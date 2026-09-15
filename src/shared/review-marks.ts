@@ -53,6 +53,9 @@ export type ReviewFile = {
    * than the session's. Undefined when no launch baseline was recorded.
    */
   preexisting?: boolean;
+  /* ── helper sweep · P7 depth ── */
+  /** Why this file is scratch and left out of the review, or null/undefined when it counts. See shared/scratch-files.ts. */
+  scratch?: import('./scratch-files.ts').ScratchReason | null;
 };
 
 /** What a file's review looks like right now. */
@@ -81,9 +84,9 @@ export function fileReview(file: Pick<ReviewFile, 'path' | 'contentHash'>, marks
   return { state: stale ? 'unreviewed' : mark.state, stale, marked: mark.state, note: mark.note, markedAt: mark.markedAt };
 }
 
-/** The files a review is about: the session's own, never the operator's pre-existing edits. */
-export function reviewableFiles<T extends Pick<ReviewFile, 'preexisting'>>(files: readonly T[]): T[] {
-  return files.filter((f) => f.preexisting !== true);
+/** The files a review is about: the session's own, never the operator's pre-existing edits, and never its scratch files. */
+export function reviewableFiles<T extends Pick<ReviewFile, 'preexisting' | 'scratch'>>(files: readonly T[]): T[] {
+  return files.filter((f) => f.preexisting !== true && !f.scratch);
 }
 
 export type ReviewCounts = {
@@ -208,6 +211,9 @@ export function formatReviewSubmission(input: {
   marks: readonly ReviewMark[];
   lineNotes?: readonly ReviewNote[];
   dependencies?: readonly ReviewDependencyLine[];
+  /* ── helper sweep · P7 depth ── */
+  /** The scoped Code Review Rules block (shared/review-rules.ts), appended as written; never an item on its own. */
+  rules?: string;
 }): { ok: true; text: string; items: number } | { ok: false; reason: string } {
   const files = reviewableFiles(input.files);
   const rejected: { file: ReviewFile; review: FileReview }[] = [];
@@ -266,6 +272,8 @@ export function formatReviewSubmission(input: {
   if (approved > 0) {
     lines.push('', `${approved} other file${approved === 1 ? ' is' : 's are'} approved as ${approved === 1 ? 'it stands' : 'they stand'}.`);
   }
+  /* ── helper sweep · P7 depth ── */
+  if (input.rules?.trim()) lines.push('', input.rules.trim());
   return { ok: true, text: lines.join('\n'), items };
 }
 

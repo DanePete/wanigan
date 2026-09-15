@@ -4,6 +4,9 @@ import path from 'node:path';
 import { app } from 'electron';
 /* ── helper sweep · P4 cost ── */
 import { migrateCostSchema } from './cost-schema';
+/* ── helper sweep · P7 depth ── */
+import { migrateDepthSchema } from './depth-schema';
+/* ── end helper sweep · P7 depth ── */
 
 let _db: Database.Database | null = null;
 
@@ -612,6 +615,9 @@ function migratePhases(d: Database.Database) {
   migrateHelperUx(d);
   /* ── helper sweep · P8 mac ── */
   migrateHelperMac(d);
+  /* ── helper sweep · P7 depth ── */
+  migrateDepthSchema(d);
+  /* ── end helper sweep · P7 depth ── */
 }
 
 /**

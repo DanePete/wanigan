@@ -14,7 +14,7 @@ const COLUMNS: readonly Column[] = [
   { id: 'ready', label: 'Ready', meaning: 'Prerequisites complete' },
   { id: 'running', label: 'In progress', meaning: 'Agent work underway' },
   { id: 'waiting', label: 'Waiting', meaning: 'Dependencies unfinished' },
-  { id: 'blocked', label: 'Blocked', meaning: 'A failure needs attention' },
+  { id: 'blocked', label: 'Blocked', meaning: 'A failure or a held task needs attention' },
   { id: 'parked', label: 'Parked', meaning: 'Scheduled to return' },
   { id: 'done', label: 'Closed', meaning: 'Completed or canceled' },
 ];
@@ -35,6 +35,8 @@ type Selection = { id: string; title: string; scope: string | null };
 type ActionNote = { nodeId: string; title: string; text: string; tone: 'ok' | 'error' };
 
 function columnOf(card: BoardCard, now = Date.now()): ColumnId {
+  /* ── helper sweep · P7 depth ── a task held for a person is stopped work, whatever its dependencies say. */
+  if (card.node.hold && card.node.status !== 'running' && card.node.status !== 'completed') return 'blocked';
   return card.node.deferUntil !== null && card.node.deferUntil > now
     && card.node.status !== 'running' && card.node.status !== 'completed'
     ? 'parked' : STATUS_COLUMN[card.node.status];
@@ -185,12 +187,14 @@ export default function Board({ projects, providers, projectId, selectedProjectI
                 <span className="brd-card-title">{card.node.title}</span>
                 <span className="brd-goal">{card.docketTitle}</span>
                 <span className="brd-status">
-                  {card.node.queued ? <Pill status="Queued for autopilot" tone="warn" />
+                  {card.node.hold ? <Pill status={card.node.hold.reason} tone="warn" />
+                    : card.node.queued ? <Pill status="Queued for autopilot" tone="warn" />
                     : column.id === 'parked' ? <Pill status={when(card.node.deferUntil!)} tone="quiet" />
                     : <Mark {...markOf(card.node.status)} />}
                   {card.risk === 'high' && <Pill status="High risk" tone="warn" />}
                 </span>
                 {(card.node.status === 'failed' || card.node.status === 'blocked') && card.node.detail && <span className="brd-why">{card.node.detail}</span>}
+                {card.node.hold && <span className="brd-why">{card.node.hold.detail}</span>}
                 {card.node.status === 'running' && card.node.startedAt !== null && <span className="brd-age">Started {ago(card.node.startedAt)}</span>}
               </button>)}
             </div>
@@ -237,6 +241,7 @@ function TaskSheet({selection,card,cards,busy,stale,note,provider,providers,prov
           {note && <Note tone={note.tone === 'ok' ? 'ok' : 'error'}>{note.text}</Note>}
           {stale && <Note tone="error">The board could not refresh. Read it again before changing this task.</Note>}
           {card.node.detail && <Note tone={card.node.status === 'failed' ? 'error' : 'info'}>{card.node.detail}</Note>}
+          {card.node.hold && <Note tone="warn" role="none">Held · {card.node.hold.reason} — {card.node.hold.detail} Change the goal’s loop budgets in Review to continue.</Note>}
           <section className="brd-detail"><SectionHead label="Instructions" /><p className="brd-instructions">{card.node.instructions || 'No instructions were recorded.'}</p></section>
           <section className="brd-detail"><SectionHead label="Prerequisites" count={card.node.dependsOn.length} />
             {!card.node.dependsOn.length ? <p className="dim">No prerequisites.</p> : <ul className="brd-dependencies">{card.node.dependsOn.map(id => {
@@ -253,7 +258,7 @@ function TaskSheet({selection,card,cards,busy,stale,note,provider,providers,prov
           <section className="brd-detail"><SectionHead label="Next action" />
             {card.node.queued && <Note tone="warn">Queued for autopilot. The dispatcher owns its next launch.</Note>}
             {parked && <p className="dim">{when(card.node.deferUntil!)} · {new Date(card.node.deferUntil!).toLocaleString()}</p>}
-            {!parked && card.node.status === 'ready' && !card.node.queued && <div className="brd-launch">
+            {!parked && card.node.status === 'ready' && !card.node.queued && !card.node.hold && <div className="brd-launch">
               {providers.length ? <select className="field" aria-label="Which agent Start launches on" value={provider} disabled={busy !== null} onChange={event=>onProvider(event.target.value)}>
                 {providers.map(row=><option key={row.id} value={row.id}>{row.label}</option>)}
               </select> : <p className="dim">No installed agent is available. Add one in Settings.</p>}

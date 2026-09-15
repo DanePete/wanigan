@@ -37,6 +37,9 @@ import type { HookInput, PolicyDecision, TrustLevel } from './types.ts';
 import { parseShell, programOf, type SegmentOrigin, type ShellSegment, type ShellWord } from './shell-parse.ts';
 import { dirname, expandHome, isAbsolute, normalize, resolve, within } from './posix-path.ts';
 import { tripwireFindings, type TripwireFinding, type TripwireView } from './taint.ts';
+/* ── helper sweep · P7 depth ── */
+import { rewriteCommandsIn, type RewriteKind } from './git-rewrite.ts';
+/* ── end helper sweep · P7 depth ── */
 
 export type RuleEnv = {
   home: string;
@@ -49,6 +52,9 @@ export type RuleEnv = {
 export type RuleContext = {
   trust: TrustLevel;
   projectPath: string | null;
+  /* ── helper sweep · P7 depth ── */
+  /** The project's "always ask before history-rewriting git commands, even at Trusted". Absent means off. */
+  alwaysAskHistoryRewrite?: boolean;
 };
 
 export type TraceStep = {
@@ -125,6 +131,8 @@ export const POLICY_RULES: readonly RuleSpec[] = [
   { id: 'tripwire.downloaded-run', outcome: 'ask', level: 'project', summary: 'Running a file this session downloaded, extracted or cloned asks. A tripwire, not containment.' },
   { id: 'tripwire.stdlib-shadow', outcome: 'ask', level: 'project', summary: 'Running Python beside a file that shadows a standard-library module asks. A tripwire, not containment.' },
   { id: 'tripwire.recorded-trusted', outcome: 'allow', level: 'trusted', summary: 'At Trusted either tripwire is recorded and allowed.' },
+  /* ── helper sweep · P7 depth ── */
+  { id: 'git.history-rewrite-always-ask', outcome: 'ask', level: 'any', summary: 'With the project setting on, a force push, reset --hard, branch -D, tag or ref delete, or filter-branch/filter-repo asks, even at Trusted.' },
 ];
 
 /* ── tool classification ─────────────────────────────────────────────── */
@@ -457,10 +465,17 @@ export function evaluate(ctx: RuleContext, input: HookInput, env: RuleEnv, extra
     trace.steps.push({ text: t.command, via: [], origin: 'tripwire', cwd: null, rule: t.rule, decision: ctx.trust === 'trusted' ? 'allow' : 'ask', reason: tripwireReason(t, ctx.trust) });
   }
 
+  /* ── helper sweep · P7 depth ── */
+  const rewriteAsk = shell && ctx.alwaysAskHistoryRewrite ? historyRewriteAsk(command) : null;
+  if (rewriteAsk) trace.steps.push(rewriteAsk.step);
+  /* ── end helper sweep · P7 depth ── */
+
   // Checked before any rule so that TRUST_COPY.trusted — "Nothing is denied by
   // Wanigan" — stays literally true. The trace is still built: a trusted
   // project's ledger row is where the operator reads what the line did.
   if (ctx.trust === 'trusted') {
+    /* ── helper sweep · P7 depth ── a question, not a denial: the Trusted promise is about denying. */
+    if (rewriteAsk) return done(rewriteAsk.decision);
     if (trip.length) return done(allow(tripwireReason(trip[0], 'trusted'), 'tripwire.recorded-trusted'));
     return done(allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow'));
   }
@@ -486,7 +501,30 @@ export function evaluate(ctx: RuleContext, input: HookInput, env: RuleEnv, extra
   // A tripwire turns an allow into a question at Project trust. It never
   // softens a stricter answer, and at Read only the shell question stands.
   if (trip.length && base.decision === 'allow') return done(ask(tripwireReason(trip[0], ctx.trust), trip[0].rule));
+  /* ── helper sweep · P7 depth ── never softens a stricter answer; turns an allow into the question. */
+  if (rewriteAsk && base.decision === 'allow') return done(rewriteAsk.decision);
   return done(base);
+}
+
+/* ── helper sweep · P7 depth ── history-rewriting git always asks, where a project opted in ── */
+
+/**
+ * The rewrites that destroy what they replace: a force push (and a push that
+ * deletes a remote ref), reset --hard, a forced branch delete, a tag delete,
+ * update-ref -d, filter-branch and filter-repo. Rebase and commit --amend are
+ * left out on purpose: they are routine local work, and the reflog keeps what
+ * they replaced — asking at every one would bury the questions that matter.
+ */
+export const ALWAYS_ASK_REWRITES: readonly RewriteKind[] = ['force-push', 'reset-hard', 'branch-delete', 'tag-delete', 'update-ref-delete', 'filter-branch', 'filter-repo'];
+
+function historyRewriteAsk(command: string): { decision: PolicyDecision; step: TraceStep } | null {
+  const hit = rewriteCommandsIn(command).find((r) => (ALWAYS_ASK_REWRITES as readonly string[]).includes(r.kind));
+  if (!hit) return null;
+  const reason = `This project always asks before a history-rewriting git command, even at ${TRUST_COPY.trusted.label}: \`${hit.text}\` is a ${hit.kind.replace('-', ' ')}, and what it replaces may not be recoverable afterwards. Approve it if you meant it.`;
+  return {
+    decision: ask(reason, 'git.history-rewrite-always-ask'),
+    step: { text: hit.text, via: [], origin: 'command', cwd: null, rule: 'git.history-rewrite-always-ask', decision: 'ask', reason },
+  };
 }
 
 /** Every tripwire sentence says what it is before it says anything else. */

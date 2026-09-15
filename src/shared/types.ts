@@ -832,6 +832,9 @@ export type TranscriptTurn = {
   role: 'user' | 'assistant' | 'system' | 'tool';
   text: string;
   toolName?: string;
+  /* ── helper sweep · P7 depth ── */
+  /** Set on the divider a compact_boundary line becomes in the reader. See shared/compaction.ts. */
+  compact?: import('./compaction').TranscriptBoundary;
 };
 
 /**
@@ -1328,6 +1331,10 @@ export type WorkDocket = {
   createdAt: number;
   updatedAt: number;
   autopilot: DocketAutopilot;
+  /* ── helper sweep · P7 depth ── */
+  /** Optional rounds and changed-lines limits. See shared/goal-budgets.ts. */
+  loopBudgets?: import('./goal-budgets').GoalLoopBudgets;
+  /* ── end helper sweep · P7 depth ── */
 };
 
 /**
@@ -1451,6 +1458,13 @@ export type DocketNode = {
    * one, and the loser was killed after its first prompt had already been sent.
    */
   queued: boolean;
+  /* ── helper sweep · P7 depth ── */
+  /**
+   * Handed back to a person by the goal's loop budgets: a reason code and the
+   * observed numbers behind it, or null. See shared/goal-budgets.ts.
+   */
+  hold?: import('./goal-budgets').GoalHold | null;
+  /* ── end helper sweep · P7 depth ── */
 };
 
 export type DocketClaim = {

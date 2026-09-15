@@ -13,6 +13,9 @@ import type { AgentDefinitionsReport, CodexLoaderReport, ReferenceLintReport } f
 import AutoModePanel from '../components/AutoModePanel';
 /* helper sweep · P8 mac */
 import { HookBenchButton, HookBenchResultView, type BenchOutcome } from '../components/HookBench';
+/* ── helper sweep · P7 depth ── */
+import { InstructionPinPanel } from '../components/InstructionPins';
+/* ── end helper sweep · P7 depth ── */
 
 /**
  * "What will my agent actually know when it starts?"
@@ -662,6 +665,9 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     memory:e.memory?<PanelError channel="memory" detail={e.memory} onRetry={()=>load(true)}/>
       :shows.memory&&d.memory?<MemoryPanel m={d.memory}/>:emptyArea('memory'),
     config:<>{project&&<ConfigPinPanel projectId={project.id} pin={d.pin} read={d.pinRead}
+        onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
+      {/* ── helper sweep · P7 depth ── */}
+      {project&&<InstructionPinPanel projectId={project.id} pin={d.pin}
         onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
       {e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
       :shows.config&&d.config?<ConfigPanel c={d.config} projectPath={project?.path ?? null}/>:emptyArea('config')}

@@ -912,6 +912,12 @@ function summarise(event: string, input: HookInput): string | null {
     return clip(str(input.agent_type), MAX_SUMMARY);
   }
   if (event === 'PostModelSwitch') return modelSwitchSummary(input);
+  /* ── helper sweep · P7 depth ── */
+  // Which kind of compaction, `auto` or `manual`, read off the 2.1.271 schema.
+  // PreCompact's `custom_instructions` is what the operator typed after
+  // /compact and PostCompact's `compact_summary` is model output; neither is read.
+  if (event === 'PreCompact' || event === 'PostCompact') return clip(str((input as Record<string, unknown>).trigger), 16);
+  /* ── end helper sweep · P7 depth ── */
   switch (event) {
     // Both ends, because "moved to /tmp" and "moved from the project root to
     // /tmp" are different facts and only the second one is worth an alarm.

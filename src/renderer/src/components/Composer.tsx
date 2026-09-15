@@ -67,6 +67,19 @@ async function writePayload(sessionId: string, payload: string[]): Promise<void>
   }
 }
 
+/* ── helper sweep · P7 depth ── */
+/**
+ * A message the operator composed, written into the terminal and then handed to
+ * main to split into asks. After the write, never instead of it: the record is
+ * a checklist for later, and a failure to keep it must not cost the send.
+ */
+async function submitMessage(sessionId: string, text: string): Promise<void> {
+  const payload = buildPtyPayload(text);
+  await writePayload(sessionId, payload);
+  if (payload.length) window.wanigan.depth.asks.record(sessionId, text).catch(() => { /* the checklist is extra */ });
+}
+/* ── end helper sweep · P7 depth ── */
+
 /* ── queue store ─────────────────────────────────────────────────────────
    Module-level so queued messages keep draining while another session is on
    screen. In-memory on purpose: the queue's lifetime is the PTY's lifetime,
@@ -175,7 +188,7 @@ async function drainOnce(): Promise<void> {
       if (state.mode !== 'send') continue;
       const head = list[0];
       unqueue(sessionId, head.id);
-      await writePayload(sessionId, buildPtyPayload(head.text));
+      await submitMessage(sessionId, head.text);
     }
   } catch { /* the next tick re-reads; a failed poll must not drop a message */ }
   finally {
@@ -455,7 +468,7 @@ export default function Composer({ session, onError, cliVersion }: {
       enqueue(sessionId, text);
       return;
     }
-    try { await writePayload(sessionId, buildPtyPayload(text)); }
+    try { await submitMessage(sessionId, text); }
     catch (e) { onError(e instanceof Error ? e.message : String(e)); }
   }, [draft, onError, sessionId, state.mode]);
 
@@ -471,7 +484,7 @@ export default function Composer({ session, onError, cliVersion }: {
   const sendQueued = useCallback(async (m: QueuedMessage) => {
     if (state.mode === 'blocked') return;
     unqueue(sessionId, m.id);
-    try { await writePayload(sessionId, buildPtyPayload(m.text)); }
+    try { await submitMessage(sessionId, m.text); }
     catch (e) { onError(e instanceof Error ? e.message : String(e)); }
   }, [onError, sessionId, state.mode]);
 

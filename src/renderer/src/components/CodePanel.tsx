@@ -21,6 +21,9 @@ import { OpinionConsentDialog, SecondOpinionActions, SecondOpinionsSection, useO
 /* ── end helper sweep · P9 opinions ── */
 /* helper sweep · P8 mac */
 import { AttributedFileView, AttributionSummaryBar } from './WhoWroteThis';
+/* ── helper sweep · P7 depth ── */
+import { MaintainabilitySection, ReviewRulesSection, ScratchFilesSection } from './DepthReview';
+/* ── end helper sweep · P7 depth ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -81,7 +84,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   focusTurn?: { turn: number; nonce: number } | null;
   onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
-  /* helper sweep · P6 ux: a path ⌘-clicked in the terminal, opened here at its line. Nonce re-fires repeats. */
+  /* helper sweep · P6 ux, P7 depth: a path ⌘-clicked in the terminal, or picked in the Timeline's file panel,
+     opened here at its line (relative to this panel's root). Nonce re-fires repeats. */
   focusFile?: { rel: string; line: number | null; directory: boolean; nonce: number } | null;
   onFocusFileHandled?: () => void;
 }) {
@@ -246,7 +250,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTurn, sessionId]);
 
-  /* helper sweep · P6 ux */
+  /* helper sweep · P6 ux, P7 depth: a file another surface asked the rail to open. */
   const handledFileNonce = useRef<number | null>(null);
   useEffect(() => {
     if (!focusFile || handledFileNonce.current === focusFile.nonce) return;
@@ -452,6 +456,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     setSending(true); setSent(null);
     try {
       const deps = await window.wanigan.reviewWork.dependencies(sessionId).catch(() => null);
+      /* ── helper sweep · P7 depth ── */
+      const rules = await window.wanigan.depth.reviewRules(sessionId).catch(() => null);
       const lineNotes = notesAnchor === review.anchor ? notes : [];
       const result = formatReviewSubmission({
         anchor: review.anchor,
@@ -459,6 +465,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         marks: marksFromReviews(review.files, review.root, review.base),
         lineNotes,
         dependencies: deps ? deps.manifests.flatMap((m) => m.lines.map((text) => ({ text }))) : [],
+        rules: rules?.text ?? '',
       });
       if (!result.ok) { setSent({ tone: 'warn', text: result.reason }); return; }
       const where = appendToComposerDraft(sessionId, result.text);
@@ -534,15 +541,19 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const target = sel ?? file?.rel;
   const inspectorText = sel ? diff : file?.text ?? '';
 
+  /* ── helper sweep · P7 depth ── a scratch file is not a change to count, revert or send; it is listed apart below. */
   const visible = useMemo(
-    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files),
-    [changes.files, scope]
+    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files).filter((f) => !reviewByPath.get(f.path)?.scratch),
+    [changes.files, scope, reviewByPath]
   );
   const preexistingCount = changes.files.filter((f) => f.preexisting).length;
   const needle = filter.trim().toLowerCase();
   const uncommittedRows = useMemo(() => orderForReview(visible.filter((f) => !needle || f.path.toLowerCase().includes(needle)
     || (reviewByPath.get(f.path)?.oldPath ?? '').toLowerCase().includes(needle)), order), [visible, needle, order, reviewByPath]);
-  const reviewRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
+  /* ── helper sweep · P7 depth ── scratch files are listed apart, collapsed, and counted nowhere. */
+  const scopedRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
+  const reviewRows = useMemo(() => scopedRows.filter((f) => !f.scratch), [scopedRows]);
+  const scratchRows = useMemo(() => scopedRows.filter((f) => f.scratch), [scopedRows]);
   const selectedReview: ReviewWorkFile | null = sel ? reviewByPath.get(sel) ?? null : null;
   const reviewKey = review ? `${review.base}:${review.files.map((f) => f.contentHash.slice(0, 7)).join('')}` : '';
   const showOpinions = tab === 'changes' && reviewing && opinionsOpen;
@@ -754,7 +765,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         <>
           <ReviewToolbar scope={diffScope} onScope={changeScope} order={order} whitespace={whitespace}
                          filter={filter} onFilter={setFilter} find={findQuery} onFind={setFindQuery} onRunFind={() => void runFind()}
-                         counts={{ agent: review.files.filter((f) => f.attribution === 'edit-tool' || f.attribution === 'shell-reported').length, uncommitted: visible.length, branch: review.files.length }} />
+                         counts={{ agent: review.files.filter((f) => !f.scratch && (f.attribution === 'edit-tool' || f.attribution === 'shell-reported')).length, uncommitted: visible.length, branch: review.files.filter((f) => !f.scratch).length }} />
           {scopeNow === 'agent' && (
             <p className="rw-because rw-pad">
               {review.hooksRecorded
@@ -904,6 +915,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   {!reviewRows.length && (
                     <p className="faint code-hint">
                       {filter.trim() ? `No file in this scope matches “${filter.trim()}”.`
+                        : scratchRows.length ? 'Only scratch files changed. They are listed below and counted nowhere.'
                         : scopeNow === 'agent' ? 'No changed file was written by an edit tool or reported by a shell command.'
                           : 'Nothing changed against the commit this session started from.'}
                     </p>
@@ -916,6 +928,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                       <FileRowMarks file={f} />
                     </button>
                   ))}
+                  {/* ── helper sweep · P7 depth ── */}
+                  {sessionId && <ScratchFilesSection sessionId={sessionId} files={scratchRows} selected={sel} onOpen={(p) => void openDiff(p)} onChanged={() => void reloadReview()} />}
                 </>
               )}
               {scopeNow === 'uncommitted' && changes.isRepo && !visible.length && (
@@ -951,6 +965,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   {reviewByPath.get(f.path) && <FileRowMarks file={reviewByPath.get(f.path)!} />}
                 </button>
               ))}
+              {/* ── helper sweep · P7 depth ── */}
+              {scopeNow === 'uncommitted' && sessionId && <ScratchFilesSection sessionId={sessionId} files={review?.files.filter((f) => f.scratch) ?? []} selected={sel} onOpen={(p) => void openDiff(p)} onChanged={() => void reloadReview()} />}
             </div>
             )}
             <div className="code-view">
@@ -1004,6 +1020,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                 <div className="rw-sections">
                   <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} />
                   <ClaimsSection sessionId={sessionId} refreshKey={reviewKey} />
+                  {/* ── helper sweep · P7 depth ── */}
+                  <ReviewRulesSection sessionId={sessionId} refreshKey={reviewKey} />
+                  <MaintainabilitySection sessionId={sessionId} refreshKey={reviewKey} />
                 </div>
               )}
             </div>

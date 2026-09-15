@@ -5,6 +5,10 @@ import { resolvedCount, reviewEvidence } from './review-work';
 import { fileReview, reviewCounts } from '../shared/review-marks';
 import { buildPrBody, type PrEvidence } from '../shared/pr-body';
 import type { PrDraft } from '../shared/review-work';
+/* ── helper sweep · P7 depth ── */
+import { ignoredPaths, promotedPaths } from './scratch';
+import { classifyScratch } from '../shared/scratch-files';
+/* ── end helper sweep · P7 depth ── */
 
 /**
  * The create-PR dialog's body, from what Wanigan recorded about the branch.
@@ -102,10 +106,15 @@ export async function prDraft(root: string): Promise<PrDraft> {
     dependencies = evidence.dependencies.manifests.flatMap((m) => m.lines);
   }
 
+  /* ── helper sweep · P7 depth ── scratch files are neither listed nor counted. */
+  const sessionProject = db().prepare('SELECT project_id FROM session_log WHERE id = ?').get(sessionId) as { project_id: string | null } | undefined;
+  const classified = classifyScratch(files, await ignoredPaths(scope.repoRoot, files.map((f) => f.path)).catch(() => new Set<string>()), promotedPaths(sessionProject?.project_id ?? null));
+  const counted = classified.filter((f) => !f.scratch).map(({ path, added, removed }) => ({ path, added, removed }));
   const body = buildPrBody({
     goal: docket ? { title: docket.title, acceptance } : null,
     turns,
-    files,
+    files: counted,
+    scratchFiles: classified.length - counted.length,
     checks,
     review,
     dependencies,

@@ -83,6 +83,14 @@ import type { HookBenchResult } from '../shared/hook-bench';
 import type { ChainCheck } from '../shared/transcript-chain';
 import type { AnnotatedRange, AttributionSummary } from '../shared/line-attribution';
 /* ── end helper sweep · P8 mac ── */
+/* ── helper sweep · P7 depth ── */
+import type { AskMessage } from '../shared/ask-items';
+import type { GoalLoopBudgets } from '../shared/goal-budgets';
+import type { MaintainabilityView } from '../shared/maintainability';
+import type { SessionFiles } from '../shared/session-files';
+import type { AgentGitMarks } from '../shared/agent-git';
+import type { CompactionMark } from '../shared/compaction';
+/* ── end helper sweep · P7 depth ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -1213,6 +1221,37 @@ const api = {
     },
   },
   /* ── end helper sweep · P8 mac ── */
+  /* ── helper sweep · P7 depth ── */
+  // Review depth. Every argument is validated again in main.
+  depth: {
+    asks: {
+      /** Called by the composer after it has written a message into the terminal. */
+      record: (sessionId: string, text: string) => call<number>('depth:asksRecord', sessionId, text),
+      list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
+      tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
+    },
+    instructions: {
+      /** Accept the instruction files on disk now as reviewed; main refuses a digest that moved since it was shown. */
+      accept: (projectId: string, digest: string, worktree?: string | null) =>
+        call<import('../shared/exec-config').ConfigPinCheck>('configPins:acceptInstructions', projectId, digest, worktree ?? null),
+      setAsk: (projectId: string, on: boolean) => call<boolean>('configPins:setInstructionAsk', projectId, on),
+    },
+    reviewRules: (sessionId: string) => call<{ rules: import('../shared/review-rules').ScopedRules[]; changed: number; text: string }>('depth:reviewRules', sessionId),
+    rejections: (sessionId: string) => call<import('../shared/rejections').GateRejection[]>('depth:rejections', sessionId),
+    historyRewriteAsk: () => call<{ projectId: string; enabled: boolean }[]>('depth:historyRewriteAsk'),
+    setHistoryRewriteAsk: (projectId: string, on: boolean) => call<boolean>('depth:setHistoryRewriteAsk', projectId, on),
+    /** "Count this file" on a scratch file, or take it back. Kept per project and path. */
+    promoteScratch: (sessionId: string, path: string, on: boolean) => call<boolean>('depth:promoteScratch', sessionId, path, on),
+    compactions: (sessionId: string) => call<{ marks: CompactionMark[]; transcript: 'live' | 'archived' | 'none' }>('depth:compactions', sessionId),
+    agentGit: (root: string) => call<AgentGitMarks & { sessions: number; commands: number; reflogRead: boolean }>('depth:agentGit', root),
+    sessionFiles: (sessionId: string) => call<SessionFiles & { root: string | null }>('depth:sessionFiles', sessionId),
+    maintainability: (sessionId: string) => call<MaintainabilityView>('depth:maintainability', sessionId),
+    goals: {
+      setLoopBudgets: (docketId: string, budgets: GoalLoopBudgets) => call<DocketDetail>('depth:setLoopBudgets', docketId, budgets),
+      measure: (docketId: string) => call<{ implementRounds: number; changedLines: number | null; binaryFiles: number; worktree: string | null }>('depth:loopMeasure', docketId),
+    },
+  },
+  /* ── end helper sweep · P7 depth ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

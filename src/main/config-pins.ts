@@ -7,6 +7,13 @@ import {
   claudeSettingsItems, codexConfigItems, diffSnapshots, dotenvItems, gitConfigItems, gitHookItems, mcpJsonItems,
   snapshotOf, summarizeItems, type ConfigPinCheck, type ExecItem, type ExecSnapshot,
 } from '../shared/exec-config';
+/* ── helper sweep · P7 depth ── */
+import { getSetting, setSetting } from './settings';
+import {
+  describeFiles, diffInstructions, instructionDecision, instructionDigest, isInstructionPath,
+  type InstructionCheck, type InstructionPinHow, type InstructionText,
+} from '../shared/instruction-pins';
+/* ── end helper sweep · P7 depth ── */
 
 export type { ConfigPinCheck } from '../shared/exec-config';
 
@@ -139,6 +146,12 @@ function parseItems(json: string): ExecItem[] {
 }
 
 export async function checkConfig(projectId: string, root: string): Promise<ConfigPinCheck> {
+  /* ── helper sweep · P7 depth ── */
+  const instructions = await checkInstructions(projectId, root).catch(() => null);
+  return { ...await checkExecutable(projectId, root), instructions };
+}
+
+async function checkExecutable(projectId: string, root: string): Promise<ConfigPinCheck> {
   const snapshot = await readExecConfig(root);
   const summary = summarizeItems(snapshot.items) + (snapshot.unreadable.length ? `; unreadable: ${snapshot.unreadable.join(', ')}` : '');
   const pins = pinsFor(projectId);
@@ -183,7 +196,24 @@ export type LaunchGate = { allowed: true; note: string | null } | { allowed: fal
  * the launch dialog; only an attended launch can carry one.
  */
 export async function gateLaunch(projectId: string, root: string, acceptDigest: string | null, attended: boolean): Promise<LaunchGate> {
-  const check = await checkConfig(projectId, root);
+  /* ── helper sweep · P7 depth ── */
+  // Instruction files first: a project that asks about them refuses here, and
+  // one that only shows them lets the executable gate below decide. The new
+  // baseline is recorded only once that gate has let the launch through.
+  let instructions: InstructionCheck | null = null;
+  try { instructions = await checkInstructions(projectId, root); } catch { instructions = null; }
+  const decided = instructions ? instructionDecision(instructions, attended) : null;
+  if (decided && !decided.allowed) return { allowed: false, reason: decided.reason };
+  const gate = await gateExecutable(projectId, root, acceptDigest, attended);
+  if (!gate.allowed || !decided || !instructions) return gate;
+  if (decided.record) recordInstructionPin(projectId, root, instructions, decided.record);
+  const notes = [gate.note, decided.note].filter(Boolean).join(' ');
+  return { allowed: true, note: notes || null };
+  /* ── end helper sweep · P7 depth ── */
+}
+
+async function gateExecutable(projectId: string, root: string, acceptDigest: string | null, attended: boolean): Promise<LaunchGate> {
+  const check = await checkExecutable(projectId, root);
   if (check.state === 'none' || check.state === 'accepted') return { allowed: true, note: null };
   if (check.state === 'first-use') {
     recordPin(projectId, check.snapshot, 'first-use', root);
@@ -205,3 +235,112 @@ export async function gateLaunch(projectId: string, root: string, acceptDigest: 
       : `This repository's executable config changed since it was last accepted (${counts || 'changed'}), and an unattended run has nobody to review it. Accept it in Context first.`,
   };
 }
+
+/* ── helper sweep · P7 depth ── instruction files beside the pin ───────── */
+
+const MAX_INSTRUCTION_FILES = 200;
+const INSTRUCTION_ROOT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'AGENTS.override.md'];
+/** Directories a nested AGENTS.md walk never enters: dependencies, build output, VCS internals, Wanigan's own worktrees. */
+const SKIP_DIRS = new Set(['node_modules', '.git', 'vendor', 'dist', 'build', 'out', 'target', '.venv', 'venv', '__pycache__', '.next', 'coverage']);
+const WALK_MAX_DIRS = 4_000;
+const WALK_MAX_DEPTH = 8;
+
+/**
+ * Every instruction file in the project, with its text. Read from disk rather
+ * than from git, because CLAUDE.local.md is usually ignored and still loaded.
+ * Symlinks are not followed, and the walk is bounded; a file too large to read
+ * is listed as unreadable, which changes the digest.
+ */
+export function readInstructionFiles(root: string): { texts: InstructionText[]; unreadable: string[] } {
+  const texts: InstructionText[] = [];
+  const unreadable: string[] = [];
+  const take = (rel: string) => {
+    if (texts.length + unreadable.length >= MAX_INSTRUCTION_FILES || !isInstructionPath(rel)) return;
+    const read = readBounded(path.join(root, rel));
+    if (read.kind === 'text') texts.push({ path: rel, text: read.text });
+    else if (read.kind === 'unreadable') unreadable.push(rel);
+  };
+  for (const name of INSTRUCTION_ROOT_FILES) take(name);
+  let dirs = 0;
+  const walk = (rel: string, depth: number, rulesOnly: boolean) => {
+    if (depth > WALK_MAX_DEPTH || dirs++ > WALK_MAX_DIRS) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { return; }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const e of entries) {
+      const child = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (rulesOnly) { walk(child, depth + 1, true); continue; }
+        if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+        walk(child, depth + 1, false);
+      } else if (e.isFile() && depth > 0) {
+        if (rulesOnly ? e.name.endsWith('.md') : (e.name === 'AGENTS.md' || e.name === 'AGENTS.override.md')) take(child);
+      }
+    }
+  };
+  walk('.claude/rules', 1, true);
+  walk('', 0, false);
+  return { texts, unreadable };
+}
+
+function askKey(projectId: string): string {
+  return `instruction_ask:${projectId}`;
+}
+
+export function instructionAsk(projectId: string): boolean {
+  try { return getSetting(askKey(projectId), '0') === '1'; } catch { return false; }
+}
+
+export function setInstructionAsk(projectId: unknown, on: unknown): boolean {
+  if (typeof projectId !== 'string' || !projectId || projectId.length > 200) throw new Error('Choose a project first.');
+  if (!db().prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) throw new Error('That is not a project Wanigan knows.');
+  setSetting(askKey(projectId), on === true ? '1' : '0');
+  return on === true;
+}
+
+type InstructionPinRow = { digest: string; texts_json: string; how: string; created_at: number };
+
+function latestInstructionPin(projectId: string): InstructionPinRow | null {
+  return (db().prepare('SELECT digest, texts_json, how, created_at FROM instruction_pins WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+    .get(projectId) as InstructionPinRow | undefined) ?? null;
+}
+
+function pinTexts(row: InstructionPinRow): InstructionText[] {
+  try {
+    const parsed: unknown = JSON.parse(row.texts_json);
+    return Array.isArray(parsed) ? parsed.filter((t): t is InstructionText => !!t && typeof (t as InstructionText).path === 'string' && typeof (t as InstructionText).text === 'string') : [];
+  } catch { return []; }
+}
+
+export async function checkInstructions(projectId: string, root: string): Promise<InstructionCheck> {
+  const { texts, unreadable } = readInstructionFiles(root);
+  const files = describeFiles(texts, hash);
+  const digest = instructionDigest(files, unreadable, hash);
+  const pin = latestInstructionPin(projectId);
+  const askOnChange = instructionAsk(projectId);
+  const lastTrusted = pin ? { at: pin.created_at, how: (['first-use', 'shown', 'reviewed'].includes(pin.how) ? pin.how : 'shown') as InstructionPinHow } : null;
+  const base = { digest, files, unreadable, askOnChange, lastTrusted, diff: [] };
+  if (!pin) return { ...base, state: files.length || unreadable.length ? 'first-use' : 'none' };
+  if (pin.digest === digest) return { ...base, state: files.length || unreadable.length ? 'same' : 'none' };
+  return { ...base, state: 'changed', diff: diffInstructions(pinTexts(pin), texts) };
+}
+
+function recordInstructionPin(projectId: string, root: string, check: InstructionCheck, how: InstructionPinHow): void {
+  const { texts } = readInstructionFiles(root);
+  // Recorded only when what is on disk is still what was decided about.
+  if (instructionDigest(describeFiles(texts, hash), check.unreadable, hash) !== check.digest) return;
+  const d = db();
+  d.prepare('INSERT INTO instruction_pins (id, project_id, digest, items_json, texts_json, how, root, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(randomUUID(), projectId, check.digest, JSON.stringify(check.files), JSON.stringify(texts), how, root, Date.now());
+  d.prepare(`DELETE FROM instruction_pins WHERE project_id=? AND rowid NOT IN (
+      SELECT rowid FROM instruction_pins WHERE project_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?)`).run(projectId, projectId, KEEP_PINS);
+}
+
+/** Accept the instruction files on disk now, as reviewed. Refused when they moved again since they were shown. */
+export async function acceptInstructions(projectId: string, root: string, digest: string): Promise<ConfigPinCheck> {
+  const current = await checkInstructions(projectId, root);
+  if (current.digest !== digest) throw new Error('The instruction files changed again while they were on screen. Read the current version before accepting it.');
+  if (current.state !== 'none') recordInstructionPin(projectId, root, current, 'reviewed');
+  return checkConfig(projectId, root);
+}
+/* ── end helper sweep · P7 depth ── */

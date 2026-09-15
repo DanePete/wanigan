@@ -7,6 +7,13 @@ import SessionAnatomyPanel from './SessionAnatomyPanel';
 import SessionPolicyEvidence from './SessionPolicyEvidence';
 /* helper sweep · P5 runtime */
 import ModelSubstitutions from './ModelSubstitutions';
+/* ── helper sweep · P7 depth ── */
+import AskChecklist from './AskChecklist';
+import SessionFilesPanel from './SessionFilesPanel';
+import type { CompactionMark } from '@shared/compaction';
+import CompactionDivider from './CompactionDivider';
+import { rejectedRows, type GateRejection, type Rejected } from '@shared/rejections';
+/* ── end helper sweep · P7 depth ── */
 
 /**
  * What the agent DID, beside the terminal that says what it claimed.
@@ -47,9 +54,13 @@ const KINDS = [
 ] as const;
 type Kind = (typeof KINDS)[number]['id'];
 
-export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
+export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onRevealFile, focusEvent }: {
   sessionId: string;
   onOpenFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── open a file in the code rail's reader rather than an external editor. */
+  onRevealFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── scroll to and mark this row once it is loaded. Nonce re-fires repeats. */
+  focusEvent?: { eventId: number; nonce: number } | null;
   /** Jump to this turn's diff in the code panel. Offered only for checkpoint-matched turns. */
   onOpenTurnDiff?: (turn: number) => void;
 }) {
@@ -170,6 +181,55 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
     return out;
   }, [groups, shown, isExpanded]);
 
+  /* ── helper sweep · P7 depth ── */
+  const [compactions, setCompactions] = useState<CompactionMark[]>([]);
+  useEffect(() => {
+    let live = true;
+    const read = () => window.wanigan.depth.compactions(sessionId)
+      .then((c) => { if (live) setCompactions(c.marks); })
+      .catch(() => { /* dividers are extra; the rail stands without them */ });
+    void read();
+    const off = window.wanigan.on.sessionEvent((e) => {
+      if (e.sessionId === sessionId && (e.event === 'PostCompact' || e.event === 'PreCompact')) window.setTimeout(() => { void read(); }, 1500);
+    });
+    return () => { live = false; off(); };
+  }, [sessionId]);
+  const [denials, setDenials] = useState<GateRejection[]>([]);
+  useEffect(() => {
+    let live = true;
+    let timer: number | undefined;
+    const read = () => window.wanigan.depth.rejections(sessionId)
+      .then((d) => { if (live) setDenials(d); })
+      .catch(() => { /* a denial the rail cannot label still shows as its own row */ });
+    void read();
+    const off = window.wanigan.on.sessionEvent((e) => {
+      if (e.sessionId !== sessionId || (e.event !== 'PreToolUse' && e.event !== 'PermissionDenied')) return;
+      if (timer === undefined) timer = window.setTimeout(() => { timer = undefined; void read(); }, 600);
+    });
+    return () => { live = false; off(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [sessionId]);
+  const rejected = useMemo(() => rejectedRows(all, denials), [all, denials]);
+  const dividersAbove = (row: Row, newerAt: number) =>
+    compactions.filter((m) => m.eventId === row.e.id || (m.eventId === null && m.at > row.e.at && m.at <= newerAt));
+  const [focused, setFocused] = useState<number | null>(null);
+  const handledFocus = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusEvent || handledFocus.current === focusEvent.nonce) return;
+    const group = groups.find((g) => g.rows.some((r) => r.e.id === focusEvent.eventId));
+    // Not loaded yet: this runs again when the rows arrive.
+    if (!group) return;
+    handledFocus.current = focusEvent.nonce;
+    setQ(''); setKind('all');
+    setTurnOverrides((m) => ({ ...m, [group.key]: true }));
+    const through = groups.indexOf(group);
+    setShown((s) => Math.max(s, groups.slice(0, through + 1).reduce((n, g) => n + g.rows.length, 0)));
+    setFocused(focusEvent.eventId);
+    window.requestAnimationFrame(() => {
+      scroll.current?.querySelector(`[data-event-id="${focusEvent.eventId}"]`)?.scrollIntoView({ block: 'center' });
+    });
+  }, [focusEvent, groups]);
+  /* ── end helper sweep · P7 depth ── */
+
   const folded = all.length - rows.length;
   const filtering = kind !== 'all' || q.trim() !== '';
   const clear = () => { setQ(''); setKind('all'); setShown(PAGE); };
@@ -273,6 +333,9 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
         <SessionAnatomyPanel sessionId={sessionId} eventCount={all.length} />
         {/* ── helper sweep · P1 policy ── */}
         <SessionPolicyEvidence sessionId={sessionId} />
+        {/* ── helper sweep · P7 depth ── */}
+        <AskChecklist sessionId={sessionId} />
+        <SessionFilesPanel sessionId={sessionId} eventCount={all.length} onReveal={onRevealFile} />
 
         {filtered.length === 0 ? (
           <div className="tl-pad">
@@ -322,7 +385,8 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
                     return (
                       <li key={r.e.id} className="tl-li">
                         {newDay && <p className="tl-day"><span>{dayLabel(r.e.at)}</span></p>}
-                        <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                        {dividersAbove(r, prev ? prev.e.at : Number.POSITIVE_INFINITY).map((m) => <CompactionDivider key={`c${m.at}`} mark={m} where="above" />)}
+                        <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} rejected={rejected.get(r.e.id)} />
                       </li>
                     );
                   })}
@@ -379,11 +443,15 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
                             </span>
                             <span className="tl-turnmeta faint">
                               {g.calls > 0 && <span>{num(g.calls)} call{g.calls === 1 ? '' : 's'}</span>}
-                              {g.failures > 0 && (
+                              {g.failures - g.rows.filter((r) => r.e.event === 'PermissionDenied' && rejected.has(r.e.id)).length > 0 && (
                                 <span className="tl-word"
                                       style={{ color: 'var(--critical)', background: 'var(--critical-soft)' }}>
-                                  ✕ {num(g.failures)} failed
+                                  ✕ {num(g.failures - g.rows.filter((r) => r.e.event === 'PermissionDenied' && rejected.has(r.e.id)).length)} failed
                                 </span>
+                              )}
+                              {/* ── helper sweep · P7 depth ── a rejection is a decision, counted apart from failures. */}
+                              {g.rows.some((r) => rejected.has(r.e.id)) && (
+                                <span className="tl-word dp-rejected-word">⊘ {num(g.rows.filter((r) => rejected.has(r.e.id)).length)} rejected</span>
                               )}
                               {liveTurn && (
                                 <span className="tl-word"
@@ -406,9 +474,10 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
                         </div>
                         {expanded && (
                           <ol className="tl-rail tl-turnbody">
-                            {g.rows.map((r) => (
+                            {g.rows.map((r, ri) => (
                               <li key={r.e.id} className="tl-li">
-                                <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                                {dividersAbove(r, ri > 0 ? g.rows[ri - 1].e.at : Number.POSITIVE_INFINITY).map((m) => <CompactionDivider key={`c${m.at}`} mark={m} where="above" />)}
+                                <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} rejected={rejected.get(r.e.id)} />
                               </li>
                             ))}
                           </ol>
@@ -707,21 +776,27 @@ function markFor(r: Row): Mark {
   }
 }
 
-function Row({ r, max, now, onOpenFile }: {
+function Row({ r, max, now, onOpenFile, focused, rejected }: {
   r: Row; max: number; now: number; onOpenFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── */
+  focused?: boolean;
+  rejected?: Rejected;
 }) {
   const e = r.e;
-  const m = markFor(r);
-  const span = r.open ? Math.max(0, now - e.at) : r.spanMs;
+  /* ── helper sweep · P7 depth ── a rejected step is a decision, never a call still running or one with no result. */
+  const m = rejected ? { glyph: '⊘', word: 'Rejected', tone: 'var(--serious)', soft: 'var(--serious-soft)', loud: true } : markFor(r);
+  const open = !rejected && r.open;
+  const span = open ? Math.max(0, now - e.at) : r.spanMs;
   // Absolute tiers, not relative: a 90-second run is slow whether or not
   // something slower happens to be on screen beside it.
   const tier = span === null ? 0 : span >= TIER_MS[2] ? 3 : span >= TIER_MS[1] ? 2 : span >= TIER_MS[0] ? 1 : 0;
   const width = span !== null && max > 0 ? Math.max(3, Math.min(100, (span / max) * 100)) : 0;
 
   const file = e.paths[0] ?? null;
-  const open = file && onOpenFile ? () => onOpenFile(file) : null;
+  const openFile = file && onOpenFile ? () => onOpenFile(file) : null;
 
-  const hint = r.open && r.spanKind === 'waited' ? 'still waiting'
+  const hint = rejected ? `${rejected.source === 'gate' ? 'Denied by Wanigan’s policy gate' : 'Denied by the auto-mode classifier'}${rejected.rule ? ` · ${rejected.rule}` : ''}${rejected.reason ? ` — ${rejected.reason}` : ''}`
+    : open && r.spanKind === 'waited' ? 'still waiting'
     : r.orphan ? 'started, no result recorded'
     : e.paths.length > 1 ? `+${e.paths.length - 1} more ${e.paths.length === 2 ? 'file' : 'files'}`
     : null;
@@ -736,10 +811,10 @@ function Row({ r, max, now, onOpenFile }: {
           <span className="tl-word" style={{ color: m.tone, background: m.soft ?? 'transparent' }}>
             {m.word}
           </span>
-          {open && <span className="tl-open faint" aria-hidden="true">↗</span>}
+          {openFile && <span className="tl-open faint" aria-hidden="true">↗</span>}
         </span>
         {e.summary && <span className="tl-sum mono" title={e.summary}>{e.summary}</span>}
-        {hint && <span className="tl-hint faint">{hint}</span>}
+        {hint && <span className={`tl-hint faint${rejected ? ' dp-rejected-why' : ''}`}>{hint}</span>}
       </span>
       <span className="tl-right">
         <span className="tl-clock mono">{clock(e.at)}</span>
@@ -763,14 +838,14 @@ function Row({ r, max, now, onOpenFile }: {
     span !== null ? `${r.spanKind === 'waited' ? 'waited' : 'took'} ${dur(span)}` : null,
   ].filter(Boolean).join(' · ');
 
-  return open ? (
-    <button type="button" className="tl-row tl-row-open" data-tier={tier}
+  return openFile ? (
+    <button type="button" className="tl-row tl-row-open" data-tier={tier} data-event-id={e.id} data-focused={focused || undefined}
             title={`Open ${e.paths.join('\n')}`} aria-label={`${label} — open ${file}`}
-            onClick={open}>
+            onClick={openFile}>
       {body}
     </button>
   ) : (
-    <div className="tl-row" data-tier={tier}>{body}</div>
+    <div className="tl-row" data-tier={tier} data-event-id={e.id} data-focused={focused || undefined}>{body}</div>
   );
 }
 

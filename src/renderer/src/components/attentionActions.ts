@@ -21,15 +21,33 @@ const RAIL_KEY = 'wanigan.code';
  * as an event for a Sessions view that is already mounted and will not re-read
  * them.
  */
-export function openTimeline(sessionId: string): void {
+export function openTimeline(sessionId: string, eventId?: number): void {
+  /* ── helper sweep · P7 depth ── a specific row to scroll to, for a view that mounts after the event. */
+  pendingFocus = typeof eventId === 'number' ? { sessionId, eventId, at: Date.now() } : null;
   try {
     const raw = localStorage.getItem(PANE_KEY);
     const map = raw ? JSON.parse(raw) as Record<string, unknown> : {};
     localStorage.setItem(PANE_KEY, JSON.stringify({ ...map, [sessionId]: 'timeline' }));
     localStorage.setItem(RAIL_KEY, '1');
   } catch { /* storage can be blocked; the event below still reaches a mounted view */ }
-  window.dispatchEvent(new CustomEvent<{ sessionId: string }>(OPEN_TIMELINE_EVENT, { detail: { sessionId } }));
+  window.dispatchEvent(new CustomEvent<{ sessionId: string; eventId?: number }>(OPEN_TIMELINE_EVENT, { detail: { sessionId, eventId } }));
 }
+
+/* ── helper sweep · P7 depth ── */
+let pendingFocus: { sessionId: string; eventId: number; at: number } | null = null;
+
+/**
+ * The timeline row a just-mounted Sessions view should scroll to, once. A
+ * request older than a minute is dropped: it was for a navigation that has
+ * already happened or been abandoned.
+ */
+export function takePendingTimelineFocus(sessionId: string): number | null {
+  const p = pendingFocus;
+  if (!p || p.sessionId !== sessionId || Date.now() - p.at > 60_000) return null;
+  pendingFocus = null;
+  return p.eventId;
+}
+/* ── end helper sweep · P7 depth ── */
 
 /**
  * Put the retry line in the session's composer, unsent, and record that it

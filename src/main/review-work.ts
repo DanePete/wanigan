@@ -21,6 +21,10 @@ import { addedTextOf, extractClaims, gradeClaims } from '../shared/claims';
 import type {
   ClaimsReview, DependencyReview, ManifestReview, MergeCheck, ReviewImageSide, ReviewSummary, ReviewWork, ReviewWorkFile, TurnStat,
 } from '../shared/review-work';
+/* ── helper sweep · P7 depth ── */
+import { markScratch, promotedPaths } from './scratch';
+import { scratchReason } from '../shared/scratch-files';
+/* ── end helper sweep · P7 depth ── */
 
 /**
  * Reviewing a session's work: the diff against the commit it started from, the
@@ -238,6 +242,8 @@ async function readBranch(t: Target): Promise<BranchRead> {
     if (f.contentHash === '') f.contentHash = hashes.get(f.path) ?? 'unhashable';
     if (t.dirty) f.preexisting = t.dirty.has(t.sub ? `${t.sub}/${f.path}` : f.path) || (!!f.oldPath && t.dirty.has(t.sub ? `${t.sub}/${f.oldPath}` : f.oldPath));
   }
+  /* ── helper sweep · P7 depth ── scratch files leave every count that reads reviewableFiles. */
+  await markScratch(t.root, t.projectId, files);
   return { files, unreadable: null, truncated };
 }
 
@@ -287,6 +293,8 @@ export async function setReviewMark(sessionId: unknown, rawPath: unknown, rawSta
   if (branch.unreadable) throw new Error(`git could not read this session's diff: ${branch.unreadable}`);
   const file = branch.files.find((f) => f.path === rawPath);
   if (!file) throw new Error(`\`${rawPath}\` is not a changed file in this session's diff any more.`);
+  /* ── helper sweep · P7 depth ── */
+  if (file.scratch) throw new Error(`\`${rawPath}\` is a scratch file, so it is not part of the review. Count this file first to mark it.`);
   const now = Date.now();
   const d = db();
   d.transaction(() => {
@@ -505,7 +513,14 @@ export async function reviewImage(sessionId: unknown, file: unknown): Promise<{ 
 
 /* ── per-turn diff stats ─────────────────────────────────────────────── */
 
-const turnStatCache = new Map<string, TurnStat>();
+const turnStatCache = new Map<string, Map<string, { added: number | null; removed: number | null }>>();
+
+/* ── helper sweep · P7 depth ── */
+function projectOf(sessionId: string): string | null {
+  const row = db().prepare('SELECT project_id FROM session_log WHERE id = ?').get(sessionId) as { project_id: string | null } | undefined;
+  return row?.project_id ?? null;
+}
+/* ── end helper sweep · P7 depth ── */
 
 /** +N −M for each turn with both snapshots. Keyed by commit pair, which never changes. */
 export async function turnStats(sessionId: unknown): Promise<Record<number, TurnStat>> {
@@ -519,16 +534,21 @@ export async function turnStats(sessionId: unknown): Promise<Record<number, Turn
     const end = [...inTurn].reverse().find((r) => (r.kind === 'turn-end' || r.kind === 'session-end') && r.commitHash);
     if (!start?.commitHash || !end?.commitHash) continue;
     const key = `${start.commitHash}..${end.commitHash}`;
-    let stat = turnStatCache.get(key);
-    if (!stat) {
+    let counts = turnStatCache.get(key);
+    if (!counts) {
       const root = fs.existsSync(start.repoRoot) ? start.repoRoot : null;
       if (!root) continue;
       const r = await runGit(root, ['diff', '--numstat', '-z', '--no-renames', start.commitHash, end.commitHash], { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 });
       if (!r.ok) continue;
-      const counts = parseNumstat(r.out);
-      stat = { files: counts.size, added: 0, removed: 0 };
-      for (const c of counts.values()) { stat.added += c.added ?? 0; stat.removed += c.removed ?? 0; }
-      turnStatCache.set(key, stat);
+      counts = parseNumstat(r.out);
+      turnStatCache.set(key, counts);
+    }
+    /* ── helper sweep · P7 depth ── scratch paths leave the turn's counts; a checkpoint already leaves out ignored files. */
+    const promoted = promotedPaths(projectOf(id));
+    const stat: TurnStat = { files: 0, added: 0, removed: 0 };
+    for (const [p, c] of counts) {
+      if (!promoted.has(p) && scratchReason(p)) continue;
+      stat.files += 1; stat.added += c.added ?? 0; stat.removed += c.removed ?? 0;
     }
     out[n] = stat;
   }

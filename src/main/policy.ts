@@ -151,7 +151,8 @@ export function ruleEnv(): RuleEnv {
 }
 
 function evaluateCall(ctx: PolicyContext, input: HookInput): Evaluation {
-  return evaluate({ trust: ctx.trust, projectPath: ctx.projectPath }, input, ruleEnv(), {
+  /* ── helper sweep · P7 depth ── read per call, so a change binds running sessions at once. */
+  return evaluate({ trust: ctx.trust, projectPath: ctx.projectPath, alwaysAskHistoryRewrite: historyRewriteAsk(ctx.projectId) }, input, ruleEnv(), {
     halted: halted(),
     /* ── helper sweep · P1 policy ── */
     tripwire: tripwireViewFor(ctx.sessionId),
@@ -569,3 +570,42 @@ export function ledgerSummary(): { denied: number; asked: number; allowed: numbe
   }
   return out;
 }
+
+/* ── helper sweep · P7 depth ── always ask before history-rewriting git, per project ── */
+
+function rewriteAskKey(projectId: string): string {
+  return `history_rewrite_ask:${projectId}`;
+}
+
+/** Off unless the operator turned it on for this project. A settings read that fails reads as off, like a missing row. */
+export function historyRewriteAsk(projectId: string | null): boolean {
+  if (!projectId) return false;
+  try { return getSetting(rewriteAskKey(projectId), '0') === '1'; } catch { return false; }
+}
+
+export function historyRewriteAskSettings(): { projectId: string; enabled: boolean }[] {
+  const rows = db().prepare("SELECT k, v FROM settings WHERE k LIKE 'history_rewrite_ask:%'").all() as { k: string; v: string }[];
+  return rows.map((r) => ({ projectId: r.k.slice('history_rewrite_ask:'.length), enabled: r.v === '1' }));
+}
+
+/**
+ * Turn the setting on or off. The change is itself a ledger row, because it
+ * changes what the gate will ask about and the ledger is where a person looks
+ * to find out why a command was or was not put to them.
+ */
+export function setHistoryRewriteAsk(projectId: unknown, enabled: unknown): boolean {
+  if (typeof projectId !== 'string' || !projectId || projectId.length > 200) throw new Error('That is not a project Wanigan knows.');
+  if (!db().prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) throw new Error('That is not a project Wanigan knows.');
+  const on = enabled === true;
+  if (historyRewriteAsk(projectId) === on) return on;
+  setSetting(rewriteAskKey(projectId), on ? '1' : '0');
+  recordEvidenceRow({
+    sessionId: null, projectId, trust: trustFor(projectId), toolName: 'Wanigan', rule: 'git.history-rewrite-always-ask.setting',
+    summary: on ? 'Always ask before history-rewriting git commands: on' : 'Always ask before history-rewriting git commands: off',
+    reason: on
+      ? 'The operator turned this on: a force push, reset --hard, branch -D, tag or ref delete, filter-branch or filter-repo now asks in this project, even at Trusted.'
+      : 'The operator turned this off: history-rewriting git commands follow the project’s trust level again.',
+  });
+  return on;
+}
+/* ── end helper sweep · P7 depth ── */

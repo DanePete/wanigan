@@ -33,6 +33,9 @@ import SessionCopyActions from '../components/SessionCopyActions';
 import { OPEN_SCRIPTS_EVENT, type OpenScriptsDetail } from '../components/ScriptLauncher';
 import { ResumeChainDialog } from '../components/ResumeChainDialog';
 import { chainWarning, type ChainCheck } from '@shared/transcript-chain';
+/* ── helper sweep · P7 depth ── */
+import { takePendingTimelineFocus } from '../components/attentionActions';
+/* ── end helper sweep · P7 depth ── */
 import '../styles/sessions.css';
 /* helper sweep · P5 runtime */
 import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
@@ -245,6 +248,12 @@ export default function Sessions({
   const [compactDetails, setCompactDetails] = useState(false);
   const detailReader = useRef<HTMLDivElement>(null);
   useEffect(() => { setCompactDetails(false); }, [activeId, compactLayout]);
+  /* ── helper sweep · P7 depth ── a row requested before this view mounted, for the session now in front. */
+  useEffect(() => {
+    if (!activeId) return;
+    const eventId = takePendingTimelineFocus(activeId);
+    if (eventId !== null) setEventFocus({ sessionId: activeId, eventId, nonce: Date.now() });
+  }, [activeId]);
   useEffect(() => {
     if (compactLayout && compactDetails) detailReader.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, [compactLayout, compactDetails]);
@@ -278,6 +287,8 @@ export default function Sessions({
   const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
   /* helper sweep · P6 ux: a file ⌘-clicked in a terminal, for that session's code rail. */
   const [fileFocus, setFileFocus] = useState<(OpenInRail & { nonce: number }) | null>(null);
+  /* ── helper sweep · P7 depth ── a timeline row another view asked to be shown (the Git view's "run by"). */
+  const [eventFocus, setEventFocus] = useState<{ sessionId: string; eventId: number; nonce: number } | null>(null);
   /*
    * Three agents in one repo were three identical rows. The launch title is
    * assigned once and is "<provider> · <project>" for all three of them, so the
@@ -582,7 +593,12 @@ export default function Sessions({
   useEffect(() => {
     const onOpen = (e: Event) => {
       const id = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId;
-      if (id && sessionsRef.current.some((s) => s.id === id)) openTimelineFor(id);
+      if (id && sessionsRef.current.some((s) => s.id === id)) {
+        openTimelineFor(id);
+        /* ── helper sweep · P7 depth ── */
+        const eventId = takePendingTimelineFocus(id);
+        if (eventId !== null) setEventFocus({ sessionId: id, eventId, nonce: Date.now() });
+      }
     };
     window.addEventListener(OPEN_TIMELINE_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_TIMELINE_EVENT, onOpen);
@@ -1361,7 +1377,18 @@ export default function Sessions({
                                 onOpenTurnDiff={(turn) => {
                                   setTurnFocus({ sessionId: active.id, turn, nonce: Date.now() });
                                   setPane(active.id, 'code');
-                                }} />
+                                }}
+                                /* ── helper sweep · P7 depth ── */
+                                onRevealFile={(p) => {
+                                  // The code rail opens files relative to its own root (the
+                                  // worktree when there is one); a path outside it opens in the
+                                  // editor, the same way the timeline's other file links do.
+                                  const root = (active.worktree ?? active.projectPath).replace(/\/+$/, '');
+                                  if (!p.startsWith(`${root}/`)) { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); return; }
+                                  setFileFocus({ sessionId: active.id, rel: p.slice(root.length + 1), line: null, directory: false, nonce: Date.now() });
+                                  setPane(active.id, 'code');
+                                }}
+                                focusEvent={eventFocus?.sessionId === active.id ? { eventId: eventFocus.eventId, nonce: eventFocus.nonce } : null} />
                     ) : (
                       <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)' }}>
                         <SessionLearning key={`sl-${active.id}`} sessionId={active.id}

@@ -12,6 +12,9 @@ import ReviewEvidence from '../components/ReviewEvidence';
 import GoalCompanion from '../components/GoalCompanion';
 import { goalLocation } from '@shared/goal-journey';
 import RegressionProof from '../components/RegressionProof';
+/* ── helper sweep · P7 depth ── */
+import LoopBudgets from '../components/LoopBudgets';
+/* ── end helper sweep · P7 depth ── */
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -533,6 +536,8 @@ export default function Control({ projects, providers, onOpenSession }: {
         onBudgetDraft={(value) => setBudgetDrafts((previous) => ({ ...previous, [detail.id]: value }))}
         onAsk={() => setArmAsk(detail.id)} onCancelAsk={() => setArmAsk(null)}
         onArm={() => void arm(detail)} onDisarm={() => void disarm(detail)} onSetBudget={() => void saveBudget(detail)} />
+      {/* ── helper sweep · P7 depth ── */}
+      <LoopBudgets docket={detail} disabled={busy !== null || !!loadError} onChanged={() => void reloadGoal(detail.id)} />
       </details>
 
         </section>}
@@ -691,10 +696,12 @@ function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite,
     <h3 id="control-task-title" tabIndex={-1}>{node.title}</h3>
     <p className="control-instructions">{node.instructions}</p>
     {node.detail && <Note tone={reopenable ? 'warn' : 'info'} role="none">{node.detail}</Note>}
+    {/* ── helper sweep · P7 depth ── */}
+    {node.hold && <Note tone="warn" role="none"><strong>Held · <span className="mono">{node.hold.reason}</span></strong> — {node.hold.detail} Change the limit under Execution &amp; spending to continue.</Note>}
     {prereqs.length > 0 && <div className="control-prereqs"><SectionHead label="Prerequisites" />{prereqs.map(prereq => <button type="button" key={prereq.id} className="control-dependency" onClick={() => onPrerequisite(prereq.id)}><span>{prereq.title}</span><Mark {...markOf(prereq.status)} /><Icon name="chevron-right" /></button>)}</div>}
     {node.sessionId && <div className="control-review-actions"><button className="btn" onClick={onSession}>Open session<Icon name="external" /></button><button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Save checkpoint</button></div>}
     <div className="control-node-actions">
-      {node.status === 'ready' && node.kind !== 'review' && (node.queued
+      {node.status === 'ready' && node.kind !== 'review' && !node.hold && (node.queued
         ? <Mark glyph="◴" word="queued by autopilot" tone="quiet" title="Autopilot has claimed this task and will launch it on its next sweep." />
         : <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>)}
       {reopenable && <><Hint>{sendsBack

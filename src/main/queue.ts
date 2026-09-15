@@ -3,6 +3,9 @@ import { db } from './db';
 import { halted } from './halt';
 import { pruneEvents } from './hooks';
 import { pruneCheckpoints } from './checkpoints';
+/* ── helper sweep · P7 depth ── */
+import { pruneDepthEvidence } from './depth-retention';
+/* ── end helper sweep · P7 depth ── */
 import { eventRetentionDays, getSetting, setSetting } from './settings';
 import {
   DEFAULT_SLOTS,
@@ -621,6 +624,12 @@ function pruneRetention(): void {
     if (checkpointSessions > 0) {
       console.log(`[wanigan] pruned checkpoints for ${checkpointSessions} session(s) older than ${days} days`);
     }
+    /* ── helper sweep · P7 depth ── */
+    // The operator's recorded asks and the paths a session referenced are read
+    // against these same events, so they go on the same window.
+    const depthRows = pruneDepthEvidence(days * DAY_MS);
+    if (depthRows > 0) console.log(`[wanigan] pruned ${depthRows} recorded ask and file-reference row(s) older than ${days} days`);
+    /* ── end helper sweep · P7 depth ── */
   } catch (error) {
     // Housekeeping. A busy database here must not take the dispatch loop's
     // error path and cost the rest of the tick its emit.

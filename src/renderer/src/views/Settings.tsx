@@ -26,6 +26,10 @@ import ExposureLeads from '../components/ExposureLeads';
 import { CodexDoctorPanel, ConfigFilesSection, DiagnosticsExport, McpEnvironmentNote } from '../components/AccountHealth';
 /* helper sweep · P6 ux */
 import { TranscriptReaderActions, TranscriptTurnText } from '../components/TranscriptExtras';
+/* ── helper sweep · P7 depth ── */
+import CompactionDivider from '../components/CompactionDivider';
+import { HistoryRewriteAskPanel } from '../components/HistoryRewriteAsk';
+/* ── end helper sweep · P7 depth ── */
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -3399,6 +3403,8 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
 
       {/* ── helper sweep · P1 policy ── */}
       <GrantsPanel projects={projects} />
+      {/* ── helper sweep · P7 depth ── */}
+      <HistoryRewriteAskPanel projects={projects} />
       <GateSelfTestPanel />
       <FatiguePanel />
 
@@ -5285,12 +5291,15 @@ function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: 
           return (
             <>
               <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, marginBottom: 8 }}>
-                {plural(d.turns.length, 'turn')} · {bytes(d.bytes)} on this disk. Oldest first, so the
+                {plural(d.turns.filter((t) => !t.compact).length, 'turn')}{d.turns.some((t) => t.compact) ? ` · ${d.turns.filter((t) => t.compact).length} compaction${d.turns.filter((t) => t.compact).length === 1 ? '' : 's'}` : ''} · {bytes(d.bytes)} on this disk. Oldest first, so the
                 end of the conversation is at the bottom.
                 {d.note ? ` ${d.note}` : ''}
               </p>
               <div className="set-turns">
-                {shown.map((t, i) => (
+                {shown.map((t, i) => t.compact ? (
+                  /* ── helper sweep · P7 depth ── */
+                  <CompactionDivider key={`${t.at}-${i}`} mark={t.compact} where="after" />
+                ) : (
                   <article key={`${t.at}-${i}`} className="set-turn" data-role={t.role}>
                     <header>
                       <strong>{TURN_ROLE[t.role]}</strong>

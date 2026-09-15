@@ -283,6 +283,20 @@ export async function runSmoke(): Promise<void> {
     const { runP8Smoke } = await import('./smoke37');
     await runP8Smoke(check, say);
     /* ── end helper sweep · P8 mac ── */
+    /* ── helper sweep · P7 depth ── */
+    const p7 = await import('./smoke36');
+    await p7.runAskItemsSmoke(check, say);
+    await p7.runGoalBudgetSmoke(check, say);
+    await p7.runMaintainabilitySmoke(check, say);
+    await p7.runSessionFilesSmoke(check, say);
+    await p7.runAgentGitSmoke(check, say);
+    await p7.runCompactionSmoke(check, say);
+    await p7.runInstructionPinSmoke(check, say);
+    await p7.runScratchSmoke(check, say);
+    await p7.runHistoryRewriteAskSmoke(check, say);
+    await p7.runRejectedStepSmoke(check, say);
+    await p7.runReviewRulesSmoke(check, say);
+    /* ── end helper sweep · P7 depth ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

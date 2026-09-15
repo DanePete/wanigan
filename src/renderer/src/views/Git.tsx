@@ -10,6 +10,10 @@ import type { ReviewSummary } from '@shared/review-work';
 /* helper sweep · P5 runtime */
 import { ReviewPrAction } from '../components/ReviewOnly';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
+/* ── helper sweep · P7 depth ── */
+import type { AgentGitMarks } from '@shared/agent-git';
+import { RunByInline, RunByList, type AgentGitLink } from '../components/AgentGitMarks';
+/* ── end helper sweep · P7 depth ── */
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
 type Status = {
@@ -274,8 +278,10 @@ function findFile(status: Status, path: string): { file: GFile; staged: boolean 
   return work ? { file: work, staged: false } : null;
 }
 
-export default function Git({ projects, projectsRead, selectedProjectId, onPickProject, onOpenSession }: {
+export default function Git({ projects, projectsRead, selectedProjectId, onPickProject, onOpenSession, onOpenSessionEvent }: {
   projects: Project[];
+  /* ── helper sweep · P7 depth ── open an agent session's timeline at the row that ran a git command. */
+  onOpenSessionEvent?: AgentGitLink;
   selectedProjectId?: string;
   onPickProject: (id: string) => void;
   /** helper sweep · P5 runtime: where a Review PR session opens. */
@@ -336,6 +342,9 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       branch in here is merged through worktrees.merge, which carries the
       guards a bare `git merge` from this pane skipped. */
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  /* ── helper sweep · P7 depth ── */
+  const [agentGit, setAgentGit] = useState<AgentGitMarks | null>(null);
+  const [openSessions, setOpenSessions] = useState<ReadonlySet<string>>(new Set());
   /** The last collision forecast for this repository, its failure, and whether one is running. */
   const [forecast, setForecast] = useState<CollisionForecast | null>(null);
   const [forecastErr, setForecastErr] = useState<string | null>(null);
@@ -441,6 +450,13 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       if (epoch !== requestEpoch.current) return null;
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setWorktrees(wt);
+      /* ── helper sweep · P7 depth ── marks are extra: rows show without them rather than wait. */
+      window.wanigan.depth.agentGit(s.root)
+        .then((m) => { if (epoch === requestEpoch.current) setAgentGit(m); })
+        .catch(() => { if (epoch === requestEpoch.current) setAgentGit(null); });
+      window.wanigan.sessions.list()
+        .then((list) => { if (epoch === requestEpoch.current) setOpenSessions(new Set(list.map((x) => x.id))); })
+        .catch(() => {});
       const sessionIds = wt.map((w) => w.sessionId).filter((id): id is string => !!id);
       if (sessionIds.length) {
         window.wanigan.reviewWork.summaries(sessionIds)
@@ -961,7 +977,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                   ))}
                   {c.subject}
                 </span>
-                <span className="gt-who">{c.author.split(' ')[0]} · {ago(c.at)}</span>
+                <span className="gt-who">{c.author.split(' ')[0]} · {ago(c.at)}<RunByInline marks={agentGit?.commits[c.hash]} /></span>
               </button>
             ))}
             {commitFilter.trim() !== '' && (
@@ -1196,6 +1212,8 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                     <span>{fileList(rowConflict.conflicted)}</span>
                   </p>
                 )}
+                {/* ── helper sweep · P7 depth ── its own line, like the conflict note, so a narrow pane cannot clip it. */}
+                <RunByList marks={agentGit?.branches[b.name]} openSessions={openSessions} onOpen={onOpenSessionEvent} compact />
                 </Fragment>
                 );
               })}
@@ -1258,6 +1276,8 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
           <SectionHead label={detail?.title ?? 'Review changes'} right={sel?.kind === 'file'
             ? <span className="faint">{sel.staged ? 'Staged' : 'Working tree'}</span>
             : sel?.kind === 'commit' ? <span className="faint">Commit</span> : undefined} />
+          {/* ── helper sweep · P7 depth ── */}
+          {sel?.kind === 'commit' && <RunByList marks={agentGit?.commits[sel.hash]} openSessions={openSessions} onOpen={onOpenSessionEvent} />}
           {detail ? <Diff text={detail.patch} cutBytes={detail.cutBytes} /> : st ? (
             <EmptyState posture="nothing-in-scope"
               title={st.clean ? 'A clear working tree.' : 'Choose a file to see what changed.'}

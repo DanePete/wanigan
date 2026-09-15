@@ -135,6 +135,9 @@ import {
 /* ── helper sweep · P8 mac ── */
 import { registerP8Ipc, startP8Services, stopP8Services } from './helper-p8';
 /* ── end helper sweep · P8 mac ── */
+/* ── helper sweep · P7 depth ── */
+import { recordPhoneAsks, registerDepthIpc, startDepthServices } from './depth';
+/* ── end helper sweep · P7 depth ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -969,6 +972,9 @@ async function startServices() {
   checkpoints.initCheckpoints();
   /* ── helper sweep · P1 policy ── */
   policyEvidence.startPolicyEvidence();
+  /* ── helper sweep · P7 depth ── */
+  startDepthServices();
+  /* ── end helper sweep · P7 depth ── */
 
   if (f.hooks) {
     try {
@@ -1299,6 +1305,9 @@ function configureMobileSources(): void {
       const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
       if (!session) throw new Error('That session is no longer running.');
       writeSession(sessionId, `${prompt}\r`);
+      /* ── helper sweep · P7 depth ── */
+      recordPhoneAsks(sessionId, prompt);
+      /* ── end helper sweep · P7 depth ── */
     },
     key: async (sessionId, sequence) => {
       // The sequence came out of mobile/control.ts's closed list, so it is not
@@ -2345,6 +2354,14 @@ function registerIpc() {
     const { id, root } = await configRoot(projectId, worktree);
     return configPins.acceptConfig(id, root, digest);
   });
+  /* ── helper sweep · P7 depth ── instruction files beside the pin, resolved through the same root check. */
+  handle('configPins:acceptInstructions', async (projectId: unknown, digest: unknown, worktree?: unknown) => {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('That is not an instruction digest.');
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.acceptInstructions(id, root, digest);
+  });
+  handle('configPins:setInstructionAsk', (projectId: unknown, on: unknown) => configPins.setInstructionAsk(projectId, on));
+  /* ── end helper sweep · P7 depth ── */
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
@@ -3442,6 +3459,9 @@ function registerIpc() {
   });
   /* ── helper sweep · P8 mac ── */
   registerP8Ipc(handle);
+  /* ── helper sweep · P7 depth ── */
+  registerDepthIpc(handle, { gitRoot });
+  /* ── end helper sweep · P7 depth ── */
 }
 
 /* ── helper sweep · P8 mac ── */

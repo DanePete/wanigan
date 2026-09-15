@@ -10,6 +10,9 @@ import '../styles/launch.css';
 import { DialogProvenance } from './LaunchProvenance';
 import { ReviewOnlyField, type NewSessionPrefill } from './ReviewOnlyField';
 import { useDialog } from './useDialog';
+/* ── helper sweep · P7 depth ── */
+import { LaunchInstructionReview } from './InstructionPins';
+/* ── end helper sweep · P7 depth ── */
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
 
@@ -438,9 +441,11 @@ export default function NewSessionDialog({
   const [configCheck, setConfigCheck] = useState<ConfigPinCheck | null>(null);
   const [configRead, setConfigRead] = useState<'reading' | 'read' | 'failed'>('reading');
   const [configAccepted, setConfigAccepted] = useState(false);
+  /* ── helper sweep · P7 depth ── accepting changed instruction files, where the project asks for it. */
+  const [instructionsAccepted, setInstructionsAccepted] = useState(false);
   useEffect(() => {
     let live = true;
-    setConfigCheck(null); setConfigAccepted(false);
+    setConfigCheck(null); setConfigAccepted(false); setInstructionsAccepted(false);
     if (!projectId) { setConfigRead('read'); return; }
     setConfigRead('reading');
     window.wanigan.configPins.check(projectId)
@@ -449,6 +454,9 @@ export default function NewSessionDialog({
     return () => { live = false; };
   }, [projectId]);
   const configChanged = configCheck?.state === 'changed';
+  /* ── helper sweep · P7 depth ── */
+  const instructions = configCheck?.instructions ?? null;
+  const instructionsAsk = instructions?.state === 'changed' && instructions.askOnChange;
 
   const blocker = list.length === 0
     ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
@@ -463,7 +471,9 @@ export default function NewSessionDialog({
             + 'Without it the session would run on the underlying CLI account instead of this provider.'
           : configChanged && !configAccepted
             ? 'This repository’s configuration changed since it was last accepted. Read the changes above and confirm them to launch.'
-            : null;
+            : instructionsAsk && !instructionsAccepted
+              ? 'This project asks before launching with changed instruction files. Read the changes above and confirm them to launch.'
+              : null;
 
   async function saveCredential() {
     const id = missingCred?.[0];
@@ -496,6 +506,8 @@ export default function NewSessionDialog({
     if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
+      /* ── helper sweep · P7 depth ── recorded as reviewed first, so the launch gate finds it accepted. */
+      if (instructionsAsk && instructionsAccepted && instructions) await window.wanigan.depth.instructions.accept(projectId, instructions.digest);
       await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt,
         isolate: prefill?.worktree ? false : isolate, accountId,
         ...(reviewOnly && provider?.harnessId === 'claude-code' ? { reviewOnly: true } : {}),
@@ -1103,6 +1115,9 @@ export default function NewSessionDialog({
           </section>
         )}
 
+        {/* ── helper sweep · P7 depth ── */}
+        {instructions && <LaunchInstructionReview check={instructions} accepted={instructionsAccepted} onAccepted={setInstructionsAccepted} />}
+
         {err && (
           // role="alert" because this text appears where nothing was, after a
           // button press that a screen reader otherwise reports as silence.
@@ -1133,6 +1148,12 @@ export default function NewSessionDialog({
                     : configCheck.state === 'accepted'
                       ? (configCheck.lastAccepted?.how === 'reviewed' ? 'Matches what you reviewed' : 'Matches the first-launch pin')
                       : configAccepted ? 'Changed, confirmed' : 'Changed since accepted'}</dd></div>
+            {/* ── helper sweep · P7 depth ── */}
+            <div><dt>Instructions</dt><dd>{!instructions ? (configRead === 'reading' ? 'Reading…' : 'Could not read')
+              : instructions.state === 'none' ? 'None in this project'
+                : instructions.state === 'first-use' ? 'Recorded at this launch'
+                  : instructions.state === 'same' ? 'Unchanged'
+                    : instructionsAsk ? (instructionsAccepted ? 'Changed, confirmed' : 'Changed, asks') : 'Changed, shown'}</dd></div>
           </dl>
           {/* helper sweep · P5 runtime: each value's source, names-only environment. */}
           {provider && (
