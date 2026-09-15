@@ -223,6 +223,8 @@ export async function runSmoke(): Promise<void> {
     await runPreflightSmoke(check, say);
     const { runOrbStorySmoke } = await import('./smoke14');
     runOrbStorySmoke(check, say);
+    const { runAccountabilitySmoke } = await import('./smoke17');
+    await runAccountabilitySmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

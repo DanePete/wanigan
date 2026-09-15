@@ -1,8 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types';
 import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide } from '@shared/collisions';
 import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+import { CommitBox, pushConfirmation } from '../components/PublishChecks';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -320,7 +321,9 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   // render a single button reading “Do it”, which is the T2 tier's own failure
   // case (bits.tsx): the second read exists to say what is about to happen, and
   // a generic button is exactly what a habit-clicker skips.
-  const [confirm, setConfirm] = useState<{ what: string; verb: string; run: () => Promise<void> } | null>(null);
+  // Push asks main for a secret scan first, and a finding turns this into the
+  // findings list with "Push anyway" in the error tone (PublishChecks.tsx).
+  const [confirm, setConfirm] = useState<{ what: ReactNode; verb: string; tone?: 'warn' | 'error'; run: () => Promise<void> } | null>(null);
   const [adding, setAdding] = useState(false);
   const [pr, setPr] = useState<GhStatusReport | null>(null);
   const [prBusy, setPrBusy] = useState(false);
@@ -728,15 +731,28 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                     title={st.detached || !st.branch
                       ? 'Detached HEAD — check out a branch before pushing.'
                       : undefined}
-                    onClick={() => setConfirm({
-                      what: st.upstream
-                        ? `Push ${st.ahead} commit${st.ahead > 1 ? 's' : ''} to ${st.upstream}. This leaves your machine.`
-                        : `Push ${st.branch} and set origin as its upstream. This leaves your machine.`,
-                      verb: st.upstream ? `Push to ${st.upstream}` : 'Push and set upstream',
-                      run: () => act('Push', () => window.wanigan.git.push(st.root,
-                        st.upstream ? {} : { setUpstream: true, branch: st.branch ?? undefined })),
-                    })}>
-              Push{st.ahead ? ` ${st.ahead}` : ''}
+                    onClick={() => {
+                      // What would be published is scanned before the sentence
+                      // asking to publish it is drawn, so the confirmation can
+                      // say what the check found. Main scans again on the push.
+                      const request = st.upstream ? {} : { setUpstream: true, branch: st.branch ?? undefined };
+                      const epoch = requestEpoch.current;
+                      setErr(null); setOk(null); setBusy('Checking push');
+                      void window.wanigan.git.scanSecrets(st.root, { action: 'push', ...request })
+                        .then((report) => {
+                          if (epoch !== requestEpoch.current) return;
+                          setConfirm(pushConfirmation(report,
+                            st.upstream
+                              ? `Push ${st.ahead} commit${st.ahead > 1 ? 's' : ''} to ${st.upstream}. This leaves your machine.`
+                              : `Push ${st.branch} and set origin as its upstream. This leaves your machine.`,
+                            st.upstream ? `Push to ${st.upstream}` : 'Push and set upstream',
+                            (acknowledge) => act('Push', () => window.wanigan.git.push(st.root, { ...request, acknowledge }))));
+                        }, (e: unknown) => {
+                          if (epoch === requestEpoch.current) setErr(`The secret check did not run, so nothing was pushed: ${e instanceof Error ? e.message : String(e)}`);
+                        })
+                        .finally(() => setBusy(null));
+                    }}>
+              {busy === 'Checking push' ? 'Checking…' : `Push${st.ahead ? ` ${st.ahead}` : ''}`}
             </button>
           </div>
         </>
@@ -773,7 +789,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       {ok && <div className="gt-notice"><Note tone="ok">{ok}</Note></div>}
       {confirm && (
         <div className="gt-confirm">
-          <ConfirmNote tone="warn" what={confirm.what} verb={confirm.verb} busy={!!busy}
+          <ConfirmNote tone={confirm.tone ?? 'warn'} what={confirm.what} verb={confirm.verb} busy={!!busy}
                        onCancel={() => setConfirm(null)}
                        onRun={() => { const run = confirm.run; setConfirm(null); return run(); }} />
         </div>
@@ -978,29 +994,11 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                 {st.clean && <p className="faint" style={{ padding: '4px 12px', fontSize: 'var(--t-small)' }}>Working tree clean.</p>}
               </div>
 
-              <div className="gt-commit">
-                <textarea value={msg} aria-label="Commit message" placeholder="Commit message" onChange={(e) => setMsg(e.target.value)} />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="btn btn-primary" disabled={!!busy || !msg.trim() || !st.staged.length}
-                          onClick={() => void act('Commit', async () => {
-                            const r = await window.wanigan.git.commit(st.root, msg);
-                            setMsg(''); return r;
-                          })}>
-                    Commit {st.staged.length ? `${st.staged.length} file${st.staged.length > 1 ? 's' : ''}` : ''}
-                  </button>
-                  {/* Same message check as Commit: without it this button is
-                      enabled only to fail in the main process on an empty message. */}
-                  <button className="btn" disabled={!!busy || !msg.trim() || !st.unstaged.length}
-                          title="Stage every tracked change and commit in one step"
-                          onClick={() => void act('Commit', async () => {
-                            const r = await window.wanigan.git.commit(st.root, msg, { all: true });
-                            setMsg(''); return r;
-                          })}>Stage all &amp; commit</button>
-                </div>
-                {!st.staged.length && !st.clean && (
-                  <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>Stage something, or use “Stage all &amp; commit”.</span>
-                )}
-              </div>
+              {/* The secret check, the Assisted-by preview and the commit
+                  itself live in CommitBox; keyed by root so nothing it holds
+                  can outlive the repository it was read from. */}
+              <CommitBox key={st.root} st={st} headHash={commits.find((c) => c.head)?.hash ?? null}
+                         msg={msg} setMsg={setMsg} busy={busy} act={act} />
             </div>
           )}
 

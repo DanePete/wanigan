@@ -63,6 +63,10 @@ import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
+import { commitChecked, pushChecked } from './guarded-git';
+import { scanFor } from './secret-scan';
+import { assistedByPreview } from './assisted-by';
+import { verifyLedger } from './ledger-chain';
 import * as gh from './gh';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
@@ -2574,6 +2578,10 @@ function registerIpc() {
   handle('policy:setDefaultTrust', (level: TrustLevel) => { policy.setDefaultTrust(level); return level; });
   handle('policy:ledger', (limit?: number, deniedOnly?: boolean) => policy.ledger(limit, { deniedOnly }));
   handle('policy:summary', () => policy.ledgerSummary());
+  // The whole chain walked on request, and the head signature judged against
+  // it. A read: it signs nothing. Asking again also retries a signing key that
+  // could not be opened earlier, which is what "Verify now" is for.
+  handle('policy:chain', () => verifyLedger(undefined, { retryKey: true }));
   handle('policy:export', async () => {
     if (!win) return null;
     const res = await dialog.showSaveDialog(win, {
@@ -2619,13 +2627,18 @@ function registerIpc() {
   handle('git:stage', (root: string, files: string[]) => gitOps.stage(gitRoot(root), files));
   handle('git:unstage', (root: string, files: string[]) => gitOps.unstage(gitRoot(root), files));
   handle('git:discard', (root: string, tracked: string[], untracked: string[]) => gitOps.discard(gitRoot(root), tracked, untracked));
-  handle('git:commit', (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => gitOps.commit(gitRoot(root), msg, opts));
+  // Commit and push scan what they would record or publish, here in main, and
+  // go past a finding only with the digest of the findings as they are now;
+  // the commit also re-derives its Assisted-by lines. See guarded-git.ts.
+  handle('git:commit', (root: string, msg: unknown, opts?: unknown) => commitChecked(gitRoot(root), msg, opts));
+  handle('git:scanSecrets', (root: string, request: unknown) => scanFor(gitRoot(root), request));
+  handle('git:assistedBy', (root: string, opts?: { amend?: unknown }) => assistedByPreview(gitRoot(root), { amend: opts?.amend === true }));
   handle('git:checkout', (root: string, ref: string, create?: boolean) => gitOps.checkout(gitRoot(root), ref, create === true));
   handle('git:deleteBranch', (root: string, name: string, force?: boolean) => gitOps.deleteBranch(gitRoot(root), name, force === true));
   handle('git:merge', (root: string, ref: string) => gitOps.merge(gitRoot(root), ref));
   handle('git:fetch', (root: string) => gitOps.fetchAll(gitRoot(root)));
   handle('git:pull', (root: string) => gitOps.pull(gitRoot(root)));
-  handle('git:push', (root: string, opts?: { setUpstream?: boolean; branch?: string }) => gitOps.push(gitRoot(root), opts));
+  handle('git:push', (root: string, opts?: unknown) => pushChecked(gitRoot(root), opts));
   handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(gitRoot(root), msg));
   handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(gitRoot(root), i, drop));
   handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(gitRoot(root), i));

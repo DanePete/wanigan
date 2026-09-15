@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type Database from 'better-sqlite3';
 import { db } from './db';
 import { halted } from './halt';
+import { appendLedgerRow, beginLedgerExport } from './ledger-chain';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
@@ -732,28 +734,27 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
  * record. Nothing in Wanigan updates or deletes a row here, and nothing should
  * be added that does — the value of the table is that its contents cannot be
  * tidied up after the thing you would want to tidy up has happened.
+ *
+ * Convention was the only thing that said so until the rows were chained. Each
+ * one now carries the hash of the one before it, so an edit made straight into
+ * SQLite is found at the row it touched (ledger-chain.ts).
  */
 export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision): void {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return;
   if (decision.decision === 'allow' && !notableAllow(ctx, tool, input)) return;
 
-  db()
-    .prepare(
-      `INSERT INTO policy_ledger (at, session_id, project_id, trust, tool_name, summary, decision, rule, reason)
-       VALUES (?,?,?,?,?,?,?,?,?)`
-    )
-    .run(
-      Date.now(),
-      ctx.sessionId,
-      ctx.projectId,
-      ctx.trust,
-      tool,
-      summarise(tool, input),
-      decision.decision,
-      decision.rule,
-      decision.reason
-    );
+  appendLedgerRow({
+    at: Date.now(),
+    session_id: ctx.sessionId,
+    project_id: ctx.projectId,
+    trust: ctx.trust,
+    tool_name: tool,
+    summary: summarise(tool, input),
+    decision: decision.decision,
+    rule: decision.rule,
+    reason: decision.reason,
+  });
 }
 
 type LedgerRow = {
@@ -768,11 +769,13 @@ type LedgerRow = {
   decision: string;
   rule: string;
   reason: string;
+  prev_hash: string | null;
+  hash: string | null;
 };
 
 const LEDGER_SELECT = `
   SELECT l.id, l.at, l.session_id, l.project_id, p.name AS project_name, l.trust,
-         l.tool_name, l.summary, l.decision, l.rule, l.reason
+         l.tool_name, l.summary, l.decision, l.rule, l.reason, l.prev_hash, l.hash
   FROM policy_ledger l
   LEFT JOIN projects p ON p.id = l.project_id
 `;
@@ -807,8 +810,15 @@ export function ledger(limit = 200, opts?: { deniedOnly?: boolean }): LedgerEntr
  * append-only log should read like the log. Written through one file descriptor
  * in ~256KB chunks so a long ledger is neither a syscall per row nor a single
  * string the size of the table.
+ *
+ * Id order, not time order: the id is the order of writing, and the chain links
+ * rows by it, so a clock that stepped backwards cannot reorder an export into a
+ * chain that no longer verifies. Each row carries its `prev_hash` and `hash`,
+ * and its trust and decision exactly as stored rather than as the list view
+ * normalises them — the hash is over what was recorded. The last line is the
+ * signature record, which scripts/verify-ledger.mjs checks with no Wanigan.
  */
-export function exportLedger(filePath: string): number {
+export function exportLedger(filePath: string, d: Database.Database = db()): number {
   const out = path.resolve(filePath);
   let fd: number;
   try {
@@ -822,17 +832,20 @@ export function exportLedger(filePath: string): number {
 
   let count = 0;
   try {
-    const rows = db().prepare(`${LEDGER_SELECT} ORDER BY l.at ASC, l.id ASC`).iterate() as IterableIterator<LedgerRow>;
+    const chain = beginLedgerExport(d);
+    const rows = d.prepare(`${LEDGER_SELECT} ORDER BY l.id ASC`).iterate() as IterableIterator<LedgerRow>;
     let chunk = '';
     for (const r of rows) {
-      chunk += `${JSON.stringify(toEntry(r))}\n`;
+      chain.push(r);
+      chunk += `${JSON.stringify({ ...toEntry(r), trust: r.trust, decision: r.decision, prev_hash: r.prev_hash, hash: r.hash })}\n`;
       count++;
       if (chunk.length > 256 * 1024) {
         fs.writeSync(fd, chunk);
         chunk = '';
       }
     }
-    if (chunk) fs.writeSync(fd, chunk);
+    chunk += `${chain.finish()}\n`;
+    fs.writeSync(fd, chunk);
   } finally {
     fs.closeSync(fd);
   }

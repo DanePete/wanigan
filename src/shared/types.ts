@@ -2246,6 +2246,8 @@ export type WaniganSettings = {
    * of paths. See settings.ts's mobileRepositoryReview().
    */
   mobileRepositoryReview: boolean;
+  /** Whether the Git view's commits carry Assisted-by trailers drawn from recorded sessions. Off by default. */
+  assistedByTrailers: boolean;
   learning: LearningSettings;
 };
 

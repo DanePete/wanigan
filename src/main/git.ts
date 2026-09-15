@@ -72,6 +72,13 @@ export type GitRun = {
    */
   code: number | null;
   killed: boolean;
+  /**
+   * Set when git printed more than `maxBuffer` and was stopped: `out` then holds
+   * the first part of its answer rather than all of it. A caller that reads the
+   * prefix must say that it did, and one that cannot use a prefix must treat
+   * this as a failure — which is what `ok: false` already makes it.
+   */
+  truncated?: boolean;
 };
 export type GitRunOpts = {
   timeout?: number;
@@ -137,6 +144,7 @@ export async function runGit(cwd: string, args: string[], opts: GitRunOpts = {})
     return {
       ok: false, out: x.stdout ?? '', err: (x.stderr || x.message || 'git failed').trim(),
       code: typeof x.code === 'number' ? x.code : null, killed: x.killed === true,
+      truncated: x.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
     };
   }
 }
@@ -294,8 +302,10 @@ export async function scopeOf(dir: string): Promise<Scope | null> {
 /**
  * The gate in front of everything that writes. Reads degrade to the
  * subdirectory; acts stop, and say which repository they would have reached.
+ * Exported for guarded-git.ts, which must refuse before it spends a scan on a
+ * commit this gate was always going to stop.
  */
-async function acting(dir: string, what: string): Promise<Scope> {
+export async function acting(dir: string, what: string): Promise<Scope> {
   const scope = await scopeOf(dir);
   if (!scope) fail(`${path.resolve(dir)} is not a git repository, so there is nothing to ${what}.`);
   if (scope.sub) {
@@ -626,12 +636,27 @@ export async function discard(dir: string, tracked: string[], untracked: string[
   }
   return true;
 }
-export async function commit(dir: string, message: string, opts: { amend?: boolean; all?: boolean } = {}) {
+/**
+ * One `Token: value` trailer line, checked before it becomes argv. git places
+ * trailers itself — after the body, merged into a trailer block that is already
+ * there — which is why they travel as `--trailer` rather than as text appended
+ * to the message here. A line break in one would start a second trailer nobody
+ * previewed.
+ */
+function trailerArg(line: unknown): string {
+  if (typeof line !== 'string' || !/^[A-Za-z][A-Za-z0-9-]{0,40}: [^\u0000-\u001f\u007f]{1,300}$/.test(line)) {
+    fail('A commit trailer must be one "Token: value" line with no control characters.');
+  }
+  return line;
+}
+
+export async function commit(dir: string, message: string, opts: { amend?: boolean; all?: boolean; trailers?: readonly string[] } = {}) {
   if (!message.trim() && !opts.amend) throw new Error('A commit needs a message.');
   const { repoRoot } = await acting(dir, 'commit');
   const args = ['commit', '-m', message];
   if (opts.amend) args.push('--amend');
   if (opts.all) args.push('-a');
+  for (const line of opts.trailers ?? []) args.push('--trailer', trailerArg(line));
   const r = await git(repoRoot, args);
   if (!r.ok) fail(r.err);
   return r.out.trim();

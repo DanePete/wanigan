@@ -57,6 +57,7 @@ export function flags() {
     // Off by default: the first screenshot anyone takes should be the tool.
     pet: bool('pet', false),
     mobileRepositoryReview: mobileRepositoryReview(),
+    assistedByTrailers: assistedByTrailers(),
   };
 }
 
@@ -80,6 +81,16 @@ export function flags() {
  */
 export function mobileRepositoryReview(): boolean {
   return bool('mobile_repository_review', false);
+}
+
+/**
+ * Whether a commit made from the Git view ends with an Assisted-by line for
+ * each agent and model Wanigan recorded working in that repository since the
+ * last commit (assisted-by.ts). Off by default: a commit message is published
+ * history, and which agents helped is the operator's to publish.
+ */
+export function assistedByTrailers(): boolean {
+  return bool('assisted_by_trailers', false);
 }
 
 export function motion(): MotionSetting {
@@ -148,6 +159,9 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     // is listed apart so nobody adds it to a "turn everything on" sweep by
     // reading the group above as a set of harmless switches.
     case 'mobile_repository_review':
+    // Also widens what leaves the machine, one commit message at a time, and is
+    // listed here for the same reason as the line above.
+    case 'assisted_by_trailers':
       if (preferenceValue !== '0' && preferenceValue !== '1') {
         throw new Error(`${preferenceKey} must be enabled or disabled.`);
       }
@@ -254,6 +268,7 @@ export function allSettings(): WaniganSettings {
     mcpServerEnabled: f.mcpServerEnabled,
     pet: f.pet,
     mobileRepositoryReview: f.mobileRepositoryReview,
+    assistedByTrailers: f.assistedByTrailers,
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),

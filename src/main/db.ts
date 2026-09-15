@@ -574,6 +574,26 @@ function migratePhases(d: Database.Database) {
     'CREATE INDEX IF NOT EXISTS idx_schedule_runs_run ON schedule_runs(run_id) '
     + 'WHERE run_id IS NOT NULL'
   );
+  // The policy ledger's hash chain (ledger-chain.ts). Additive: a row written
+  // before these columns existed keeps NULL in both and is reported as before
+  // the chain began, never as verified, because nothing was ever computed over
+  // it that it could be checked against.
+  addColumn(d, 'policy_ledger', 'prev_hash', 'TEXT');
+  addColumn(d, 'policy_ledger', 'hash', 'TEXT');
+  // One row: the last head signed, what it covered, and the public half of the
+  // key that signed it. The key is kept beside the signature so a head signed on
+  // another Mac is recognised as exactly that, rather than read as a forgery.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS policy_ledger_head (
+      id         INTEGER PRIMARY KEY CHECK (id = 1),
+      last_id    INTEGER NOT NULL,
+      count      INTEGER NOT NULL,
+      hash       TEXT NOT NULL,
+      signed_at  INTEGER NOT NULL,
+      signature  TEXT NOT NULL,
+      public_key TEXT NOT NULL
+    )
+  `);
   migrateLearning(d);
   migrateControl(d);
   migrateAccounts(d);
