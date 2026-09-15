@@ -27,6 +27,8 @@ type Arm = {
   root?: string | null;
   halted?: boolean;
   tripwire?: TripwireView;
+  /* ── helper sweep · P7 depth ── */
+  alwaysAskRewrite?: boolean;
   /** The decision required. For the refusing arm, `ask` or `deny`; for the other, `allow`. */
   expect: PolicyDecision['decision'];
   /** The rule that must decide, when the arm is the rule's own. */
@@ -123,6 +125,10 @@ export const SELFTEST_FIXTURES: readonly SelfTestFixture[] = [
   { rule: 'tripwire.recorded-trusted',
     refuse: { trust: 'trusted', input: bash('ls'), halted: true, tripwire: downloaded, expect: 'deny' },
     allow: { trust: 'trusted', input: bash('bash vendor/tool/install.sh'), tripwire: downloaded, expect: 'allow', rule: 'tripwire.recorded-trusted' } },
+  /* ── helper sweep · P7 depth ── */
+  { rule: 'git.history-rewrite-always-ask',
+    refuse: { trust: 'trusted', input: bash('cd api && git push --force origin feature'), alwaysAskRewrite: true, expect: 'ask', rule: 'git.history-rewrite-always-ask' },
+    allow: { trust: 'trusted', input: bash('git push origin feature && git rebase main'), alwaysAskRewrite: true, expect: 'allow' } },
 ];
 
 export type SelfTestFailure = {
@@ -144,7 +150,7 @@ export type SelfTestResult = {
 
 function runArm(arm: Arm, env: RuleEnv): PolicyDecision {
   const root = arm.root === undefined ? SELFTEST_ROOT : arm.root;
-  return evaluate({ trust: arm.trust, projectPath: root }, arm.input, env, { halted: arm.halted, tripwire: arm.tripwire ?? noTaint }).decision;
+  return evaluate({ trust: arm.trust, projectPath: root, alwaysAskHistoryRewrite: arm.alwaysAskRewrite }, arm.input, env, { halted: arm.halted, tripwire: arm.tripwire ?? noTaint }).decision;
 }
 
 /**

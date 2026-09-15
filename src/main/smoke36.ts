@@ -534,3 +534,59 @@ export async function runScratchSmoke(check: Check, say: Say): Promise<void> {
     try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
   }
 }
+
+/** Item 9: history-rewriting git always asks where a project opted in, through the real gate and ledger. */
+export async function runHistoryRewriteAskSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · destructive git always asks (opt-in per project)');
+  const repo = repoFixture('wanigan-p7-rewriteask-');
+  const { addProject, removeProject } = await import('./store');
+  const hooks = await import('./hooks');
+  const policy = await import('./policy');
+  const { runGateSelfTest } = await import('../shared/policy-selftest');
+  try {
+    repo.write('README.md', '# x\n'); repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+    const project = await addProject(repo.dir);
+    policy.setTrust(project.id, 'trusted');
+    await hooks.startHookServer();
+    const sid = `p7-rewriteask-${Date.now()}`;
+    insertSession(sid, project.id, repo.dir, null);
+    policy.registerPolicyContext({ sessionId: sid, projectId: project.id, projectPath: repo.dir, trust: 'trusted' });
+    const handler = hookHandlerOf(hooks.writeHookSettings(sid, repo.dir));
+    if (!handler) { check(false, 'rewrite ask: no hook capability'); return; }
+    const pre = async (command: string) => {
+      const res = await postHook(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: repo.dir, tool_input: { command } });
+      return (res.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string } | undefined) ?? {};
+    };
+    const ledgerFor = (summary: string) => db().prepare('SELECT decision, rule FROM policy_ledger WHERE session_id = ? AND summary = ? ORDER BY id DESC LIMIT 1').get(sid, summary) as { decision: string; rule: string } | undefined;
+
+    check(policy.historyRewriteAsk(project.id) === false, 'rewrite ask: off by default');
+    const offForce = await pre('git push --force origin feature');
+    check(offForce.permissionDecision === 'allow', 'rewrite ask: with the setting off, a Trusted project’s force push is allowed as before', offForce);
+
+    policy.setHistoryRewriteAsk(project.id, true);
+    const settingRow = db().prepare("SELECT rule, summary FROM policy_ledger WHERE project_id = ? AND rule = 'git.history-rewrite-always-ask.setting' ORDER BY id DESC LIMIT 1").get(project.id) as { rule: string; summary: string } | undefined;
+    check(!!settingRow && /: on$/.test(settingRow.summary), 'rewrite ask: turning it on is itself a ledger row', settingRow);
+    const force = await pre('bash -c "git push --force origin feature"');
+    check(force.permissionDecision === 'ask' && /always asks before a history-rewriting git command, even at Trusted/.test(force.permissionDecisionReason ?? ''),
+      'rewrite ask: at Trusted, a force push wrapped in bash -c is put to the operator', force);
+    check(ledgerFor('bash -c "git push --force origin feature"')?.rule === 'git.history-rewrite-always-ask', 'rewrite ask: the decision is a ledger row naming the rule');
+    for (const cmd of ['git reset --hard HEAD~1', 'git branch -D spike', 'git filter-repo --path secrets --invert-paths']) {
+      const d = await pre(cmd);
+      check(d.permissionDecision === 'ask' && ledgerFor(cmd)?.decision === 'ask', `rewrite ask: \`${cmd}\` asks and is recorded`, d);
+    }
+    const routine = await pre('git rebase main && git push origin feature');
+    check(routine.permissionDecision === 'allow' && ledgerFor('git rebase main && git push origin feature')?.decision === 'allow', 'rewrite ask: routine git is allowed, and still a ledger row', routine);
+
+    // Nobody to ask: the question becomes a denial that says so.
+    policy.registerPolicyContext({ sessionId: sid, projectId: project.id, projectPath: repo.dir, trust: 'trusted', attended: false });
+    const unattended = await pre('git reset --hard');
+    check(unattended.permissionDecision === 'deny' && ledgerFor('git reset --hard')?.rule === 'git.history-rewrite-always-ask.unattended', 'rewrite ask: an unattended run is denied, with the rule named', unattended);
+
+    const selftest = runGateSelfTest();
+    check(selftest.failures.length === 0 && selftest.uncovered.length === 0 && selftest.rules === selftest.passed, 'rewrite ask: the gate self-test covers the new rule with both arms', JSON.stringify(selftest.failures));
+    hooks.cleanupHookSettings(sid);
+    policy.releasePolicyContext(sid);
+  } finally {
+    try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
+  }
+}

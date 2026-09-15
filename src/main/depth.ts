@@ -8,6 +8,7 @@ import { compactionsFor } from './compactions';
 import { promotedPaths, setScratchPromotion } from './scratch';
 import { scratchReason } from '../shared/scratch-files';
 import { db } from './db';
+import { historyRewriteAskSettings, setHistoryRewriteAsk } from './policy';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -40,6 +41,8 @@ export function registerDepthIpc(handle: Handle, options: DepthIpcOptions): void
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
   handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:historyRewriteAsk', () => historyRewriteAskSettings());
+  handle('depth:setHistoryRewriteAsk', (projectId: unknown, on: unknown) => setHistoryRewriteAsk(projectId, on));
   handle('depth:promoteScratch', (sessionId: unknown, rel: unknown, on: unknown) => {
     const id = idArg(sessionId, 'session');
     const row = db().prepare('SELECT project_id FROM session_log WHERE id = ?').get(id) as { project_id: string | null } | undefined;

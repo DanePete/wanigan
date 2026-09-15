@@ -22,6 +22,7 @@ import { FatiguePanel, GateSelfTestPanel, GrantsPanel, LedgerTrace, tracesTool }
 import ExposureLeads from '../components/ExposureLeads';
 /* ── helper sweep · P7 depth ── */
 import CompactionDivider from '../components/CompactionDivider';
+import { HistoryRewriteAskPanel } from '../components/HistoryRewriteAsk';
 /* ── end helper sweep · P7 depth ── */
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
@@ -3377,6 +3378,8 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
 
       {/* ── helper sweep · P1 policy ── */}
       <GrantsPanel projects={projects} />
+      {/* ── helper sweep · P7 depth ── */}
+      <HistoryRewriteAskPanel projects={projects} />
       <GateSelfTestPanel />
       <FatiguePanel />
 
