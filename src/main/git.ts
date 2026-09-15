@@ -477,8 +477,9 @@ export async function log(dir: string, opts: { limit?: number; all?: boolean } =
 
 /** Object names only. `git show` takes diff options, and one of them is
  *  `--output=<file>`: an unvalidated leading dash from the renderer is a
- *  write-anywhere primitive, not a bad lookup. */
-const OBJECT_NAME = /^[0-9a-fA-F]{4,64}$/;
+ *  write-anywhere primitive, not a bad lookup. Exported for the worktree start
+ *  point, which reaches `git worktree add` as an argument for the same reason. */
+export const OBJECT_NAME = /^[0-9a-fA-F]{4,64}$/;
 
 /** A patch this long is not going to be read in a pane; the cut is announced
  *  rather than silently returning a diff that stops mid-hunk. */

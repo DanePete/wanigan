@@ -596,6 +596,7 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateAttempts(d);
 }
 
 /**
@@ -1070,6 +1071,93 @@ function migrateAccounts(d: Database.Database) {
   // bounded and redacted before it is written (headless.ts). Null for every
   // row that never held a call, including all rows from before the column.
   addColumn(d, 'headless_rows', 'held_json', 'TEXT');
+  // The commit the agent started from, read in the directory it ran in after
+  // any worktree was cut. It was computed for the changed-file count and then
+  // thrown away, so a finished row could not say which tree produced it; an
+  // attempt pinned to a commit is refused when this is not that commit. Null
+  // for rows from before the column and rows that never reached a spawn.
+  addColumn(d, 'headless_rows', 'base_head', 'TEXT');
+}
+
+/**
+ * Attempts: one task run several times from one pinned commit, and what each
+ * run left behind. See src/shared/attempts.ts for the two readings.
+ *
+ * An attempt is a pointer to a real single-repository headless run, plus the
+ * facts copied off it once it ends. The copy is deliberate: the run row is the
+ * runner's record and the attempt is the comparison's, and a comparison has to
+ * stay readable after the run list is pruned. Tokens are per attempt because
+ * each attempt is its own run, and a run is where headless tokens are summed.
+ *
+ * No foreign key to projects. Removing a project must not delete the record of
+ * what was spent comparing work in it, which is the same choice headless_rows
+ * makes.
+ */
+function migrateAttempts(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS attempt_sets (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL,
+      kind            TEXT NOT NULL,
+      prompt          TEXT NOT NULL,
+      prompt_sha256   TEXT NOT NULL,
+      base_commit     TEXT NOT NULL,
+      arms_json       TEXT NOT NULL,
+      repeats         INTEGER NOT NULL,
+      budget_usd      REAL NOT NULL,
+      timeout_ms      INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'running',
+      kept_attempt_id TEXT,
+      decided_at      INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempt_sets_created ON attempt_sets(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS attempts (
+      id              TEXT PRIMARY KEY,
+      set_id          TEXT NOT NULL REFERENCES attempt_sets(id) ON DELETE CASCADE,
+      arm_index       INTEGER NOT NULL,
+      repeat_index    INTEGER NOT NULL,
+      headless_run_id TEXT,
+      worktree        TEXT,
+      base_head       TEXT,
+      status          TEXT NOT NULL DEFAULT 'queued',
+      exit_code       INTEGER,
+      duration_ms     INTEGER,
+      cost_usd        REAL,
+      cost_reported   INTEGER,
+      in_tokens       INTEGER,
+      out_tokens      INTEGER,
+      cache_read      INTEGER,
+      cache_write     INTEGER,
+      files_changed   INTEGER,
+      gate_status     TEXT,
+      gate_note       TEXT,
+      review_run_id   TEXT,
+      tree            TEXT,
+      oracle_json     TEXT,
+      started_at      INTEGER,
+      ended_at        INTEGER,
+      UNIQUE (set_id, arm_index, repeat_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempts_set ON attempts(set_id, repeat_index, arm_index);
+    CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(headless_run_id) WHERE headless_run_id IS NOT NULL;
+  `);
+  // Why a run could not start or was refused, copied off its row: the run's
+  // error is the only account of a pinned worktree that came out at the wrong
+  // commit, and it has to outlive the run list.
+  addColumn(d, 'attempts', 'error', 'TEXT');
+  // What the run was actually stored with — provider, profile fingerprint,
+  // model, effort and a hash of the prompt — so the evidence label compares
+  // recorded facts against the arm, rather than restating what was asked for.
+  addColumn(d, 'attempts', 'launch_json', 'TEXT');
+  // When this process began gating the attempt. A gate left 'running' by a
+  // process that died is closed as unavailable on the next start, the same
+  // way an interrupted review run is, rather than read as still in flight.
+  addColumn(d, 'attempts', 'gate_started_at', 'INTEGER');
+  // Whether the set holds calls that need approval for the operator: copied to
+  // every attempt's run, and shown on the set so a paused trial is explained.
+  addColumn(d, 'attempt_sets', 'hold_for_approval', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /**
