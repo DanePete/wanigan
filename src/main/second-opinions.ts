@@ -297,8 +297,8 @@ function statementsFor(built: Built, profile: OpinionProfile, budget: number | n
     ? `Claude Code stops itself at $${(budget ?? profile.cap.defaultUsd).toFixed(2)} (--max-budget-usd), and Wanigan stops it after ${minutes} minutes.`
     : `Codex has no spending cap Wanigan can set. Wanigan stops it after ${minutes} minutes; what it spends before then is not capped.`;
   const nothingElse = profile.harness === 'codex'
-    ? 'Wanigan sends nothing else from this session or repository. Codex runs in its read-only sandbox, which blocks writes but not reads, so its agent can still read files elsewhere on this Mac if it decides to. It loads your ~/.codex configuration, including any MCP servers named there.'
-    : `Nothing else from this session or repository is sent: no other files, no transcript${built.kind === 'decisions' ? ' beyond your messages' : ''}, no MCP servers, and every tool Wanigan can name is denied. Claude Code adds its own system prompt and loads your user-level settings and instructions, as it does anywhere.`;
+    ? 'Wanigan adds nothing from this session or repository. Codex runs in its read-only sandbox, which blocks writes but not reads, so its agent can still read files elsewhere on this Mac if it decides to. It loads your ~/.codex configuration, including any MCP servers named there.'
+    : `No other file from this session or repository, no transcript${built.kind === 'decisions' ? ' beyond your messages' : ''}, no MCP server, and no tool: every tool Wanigan can name is denied. Claude Code adds its own system prompt and loads your user-level settings and instructions, as it does anywhere.`;
   const metering = profile.metering === 'unproven'
     ? ` ${profile.label} has not run a second opinion here before, so whether it reports a price is not yet known.`
     : profile.metering === 'unpriced' ? ` ${profile.label} has reported tokens but no price before, so this run is likely to read "unpriced".` : '';

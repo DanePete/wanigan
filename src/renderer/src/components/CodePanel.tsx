@@ -15,6 +15,10 @@ import {
   ClaimsSection, DependenciesSection, FileRowMarks, FindResults, ImageDiff, ReviewFileBar, ReviewSummaryBar, ReviewToolbar, ReviewViewOptions,
   StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
 } from './ReviewWorkbench';
+/* ── helper sweep · P9 opinions ── */
+import type { OpinionKind } from '@shared/second-opinions';
+import { OpinionConsentDialog, SecondOpinionActions, SecondOpinionsSection, useOpinionRuns } from './SecondOpinions';
+/* ── end helper sweep · P9 opinions ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -161,6 +165,11 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const reviewing = !!sessionId && !!review?.base;
   const scopeNow: ReviewScope = reviewing ? diffScope : 'uncommitted';
   const reviewByPath = useMemo(() => new Map((review?.files ?? []).map((f) => [f.path, f])), [review]);
+  // Second opinions (helper sweep · P9): billed, started only from their
+  // consent dialog, and read back while one is running.
+  const [consent, setConsent] = useState<OpinionKind | null>(null);
+  const [opinionsOpen, setOpinionsOpen] = useState(false);
+  const { runs: opinionRuns, error: opinionErr, reload: reloadOpinions } = useOpinionRuns(sessionId, tab === 'changes' && reviewing);
 
   useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
 
@@ -463,6 +472,20 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     return null;
   }
 
+  /** Several notes on one diff at once — confirmed findings from a second opinion. */
+  function addNotes(list: ReviewNote[], anchor: string): string | null {
+    if (!list.length) return null;
+    if (notes.length + list.length > MAX_REVIEW_NOTES) return `${notes.length} notes are waiting and ${MAX_REVIEW_NOTES} is the most one message holds. Add them to the message first.`;
+    if (notes.length && notesAnchor !== anchor) {
+      return `The ${notes.length} waiting note${notes.length === 1 ? ' is' : 's are'} on ${notesAnchor}. Add or discard ${notes.length === 1 ? 'it' : 'them'} first.`;
+    }
+    const known = new Set(notes.map((n) => n.id));
+    setNotes((current) => [...current, ...list.filter((n) => !known.has(n.id))]);
+    setNotesAnchor(anchor);
+    setNotesAdded(null);
+    return null;
+  }
+
   function addNotesToMessage() {
     if (!sessionId || !notes.length || !notesAnchor) return;
     const count = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
@@ -493,6 +516,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const reviewRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
   const selectedReview: ReviewWorkFile | null = sel ? reviewByPath.get(sel) ?? null : null;
   const reviewKey = review ? `${review.base}:${review.files.map((f) => f.contentHash.slice(0, 7)).join('')}` : '';
+  const showOpinions = tab === 'changes' && reviewing && opinionsOpen;
   const diffAnchor = scopeNow === 'uncommitted' || !review?.anchor ? changesAnchor : review.anchor;
 
   const crumbs = useMemo(() => {
@@ -690,6 +714,13 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         <ReviewSummaryBar work={review} error={reviewErr} onSend={() => void sendReview()} sending={sending}
                           sent={sent} onDismissSent={() => setSent(null)} />
       )}
+      {tab === 'changes' && sessionId && reviewing && review && review.files.length > 0 && (
+        <SecondOpinionActions runs={opinionRuns} onOpen={setConsent} resultsOpen={opinionsOpen} onToggleResults={() => setOpinionsOpen((v) => !v)} />
+      )}
+      {consent && sessionId && (
+        <OpinionConsentDialog sessionId={sessionId} kind={consent} onClose={() => setConsent(null)}
+                              onStarted={() => { setOpinionsOpen(true); void reloadOpinions(); }} />
+      )}
       {tab === 'changes' && reviewing && review && (
         <>
           <ReviewToolbar scope={diffScope} onScope={changeScope} order={order} whitespace={whitespace}
@@ -716,7 +747,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                      onOpen={openHit} onClose={() => setFind(null)} />
       )}
 
-      <div className="code-body">
+      <div className={`code-body${showOpinions ? ' so-open' : ''}`}>
         {tab === 'turns' ? (
           <>
             <div className="code-list">
@@ -829,6 +860,14 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           </>
         ) : tab === 'changes' ? (
           <>
+            {/* The results of a second opinion take the file list's place while
+                they are open, so the diff a finding points at stays in view below. */}
+            {showOpinions && sessionId ? (
+              <SecondOpinionsSection sessionId={sessionId} runs={opinionRuns} error={opinionErr} refreshKey={reviewKey}
+                                     onChanged={() => void reloadOpinions()} onClose={() => setOpinionsOpen(false)}
+                                     onAddNotes={(list) => (review?.anchor ? addNotes(list, review.anchor) : 'This session has no base commit to anchor a note to.')}
+                                     onOpen={(file, line) => openHit({ file, line, side: line === null ? null : 'new', text: '' })} />
+            ) : (
             <div className="code-list">
               {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}
               {scopeNow !== 'uncommitted' && review && (
@@ -884,6 +923,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                 </button>
               ))}
             </div>
+            )}
             <div className="code-view">
               {sel && baseHead && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 9px',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@shared/types';
 import { Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
+import { SecondOpinionsSpend } from '../components/SecondOpinions';
 import '../styles/insights.css';
 import { useViewMemory } from '../components/viewMemory';
 
@@ -823,6 +824,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
 
             <SpendByProject rows={byProject} days={days} />
+            {/* helper sweep · P9 opinions: billed second opinions, observed counts only. */}
+            <SecondOpinionsSpend />
             <details className="ins-comparison">
               <summary>Compare with synchronous pricing</summary>
               <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />

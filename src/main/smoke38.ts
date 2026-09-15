@@ -105,7 +105,7 @@ export async function runSecondOpinionSmoke(check: Check, say: Say): Promise<voi
       && preview.sends.sentBytes > 0 && preview.sends.sentBytes === preview.sends.diffBytes && !preview.sends.truncated,
       'the preview counts the files and bytes sent, leaves out the operator\'s pre-launch edit, and states the cap', preview.sends);
     check(/Anthropic receives it/.test(preview.statements.vendor) && /\$0\.75 \(--max-budget-usd\)/.test(preview.statements.cap)
-      && /Nothing else from this session or repository is sent/.test(preview.statements.nothingElse) && /^This is billed\./.test(preview.statements.billed),
+      && /^No other file from this session or repository, no transcript, no MCP server, and no tool/.test(preview.statements.nothingElse) && /^This is billed\./.test(preview.statements.billed),
       'the preview states the vendor, the dollar cap, that nothing else is sent, and that it is billed', preview.statements);
     check(/1 line holding something shaped like a credential is replaced with \[REDACTED\]/.test(preview.statements.environment),
       'a credential in the diff is counted in the preview and redacted before sending', preview.statements.environment);

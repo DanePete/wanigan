@@ -1,0 +1,65 @@
+/* Second opinions (helper sweep · P9): the billed actions under the review
+   verdict, the consent dialog, the findings and decisions under the diff, and
+   the ledger in the rail and in Insights. Marks carry a glyph and a word. */
+.so-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); padding: var(--s-1) var(--s-3); border-bottom: 1px solid var(--line-soft); background: var(--bg-raised); font-size: var(--t-small); }
+.so-actions-label { font-size: var(--t-micro); margin-right: auto; }
+
+.modal.so-consent { max-width: 40rem; display: grid; gap: var(--s-2); }
+.so-consent h2 { margin: 0; font-size: var(--t-lead); font-weight: 600; }
+.so-h3 { margin: var(--s-2) 0 0; font-size: var(--t-small); font-weight: 600; }
+.so-lead { margin: 0; font-size: var(--t-small); line-height: 1.5; }
+.so-field { display: block; margin-top: var(--s-1); }
+.field.so-select { width: 100%; min-width: 0; font-size: var(--t-small); }
+.so-profile-line { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: 0; font-size: var(--t-micro); }
+.so-sends { margin: 0; padding-left: var(--s-5); display: grid; gap: var(--s-1); font-size: var(--t-small); line-height: 1.45; }
+.so-statement { margin: 0; font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.so-statement.faint { font-size: var(--t-micro); }
+.so-billed { margin: 0; padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--warning-soft); font-size: var(--t-small); line-height: 1.5; }
+.so-cap { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); }
+.field.so-budget { width: 7rem; font-family: var(--mono); font-size: var(--t-small); }
+.so-cap .so-statement { flex: 1 1 16rem; }
+.so-argv { font-size: var(--t-micro); }
+.so-argv > summary { cursor: pointer; color: var(--text-dim); }
+.so-argv pre { margin: var(--s-1) 0 0; padding: var(--s-2); max-height: 10rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-sunk); border-radius: var(--r-sm); font-size: var(--t-micro); }
+.so-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-2); }
+
+/* In the file list's grid row, given more of the rail while it is open. */
+.code-body.so-open { grid-template-rows: minmax(7.5rem, 60%) 1fr; }
+.so-panel { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--line); background: var(--bg-raised); font-size: var(--t-small); }
+.so-panel > .rw-find-head { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.so-panel-body { display: grid; align-content: start; gap: var(--s-2); min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-2) var(--s-3); }
+.so-panel .so-pad { display: grid; gap: var(--s-2); }
+.so-run-pick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-top: var(--s-2); font-size: var(--t-micro); }
+.so-run-pick .so-select { flex: 1 1 14rem; width: auto; }
+.so-findings { display: grid; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.so-finding { display: grid; gap: var(--s-1); padding: var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-soft); }
+.so-finding[data-adjudication='refuted'] .so-finding-title { text-decoration: line-through; color: var(--text-dim); }
+.so-finding-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); }
+.so-finding-title { font-weight: 600; overflow-wrap: anywhere; }
+.so-confidence { margin-left: auto; font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.so-where { justify-self: start; padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--t-micro); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.so-where:hover, .so-where:focus-visible { text-decoration: underline; }
+.so-touches { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); font-size: var(--t-micro); }
+.so-body { margin: 0; font-size: var(--t-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.so-verdict { margin-top: var(--s-1); }
+.so-add { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.so-raw { margin: 0; padding: var(--s-2); max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-sunk); border-radius: var(--r-sm); font-size: var(--t-micro); }
+.so-ledger { display: grid; gap: var(--s-1); margin-top: var(--s-3); }
+
+.so-ledger-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; font-size: var(--t-micro); }
+.so-ledger-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s-2); padding: var(--s-1) 0; border-bottom: 1px solid var(--line-soft); }
+.so-ledger-what { font-weight: 600; overflow-wrap: anywhere; }
+.so-ledger-cost { margin-left: auto; }
+.so-ledger-list .so-counts { flex-basis: 100%; }
+
+.so-table-wrap { overflow-x: auto; }
+.so-table { width: 100%; border-collapse: collapse; font-size: var(--t-micro); }
+.so-table th { text-align: left; font-weight: 600; color: var(--text-dim); padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+.so-table td { padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line-soft); vertical-align: baseline; white-space: nowrap; }
+.so-table td.so-cell-wrap { white-space: normal; overflow-wrap: anywhere; min-width: 8rem; }
+.so-counts { font-variant-numeric: tabular-nums; }
+
+.card.so-spend { display: grid; gap: var(--s-2); padding: var(--s-4); }
+.so-spend-head { display: grid; gap: var(--s-1); }
+.so-spend-head h3 { margin: 0; font-size: var(--t-body); font-weight: 600; }
+.so-spend-head .faint { font-size: var(--t-small); }
