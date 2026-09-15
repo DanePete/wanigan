@@ -379,6 +379,12 @@ export const STUB = `
           staged:[],unstaged:[],untracked:[],conflicted:[],clean:true,operation:null});
         if (['git.log','git.branches','git.stashes'].includes(key)) return Promise.resolve([]);
         if (pathParts[0] === 'on') return () => {};
+        // Every preload method named onX is a subscription that returns its
+        // unsubscribe function; none is a request (grep the preload). Answering
+        // one with a Promise let the shell crash in an effect's cleanup calling
+        // it, which blanked the whole window for any probe that did not
+        // override it: automation.onDraft and opterm.onData arrived that way.
+        if (/^on[A-Z]/.test(pathParts[pathParts.length - 1])) return () => {};
         if (key === 'prefs.all' || key === 'settings.all') return Promise.resolve(settings);
         if (key in FIXED) return Promise.resolve(FIXED[key]);
         const leaf = pathParts[pathParts.length - 1];
