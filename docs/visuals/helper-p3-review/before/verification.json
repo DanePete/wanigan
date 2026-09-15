@@ -1,0 +1,78 @@
+{
+  "at": "2026-09-15T04:02:30.716Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, git and review services; no real agent calls",
+  "mode": "before",
+  "commit": "36c2daf05580f46343b44fafa16858496bf89250",
+  "uncommittedChanges": 0,
+  "checks": [
+    "before: the code rail lists changed files and a diff, with no verdict, no marks, no scopes and no evidence under the diff",
+    "before: each turn row says how many files it changed and nothing about lines",
+    "before: a Fleet row says what state a session is in and nothing about whether its diff was reviewed",
+    "before: the branches pane lists agent worktree branches with no review state or diff size",
+    "before: the create-PR dialog opens with an empty body",
+    "before: a verify task offers the review gate and nothing that runs a test before and after the change"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/code-rail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/code-rail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/turns-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/turns-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/fleet-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/fleet-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/git-branches-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/git-branches-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/pr-dialog-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/pr-dialog-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/goal-verify-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../../Users/dane/Projects/drupal/wanigan-p3-review/docs/visuals/helper-p3-review/before/goal-verify-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

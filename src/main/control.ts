@@ -754,6 +754,12 @@ type VerificationTree =
   | { kind: 'gone'; path: string; from: NodeRow }
   | { kind: 'none' };
 
+/* ── helper sweep · P3 review ── the regression proof asks the same question of a verify task. */
+export function verificationTreeFor(nodeId: string): { kind: 'found'; path: string; fromTitle: string } | { kind: 'gone'; path: string; fromTitle: string } | { kind: 'none' } {
+  const tree = verificationTree(nodeRow(nodeId));
+  return tree.kind === 'none' ? tree : { kind: tree.kind, path: tree.path, fromTitle: tree.from.title };
+}
+
 function verificationTree(node: NodeRow): VerificationTree {
   // A node that ran in its own worktree and is not a verification of something
   // else is its own subject: an implement node re-running its gate is fine.

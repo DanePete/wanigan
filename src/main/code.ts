@@ -297,15 +297,18 @@ export async function gitChanges(root: string, baseline?: ChangeBaseline): Promi
   return { isRepo: true, branch, files, headMoved, commits, attributed: dirty !== null, unreadable: null };
 }
 
-export async function gitDiff(root: string, file: string): Promise<string> {
+export async function gitDiff(root: string, file: string, options?: { whitespace?: unknown }): Promise<string> {
   confine(root, file);
   const opts = { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 };
+  // `-w` hides changes that are whitespace only (helper sweep · P3 review). A
+  // boolean from the renderer, never a flag it spells.
+  const ws = options?.whitespace === true ? ['-w'] : [];
   // Staged and unstaged together, so the pane shows the whole change.
-  const tracked = await runGit(root, ['diff', 'HEAD', '--', file], opts);
+  const tracked = await runGit(root, ['diff', ...ws, 'HEAD', '--', file], opts);
   if (tracked.out.trim()) return tracked.out;
   // `--no-index` exits non-zero precisely when it found a difference, which is
   // the case this call exists for: the whole of a file git is not tracking yet.
-  const untracked = await runGit(root, ['diff', '--no-index', '/dev/null', file], opts);
+  const untracked = await runGit(root, ['diff', ...ws, '--no-index', '/dev/null', file], opts);
   return untracked.out || '';
 }
 

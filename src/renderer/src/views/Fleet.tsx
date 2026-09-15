@@ -4,7 +4,9 @@ import type {
 } from '@shared/types';
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
-import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { Chip, EmptyState, Mark, Note, PageHead, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { diffStatLabel } from '@shared/review-marks';
+import type { ReviewSummary } from '@shared/review-work';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
@@ -147,6 +149,9 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   const [attention, setAttention] = useState<Record<string, Attention>>({});
   const [usage, setUsage] = useState<Record<string, SessionUsage>>({});
   const [spark, setSpark] = useState<Record<string, number[]>>({});
+  // Needs review and the diff stat, per session (helper sweep · P3). Read on the
+  // sparkline beat rather than every poll: each one is a git diff in main.
+  const [reviews, setReviews] = useState<Record<string, ReviewSummary>>({});
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel>('project');
   // Sort and filter are view memory rather than component state, because this
   // view's whole purpose is to send the operator somewhere else. Narrow to
@@ -236,7 +241,12 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
       // A session that appeared since the last tick gets its sparkline now
       // rather than on the next slow beat — an empty cell reads as broken.
       const fresh = ids.filter((id) => !sparkIds.current.has(id));
-      if (withSparks || fresh.length) await loadSparks(withSparks ? ids : fresh);
+      if (withSparks || fresh.length) {
+        window.wanigan.reviewWork.summaries(ids)
+          .then((next) => { if (alive.current) setReviews(next); })
+          .catch(() => { /* the chip is absent rather than invented */ });
+        await loadSparks(withSparks ? ids : fresh);
+      }
     } catch (e) {
       if (alive.current) { setErr(msg(e)); setReady(true); }
     } finally {
@@ -621,6 +631,14 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
                     <span>{mark.glyph} {att?.label || mark.word}</span>
                     <span>{dur(Date.now() - (att?.since ?? s.createdAt))}</span>
                   </span>
+                  {(reviews[s.id]?.needsReview || (reviews[s.id]?.counts.files ?? 0) > 0) && (
+                    <span className="fleet-entry-review">
+                      {reviews[s.id].needsReview && <Mark glyph="◐" word={reviews[s.id].label} tone="warn" />}
+                      {reviews[s.id].counts.files > 0 && (
+                        <span className="fleet-diffstat">{diffStatLabel(reviews[s.id].counts.added, reviews[s.id].counts.removed)}</span>
+                      )}
+                    </span>
+                  )}
                 </button>
               );
             })}

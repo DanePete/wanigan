@@ -1,0 +1,139 @@
+{
+  "at": "2026-09-15T04:03:33.176Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, git and review services; no real agent calls",
+  "mode": "after",
+  "commit": "8de4f317309fd94be860b01c1b1fc71689c98350",
+  "uncommittedChanges": 0,
+  "checks": [
+    "the rail states the verdict as \"Needs review · 1 of 5 files\" with its diff stat, its counts and the rule in words",
+    "three scopes are counted, and the branch scope lists the test file first in review order",
+    "a test file's header carries its alarms with their lines and says \"changed outside edit tools\", never \"not the agent\"",
+    "Approve sends the session id, the path and the state; main computes the hash",
+    "an approval made on an older version of a file shows \"changed since you marked it\", beside its high tier",
+    "a changed PNG shows before and after side by side, both decoded from data URLs",
+    "under the diff, Dependencies lists the added and upgraded packages with the install command, and Claims grades each claim with its reason",
+    "a note left unsent survives a move to another file and comes back with its text when the operator returns",
+    "cancelling a written note asks before discarding it",
+    "Send review puts one message with the comment and the new dependency into the message box, and sends nothing",
+    "the agent-edits scope previews the session's hunks with the refused file and its reason, and stages with the previewed digest",
+    "each turn row carries its +N −M badge from the checkpoints",
+    "a Fleet row carries \"Needs review · 1 of 5 files\" and its diff stat; a fully approved session shows only its stat",
+    "the Git view lists agent worktrees with their review state and diff size, sorted by size, with merge disabled while a high-tier file is unapproved",
+    "the risk tier editor shows the project's rules and offers the defaults as unsaved rows, never applying them",
+    "create PR on a worktree opens the dialog for that branch with a body written from recorded evidence, and says so",
+    "a verify task shows its saved test command and the last regression proof: proved, with both exit codes and durations"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p3-review/after/code-rail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/code-rail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/image-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/image-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/evidence-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/evidence-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/unsent-note-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/unsent-note-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/stage-hunks-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/stage-hunks-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/turns-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/turns-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/fleet-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/fleet-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/git-worktrees-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/git-worktrees-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/git-risk-tiers-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/git-risk-tiers-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/pr-dialog-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/pr-dialog-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/goal-verify-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p3-review/after/goal-verify-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

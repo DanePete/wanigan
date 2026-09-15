@@ -189,12 +189,21 @@ export function formatReviewNotes(notes: readonly ReviewNote[], anchor: string):
     'Address each one, or reply saying why you are leaving it as it is.',
   ];
   notes.forEach((note, i) => {
-    lines.push('', `${i + 1}. \`${note.file}\`, ${noteLocation(note)}:`);
-    lines.push('   ```diff');
-    for (const q of note.quote) lines.push(`   ${q}`);
-    if (note.quoteOmitted > 0) lines.push(`   … ${note.quoteOmitted} more selected line${note.quoteOmitted === 1 ? '' : 's'}`);
-    lines.push('   ```');
-    for (const para of note.body.split('\n')) lines.push(`   ${para}`);
+    lines.push('', ...formatNoteEntry(note, i + 1));
   });
   return lines.join('\n');
+}
+
+/**
+ * One numbered note, as lines: the file and range, the quoted diff, the comment.
+ * Shared with the whole-diff review message, so a line note reads the same
+ * whichever button put it into the message box.
+ */
+export function formatNoteEntry(note: ReviewNote, n: number): string[] {
+  const lines = [`${n}. \`${note.file}\`, ${noteLocation(note)}:`, '   ```diff'];
+  for (const q of note.quote) lines.push(`   ${q}`);
+  if (note.quoteOmitted > 0) lines.push(`   … ${note.quoteOmitted} more selected line${note.quoteOmitted === 1 ? '' : 's'}`);
+  lines.push('   ```');
+  for (const para of note.body.split('\n')) lines.push(`   ${para}`);
+  return lines;
 }

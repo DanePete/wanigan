@@ -9,6 +9,7 @@ import { useViewMemory } from '../components/viewMemory';
 import ReviewEvidence from '../components/ReviewEvidence';
 import GoalCompanion from '../components/GoalCompanion';
 import { goalLocation } from '@shared/goal-journey';
+import RegressionProof from '../components/RegressionProof';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -698,6 +699,8 @@ function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite,
         ? 'Reopening sends the implementation and verification back. Your note goes to the next implementation session, and verification needs a new gate run.'
         : 'Reopen this task for another pass. Its dependents stay blocked until it completes.'}</Hint><button className="btn" onClick={onRetry} disabled={busy !== null} title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button></>}
       {node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}
+      {/* helper sweep · P3 review: fails before, passes after. */}
+      {node.kind === 'verify' && <RegressionProof nodeId={node.id} disabled={busy !== null} />}
       {(actionable || node.sessionId) && (node.kind === 'review' ? <details className="control-note" open={noteOpen} onToggle={event => setNoteOpen(event.currentTarget.open)}><summary>{note.trim() ? 'Decision note added' : 'Add a decision note'}</summary><label><span className="label">Decision note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What supports your decision?" disabled={busy !== null} /></label></details> : <label><span className="label">Evidence or handoff note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What should the next person know?" disabled={busy !== null} /></label>)}
       {node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={event => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}
       {node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}

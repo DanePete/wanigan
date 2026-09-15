@@ -40,6 +40,14 @@ import type {
   AwaySummary, LimitResumeOffer, ProviderStatusReport, ResumeAtReset, ResumeCheck, SnoozePreset,
 } from '../shared/types';
 
+/* ── helper sweep · P3 review ── */
+import type { FileReview, ReviewMarkState } from '../shared/review-marks';
+import type { RiskRule } from '../shared/risk-tiers';
+import type {
+  ClaimsReview, DependencyReview, MergeCheck, PrDraft, RegressionProofRecord, ReviewImageSide, ReviewSummary, ReviewWork, StagePlan, TurnStat,
+} from '../shared/review-work';
+/* ── end helper sweep · P3 review ── */
+
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** Unwraps the main process envelope so callers see values or thrown errors. */
@@ -186,7 +194,7 @@ const api = {
       files: { path: string; index: string; work: string; staged: boolean; untracked: boolean;
                preexisting?: boolean; committed?: boolean }[];
     }>('code:changes', root, sessionId),
-    diff: (root: string, file: string) => call<string>('code:diff', root, file),
+    diff: (root: string, file: string, opts?: { whitespace?: boolean }) => call<string>('code:diff', root, file, opts),
     list: (root: string, rel: string) =>
       call<{ name: string; rel: string; dir: boolean; size: number }[]>('code:list', root, rel),
     read: (root: string, rel: string) =>
@@ -939,6 +947,37 @@ const api = {
     denialRetryDrafted: (sessionId: string) => call<boolean>('helper:denialRetryDrafted', sessionId),
     takeReplies: () => call<{ sessionId: string; text: string; at: number }[]>('helper:takeReplies'),
   },
+  /* ── helper sweep · P3 review ── */
+  // Reviewing the work. Main resolves every checkout from the id it is given.
+  reviewWork: {
+    work: (sessionId: string, opts?: { whitespace?: boolean }) => call<ReviewWork>('review:work', sessionId, opts),
+    summaries: (ids: string[]) => call<Record<string, ReviewSummary>>('review:summaries', ids),
+    setMark: (sessionId: string, file: string, state: ReviewMarkState, note?: string | null) =>
+      call<FileReview>('review:setMark', sessionId, file, state, note),
+    fileDiff: (sessionId: string, file: string, opts?: { whitespace?: boolean }) => call<string>('review:fileDiff', sessionId, file, opts),
+    patch: (sessionId: string, opts?: { whitespace?: boolean }) => call<{ patch: string; truncated: boolean }>('review:patch', sessionId, opts),
+    image: (sessionId: string, file: string) => call<{ before: ReviewImageSide; after: ReviewImageSide }>('review:image', sessionId, file),
+    turnStats: (sessionId: string) => call<Record<number, TurnStat>>('review:turnStats', sessionId),
+    dependencies: (sessionId: string) => call<DependencyReview>('review:dependencies', sessionId),
+    claims: (sessionId: string) => call<ClaimsReview>('review:claims', sessionId),
+    stagePlan: (sessionId: string) => call<StagePlan>('review:stagePlan', sessionId),
+    stageApply: (sessionId: string, digest: string) => call<{ staged: string[]; detail: string }>('review:stageApply', sessionId, digest),
+    mergeCheck: (worktreePath: string) => call<MergeCheck>('review:mergeCheck', worktreePath),
+    prDraft: (root: string) => call<PrDraft>('review:prDraft', root),
+  },
+  riskTiers: {
+    list: (projectId: string) => call<RiskRule[]>('riskTiers:list', projectId),
+    save: (projectId: string, rules: RiskRule[]) => call<RiskRule[]>('riskTiers:save', projectId, rules),
+    defaults: () => call<RiskRule[]>('riskTiers:defaults'),
+  },
+  proof: {
+    regressionCommand: (nodeId: string) => call<{ command: string | null; approvedAt: number | null }>('proof:regressionCommand', nodeId),
+    saveRegressionCommand: (nodeId: string, command: string) =>
+      call<{ command: string; approvedAt: number }>('proof:saveRegressionCommand', nodeId, command),
+    runRegression: (nodeId: string) => call<RegressionProofRecord>('proof:runRegression', nodeId),
+    latestRegression: (nodeId: string) => call<RegressionProofRecord | null>('proof:latestRegression', nodeId),
+  },
+  /* ── end helper sweep · P3 review ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

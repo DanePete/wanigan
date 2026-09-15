@@ -156,7 +156,8 @@ export function history(projectId: string, limit = 12): ReviewRun[] {
   return (db().prepare('SELECT * FROM review_runs WHERE project_id=? ORDER BY started_at DESC LIMIT ?').all(projectId, Math.max(1, Math.min(50, limit))) as Parameters<typeof map>[0][]).map(map);
 }
 
-async function runCommand(command: string, cwd: string): Promise<ReviewRun['results'][number]> {
+/* ── helper sweep · P3 review ── exported for the regression proof, which runs one command the same way. */
+export async function runCommand(command: string, cwd: string): Promise<ReviewRun['results'][number]> {
   const started = Date.now();
   return new Promise((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
