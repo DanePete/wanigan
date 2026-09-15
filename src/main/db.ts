@@ -596,6 +596,9 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  /* ── helper sweep · P5 runtime ── */
+  migrateHelperSweepP5(d);
+  /* ── end helper sweep · P5 runtime ── */
 }
 
 /**
@@ -1485,3 +1488,31 @@ export function newRunId(): string {
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
 }
+
+/* ── helper sweep · P5 runtime ──────────────────────────────────────────
+   Additive only. Every table is new and every column is nullable, so a
+   database written by an older build reads back unchanged and one written
+   by this build still opens in an older one. */
+function migrateHelperSweepP5(d: Database.Database) {
+  d.exec(`
+    -- A headless run, queue item or schedule refused before any agent started,
+    -- because its prompt was an interactive-only slash command. No spend.
+    CREATE TABLE IF NOT EXISTS headless_refusals (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      source      TEXT NOT NULL,
+      label       TEXT,
+      provider_id TEXT,
+      harness     TEXT,
+      command     TEXT NOT NULL,
+      reason      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_headless_refusals_at ON headless_refusals(at DESC);
+  `);
+  // The finer outcome of a finished headless row, derived from its recorded
+  // output by shared/headless-outcome.ts. The status column keeps its meaning.
+  addColumn(d, 'headless_rows', 'outcome', 'TEXT');
+  addColumn(d, 'headless_rows', 'outcome_reason', 'TEXT');
+  addColumn(d, 'headless_rows', 'outcome_detail', 'TEXT');
+}
+/* ── end helper sweep · P5 runtime ── */

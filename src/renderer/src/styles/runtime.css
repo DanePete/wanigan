@@ -30,3 +30,11 @@
 .codex-reader-note { display: grid; }
 .codex-reader-line { display: block; line-height: 1.5; }
 .codex-reader-why { color: var(--text-dim); margin-top: var(--s-1); }
+.hr-outcome { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: baseline; font-size: var(--t-small); }
+.hr-outcome-detail { color: var(--text-dim); min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.hr-refusals { display: grid; gap: var(--s-2); border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.hr-refusals .sec-head { margin: 0; }
+.hr-refusals ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.hr-refusals li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
+.hr-refusal-head code { font-family: var(--mono); }
+.hr-refusal-reason { color: var(--text-faint); line-height: 1.45; }

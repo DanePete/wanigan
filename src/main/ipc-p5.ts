@@ -9,6 +9,8 @@
 import * as processWatch from './process-watch';
 import { codexReaderHealth } from './codex-rollout-health';
 import { detectProviders } from './providers';
+import { recentRefusals } from './headless-guard';
+import { headlessOutcomes } from './headless';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -37,4 +39,11 @@ export function registerP5Ipc(handle: Handle): void {
     } catch { /* detection failed: the stored version stands */ }
     return codexReaderHealth(version, force === true);
   });
+
+  // ── headless runs that tell the truth ───────────────────────────────
+  handle('headless:outcomes', (runId: unknown) => {
+    if (typeof runId !== 'string' || !runId || runId.length > 200) throw new Error('A run id is required.');
+    return headlessOutcomes(runId);
+  });
+  handle('headless:refusals', (limit: unknown) => recentRefusals(typeof limit === 'number' ? limit : 20));
 }

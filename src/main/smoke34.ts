@@ -187,3 +187,81 @@ export async function runCodexReaderSmoke(check: Check, say: Say): Promise<void>
     health.resetCodexReaderHealth();
   }
 }
+
+/**
+ * helper sweep · P5 runtime — headless runs that tell the truth.
+ *
+ * The refusal is walked through the two real entry points a prompt reaches:
+ * startHeadlessRun, which the Runs view, the queue and a firing schedule all
+ * call, and createSchedule. Neither may leave a run, a queue item or a schedule
+ * behind, and both must leave a refusal row.
+ */
+export async function runHeadlessTruthSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · headless runs that tell the truth');
+  const os = await import('node:os');
+  const { db } = await import('./db');
+  const headless = await import('./headless');
+  const schedule = await import('./schedule');
+  const guard = await import('./headless-guard');
+  const { addProject, removeProject } = await import('./store');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-refuse-'));
+  const project = await addProject(root);
+  try {
+    const runsBefore = (db().prepare('SELECT COUNT(*) n FROM runs').get() as { n: number }).n;
+    const queueBefore = (db().prepare('SELECT COUNT(*) n FROM queue').get() as { n: number }).n;
+    let message = '';
+    try {
+      await headless.startHeadlessRun({
+        name: 'refuse login', providerId: 'claude', projectIds: [project.id], prompt: '/login',
+        maxBudgetUsd: 1, timeoutMs: 60_000, isolate: false,
+      } as Parameters<typeof headless.startHeadlessRun>[0]);
+    } catch (error) { message = error instanceof Error ? error.message : String(error); }
+    check(/only works in an interactive Claude Code terminal/.test(message) && /nothing was spent/.test(message),
+      'a headless run whose prompt is /login is refused with the reason, before anything starts', message);
+    const runsAfter = (db().prepare('SELECT COUNT(*) n FROM runs').get() as { n: number }).n;
+    const queueAfter = (db().prepare('SELECT COUNT(*) n FROM queue').get() as { n: number }).n;
+    check(runsAfter === runsBefore && queueAfter === queueBefore,
+      'and it leaves no run row and no queue item behind', { runsBefore, runsAfter, queueBefore, queueAfter });
+    const refusals = guard.recentRefusals(5);
+    check(refusals[0]?.command === '/login' && refusals[0]?.harness === 'claude-code' && refusals[0]?.source === 'headless run',
+      'the refusal is recorded with the command, the harness and where it came from', refusals[0]);
+
+    // The allowed direction is asserted without calling startHeadlessRun: a
+    // prompt the guard lets through would go on to launch a real agent, and
+    // this suite never spends. The same classifier is what the entry point runs.
+    const { classifyHeadlessPrompt } = await import('../shared/slash-commands');
+    check(classifyHeadlessPrompt('claude-code', '/my-team-skill tidy the README').kind === 'allowed',
+      'a skill or custom command is not refused by the slash-command guard');
+
+    const schedulesBefore = schedule.listSchedules().length;
+    let scheduleMessage = '';
+    try {
+      schedule.createSchedule({ name: 'nightly resume', cron: '0 3 * * *', kind: 'headless',
+        payload: { prompt: '/resume', providerId: 'claude' }, projectId: project.id });
+    } catch (error) { scheduleMessage = error instanceof Error ? error.message : String(error); }
+    check(/\/resume/.test(scheduleMessage) && schedule.listSchedules().length === schedulesBefore,
+      'a schedule whose prompt is /resume is refused at creation and never stored', scheduleMessage);
+    check(guard.recentRefusals(1)[0]?.source === 'schedule', 'and the schedule refusal is recorded as a schedule');
+
+    // Finer outcomes are written by runRow from the output it just stored; a
+    // real agent cannot run offline, so the read side is exercised on a row and
+    // the write side is asserted at its call site.
+    const runId = `p5-outcome-${Date.now()}`;
+    db().prepare(`INSERT INTO runs (id, name, model, status, config_json, kind, total_requests, created_at)
+                  VALUES (?, 'outcomes', 'claude', 'ended', '{}', 'headless', 1, ?)`).run(runId, Date.now());
+    db().prepare(`INSERT INTO headless_rows (run_id, project_id, project_name, project_path, status, outcome, outcome_reason, outcome_detail)
+                  VALUES (?, ?, ?, ?, 'succeeded', 'waiting_on_input', 'permission-denials', 'denied twice')`)
+      .run(runId, project.id, project.name, project.path);
+    const read = headless.headlessOutcomes(runId);
+    check(read[project.id]?.kind === 'waiting_on_input' && read[project.id]?.reason === 'permission-denials',
+      'a row’s finer outcome reads back beside its unchanged status', read);
+    db().prepare('DELETE FROM runs WHERE id=?').run(runId);
+    const src = sourceOf('src/main/headless.ts');
+    check(/classifyHeadlessOutcome\(\{\s*harness: def\.harness, status, stdout, stderr, spawnFailed: outcome\.spawnError !== null,?\s*\}\)/.test(src)
+      && /UPDATE headless_rows SET outcome=\?, outcome_reason=\?, outcome_detail=\?/.test(src),
+    'runRow classifies every finished row from its own recorded output and stores the outcome');
+  } finally {
+    try { removeProject(project.id); } catch { /* already gone */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}

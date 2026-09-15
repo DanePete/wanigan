@@ -8,6 +8,8 @@ import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/c
 /* ── helper sweep · P5 runtime ── */
 import type { SessionProcesses, StopSurvivorResult } from '../shared/process-tree';
 import type { CodexReaderHealth } from '../shared/rollout-format';
+import type { HeadlessOutcome } from '../shared/headless-outcome';
+import type { HeadlessRefusal } from '../shared/slash-commands';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -847,6 +849,10 @@ const api = {
   },
   codexReaders: {
     health: (force?: boolean) => call<CodexReaderHealth>('codexReaders:health', force === true),
+  },
+  headlessTruth: {
+    outcomes: (runId: string) => call<Record<string, HeadlessOutcome>>('headless:outcomes', runId),
+    refusals: (limit?: number) => call<HeadlessRefusal[]>('headless:refusals', limit ?? 20),
   },
   /* ── end helper sweep · P5 runtime ── */
   on: {
