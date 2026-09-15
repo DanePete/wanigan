@@ -5,6 +5,7 @@ import type {
 import { ConfirmNote, EmptyState, Hint, Mark, Note, PageHead, Pill, Reading, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
 import { useLiveViewMemory } from '../components/planningMemory';
+import Attempts from './Attempts';
 
 const TIMEOUTS = [5, 15, 30, 60] as const;
 const msg = (e: unknown) => e instanceof Error ? e.message : String(e);
@@ -82,6 +83,8 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const [filter, setFilter] = useLiveViewMemory('runFilter', 'all');
   const [revision, setRevision] = useLiveViewMemory('runRevision', 0);
   const [defaultsKey, setDefaultsKey] = useLiveViewMemory('runProviderDefaults', '');
+  /** Headless runs, or attempt sets: one Runs view, two ways of reading unattended work. */
+  const [area, setArea] = useLiveViewMemory<'runs' | 'attempts'>('runArea', 'runs');
   const active = useRef(true), readSequence = useRef(0), actionLock = useRef(false);
   const composer = useRef<HTMLFieldSetElement>(null);
   const reader = useRef<HTMLElement>(null);
@@ -459,10 +462,26 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
 
   const filteredRuns = runs.filter(run => (!query.trim() || `${run.name} ${run.model}`.toLowerCase().includes(query.trim().toLowerCase())) && (filter === 'all' || filter === 'active' && run.open > 0 || filter === 'attention' && (run.awaiting > 0 || run.failed > 0 || run.blocked > 0 || run.status === 'failed')));
 
+  const areaSwitch = (
+    <Segmented label="Runs area" value={area} onChange={setArea}
+               options={[{ value: 'runs', label: 'Headless runs' }, { value: 'attempts', label: 'Attempts' }]} />
+  );
+  // After every hook above, so switching areas never changes how many hooks a
+  // render runs. Each attempt is still a headless run and still listed on the
+  // other side, which is where a held call in one is answered.
+  if (area === 'attempts') {
+    return (
+      <main className="pane wide hr-view">
+        <Attempts projects={projects} providers={providers} areaSwitch={areaSwitch} />
+      </main>
+    );
+  }
+
   return (
     <main className="pane wide hr-view">
       <PageHead title="Runs" lead={launching ? 'One assignment. Each repository works independently.' : 'Unattended work, ready for your review.'} actions={<>
         {launching ? <button className="btn" disabled={busy} onClick={() => setLaunching(false)}>Back to runs</button> : <>
+          {areaSwitch}
           <button className="btn" onClick={reload}>Refresh runs</button>
           <button className="btn btn-primary" disabled={!!merging || !!canceling} onClick={() => { setLaunching(true); setErr(null); }}>New run</button>
         </>}
