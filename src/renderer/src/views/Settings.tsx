@@ -4404,7 +4404,7 @@ function AttachmentRetention() {
 
   const previewText = preview && (
     <>
-      With a {plural(preview.windowDays, 'day')} window, {num(preview.directories)} of{' '}
+      With a {num(preview.windowDays)}-day window, {num(preview.directories)} of{' '}
       {plural(preview.scanned, 'session directory', 'session directories')} qualify now:{' '}
       {plural(preview.filesEligible, 'file')}, {bytes(preview.bytesEligible)}. {keptSentence(preview.kept)}
     </>
@@ -4424,7 +4424,7 @@ function AttachmentRetention() {
                   remove now; a directory is only ever removed when its session ended before the window,
                   nothing in it was named in a prompt, and it holds only files Wanigan staged.</>}
           </p>
-          {r.last && <p className="set-retention-last">{reclaimSentence(r.last)}</p>}
+          {r.last && !result && <p className="set-retention-last">{reclaimSentence(r.last)}</p>}
 
           <div className="set-retention-controls">
             {!r.enabled && (

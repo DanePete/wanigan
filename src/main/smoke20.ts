@@ -516,7 +516,7 @@ export async function runPastTurnsSmoke(check: Check, say: Say): Promise<void> {
     const codePanel = appSource('src/renderer/src/components/CodePanel.tsx');
     check(sessionsView.includes('onClick={() => setInspecting(p)}') && sessionsView.includes('<PastSessionEvidence session={inspecting}'),
       'each Recent row opens the finished run\'s evidence, so it no longer needs a live session to be read');
-    check(panel.includes('sessionId={session.id} initialTab="turns"') && panel.includes('<Timeline key={`past-tl-${session.id}`} sessionId={session.id}')
+    check(panel.includes('sessionId={session.id} initialTab="turns" live={false}') && panel.includes('<Timeline key={`past-tl-${session.id}`} sessionId={session.id}')
       && codePanel.includes("useState<'changes' | 'files' | 'turns'>(initialTab)"),
     'that panel opens the Code panel on the run\'s own turns and the Timeline on its own events, by the finished run\'s id');
   } catch (error) {

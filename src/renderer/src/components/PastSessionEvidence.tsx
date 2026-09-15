@@ -48,7 +48,7 @@ export default function PastSessionEvidence({ session, providerLabel, onClose }:
         <div className="past-evidence-body">
           {area === 'turns' ? (
             <CodePanel key={`past-code-${session.id}`} projectPath={session.worktree ?? session.projectPath}
-                       projectName={session.projectName} sessionId={session.id} initialTab="turns"
+                       projectName={session.projectName} sessionId={session.id} initialTab="turns" live={false}
                        focusTurn={focusTurn} onFocusTurnHandled={() => setFocusTurn(null)} />
           ) : (
             <Timeline key={`past-tl-${session.id}`} sessionId={session.id}

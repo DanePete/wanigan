@@ -196,3 +196,5 @@
   .goal-companion { border-left: 0; padding-left: 0; }
   .goal-companion-copy { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--s-3); }
 }
+/* Recorded outcomes for the task kind, read beside the provider choice. */
+.control-evidence { padding: var(--s-2) var(--s-4) 0; max-width: 90ch; }

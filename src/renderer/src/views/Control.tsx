@@ -523,8 +523,10 @@ export default function Control({ projects, providers, onOpenSession }: {
             {detail.autopilot.enabled && detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} cap` : ''}</span>
         </summary>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
-      <OutcomeEvidence outcomes={outcomes} kind={activeNode && activeNode.kind !== 'review' ? activeNode.kind : 'implement'}
-        providerId={providerId} providerLabel={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} />
+      <div className="control-evidence">
+        <OutcomeEvidence outcomes={outcomes} kind={activeNode && activeNode.kind !== 'review' ? activeNode.kind : 'implement'}
+          providerId={providerId} providerLabel={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} />
+      </div>
       <AutopilotCard docket={detail} busy={busy ?? (loadError ? 'unavailable' : null)} confirming={armAsk === detail.id}
         armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
         armedWith={providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId}
