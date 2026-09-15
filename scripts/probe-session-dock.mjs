@@ -135,6 +135,51 @@ for (const theme of ['dark', 'light']) {
   await close();
 }
 
+// View › Show/Hide Composer. Main's half (the label follows the report) runs in
+// the smoke suite; this is the window's half. The stub never fires menuRoute,
+// so the listener App registers is captured and called as main would call it,
+// and every composerShown report the window sends is recorded.
+{
+  console.log('── View menu');
+  const instrument = `
+    const base = window.wanigan;
+    window.__menuRoute = null;
+    window.__composerReports = [];
+    const on = new Proxy(base.on, { get: (o, p) => p === 'menuRoute' ? (cb) => { window.__menuRoute = cb; return () => {}; } : o[p] });
+    const menu = { composerShown: (shown) => { window.__composerReports.push(shown); } };
+    window.wanigan = new Proxy(base, { get: (t, p) => p === 'on' ? on : p === 'menu' ? menu : t[p] });
+  `;
+  const { page, close } = await openRenderer({ theme: 'dark', width: 1440, height: 900, onError, instrument });
+  const reports = () => page.evaluate(() => window.__composerReports.slice());
+  check((await reports())[0] === true, 'on launch the window tells main what this machine remembers, before anyone opens the menu', await reports());
+  check(await page.evaluate(() => typeof window.__menuRoute === 'function'), 'the window listens for menu routes');
+
+  // Hide from another view: nothing to navigate to, the preference is written.
+  await page.keyboard.press('Meta+2');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.__menuRoute({ kind: 'composer', show: false }));
+  await page.waitForTimeout(200);
+  check((await reports()).at(-1) === false, 'Hide Composer from another view reports the dock shut', await reports());
+
+  // Show from another view: it takes you to the composer it just showed.
+  await page.evaluate(() => window.__menuRoute({ kind: 'composer', show: true }));
+  await page.waitForTimeout(800);
+  check(await page.locator('.session-dock-toggle').getAttribute('aria-expanded') === 'true', 'Show Composer from another view lands on Sessions with the dock open');
+
+  // Hide while the terminal has focus — the case ⌘E cannot serve.
+  await page.evaluate(() => document.querySelector('.terminal-host .xterm-helper-textarea')?.focus());
+  const inTerminal = await page.evaluate(() => !!document.activeElement?.closest('.terminal-host'));
+  await page.evaluate(() => window.__menuRoute({ kind: 'composer', show: false }));
+  await page.waitForTimeout(300);
+  check(await page.locator('.session-dock-toggle').getAttribute('aria-expanded') === 'false', `Hide Composer works with focus in the terminal (focus was ${inTerminal ? 'in' : 'NOT in'} the terminal)`);
+  check(await page.evaluate(() => !!document.activeElement?.closest('.terminal-host')) === inTerminal, 'and leaves focus where it was');
+  await page.evaluate(() => window.__menuRoute({ kind: 'composer', show: true }));
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => document.activeElement?.classList.contains('composer-area')), 'Show Composer on Sessions puts focus in the box');
+  check((await reports()).at(-1) === true, 'and reports the dock open', await reports());
+  await close();
+}
+
 check(errors.length === 0, 'no page errors', errors.slice(0, 3));
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

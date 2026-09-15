@@ -10,6 +10,7 @@ import { applyUnreadCounts } from '@shared/unread';
 import SessionHandoff from '../components/SessionHandoff';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer, { hasDraft, useQueuedCount } from '../components/Composer';
+import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from '../components/composerPreference';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
@@ -236,9 +237,27 @@ export default function Sessions({
   const [sessionPickerCompact, setSessionPickerCompact] = useState(true);
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
-  // Visible by default: the composer earns its keep by being seen once.
   // Collapsing is remembered per machine, like the code rail.
-  const [composerOpen, setComposerOpen] = useState(() => localStorage.getItem('wanigan.composer') !== '0');
+  const [composerOpen, setComposerOpen] = useState(readComposerShown);
+  /**
+   * Every way the dock opens or shuts: its toggle, ⌘E, and the View menu.
+   * Shutting it from inside would drop focus on <body>, so focus goes to the
+   * toggle, which survives the collapse and reopens it. Opening from a chord or
+   * the menu means "let me type", so focus goes into the box; a click on the
+   * toggle is a disclosure and leaves focus on the button it pressed.
+   */
+  const showComposer = useCallback((show: boolean, focus: boolean) => {
+    const inDock = !!document.activeElement?.closest('.session-dock-body');
+    writeComposerShown(show);
+    setComposerOpen(show);
+    if (show && focus) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
+    else if (!show && inDock) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.session-dock-toggle')?.focus());
+  }, []);
+  useEffect(() => {
+    const onMenu = (e: Event) => showComposer((e as CustomEvent<{ show: boolean }>).detail.show, true);
+    window.addEventListener(COMPOSER_MENU_EVENT, onMenu);
+    return () => window.removeEventListener(COMPOSER_MENU_EVENT, onMenu);
+  }, [showComposer]);
   // A "view this turn's diff" jump from the Timeline into the Code pane. The
   // nonce makes repeat jumps to the same turn re-fire the effect.
   const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
@@ -485,15 +504,7 @@ export default function Sessions({
       if (e.key === 'e') {
         e.preventDefault();
         if (compactDetails) setCompactDetails(false);
-        // Hiding the dock from inside it would drop focus on <body>. The toggle
-        // survives the collapse and is where the same chord or Enter reopens it.
-        const inDock = !!el?.closest('.session-dock-body');
-        setComposerOpen((v) => {
-          localStorage.setItem('wanigan.composer', v ? '0' : '1');
-          if (!v) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
-          else if (inDock) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.session-dock-toggle')?.focus());
-          return !v;
-        });
+        showComposer(!composerOpen, true);
         return;
       }
       // ⌘⌫, not ⌘W. macOS registers ⌘W as Close Window at the menu-bar level,
@@ -1072,7 +1083,7 @@ export default function Sessions({
                 </div>
                 {active && (
                   <SessionDock session={active} att={att} open={composerOpen}
-                               onToggle={() => { localStorage.setItem('wanigan.composer', composerOpen ? '0' : '1'); setComposerOpen(!composerOpen); }}>
+                               onToggle={() => showComposer(!composerOpen, false)}>
                     <Composer key={`composer-${active.id}`} session={active} onError={onError} />
                   </SessionDock>
                 )}
