@@ -312,7 +312,7 @@ export async function runIssueIntakeSmoke(check: Check, say: Say): Promise<void>
     const linked = new Set(overview.events.map((e) => e.eventId));
     check(mine?.watch.kind === 'github' && mine.watch.repo === 'github.com/octo/app' && mine.watch.remote === 'origin'
       && mine.last?.id === prompt.id && mine.lastSucceeded?.id === prompt.id
-      && mirror?.watch.kind === 'unwatched' && /gitlab\.com/.test(mirror.watch.detail)
+      && mirror?.watch.kind === 'unwatched' && mirror.watch.detail.startsWith('This repository’s remotes point at gitlab.com. Intake watches')
       && keyed(repo.id).every((e) => linked.has(e.id)) && overview.timer.enabled && overview.timer.intervalMinutes === 15,
     'the overview names the watched repository and remote, the newest poll and success, why a GitLab project is unwatched, and a link for every GitHub event', JSON.stringify({ mine: mine?.watch, mirror: mirror?.watch }));
   } catch (e) {
