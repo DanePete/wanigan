@@ -39,7 +39,7 @@ export function CodexLoaderPanel({ report, error }: { report: CodexLoaderReport 
       <div className="stat-grid">
         <Stat label="AGENTS.md chain" value={bytes(chain.totalBytes)} sub={`${num(chain.files.filter((f) => f.status !== 'blank').length)} files, root first`} />
         <Stat label="Byte budget" value={bytes(chain.maxBytes)} sub={report.maxBytesFrom === 'config' ? 'project_doc_max_bytes in config.toml' : 'Codex default'} />
-        <Stat label="Past the budget" value={bytes(chain.droppedBytes)} sub={past.length ? `${num(past.length)} files cut or dropped` : 'nothing is cut'} />
+        <Stat label="Past the budget" value={bytes(chain.droppedBytes)} sub={past.length ? `${num(past.length)} ${past.length === 1 ? 'file' : 'files'} cut or dropped` : 'nothing is cut'} />
         <Stat label="Skills listed each turn" value={num(report.listedSkills)} sub={<>{report.listedTokens > 0 ? <Est n={report.listedTokens} /> : 'no listing'} tokens</>} />
       </div>
       <meter className="cost-meter" min={0} max={1} low={0.75} high={0.9} optimum={0.2} value={Math.min(1, share)}

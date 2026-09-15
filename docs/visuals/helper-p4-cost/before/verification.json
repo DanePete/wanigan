@@ -1,0 +1,107 @@
+{
+  "before": true,
+  "generatedBy": "scripts/probe-helper-p4-cost.mjs",
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-where-the-money-went: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-codex-credits: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-cost-by-cause: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · context lint: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · Codex loader area: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · Skills listing cost: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · schedule admission: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · usage-window-share: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · learning-inbox-codex-budget: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · cold-cache note: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · session anatomy: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-where-the-money-went: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-codex-credits: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-cost-by-cause: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · context lint: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · Codex loader area: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · Skills listing cost: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · schedule admission: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · usage-window-share: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · learning-inbox-codex-budget: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · cold-cache note: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · session anatomy: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while rendering"
+    }
+  ],
+  "pageErrors": []
+}

@@ -107,7 +107,9 @@ export default function SkillListingCost({ projectId }: { projectId: string | nu
                               onClick={() => { setDone(null); setConfirm({ row, allow: row.listed === false }); }}>
                               {row.listed === false ? 'List it' : 'Make manual-only'}
                             </button>
-                          : <span className="cost-cell-sub">{row.personal ? 'not applied by Wanigan — edit the file' : 'project skill — propose in the review inbox'}</span>}
+                          : <span className="cost-cell-sub">{row.personal ? 'not applied by Wanigan — edit the file'
+                            : row.source === 'project' || row.source === 'agents-project' ? 'project skill — propose in the review inbox'
+                              : 'installed by the harness or a plugin — not Wanigan’s to switch'}</span>}
                       </td>
                     </tr>
                   ))}
