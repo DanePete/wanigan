@@ -9,6 +9,7 @@ import type { ObservedLimitsReport, SessionStatusLine } from '../shared/status-l
 import type { SessionTraces } from '../shared/trace-spans';
 import type { SpendSourceReport } from '../shared/spend-sources';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
+import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -290,6 +291,18 @@ const api = {
       call<{ merged: boolean; detail: string }>('worktrees:merge', p, opts),
     forecast: (projectId: string) =>
       call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
+    // What a new worktree of this project is given. Saving commands asks the
+    // person in a native dialog for any line not already stored, and rejects
+    // with main's sentence when they cancel.
+    setup: (projectId: string) =>
+      call<import('../shared/worktree-bootstrap').WorktreeSetupConfig>('worktrees:setup', projectId),
+    setDepsMode: (projectId: string, mode: import('../shared/worktree-bootstrap').DepsMode) =>
+      call<import('../shared/worktree-bootstrap').DepsMode>('worktrees:setDepsMode', projectId, mode),
+    saveCommands: (projectId: string, input: import('../shared/worktree-bootstrap').WorktreeCommandLists) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandLists & { projectId: string; updatedAt: number | null }>(
+        'worktrees:saveCommands', projectId, input),
+    commandRuns: (projectId: string, limit?: number) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandRun[]>('worktrees:commandRuns', projectId, limit),
   },
   /** The repository's executable config against what was last let launch. */
   configPins: {
@@ -526,6 +539,9 @@ const api = {
     prStatus: (root: string, force?: boolean) => call<any>('gh:prStatus', root, force),
     createPr: (root: string, input: { title: string; body?: string; draft?: boolean; base?: string }) =>
       call<{ url: string | null; detail: string }>('gh:createPr', root, input),
+    // Both contact GitHub through gh, so both are called only from a press.
+    readiness: (projectId: string) => call<PrReadinessReport>('gh:readiness', projectId),
+    failedLog: (projectId: string, link: string) => call<FailedLogReport>('gh:failedLog', projectId, link),
   },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {

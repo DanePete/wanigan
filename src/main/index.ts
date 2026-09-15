@@ -46,6 +46,7 @@ import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
+import * as worktreeSetup from './worktree-setup';
 import { forecastCollisions } from './collisions';
 import * as configPins from './config-pins';
 import * as queue from './queue';
@@ -69,6 +70,7 @@ import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
 import * as gh from './gh';
+import * as prReadiness from './pr-readiness';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
@@ -2350,6 +2352,17 @@ function registerIpc() {
   });
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
+  // What each new worktree of a project is given: how dependency folders
+  // arrive, and the setup and teardown commands. Keyed on a project id; main
+  // resolves the repository. Saving commands is command text `$SHELL -lc` runs
+  // in every worktree Wanigan makes for the project, from sessions and headless
+  // runs alike, so the question goes on the save — asked here, where a
+  // compromised renderer cannot decline to render it — and never on the run.
+  handle('worktrees:setup', (projectId: unknown) => worktrees.worktreeSetupConfig(projectId));
+  handle('worktrees:setDepsMode', (projectId: unknown, mode: unknown) => worktreeSetup.setDepsMode(projectId, mode));
+  handle('worktrees:saveCommands', (projectId: unknown, input: unknown) =>
+    worktreeSetup.saveWorktreeCommandsWithConsent(win, projectId, input));
+  handle('worktrees:commandRuns', (projectId: unknown, limit?: unknown) => worktreeSetup.worktreeCommandRuns(projectId, limit));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
   handle('headless:start', async (cfg: HeadlessStartRequest) => {
@@ -2763,6 +2776,12 @@ function registerIpc() {
   // Same confinement as git:*; auth and hosts stay inside gh itself.
   handle('gh:prStatus', (root: string, force?: boolean) => gh.prStatusReport(gitRoot(root), force === true));
   handle('gh:createPr', (root: string, input: unknown) => gh.createPr(gitRoot(root), input));
+  // Merge readiness, read on a press: mergeability, checks and review threads
+  // for the project's branch, then one failing check's log on a second press.
+  // Keyed on a project id; main resolves the repository, and fetches a log only
+  // for a check its own last read of that project returned. Nothing is posted.
+  handle('gh:readiness', (projectId: string) => prReadiness.readinessReport(projectId));
+  handle('gh:failedLog', (projectId: string, link: string) => prReadiness.failedCheckLog(projectId, link));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
