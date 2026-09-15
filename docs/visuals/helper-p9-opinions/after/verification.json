@@ -1,0 +1,154 @@
+{
+  "at": "2026-09-15T04:53:02.029Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, review and second-opinion services; no real agent calls",
+  "mode": "after",
+  "commit": "833427d770826813fff34304134b030f4686c8fa",
+  "uncommittedChanges": 0,
+  "checks": [
+    "under the verdict, \"Get a second review…\", \"Find unrequested decisions…\" and \"Results · 0\" sit in a row that says they are billed per run; the results panel says none has run and closes",
+    "the review dialog names the reviewer and vendor, exactly what is sent with its size and cap, that nothing else is, the dollar cap, and \"This is billed.\"",
+    "changing the dollar cap re-reads the preview, so the statement and the digest follow the number typed",
+    "picking the other vendor says OpenAI receives it, that Codex has no hard cap and a 10-minute timeout applies, and what its sandbox does not stop",
+    "an unmetered profile is refused by name, and the run button is disabled",
+    "Run billed review sends the previewed digest and the profile fingerprint to main, which asks again before anything is sent",
+    "each finding shows severity, confidence, its location and whether that location is in the diff, and is marked Confirmed, Refuted or Not sure",
+    "adding confirmed findings puts one anchored note per finding into the review notes tray, and says Send review puts them in the message box",
+    "decisions show risk, the checked locations, how many were dropped for citing code not in the diff, and add to the review notes one at a time",
+    "a reply that could not be read says \"Could not read findings\" with the reason, and shows the reply as it came",
+    "the session ledger lists both kinds with reviewer, cost or unpriced, confirmed/refuted/not sure, kept/dropped, and totals only recorded dollars",
+    "Send review puts the confirmed finding, cited \"second review by Codex\", and the added decision into the message box, and sends nothing",
+    "the decisions dialog counts the messages and plan items it sends, marks the same backend, and refuses another backend with the reason",
+    "the Spending report carries a Second opinions card: every run with its session, reviewer, cost or unpriced, and what came of it"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/code-rail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/code-rail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-review-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-review-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-review-codex-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-review-codex-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/findings-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/findings-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/findings-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/findings-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/decisions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/decisions-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/decisions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/decisions-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/unreadable-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/unreadable-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/unreadable-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/unreadable-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-decisions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/consent-decisions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/insights-spending-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/insights-spending-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/insights-spending-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p9-opinions/after/insights-spending-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    }
+  ]
+}
