@@ -3458,7 +3458,9 @@ export type MenuRoute =
   | { kind: 'new-session' }
   | { kind: 'palette' }
   | { kind: 'shortcuts' }
-  | { kind: 'sidebar' };
+  | { kind: 'sidebar' }
+  /** Carries the intent, not a toggle: the item's label was "Show" or "Hide" when it was chosen. */
+  | { kind: 'composer'; show: boolean };
 
 /** Where the Claude CLI installs a plugin. Validated in main, not just typed. */
 export type PluginScope = 'user' | 'project' | 'local';

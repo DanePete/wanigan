@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -1487,5 +1488,5 @@ export function newRunId(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+  return `run_${stamp}_${randomBytes(2).toString('hex')}`;
 }
