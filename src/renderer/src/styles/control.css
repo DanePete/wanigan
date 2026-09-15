@@ -130,8 +130,13 @@
 .control-lower p { margin: 0; line-height: 1.6; }
 .control-event { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
 .control-event strong { margin-left: var(--s-2); font-size: var(--t-small); }
+/* A GitHub event's kind is a mark, glyph and word, where a typed event has its kind in bold. */
+.control-event > .mark { margin-left: var(--s-2); font-size: var(--t-small); }
 .control-event p { color: var(--text-dim); font-size: var(--t-small); margin: var(--s-2) 0; }
-.control-event .btn { margin-right: var(--s-2); }
+/* Middle, not baseline: .btn is inline-flex, and one that starts with an icon —
+   Open on GitHub — has no text baseline, so on baseline it sat higher than the
+   word-only buttons beside it. */
+.control-event .btn { margin-right: var(--s-2); vertical-align: middle; }
 .control-table { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
 .control-table th { text-align: left; color: var(--text-faint); font-size: var(--t-micro); font-weight: 500; }
 .control-table td, .control-table th { padding: var(--s-2) var(--s-1); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
