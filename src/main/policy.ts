@@ -5,6 +5,7 @@ import { db } from './db';
 import { halted } from './halt';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
+import { recordTripwireSignal, tripwireViewFor } from './tripwire';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
 import type { HookInput, LedgerEntry, PolicyDecision, StoredTrace, TrustLevel } from '../shared/types';
 import {
@@ -150,7 +151,11 @@ export function ruleEnv(): RuleEnv {
 }
 
 function evaluateCall(ctx: PolicyContext, input: HookInput): Evaluation {
-  return evaluate({ trust: ctx.trust, projectPath: ctx.projectPath }, input, ruleEnv(), { halted: halted() });
+  return evaluate({ trust: ctx.trust, projectPath: ctx.projectPath }, input, ruleEnv(), {
+    halted: halted(),
+    /* ── helper sweep · P1 policy ── */
+    tripwire: tripwireViewFor(ctx.sessionId),
+  });
 }
 
 /*
@@ -250,6 +255,9 @@ export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
     const { decision: decided, trace } = evaluateCall(ctx, input);
     const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
     recordDecision(ctx, input, answer, trace);
+    /* ── helper sweep · P1 policy ── */
+    const tripped = trace.steps.find((s) => s.origin === 'tripwire');
+    if (tripped?.rule) recordTripwireSignal(ctx.sessionId, ctx.projectId, tripped.rule, tripped.reason ?? tripped.text, ctx.trust);
     return answer;
   } catch {
     if (ctx.attended !== false) return null;

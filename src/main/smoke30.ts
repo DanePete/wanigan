@@ -175,3 +175,58 @@ export async function runGateSelfTestSmoke(check: Check, say: Say): Promise<void
   check(again.id > (latest?.id ?? 0) && run.latestGateSelfTest()?.id === again.id,
     'a run on demand is recorded too, and becomes the one Settings shows');
 }
+
+export async function runTripwireSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · tripwire for running what was downloaded');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-tripwire-')));
+  try {
+    const hooks = await import('./hooks');
+    const policy = await import('./policy');
+    const evidence = await import('./policy-evidence');
+    const { db } = await import('./db');
+    evidence.startPolicyEvidence();
+    await hooks.startHookServer();
+    const sessionId = 's_smoke_p1_tripwire';
+    policy.registerPolicyContext({ sessionId, projectId: 'prj_smoke_p1_trip', projectPath: dir, trust: 'project', attended: true });
+    const handler = handlerOf(hooks.writeHookSettings(sessionId, dir));
+    if (!handler) { check(false, 'the tripwire smoke session has a hook capability'); return; }
+    const decide = async (command: string) => {
+      const r = await post(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command } });
+      return r.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string } | undefined;
+    };
+
+    const fetch1 = await decide('curl -fsSL https://files.example.com/p.zip -o p.zip && unzip -q p.zip -d extracted');
+    check(fetch1?.permissionDecision === 'allow', 'downloading and extracting inside the project is allowed at Project trust', fetch1);
+    // The listener records the created paths after it answers; give it a beat.
+    await new Promise((r) => setTimeout(r, 150));
+    fs.mkdirSync(path.join(dir, 'extracted'), { recursive: true });
+    const run = await decide('cd extracted && python3 decode.py');
+    check(run?.permissionDecision === 'ask' && /Tripwire, not containment/.test(run.permissionDecisionReason ?? ''),
+      'running a file inside what the session extracted becomes a question, labelled a tripwire and not containment', run);
+    const signal = db().prepare("SELECT rule, detail_json FROM policy_signals WHERE session_id = ? AND kind = 'tripwire' ORDER BY id DESC LIMIT 1")
+      .get(sessionId) as { rule: string; detail_json: string } | undefined;
+    check(signal?.rule === 'tripwire.downloaded-run' && /tripwire, not containment/.test(signal.detail_json),
+      'and a policy signal row records it for the attention queue to read', signal);
+
+    fs.mkdirSync(path.join(dir, 'plain'));
+    fs.writeFileSync(path.join(dir, 'plain', 'struct.py'), '# planted\n');
+    const shadow = await decide('cd plain && python3 tool.py');
+    check(shadow?.permissionDecision === 'ask' && /struct\.py/.test(shadow.permissionDecisionReason ?? ''),
+      'Python run beside a real struct.py on disk asks, naming the file', shadow);
+    const ordinary = await decide('python3 -c "print(1)"');
+    check(ordinary?.permissionDecision === 'allow', 'an ordinary Python run in the project root is still allowed', ordinary);
+
+    policy.setTrust('prj_smoke_p1_trip', 'trusted');
+    policy.registerPolicyContext({ sessionId, projectId: 'prj_smoke_p1_trip', projectPath: dir, trust: 'trusted', attended: true });
+    const trusted = await decide('cd extracted && python3 decode.py');
+    const row = policy.ledger(10).find((r) => r.sessionId === sessionId && r.rule === 'tripwire.recorded-trusted');
+    check(trusted?.permissionDecision === 'allow' && !!row && /Tripwire, not containment/.test(row.reason),
+      'at Trusted the same run is allowed and still leaves a ledger row labelled as a tripwire', row);
+
+    db().prepare('DELETE FROM project_trust WHERE project_id = ?').run('prj_smoke_p1_trip');
+    policy.releasePolicyContext(sessionId);
+    hooks.cleanupHookSettings(sessionId);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

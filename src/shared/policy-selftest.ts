@@ -14,7 +14,7 @@
  * pass here does not say anything about a particular symlink on it.
  */
 
-import { evaluate, POLICY_RULES, type RuleEnv } from './policy-rules.ts';
+import { evaluate, POLICY_RULES, type RuleEnv, type TripwireView } from './policy-rules.ts';
 import type { HookInput, PolicyDecision, TrustLevel } from './types.ts';
 
 export const SELFTEST_HOME = '/wanigan-selftest/home';
@@ -26,6 +26,7 @@ type Arm = {
   /** Null runs the payload with no known project directory. */
   root?: string | null;
   halted?: boolean;
+  tripwire?: TripwireView;
   /** The decision required. For the refusing arm, `ask` or `deny`; for the other, `allow`. */
   expect: PolicyDecision['decision'];
   /** The rule that must decide, when the arm is the rule's own. */
@@ -38,6 +39,10 @@ const bash = (command: string): HookInput => ({ hook_event_name: 'PreToolUse', t
 const tool = (tool_name: string, tool_input: Record<string, unknown> = {}): HookInput => ({ hook_event_name: 'PreToolUse', tool_name, tool_input });
 const H = SELFTEST_HOME;
 const R = SELFTEST_ROOT;
+
+const noTaint: TripwireView = { tainted: [], shadowsIn: () => [] };
+const downloaded: TripwireView = { tainted: [`${R}/vendor/tool`], shadowsIn: () => [] };
+const shadowing: TripwireView = { tainted: [], shadowsIn: (dir) => (dir === `${R}/extracted` ? ['struct.py', 'base64.py'] : []) };
 
 export const SELFTEST_FIXTURES: readonly SelfTestFixture[] = [
   { rule: 'halted.deny',
@@ -109,6 +114,15 @@ export const SELFTEST_FIXTURES: readonly SelfTestFixture[] = [
   { rule: 'project.allow',
     refuse: { trust: 'project', input: tool('Read', { file_path: `${H}/.aws/credentials` }), expect: 'ask' },
     allow: { trust: 'project', input: tool('WebFetch', { url: 'https://example.com' }), expect: 'allow', rule: 'project.allow' } },
+  { rule: 'tripwire.downloaded-run',
+    refuse: { trust: 'project', input: bash('cd vendor/tool && ./install.sh'), tripwire: downloaded, expect: 'ask', rule: 'tripwire.downloaded-run' },
+    allow: { trust: 'project', input: bash('node scripts/build.js'), tripwire: downloaded, expect: 'allow' } },
+  { rule: 'tripwire.stdlib-shadow',
+    refuse: { trust: 'project', input: bash('cd extracted && python3 decode.py'), tripwire: shadowing, expect: 'ask', rule: 'tripwire.stdlib-shadow' },
+    allow: { trust: 'project', input: bash('python3 scripts/report.py'), tripwire: shadowing, expect: 'allow' } },
+  { rule: 'tripwire.recorded-trusted',
+    refuse: { trust: 'trusted', input: bash('ls'), halted: true, tripwire: downloaded, expect: 'deny' },
+    allow: { trust: 'trusted', input: bash('bash vendor/tool/install.sh'), tripwire: downloaded, expect: 'allow', rule: 'tripwire.recorded-trusted' } },
 ];
 
 export type SelfTestFailure = {
@@ -130,7 +144,7 @@ export type SelfTestResult = {
 
 function runArm(arm: Arm, env: RuleEnv): PolicyDecision {
   const root = arm.root === undefined ? SELFTEST_ROOT : arm.root;
-  return evaluate({ trust: arm.trust, projectPath: root }, arm.input, env, { halted: arm.halted }).decision;
+  return evaluate({ trust: arm.trust, projectPath: root }, arm.input, env, { halted: arm.halted, tripwire: arm.tripwire ?? noTaint }).decision;
 }
 
 /**

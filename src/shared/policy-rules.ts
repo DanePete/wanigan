@@ -36,6 +36,7 @@ import { TRUST_COPY } from './types.ts';
 import type { HookInput, PolicyDecision, TrustLevel } from './types.ts';
 import { parseShell, programOf, type SegmentOrigin, type ShellSegment, type ShellWord } from './shell-parse.ts';
 import { dirname, expandHome, isAbsolute, normalize, resolve, within } from './posix-path.ts';
+import { tripwireFindings, type TripwireFinding, type TripwireView } from './taint.ts';
 
 export type RuleEnv = {
   home: string;
@@ -54,7 +55,7 @@ export type TraceStep = {
   /** The command as read back, or `(whole line)` for a raw-text pattern. */
   text: string;
   via: string[];
-  origin: SegmentOrigin | 'raw';
+  origin: SegmentOrigin | 'raw' | 'tripwire';
   /** The directory relative paths in this command resolve against, when known. */
   cwd: string | null;
   rule: string | null;
@@ -76,7 +77,11 @@ export type Evaluation = { decision: PolicyDecision; trace: PolicyTrace };
 export type EvaluateExtras = {
   /** The operator's emergency stop. Outranks every trust level. */
   halted?: boolean;
+  /** What this session downloaded, and what a directory holds; see taint.ts. */
+  tripwire?: TripwireView;
 };
+
+export type { TripwireView };
 
 /* ── the rule register ───────────────────────────────────────────────── */
 
@@ -117,6 +122,9 @@ export const POLICY_RULES: readonly RuleSpec[] = [
   { id: 'project.write-outside', outcome: 'ask', level: 'project', summary: 'A write outside the project asks.' },
   { id: 'project.write-inside', outcome: 'allow', level: 'project', summary: 'A write inside the project is allowed.' },
   { id: 'project.allow', outcome: 'allow', level: 'project', summary: 'Everything else at Project trust is allowed.' },
+  { id: 'tripwire.downloaded-run', outcome: 'ask', level: 'project', summary: 'Running a file this session downloaded, extracted or cloned asks. A tripwire, not containment.' },
+  { id: 'tripwire.stdlib-shadow', outcome: 'ask', level: 'project', summary: 'Running Python beside a file that shadows a standard-library module asks. A tripwire, not containment.' },
+  { id: 'tripwire.recorded-trusted', outcome: 'allow', level: 'trusted', summary: 'At Trusted either tripwire is recorded and allowed.' },
 ];
 
 /* ── tool classification ─────────────────────────────────────────────── */
@@ -442,10 +450,18 @@ export function evaluate(ctx: RuleContext, input: HookInput, env: RuleEnv, extra
   const inspected = shell ? inspectShell(command, ctx.projectPath, env) : null;
   if (inspected) { trace.steps = inspected.steps; trace.notes = inspected.notes; }
 
+  const trip = shell && extras.tripwire
+    ? tripwireFindings(command, ctx.projectPath ? resolve(env.cwd, ctx.projectPath) : env.cwd, env.home, extras.tripwire)
+    : [];
+  for (const t of trip) {
+    trace.steps.push({ text: t.command, via: [], origin: 'tripwire', cwd: null, rule: t.rule, decision: ctx.trust === 'trusted' ? 'allow' : 'ask', reason: tripwireReason(t, ctx.trust) });
+  }
+
   // Checked before any rule so that TRUST_COPY.trusted — "Nothing is denied by
   // Wanigan" — stays literally true. The trace is still built: a trusted
   // project's ledger row is where the operator reads what the line did.
   if (ctx.trust === 'trusted') {
+    if (trip.length) return done(allow(tripwireReason(trip[0], 'trusted'), 'tripwire.recorded-trusted'));
     return done(allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow'));
   }
 
@@ -467,7 +483,17 @@ export function evaluate(ctx: RuleContext, input: HookInput, env: RuleEnv, extra
   // let `cat ~/.ssh/id_rsa; rm -rf /` come back as a question about the key.
   // An equal question still names the credential directory, as it always has.
   if (credAsk && RANK[base.decision] <= RANK.ask) return done(credAsk);
+  // A tripwire turns an allow into a question at Project trust. It never
+  // softens a stricter answer, and at Read only the shell question stands.
+  if (trip.length && base.decision === 'allow') return done(ask(tripwireReason(trip[0], ctx.trust), trip[0].rule));
   return done(base);
+}
+
+/** Every tripwire sentence says what it is before it says anything else. */
+function tripwireReason(t: TripwireFinding, trust: TrustLevel): string {
+  const what = `Tripwire, not containment: ${t.detail}.`;
+  if (trust === 'trusted') return `${TRUST_COPY.trusted.label}: Wanigan denies nothing here, and records this. ${what}`;
+  return `${what} A file that arrived from the network is running on this machine. Approve it only if you know what it is; reading it first is safer.`;
 }
 
 function readonlyDecision(tool: string, shell: boolean): PolicyDecision {

@@ -2,6 +2,7 @@ import { onHookInput } from './hooks';
 import { approvalDetailFor, attachApprovalExplanation } from './approval-explain';
 import { ledgerTrace } from './policy';
 import { latestGateSelfTest, runAndRecordGateSelfTest } from './policy-selftest-run';
+import { forgetTaint, observeForTaint } from './tripwire';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -22,6 +23,8 @@ export function startPolicyEvidence(): void {
   } catch (e) { console.warn('[wanigan] gate self-test could not run:', e); }
   onHookInput((stored, input, cwd) => {
     attachApprovalExplanation(stored, input, cwd);
+    observeForTaint(stored, input, cwd);
+    if (stored.event === 'SessionEnd') forgetTaint(stored.sessionId);
   });
 }
 
