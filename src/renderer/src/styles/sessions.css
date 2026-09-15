@@ -275,20 +275,24 @@
   padding-inline: 7px;
 }
 
-.sessions-view .sessions--compact-picker .session-attachments > div:first-child {
-  align-items: flex-start !important;
-  flex-wrap: wrap;
-  gap: 7px !important;
-}
-
-.sessions-view .sessions--compact-picker .session-attachments > div:first-child > div:last-child {
-  width: 100%;
-  margin-left: 0 !important;
-}
-
-.sessions-view .sessions--compact-picker .session-attachments > div:first-child > div:last-child .btn {
-  flex: 1 1 140px;
-}
+/* The dock under the terminal: one bar that is the same open or shut, so the
+   control that hid it is where it is found again. The bar wraps rather than
+   truncating; its height changes the PTY's, so nothing in it animates. */
+.sessions-view .session-dock { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--bg-soft); }
+.sessions-view .session-dock-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-3); padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2); }
+.sessions-view .session-dock-toggle { flex: none; display: inline-flex; align-items: center; gap: var(--s-1); min-height: var(--control-h-sm); padding-inline: var(--s-2); border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font-family: inherit; font-size: var(--t-small); font-weight: 600; cursor: pointer; }
+.sessions-view .session-dock-toggle:hover { background: var(--bg-sunk); }
+.sessions-view .session-dock-toggle[aria-expanded='false'] .icon { transform: rotate(180deg); }
+.sessions-view .session-dock-toggle kbd { font-family: var(--font-ui); font-size: var(--t-micro); font-weight: 400; color: var(--text-faint); }
+.sessions-view .session-dock-summary { min-width: 0; font-size: var(--t-small); font-variant-numeric: tabular-nums; }
+.sessions-view .session-dock-held { font-size: var(--t-small); font-weight: 600; }
+.sessions-view .session-dock-held[data-tone='warning'] { color: var(--warning); }
+.sessions-view .session-dock-held[data-tone='critical'] { color: var(--critical); }
+.sessions-view .session-dock-actions { display: flex; gap: var(--s-2); margin-left: auto; }
+.sessions-view .session-dock-actions .btn { white-space: nowrap; }
+.sessions-view .session-dock-notices { display: flex; flex-direction: column; gap: var(--s-2); padding: 0 var(--s-3) var(--s-2); }
+.sessions-view .session-dock-files { padding: 0 var(--s-3) var(--s-2); }
+.sessions-view .session-dock-chips { display: flex; gap: var(--s-2); overflow-x: auto; }
 
 /* Both "show more" controls in the Recent list are one rule rather than two
    inline style objects that could drift apart — the active band's control is
@@ -318,6 +322,11 @@
   .sessions-view .btn,
   .sessions-view select,
   .sessions-view input:not(.xterm-helper-textarea) {
+    min-height: 44px;
+  }
+
+  /* Its own rule outranks the one above, so the touch floor is restated. */
+  .sessions-view .session-dock-toggle {
     min-height: 44px;
   }
 
