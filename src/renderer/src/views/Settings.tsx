@@ -12,6 +12,7 @@ import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTimer } from '@shared/intake';
+import type { LedgerBreakKind, LedgerChainStatus } from '@shared/ledger-chain';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
@@ -82,7 +83,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
-  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export hash chain tamper signature verify' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Commit attribution', hint: 'Assisted-by trailers on Git view commits', keywords: 'assisted-by assisted by trailer commit attribution agent model git' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
@@ -1030,6 +1032,7 @@ export default function Settings({
             <Worktrees />
             <Trust projects={projects} onAddProject={onAddProject} />
             <SandboxShellSection prefs={prefs} pending={pending} setPref={setPref} />
+            <CommitAttribution prefs={prefs} pending={pending} setFlag={setFlag} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
@@ -3268,6 +3271,111 @@ function SandboxShellSection({ prefs, pending, setPref }: {
   );
 }
 
+const BREAK_WORDS: Record<LedgerBreakKind, string> = {
+  content: 'its contents no longer produce the hash written beside them, so it was changed after it was written',
+  link: 'it does not follow the record before it, so a record was removed, inserted or reordered',
+  unchained: 'it has no hash although it was written after the chain began',
+};
+
+/**
+ * Whether the ledger is still what was written, from a walk of the whole chain
+ * in main. Nothing here is inferred: "verified" appears only over a check that
+ * returned, a check that failed says it failed, and records from before the
+ * chain began are counted as unverified rather than folded into the total.
+ */
+function LedgerChain() {
+  const [chain, setChain] = useState<{ s: 'loading' } | { s: 'ok'; d: LedgerChainStatus } | { s: 'err'; e: string }>({ s: 'loading' });
+  const [checking, setChecking] = useState(false);
+  const verify = useCallback(async () => {
+    setChecking(true);
+    try { setChain({ s: 'ok', d: await window.wanigan.policy.chain() }); }
+    catch (e) { setChain({ s: 'err', e: msg(e) }); }
+    finally { setChecking(false); }
+  }, []);
+  useEffect(() => { void verify(); }, [verify]);
+
+  let mark: React.ReactNode = null;
+  let line: React.ReactNode = null;
+  const notes: string[] = [];
+  if (chain.s === 'loading') {
+    line = <span className="dim">Verifying the chain…</span>;
+  } else if (chain.s === 'err') {
+    mark = <Mark glyph="?" word="Not verified" color="var(--warning)" />;
+    line = <>The chain was not checked: {chain.e}</>;
+  } else {
+    const c = chain.d;
+    const sig = c.signature;
+    const head = sig.state === 'signed'
+      ? (sig.unsignedAfter ? `head signed through #${sig.lastId}, ${plural(sig.unsignedAfter, 'newer record')} not yet signed` : 'head signed')
+      : sig.state === 'unsigned' ? 'head not signed'
+        : sig.state === 'unchecked' ? 'head signature not checked' : 'head signature does not match';
+    if (!c.total) {
+      mark = <Mark glyph="○" word="Nothing to verify" color="var(--text-faint)" />;
+      line = <>No decision has been recorded yet, so there is no chain to check.</>;
+    } else if (c.firstBreak) {
+      mark = <Mark glyph="✕" word="Chain broken" color="var(--critical)" />;
+      line = <>Chain breaks at record #{c.firstBreak.id} ({c.firstBreak.toolName}, {fullDate(c.firstBreak.at)}): {BREAK_WORDS[c.firstBreak.kind]}. {plural(c.verifiedThrough, 'record')} before it verified.</>;
+    } else if (!c.chained) {
+      mark = <Mark glyph="○" word="Not chained" color="var(--text-faint)" />;
+      line = <>Every record here was written before the chain began, so none can be verified. Decisions recorded from now on are chained.</>;
+    } else if (sig.state === 'mismatch') {
+      mark = <Mark glyph="✕" word="Head does not match" color="var(--critical)" />;
+      line = <>Chain recomputes through {plural(c.verifiedThrough, 'record')}, but {head}.</>;
+    } else {
+      mark = sig.state === 'signed' ? <Mark glyph="✓" word="Verified" color="var(--good)" /> : <Mark glyph="◑" word="Verified, unsigned" color="var(--warning)" />;
+      line = <>Chain verified through {plural(c.verifiedThrough, 'record')} · {head}</>;
+    }
+    if (sig.state !== 'signed' && 'reason' in sig && c.chained) notes.push(sig.reason);
+    if (c.unchainedBefore) {
+      notes.push(`${plural(c.unchainedBefore, 'record')} from before the chain began ${c.unchainedBefore === 1 ? 'is' : 'are'} not verified: nothing was computed over ${c.unchainedBefore === 1 ? 'it' : 'them'} when ${c.unchainedBefore === 1 ? 'it was' : 'they were'} written.`);
+    }
+  }
+  const checked = chain.s === 'ok' ? chain.d : null;
+  const fingerprint = checked?.keyFingerprint ? checked.keyFingerprint.slice(0, 16) : null;
+  return (
+    <div className="set-chain sunk" role="group" aria-label="Ledger chain">
+      <div className="set-chain-line">
+        {mark}
+        <span className="set-chain-text">{line}</span>
+        <button className="btn" onClick={() => void verify()} disabled={checking}>{checking ? 'Verifying…' : 'Verify now'}</button>
+      </div>
+      {notes.map((n) => <p key={n} className="set-chain-note">{n}</p>)}
+      {checked && (
+        <p className="set-chain-note">
+          Checked {ago(checked.checkedAt)}.
+          {fingerprint && <> Signing key <span className="mono">{fingerprint.match(/.{4}/g)?.join(' ')}</span>: an export carries its public
+            key, and <span className="mono">node scripts/verify-ledger.mjs &lt;file&gt; --fingerprint {fingerprint}</span> checks it without Wanigan.</>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Assisted-by trailers, opt-in. The switch is here because it changes what gets
+ * published; the lines themselves are shown in the Git view's commit box, where
+ * the commit they will end is.
+ */
+function CommitAttribution({ prefs, pending, setFlag }: {
+  prefs: WaniganSettings | null; pending: string | null; setFlag: (k: string, on: boolean) => Promise<void>;
+}) {
+  return (
+    <Section title="Commit attribution"
+             hint="What a commit made from Wanigan’s Git view says about the agents that helped write it.">
+      {!prefs ? <Reading what="your preferences" /> : (
+        <Toggle title="Add Assisted-by trailers" on={prefs.assistedByTrailers} busy={pending === 'assisted_by_trailers'}
+                onChange={(v) => void setFlag('assisted_by_trailers', v)}>
+          A commit from the Git view ends with one <span className="mono">Assisted-by: agent (model)</span> line
+          for each agent and model Wanigan recorded working in that checkout since its last commit, and the commit box
+          shows the exact lines before you commit. Only sessions Wanigan started count — an agent run in another
+          terminal is never seen, so a commit without the line is not a statement that no agent helped. Commits made
+          anywhere else, the phone included, are left as they are.
+        </Toggle>
+      )}
+    </Section>
+  );
+}
+
 function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: () => void }) {
   const [deniedOnly, setDeniedOnly] = useState(false);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -3444,6 +3552,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
           );
         }}
       </Frame>
+      <LedgerChain />
 
       <div className="set-filters">
         <div className="set-chips" role="group" aria-label="Ledger decision filter">
