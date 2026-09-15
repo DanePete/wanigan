@@ -417,3 +417,8 @@ a.set-mini, a.btn { text-decoration: none; }
 .set-account-seed input { margin-top: var(--s-1); accent-color: var(--accent); flex: none; }
 .set-account-seed-why { display: block; margin-top: var(--s-1); }
 .set-accounts-foot { font-size: var(--t-micro); margin-top: var(--s-3); line-height: 1.45; }
+
+/* Transcript recall: a per-project switch list under Wanigan's own MCP server. */
+.set-recall-lede { margin: 0 0 var(--s-2); color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 72ch; }
+.set-recall-lede code { overflow-wrap: anywhere; }
+.set-recall-list { display: flex; flex-direction: column; }

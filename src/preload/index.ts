@@ -258,6 +258,9 @@ const api = {
     get: (id: string) => call<{ turns: TranscriptTurn[]; note: string | null; bytes: number }>('transcripts:get', id),
     list: () => call<{ sessionId: string; bytes: number; turns: number; archivedAt: number }[]>('transcripts:list'),
     forget: (id: string) => call<boolean>('transcripts:forget', id),
+    /** Project id → whether its sessions may call wanigan_recall_transcripts. */
+    recall: () => call<Record<string, boolean>>('transcripts:recall'),
+    setRecall: (projectId: string, enabled: boolean) => call<boolean>('transcripts:setRecall', projectId, enabled),
     context: (sessionId: string) => call<import('../shared/types').ClaudeContextUsage>('transcripts:context', sessionId),
   },
   // ── phase 9 · worktrees ──────────────────────────────────────────────

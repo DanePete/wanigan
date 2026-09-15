@@ -2199,6 +2199,19 @@ function registerIpc() {
   handle('transcripts:get', (id: string) => transcripts.transcriptFor(id));
   handle('transcripts:list', () => transcripts.archivedSessions());
   handle('transcripts:forget', (id: string) => { transcripts.forgetTranscript(id); return true; });
+  // Transcript recall, per project and only ever the operator's act. The
+  // setting and the MCP server's rule that lists the tool by it both existed,
+  // with nothing able to set it, so wanigan_recall_transcripts was reachable
+  // only from the smoke suite.
+  handle('transcripts:recall', () => Object.fromEntries(
+    listProjects().map((project) => [project.id, transcripts.recallEnabled(project.id)])));
+  handle('transcripts:setRecall', (projectId: unknown, enabled: unknown) => {
+    if (typeof projectId !== 'string' || !projectById(projectId)) {
+      throw new Error('That project is no longer in Wanigan. Reopen Settings and choose again.');
+    }
+    if (typeof enabled !== 'boolean') throw new Error('Transcript recall is either on or off.');
+    return transcripts.setRecallEnabled(projectId, enabled);
+  });
   // Context occupancy for the selected session. Resolved from this process's
   // own session record — the renderer names a session, never a path — and
   // gated on the harness that actually writes a transcript.

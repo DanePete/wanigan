@@ -291,3 +291,32 @@ export async function runBudgetGateSmoke(check: Check, say: Say): Promise<void> 
     for (const dir of [overDir, underDir]) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ } }
   }
 }
+
+/**
+ * Transcript recall can be switched on by the person it belongs to.
+ *
+ * The per-project setting and the MCP rule that lists the tool by it both
+ * existed, and nothing outside the smoke suite could set it.
+ */
+export async function runRecallSwitchSmoke(check: Check, say: Say): Promise<void> {
+  say('── transcripts · recall is a per-project switch a person can reach');
+  try {
+    const transcripts = await import('./transcripts');
+    const index = appSource('src/main/index.ts');
+    const handler = index.slice(index.indexOf("handle('transcripts:setRecall'"), index.indexOf("handle('transcripts:setRecall'") + 500);
+    check(handler.includes('projectById(projectId)') && handler.includes("typeof enabled !== 'boolean'")
+      && handler.includes('transcripts.setRecallEnabled(projectId, enabled)'),
+    'the main process sets recall only for a project it knows, and only to a real boolean');
+    const preload = appSource('src/preload/index.ts');
+    const settings = appSource('src/renderer/src/views/Settings.tsx');
+    check(preload.includes("call<boolean>('transcripts:setRecall', projectId, enabled)")
+      && settings.includes('window.wanigan.transcripts.setRecall(project.id, on)')
+      && settings.includes('<RecallProjects '),
+    'Settings reaches that switch through the typed preload, one project at a time');
+    let refused = '';
+    try { transcripts.setRecallEnabled('', true); } catch (error) { refused = String(error); }
+    check(/Choose a project/.test(refused), 'and the setter itself still refuses a missing project', refused);
+  } catch (error) {
+    check(false, 'the recall switch checks ran without throwing', String(error));
+  }
+}

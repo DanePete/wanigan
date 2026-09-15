@@ -4253,6 +4253,71 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
   );
 }
 
+/**
+ * Which projects' sessions may search their own archived transcripts.
+ *
+ * transcripts.ts kept the per-project setting and the MCP server listed the
+ * tool by it, but nothing could switch it on, so the tool existed only in the
+ * smoke suite. Off by default and never global: a session that can read past
+ * conversations can quote them, so each project is the operator's own choice.
+ * The two conditions it depends on — Wanigan's server running, transcripts
+ * being archived — are stated where they are false rather than left implied.
+ */
+function RecallProjects({ projects, serverOn, archiving }: { projects: Project[]; serverOn: boolean; archiving: boolean }) {
+  const states = useLoad(() => window.wanigan.transcripts.recall(), [projects.length]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function flip(project: Project, on: boolean) {
+    setResult(null);
+    setBusy(project.id);
+    try {
+      await window.wanigan.transcripts.setRecall(project.id, on);
+      states.reload();
+      setResult({
+        tone: 'ok',
+        text: on
+          ? `Sessions in ${project.name} can now call wanigan_recall_transcripts. Sessions that start from now on are offered it; one already running may not see it until it restarts.`
+          : `Recall is off for ${project.name}. The next call from any session there is refused, including one already running.`,
+      });
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <>
+      <div className="set-sub">Transcript recall</div>
+      <p className="set-recall-lede">
+        A project switched on here gives its agents one more tool from Wanigan’s server:
+        {' '}<code>wanigan_recall_transcripts</code>, a search over that project’s archived Claude Code
+        transcripts that returns short, redacted snippets. It never reaches another project, another
+        account or another model backend, and nothing is added to a session unless the agent calls it.
+      </p>
+      {!serverOn && (
+        <Note tone="warn">Wanigan’s MCP server is off, so no session is offered this tool whatever is switched on below.</Note>
+      )}
+      {!archiving && (
+        <Note tone="warn">Transcript archiving is off, so nothing new is added for recall to find.</Note>
+      )}
+      <Frame v={states.v} what="transcript recall" onRetry={states.reload}>
+        {(on) => projects.length ? (
+          <div className="set-recall-list">
+            {projects.map((project) => (
+              <Toggle key={project.id} title={project.name} on={on[project.id] === true} busy={busy === project.id}
+                      onChange={(next) => void flip(project, next)}>
+                {on[project.id] === true
+                  ? 'Its sessions can search this project’s archived transcripts.'
+                  : 'Off. Its sessions are not told past conversations can be searched.'}
+              </Toggle>
+            ))}
+          </div>
+        ) : <p className="set-recall-lede">Add a project first; recall is switched on one project at a time.</p>}
+      </Frame>
+      <Result r={result} />
+    </>
+  );
+}
+
 function Mcp({ projects, prefs, pending, setFlag }: {
   projects: Project[]; prefs: WaniganSettings | null; pending: string | null;
   setFlag: (k: string, on: boolean) => Promise<void>;
@@ -4476,6 +4541,9 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           </div>
         )}
       </Frame>
+
+      <RecallProjects projects={projects} serverOn={Boolean(prefs?.mcpServerEnabled)}
+                      archiving={prefs?.archiveTranscripts ?? true} />
 
       <div className="set-sub">Servers given to agents</div>
       {draft && (
