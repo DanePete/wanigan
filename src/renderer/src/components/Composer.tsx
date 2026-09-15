@@ -93,6 +93,22 @@ export function queuedFor(sessionId: string): QueuedMessage[] {
   return queues.get(sessionId) ?? [];
 }
 
+/**
+ * How many messages wait for one session, kept current. The queue drains
+ * whether or not the composer is mounted, so a collapsed dock has to be able
+ * to say that something is still going to be typed into the agent.
+ */
+export function useQueuedCount(sessionId: string): number {
+  const [count, setCount] = useState(() => queuedFor(sessionId).length);
+  useEffect(() => {
+    const sync = () => setCount(queuedFor(sessionId).length);
+    sync();
+    queueListeners.add(sync);
+    return () => { queueListeners.delete(sync); };
+  }, [sessionId]);
+  return count;
+}
+
 function enqueue(sessionId: string, text: string) {
   queues.set(sessionId, [...queuedFor(sessionId), { id: queueSeq++, text, queuedAt: Date.now() }]);
   // A human aiming a message at this session is fresher evidence than whatever
@@ -208,6 +224,11 @@ function readDrafts(): ComposerDraftMap {
   } catch { return {}; }
 }
 
+/** Whether an unsent draft is waiting for this session behind a hidden composer. */
+export function hasDraft(sessionId: string): boolean {
+  return !!readDrafts()[sessionId]?.text.trim();
+}
+
 function writeDrafts(map: ComposerDraftMap) {
   try { localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(map)); }
   catch { /* the caps are the real bound; a quota error here is the fallback */ }
@@ -256,13 +277,13 @@ export function rankSkills(options: SkillOption[], query: string, cap = 6): Skil
 
 /* ── component ───────────────────────────────────────────────────────── */
 
-export default function Composer({ session, onError, onCollapse }: {
+export default function Composer({ session, onError }: {
   session: Session;
   onError: (message: string) => void;
-  onCollapse?: () => void;
 }) {
   const sessionId = session.id;
   const [draft, setDraft] = useState(() => readDrafts()[sessionId]?.text ?? '');
+  const unsavedDraft = useRef<string | null>(null);
   const [attention, setAttention] = useState<AttentionKind | null>(null);
   const [queued, setQueued] = useState<QueuedMessage[]>(() => queuedFor(sessionId));
   const [stash, setStash] = useState<StashEntry[]>(readStash);
@@ -283,11 +304,20 @@ export default function Composer({ session, onError, onCollapse }: {
     // Re-read before writing rather than closing over a map: the debounce and
     // the caps mean this write can evict another session's draft, and it must
     // do that to whatever is on disk now, not to a snapshot from a mount ago.
+    unsavedDraft.current = draft;
     const t = window.setTimeout(() => {
       writeDrafts(putDraft(readDrafts(), sessionId, draft, Date.now()));
+      unsavedDraft.current = null;
     }, 300);
     return () => window.clearTimeout(t);
   }, [draft, sessionId]);
+  // Hiding the dock or switching session unmounts this inside the debounce,
+  // and the cleanup above cancels the write — the last few keystrokes typed
+  // before ⌘E were simply gone. Whatever the timer did not get to is written
+  // on the way out.
+  useEffect(() => () => {
+    if (unsavedDraft.current !== null) writeDrafts(putDraft(readDrafts(), sessionId, unsavedDraft.current, Date.now()));
+  }, [sessionId]);
 
   useEffect(() => {
     const sync = () => setQueued(queuedFor(sessionId));
@@ -514,10 +544,6 @@ export default function Composer({ session, onError, onCollapse }: {
         </div>
         <div className="composer-actions">
           <span className="composer-key-hint"><kbd>↵</kbd> send <kbd>⇧↵</kbd> new line <kbd>$</kbd> skill</span>
-          {onCollapse && (
-            <button type="button" className="composer-chip-btn" title="Hide the composer (⌘E brings it back)"
-                    aria-label="Hide the composer" onClick={onCollapse}>⌄</button>
-          )}
           {runsClaudeHarness(session) && (
             <button type="button" className="btn"
                     disabled={state.mode !== 'send'}

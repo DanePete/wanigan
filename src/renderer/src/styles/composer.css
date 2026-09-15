@@ -106,12 +106,6 @@
 .composer-stash-restore:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .composer-stash-empty { margin: 4px 6px; font-size: var(--t-micro); }
 
-.composer-closed { flex: none; display: flex; justify-content: flex-end; border-top: 1px solid var(--line); }
-.composer-reopen {
-  font-size: var(--t-micro); padding: 2px 9px; border-radius: var(--r-sm); cursor: pointer;
-}
-.composer-reopen:hover { color: var(--text); background: var(--bg-sunk); }
-
 /* ── keyboard cheat sheet ─────────────────────────────────────────── */
 
 .shortcut-sheet {

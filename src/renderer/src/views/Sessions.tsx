@@ -9,7 +9,7 @@ import { providerTint } from '@shared/provider-status';
 import { applyUnreadCounts } from '@shared/unread';
 import SessionHandoff from '../components/SessionHandoff';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
-import Composer from '../components/Composer';
+import Composer, { hasDraft, useQueuedCount } from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
@@ -485,9 +485,13 @@ export default function Sessions({
       if (e.key === 'e') {
         e.preventDefault();
         if (compactDetails) setCompactDetails(false);
+        // Hiding the dock from inside it would drop focus on <body>. The toggle
+        // survives the collapse and is where the same chord or Enter reopens it.
+        const inDock = !!el?.closest('.session-dock-body');
         setComposerOpen((v) => {
           localStorage.setItem('wanigan.composer', v ? '0' : '1');
           if (!v) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
+          else if (inDock) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.session-dock-toggle')?.focus());
           return !v;
         });
         return;
@@ -1066,19 +1070,12 @@ export default function Sessions({
                     </div>
                   )}
                 </div>
-                {active && <AttachStrip session={active} att={att} />}
-                {active && (composerOpen ? (
-                  <Composer key={`composer-${active.id}`} session={active} onError={onError}
-                            onCollapse={() => { localStorage.setItem('wanigan.composer', '0'); setComposerOpen(false); }} />
-                ) : (
-                  <div className="composer-closed">
-                    <FocusBtn className="faint composer-reopen"
-                              title="Open the composer — drafts, queueing and stashed prompts (⌘E)"
-                              onClick={() => { localStorage.setItem('wanigan.composer', '1'); setComposerOpen(true); }}>
-                      ✎ compose ⌘E
-                    </FocusBtn>
-                  </div>
-                ))}
+                {active && (
+                  <SessionDock session={active} att={att} open={composerOpen}
+                               onToggle={() => { localStorage.setItem('wanigan.composer', composerOpen ? '0' : '1'); setComposerOpen(!composerOpen); }}>
+                    <Composer key={`composer-${active.id}`} session={active} onError={onError} />
+                  </SessionDock>
+                )}
               </div>
 
               {(detailsVisible || (showRail && compactLayout)) && active && (
@@ -2183,33 +2180,77 @@ function imagesFrom(dt: DataTransfer | null): File[] {
   return out;
 }
 
-function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
+/**
+ * Everything under the terminal that is for talking to the agent — what is
+ * staged, and the composer — behind one disclosure.
+ *
+ * It used to be two bands with two ideas of hidden: a bare ⌄ among the send
+ * buttons put the composer away and left the attachments band standing, so
+ * "hidden" still cost 83px of terminal. The bar is now the same bar open or
+ * shut, so the control that closed the dock is where the pointer finds it to
+ * open it again, and the height changes only when the operator asks — every
+ * change is a resize of a live PTY and a redraw of the agent's TUI.
+ *
+ * Shut is not silent. Queued messages still drain into the terminal and a
+ * draft still waits, so the bar says so; a failed read, a refused file and the
+ * after-attach hint stay outside the disclosure because each is either a
+ * failure or the answer to something the operator just did.
+ */
+function SessionDock({ session, att, open, onToggle, children }: {
+  session: Session;
+  att: AttachState;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
   const images = att.items.filter((a) => a.kind === 'image');
   const visual = images.reduce((n, a) => n + (a.visualTokens ?? 0), 0);
   const priced = images.reduce((n, a) => n + (att.cost[a.id] ?? 0), 0);
+  const queued = useQueuedCount(session.id);
+  // A draft only changes while the composer is mounted, so reading it again
+  // when the dock shuts or the session changes is reading it every time it can
+  // have moved. An effect, not a memo: the composer writes its last keystrokes
+  // as it unmounts, which is after this component renders and before this runs.
+  const [draft, setDraftKept] = useState(false);
+  useEffect(() => { setDraftKept(!open && hasDraft(session.id)); }, [open, session.id]);
+  const exited = session.status === 'exited';
+  const held = open ? [] : [
+    queued > 0 ? (exited ? `${plural(queued, 'queued message')} not sent — session exited` : `${queued} queued, sends when idle`) : null,
+    draft ? 'draft kept' : null,
+  ].filter(Boolean);
 
   return (
-    <div className="session-attachments" style={{ borderTop: '1px solid var(--line)', background: 'var(--bg-soft)',
-                  padding: '6px 10px 7px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="label" style={{ flex: 'none' }}>Attachments</span>
-        <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
-          {att.phase === 'loading' ? 'reading…'
-            : att.items.length === 0
-              ? (att.sent > 0 ? `none staged · ${plural(att.sent, 'file')} sent` : 'none staged')
-              : `${plural(att.items.length, 'file')} staged${att.sent > 0 ? ` · ${att.sent} sent` : ''}`}
+    <section className="session-dock" aria-label="Composer" data-open={open}>
+      <div className="session-dock-bar">
+        <button type="button" className="session-dock-toggle" aria-expanded={open}
+                aria-controls="session-dock-body" aria-keyshortcuts="Meta+E Control+E" onClick={onToggle}>
+          <Icon name="chevron-down" />
+          Composer
+          <kbd>⌘E</kbd>
+        </button>
+        <span className="faint session-dock-summary">
+          {att.phase === 'loading' ? 'Attachments: reading…'
+            : att.phase === 'error' ? 'Attachments: did not load'
+              : att.items.length === 0
+                ? `Attachments: none staged${att.sent > 0 ? ` · ${plural(att.sent, 'file')} sent` : ''}`
+                : `Attachments: ${plural(att.items.length, 'file')} staged${att.sent > 0 ? ` · ${att.sent} sent` : ''}`}
           {images.length > 0 && visual > 0 && (
             <> · {num(visual)} visual tokens ≈ {usd(priced)} when read</>
           )}
         </span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <FocusBtn className="btn" style={{ padding: '3px 9px' }} onClick={att.browse} disabled={att.busy}
+        {/* Mounted empty while open: a live region only announces text that
+            arrives after it exists. */}
+        <span className="session-dock-held" role="status" data-tone={exited && queued > 0 ? 'critical' : 'warning'}>
+          {held.join(' · ')}
+        </span>
+        <div className="session-dock-actions">
+          <FocusBtn className="btn btn-sm" onClick={att.browse} disabled={att.busy}
                     title="Pick files to stage for this session">
             {att.busy ? 'Adding…' : '+ Add files'}
           </FocusBtn>
-          <FocusBtn className="btn" style={{ padding: '3px 9px' }} onClick={() => void att.typeReference()}
-                    disabled={att.items.length === 0 || att.busy || session.status === 'exited'}
-                    title={session.status === 'exited'
+          <FocusBtn className="btn btn-sm" onClick={() => void att.typeReference()}
+                    disabled={att.items.length === 0 || att.busy || exited}
+                    title={exited
                       ? 'This session has exited, so there is no prompt to type into. Resume it from Recent, then add the file.'
                       : 'Attaching already names these files in your prompt. Use this to name them again — after clearing the input, say.'}>
             Name again
@@ -2217,49 +2258,57 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
         </div>
       </div>
 
-      {att.phase === 'error' ? (
-        <Note tone="error">
-          <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
-          The attachment list did not load: {att.loadErr} Files already staged are still on disk in this
-          session's attachment folder.{' '}
-          <FocusBtn className="link" style={{ fontSize: 'var(--t-small)' }} onClick={() => void att.reload()}>Retry</FocusBtn>
-        </Note>
-      ) : att.phase === 'loading' ? (
-        <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading what is staged for this session…</p>
-      ) : att.items.length === 0 ? (
-        // Three lines of teaching, permanently, under the terminal on the view
-        // an operator spends the day in — and it is a lesson learned once. The
-        // remembered one-liner keeps it for a newcomer and gives it back to
-        // everyone else as a "Show:" link.
-        <Explainer id="attach-how" title="How attachments work" compact defaultHidden>
-          Drop a file on the terminal, paste a screenshot with ⌘V, or add one. Wanigan copies it where
-          this project's agent can read it and writes the path into your prompt, so all you add is the
-          question. Sent files leave this strip.
-        </Explainer>
-      ) : (
-        // Its own scroller: a dozen chips are wider than the pane, and the view
-        // never scrolls sideways as a whole.
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
-          {att.items.map((a) => (
-            <Chip key={a.id} a={a} usdCost={att.cost[a.id] ?? null} onRemove={() => void att.remove(a.id)} />
+      {(att.phase === 'error' || att.hint || att.rejects.length > 0) && (
+        <div className="session-dock-notices">
+          {att.phase === 'error' && (
+            <Note tone="error">
+              <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
+              The attachment list did not load: {att.loadErr} Files already staged are still on disk in this
+              session's attachment folder.{' '}
+              <FocusBtn className="link" style={{ fontSize: 'var(--t-small)' }} onClick={() => void att.reload()}>Retry</FocusBtn>
+            </Note>
+          )}
+          {att.hint && <Note tone="info">{att.hint}</Note>}
+          {att.rejects.map((r) => (
+            <div key={r.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Note tone="error">
+                  <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
+                  <span style={{ fontWeight: 650 }}>Not attached. </span>{r.text}
+                </Note>
+              </div>
+              <FocusBtn className="past-x faint" title="Dismiss" onClick={() => att.dismiss(r.key)}>×</FocusBtn>
+            </div>
           ))}
         </div>
       )}
 
-      {att.hint && <Note tone="info">{att.hint}</Note>}
-
-      {att.rejects.map((r) => (
-        <div key={r.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <Note tone="error">
-              <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
-              <span style={{ fontWeight: 650 }}>Not attached. </span>{r.text}
-            </Note>
+      {/* Always mounted, so the toggle's aria-controls resolves while shut. */}
+      <div id="session-dock-body" className="session-dock-body" hidden={!open}>
+        {open && att.phase === 'ready' && (att.items.length === 0 ? (
+          // Three lines of teaching, permanently, under the terminal on the view
+          // an operator spends the day in — and it is a lesson learned once. The
+          // remembered one-liner keeps it for a newcomer and gives it back to
+          // everyone else as a "Show:" link.
+          <div className="session-dock-files">
+            <Explainer id="attach-how" title="How attachments work" compact defaultHidden>
+              Drop a file on the terminal, paste a screenshot with ⌘V, or add one. Wanigan copies it where
+              this project's agent can read it and writes the path into your prompt, so all you add is the
+              question. Sent files leave this strip.
+            </Explainer>
           </div>
-          <FocusBtn className="past-x faint" title="Dismiss" onClick={() => att.dismiss(r.key)}>×</FocusBtn>
-        </div>
-      ))}
-    </div>
+        ) : (
+          // Its own scroller: a dozen chips are wider than the pane, and the view
+          // never scrolls sideways as a whole.
+          <div className="session-dock-files session-dock-chips">
+            {att.items.map((a) => (
+              <Chip key={a.id} a={a} usdCost={att.cost[a.id] ?? null} onRemove={() => void att.remove(a.id)} />
+            ))}
+          </div>
+        ))}
+        {open && children}
+      </div>
+    </section>
   );
 }
 
