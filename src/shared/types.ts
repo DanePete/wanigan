@@ -3449,3 +3449,38 @@ export type ExpiringResults = {
   endedAt: number;
   downloadableUntil: number;
 };
+
+/* ── helper sweep · P1 policy ── */
+
+/**
+ * The newest explained approval in one session: which stored event carried it
+ * and what the command's script alias runs. See shared/script-explain.ts.
+ */
+export type ApprovalDetail = {
+  eventId: number;
+  at: number;
+  event: string;
+  toolName: string | null;
+  approval: import('./script-explain').ApprovalExplanation;
+};
+
+/**
+ * The phone's copy of an approval explanation: bounded, redacted, and sent only
+ * while remote control is on — the same opt-in that already lets a paired
+ * device read the terminal the prompt is printed in.
+ */
+export type MobileApprovalCard = {
+  scripts: {
+    alias: string;
+    manifest: string;
+    runs: { from: string; command: string; depth: number }[];
+    moreRuns: number;
+    paths: string[];
+    hosts: string[];
+    reversible: 'reversible' | 'not reversible' | 'cannot confirm';
+    because: string;
+    change: 'changed' | 'unchanged' | 'new since launch' | 'cannot confirm';
+    changeDetail: string;
+    notes: string[];
+  }[];
+};

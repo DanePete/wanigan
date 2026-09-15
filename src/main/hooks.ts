@@ -473,6 +473,8 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
   const stored = store(sessionId, event, input, at);
   if (stored) emit(stored);
+  /* ── helper sweep · P1 policy ── */
+  if (stored) observeInput(stored, input, registered.get(sessionId)?.projectPath ?? null);
   // Claude Code's own lifecycle signal is an additional cleanup path, never the
   // authoritative one: the session/headless owners call cleanup when the process
   // exits, and stopHookServer sweeps the rest. So a SessionEnd the process
@@ -784,6 +786,38 @@ export function recordProviderEvent(
 export function onHookEvent(cb: (e: SessionEvent) => void): () => void {
   listeners.add(cb);
   return () => { listeners.delete(cb); };
+}
+
+/* ── helper sweep · P1 policy ── */
+/**
+ * Observers that need the posted body as well as the stored row.
+ *
+ * The row is deliberately lossy — a command is clipped to 160 characters and a
+ * Write's contents are never kept — and that is right for a timeline. The
+ * policy evidence built beside it (what a script alias runs, which paths a
+ * download created, which command a person approved) needs the whole command
+ * and the session's working directory, once, in memory, and keeps only what it
+ * derives. Called after the hook has been answered, so no observer can delay a
+ * tool call; a throwing observer costs itself and nobody else.
+ */
+type InputObserver = (stored: SessionEvent, input: HookInput, cwd: string | null) => void;
+const inputObservers = new Set<InputObserver>();
+
+export function onHookInput(cb: InputObserver): () => void {
+  inputObservers.add(cb);
+  return () => { inputObservers.delete(cb); };
+}
+
+function observeInput(stored: SessionEvent, input: HookInput, registeredCwd: string | null): void {
+  const cwd = typeof input.cwd === 'string' && input.cwd.startsWith('/') ? input.cwd : registeredCwd;
+  for (const cb of inputObservers) {
+    try { cb(stored, input, cwd); } catch { /* one observer must not stop the rest */ }
+  }
+}
+
+/** The working directory a live session's hook settings were written for, or null. */
+export function registeredHookCwd(waniganSessionId: string): string | null {
+  return registered.get(waniganSessionId)?.projectPath ?? null;
 }
 
 /**

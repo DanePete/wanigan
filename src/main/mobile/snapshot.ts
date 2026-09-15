@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import { theme } from '../settings';
 import { controlScopeAllowed, json, registerApiRoute, send } from './dispatch';
-import type { MobileFleetSession, MobileFleetSnapshot } from '../../shared/types';
+import type { MobileApprovalCard, MobileFleetSession, MobileFleetSnapshot } from '../../shared/types';
 import type { MobilePushProbe } from './push';
 import type { MobileWebPushProbe } from './webpush';
 
@@ -34,6 +34,30 @@ let pushProbeSource: PushProbeSource | null = null;
 
 type WebPushProbeSource = () => MobileWebPushProbe;
 let webPushProbeSource: WebPushProbeSource | null = null;
+
+/* ── helper sweep · P1 policy ── */
+type ApprovalCardSource = (sessionId: string, since: number) => MobileApprovalCard | null;
+let approvalCardSource: ApprovalCardSource | null = null;
+
+/**
+ * Register the reader for a waiting approval's explanation. Asked only for a
+ * session whose attention is `permission`, and only while remote control is on;
+ * see ./approval-card for why that is the line.
+ */
+export function configureApprovalCardSource(fn: ApprovalCardSource | null): void {
+  approvalCardSource = fn;
+}
+
+function withApprovalCards(sessions: MobileFleetSession[]): (MobileFleetSession & { approval?: MobileApprovalCard })[] {
+  const source = approvalCardSource;
+  if (!source || !controlScopeAllowed()) return sessions;
+  return sessions.map((s) => {
+    if (s.attention.kind !== 'permission' || s.status === 'exited') return s;
+    let card: MobileApprovalCard | null = null;
+    try { card = source(s.id, s.attention.since); } catch { card = null; }
+    return card ? { ...s, approval: card } : s;
+  });
+}
 
 /** Register the only source of bytes returned by /api/status. */
 export function configureSnapshotSource(fn: SnapshotSource | null): void {
@@ -293,6 +317,8 @@ async function serveStatus(res: http.ServerResponse): Promise<void> {
     // reach the operator once they stop looking at it.
     const body = JSON.stringify({
       ...snapshot,
+      /* ── helper sweep · P1 policy ── */
+      sessions: withApprovalCards(snapshot.sessions),
       appearance: theme(),
       remoteControl: controlScopeAllowed(),
       alerts: alertState(),

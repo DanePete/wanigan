@@ -26,6 +26,9 @@ export { readableTerminal, styledTerminal } from './mobile/terminal-text';
 export { readTerminalScreen, MAX_TERMINAL_SPAN_VALUES } from './mobile/terminal';
 
 export { configureSnapshotSource } from './mobile/snapshot';
+/* ── helper sweep · P1 policy ── */
+// Registers the waiting-approval explanation with the snapshot on import.
+import './mobile/approval-card';
 
 export { configureMobileControlSource } from './mobile/control';
 

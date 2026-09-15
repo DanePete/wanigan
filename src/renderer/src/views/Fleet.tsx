@@ -8,6 +8,8 @@ import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, nu
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
+/* ── helper sweep · P1 policy ── */
+import ApprovalExplainer from '../components/ApprovalExplainer';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -727,6 +729,9 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
           {att.reason.event && <> Read from <span className="mono">{att.reason.event.name}</span>, {ago(att.reason.event.at)}.</>}
         </span>
       )}
+
+      {/* ── helper sweep · P1 policy ── */}
+      {urgent && <ApprovalExplainer sessionId={s.id} since={att?.since ?? s.createdAt} />}
 
       <Spark values={spark} live={u.lastAt} />
 

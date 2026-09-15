@@ -36,6 +36,9 @@ import type {
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
 
+/* ── helper sweep · P1 policy ── */
+import type { ApprovalDetail } from '../shared/types';
+
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** Unwraps the main process envelope so callers see values or thrown errors. */
@@ -833,6 +836,10 @@ const api = {
     // Main cannot read the renderer's localStorage, and the View menu names the
     // dock's state in its label; this is the one fact it is told.
     composerShown: (shown: boolean) => ipcRenderer.send('menu:composerShown', shown),
+  },
+  /* ── helper sweep · P1 policy ── */
+  policyEvidence: {
+    approval: (sessionId: string, sinceAt?: number) => call<ApprovalDetail | null>('policyEvidence:approval', sessionId, sinceAt),
   },
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {

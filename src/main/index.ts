@@ -106,6 +106,8 @@ import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
+/* ── helper sweep · P1 policy ── */
+import * as policyEvidence from './policy-evidence';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -936,6 +938,8 @@ async function startServices() {
   // Turn boundaries feed the checkpoint queue. Idempotent; the subscription
   // outlives window recreation on purpose — captures are per-session facts.
   checkpoints.initCheckpoints();
+  /* ── helper sweep · P1 policy ── */
+  policyEvidence.startPolicyEvidence();
 
   if (f.hooks) {
     try {
@@ -3288,6 +3292,9 @@ function registerIpc() {
     return next;
   });
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
+
+  /* ── helper sweep · P1 policy ── */
+  policyEvidence.registerPolicyEvidenceIpc(handle);
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {

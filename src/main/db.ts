@@ -1473,6 +1473,76 @@ function migrateImprovementScout(d: Database.Database) {
   for (const [id, label, description, url, publisher, kind] of sources) {
     refresh.run(label, description, url, publisher, kind, at, id);
   }
+
+  /* ── helper sweep · P1 policy ── */
+  migrateHelperSweepPolicy(d);
+}
+
+/* ── helper sweep · P1 policy ── */
+/**
+ * Approvals and the policy gate. Every change is additive: two nullable
+ * columns on existing tables and five new tables, so a database written by an
+ * older build opens unchanged and an older build reading this one ignores them.
+ */
+function migrateHelperSweepPolicy(d: Database.Database) {
+  // What an approval's script alias runs, attached to the PreToolUse or
+  // PermissionRequest row it explains. JSON, written after the hook answered.
+  addColumn(d, 'session_events', 'detail_json', 'TEXT');
+  // The per-segment trace behind a decision: which command in the line fired
+  // which rule, and through which wrappers.
+  addColumn(d, 'policy_ledger', 'trace_json', 'TEXT');
+  d.exec(`
+    -- Observations the gate records that are not decisions about one call:
+    -- a tripwire, a fast run of approvals, a history rewrite pinned as
+    -- evidence. Append-only, like the ledger they sit beside.
+    CREATE TABLE IF NOT EXISTS policy_signals (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      session_id  TEXT,
+      project_id  TEXT,
+      kind        TEXT NOT NULL,
+      rule        TEXT NOT NULL,
+      summary     TEXT NOT NULL,
+      detail_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_policy_signals_session ON policy_signals(session_id, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_policy_signals_kind ON policy_signals(kind, at DESC);
+
+    -- A person approving an exact command, or a tool on a path prefix, in an
+    -- attended session. Read only by unattended runs of projects that opted in.
+    CREATE TABLE IF NOT EXISTS policy_grants (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      project_id  TEXT NOT NULL,
+      session_id  TEXT NOT NULL,
+      grant_key   TEXT NOT NULL,
+      tool_name   TEXT NOT NULL,
+      summary     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_policy_grants_key ON policy_grants(project_id, grant_key, at DESC);
+
+    -- Each run of the gate's own fixture corpus: at app start, and on demand.
+    CREATE TABLE IF NOT EXISTS policy_selftest_runs (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      at            INTEGER NOT NULL,
+      rules         INTEGER NOT NULL,
+      passed        INTEGER NOT NULL,
+      failures_json TEXT NOT NULL
+    );
+
+    -- A skill's capability surface as computed from its files, and the surface
+    -- a person last approved. The delta between the two is what gets reviewed.
+    CREATE TABLE IF NOT EXISTS skill_surfaces (
+      skill_path            TEXT PRIMARY KEY,
+      name                  TEXT NOT NULL,
+      digest                TEXT NOT NULL,
+      surface_json          TEXT NOT NULL,
+      computed_at           INTEGER NOT NULL,
+      approved_digest       TEXT,
+      approved_surface_json TEXT,
+      approved_at           INTEGER
+    );
+  `);
 }
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {
   db().prepare('INSERT INTO events (run_id, at, level, message) VALUES (?,?,?,?)')
