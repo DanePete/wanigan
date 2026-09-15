@@ -719,6 +719,14 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
       <span className="fleet-detail">
         {att?.detail ?? (att?.tool ? `Running ${att.tool}.` : 'No hook events for this session yet.')}
       </span>
+      {/* Why this verdict, from the classifier's own record: the rule, the event
+          it read and when. A ranking nobody can question is not one to trust. */}
+      {att?.reason && (
+        <span className="fleet-reason">
+          Because {att.reason.because.charAt(0).toLowerCase() + att.reason.because.slice(1)}
+          {att.reason.event && <> Read from <span className="mono">{att.reason.event.name}</span>, {ago(att.reason.event.at)}.</>}
+        </span>
+      )}
 
       <Spark values={spark} live={u.lastAt} />
 

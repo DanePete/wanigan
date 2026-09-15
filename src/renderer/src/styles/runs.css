@@ -77,3 +77,11 @@
   .hr-form-grid, .hr-provider-fields { grid-template-columns: minmax(0, 1fr); }
   .stat-grid.hr-stats { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* A row stopped on a held call: the call, a note, and the three answers. */
+.hr-held { display: grid; gap: var(--s-2); margin-top: var(--s-2); padding: var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised); }
+.hr-held-lede { margin: 0; font-size: var(--t-small); line-height: 1.5; color: var(--text-dim); }
+.hr-held-call { display: block; padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); font-size: var(--t-small); white-space: pre-wrap; overflow-wrap: anywhere; }
+.hr-held-note { display: grid; gap: var(--s-1); }
+.hr-held-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.hr-held-past { margin: var(--s-1) 0 0; font-size: var(--t-small); }

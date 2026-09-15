@@ -69,7 +69,9 @@ export default function HandoverBubble({ story, onOpened, onError }: {
   const compactions = story?.compaction?.completed ?? 0;
   useEffect(() => { setDismissed(null); setNote(null); }, [compactions, sessionId]);
 
-  const carry = useCallback(async () => {
+  // The account is taken from what the bubble said when it was pressed, not
+  // re-derived afterwards: the offer the operator read is the one carried out.
+  const carry = useCallback(async (toAccountId: string | null) => {
     if (!sessionId) return;
     setPhase('asking'); setNote(null);
     try {
@@ -89,7 +91,7 @@ export default function HandoverBubble({ story, onOpened, onError }: {
         return;
       }
       setPhase('carrying');
-      const done = await window.wanigan.handover.finish(sessionId);
+      const done = await window.wanigan.handover.finish(sessionId, toAccountId);
       if (done.kind === 'carried') {
         setShowing(false);
         onOpened(done.session.id, done.session.projectId);
@@ -116,7 +118,7 @@ export default function HandoverBubble({ story, onOpened, onError }: {
       <div className="handover-actions">
         {canCarry && (
           <button className="btn btn-sm btn-primary" type="button" disabled={phase !== 'idle'}
-                  onClick={() => void carry()}>
+                  onClick={() => void carry(says.kind === 'limit' ? says.accountId ?? null : null)}>
             {phase === 'asking' ? 'Asking for a note…' : phase === 'carrying' ? 'Opening…' : 'Carry it across'}
           </button>
         )}
@@ -127,7 +129,7 @@ export default function HandoverBubble({ story, onOpened, onError }: {
       </div>
       {canCarry && (
         <p className="handover-why">
-          The agent writes a handover note, then a new session opens with it. This one stays open.
+          The agent writes a handover note, then a new session opens with it{says.kind === 'limit' && says.accountId ? ' on that account' : ''}. This one stays open.
         </p>
       )}
     </div>

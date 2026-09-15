@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { db } from './db';
 import { getSetting, setSetting } from './settings';
 import {
@@ -2079,7 +2079,7 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     }
 
     const headlessProject = await addProject(projectRoot);
-    const frozenRunId = `headless-fingerprint-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const frozenRunId = `headless-fingerprint-${Date.now()}-${randomBytes(3).toString('hex')}`;
     const frozenConfig = {
       name: 'stale provider fingerprint smoke',
       providerId: 'claude',
