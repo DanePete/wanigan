@@ -37,7 +37,7 @@ import type {
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
 
 /* ── helper sweep · P1 policy ── */
-import type { ApprovalDetail, AutoModeView, FatigueReport, GateSelfTestRun, StoredTrace } from '../shared/types';
+import type { ApprovalDetail, AutoModeView, FatigueReport, GateSelfTestRun, PolicySignal, StoredTrace } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -844,6 +844,7 @@ const api = {
     selfTest: () => call<GateSelfTestRun | null>('policyEvidence:selfTest'),
     fatigue: () => call<FatigueReport>('policyEvidence:fatigue'),
     autoMode: (projectId: string) => call<AutoModeView>('policyEvidence:autoMode', projectId),
+    session: (sessionId: string) => call<{ signals: PolicySignal[] }>('policyEvidence:session', sessionId),
     runSelfTest: () => call<GateSelfTestRun>('policyEvidence:runSelfTest'),
   },
   on: {

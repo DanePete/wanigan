@@ -7,6 +7,8 @@ import type { AutoModeView, ProviderInfo } from '../shared/types';
 import { latestGateSelfTest, runAndRecordGateSelfTest } from './policy-selftest-run';
 import { forgetTaint, observeForTaint } from './tripwire';
 import { fatigueReport, observeFatigue } from './fatigue';
+import { observeForRewrites } from './rewrite-evidence';
+import { sessionSignals } from './policy-signals';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -29,6 +31,7 @@ export function startPolicyEvidence(): void {
     attachApprovalExplanation(stored, input, cwd);
     observeForTaint(stored, input, cwd);
     observeFatigue(stored);
+    observeForRewrites(stored, input, cwd);
     if (stored.event === 'SessionEnd') forgetTaint(stored.sessionId);
   });
 }
@@ -63,6 +66,7 @@ export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
   handle('policyEvidence:fatigue', () => fatigueReport());
+  handle('policyEvidence:session', (sessionId: unknown) => ({ signals: sessionSignals(sessionIdArg(sessionId)) }));
   handle('policyEvidence:autoMode', (projectId: unknown) => autoModeFor(typeof projectId === 'string' && projectId.length <= 200 ? projectId : null));
   handle('policyEvidence:selfTest', () => latestGateSelfTest());
   handle('policyEvidence:runSelfTest', () => runAndRecordGateSelfTest());

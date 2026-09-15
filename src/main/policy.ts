@@ -409,6 +409,22 @@ function traceJson(trace: PolicyTrace | undefined): string | null {
   });
 }
 
+/**
+ * A ledger row for something the gate observed rather than decided — a history
+ * rewrite pinned as evidence, a grant an unattended run relied on. Recorded as
+ * an allow, because nothing was refused, under a rule that says what it is.
+ */
+export function recordEvidenceRow(row: {
+  sessionId: string | null; projectId: string | null; trust: TrustLevel;
+  toolName: string; summary: string; rule: string; reason: string;
+}): void {
+  db().prepare(
+    `INSERT INTO policy_ledger (at, session_id, project_id, trust, tool_name, summary, decision, rule, reason)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  ).run(Date.now(), row.sessionId, row.projectId, row.trust, row.toolName,
+    clip(redactCredentials(row.summary)), 'allow', row.rule, clip(redactCredentials(row.reason), 800));
+}
+
 /** The stored trace for one ledger row, or null when the row carries none. */
 export function ledgerTrace(id: number): StoredTrace | null {
   if (!Number.isInteger(id) || id <= 0) return null;

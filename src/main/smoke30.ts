@@ -260,6 +260,71 @@ export async function runFatigueSmoke(check: Check, say: Say): Promise<void> {
   hooks.cleanupHookSettings(sessionId);
 }
 
+export async function runRewriteEvidenceSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · git history rewrites leave evidence');
+  const { dir, git } = repo('wanigan-rewrite-');
+  try {
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+    git('add', '-A'); git('commit', '-qm', 'one');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'two\n');
+    git('commit', '-qam', 'two');
+    git('branch', 'spike');
+    const orphan = git('rev-parse', 'HEAD').trim();
+    const { addProject, removeProject } = await import('./store');
+    const hooks = await import('./hooks');
+    const policy = await import('./policy');
+    const evidence = await import('./policy-evidence');
+    const rewrite = await import('./rewrite-evidence');
+    const { db } = await import('./db');
+    const project = await addProject(dir);
+    evidence.startPolicyEvidence();
+    await hooks.startHookServer();
+    const sessionId = 's_smoke_p1_rewrite';
+    policy.registerPolicyContext({ sessionId, projectId: project.id, projectPath: dir, trust: 'project', attended: true });
+    const handler = handlerOf(hooks.writeHookSettings(sessionId, dir));
+    if (!handler) { check(false, 'the rewrite smoke session has a hook capability'); return; }
+
+    await post(handler, { hook_event_name: 'SessionStart', cwd: dir });
+    await rewrite.rewriteEvidenceIdle(sessionId);
+    await post(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: 'git reset --hard HEAD~1 && git branch -D spike' } });
+    // The agent's command, run for real: history on main loses "two", and the
+    // only other branch holding it is deleted.
+    git('reset', '-q', '--hard', 'HEAD~1');
+    git('branch', '-D', 'spike');
+    const statusBefore = git('status', '--porcelain');
+    const headBefore = git('rev-parse', 'HEAD').trim();
+    await post(handler, { hook_event_name: 'Stop', cwd: dir });
+    await new Promise((r) => setTimeout(r, 50));
+    await rewrite.rewriteEvidenceIdle(sessionId);
+
+    const prefix = rewrite.evidenceRefPrefix(sessionId);
+    const pins = git('for-each-ref', '--format=%(objectname) %(refname)', prefix).trim().split('\n').filter(Boolean);
+    check(pins.length === 1 && pins[0].startsWith(orphan),
+      'the commit orphaned by reset --hard and branch -D is pinned once under refs/wanigan/evidence/<session>/', pins);
+    check(git('status', '--porcelain') === statusBefore && git('rev-parse', 'HEAD').trim() === headBefore,
+      'pinning wrote nothing to the working tree, the index or HEAD');
+    const rows = policy.ledger(50).filter((r) => r.sessionId === sessionId && r.rule === 'evidence.git-rewrite');
+    check(rows.length === 2 && rows.some((r) => r.summary.includes('refs/heads/main') && r.summary.includes('non-fast-forward'))
+      && rows.some((r) => r.summary.includes('refs/heads/spike') && r.summary.includes('deleted')),
+    'a ledger row names each rewritten ref and how it moved', rows.map((r) => r.summary));
+    const commandSignal = db().prepare("SELECT summary FROM policy_signals WHERE session_id = ? AND kind = 'git-rewrite-command'").get(sessionId) as { summary: string } | undefined;
+    check(/reset-hard, branch-delete/.test(commandSignal?.summary ?? ''), 'the rewriting command itself is recorded from its PreToolUse', commandSignal);
+    const { sessionSignals } = await import('./policy-signals');
+    const kinds = sessionSignals(sessionId).map((s) => s.kind);
+    check(kinds.filter((k) => k === 'git-rewrite').length === 2 && kinds.includes('git-rewrite-command'),
+      'the session’s timeline read returns both pins and the command', kinds);
+
+    const removed = await rewrite.forgetEvidenceRefs(sessionId);
+    check(removed === 1 && git('for-each-ref', prefix).trim() === '', 'retention removes the pins through the checkpoint cleanup path, and the ledger rows stay');
+
+    policy.releasePolicyContext(sessionId);
+    hooks.cleanupHookSettings(sessionId);
+    removeProject(project.id);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function runAutoModeSmoke(check: Check, say: Say): Promise<void> {
   say('── helper sweep · P1 · trust levels as auto-mode classifier rules');
   const hooks = await import('./hooks');

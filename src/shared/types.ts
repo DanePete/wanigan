@@ -3527,3 +3527,13 @@ export type AutoModeView = import('./auto-mode').CompiledAutoMode & {
   /** Which CLI profile the version came from; null when no Claude Code harness was detected. */
   providerLabel: string | null;
 };
+
+/** One observation recorded beside the policy ledger (policy_signals). */
+export type PolicySignal = {
+  id: number;
+  at: number;
+  sessionId: string | null;
+  kind: string;
+  rule: string;
+  summary: string;
+};

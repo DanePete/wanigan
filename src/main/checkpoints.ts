@@ -6,6 +6,8 @@ import { runGit } from './git';
 import { onHookEvent } from './hooks';
 import { assertManagedRoot } from './roots';
 import { getSetting } from './settings';
+/* ── helper sweep · P1 policy ── */
+import { forgetEvidenceRefs, staleEvidenceSessions } from './rewrite-evidence';
 import type {
   CheckpointDiff, CheckpointKind, CheckpointRevertAction, CheckpointRevertPlan,
   CheckpointRevertResult, SessionCheckpoint,
@@ -460,6 +462,9 @@ export function forgetSessionCheckpoints(sessionId: string): void {
     if (!fs.existsSync(root)) continue;
     void runGit(root, ['update-ref', '-d', refFor(sessionId)], { timeout: 8_000 }).catch(() => {});
   }
+  /* ── helper sweep · P1 policy ── */
+  // History-rewrite evidence pins live beside the checkpoints and leave with them.
+  void forgetEvidenceRefs(sessionId, roots).catch(() => {});
   try { db().prepare('DELETE FROM session_checkpoints WHERE session_id = ?').run(sessionId); } catch { /* next prune retries */ }
   live.delete(sessionId);
   try { fs.rmSync(indexFileFor(sessionId), { force: true }); } catch { /* scratch file */ }
@@ -480,6 +485,13 @@ export function pruneCheckpoints(olderThanMs: number): number {
     if (live.has(id)) continue;
     forgetSessionCheckpoints(id);
     gone += 1;
+  }
+  /* ── helper sweep · P1 policy ── */
+  // A session can pin rewrite evidence without ever capturing a checkpoint, so
+  // its pins are swept on the same retention by their own signal rows.
+  for (const id of staleEvidenceSessions(cutoff, PRUNE_SESSIONS_PER_PASS)) {
+    if (live.has(id) || sessions.includes(id)) continue;
+    void forgetEvidenceRefs(id).catch(() => {});
   }
   return gone;
 }

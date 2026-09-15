@@ -235,6 +235,7 @@ export async function runSmoke(): Promise<void> {
     await p1.runTripwireSmoke(check, say);
     await p1.runFatigueSmoke(check, say);
     await p1.runAutoModeSmoke(check, say);
+    await p1.runRewriteEvidenceSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }
