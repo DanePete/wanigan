@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runGitSync } from '../git';
+import { claudeProjectSlug } from '../../shared/claude-slug';
 import { managedPolicyDir } from './instructions';
 
 /**
@@ -181,10 +182,12 @@ function expandHome(p: string, base: string): string {
 
 /**
  * Claude Code derives <project> by replacing every non-alphanumeric character
- * with '-'. Case is preserved, and the leading '/' becomes a leading '-'.
+ * with '-'. Case is preserved, and the leading '/' becomes a leading '-'. A
+ * name past 200 characters is cut and given a hash of the path; that rule and
+ * its vectors are in src/shared/claude-slug.ts.
  */
 export function slugForPath(p: string): string {
-  return path.resolve(p).replace(/[^A-Za-z0-9]/g, '-');
+  return claudeProjectSlug(path.resolve(p));
 }
 
 /**

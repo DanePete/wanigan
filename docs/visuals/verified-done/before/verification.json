@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-15T04:25:23.134Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the implementation task offers Mark complete on the agent's word, and the gate result is a one-line summary in the evidence column",
+    "before: Execution & spending has no say over what happens when an agent stops"
+  ],
+  "errors": []
+}

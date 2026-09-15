@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T03:49:52.946Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "the sandbox choice is off by default, says what it confines and what it does not before the choice, and stores below-trusted when picked; Trusted names its one exception"
+  ],
+  "errors": []
+}

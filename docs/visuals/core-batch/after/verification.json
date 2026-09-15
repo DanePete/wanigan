@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-14T23:22:50.988Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "a changed configuration is itemised in the launch dialog, launch waits for an explicit confirmation, and the confirmed digest travels with the launch",
+    "continuing a running Codex conversation on another account ends nothing on the first press, and says why it must end the session",
+    "Context shows the changed configuration and records an acceptance for exactly the digest on screen, then reads as reviewed",
+    "the Fleet inspector says why a session needs you: the rule, the event it read, and when",
+    "a review whose last decision asked for changes explains that reopening sends the implementation back with the note"
+  ],
+  "errors": []
+}

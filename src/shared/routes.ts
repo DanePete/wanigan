@@ -46,7 +46,7 @@ export const TABS = [
   // this answers "what is outstanding, and what am I doing about it today" —
   // which spans goals and is therefore a different surface, not a tab inside
   // one. Appended past the digit row for the reason stated above Usage.
-  { id: 'board',     label: 'Board',     group: 'Work',    hint: 'Every ticket across every goal, in columns you can move and park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
+  { id: 'board',     label: 'Board',     group: 'Work',    hint: 'Every ticket across every goal, in columns, to start, retry or park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
   { id: 'mission', label: 'Mission room', group: 'Work', hint: 'Your companion and a briefing across project spaces', keywords: 'home orb assistant companion chat overview spaces' },
 ] as const;
 

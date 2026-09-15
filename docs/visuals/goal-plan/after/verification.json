@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T03:37:05.476Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "the goal's evidence shows the accepted plan as the planning agent's words, where it was accepted, and that later tasks receive it"
+  ],
+  "errors": []
+}

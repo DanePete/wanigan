@@ -233,6 +233,8 @@ export type Session = {
    * saying.
    */
   accountNote?: string | null;
+  /** What the executable-config pin did at launch, when it did anything: a first-use pin or a reviewed change. */
+  configNote?: string | null;
   /** How the docket goal capsule reached this session, when one was requested. */
   goalCapsule?: GoalCapsuleDelivery | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
@@ -294,6 +296,12 @@ export type LaunchOptions = {
    * instructions, recorded as a work-trace row, never mutated by the renderer.
    */
   goalCapsule?: GoalCapsule;
+  /**
+   * The executable-config digest the operator read and accepted in the launch
+   * dialog. Main recomputes the digest at launch and launches only when they
+   * match, so a configuration that moved again is asked about again.
+   */
+  acceptConfigDigest?: string;
 };
 
 /** A finished session, recoverable after a quit. */
@@ -753,6 +761,25 @@ export type Attention = {
   detail: string | null;
   /** The tool currently in flight, if one is. */
   tool: string | null;
+  /**
+   * Why this verdict and not another: the rule that decided it, the recorded
+   * event it read, and the rule stated with its threshold. Every verdict the
+   * classifier makes carries one; a verdict assembled elsewhere without the
+   * evidence leaves it out rather than inventing one.
+   */
+  reason?: AttentionReason;
+};
+
+export type AttentionRule =
+  | 'permission-request' | 'nonzero-exit' | 'repeated-failure' | 'recent-failure'
+  | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working';
+
+export type AttentionReason = {
+  rule: AttentionRule;
+  /** The hook event the rule read, by name and arrival time; null when the rule read something else, such as an exit code. */
+  event: { name: string; at: number } | null;
+  /** The rule in words, with its threshold. */
+  because: string;
 };
 
 /* ── P4 · transcripts ───────────────────────────────────────────────── */
@@ -1158,6 +1185,35 @@ export type HeadlessConfig = {
   timeoutMs: number;
   /** Worktree per repo, so a headless fleet never fights the working tree. */
   isolate: boolean;
+  /**
+   * Hold a call that needs approval for the operator, instead of denying it.
+   * Opted into per run: Claude Code ignores a hold when the model asked for
+   * several tools at once, and that call then falls to the CLI's own
+   * permission rules, where a plain deny could not be ignored. See
+   * src/shared/deferred-approvals.ts.
+   */
+  holdForApproval?: boolean;
+};
+
+/**
+ * A call a headless row stopped on, waiting for a person.
+ *
+ * `summary` is the redacted, bounded line a person decides on, never the
+ * whole input. `permissionMode` is what the run was deferred under, because
+ * the CLI does not restore it on resume and a resume under another mode is
+ * not the same run.
+ */
+export type HeadlessHeld = {
+  toolUseId: string;
+  toolName: string;
+  summary: string;
+  cliSessionId: string;
+  permissionMode: string;
+  heldAt: number;
+  /** Null until someone answers. `stop` ends the row without resuming it. */
+  answer: { decision: 'allow' | 'deny' | 'stop'; note: string | null; answeredAt: number } | null;
+  /** When the resumed run started, so one answer can never resume twice. */
+  resumedAt: number | null;
 };
 
 /**
@@ -1176,7 +1232,7 @@ export type HeadlessRow = {
   projectId: string;
   projectName: string;
   projectPath: string;
-  status: 'pending' | 'running' | 'succeeded' | 'errored' | 'timeout' | 'canceled' | 'blocked';
+  status: 'pending' | 'running' | 'succeeded' | 'errored' | 'timeout' | 'canceled' | 'blocked' | 'awaiting';
   costUsd: number;
   /**
    * Whether the CLI named a cost at all. `costUsd` cannot answer this: a run
@@ -1193,6 +1249,8 @@ export type HeadlessRow = {
   worktree: string | null;
   startedAt: number | null;
   endedAt: number | null;
+  /** The call this row is waiting on, or last waited on; null when it never held one. */
+  held: HeadlessHeld | null;
 };
 
 /**
@@ -1238,6 +1296,8 @@ export type HeadlessRun = {
   failed: number;
   blocked: number;
   open: number;
+  /** Rows stopped on a held call, waiting for a person's answer. */
+  awaiting: number;
   filesChanged: number;
 };
 
@@ -1270,6 +1330,7 @@ export type WorkDocket = {
   createdAt: number;
   updatedAt: number;
   autopilot: DocketAutopilot;
+  gate: DocketGate;
 };
 
 /**
@@ -1382,6 +1443,15 @@ export type DocketNode = {
    */
   deferUntil: number | null;
   /**
+   * When this task was last reopened, or null. Gate proofs from before it
+   * describe work the reopen replaced and do not count toward completing it.
+   */
+  reopenedAt: number | null;
+  /** When a review gate run for this task began, while one is running in this Wanigan process; otherwise null. */
+  gateRunningSince: number | null;
+  /** Failed gates typed back into this task's session since it last started. */
+  gateReturns: number;
+  /**
    * The autopilot dispatcher has claimed this task and is about to launch it.
    * A queued task reads as 'ready' otherwise, so pressing Start raced the
    * dispatcher: both created a worktree and a PTY, the atomic claim decided
@@ -1409,6 +1479,19 @@ export type DocketClaim = {
  * session. The objective, instructions and acceptance checks travel in the
  * first prompt as before; this carries only what was missing there.
  */
+/** A plan captured from a goal task's planning session. `text` is the agent's own words. */
+export type GoalPlan = {
+  docketId: string;
+  nodeId: string;
+  nodeTitle: string;
+  state: 'proposed' | 'accepted';
+  text: string;
+  truncated: boolean;
+  edited: boolean;
+  planFilePath: string | null;
+  capturedAt: number;
+};
+
 export type GoalCapsule = {
   docketId: string;
   docketTitle: string;
@@ -1423,6 +1506,19 @@ export type GoalCapsule = {
   siblingClaims: { nodeId: string; title: string; path: string }[];
   /** Whether this harness can claim/checkpoint through Wanigan's MCP tools. */
   canClaimLive: boolean;
+  /**
+   * What a human reviewer asked to change, newest first, from "Request changes"
+   * decisions on this goal. The note used to be stored and never reach any
+   * agent; this is how it reaches the one launched to address it.
+   */
+  changesRequested: { note: string; decidedAt: number }[];
+  /**
+   * The goal's accepted plan (or, failing that, its latest proposal) as it
+   * stood at launch, for every task but the planning one. Written by the
+   * planning agent, and handed on labelled as that. Null when no plan was
+   * captured.
+   */
+  plan: { nodeTitle: string; state: 'proposed' | 'accepted'; text: string; truncated: boolean; edited: boolean; capturedAt: number } | null;
   recordedAt: number;
 };
 
@@ -1441,6 +1537,50 @@ export type DocketProof = {
   status: 'recorded' | 'passed' | 'failed';
   summary: string;
   createdAt: number;
+  /**
+   * The rest is read from a gate run's desktop-only detail, so only `test`
+   * proofs carry it, and a proof written before it was recorded has none.
+   * None of it crosses to a paired phone, which reads `summary`.
+   */
+  gate?: GateProofDetail;
+};
+
+/** Who started a review gate run. */
+export type ProofTrigger = 'operator' | 'stop';
+
+export type GateProofDetail = {
+  trigger: ProofTrigger;
+  /**
+   * The git tree the gate started against: a content hash of the working copy,
+   * untracked files included and ignored files not. Null when it could not be
+   * read, which is said rather than guessed.
+   */
+  tree: string | null;
+  /** Heuristic weak-oracle reading of the diff since the goal's base commit, or null when that diff could not be read. */
+  oracle: OracleReading | null;
+  /** Why `oracle` is null, when it is. */
+  oracleNote: string | null;
+  /** The command that failed and the lines of its output kept, on a failed run. */
+  failure: { command: string; exitCode: number | null; excerpt: string; cut: boolean } | null;
+  /** What happened to a failure after it was recorded: typed back into the session, or why not. */
+  handBack: { sent: boolean; attempt: number | null; sentence: string } | null;
+};
+
+export type OracleFlag =
+  | { kind: 'tests-edited-with-code'; testFiles: number; codeFiles: number }
+  | { kind: 'test-without-assertion'; path: string };
+
+export type OracleReading = { testFiles: number; codeFiles: number; flags: OracleFlag[] };
+
+/**
+ * A goal's verified-done settings. Both are off until the operator turns them
+ * on, and `returnFailures` is never on without `onStop`.
+ */
+export type DocketGate = {
+  /** Run the review gate each time an implementation or verification agent stops. */
+  onStop: boolean;
+  /** Type a failed gate's error lines back into that agent's session, a capped number of times. */
+  returnFailures: boolean;
 };
 
 export type DocketCheckpoint = {
@@ -1460,6 +1600,8 @@ export type DocketDetail = WorkDocket & {
   claims: DocketClaim[];
   proofs: DocketProof[];
   checkpoints: DocketCheckpoint[];
+  /** Commands in the project's review gate, so a gate setting can say why it cannot turn on beside the control. */
+  reviewCommands: number;
 };
 
 /**
@@ -1581,8 +1723,12 @@ export type GoalTraceEvent = {
   docketId: string;
   nodeId: string;
   sessionId: string;
-  /** 'launch' rows are written by Control itself when a node starts (the goal capsule). */
-  source: 'hook' | 'telemetry' | 'launch';
+  /**
+   * 'launch' rows are written by Control itself when a node starts (the goal
+   * capsule); 'gate' rows when a gate an agent's stop asked for could not run,
+   * or when a failed one was typed back into the session.
+   */
+  source: 'hook' | 'telemetry' | 'launch' | 'gate';
   kind: string;
   status: 'recorded' | 'failed';
   toolName: string | null;
@@ -1940,6 +2086,36 @@ export type McpServerReview = {
 
 /* ── P13 · uploaded rows ────────────────────────────────────────────── */
 
+/**
+ * What an attachment reclaim would remove now, for a window that may not be
+ * switched on yet. Nothing has been deleted to produce it. `kept` counts the
+ * session directories left alone, by the reason each was left.
+ */
+export type AttachmentReclaimPreview = {
+  enabled: boolean;
+  windowDays: number;
+  cutoff: number;
+  scanned: number;
+  directories: number;
+  filesEligible: number;
+  bytesEligible: number;
+  kept: Partial<Record<'session-still-open' | 'no-session-record' | 'resumed-later' | 'within-window' | 'referenced' | 'holds-agent-output' | 'unreadable', number>>;
+};
+
+/** One recorded reclaim pass. Bytes are measured from files confirmed gone. */
+export type AttachmentReclaimSummary = {
+  ranAt: number;
+  how: 'scheduled' | 'on-request';
+  windowDays: number;
+  scanned: number;
+  directories: number;
+  filesRemoved: number;
+  bytesFreed: number;
+  kept: number;
+  errors: number;
+  firstError: string | null;
+};
+
 export type UploadedFile = {
   hash: string;
   fileId: string;
@@ -2062,7 +2238,10 @@ export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> =
   },
   trusted: {
     label: 'Trusted',
-    detail: 'Nothing is denied by Wanigan. The OS sandbox and the agent’s own permission prompts are the only limits.',
+    // One refusal outranks trust, like the halt: reading the bearer tokens
+    // Wanigan hands every other session is never a trusted repository's own
+    // work, and a session holding one can speak for another.
+    detail: 'Nothing is denied by Wanigan except reading other sessions’ Wanigan credentials. Claude Code’s sandbox, if you turn it on, and the agent’s own permission prompts are the other limits.',
   },
 };
 
@@ -2185,7 +2364,8 @@ export function harnessLabel(harness: string): string {
 }
 
 export type PolicyDecision = {
-  decision: 'allow' | 'deny' | 'ask';
+  /** `defer` only ever answers an unattended run that opted into holding calls. */
+  decision: 'allow' | 'deny' | 'ask' | 'defer';
   reason: string;
   /** The rule that fired, for the ledger. */
   rule: string;
@@ -2200,7 +2380,7 @@ export type LedgerEntry = {
   trust: TrustLevel;
   toolName: string;
   summary: string;
-  decision: 'allow' | 'deny' | 'ask';
+  decision: 'allow' | 'deny' | 'ask' | 'defer';
   rule: string;
   reason: string;
 };
@@ -2250,8 +2430,12 @@ export type WaniganSettings = {
    * of paths. See settings.ts's mobileRepositoryReview().
    */
   mobileRepositoryReview: boolean;
+  /** Which Claude Code sessions run shell commands in Claude Code's sandbox; see shared/sandbox-policy.ts. */
+  sandboxShell: SandboxShell;
   learning: LearningSettings;
 };
+
+export type SandboxShell = 'off' | 'below-trusted' | 'always';
 
 /* ── AI Improvement Scout ──────────────────────────────────────────── */
 

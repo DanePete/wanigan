@@ -222,6 +222,20 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
     check(fs.existsSync(rollout),
       'and the account it started on can still continue it — the source is never moved');
 
+    // The resume that follows a handoff names the other account. It used to be
+    // refused for exactly that — "this conversation belongs to Handoff From" —
+    // so the link was made and the conversation never continued anywhere.
+    const { resumeAccountFor } = await import('./sessions');
+    db().prepare('UPDATE session_log SET account_id = ? WHERE id = ?').run(from.id, sid);
+    const resumed = resumeAccountFor(sid, 'codex', to.id);
+    check(resumed.accountId === to.id && /handed over/.test(resumed.note ?? ''),
+      'after a handoff, resuming under the account it was handed to is allowed and says why', JSON.stringify(resumed));
+    const stranger = accountsMod.create({ harness: 'codex', label: 'Handoff Stranger', configDir: path.join(dataDir(), 'handoff-stranger') });
+    let strangerRefused = false;
+    try { resumeAccountFor(sid, 'codex', stranger.id); } catch { strangerRefused = true; }
+    check(strangerRefused, 'an account the conversation was never handed to is still refused, because Codex would not find it there');
+    accountsMod.remove(stranger.id);
+
     // Running it twice must not fail: an operator can click again.
     const again = handoffConversation(sid, to.id);
     check(again.linkedTo === moved.linkedTo, 'handing the same conversation over twice is a no-op, not an error');
@@ -261,6 +275,24 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
       'the handover prompt asks for a note rather than a one-word instruction');
     check(handoverSeed('x').includes('previous session'),
       'the fresh session is told the text is a handover, not passed it off as the work');
+
+    // "Personal has room. Carry the work there?" used to open the new session
+    // on the pressed account anyway. The id comes from the renderer, so it has
+    // to be an account of this session's own harness.
+    const { __test: handoverTest } = await import('./handover');
+    const accountsForCarry = await import('./accounts');
+    const { dataDir: carryDataDir } = await import('./db');
+    const carryPath = await import('node:path');
+    const claudeHome = accountsForCarry.create({ harness: 'claude-code', label: 'Carry Roomier', configDir: carryPath.join(carryDataDir(), 'carry-roomier') });
+    const codexHome = accountsForCarry.create({ harness: 'codex', label: 'Carry Codex', configDir: carryPath.join(carryDataDir(), 'carry-codex') });
+    const pressed = { providerId: 'claude', accountId: 'acct_pressed' } as import('../shared/types').Session;
+    const refuses = (id: string) => { try { handoverTest.carryAccount(pressed, id); return false; } catch { return true; } };
+    check(handoverTest.carryAccount(pressed, claudeHome.id) === claudeHome.id,
+      'taking the roomier-account offer opens the fresh session on that account, not the pressed one');
+    check(handoverTest.carryAccount(pressed, null) === 'acct_pressed' && handoverTest.carryAccount(pressed, 'acct_pressed') === 'acct_pressed',
+      'with no offer taken, the fresh session keeps the account the conversation already runs as');
+    check(refuses(codexHome.id) && refuses('acct_no_such_account'),
+      'an account of another harness, or one Wanigan does not hold, is refused rather than quietly replaced by the default');
 
     // An empty note and an unreadable transcript are different sentences, and
     // the type keeps them apart so a surface cannot merge them by accident.

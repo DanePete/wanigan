@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -493,6 +494,21 @@ function migratePhases(d: Database.Database) {
       set_at     INTEGER NOT NULL
     );
 
+    -- Digests of a repository's executable configuration that a launch was let
+    -- through with: hooks, MCP servers, helpers, env overrides, git hooks and
+    -- drivers. 'first-use' records trust on first use, never a review; a launch
+    -- whose digest matches no row is asked about (see config-pins.ts).
+    CREATE TABLE IF NOT EXISTS config_pins (
+      id          TEXT PRIMARY KEY,
+      project_id  TEXT NOT NULL,
+      digest      TEXT NOT NULL,
+      items_json  TEXT NOT NULL,
+      how         TEXT NOT NULL,
+      root        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_config_pins_project ON config_pins(project_id, created_at DESC);
+
     -- A review recipe is operator-owned commands plus the immutable evidence
     -- from each execution. Agents may suggest commands; only this surface runs
     -- the configured gate and records its result.
@@ -581,6 +597,7 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateAttempts(d);
   migrateObservedTelemetry(d);
 }
 
@@ -1145,6 +1162,97 @@ function migrateAccounts(d: Database.Database) {
   // estimated" over the sum of both. Nullable on purpose — a row written
   // before this column existed reads as unknown, never as reported.
   addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
+  // The call a row stopped on for a person's answer, and the answer: JSON,
+  // bounded and redacted before it is written (headless.ts). Null for every
+  // row that never held a call, including all rows from before the column.
+  addColumn(d, 'headless_rows', 'held_json', 'TEXT');
+  // The commit the agent started from, read in the directory it ran in after
+  // any worktree was cut. It was computed for the changed-file count and then
+  // thrown away, so a finished row could not say which tree produced it; an
+  // attempt pinned to a commit is refused when this is not that commit. Null
+  // for rows from before the column and rows that never reached a spawn.
+  addColumn(d, 'headless_rows', 'base_head', 'TEXT');
+}
+
+/**
+ * Attempts: one task run several times from one pinned commit, and what each
+ * run left behind. See src/shared/attempts.ts for the two readings.
+ *
+ * An attempt is a pointer to a real single-repository headless run, plus the
+ * facts copied off it once it ends. The copy is deliberate: the run row is the
+ * runner's record and the attempt is the comparison's, and a comparison has to
+ * stay readable after the run list is pruned. Tokens are per attempt because
+ * each attempt is its own run, and a run is where headless tokens are summed.
+ *
+ * No foreign key to projects. Removing a project must not delete the record of
+ * what was spent comparing work in it, which is the same choice headless_rows
+ * makes.
+ */
+function migrateAttempts(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS attempt_sets (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL,
+      kind            TEXT NOT NULL,
+      prompt          TEXT NOT NULL,
+      prompt_sha256   TEXT NOT NULL,
+      base_commit     TEXT NOT NULL,
+      arms_json       TEXT NOT NULL,
+      repeats         INTEGER NOT NULL,
+      budget_usd      REAL NOT NULL,
+      timeout_ms      INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'running',
+      kept_attempt_id TEXT,
+      decided_at      INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempt_sets_created ON attempt_sets(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS attempts (
+      id              TEXT PRIMARY KEY,
+      set_id          TEXT NOT NULL REFERENCES attempt_sets(id) ON DELETE CASCADE,
+      arm_index       INTEGER NOT NULL,
+      repeat_index    INTEGER NOT NULL,
+      headless_run_id TEXT,
+      worktree        TEXT,
+      base_head       TEXT,
+      status          TEXT NOT NULL DEFAULT 'queued',
+      exit_code       INTEGER,
+      duration_ms     INTEGER,
+      cost_usd        REAL,
+      cost_reported   INTEGER,
+      in_tokens       INTEGER,
+      out_tokens      INTEGER,
+      cache_read      INTEGER,
+      cache_write     INTEGER,
+      files_changed   INTEGER,
+      gate_status     TEXT,
+      gate_note       TEXT,
+      review_run_id   TEXT,
+      tree            TEXT,
+      oracle_json     TEXT,
+      started_at      INTEGER,
+      ended_at        INTEGER,
+      UNIQUE (set_id, arm_index, repeat_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempts_set ON attempts(set_id, repeat_index, arm_index);
+    CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(headless_run_id) WHERE headless_run_id IS NOT NULL;
+  `);
+  // Why a run could not start or was refused, copied off its row: the run's
+  // error is the only account of a pinned worktree that came out at the wrong
+  // commit, and it has to outlive the run list.
+  addColumn(d, 'attempts', 'error', 'TEXT');
+  // What the run was actually stored with — provider, profile fingerprint,
+  // model, effort and a hash of the prompt — so the evidence label compares
+  // recorded facts against the arm, rather than restating what was asked for.
+  addColumn(d, 'attempts', 'launch_json', 'TEXT');
+  // When this process began gating the attempt. A gate left 'running' by a
+  // process that died is closed as unavailable on the next start, the same
+  // way an interrupted review run is, rather than read as still in flight.
+  addColumn(d, 'attempts', 'gate_started_at', 'INTEGER');
+  // Whether the set holds calls that need approval for the operator: copied to
+  // every attempt's run, and shown on the set so a paused trial is explained.
+  addColumn(d, 'attempt_sets', 'hold_for_approval', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /**
@@ -1368,6 +1476,21 @@ function migrateControl(d: Database.Database) {
   // "not now, but not never" — instead of forcing every known issue to be
   // either in progress or forgotten.
   addColumn(d, 'work_nodes', 'defer_until', 'INTEGER');
+  // When a task was last reopened. A gate proof written before it is evidence
+  // about a tree the reopened work has since replaced, so it must not complete
+  // the task a second time — hasPassedProof in control.ts and the phone's gate
+  // reading both count only proofs from after this moment.
+  addColumn(d, 'work_nodes', 'reopened_at', 'INTEGER');
+  // Verified done, opted into per goal. `gate_on_stop` runs the review gate
+  // each time an implementation or verification agent stops, and holds an
+  // implementation task until a gate has passed. `return_failures` types a
+  // failed gate's error lines back into that session, which starts another
+  // agent turn and so spends tokens: off unless chosen, and never on without
+  // the gate. `gate_returns` counts those per task run so the cap holds across
+  // a restart; starting or reopening the task resets it.
+  addColumn(d, 'work_dockets', 'gate_on_stop', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_dockets', 'return_failures', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_nodes', 'gate_returns', 'INTEGER NOT NULL DEFAULT 0');
   // The interview that produced a goal, kept after it did.
   //
   // Durable rather than in memory because an interview is ten minutes of the
@@ -1557,5 +1680,5 @@ export function newRunId(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+  return `run_${stamp}_${randomBytes(2).toString('hex')}`;
 }

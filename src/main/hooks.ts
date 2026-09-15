@@ -6,6 +6,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
+import { planFromHook, recordGoalPlan } from './goal-plans';
+import type { ClaudeSandboxSettings } from '../shared/sandbox-policy';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import { acceptStatusLine, cleanupStatusLine, statusLineEntry, sweepStatusLineFiles } from './statusline';
@@ -267,6 +269,8 @@ export type HookSettingsOptions = {
    * and unknown earns the base event set only.
    */
   cliVersion?: string | null;
+  /** Claude Code's sandbox block, when sandboxing applies to this launch (shared/sandbox-policy.ts). */
+  sandbox?: ClaudeSandboxSettings | null;
 };
 
 /** The leading dotted triple of a `--version` line; null when there is none. */
@@ -346,7 +350,12 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify(statusLine ? { hooks, statusLine } : { hooks }, null, 2), { mode: 0o600 });
+  // The sandbox and the status line ride in the same --settings file on
+  // purpose: the binary honours the sandbox keys from CLI settings and ignores
+  // them from a repository, and the status line relay carries this session's
+  // capability.
+  const settings = { hooks, ...(options.sandbox ? { sandbox: options.sandbox } : {}), ...(statusLine ? { statusLine } : {}) };
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
@@ -755,6 +764,11 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
     };
     recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
       toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
+    // A goal task's plan, proposed and then accepted, becomes that goal's
+    // evidence and reaches the tasks after it (goal-plans.ts). Only goal work
+    // records anything; its own try, like the trace, never costs a tool call.
+    const plan = planFromHook(event, toolName, input as Record<string, unknown>);
+    if (plan) { try { recordGoalPlan(sessionId, plan, at); } catch { /* the event row above stands either way */ } }
     if (event === 'PostModelSwitch') {
       // The row above is the evidence; this is the correction it implies. Kept
       // inside its own try because a stale model field is a smaller wrong than
