@@ -110,6 +110,7 @@ import * as scout from './improvement-scout';
 import { registerP5Ipc } from './ipc-p5';
 import * as processWatch from './process-watch';
 import { recordLaunchProvenance } from './launch-provenance';
+import { recordModelRequest } from './model-substitutions';
 /* ── end helper sweep · P5 runtime ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
@@ -1994,6 +1995,7 @@ function registerIpc() {
     const created = await createSession(opts);
     /* ── helper sweep · P5 runtime ── */
     recordLaunchProvenance(created, opts);
+    recordModelRequest(created.id, created.model, 'launch', created.createdAt);
     /* ── end helper sweep · P5 runtime ── */
     // The first live agent is what takes the power-save blocker. Doing it here
     // rather than waiting for the poller means the Mac is already held before
@@ -2013,7 +2015,12 @@ function registerIpc() {
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
   // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
   // slash command and its session-record update cannot drift apart.
-  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => setSessionTuning(id, field, value));
+  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => {
+    const delivered = setSessionTuning(id, field, value);
+    /* ── helper sweep · P5 runtime: a /model Wanigan typed is a request ── */
+    if (delivered && field === 'model' && typeof value === 'string') recordModelRequest(id, value, 'wanigan');
+    return delivered;
+  });
   // The status bar may reveal only the folder of a live Wanigan session. A
   // generic renderer-controlled shell.openPath bridge would let a compromised
   // renderer invoke arbitrary file handlers on this Mac.

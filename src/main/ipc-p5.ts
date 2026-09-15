@@ -17,6 +17,7 @@ import { previewDiagnostics, saveDiagnostics } from './diagnostics';
 import { BrowserWindow } from 'electron';
 import { envNamesFor, launchProvenanceFor } from './launch-provenance';
 import { goalReviewOnly, preparePrReview, setGoalReviewOnly } from './review-only';
+import { substitutionsFor } from './model-substitutions';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -75,6 +76,9 @@ export function registerP5Ipc(handle: Handle): void {
     return goalReviewOnly(docketId);
   });
   handle('review:setGoalReviewOnly', (docketId: unknown, enabled: unknown) => setGoalReviewOnly(docketId, enabled));
+
+  // ── asked for X, answered by Y ──────────────────────────────────────
+  handle('models:substitutions', (sessionId: unknown) => substitutionsFor(sessionId));
   // Names only: the dialog shows which variables a profile sets, never a value.
   handle('launchProvenance:envNames', (providerId: unknown) => {
     const def = typeof providerId === 'string' ? providerById(providerId) : null;

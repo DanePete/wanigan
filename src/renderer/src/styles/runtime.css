@@ -91,3 +91,7 @@
 .review-pr-label { font-size: var(--t-small); color: var(--text-dim); }
 .review-pr-hint { flex-basis: 100%; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
 .session-review-only { margin: 0; padding-block: var(--s-2); display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: baseline; font-size: var(--t-small); color: var(--text-dim); }
+.model-subs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.model-subs li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
+.model-subs-facts { color: var(--text-dim); line-height: 1.45; overflow-wrap: anywhere; }
+.model-subs-compact { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }

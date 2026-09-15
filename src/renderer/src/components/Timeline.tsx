@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionCheckpoint, SessionEvent } from '@shared/types';
 import { Note, Section, Stat, Icon, ago, num } from './bits';
+/* helper sweep · P5 runtime */
+import ModelSubstitutions from './ModelSubstitutions';
 
 /**
  * What the agent DID, beside the terminal that says what it claimed.
@@ -233,6 +235,8 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
         <div className="tl-sticky">
           <div className="tl-identity"><strong>Session activity</strong><button className="tl-chip" type="button" onClick={() => scroll.current?.scrollTo({ top: 0, behavior: 'instant' })}>Latest</button></div>
           <LiveStrip live={live} now={now} />
+          {/* helper sweep · P5 runtime: asked for one model, answered by another. */}
+          <ModelSubstitutions sessionId={sessionId} compact />
           <div className="tl-filters">
             <input
               className="field tl-search"

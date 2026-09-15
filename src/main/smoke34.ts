@@ -585,3 +585,56 @@ export async function runReviewOnlySmoke(check: Check, say: Say): Promise<void> 
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+/**
+ * helper sweep · P5 runtime — asked for X, answered by Y.
+ *
+ * A recorded session asks for `opus`, is answered by Opus, then by Sonnet after
+ * the CLI's own fallback, and is then switched to `sonnet` by a person — after
+ * which Sonnet answering is agreement, not substitution.
+ */
+export async function runModelSubstitutionSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · asked for X, answered by Y');
+  const { db } = await import('./db');
+  const subs = await import('./model-substitutions');
+  const id = `s_p5_subs_${Date.now()}`;
+  const t0 = Date.now() - 60_000;
+  try {
+    db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, project_path, project_name, started_at, harness_id, model)
+                  VALUES (?, NULL, 'claude', '/tmp', 'subs', ?, 'claude-code', 'sonnet')`).run(id, t0);
+    const none = subs.substitutionsFor(id);
+    check(none.substitutions.length === 0 && /was not recorded/.test(none.note ?? ''),
+      'with no recorded launch request, nothing is compared and the reason is said', none);
+
+    subs.recordModelRequest(id, 'opus', 'launch', t0);
+    const api = db().prepare("INSERT INTO session_api_events (session_id, at, kind, model, cost_usd) VALUES (?,?, 'request', ?, ?)");
+    api.run(id, t0 + 1_000, 'claude-opus-5[1m]', 0.30);
+    api.run(id, t0 + 3_000, 'claude-sonnet-5-20260901', 0.04);
+    api.run(id, t0 + 4_000, 'claude-sonnet-5-20260901', 0.05);
+    const ev = db().prepare("INSERT INTO session_events (session_id, at, event, summary) VALUES (?,?, 'PostModelSwitch', ?)");
+    ev.run(id, t0 + 2_000, 'claude-opus-5 → claude-sonnet-5 · auto');
+    ev.run(id, t0 + 10_000, 'claude-sonnet-5 → claude-sonnet-5 · command');
+    api.run(id, t0 + 11_000, 'claude-sonnet-5-20260901', 0.07);
+
+    const read = subs.substitutionsFor(id);
+    const [only] = read.substitutions;
+    check(read.substitutions.length === 1 && only.requested === 'opus' && /claude-sonnet-5/.test(only.reported),
+      'requested opus, answered by Sonnet is one substitution; Opus[1m] answering opus is not', read.substitutions);
+    check(only?.count === 3 && Math.abs((only?.costUsd ?? 0) - 0.09) < 1e-9,
+      'it counts the CLI fallback and the two Sonnet answers, and attributes their reported cost to Sonnet', only);
+    check(!!only && only.via.includes('auto-switch') && only.via.includes('otel'), 'and says which evidence it read', only?.via);
+    const stored = db().prepare('SELECT count, cost_usd FROM model_substitutions WHERE session_id=?').all(id) as { count: number; cost_usd: number }[];
+    check(stored.length === 1 && stored[0].count === 3, 'the substitution is kept after the session, for a later read', stored);
+
+    const index = sourceOf('src/main/index.ts');
+    check(/recordModelRequest\(created\.id, created\.model, 'launch', created\.createdAt\)/.test(index)
+      && /if \(delivered && field === 'model' && typeof value === 'string'\) recordModelRequest\(id, value, 'wanigan'\)/.test(index),
+    'the launch model and every /model Wanigan types are recorded as requests at their call sites');
+  } finally {
+    db().prepare('DELETE FROM session_api_events WHERE session_id=?').run(id);
+    db().prepare('DELETE FROM session_events WHERE session_id=?').run(id);
+    db().prepare('DELETE FROM model_requests WHERE session_id=?').run(id);
+    db().prepare('DELETE FROM model_substitutions WHERE session_id=?').run(id);
+    db().prepare('DELETE FROM session_log WHERE id=?').run(id);
+  }
+}

@@ -11,6 +11,7 @@ import TeamPanel from '../components/TeamPanel';
 /* helper sweep · P5 runtime */
 import SessionProcessesPanel, { SurvivorsAcrossSessions } from '../components/SessionProcesses';
 import { ReviewOnlyMark } from '../components/ReviewOnly';
+import ModelSubstitutions from '../components/ModelSubstitutions';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -736,6 +737,9 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
           {att.reason.event && <> Read from <span className="mono">{att.reason.event.name}</span>, {ago(att.reason.event.at)}.</>}
         </span>
       )}
+
+      {/* helper sweep · P5 runtime */}
+      <ModelSubstitutions sessionId={s.id} />
 
       <Spark values={spark} live={u.lastAt} />
 

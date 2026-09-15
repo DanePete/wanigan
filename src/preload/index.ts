@@ -15,6 +15,7 @@ import type { DoctorReport } from '../shared/codex-doctor';
 import type { DiagnosticsPreview } from '../shared/diagnostics';
 import type { LaunchOrigin, LaunchProvenanceInput, LaunchValue } from '../shared/launch-provenance';
 import type { Forge } from '../shared/pr-review';
+import type { Substitution } from '../shared/model-substitution';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -877,6 +878,9 @@ const api = {
     }>('review:preparePr', projectId, prNumber),
     goal: (docketId: string) => call<boolean>('review:goalReviewOnly', docketId),
     setGoal: (docketId: string, enabled: boolean) => call<boolean>('review:setGoalReviewOnly', docketId, enabled),
+  },
+  models: {
+    substitutions: (sessionId: string) => call<{ sessionId: string; substitutions: Substitution[]; note: string | null }>('models:substitutions', sessionId),
   },
   launchProvenance: {
     forSession: (sessionId: string) => call<{ origin: LaunchOrigin; values: LaunchValue[] } | null>('launchProvenance:forSession', sessionId),

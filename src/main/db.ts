@@ -1548,6 +1548,29 @@ function migrateHelperSweepP5(d: Database.Database) {
       head       TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    -- What a session asked for, in order: its launch model and each /model
+    -- Wanigan typed. A person's switch in the terminal arrives as a hook event.
+    CREATE TABLE IF NOT EXISTS model_requests (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      at         INTEGER NOT NULL,
+      model      TEXT,
+      via        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_model_requests_session ON model_requests(session_id, at);
+    -- Asked for one model, answered by another, with the reported cost of the
+    -- answers attributed to the model that gave them.
+    CREATE TABLE IF NOT EXISTS model_substitutions (
+      session_id TEXT NOT NULL,
+      requested  TEXT NOT NULL,
+      reported   TEXT NOT NULL,
+      first_at   INTEGER NOT NULL,
+      last_at    INTEGER NOT NULL,
+      count      INTEGER NOT NULL,
+      cost_usd   REAL,
+      via_json   TEXT NOT NULL,
+      PRIMARY KEY (session_id, requested, reported)
+    );
     CREATE TABLE IF NOT EXISTS session_launch_provenance (
       session_id  TEXT PRIMARY KEY,
       at          INTEGER NOT NULL,
