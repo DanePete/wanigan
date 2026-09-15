@@ -1330,6 +1330,7 @@ export type WorkDocket = {
   createdAt: number;
   updatedAt: number;
   autopilot: DocketAutopilot;
+  gate: DocketGate;
 };
 
 /**
@@ -1446,6 +1447,10 @@ export type DocketNode = {
    * describe work the reopen replaced and do not count toward completing it.
    */
   reopenedAt: number | null;
+  /** When a review gate run for this task began, while one is running in this Wanigan process; otherwise null. */
+  gateRunningSince: number | null;
+  /** Failed gates typed back into this task's session since it last started. */
+  gateReturns: number;
   /**
    * The autopilot dispatcher has claimed this task and is about to launch it.
    * A queued task reads as 'ready' otherwise, so pressing Start raced the
@@ -1532,6 +1537,50 @@ export type DocketProof = {
   status: 'recorded' | 'passed' | 'failed';
   summary: string;
   createdAt: number;
+  /**
+   * The rest is read from a gate run's desktop-only detail, so only `test`
+   * proofs carry it, and a proof written before it was recorded has none.
+   * None of it crosses to a paired phone, which reads `summary`.
+   */
+  gate?: GateProofDetail;
+};
+
+/** Who started a review gate run. */
+export type ProofTrigger = 'operator' | 'stop';
+
+export type GateProofDetail = {
+  trigger: ProofTrigger;
+  /**
+   * The git tree the gate started against: a content hash of the working copy,
+   * untracked files included and ignored files not. Null when it could not be
+   * read, which is said rather than guessed.
+   */
+  tree: string | null;
+  /** Heuristic weak-oracle reading of the diff since the goal's base commit, or null when that diff could not be read. */
+  oracle: OracleReading | null;
+  /** Why `oracle` is null, when it is. */
+  oracleNote: string | null;
+  /** The command that failed and the lines of its output kept, on a failed run. */
+  failure: { command: string; exitCode: number | null; excerpt: string; cut: boolean } | null;
+  /** What happened to a failure after it was recorded: typed back into the session, or why not. */
+  handBack: { sent: boolean; attempt: number | null; sentence: string } | null;
+};
+
+export type OracleFlag =
+  | { kind: 'tests-edited-with-code'; testFiles: number; codeFiles: number }
+  | { kind: 'test-without-assertion'; path: string };
+
+export type OracleReading = { testFiles: number; codeFiles: number; flags: OracleFlag[] };
+
+/**
+ * A goal's verified-done settings. Both are off until the operator turns them
+ * on, and `returnFailures` is never on without `onStop`.
+ */
+export type DocketGate = {
+  /** Run the review gate each time an implementation or verification agent stops. */
+  onStop: boolean;
+  /** Type a failed gate's error lines back into that agent's session, a capped number of times. */
+  returnFailures: boolean;
 };
 
 export type DocketCheckpoint = {
@@ -1551,6 +1600,8 @@ export type DocketDetail = WorkDocket & {
   claims: DocketClaim[];
   proofs: DocketProof[];
   checkpoints: DocketCheckpoint[];
+  /** Commands in the project's review gate, so a gate setting can say why it cannot turn on beside the control. */
+  reviewCommands: number;
 };
 
 /**
@@ -1672,8 +1723,12 @@ export type GoalTraceEvent = {
   docketId: string;
   nodeId: string;
   sessionId: string;
-  /** 'launch' rows are written by Control itself when a node starts (the goal capsule). */
-  source: 'hook' | 'telemetry' | 'launch';
+  /**
+   * 'launch' rows are written by Control itself when a node starts (the goal
+   * capsule); 'gate' rows when a gate an agent's stop asked for could not run,
+   * or when a failed one was typed back into the session.
+   */
+  source: 'hook' | 'telemetry' | 'launch' | 'gate';
   kind: string;
   status: 'recorded' | 'failed';
   toolName: string | null;

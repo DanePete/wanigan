@@ -368,6 +368,22 @@ and an external-editor handoff, so a long file is never trapped in the rail.
 `⌘K` opens the view palette. It is the keyboard route to every surface when the
 header is narrower than the tab strip; `⌘0` opens Runs directly.
 
+**Verified done** is a goal's choice under Review › Execution & spending. An
+agent ending its turn is a claim that the work is done. With **Run the gate**,
+each Stop from an implementation or verification session runs the project's
+review gate in that task's tree, records which tree it ran on, and skips the run
+when nothing changed since the last one. An implementation task then completes
+only after a gate has passed. **Run the gate, hand failures back** also types
+the failing command and the lines that look like errors into the session that
+stopped: at most twice each time a task starts, never over a session that has
+moved on, and never once the goal's reported spend reaches its cap. Each hand-back
+starts another agent turn, so it spends tokens, and if the agent stopped to ask
+a question, the hand-back answers it with the failure. Every gate result also flags
+tests changed in the same change as the code, and test files that gained no
+assertion. Those flags come from reading the diff, and they never fail a gate.
+The gate runs after the Stop, not inside a blocking hook, because a hook that
+waits minutes for a suite would hit the CLI's hook timeout.
+
 Sessions, headless runs and batches all go through one dispatcher with a slot
 count per surface, exponential backoff, and harder backoff on a 429 — batch rate
 limits count requests waiting *inside* a batch, not only HTTP calls, so

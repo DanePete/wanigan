@@ -102,6 +102,7 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as goalGate from './goal-gate';
 import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
@@ -940,6 +941,12 @@ async function startServices() {
   // Turn boundaries feed the checkpoint queue. Idempotent; the subscription
   // outlives window recreation on purpose — captures are per-session facts.
   checkpoints.initCheckpoints();
+  // Verified done. A goal that gates on stop runs its review gate when an
+  // agent stops; the nudge is the channel Control already re-reads on.
+  goalGate.initGoalGate(() => {
+    const w = liveWindow();
+    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+  });
 
   if (f.hooks) {
     try {
@@ -2819,6 +2826,8 @@ function registerIpc() {
   // setDocketBudget bounds it in the main process.
   handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
     control.setDocketBudget(docketId, budgetUsd));
+  handle('control:setGate', (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+    control.setGoalGate(docketId, input ?? {}));
   // The board reads the same rows the goal graph does, a second way. There is
   // no ticket table behind it — see control.boardCards.
   // ── the interview ────────────────────────────────────────────────────

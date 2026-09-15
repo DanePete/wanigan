@@ -576,6 +576,8 @@ const api = {
       call<DocketDetail>('control:setAutopilot', docketId, input),
     setBudget: (docketId: string, budgetUsd: number | null) =>
       call<DocketDetail>('control:setBudget', docketId, budgetUsd),
+    setGate: (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+      call<DocketDetail>('control:setGate', docketId, input),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
