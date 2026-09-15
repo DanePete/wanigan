@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { MacSettings } from '@shared/mac-presence';
-import { Note, Section } from './bits';
+import type { AutomationLedgerRow, AutomationStatus } from '@shared/automation-protocol';
+import { Mark, Note, Section, ago } from './bits';
+import { useAnnounce } from './announce';
+import { appendToComposerDraft } from './Composer';
 import '../styles/mac-around.css';
 
 /**
@@ -86,4 +89,114 @@ export function DockAndMenuBarSettings() {
       )}
     </Section>
   );
+}
+
+/* ── the automation socket ───────────────────────────────────────────── */
+
+const OUTCOME_MARK: Record<string, { glyph: string; tone: 'ok' | 'warn' | 'bad' | 'quiet' }> = {
+  answered: { glyph: '✓', tone: 'ok' }, drafted: { glyph: '✎', tone: 'ok' }, 'drafted-held': { glyph: '✎', tone: 'quiet' },
+  sent: { glyph: '↵', tone: 'warn' }, 'sent-from-queue': { glyph: '↵', tone: 'warn' }, queued: { glyph: '◷', tone: 'quiet' },
+  started: { glyph: '▶', tone: 'warn' }, asked: { glyph: '?', tone: 'quiet' }, declined: { glyph: '✕', tone: 'quiet' },
+  refused: { glyph: '✕', tone: 'bad' }, 'queue-dropped': { glyph: '✕', tone: 'quiet' }, 'queue-expired': { glyph: '✕', tone: 'quiet' },
+  'write-failed': { glyph: '!', tone: 'bad' }, 'launch-failed': { glyph: '!', tone: 'bad' },
+};
+
+export function AutomationSocketSettings() {
+  const { settings, error, busy, set } = useMacSettings();
+  const [status, setStatus] = useState<AutomationStatus | null>(null);
+  const [ledger, setLedger] = useState<AutomationLedgerRow[]>([]);
+  const [readError, setReadError] = useState<string | null>(null);
+  const reload = useCallback(() => {
+    Promise.all([window.wanigan.automation.status(), window.wanigan.automation.ledger(20)])
+      .then(([s, rows]) => { setStatus(s); setLedger(rows); setReadError(null); }, (e) => setReadError(msg(e)));
+  }, []);
+  useEffect(() => { reload(); }, [reload, settings?.automationSocket, settings?.automationSend]);
+
+  return (
+    <Section title="Automation socket"
+             hint="A local door for your own scripts: list sessions, draft into a composer, and — only if you allow it — send. Off by default.">
+      {(error || readError) && <Note tone="error">{error ?? readError}</Note>}
+      {settings && (
+        <div className="p8-switches">
+          <P8Switch title="Local automation socket" on={settings.automationSocket} busy={busy === 'automationSocket'}
+                    onChange={(v) => set('automationSocket', v)}>
+            Opens a Unix domain socket in Wanigan’s own data folder, in a directory only your user can enter, with a fresh
+            token beside it each time it starts. A script that reads the token can list sessions, read one session’s state,
+            and put text into a session’s composer as a draft you still send yourself. Asking for a new session raises an
+            approval dialog here, refused after five minutes. Every call is written to the ledger below with the process
+            that made it.
+          </P8Switch>
+          <P8Switch title="Allow scripts to send" on={settings.automationSend} busy={busy === 'automationSend' || !settings.automationSocket}
+                    onChange={(v) => set('automationSend', v)}>
+            Lets a script’s <span className="mono">send</span> type into a session’s prompt. Even then the text reaches the
+            agent only while it is idle or has finished its turn — the same rule the composer uses — and never answers a
+            permission prompt; otherwise the send waits in a queue for up to an hour. With this off, a send is refused and
+            the script is told to draft instead.
+          </P8Switch>
+        </div>
+      )}
+      {status && (
+        <div className="p8-socket-state">
+          <div className="p8-socket-line">
+            {status.listening
+              ? <Mark glyph="✓" word="listening" tone="ok" />
+              : status.enabled
+                ? <Mark glyph="!" word="not listening" tone="bad" />
+                : <Mark glyph="○" word="off" tone="quiet" />}
+            <code className="mono p8-path">{status.socketPath}</code>
+          </div>
+          {status.error && <Note tone="error">{status.error}</Note>}
+          <p className="p8-fine">
+            Token: <code className="mono p8-path">{status.tokenPath}</code> — never shown in this window. The reference
+            client is <code className="mono">npm run cli -- socket list</code>; see <code className="mono">socket help</code>.
+            {status.queued > 0 ? ` ${status.queued} send${status.queued === 1 ? '' : 's'} waiting for an agent to reach its prompt.` : ''}
+          </p>
+        </div>
+      )}
+      <div className="set-sub">Ledger</div>
+      {ledger.length === 0 ? (
+        <p className="p8-fine">No calls recorded. Every call the socket receives — answered, refused or queued — appears here.</p>
+      ) : (
+        <div className="p8-scroll">
+          <table className="grid p8-ledger">
+            <thead><tr><th>When</th><th>Verb</th><th>Outcome</th><th>Peer</th><th>Detail</th></tr></thead>
+            <tbody>
+              {ledger.map((row) => {
+                const mark = OUTCOME_MARK[row.outcome] ?? { glyph: '·', tone: 'quiet' as const };
+                return (
+                  <tr key={row.id}>
+                    <td className="p8-when">{ago(row.at)}</td>
+                    <td className="mono">{row.verb}</td>
+                    <td><Mark glyph={mark.glyph} word={row.outcome} tone={mark.tone} /></td>
+                    <td className="mono p8-path">{row.peerPid ? `${row.peerCommand} · pid ${row.peerPid}` : 'unknown peer'}</td>
+                    <td className="p8-fine">{row.detail ?? ''}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * Where a script's draft lands: the session's composer, unsent, with a line in
+ * the polite region that says where it came from. Rendered once by App.
+ */
+export function AutomationDraftLanding({ openSession }: { openSession: (id: string) => void }) {
+  const { announce } = useAnnounce();
+  useEffect(() => {
+    const land = (sessionId: string, text: string) => {
+      appendToComposerDraft(sessionId, text, 'A script put this in the draft through the automation socket. Nothing is sent until you press Send.');
+      announce({ tone: 'info', text: 'A script drafted a message into a session’s composer. It is unsent.', action: { label: 'Open', run: () => openSession(sessionId) } });
+    };
+    const off = window.wanigan.automation.onDraft(({ sessionId, text }) => land(sessionId, text));
+    window.wanigan.automation.takeDrafts()
+      .then((held) => { for (const d of held) land(d.sessionId, d.text); })
+      .catch(() => {});
+    return () => { off(); };
+  }, [announce, openSession]);
+  return null;
 }

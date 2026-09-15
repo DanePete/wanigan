@@ -13,7 +13,7 @@ import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 /* helper sweep · P8 mac */
-import { DockAndMenuBarSettings } from '../components/MacAround';
+import { AutomationSocketSettings, DockAndMenuBarSettings } from '../components/MacAround';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
@@ -88,6 +88,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
+  /* helper sweep · P8 mac */
+  { tab: 'connections', tabLabel: 'Connections', section: 'Automation socket', hint: 'A local, owner-only socket your scripts can drive', keywords: 'automation socket unix script cli draft send ledger token local api' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -1080,6 +1082,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
             <PhoneMonitor />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+            {/* helper sweep · P8 mac */}
+            <AutomationSocketSettings />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>

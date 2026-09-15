@@ -49,6 +49,7 @@ import type {
 /* ── end helper sweep · P3 review ── */
 /* ── helper sweep · P8 mac ── */
 import type { MacSettings } from '../shared/mac-presence';
+import type { AutomationLedgerRow, AutomationStatus } from '../shared/automation-protocol';
 /* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -985,6 +986,18 @@ const api = {
   mac: {
     settings: () => call<MacSettings>('mac:settings'),
     setSetting: (key: keyof MacSettings, value: boolean) => call<MacSettings>('mac:setSetting', key, value),
+  },
+  automation: {
+    status: () => call<AutomationStatus>('automation:status'),
+    ledger: (limit?: number) => call<AutomationLedgerRow[]>('automation:ledger', limit),
+    takeDrafts: () => call<{ sessionId: string; text: string; at: number }[]>('automation:takeDrafts'),
+    // A script put words into a session's composer through the automation
+    // socket. The renderer lands them as a draft; nothing is sent from here.
+    onDraft: (cb: (draft: { sessionId: string; text: string }) => void) => {
+      const h = (_e: unknown, draft: { sessionId: string; text: string }) => cb(draft);
+      listen('automation:draft', h);
+      return () => ipcRenderer.removeListener('automation:draft', h);
+    },
   },
   /* ── end helper sweep · P8 mac ── */
 };

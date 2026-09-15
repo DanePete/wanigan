@@ -4,3 +4,12 @@
 .p8-switch-state { color: var(--text-faint); }
 .p8-switch-state[data-on='true'] { color: var(--good); }
 .p8-switches { display: grid; }
+
+.p8-socket-state { display: grid; gap: var(--s-2); margin-top: var(--s-3); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-sunk); }
+.p8-socket-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); min-width: 0; }
+.p8-path { font-size: var(--t-micro); overflow-wrap: anywhere; color: var(--text-dim); }
+.p8-fine { margin: 0; font-size: var(--t-micro); line-height: 1.5; color: var(--text-dim); }
+.p8-scroll { overflow-x: auto; }
+.p8-ledger { font-size: var(--t-small); }
+.p8-ledger .mark { white-space: nowrap; }
+.p8-when { white-space: nowrap; color: var(--text-faint); }
