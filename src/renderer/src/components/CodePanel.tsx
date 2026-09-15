@@ -15,6 +15,9 @@ import {
   ClaimsSection, DependenciesSection, FileRowMarks, FindResults, ImageDiff, ReviewFileBar, ReviewSummaryBar, ReviewToolbar, ReviewViewOptions,
   StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
 } from './ReviewWorkbench';
+/* ── helper sweep · P7 depth ── */
+import { MaintainabilitySection } from './DepthReview';
+/* ── end helper sweep · P7 depth ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -935,6 +938,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                 <div className="rw-sections">
                   <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} />
                   <ClaimsSection sessionId={sessionId} refreshKey={reviewKey} />
+                  {/* ── helper sweep · P7 depth ── */}
+                  <MaintainabilitySection sessionId={sessionId} refreshKey={reviewKey} />
                 </div>
               )}
             </div>

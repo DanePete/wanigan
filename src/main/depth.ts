@@ -1,5 +1,6 @@
 import { asksFor, recordAsks, tickAsk } from './ask-items';
 import { loopBudgetMeasure, setLoopBudgets } from './control';
+import { maintainabilityFor } from './maintainability';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -27,6 +28,7 @@ export function registerDepthIpc(handle: Handle): void {
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
   handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:maintainability', (sessionId: unknown) => maintainabilityFor(sessionId));
   handle('depth:loopMeasure', (docketId: unknown) => loopBudgetMeasure(idArg(docketId, 'goal')));
 }
 

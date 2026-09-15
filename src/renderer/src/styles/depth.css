@@ -30,3 +30,15 @@
 .dp-loop-form label { display: grid; gap: var(--s-1); min-width: 0; }
 .dp-loop-form .field { width: 9rem; max-width: 100%; }
 @media (max-width: 520px) { .dp-loop-facts { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── maintainability, under the diff ───────────────────────────────────── */
+.dp-drift-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-2) var(--s-3); margin: var(--s-2) 0 0; font-size: var(--t-small); line-height: 1.5; }
+.dp-drift-grid dt { color: var(--text-dim); display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; }
+.dp-drift-grid dd { margin: 0; display: grid; gap: var(--s-1); min-width: 0; overflow-wrap: anywhere; }
+.dp-dupes { list-style: none; margin: var(--s-1) 0 0; padding: 0; display: grid; gap: var(--s-1); }
+.dp-dupes li { display: grid; gap: var(--s-1); padding: var(--s-1) var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+.dp-dupe-preview { font-size: var(--t-micro); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dp-skipped { margin-top: var(--s-2); font-size: var(--t-micro); }
+.dp-skipped > summary { cursor: pointer; color: var(--text-dim); }
+.dp-skipped ul { margin: var(--s-1) 0 0; padding-left: var(--s-4); display: grid; gap: var(--s-1); }
+@media (max-width: 520px) { .dp-drift-grid { grid-template-columns: minmax(0, 1fr); } }

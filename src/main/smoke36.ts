@@ -202,3 +202,52 @@ export async function runGoalBudgetSmoke(check: Check, say: Say): Promise<void> 
     try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
   }
 }
+
+/** Item 3: maintainability drift between a session's base and latest checkpoint, from real git objects. */
+export async function runMaintainabilitySmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · maintainability drift per checkpoint (heuristic)');
+  const repo = repoFixture('wanigan-p7-drift-');
+  const { maintainabilityFor } = await import('./maintainability');
+  const block = [
+    '  const response = await fetch(url, { headers });',
+    '  if (!response.ok) throw new Error(`status ${response.status}`);',
+    '  const body = await response.json();',
+    '  validateBody(body, schema);',
+    '  cache.set(url, body);',
+    '  metrics.increment("fetch.ok");',
+    '  return body;',
+  ];
+  repo.write('src/one.ts', ['export async function one(url, headers) {', ...block, '}', ''].join('\n'));
+  repo.write('src/two.ts', ['export async function two(url) {', '  return get(url);', '}', ''].join('\n'));
+  repo.write('README.md', '# drift\n');
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+  const base = repo.git('rev-parse', 'HEAD').trim();
+  // The session's turn: copies the block into two.ts, adds comments and blank lines, touches one.ts, and changes the README.
+  repo.write('src/one.ts', ['// Shared fetch pipeline.', 'export const retries = 3;', 'export async function one(url, headers) {', ...block, '}', ''].join('\n'));
+  repo.write('src/two.ts', ['// Fetches with the shared pipeline.', '', 'export async function two(url, headers) {', ...block, '}', ''].join('\n'));
+  repo.write('README.md', '# drift\n\nmore words\n');
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'turn one');
+  const turn = repo.git('rev-parse', 'HEAD').trim();
+  const sid = `p7-drift-${Date.now()}`;
+  insertSession(sid, null, repo.dir, base);
+  const cp = db().prepare('INSERT INTO session_checkpoints (session_id, turn, kind, at, repo_root, commit_hash, tree_hash, files_changed, status, detail) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  cp.run(sid, 0, 'session-start', Date.now() - 60_000, repo.dir, base, null, null, 'ok', null);
+
+  const unchanged = await maintainabilityFor(sid);
+  check(unchanged.state === 'unchanged' && unchanged.report === null, 'drift: a session whose only checkpoint is its base reports no change rather than zeros', unchanged.state);
+
+  cp.run(sid, 1, 'turn-end', Date.now() - 30_000, repo.dir, turn, null, 3, 'ok', null);
+  const view = await maintainabilityFor(sid);
+  const r = view.report;
+  check(view.state === 'ready' && view.base === base && view.latest === turn && view.latestTurn === 1 && view.changedFiles === 3,
+    'drift: the base and latest checkpoint are read as real commits', { state: view.state, changed: view.changedFiles });
+  // one.ts: one code line and one comment added; two.ts: the header and seven copied lines replace two.
+  check(r?.codeAdded === 9 && r.codeRemoved === 2, 'drift: code lines added and removed exclude the comment and blank lines the turn added', JSON.stringify(r && { added: r.codeAdded, removed: r.codeRemoved }));
+  check(r?.longestBefore?.lines === 9 && r.longestBefore.name === 'one' && r.longestAfter?.lines === 9,
+    'drift: the longest function before and after is measured by the brace heuristic', JSON.stringify(r && { before: r.longestBefore, after: r.longestAfter }));
+  check(r?.duplicatedBlocks.length === 1 && r.duplicatedBlocks[0].occurrences.map((o) => o.path).sort().join() === 'src/one.ts,src/two.ts',
+    'drift: the copied block is one new duplicate across both changed files', JSON.stringify(r?.duplicatedBlocks));
+  check(r?.skipped.some((s) => s.path === 'README.md' && s.reason === 'no heuristic for this language') === true, 'drift: a file with no heuristic is listed as not analysed, not silently dropped');
+  const none = await maintainabilityFor(`p7-drift-none-${Date.now()}`);
+  check(none.state === 'no-checkpoints', 'drift: a session with no checkpoints says so');
+}

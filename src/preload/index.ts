@@ -57,6 +57,7 @@ import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, Gat
 /* ── helper sweep · P7 depth ── */
 import type { AskMessage } from '../shared/ask-items';
 import type { GoalLoopBudgets } from '../shared/goal-budgets';
+import type { MaintainabilityView } from '../shared/maintainability';
 /* ── end helper sweep · P7 depth ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1032,6 +1033,7 @@ const api = {
       list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
       tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
     },
+    maintainability: (sessionId: string) => call<MaintainabilityView>('depth:maintainability', sessionId),
     goals: {
       setLoopBudgets: (docketId: string, budgets: GoalLoopBudgets) => call<DocketDetail>('depth:setLoopBudgets', docketId, budgets),
       measure: (docketId: string) => call<{ implementRounds: number; changedLines: number | null; binaryFiles: number; worktree: string | null }>('depth:loopMeasure', docketId),
