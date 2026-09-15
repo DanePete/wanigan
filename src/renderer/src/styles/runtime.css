@@ -22,10 +22,12 @@
 .proc-across .sec-head { margin: 0; }
 .proc-across-session { display: grid; gap: var(--s-1); }
 .proc-across-name { font-size: var(--t-body); font-weight: 550; overflow-wrap: anywhere; }
-.session-runtime { border-top: 1px solid var(--line-soft); padding-block: var(--s-2); }
-.session-runtime > summary { cursor: pointer; font-size: var(--t-small); font-weight: 550; }
-.session-runtime > summary span { color: var(--text-faint); margin-left: var(--s-2); font-weight: 400; }
-.session-runtime-body { display: grid; gap: var(--s-3); padding-top: var(--s-2); }
+/* Laid out like the Session controls drawer above it: same inset, same type. */
+.session-runtime { border-top: 1px solid var(--line-soft); }
+.session-runtime > summary { cursor: pointer; padding: var(--s-2) var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
+.session-runtime > summary span { color: var(--text-faint); margin-left: var(--s-3); font-size: var(--t-micro); }
+.session-runtime-body { display: grid; gap: var(--s-3); padding: 0 var(--s-5) var(--s-3); max-height: min(40vh, 380px); overflow: auto; }
+.session-review-only { padding-inline: var(--s-5); }
 .codex-reader-quiet { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; max-width: 90ch; }
 .codex-reader-note { display: grid; }
 .codex-reader-line { display: block; line-height: 1.5; }
@@ -43,9 +45,10 @@
 .codex-continue-lead { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
 .codex-continue-facts { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: var(--s-2) var(--s-3); margin: 0; font-size: var(--t-small); }
 .codex-continue-facts dt { color: var(--text-faint); }
-.codex-continue-facts dd { margin: 0; display: grid; gap: var(--s-1); min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.codex-continue-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.codex-continue-facts dd .field { display: block; margin-bottom: var(--s-1); }
 .codex-continue-facts code, .codex-continue-home code { font-family: var(--mono); font-size: var(--t-micro); }
-.codex-continue-home { color: var(--text-faint); }
+.codex-continue-home { display: block; color: var(--text-faint); }
 .codex-continue-refusal { display: grid; gap: var(--s-1); font-size: var(--t-small); line-height: 1.5; color: var(--text-dim); }
 .codex-continue-actions { display: flex; gap: var(--s-2); justify-content: flex-end; flex-wrap: wrap; }
 .past-codex { font-size: var(--t-micro); }

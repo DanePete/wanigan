@@ -49,7 +49,7 @@ export default function CodexReaderNote({ accountId, context }: { accountId?: st
           const unparsed = unparsedSentence(a.unparsedLines, a.filesWithUnparsed);
           return (
             <span key={a.home} className="codex-reader-line">
-              <strong>{a.label}</strong>{' '}
+              <strong>{a.label} (Codex):</strong>{' '}
               {unreadable}{unreadable && a.codecs.length ? ` Detected: ${a.codecs.join(', ')}.` : ''}{' '}
               {unparsed}
             </span>

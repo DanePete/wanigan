@@ -1032,7 +1032,7 @@ export default function NewSessionDialog({
         <label className="sunk"
                style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '6px 0 14px',
                         padding: '9px 11px', cursor: isRepo ? 'pointer' : 'not-allowed' }}>
-          <input type="checkbox" checked={isolate} disabled={!isRepo}
+          <input type="checkbox" checked={isolate && !prefill?.worktree} disabled={!isRepo || !!prefill?.worktree}
                  onChange={(e) => setIsolate(e.target.checked)}
                  style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
           <span style={{ minWidth: 0 }}>
