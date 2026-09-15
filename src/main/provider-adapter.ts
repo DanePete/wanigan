@@ -22,8 +22,12 @@ export type ProviderAdapterProbe = {
    * fact about the inspected executable but about which argv Wanigan itself
    * compiles, so no adapter may claim it. Letting one would mean a manifest
    * could promise a spend ceiling the runner never passes.
+   *
+   * `observeOnlyHooks` is excluded for the same kind of reason: it is Codex's
+   * own answer, read from its app-server, about hooks Wanigan defines. An
+   * adapter claiming it would be a pack asserting trust Codex never gave.
    */
-  capabilities: Partial<Omit<ProviderCapabilities, 'probed' | 'note' | 'headlessBudget'>>;
+  capabilities: Partial<Omit<ProviderCapabilities, 'probed' | 'note' | 'headlessBudget' | 'observeOnlyHooks'>>;
   note: string | null;
 };
 

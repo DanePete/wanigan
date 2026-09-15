@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-15T05:44:39.582Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no Codex or agent run",
+  "mode": "after",
+  "checks": [
+    "trusted: under the Codex runtime row, \"◐\" and then \"injected and trusted on 0.154.0; no event has arrived yet from a real session\", then the sentence that the trust gate does not cover Codex; nothing clipped at 1440 or 560 px",
+    "observed: under the Codex runtime row, \"✓\" and then \"observed on 0.154.0 — first event Sep 14, 2026, 9:04 PM\", then the sentence that the trust gate does not cover Codex; nothing clipped at 1440 or 560 px",
+    "unavailable: under the Codex runtime row, \"✕\" and then \"not available: Codex did not trust Wanigan's hooks by the hashes it reported\", then the sentence that the trust gate does not cover Codex; nothing clipped at 1440 or 560 px",
+    "not yet asked: the line says it is checking, asks main once with the Codex profile id (never a path), and then shows the answer",
+    "a failed check reads \"could not read\" with the error, and is never drawn as trusted, observed or not available"
+  ],
+  "errors": []
+}
