@@ -723,7 +723,12 @@ export async function runConfigFilesSmoke(check: Check, say: Say): Promise<void>
 
     const hooksSrc = sourceOf('src/main/hooks.ts');
     const daemonSrc = sourceOf('src/main/daemon.ts');
-    check(/atomicWriteFile\(file, JSON\.stringify\(\{ hooks \}, null, 2\), 0o600\)/.test(hooksSrc) && /atomicWriteFile\(file, body, 0o600\)/.test(daemonSrc),
+    // The settings object grew (version-gated keys, the auto-mode block) when
+    // the helper packages merged, so the call is matched by its shape: the
+    // injected file goes through atomicWriteFile, and nothing writes it in place.
+    check(/atomicWriteFile\(file, JSON\.stringify\(\{[\s\S]*?\bhooks,?[\s\S]*?\}, null, 2\), 0o600\)/.test(hooksSrc)
+      && !/fs\.writeFileSync\(file, JSON\.stringify/.test(hooksSrc)
+      && /atomicWriteFile\(file, body, 0o600\)/.test(daemonSrc),
       'hook settings and the scheduler plist are written atomically at their call sites');
   } finally {
     if (mcpFile) try { registry.cleanupMcpConfig(mcpFile, 's_p5_config'); } catch { /* gone */ }
