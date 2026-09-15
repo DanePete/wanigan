@@ -21,7 +21,7 @@ import * as accounts from './accounts';
 import { readableFromAccount } from './handoff';
 import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
-import { codexHooksAreSource, forgetCodexHookSession, prepareCodexHookLaunch } from './codex-hooks';
+import { codexHookDelivered, forgetCodexHookSession, prepareCodexHookLaunch } from './codex-hooks';
 import { CODEX_HOOK_HEADERS_ENV, CODEX_HOOK_URL_ENV } from '../shared/codex-hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
@@ -621,16 +621,19 @@ export type CodexLifecycleSignal = 'permission' | 'finished';
 
 /**
  * One OSC 9 lifecycle signal, recorded as the event it stands for — unless
- * this session's own hooks have delivered, in which case it is not recorded.
+ * this session's own hooks have already delivered that same event.
  *
  * One source per fact. A turn's end would otherwise be two Stop rows, and a
  * Stop is what runs a goal's review gate and what the checkpoint chain cuts a
- * turn at. Until the hooks deliver, nothing is known about whether they will,
- * so OSC 9 is the source; the switch is one-way for the session and recorded
- * on it (codex-hooks.ts). Returns the stored event, or null when none was.
+ * turn at. The hand-over is per event: until a Stop hook has arrived, nothing
+ * shows that it will, so OSC 9 stays the source for Stop even after other hooks
+ * have fired, and the same for PermissionRequest. The cost is that a session's
+ * first turn can record one Stop from each source; losing a session's finished
+ * signal to a hook that never fires would cost more. Returns the stored event,
+ * or null when none was.
  */
 export function recordCodexNotification(sessionId: string, signal: CodexLifecycleSignal, at: number): SessionEvent | null {
-  if (codexHooksAreSource(sessionId)) return null;
+  if (codexHookDelivered(sessionId, signal === 'permission' ? 'PermissionRequest' : 'Stop')) return null;
   return signal === 'permission'
     ? recordProviderEvent(sessionId, 'PermissionRequest', 'Waiting for your approval.', at)
     : recordProviderEvent(sessionId, 'Stop', 'Turn complete.', at);
@@ -2320,7 +2323,7 @@ export function writeSession(sessionId: string, data: string): boolean {
       // Once the session's hooks deliver, they post the real UserPromptSubmit,
       // and this one would count every turn twice. The answer to an approval
       // above has no hook, so it is recorded either way.
-      if (!codexHooksAreSource(sessionId)) recordProviderEvent(sessionId, 'UserPromptSubmit');
+      if (!codexHookDelivered(sessionId, 'UserPromptSubmit')) recordProviderEvent(sessionId, 'UserPromptSubmit');
     }
   }
   return true;

@@ -424,15 +424,19 @@ export async function runCodexHookSmoke(check: Check, say: Say): Promise<void> {
       && delivery.state === 'injected' && delivery.switchedAt === switchedB,
     'its first hook event switches the source, and the moment is written onto its session row', show({ delivery, switchedB }));
     const count = (sid: string, event: string) => hooks.sessionEvents(sid).filter((row: SessionEvent) => row.event === event).length;
-    const stopsBefore = count(sidB, 'Stop');
-    const asksBefore = count(sidB, 'PermissionRequest');
-    const afterStop = recordCodexNotification(sidB, 'finished', Date.now());
-    const afterAsk = recordCodexNotification(sidB, 'permission', Date.now());
-    check(afterStop === null && afterAsk === null && count(sidB, 'Stop') === stopsBefore && count(sidB, 'PermissionRequest') === asksBefore,
-      'after the switch, OSC 9\'s Stop and PermissionRequest are no longer recorded for that session');
+    const afterStartOnly = recordCodexNotification(sidB, 'finished', Date.now());
+    check(afterStartOnly?.event === 'Stop',
+      'a SessionStart hook alone does not retire OSC 9\'s Stop: until a Stop hook arrives, nothing shows one will, and the session must not lose its finished signal', show(afterStartOnly));
     await post(url, bearerB, { hook_event_name: 'Stop' });
-    check(count(sidB, 'Stop') === stopsBefore + 1,
-      'and a Stop from its hook is recorded once, as the one Stop for that turn');
+    const stopsBefore = count(sidB, 'Stop');
+    const afterStop = recordCodexNotification(sidB, 'finished', Date.now());
+    const askStillOsc = recordCodexNotification(sidB, 'permission', Date.now());
+    check(afterStop === null && count(sidB, 'Stop') === stopsBefore && askStillOsc?.event === 'PermissionRequest',
+      'once its Stop hook has delivered, OSC 9\'s Stop is no longer recorded, while PermissionRequest stays with OSC 9 until its own hook delivers', show({ afterStop, askStillOsc }));
+    await post(url, bearerB, { hook_event_name: 'PermissionRequest', tool_name: 'shell' });
+    const asksBefore = count(sidB, 'PermissionRequest');
+    check(recordCodexNotification(sidB, 'permission', Date.now()) === null && count(sidB, 'PermissionRequest') === asksBefore,
+      'and once a PermissionRequest hook has delivered, OSC 9\'s approval signal is retired too');
     const sidC = `s_codexhooks_c_${Date.now().toString(36)}`;
     sessionIds.push(sidC);
     check(recordCodexNotification(sidC, 'finished', Date.now())?.event === 'Stop',
@@ -444,7 +448,7 @@ export async function runCodexHookSmoke(check: Check, say: Say): Promise<void> {
     /* ── what the source says ──────────────────────────────────────────── */
     const sessionsSrc = appSource('src/main/sessions.ts');
     check(/recordCodexNotification\(id, signal, now\)/.test(sessionsSrc)
-      && /if \(!codexHooksAreSource\(sessionId\)\) recordProviderEvent\(sessionId, 'UserPromptSubmit'\)/.test(sessionsSrc)
+      && /if \(!codexHookDelivered\(sessionId, 'UserPromptSubmit'\)\) recordProviderEvent\(sessionId, 'UserPromptSubmit'\)/.test(sessionsSrc)
       && /\.\.\.lifecycleArgs, \.\.\.\(codexHooks\?\.args \?\? \[\]\)/.test(sessionsSrc)
       && /\.\.\.\(codexHooks\?\.env \?\? \{\}\)/.test(sessionsSrc),
     'the launch spreads the hook arguments beside the OSC 9 arguments and the two variables into that PTY, and the terminal reader and the Enter handler both consult the switch');

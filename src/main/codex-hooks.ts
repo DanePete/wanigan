@@ -63,6 +63,14 @@ const memory = new Map<string, TrustRecord>();
 const inFlight = new Map<string, Promise<TrustRecord>>();
 /** Session id → when its own hooks first delivered, for the life of the process. */
 const hookSources = new Map<string, number>();
+/**
+ * Session id → the events its hooks have delivered. The hand-over from OSC 9 is
+ * per event, not per session: a session whose SessionStart hook fired has shown
+ * that hooks run, not that its Stop or PermissionRequest hooks will, and turning
+ * off OSC 9's Stop on the strength of a SessionStart would leave a session that
+ * never reports finishing if those two did not fire.
+ */
+const deliveredEvents = new Map<string, Set<string>>();
 
 const cacheKey = (bin: string, version: string) => JSON.stringify([bin, version, CODEX_HOOK_DEFINITION_SHA256]);
 
@@ -266,6 +274,9 @@ export async function prepareCodexHookLaunch(input: {
 function noteHookEvent(
   sessionId: string, bin: string, version: string, event: SessionEvent, onSwitch?: (at: number) => void,
 ): void {
+  const delivered = deliveredEvents.get(sessionId) ?? new Set<string>();
+  delivered.add(String(event.event));
+  deliveredEvents.set(sessionId, delivered);
   if (hookSources.has(sessionId)) return;
   const at = event.at;
   hookSources.set(sessionId, at);
@@ -286,14 +297,24 @@ function noteHookEvent(
   try { onSwitch?.(at); } catch { /* bookkeeping must not cost the event */ }
 }
 
-/** Whether this session's own hooks have delivered, so OSC 9 is no longer its source. */
+/** Whether this session's own hooks have delivered anything at all. */
 export function codexHooksAreSource(sessionId: string): boolean {
   return hookSources.has(sessionId);
+}
+
+/**
+ * Whether this session's hooks have delivered this event, so the OSC 9 or
+ * Enter-typed stand-in for it is no longer recorded. Asked per event: see
+ * deliveredEvents.
+ */
+export function codexHookDelivered(sessionId: string, event: 'Stop' | 'PermissionRequest' | 'UserPromptSubmit'): boolean {
+  return deliveredEvents.get(sessionId)?.has(event) === true;
 }
 
 /** At exit; the recorded switch on the session row is unaffected. */
 export function forgetCodexHookSession(sessionId: string): void {
   hookSources.delete(sessionId);
+  deliveredEvents.delete(sessionId);
 }
 
 /**
