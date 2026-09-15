@@ -1474,6 +1474,19 @@ export type DocketClaim = {
  * session. The objective, instructions and acceptance checks travel in the
  * first prompt as before; this carries only what was missing there.
  */
+/** A plan captured from a goal task's planning session. `text` is the agent's own words. */
+export type GoalPlan = {
+  docketId: string;
+  nodeId: string;
+  nodeTitle: string;
+  state: 'proposed' | 'accepted';
+  text: string;
+  truncated: boolean;
+  edited: boolean;
+  planFilePath: string | null;
+  capturedAt: number;
+};
+
 export type GoalCapsule = {
   docketId: string;
   docketTitle: string;
@@ -1494,6 +1507,13 @@ export type GoalCapsule = {
    * agent; this is how it reaches the one launched to address it.
    */
   changesRequested: { note: string; decidedAt: number }[];
+  /**
+   * The goal's accepted plan (or, failing that, its latest proposal) as it
+   * stood at launch, for every task but the planning one. Written by the
+   * planning agent, and handed on labelled as that. Null when no plan was
+   * captured.
+   */
+  plan: { nodeTitle: string; state: 'proposed' | 'accepted'; text: string; truncated: boolean; edited: boolean; capturedAt: number } | null;
   recordedAt: number;
 };
 

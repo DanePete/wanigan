@@ -2856,6 +2856,10 @@ function registerIpc() {
   handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
   handle('control:resumeReceipts', (docketId: string) => control.resumeReceipts(docketId));
   handle('control:traces', (docketId: string, limit?: number) => control.traces(docketId, limit));
+  handle('control:plan', (docketId: unknown) => {
+    if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
+    return control.goalPlan(docketId);
+  });
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());

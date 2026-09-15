@@ -593,6 +593,8 @@ const api = {
     cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
+    /** The plan captured from this goal's planning session; the agent's text. */
+    plan: (docketId: string) => call<import('../shared/types').GoalPlan | null>('control:plan', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

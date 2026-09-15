@@ -198,3 +198,6 @@
 }
 /* Recorded outcomes for the task kind, read beside the provider choice. */
 .control-evidence { padding: var(--s-2) var(--s-4) 0; max-width: 90ch; }
+/* A goal's captured plan: the agent's text, kept apart from Wanigan's own copy. */
+.control-plan-note { margin: var(--s-2) 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.control-plan-text { max-height: 360px; overflow: auto; margin: 0; padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); font-size: var(--t-small); white-space: pre-wrap; overflow-wrap: anywhere; }

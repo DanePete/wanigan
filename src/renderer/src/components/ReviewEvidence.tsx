@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import type { DocketDetail, GoalResumeReceipt, GoalTraceEvent } from '@shared/types';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { DocketDetail, GoalPlan, GoalResumeReceipt, GoalTraceEvent } from '@shared/types';
 import { Hint, Mark, Pill, SectionHead, Segmented, ago, markOf, usd } from './bits';
 import { useViewMemory } from './viewMemory';
 
@@ -10,6 +10,18 @@ export default function ReviewEvidence({ docket, receipts, traces, onTask, child
   onTask: (id: string) => void; children: ReactNode;
 }) {
   const [area, setArea] = useViewMemory<Area>(`${docket.id}/evidence`, 'proof');
+  // Read again whenever a plan proof lands, so an accepted plan replaces the
+  // proposal on screen without waiting for the goal to be reopened.
+  const planProofs = docket.proofs.filter((proof) => proof.kind === 'plan').length;
+  const [plan, setPlan] = useState<GoalPlan | null | 'unread'>(null);
+  useEffect(() => {
+    let live = true;
+    if (!planProofs) { setPlan(null); return; }
+    window.wanigan.control.plan(docket.id)
+      .then((value) => { if (live) setPlan(value); })
+      .catch(() => { if (live) setPlan('unread'); });
+    return () => { live = false; };
+  }, [docket.id, planProofs]);
   const attribution = (nodeId: string | null) => {
     const node = docket.nodes.find(node => node.id === nodeId);
     return node ? <button type="button" className="control-attribution" onClick={() => onTask(node.id)}>{node.title}</button> : <span className="faint">Goal record</span>;
@@ -22,6 +34,20 @@ export default function ReviewEvidence({ docket, receipts, traces, onTask, child
     <Segmented<Area> label="Evidence area" value={area} onChange={setArea} options={[{ value: 'proof', label: 'Proof' }, { value: 'handoffs', label: 'Handoffs' }, { value: 'activity', label: 'Activity' }]} />
     <div className="control-proof-body" key={area}>
       {area === 'proof' && <>
+        {plan === 'unread' && <Hint>This goal has a captured plan, and Wanigan could not read it just now.</Hint>}
+        {plan && plan !== 'unread' && (
+          <details className="control-contract control-plan">
+            <summary>
+              {plan.state === 'accepted' ? 'The accepted plan' : 'A proposed plan, not accepted yet'}
+              <span>{plan.nodeTitle} · {ago(plan.capturedAt)}{plan.edited ? ' · edited before acceptance' : ''}</span>
+            </summary>
+            <p className="control-plan-note">
+              Written by the planning agent{plan.state === 'accepted' ? ', accepted in its session, and handed to the tasks launched after it' : '; later tasks are told it is only a proposal'}.
+              {plan.truncated ? ' Only its first part was kept.' : ''}
+            </p>
+            <pre className="control-plan-text">{plan.text}</pre>
+          </details>
+        )}
         <SectionHead label="Proof bundle" count={docket.proofs.length} />
         {docket.proofs.length === 0 ? <Hint>No evidence yet. A passing review gate is required before verification can complete.</Hint> : docket.proofs.map(proof => <article className="control-record" key={proof.id}>
           <div><Pill status={proof.status} /><span>{proof.kind}</span><time>{ago(proof.createdAt)}</time></div>
