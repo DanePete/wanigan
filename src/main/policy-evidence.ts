@@ -1,6 +1,6 @@
 import { onHookInput } from './hooks';
 import { approvalDetailFor, attachApprovalExplanation } from './approval-explain';
-import { ledgerTrace, trustFor } from './policy';
+import { ledgerTrace, setGrantLookup, trustFor } from './policy';
 import { detectProviders } from './providers';
 import { compileAutoMode } from '../shared/auto-mode';
 import type { AutoModeView, ProviderInfo } from '../shared/types';
@@ -9,6 +9,8 @@ import { forgetTaint, observeForTaint } from './tripwire';
 import { fatigueReport, observeFatigue } from './fatigue';
 import { observeForRewrites } from './rewrite-evidence';
 import { sessionSignals } from './policy-signals';
+import { grantFor, grantSettings, observeForGrants, setGrantSetting } from './grants';
+import { listProjects } from './store';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -22,6 +24,13 @@ let started = false;
 export function startPolicyEvidence(): void {
   if (started) return;
   started = true;
+  setGrantLookup((projectId, projectPath, input) => {
+    const match = grantFor(projectId, projectPath, input);
+    if (!match) return null;
+    return match.grant
+      ? { grant: { id: match.grant.id, at: match.grant.at, summary: match.grant.summary }, days: match.days }
+      : { grant: null, because: match.because, days: match.days };
+  });
   // The gate checks itself before the first session can reach it.
   try {
     const run = runAndRecordGateSelfTest();
@@ -32,6 +41,7 @@ export function startPolicyEvidence(): void {
     observeForTaint(stored, input, cwd);
     observeFatigue(stored);
     observeForRewrites(stored, input, cwd);
+    observeForGrants(stored, input);
     if (stored.event === 'SessionEnd') forgetTaint(stored.sessionId);
   });
 }
@@ -66,6 +76,12 @@ export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
   handle('policyEvidence:fatigue', () => fatigueReport());
+  handle('policyEvidence:grantSettings', () => grantSettings(listProjects().map((p) => p.id)));
+  handle('policyEvidence:setGrantSetting', (projectId: unknown, enabled: unknown, days: unknown) => {
+    if (typeof projectId !== 'string' || typeof enabled !== 'boolean' || typeof days !== 'number') throw new Error('That grant setting is not one Wanigan accepts.');
+    setGrantSetting(projectId, enabled, days);
+    return grantSettings([projectId])[0];
+  });
   handle('policyEvidence:session', (sessionId: unknown) => ({ signals: sessionSignals(sessionIdArg(sessionId)) }));
   handle('policyEvidence:autoMode', (projectId: unknown) => autoModeFor(typeof projectId === 'string' && projectId.length <= 200 ? projectId : null));
   handle('policyEvidence:selfTest', () => latestGateSelfTest());

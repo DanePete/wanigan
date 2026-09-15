@@ -220,6 +220,42 @@ export function contextForSession(sessionId: string | null): PolicyContext | nul
   return contexts.get(sessionId) ?? null;
 }
 
+/* ── helper sweep · P1 policy ── */
+export type GrantLookup = (projectId: string | null, projectPath: string | null, input: HookInput) =>
+  ({ grant: { id: number; at: number; summary: string } | null; because?: string; days: number }) | null;
+let grantLookup: GrantLookup | null = null;
+
+/**
+ * Registered by the policy evidence at start, rather than imported, because the
+ * grant store reads this module's contexts to tell attended sessions apart.
+ */
+export function setGrantLookup(fn: GrantLookup | null): void {
+  grantLookup = fn;
+}
+
+/**
+ * An ask on a run with nobody watching. Denied, as always — unless the project
+ * opted in to relying on earlier approvals and a person approved this exact
+ * call in an attended session of the same project within its window, in which
+ * case it is allowed and the rule and reason name the grant. A denial for a
+ * project that opted in names the grant that was missing.
+ */
+function unattendedAnswer(ctx: PolicyContext, input: HookInput, decided: PolicyDecision): PolicyDecision {
+  if (decided.decision !== 'ask') return decided;
+  let match: ReturnType<GrantLookup> = null;
+  try { match = grantLookup?.(ctx.projectId, ctx.projectPath, input) ?? null; } catch { match = null; }
+  if (!match) return nobodyToAsk(decided);
+  if (match.grant) {
+    return {
+      decision: 'allow',
+      rule: `${decided.rule}.granted`,
+      reason: `Allowed without asking: this run is unattended, and a person approved the same call in an attended session of this project on ${new Date(match.grant.at).toISOString().slice(0, 16).replace('T', ' ')} UTC (grant #${match.grant.id}: ${match.grant.summary}). The question would have been: ${decided.reason}`,
+    };
+  }
+  const denied = nobodyToAsk(decided);
+  return { ...denied, reason: `${denied.reason} ${match.because ?? ''} This project allows unattended runs to rely on approvals from the last ${match.days} days, and none covers this call.`.trim() };
+}
+
 /**
  * The answer when the gate itself failed — a rule that threw, or a ledger write
  * that did.
@@ -253,7 +289,8 @@ function unevaluable(): PolicyDecision {
 export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
   try {
     const { decision: decided, trace } = evaluateCall(ctx, input);
-    const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
+    /* ── helper sweep · P1 policy ── */
+    const answer = ctx.attended === false ? unattendedAnswer(ctx, input, decided) : decided;
     recordDecision(ctx, input, answer, trace);
     /* ── helper sweep · P1 policy ── */
     const tripped = trace.steps.find((s) => s.origin === 'tripwire');
@@ -362,7 +399,9 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
 export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision, trace?: PolicyTrace): void {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return;
-  if (decision.decision === 'allow' && !notableAllow(ctx, tool, input)) return;
+  // An allow that relied on a grant is always written down: it is the one allow
+  // that stood in for a question somebody would otherwise have been asked.
+  if (decision.decision === 'allow' && !decision.rule.endsWith('.granted') && !notableAllow(ctx, tool, input)) return;
 
   db()
     .prepare(

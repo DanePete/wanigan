@@ -325,6 +325,70 @@ export async function runRewriteEvidenceSmoke(check: Check, say: Say): Promise<v
   }
 }
 
+export async function runGrantSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · unattended runs rely only on what a person granted');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-grants-')));
+  try {
+    const { addProject, removeProject } = await import('./store');
+    const hooks = await import('./hooks');
+    const policy = await import('./policy');
+    const evidence = await import('./policy-evidence');
+    const grants = await import('./grants');
+    const { db } = await import('./db');
+    const project = await addProject(dir);
+    evidence.startPolicyEvidence();
+    await hooks.startHookServer();
+    const command = 'sudo systemctl restart app';
+
+    const attendedId = 's_smoke_p1_grant_attended';
+    db().prepare('INSERT INTO session_log (id, provider_id, project_id, project_path, project_name, started_at) VALUES (?,?,?,?,?,?)')
+      .run(attendedId, 'claude', project.id, dir, project.name, Date.now());
+    const attended = handlerOf(hooks.writeHookSettings(attendedId, dir));
+    const fanId = `h_r_smoke_p1_grant__${project.id}`;
+    policy.registerPolicyContext({ sessionId: fanId, projectId: project.id, projectPath: dir, trust: 'project', attended: false });
+    const fan = handlerOf(hooks.writeHookSettings(fanId, dir));
+    if (!attended || !fan) { check(false, 'the grant smoke sessions have hook capabilities'); return; }
+    const unattendedDecision = async (cmd: string) => ((await post(fan, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: cmd } }))
+      .hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string } | undefined);
+
+    await post(attended, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', cwd: dir, tool_input: { command } });
+    await post(attended, { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command } });
+    const recorded = db().prepare('SELECT id, tool_name FROM policy_grants WHERE project_id = ?').all(project.id) as { id: number; tool_name: string }[];
+    check(recorded.length === 1 && recorded[0].tool_name === 'Bash', 'a prompt answered by running the tool in an attended session records one grant', recorded);
+
+    const off = await unattendedDecision(command);
+    check(off?.permissionDecision === 'deny' && !/grant #|No person approved|rely on approvals/.test(off.permissionDecisionReason ?? ''),
+      'with the project opted out (the default) the unattended ask is still denied, exactly as before', off?.permissionDecisionReason);
+
+    grants.setGrantSetting(project.id, true, 7);
+    const granted = await unattendedDecision('sudo  systemctl   restart app');
+    const allowRow = policy.ledger(20).find((r) => r.sessionId === fanId && r.rule === 'bash.sudo.granted');
+    check(granted?.permissionDecision === 'allow' && !!allowRow && allowRow.reason.includes(`grant #${recorded[0]?.id}`),
+      'opted in, the same command from an unattended run is allowed and its ledger row names the grant it relied on', allowRow?.reason);
+    const other = await unattendedDecision('sudo systemctl stop app');
+    check(other?.permissionDecision === 'deny' && /No person approved this exact command/.test(other.permissionDecisionReason ?? ''),
+      'a different command is denied, and the denial names the grant that was missing', other?.permissionDecisionReason);
+
+    await post(fan, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', cwd: dir, tool_input: { command: 'sudo reboot' } });
+    await post(fan, { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: 'sudo reboot' } });
+    const count = (db().prepare('SELECT COUNT(*) AS n FROM policy_grants WHERE project_id = ?').get(project.id) as { n: number }).n;
+    check(count === 1, 'an unattended run’s own prompts never create grants', count);
+
+    db().prepare('UPDATE policy_grants SET at = ? WHERE project_id = ?').run(Date.now() - 9 * 86_400_000, project.id);
+    const expired = await unattendedDecision(command);
+    check(expired?.permissionDecision === 'deny' && /more than 7 days ago/.test(expired.permissionDecisionReason ?? ''),
+      'a grant older than the window no longer counts, and the denial says it expired', expired?.permissionDecisionReason);
+
+    policy.releasePolicyContext(fanId);
+    hooks.cleanupHookSettings(fanId);
+    hooks.cleanupHookSettings(attendedId);
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(attendedId);
+    removeProject(project.id);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export async function runAutoModeSmoke(check: Check, say: Say): Promise<void> {
   say('── helper sweep · P1 · trust levels as auto-mode classifier rules');
   const hooks = await import('./hooks');

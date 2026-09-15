@@ -3537,3 +3537,13 @@ export type PolicySignal = {
   rule: string;
   summary: string;
 };
+
+/** A project's opt-in to letting unattended runs rely on earlier attended approvals. See shared/grants.ts. */
+export type GrantSetting = {
+  projectId: string;
+  enabled: boolean;
+  days: number;
+  /** Grants recorded for the project within the window. */
+  grants: number;
+  newestAt: number | null;
+};

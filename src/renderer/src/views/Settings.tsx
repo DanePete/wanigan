@@ -18,7 +18,7 @@ import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 /* ── helper sweep · P1 policy ── */
-import { FatiguePanel, GateSelfTestPanel, LedgerTrace, tracesTool } from '../components/PolicyEvidence';
+import { FatiguePanel, GateSelfTestPanel, GrantsPanel, LedgerTrace, tracesTool } from '../components/PolicyEvidence';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -3367,6 +3367,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
       </Frame>
 
       {/* ── helper sweep · P1 policy ── */}
+      <GrantsPanel projects={projects} />
       <GateSelfTestPanel />
       <FatiguePanel />
 

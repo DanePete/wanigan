@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { FatigueReport, GateSelfTestRun, StoredTrace } from '@shared/types';
+import type { FatigueReport, GateSelfTestRun, GrantSetting, Project, StoredTrace } from '@shared/types';
 import { Mark, Note, SectionHead, Stat, ago, num, type Tone } from './bits';
 import '../styles/policy-evidence.css';
 
@@ -209,6 +209,84 @@ export function FatiguePanel() {
         the next event for the same tool. When the tool ran, that event arrives after it finished, so the time includes the
         tool’s own run. {report && report !== 'error' ? `A run of ${report.run} answers in a row under ${seconds} is recorded as a fast run.` : ''} There is no score.
       </p>
+    </section>
+  );
+}
+
+const GRANT_DAYS = [1, 7, 14, 30];
+
+/**
+ * The per-project opt-in for unattended runs to rely on earlier approvals.
+ * Off by default, and the explanation beside the switch is the whole rule, so
+ * nobody turns it on believing it does more or less than it does.
+ */
+export function GrantsPanel({ projects }: { projects: Project[] }) {
+  const [rows, setRows] = useState<GrantSetting[] | null | 'error'>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.policyEvidence.grantSettings()
+      .then((r) => { if (live) setRows(r); })
+      .catch(() => { if (live) setRows('error'); });
+    return () => { live = false; };
+  }, [projects.length]);
+  const save = async (projectId: string, enabled: boolean, days: number) => {
+    setSaving(projectId); setProblem(null);
+    try {
+      const next = await window.wanigan.policyEvidence.setGrantSetting(projectId, enabled, days);
+      setRows((prev) => (Array.isArray(prev) ? prev.map((r) => (r.projectId === projectId ? next : r)) : prev));
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally { setSaving(null); }
+  };
+  return (
+    <section className="pe-grants" aria-label="Unattended runs and earlier approvals">
+      <SectionHead label="Unattended runs: deny unless a person granted it before" />
+      <p className="dim pe-fine pe-grants-rule">
+        A headless or scheduled run has nobody to ask, so every question the gate would put to you is denied. With this on
+        for a project, a question is allowed instead when you approved the same call in an attended session of that project
+        within the window: the exact command (spacing and quoting aside), the same write tool on a path under the directory you
+        approved, or the same MCP tool. Approval means Wanigan saw the permission prompt and then the tool run. Every call
+        allowed this way is a ledger row naming the grant it used, and every denial names the grant that was missing. Rules
+        that deny outright still deny.
+      </p>
+      {rows === null ? <p className="faint pe-fine">Reading grant settings…</p>
+        : rows === 'error' ? <Note tone="error">Wanigan could not read the grant settings.</Note>
+          : !projects.length ? <p className="faint pe-fine">No projects yet.</p>
+            : (
+              <div className="pe-scroll">
+                <table className="grid pe-table">
+                  <thead><tr><th>Project</th><th>Rely on earlier approvals</th><th>Window</th><th className="r">Grants in window</th></tr></thead>
+                  <tbody>
+                    {projects.map((p) => {
+                      const r = rows.find((x) => x.projectId === p.id) ?? { projectId: p.id, enabled: false, days: 7, grants: 0, newestAt: null };
+                      return (
+                        <tr key={p.id}>
+                          <td>{p.name}</td>
+                          <td>
+                            <label className="pe-check">
+                              <input type="checkbox" checked={r.enabled} disabled={saving === p.id}
+                                     onChange={(e) => void save(p.id, e.target.checked, r.days)} />
+                              {r.enabled ? 'On' : 'Off'}
+                            </label>
+                          </td>
+                          <td>
+                            <select className="field" value={r.days} disabled={saving === p.id}
+                                    aria-label={`Grant window for ${p.name}`}
+                                    onChange={(e) => void save(p.id, r.enabled, Number(e.target.value))}>
+                              {GRANT_DAYS.map((d) => <option key={d} value={d}>{d} day{d === 1 ? '' : 's'}</option>)}
+                            </select>
+                          </td>
+                          <td className="r">{num(r.grants)}{r.newestAt ? <div className="faint pe-fine">newest {ago(r.newestAt)}</div> : null}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+      {problem && <Note tone="error">{problem}</Note>}
     </section>
   );
 }
