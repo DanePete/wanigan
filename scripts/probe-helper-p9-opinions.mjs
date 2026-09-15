@@ -178,7 +178,7 @@ try {
           const p = profiles[kind].find((x) => x.providerId === providerId);
           return { kind, sessionId: 's1', profile: p, digest: `digest-${kind}-${providerId}-${maxBudgetUsd}`, diffSha256: 'e'.repeat(64),
             sends: { anchor: ANCHOR, diffBytes: 4301, sentBytes: 4301, capBytes: 98304, truncated: false, files: 3, filesListed: 3, preexistingLeftOut: 1,
-              checks: ['A retried checkout charges once.'], checksOmitted: 0, reviewRules: null,
+              checks: ['A retried checkout charges once.'], checksOmitted: 0, reviewRules: 2,
               messages: kind === 'decisions' ? { sent: 3, omitted: 0, chars: 412 } : null, goal: { title: 'Make checkout retries safe', planItems: 4 } },
             timeoutMs: 600000, statements: statements(kind, p, maxBudgetUsd), argv: argv(p, maxBudgetUsd), refusal: p.refusal };
         },
@@ -283,7 +283,7 @@ try {
     assert.match(text, /The diff against its base commit: 4\.2 KB, whole \(the cap is 96 KB\)\./);
     assert.match(text, /The list of 3 changed files; 1 file you had already changed before the session is left out\./);
     assert.match(text, /The goal “Make checkout retries safe”: 1 acceptance check\./);
-    assert.match(text, /Scoped code review rules: none — this build has no collector for them, so none are sent\./);
+    assert.match(text, /Scoped code review rules: 2, each cited by the file and heading it comes from\./);
     assert.match(text, /Nothing else\. No other file from this session or repository, no transcript, no MCP server, and no tool/);
     assert.match(text, /Anthropic receives it/);
     assert.match(text, /Claude Code stops itself at \$1\.00 \(--max-budget-usd\)/);

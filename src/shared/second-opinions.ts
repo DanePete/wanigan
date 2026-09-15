@@ -197,8 +197,9 @@ export type ReviewPayloadInput = {
   /** A goal's acceptance checks, as written. Empty when the session has no goal. */
   checks: readonly string[];
   /**
-   * Scoped code review rules. No collector for them exists in this build, so
-   * main passes null and the dialog says so rather than sending nothing silently.
+   * The Code Review Rules whose scope covers the changed files, each cited by
+   * file and heading (main/review-rules.ts). null when they could not be read,
+   * which the dialog says rather than sending nothing silently; [] when none apply.
    */
   reviewRules: readonly string[] | null;
 };
@@ -742,7 +743,7 @@ export type OpinionSends = {
   preexistingLeftOut: number;
   checks: string[];
   checksOmitted: number;
-  /** null when no collector for scoped review rules exists in this build. */
+  /** null when the scoped review rules could not be read; 0 when none cover the diff. */
   reviewRules: number | null;
   messages: { sent: number; omitted: number; chars: number } | null;
   goal: { title: string; planItems: number } | null;

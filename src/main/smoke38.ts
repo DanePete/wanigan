@@ -76,6 +76,8 @@ export async function runSecondOpinionSmoke(check: Check, say: Say): Promise<voi
     repo.write('src/cart.ts', 'export function total(items) {\n  let sum = 0;\n  for (const i of items) sum += i.price;\n  return sum;\n}\n');
     repo.write('src/old.ts', 'export const legacy = true;\n');
     repo.write('notes.md', '# notes\n');
+    // Rules scoped to src/: the review payload carries them for src/cart.ts and src/retry.ts, cited.
+    repo.write('src/AGENTS.md', '# src\n\n## Code Review Rules\n\n- Round money once, at the edge, never inside a loop.\n');
     repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
     const base = repo.git('rev-parse', 'HEAD').trim();
     const project = await addProject(repo.dir);
@@ -113,6 +115,8 @@ export async function runSecondOpinionSmoke(check: Check, say: Say): Promise<voi
       && preview.argv.includes('<the payload described above>') && !preview.argv.some((a) => a.includes('retry(fn)')),
       'the argv on the consent screen is the real one with the payload elided', preview.argv);
 
+    check(preview.sends.reviewRules === 1,
+      'the Code Review Rules covering the changed files are counted in what the preview says it sends', preview.sends.reviewRules);
     const codexPreview = await opinions.previewOpinion({ sessionId: sid, kind: 'review', providerId: 'codex' });
     check(/Codex has no spending cap Wanigan can set\. Wanigan stops it after 10 minutes/.test(codexPreview.statements.cap)
       && /blocks writes but not reads/.test(codexPreview.statements.nothingElse),
@@ -163,6 +167,8 @@ export async function runSecondOpinionSmoke(check: Check, say: Say): Promise<voi
     check(lines[0] === '-p' && lines.includes('--json-schema') && lines.includes('--no-session-persistence') && lines.includes('--strict-mcp-config')
       && lines[lines.indexOf('--max-budget-usd') + 1] === '0.75' && lines[lines.indexOf('--output-format') + 1] === 'json',
       'the Claude call runs -p with the JSON output format, the schema flag its version supports, no MCP servers, and the agreed dollar cap', lines.filter((l) => l.startsWith('--')));
+    check(argv.includes('## Code review rules for this scope') && argv.includes('- Round money once, at the edge, never inside a loop. (src/AGENTS.md › Code Review Rules)'),
+      'the prompt carries the scoped rule, cited by the file and heading it came from', argv.slice(0, 300));
     const denied = lines[lines.indexOf('--disallowedTools') + 1] ?? '';
     check(['Read', 'Bash', 'Write', 'Edit', 'WebFetch', 'Task', 'Agent'].every((t) => denied.split(',').includes(t)) && !lines.includes('--dangerously-skip-permissions'),
       'every tool Wanigan can name is denied, reads included, so the reviewer has only the payload', denied);

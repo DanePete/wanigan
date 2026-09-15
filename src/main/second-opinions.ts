@@ -8,6 +8,8 @@ import { readOnlyCallArgs, readOnlyCallStandInVersion, runReadOnlyCall, type Rea
 import { listSessions } from './sessions';
 import { reviewPatch, reviewWork } from './review-work';
 import { operatorMessages } from './transcripts';
+/* helper sweep · integration: the Code Review Rules that cover the diff, from the review-depth package. */
+import { rulesForCheckout } from './review-rules';
 import { redactCredentials } from './redact';
 import { splitPatchByFile } from '../shared/review-order';
 import {
@@ -246,7 +248,12 @@ async function buildPayload(kind: OpinionKind, sessionId: string): Promise<Built
   const goal = goalFor(sessionId);
 
   if (kind === 'review') {
-    const payload = buildReviewPayload({ anchor: work.anchor, files, patch: redacted.text, checks: goal?.checks ?? [], reviewRules: null });
+    // The same rules Send review carries: the Code Review Rules sections whose
+    // scope covers a file this session changed, each cited by file and heading.
+    // null means they could not be read, which the dialog says; [] means none apply.
+    const scoped = work.root ? await rulesForCheckout(work.root, own.map((f) => f.path)).catch(() => null) : null;
+    const reviewRules = scoped === null ? null : scoped.flatMap((r) => r.rules.map((rule) => `${rule} (${r.file} › ${r.heading})`));
+    const payload = buildReviewPayload({ anchor: work.anchor, files, patch: redacted.text, checks: goal?.checks ?? [], reviewRules });
     return {
       kind, session, base: work.base, anchor: work.anchor, prompt: payload.prompt, promptSha: sha256(payload.prompt), diffSha: sha256(payload.diff.text),
       redactedLines: redacted.lines, refusal: null,

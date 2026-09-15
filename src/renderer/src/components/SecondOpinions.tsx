@@ -190,7 +190,9 @@ export function OpinionConsentDialog({ sessionId, kind, onClose, onStarted }: {
                 ? <li>The goal “{s.goal.title}”: {s.checks.length} acceptance check{s.checks.length === 1 ? '' : 's'}{kind === 'decisions' ? `, its objective and ${s.goal.planItems} plan item${s.goal.planItems === 1 ? '' : 's'}` : ''}.</li>
                 : <li>No goal: this session was not started from one, so no acceptance checks.</li>}
               {kind === 'review' && (
-                <li>Scoped code review rules: {s.reviewRules === null ? 'none — this build has no collector for them, so none are sent' : `${s.reviewRules}`}.</li>
+                <li>Scoped code review rules: {s.reviewRules === null ? 'they could not be read, so none are sent'
+                  : s.reviewRules === 0 ? 'none cover the changed files'
+                    : `${s.reviewRules}, each cited by the file and heading it comes from`}.</li>
               )}
             </ul>
             <p className="so-statement"><strong>Nothing else.</strong> {current.statements.nothingElse}</p>
