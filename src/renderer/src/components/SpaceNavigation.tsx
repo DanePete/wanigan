@@ -2,6 +2,7 @@ import type { Project } from '@shared/types';
 import { labelForTab, TAB_ICONS, type Tab } from '@shared/routes';
 import { areaFor, SPACE_AREAS, spaceLabel } from '@shared/spaces';
 import { Icon } from './bits';
+import { useChord } from '../bindings';
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useDialog } from './useDialog';
 import '../styles/spaces.css';
@@ -108,6 +109,7 @@ export function SpaceDock({ tab, go, needs, expanded, onMore, companion }: {
   tab: Tab; go: (tab: Tab) => void; needs: number; expanded: boolean; onMore: () => void; companion?: ReactNode;
 }) {
   const current = areaFor(tab);
+  const listChord = useChord('sidebar').glyphs;
   return <footer className="space-foot">
     {companion ?? <span className="space-foot-note">Local first. Your work, together.</span>}
     <nav className="space-dock" aria-label="Workspace navigation">
@@ -117,7 +119,7 @@ export function SpaceDock({ tab, go, needs, expanded, onMore, companion }: {
         {area.id === 'fleet' && needs > 0 && <span className="space-count" aria-label={`${needs} need you`}>{needs}</span>}
       </button>)}
       <button type="button" aria-expanded={expanded} aria-controls="wanigan-sidebar"
-        aria-label="All destinations" title="All destinations (⌥⌘S)" onClick={onMore}><Icon name="panel" /></button>
+        aria-label="All destinations" title={`All destinations (${listChord})`} onClick={onMore}><Icon name="panel" /></button>
     </nav>
     <button className="space-settings" type="button" aria-label="Settings" onClick={() => go('settings')}>
       <Icon name={TAB_ICONS.settings} />

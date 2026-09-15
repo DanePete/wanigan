@@ -15,6 +15,8 @@ import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTi
 import type { LedgerBreakKind, LedgerChainStatus } from '@shared/ledger-chain';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 import type { IconName } from '../components/bits';
+import KeyboardSettings from '../components/KeyboardSettings';
+import { useChord } from '../bindings';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
@@ -100,6 +102,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  { tab: 'app', tabLabel: 'App', section: 'Keyboard', hint: 'Change or reset a keyboard shortcut', keywords: 'keyboard shortcuts shortcut keys chord chords rebind remap keymap hotkey hotkeys accelerator' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
 
@@ -162,8 +165,8 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
-    detail: 'Tune motion for comfort and open a fictional workspace before sharing a screenshot or demo.',
-    help: 'These are local presentation preferences. Motion changes immediately; demo mode opens a separate workspace with fictional data.',
+    detail: 'Tune motion for comfort, choose your keyboard shortcuts, and open a fictional workspace before sharing a screenshot or demo.',
+    help: 'These are local presentation preferences. Motion and shortcuts change immediately; demo mode opens a separate workspace with fictional data.',
   },
 ];
 
@@ -1102,6 +1105,7 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
             <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            <KeyboardSettings />
             <DemoPanel />
           </SettingsTabPanel>
         </div>
@@ -6109,6 +6113,7 @@ function Backup() {
 
 /* Demo controls share the same main-owned window transition as the shortcut. */
 export function DemoPanel() {
+  const demoChord = useChord('demo').glyphs;
   const [state, setState] = useState<import('@shared/demo').DemoState | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -6147,7 +6152,7 @@ export function DemoPanel() {
       <button className="btn btn-primary" disabled={busy} onClick={() => void toggle()}>
         {busy ? 'Switching workspace…' : state.on ? 'Return to real workspace' : 'Open demo workspace'}
       </button>
-      <p className="faint">⌘⇧D opens the same switch from anywhere. Mission, Sessions, Fleet and Usage have sample data; other surfaces are still being prepared.</p>
+      <p className="faint">{demoChord} opens the same switch from anywhere. Mission, Sessions, Fleet and Usage have sample data; other surfaces are still being prepared.</p>
     </>}
     <div className="set-stack">
       <label className="label" htmlFor="demo-prompt">Demo prompts</label>

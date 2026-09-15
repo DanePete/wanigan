@@ -7323,8 +7323,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
     // Off-list views are reachable and are labelled with a real shortcut where
     // one exists rather than a blank column. Nothing is off the list any more,
-    // but the palette must stay truthful if a route is added and ungrouped.
-    && appSrc.includes('meta: TAB_SHORTCUTS[item.id].label'),
+    // but the palette must stay truthful if a route is added and ungrouped —
+    // and print the chord in effect, rebound or not.
+    && appSrc.includes('meta: chordLabels(keymap, `view:${item.id}`).keys'),
   'the keyboard palette traps focus, moves an announced highlight on arrow keys and restores its opener, while navigation remains reachable and truthful on Views-only routes');
 
   // The composer's $ menu was a listbox that owned no options — role="option"
@@ -8037,7 +8038,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // length — including by quoting the roles it deliberately omits. Reading the
   // prose as code made "no reload role" fail on the sentence saying so.
   const menuCode = menuSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  const bindingsSrc = sourceOf('src/renderer/src/bindings.ts');
+  // The rows moved to shared/bindings.ts so main can validate a rebinding
+  // against them; the matcher stayed in the renderer. Both halves are read, so
+  // a contract about either still finds it.
+  const bindingsSrc = sourceOf('src/shared/bindings.ts') + sourceOf('src/renderer/src/bindings.ts');
   const shellCssSrc = sourceOf('src/renderer/src/styles/shell.css');
   const useDialogSrc = sourceOf('src/renderer/src/components/useDialog.ts');
   const ungrouped = TABS.map((item) => item.id)
@@ -8133,7 +8137,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // The menu bar is built from the route table and claims no key the window
   // needs. A registered accelerator is taken by the OS before the keydown
   // reaches the renderer, which is where "the PTY owns its keystrokes" lives.
-  check(menuCode.includes("import { SIDEBAR_GROUPS, TAB_SHORTCUTS, labelForTab")
+  check(menuCode.includes("import { SIDEBAR_GROUPS, labelForTab } from '../shared/routes'")
+    && menuCode.includes("import { effectiveKeymap, menuAccelerator, type Keymap } from '../shared/keymap'")
     && menuCode.includes('registerAccelerator: false')
     && (menuCode.match(/(?<![A-Za-z])accelerator:/g) ?? []).length === (menuCode.match(/registerAccelerator: false/g) ?? []).length
     && !menuCode.includes("role: 'reload'") && !menuCode.includes("role: 'forceReload'")
@@ -8142,7 +8147,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && preloadSrc.includes("listen('menu:route'")
     && appSrc.includes('window.wanigan.on.menuRoute(')
     && appSrc.includes("case 'tab': go(route.tab); break;"),
-  'the macOS menu bar is built from the same route table, prints chords without taking them from the window, and cannot reload a renderer that owns live PTYs');
+  'the macOS menu bar is built from the same route table, prints the effective keymap’s chords without taking them from the window, and cannot reload a renderer that owns live PTYs');
   check(appSrc.includes('window.wanigan.on.notificationOpened(')
     && appSrc.includes("if (route.kind === 'session') { focusSession(route.sessionId); go('sessions'); }"),
     'a clicked notification lands on the session it named, instead of raising the window onto whichever tab was open');

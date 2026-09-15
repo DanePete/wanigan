@@ -5,6 +5,7 @@ import type {
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
 import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { useChord } from '../bindings';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
@@ -142,6 +143,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   /** Fleet watches sessions; the shell is what starts one. */
   onNewSession?: () => void;
 }) {
+  const newSessionChord = useChord('new-session').glyphs;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [attention, setAttention] = useState<Record<string, Attention>>({});
   const [usage, setUsage] = useState<Record<string, SessionUsage>>({});
@@ -477,7 +479,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
         <EmptyState posture="nothing-yet" title="No agents Wanigan started are running"
                     cue={<>Fleet watches sessions that already exist; it does not start them. A new session appears here within three seconds.</>}
                     action={onNewSession
-                      ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">⌘T</kbd></button>
+                      ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">{newSessionChord}</kbd></button>
                       : undefined} />
         {/* This is the branch where "nothing is running" is most likely to be
             wrong — none of Wanigan's own, and three Claude processes started

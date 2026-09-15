@@ -1,5 +1,7 @@
 import { Menu, app, type BrowserWindow, type MenuItemConstructorOptions } from 'electron';
-import { SIDEBAR_GROUPS, TAB_SHORTCUTS, labelForTab, type Tab } from '../shared/routes';
+import { SIDEBAR_GROUPS, labelForTab } from '../shared/routes';
+import { effectiveKeymap, menuAccelerator, type Keymap } from '../shared/keymap';
+import { effectiveStoredKeymap } from './keymap';
 import { navSidebar } from './settings';
 import type { MenuRoute } from '../shared/types';
 
@@ -22,9 +24,12 @@ import type { MenuRoute } from '../shared/types';
  *    not be the thing that kills fifteen agents. Developer tools stay, behind
  *    the standard chord, because they cost nothing and inspect rather than act.
  *  - The chords printed here are the chords the renderer already binds, read
- *    from TAB_SHORTCUTS so a printed chord cannot drift from a working one. But
- *    they are printed, not registered: every custom item sets
- *    `registerAccelerator: false`. A registered accelerator is consumed by the
+ *    from the effective keymap — the route and binding tables with the
+ *    operator's rebindings laid over them — so a printed chord cannot drift
+ *    from a working one, and a rebinding moves the menu's chord on the same
+ *    write that moves the window's. But they are printed, not registered:
+ *    every custom item sets `registerAccelerator: false`, still, whatever the
+ *    chord. A registered accelerator is consumed by the
  *    OS before the key reaches the window, and the window is where the rule
  *    "the PTY owns its keystrokes" is enforced — ⌘K and ⌘T belong to whatever
  *    agent is running while a terminal has focus, and a menu bar must not be
@@ -34,23 +39,22 @@ import type { MenuRoute } from '../shared/types';
  *    column; someone who learns one has learned the other.
  */
 
-/** ⌘1 → 'CommandOrControl+1'. Reads the published aria string, not a second table. */
-function accelerator(tab: Tab): string | undefined {
-  // aria-keyshortcuts publishes alternatives space-separated, Meta first. The
-  // Meta alternative is the one macOS wants; 'CommandOrControl' is Electron's
-  // spelling of the same key on both platforms.
-  const meta = TAB_SHORTCUTS[tab].aria.split(' ').find((alt) => alt.startsWith('Meta+'));
-  if (!meta) return undefined;
-  return meta.replace(/^Meta\+/, 'CommandOrControl+');
-}
-
 /**
  * Every menu item that navigates sends its intent to the renderer rather than
  * changing state here. The renderer owns the router, the dialogs and the
  * knowledge of what is on screen; main knowing any of that would be a second
  * copy of it that drifts.
+ *
+ * `keymap` defaults to what is stored, read fresh on every build: the menu is
+ * rebuilt after each keymap write, and a stale copy held here would print the
+ * chord from before it.
  */
-export function buildApplicationMenu(getWindow: () => BrowserWindow | null, sidebar?: boolean): Menu {
+export function buildApplicationMenu(getWindow: () => BrowserWindow | null, sidebar?: boolean,
+  keymap: Keymap = effectiveStoredKeymap()): Menu {
+  const chords = effectiveKeymap(keymap);
+  // ⌘1 → 'CommandOrControl+1', from the same overlay the window matches.
+  const accelerator = (id: string) => menuAccelerator(chords.byId.get(id));
+
   const send = (route: MenuRoute) => () => {
     const w = getWindow();
     if (!w || w.isDestroyed()) return;
@@ -64,7 +68,7 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
     if (index > 0) goSubmenu.push({ type: 'separator' });
     for (const tab of section.tabs) {
       goSubmenu.push({
-        label: labelForTab(tab), accelerator: accelerator(tab), registerAccelerator: false,
+        label: labelForTab(tab), accelerator: accelerator(`view:${tab}`), registerAccelerator: false,
         click: send({ kind: 'tab', tab }),
       });
     }
@@ -77,7 +81,7 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
         { role: 'about' },
         { type: 'separator' },
         {
-          label: 'Settings…', accelerator: accelerator('settings'), registerAccelerator: false,
+          label: 'Settings…', accelerator: accelerator('view:settings'), registerAccelerator: false,
           click: send({ kind: 'tab', tab: 'settings' }),
         },
         { type: 'separator' },
@@ -94,12 +98,12 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
       label: 'Session',
       submenu: [
         {
-          label: 'New Session…', accelerator: 'CommandOrControl+T', registerAccelerator: false,
+          label: 'New Session…', accelerator: accelerator('new-session'), registerAccelerator: false,
           click: send({ kind: 'new-session' }),
         },
         { type: 'separator' },
         {
-          label: 'Find Anything…', accelerator: 'CommandOrControl+K', registerAccelerator: false,
+          label: 'Find Anything…', accelerator: accelerator('palette'), registerAccelerator: false,
           click: send({ kind: 'palette' }),
         },
       ],
@@ -114,7 +118,7 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
         // changes so the tick is never a frame behind the window.
         {
           label: 'Destination List', type: 'checkbox', checked: sidebar ?? navSidebar() === 'open',
-          accelerator: 'Alt+CommandOrControl+S', registerAccelerator: false,
+          accelerator: accelerator('sidebar'), registerAccelerator: false,
           click: send({ kind: 'sidebar' }),
         },
         { type: 'separator' },
@@ -142,7 +146,7 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
       // which one is real.
       submenu: [
         {
-          label: 'Keyboard Shortcuts', accelerator: 'CommandOrControl+/', registerAccelerator: false,
+          label: 'Keyboard Shortcuts', accelerator: accelerator('sheet'), registerAccelerator: false,
           click: send({ kind: 'shortcuts' }),
         },
       ],
