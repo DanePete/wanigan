@@ -1475,7 +1475,7 @@ export type DocketProof = {
   id: string;
   docketId: string;
   nodeId: string | null;
-  kind: 'plan' | 'test' | 'diff' | 'review' | 'decision';
+  kind: 'plan' | 'test' | 'diff' | 'review' | 'decision' | 'regression';
   status: 'recorded' | 'passed' | 'failed';
   summary: string;
   createdAt: number;
