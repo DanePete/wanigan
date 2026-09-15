@@ -91,26 +91,28 @@ export function isContentAttribute(key: string): boolean {
  * classes and permission decisions.
  */
 export function sanitizeSpanAttributes(attrs: Record<string, unknown>): Record<string, SpanAttrValue> {
-  const out: Record<string, SpanAttrValue> = {};
+  // Collected in a Map, because the keys are the exporter's: an attribute named
+  // __proto__ must stay an attribute rather than be a write to the object itself.
+  const out = new Map<string, SpanAttrValue>();
   let kept = 0;
   for (const [key, value] of Object.entries(attrs)) {
     if (kept >= MAX_ATTRIBUTES) break;
     if (!key || key.length > 64 || IDENTITY_PREFIX.test(key) || isContentAttribute(key)) continue;
     if (typeof value === 'number') {
       if (!Number.isFinite(value)) continue;
-      out[key] = value;
+      out.set(key, value);
     } else if (typeof value === 'boolean') {
-      out[key] = value;
+      out.set(key, value);
     } else if (typeof value === 'string') {
       const v = value.trim();
       if (!v || v.length > MAX_VALUE_LENGTH || /[\u0000-\u001f]/.test(v)) continue;
-      out[key] = v;
+      out.set(key, v);
     } else {
       continue;
     }
     kept++;
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 /**
@@ -160,13 +162,15 @@ function anyValue(v: unknown): SpanAttrValue | undefined {
 }
 
 function attributesOf(list: unknown): Record<string, SpanAttrValue> {
-  const out: Record<string, SpanAttrValue> = {};
+  // A Map for the reason sanitizeSpanAttributes gives. Object.fromEntries defines
+  // each key as its own property, __proto__ included, and never calls a setter.
+  const out = new Map<string, SpanAttrValue>();
   for (const item of asArray(list).slice(0, 256)) {
     if (!isRecord(item) || typeof item.key !== 'string' || !item.key) continue;
     const value = anyValue(item.value);
-    if (value !== undefined) out[item.key] = value;
+    if (value !== undefined) out.set(item.key, value);
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 /** Unix nanoseconds → milliseconds; the rounding is exact to the millisecond (see otel.ts millisOf). */

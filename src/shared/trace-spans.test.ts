@@ -86,6 +86,18 @@ test('an OTLP/JSON export is read into spans with content, identity, events and 
     'an export past the cap stores what fits');
 });
 
+test('an attribute named like part of an object is kept as an attribute, not written into the object', () => {
+  const kv = (key: string, value: Record<string, unknown>) => ({ key, value });
+  const [read] = spansFromOtlp({ resourceSpans: [{ scopeSpans: [{ spans: [{
+    traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), name: 'claude_code.tool', startTimeUnixNano: '1788000000000000000',
+    attributes: [kv('__proto__', { stringValue: 'polluted' }), kv('constructor', { intValue: '7' }), kv('tool_name', { stringValue: 'Bash' })],
+  }] }] }] });
+  const attrs = read.span.attrs;
+  assert.deepEqual(Object.entries(attrs), [['__proto__', 'polluted'], ['constructor', 7], ['tool_name', 'Bash']]);
+  assert.equal(Object.getPrototypeOf(attrs), Object.prototype, 'the key is an own property, not the prototype');
+  assert.equal(JSON.parse(JSON.stringify(attrs)).tool_name, 'Bash');
+});
+
 test('span ids are hex, lowercase, never all zeros, and a base64 exporter is read rather than dropped', () => {
   assert.equal(normalizeSpanId('00F067AA0BA902B7', 8), '00f067aa0ba902b7');
   assert.equal(normalizeSpanId('0000000000000000', 8), null);
