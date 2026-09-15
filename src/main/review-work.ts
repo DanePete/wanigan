@@ -45,6 +45,8 @@ const MAX_FILES = 2_000;
 const MAX_PATCH_BYTES = 2 * 1024 * 1024;
 /** Untracked files larger than this are listed but not read into the patch. */
 const MAX_UNTRACKED_READ = 256 * 1024;
+/** Untracked files read into the whole patch, each its own `git diff --no-index`; the rest are listed only. */
+const MAX_UNTRACKED_PATCHES = 60;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const SUMMARY_TTL_MS = 8_000;
@@ -247,9 +249,11 @@ async function readPatch(t: Target, files: readonly ReviewFile[], whitespace: bo
   let patch = r.ok ? r.out : '';
   let truncated = !r.ok || patch.length > MAX_PATCH_BYTES;
   if (patch.length > MAX_PATCH_BYTES) patch = patch.slice(0, MAX_PATCH_BYTES);
+  let untrackedRead = 0;
   for (const f of files) {
     if (f.status !== '?' || f.binary || f.added === null) continue;
-    if (patch.length > MAX_PATCH_BYTES) { truncated = true; break; }
+    if (patch.length > MAX_PATCH_BYTES || untrackedRead >= MAX_UNTRACKED_PATCHES) { truncated = true; break; }
+    untrackedRead += 1;
     const one = await runGit(t.root, ['diff', '--no-index', '--no-color', '--', '/dev/null', f.path], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
     patch += one.out;
   }

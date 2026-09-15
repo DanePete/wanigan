@@ -166,6 +166,10 @@
 .fleet-entry-top > span, .fleet-entry-state { font-size: var(--t-small); color: var(--text-dim); }
 .fleet-entry-task { color: var(--text-dim); font-size: var(--t-body); overflow-wrap: anywhere; }
 .fleet-entry-state { font-variant-numeric: tabular-nums; }
+/* Needs review and the session's diff size, under its state (helper sweep · P3). */
+.fleet-entry-review { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); font-size: var(--t-small); }
+.fleet-entry-review .mark { white-space: normal; }
+.fleet-diffstat { font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .fleet-inspector { min-width: 0; }
 .fleet-inspector .fleet-card { min-height: 100%; padding: var(--s-5); gap: var(--s-3); background: none; border: 0; border-radius: 0; }
 .fleet-inspector .fleet-card:hover { background: none; }

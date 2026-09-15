@@ -3,6 +3,10 @@ import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types'
 import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide } from '@shared/collisions';
 import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+import RiskTierEditor from '../components/RiskTierEditor';
+import '../styles/review-work.css';
+import { diffStatLabel } from '@shared/review-marks';
+import type { ReviewSummary } from '@shared/review-work';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -334,6 +338,16 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   const [forecastBusy, setForecastBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
+  /*
+   * Reviewing agent worktrees (helper sweep · P3): each worktree's needs-review
+   * state and diff size, sortable by size; the branch a pull request is opened
+   * for when it is a worktree's rather than the checkout's; and where the PR
+   * body came from, said beside the box.
+   */
+  const [reviews, setReviews] = useState<Record<string, ReviewSummary>>({});
+  const [wtSort, setWtSort] = useState<'size' | 'branch'>('size');
+  const [prTarget, setPrTarget] = useState<{ root: string; branch: string } | null>(null);
+  const [prSource, setPrSource] = useState<string | null>(null);
 
   // Four elements carry .gt-scroll, not one: the log on the left, and the pane
   // on the right that changes, branches and stash take turns filling. A single
@@ -395,7 +409,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
     requestEpoch.current += 1;
     setSt(null); setCommits([]); setBrs([]); setStash([]); setWorktrees([]);
     setDetail(null); setErr(null); setOk(null); setConfirm(null);
-    setPr(null); setCreating(false);
+    setPr(null); setCreating(false); setReviews({}); setPrTarget(null); setPrSource(null);
     setForecast(null); setForecastErr(null); setForecastBusy(false);
   }, [root]);
 
@@ -423,6 +437,12 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       if (epoch !== requestEpoch.current) return null;
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setWorktrees(wt);
+      const sessionIds = wt.map((w) => w.sessionId).filter((id): id is string => !!id);
+      if (sessionIds.length) {
+        window.wanigan.reviewWork.summaries(sessionIds)
+          .then((next) => { if (epoch === requestEpoch.current) setReviews(next); })
+          .catch(() => { /* rows show without a review state rather than an invented one */ });
+      }
       setErr(null);
       return s;
     } catch (e) {
@@ -606,7 +626,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
     const epoch = requestEpoch.current;
     setBusy('Create PR'); setErr(null); setOk(null);
     try {
-      const r = await window.wanigan.gh.createPr(st.root, {
+      const r = await window.wanigan.gh.createPr(prTarget?.root ?? st.root, {
         title: form.title, body: form.body, draft: form.draft, base: form.base.trim() || undefined,
       });
       // The pull request was opened either way; reporting it over a different
@@ -617,6 +637,56 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       await loadPr(true);
     } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
+  }
+
+  /**
+   * Open the PR dialog. The title keeps its existing source; the body is written
+   * from Wanigan's recorded evidence when the branch belongs to a session, with
+   * no model call, and left blank with the reason when it does not.
+   */
+  async function openPrDialog(root: string, target: { root: string; branch: string } | null, title: string) {
+    const epoch = requestEpoch.current;
+    setPrTarget(target);
+    setForm({ title, body: '', draft: false, base: '' });
+    setPrSource('Looking for recorded evidence about this branch…');
+    setCreating(true);
+    try {
+      const draft = await window.wanigan.reviewWork.prDraft(target?.root ?? root);
+      if (epoch !== requestEpoch.current) return;
+      if (draft.kind === 'draft') {
+        setForm((f) => (f.body.trim() ? f : { ...f, body: draft.body }));
+        setPrSource(`The body is written from Wanigan's recorded evidence${draft.goalTitle ? ` for the goal “${draft.goalTitle}”` : ''}. Edit it before creating.`);
+      } else {
+        setPrSource(`Body left blank: ${draft.reason}`);
+      }
+    } catch (e) {
+      if (epoch === requestEpoch.current) setPrSource(`Body left blank: the recorded evidence could not be read (${e instanceof Error ? e.message : String(e)}).`);
+    }
+  }
+
+  /** A worktree merge, asked of the risk tiers first so the confirmation can name what blocks it. */
+  async function confirmWorktreeMerge(wt: WorktreeInfo, intoBranch: string) {
+    if (!st) return;
+    const epoch = requestEpoch.current;
+    let gate: Awaited<ReturnType<typeof window.wanigan.reviewWork.mergeCheck>>;
+    try { gate = await window.wanigan.reviewWork.mergeCheck(wt.path); }
+    catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); return; }
+    if (epoch !== requestEpoch.current) return;
+    if (!gate.allowed) { setOk(null); setErr(gate.detail ?? 'The merge is blocked by the project\'s risk tiers.'); return; }
+    const hit = baseConflict(wt.path);
+    const foreseen = hit && forecast
+      ? ` The forecast ${ago(forecast.at)} found it conflicts with ${hit.b.branch} in ${fileList(hit.conflicted)}; if that still holds, git will stop and the merge will be backed out.`
+      : '';
+    const name = wt.branch ?? wt.path;
+    setConfirm({
+      what: `Merge ${name} into ${intoBranch}. It is an agent's worktree at ${wt.path}${wt.dirty === null ? ' whose uncommitted files git could not count; anything uncommitted there will not be merged' : wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.${foreseen}`,
+      verb: `Merge into ${intoBranch}`,
+      run: () => act('Merge', async () => {
+        const r = await window.wanigan.worktrees.merge(wt.path, { squash: false });
+        if (!r.merged) throw new Error(r.detail);
+        return r;
+      }),
+    });
   }
 
   async function addProject() {
@@ -708,10 +778,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                       title={st.upstream
                         ? `Open a pull request for ${st.branch} with gh`
                         : 'A pull request needs the branch on the remote — push it first.'}
-                      onClick={() => {
-                        setForm({ title: commits.find((c) => c.head)?.subject ?? '', body: '', draft: false, base: '' });
-                        setCreating(true);
-                      }}>
+                      onClick={() => void openPrDialog(st.root, null, commits.find((c) => c.head)?.subject ?? '')}>
                 Create PR
               </button>
             )}
@@ -781,12 +848,13 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       {creating && st?.isRepo && (
         <div className="gt-notice">
           <Note tone="warn">
-            Open a pull request for <span className="mono">{st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
+            Open a pull request for <span className="mono">{prTarget?.branch ?? st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
             <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
               <input className="field" aria-label="Pull request title" placeholder="Title" maxLength={300} value={form.title}
                      onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
-              <textarea className="field" aria-label="Pull request body" placeholder="Body (optional)" rows={4} value={form.body}
+              <textarea className="field" aria-label="Pull request body" placeholder="Body (optional)" rows={form.body ? 12 : 4} value={form.body}
                         onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} />
+              {prSource && <p className="rw-pr-source">{prSource}</p>}
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 'var(--t-small)' }}>
                   <input type="checkbox" checked={form.draft}
@@ -799,7 +867,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                   <button className="btn btn-primary" disabled={!!busy || !form.title.trim()} onClick={() => void createPr()}>
                     {busy === 'Create PR' ? 'Creating…' : 'Create PR on GitHub'}
                   </button>
-                  <button className="btn" disabled={!!busy} onClick={() => setCreating(false)}>Cancel</button>
+                  <button className="btn" disabled={!!busy} onClick={() => { setCreating(false); setPrTarget(null); setPrSource(null); }}>Cancel</button>
                 </div>
               </div>
             </div>
@@ -810,6 +878,10 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       <details className="gt-review-controls">
         <summary>Review gate<span className="faint">Checks & recorded results</span></summary>
         <ReviewGate projectId={projectId} projectName={project?.name} />
+      </details>
+      <details className="gt-review-controls">
+        <summary>Risk tiers<span className="faint">Paths that need an approval before a merge</span></summary>
+        <RiskTierEditor projectId={projectId} projectName={project?.name} />
       </details>
 
       <div className="gt" style={{ flex: 1, minHeight: 0 }}>
@@ -1007,6 +1079,53 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
           {pane === 'branches' && st && (
             <div className="gt-scroll" ref={paneRef}>
               {hasWorktrees && (
+                <section className="rw-worktrees" aria-label="Agent worktrees">
+                  <SectionHead label="Agent worktrees" count={worktrees.length} right={
+                    <Segmented label="Sort worktrees by" value={wtSort} onChange={setWtSort} options={[
+                      { value: 'size', label: 'Diff size' }, { value: 'branch', label: 'Branch' },
+                    ]} />} />
+                  <ul className="rw-worktree-list">
+                    {[...worktrees].sort((a, z) => {
+                      if (wtSort === 'branch') return (a.branch ?? a.path).localeCompare(z.branch ?? z.path);
+                      const size = (w: WorktreeInfo) => { const r = w.sessionId ? reviews[w.sessionId] : undefined; return r ? r.counts.added + r.counts.removed : -1; };
+                      return size(z) - size(a) || (a.branch ?? a.path).localeCompare(z.branch ?? z.path);
+                    }).map((w) => {
+                      const r = w.sessionId ? reviews[w.sessionId] : undefined;
+                      const upstream = brs.find((b) => b.name === w.branch && !b.remote)?.upstream ?? null;
+                      return (
+                        <li key={w.path} className="rw-worktree">
+                          <div className="rw-worktree-top">
+                            <span className="rw-worktree-name">{w.branch ?? w.path.split('/').pop()}</span>
+                            {r?.needsReview && <Mark glyph="◐" word={r.label} tone="warn" />}
+                            {r && !r.needsReview && r.reason === 'all-approved' && <Mark glyph="✓" word="reviewed" tone="ok" />}
+                            {r && !r.needsReview && r.reason === 'no-diff' && <Mark glyph="○" word="no changes" tone="quiet" />}
+                            {r && r.highTierUnapproved > 0 && <Mark glyph="▲" word={`${r.highTierUnapproved} high-tier unapproved`} tone="serious" />}
+                            {!w.sessionId && <span className="faint">no Wanigan session</span>}
+                            {r && r.counts.files > 0 && <span className="rw-stat">{r.counts.files} file{r.counts.files === 1 ? '' : 's'} · {diffStatLabel(r.counts.added, r.counts.removed)}</span>}
+                          </div>
+                          <div className="rw-actions">
+                            {w.branch && st.branch && (
+                              <button type="button" className="gt-chip" disabled={!!busy || (r?.highTierUnapproved ?? 0) > 0}
+                                      onClick={() => void confirmWorktreeMerge(w, st.branch ?? 'the current branch')}>
+                                merge into {st.branch}
+                              </button>
+                            )}
+                            {w.branch && upstream && (
+                              <button type="button" className="gt-chip" disabled={!!busy || creating}
+                                      onClick={() => void openPrDialog(st.root, { root: w.path, branch: w.branch ?? '' }, commits.find((c) => c.refs.some((ref) => ref.endsWith(w.branch ?? '')))?.subject ?? w.branch ?? '')}>
+                                create PR…
+                              </button>
+                            )}
+                            {w.branch && !upstream && <span className="faint rw-because">Push {w.branch} to open a pull request for it.</span>}
+                            {(r?.highTierUnapproved ?? 0) > 0 && <span className="faint rw-because">Approve its high-tier files in the session's code rail to merge.</span>}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+              {hasWorktrees && (
                 <ForecastPanel forecast={forecast} busy={forecastBusy} error={forecastErr}
                                onCheck={() => { setForecastErr(null); void runForecast(); }} />
               )}
@@ -1048,21 +1167,11 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                                   // A bare `git merge` from here ran none of that and took
                                   // the committed half of an agent's work silently.
                                   const wt = worktrees.find((w) => w.branch === b.name);
-                                  const hit = wt ? baseConflict(wt.path) : undefined;
                                   // Said before the press, not discovered after it: the
-                                  // merge itself still stops and backs out on a conflict.
-                                  const foreseen = hit && forecast
-                                    ? ` The forecast ${ago(forecast.at)} found it conflicts with ${hit.b.branch} in ${fileList(hit.conflicted)}; if that still holds, git will stop and the merge will be backed out.`
-                                    : '';
-                                  setConfirm(wt
-                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}${wt.dirty === null ? ' whose uncommitted files git could not count; anything uncommitted there will not be merged' : wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.${foreseen}`,
-                                        verb: `Merge into ${st.branch}`,
-                                        run: () => act('Merge', async () => {
-                                          const r = await window.wanigan.worktrees.merge(wt.path, { squash: false });
-                                          if (!r.merged) throw new Error(r.detail);
-                                          return r;
-                                        }) }
-                                    : { what: `Merge ${b.name} into ${st.branch}.`,
+                                  // merge itself still stops and backs out on a conflict,
+                                  // and the risk tiers are asked before the confirmation.
+                                  if (wt) { void confirmWorktreeMerge(wt, st.branch ?? 'the current branch'); return; }
+                                  setConfirm({ what: `Merge ${b.name} into ${st.branch}.`,
                                         verb: `Merge into ${st.branch}`,
                                         run: () => act('Merge', () => window.wanigan.git.merge(st.root, b.name)) });
                                 }}>merge</button>

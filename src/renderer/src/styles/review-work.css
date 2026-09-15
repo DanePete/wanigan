@@ -1,0 +1,91 @@
+/* Reviewing the work in the code rail: the verdict, scopes, per-file marks and
+   the evidence under a diff. Marks carry a glyph and a word; colour is the
+   last channel, never the only one. */
+.rw-summary { display: grid; gap: var(--s-1); padding: var(--s-1) var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+.rw-summary-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-3); font-size: var(--t-small); }
+.rw-summary-line .rw-send { margin-left: auto; }
+.rw-because { margin: 0; font-size: var(--t-micro); color: var(--text-dim); line-height: 1.45; }
+.rw-stat { font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.rw-toolbar { display: grid; gap: var(--s-1); padding: var(--s-1) var(--s-3) var(--s-2); border-bottom: 1px solid var(--line-soft); }
+.rw-toolbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.rw-toolbar .seg { max-width: 100%; }
+.rw-check { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--t-small); color: var(--text-dim); }
+.field.rw-filter { flex: 1 1 10rem; min-width: 0; font-size: var(--t-small); }
+
+.rw-row-marks { display: inline-flex; gap: var(--s-1); margin-left: auto; flex: none; font-size: var(--t-micro); }
+
+.rw-filebar { display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-soft); }
+.rw-filebar-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); min-width: 0; }
+.rw-path { font-size: var(--t-small); overflow-wrap: anywhere; }
+.rw-was { font-size: var(--t-micro); overflow-wrap: anywhere; }
+.rw-filebar-top .rw-stat { margin-left: auto; }
+.rw-tags { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); font-size: var(--t-micro); }
+.rw-tags .mark { white-space: normal; }
+.rw-tag { display: inline-flex; align-items: center; padding: 0 var(--s-2); border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--text-dim); font-size: var(--t-micro); line-height: 1.6; }
+.rw-note { margin: 0; font-size: var(--t-small); color: var(--text); overflow-wrap: anywhere; }
+.rw-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.rw-actions .btn[aria-pressed='true'] { background: var(--bg-selected); border-color: var(--text-faint); color: var(--text); }
+.review-compose.rw-compose { position: static; border-top: 0; padding: 0; background: none; }
+
+.rw-find, .rw-stage { display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+.rw-find-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); font-size: var(--t-small); }
+.rw-find-head .btn { margin-left: auto; }
+.rw-find-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; max-height: 40vh; overflow-y: auto; }
+.rw-find-hit { display: grid; gap: 0; width: 100%; padding: var(--s-1) var(--s-2); text-align: left; border-radius: var(--r-sm); background: none; border: 0; cursor: pointer; color: var(--text); }
+.rw-find-hit:hover, .rw-find-hit:focus-visible { background: var(--bg-sunk); }
+.rw-find-where { font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
+.rw-find-text { font-size: var(--t-micro); white-space: pre-wrap; overflow-wrap: anywhere; }
+.rw-find-more { margin: 0; font-size: var(--t-micro); }
+
+.rw-stage-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; font-size: var(--t-small); }
+.rw-stage-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); overflow-wrap: anywhere; }
+.rw-stage-patch { max-height: 40vh; overflow: auto; }
+
+.rw-image-diff { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--s-3); padding: var(--s-3); }
+.rw-image-side { display: grid; gap: var(--s-1); margin: 0; align-content: start; }
+.rw-image-side figcaption { font-size: var(--t-micro); }
+.rw-image { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-sunk); }
+.rw-image-empty { margin: 0; padding: var(--s-4); border: 1px dashed var(--line); border-radius: var(--r-sm); font-size: var(--t-small); text-align: center; }
+.rw-pad { padding: var(--s-2) var(--s-3); }
+
+.rw-sections { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.rw-section { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); font-size: var(--t-small); }
+.rw-section > summary { cursor: pointer; font-weight: 600; display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: baseline; }
+.rw-section > summary .faint { font-weight: 400; font-size: var(--t-micro); }
+.rw-section-empty { margin: var(--s-1) 0 0; font-size: var(--t-micro); line-height: 1.45; }
+.rw-manifest { display: grid; gap: var(--s-1); margin-top: var(--s-2); }
+.rw-manifest-path { font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
+.rw-dep-list, .rw-claims { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
+.rw-dep-list li { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; overflow-wrap: anywhere; }
+.rw-claims { margin-top: var(--s-2); }
+.rw-claims li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--s-2); align-items: baseline; }
+.rw-claim-quote { overflow-wrap: anywhere; }
+.rw-claim-why { grid-column: 2; font-size: var(--t-micro); overflow-wrap: anywhere; }
+
+.review-diff .dl.rw-focus { box-shadow: inset 3px 0 0 var(--warning); background: var(--diff-match-bg); }
+.rw-unsent { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); }
+.rw-unsent-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-1); }
+
+/* Risk tiers editor, in the Git view's project settings. */
+.rw-tiers { display: grid; gap: var(--s-2); padding: var(--s-4) var(--s-5); border-top: 1px solid var(--line-soft); background: var(--bg-raised); }
+.rw-tiers > * { max-width: 60rem; }
+.rw-tier-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
+.rw-tier-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.field.rw-tier-pattern { flex: 1 1 14rem; min-width: 0; font-family: var(--mono); font-size: var(--t-small); }
+.field.rw-tier-select { width: auto; font-size: var(--t-small); }
+
+/* Agent worktrees in the Git view, with their review state and diff size. */
+.rw-worktrees { display: grid; gap: var(--s-1); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.rw-worktree-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
+.rw-worktree { display: grid; gap: var(--s-1); padding: var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); }
+.rw-worktree-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); font-size: var(--t-small); }
+.rw-worktree-top .rw-stat { margin-left: auto; }
+.rw-worktree-name { font-family: var(--mono); overflow-wrap: anywhere; }
+.rw-pr-source { margin: 0; font-size: var(--t-micro); color: var(--text-dim); }
+
+/* The regression proof on a goal's verify task. */
+.rw-proof { display: grid; gap: var(--s-2); margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.rw-proof-result { display: grid; gap: var(--s-1); }
+.rw-view-options { display: grid; gap: var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--line-soft); font-size: var(--t-small); }
+.rw-because .mark { white-space: normal; margin-right: var(--s-1); }

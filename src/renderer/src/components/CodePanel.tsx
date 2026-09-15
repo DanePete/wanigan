@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
-import { Note, Icon } from './bits';
+import { ConfirmNote, Note, Icon } from './bits';
 import { useDialog } from './useDialog';
 import { appendToComposerDraft } from './Composer';
 import {
@@ -8,9 +8,24 @@ import {
   type ReviewNote,
 } from '@shared/review-notes';
 import '../styles/code-reader.css';
+import { diffStatLabel, formatReviewSubmission, marksFromReviews } from '@shared/review-marks';
+import { orderForReview, type ReviewOrderMode } from '@shared/review-order';
+import type { ReviewWorkFile, TurnStat } from '@shared/review-work';
+import {
+  ClaimsSection, DependenciesSection, FileRowMarks, FindResults, ImageDiff, ReviewFileBar, ReviewSummaryBar, ReviewToolbar, ReviewViewOptions,
+  StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
+} from './ReviewWorkbench';
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
+
+/**
+ * A review note being written but not yet added, per session. Module-level so it
+ * outlives a switch to another file, another tab or a closed rail; the operator
+ * is asked before one is thrown away.
+ */
+type UnsentNote = { anchor: string; file: string; from: number; to: number; body: string; text: string };
+const unsentNotes = new Map<string, UnsentNote>();
 
 /** One conversational turn, derived from its boundary checkpoints. */
 type TurnRow = {
@@ -122,6 +137,30 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const [cpPlan, setCpPlan] = useState<(CheckpointRevertPlan & { targetLabel: string }) | null>(null);
   const [cpBusy, setCpBusy] = useState(false);
   const [cpResult, setCpResult] = useState<CheckpointRevertResult | null>(null);
+  /*
+   * Reviewing the work (helper sweep · P3). Three scopes over the same session:
+   * the files a recorded edit route names, everything uncommitted, and the
+   * whole branch against the commit the session started from. Per-file marks,
+   * tiers and alarms come from main with the branch diff; Send review writes
+   * one message into the message box and sends nothing.
+   */
+  const [diffScope, setDiffScope] = useState<ReviewScope>('branch');
+  const [order, setOrder] = useState<ReviewOrderMode>('review');
+  const [whitespace, setWhitespace] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [findQuery, setFindQuery] = useState('');
+  const [find, setFind] = useState<{ query: string; hits: FindHit[]; more: number; truncated: boolean } | null>(null);
+  const [focusLine, setFocusLine] = useState<{ file: string; line: number; side: 'new' | 'old' } | null>(null);
+  const [staging, setStaging] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
+  const [turnStats, setTurnStats] = useState<Record<number, TurnStat>>({});
+  const [unsent, setUnsent] = useState<UnsentNote | null>(() => (sessionId ? unsentNotes.get(sessionId) ?? null : null));
+  const [discardUnsent, setDiscardUnsent] = useState(false);
+  const { work: review, error: reviewErr, reload: reloadReview } = useReviewWork(sessionId, whitespace, tab === 'changes');
+  const reviewing = !!sessionId && !!review?.base;
+  const scopeNow: ReviewScope = reviewing ? diffScope : 'uncommitted';
+  const reviewByPath = useMemo(() => new Map((review?.files ?? []).map((f) => [f.path, f])), [review]);
 
   useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
 
@@ -155,6 +194,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const loadCheckpoints = useCallback(() => {
     if (!sessionId) return;
     window.wanigan.checkpoints.list(sessionId).then(setCps).catch(() => {});
+    // Per-turn +N −M, keyed by the snapshot pair main already diffed.
+    window.wanigan.reviewWork.turnStats(sessionId).then(setTurnStats).catch(() => {});
   }, [sessionId]);
 
   useEffect(() => {
@@ -166,7 +207,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [tab, sessionId, loadCheckpoints]);
 
-  useEffect(() => { setCps([]); setSelTurn(null); setTurnDiff(null); setTurnDiffNote(null); setCpPlan(null); setCpResult(null); }, [sessionId]);
+  useEffect(() => { setCps([]); setSelTurn(null); setTurnDiff(null); setTurnDiffNote(null); setCpPlan(null); setCpResult(null); setTurnStats({}); }, [sessionId]);
+  useEffect(() => { setUnsent(sessionId ? unsentNotes.get(sessionId) ?? null : null); setDiscardUnsent(false); setFind(null); setStaging(false); setSent(null); }, [sessionId]);
 
   const turns = useMemo(() => deriveTurns(cps), [cps]);
 
@@ -325,10 +367,82 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     } finally { setBulkBusy(false); }
   }
 
-  async function openDiff(p: string) {
+  async function openDiff(p: string, opts: { line?: { line: number; side: 'new' | 'old' } | null; scope?: ReviewScope; whitespace?: boolean } = {}) {
     setSel(p); setFile(null); setPlan(null); setReverted(null);
-    try { setDiff(await window.wanigan.code.diff(projectPath, p)); setErr(null); }
+    setFocusLine(opts.line ? { file: p, ...opts.line } : null);
+    const inScope = opts.scope ?? scopeNow;
+    const ws = opts.whitespace ?? whitespace;
+    try {
+      // The branch scopes read the diff against the session's base commit; the
+      // uncommitted scope keeps the working tree against HEAD, as it always has.
+      const text = sessionId && inScope !== 'uncommitted' && reviewByPath.has(p)
+        ? await window.wanigan.reviewWork.fileDiff(sessionId, p, { whitespace: ws })
+        : await window.wanigan.code.diff(projectPath, p, { whitespace: ws });
+      setDiff(text); setErr(null);
+    }
     catch (e) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  function changeScope(next: ReviewScope) {
+    setDiffScope(next);
+    if (sel) void openDiff(sel, { scope: next });
+  }
+
+  function changeWhitespace(next: boolean) {
+    setWhitespace(next);
+    if (sel) void openDiff(sel, { whitespace: next });
+  }
+
+  async function runFind() {
+    if (!sessionId || !findQuery.trim()) { setFind(null); return; }
+    try {
+      const { patch, truncated } = await window.wanigan.reviewWork.patch(sessionId, { whitespace });
+      const { hits, more } = findInPatch(patch, findQuery);
+      setFind({ query: findQuery.trim(), hits, more, truncated });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  function openHit(hit: FindHit) {
+    const inUncommitted = changes.files.some((f) => f.path === hit.file);
+    const target: ReviewScope = scopeNow === 'uncommitted' && !inUncommitted ? 'branch' : scopeNow === 'agent' && !reviewByPath.get(hit.file) ? 'branch' : scopeNow;
+    if (target !== scopeNow) setDiffScope(target);
+    void openDiff(hit.file, { scope: target, line: hit.line !== null && hit.side ? { line: hit.line, side: hit.side } : null });
+  }
+
+  async function sendReview() {
+    if (!sessionId || !review?.anchor || !review.base) return;
+    setSending(true); setSent(null);
+    try {
+      const deps = await window.wanigan.reviewWork.dependencies(sessionId).catch(() => null);
+      const lineNotes = notesAnchor === review.anchor ? notes : [];
+      const result = formatReviewSubmission({
+        anchor: review.anchor,
+        files: review.files,
+        marks: marksFromReviews(review.files, review.root, review.base),
+        lineNotes,
+        dependencies: deps ? deps.manifests.flatMap((m) => m.lines.map((text) => ({ text }))) : [],
+      });
+      if (!result.ok) { setSent({ tone: 'warn', text: result.reason }); return; }
+      const where = appendToComposerDraft(sessionId, result.text);
+      if (lineNotes.length) { setNotes([]); setNotesAnchor(null); }
+      const count = `${result.items} item${result.items === 1 ? '' : 's'}`;
+      setSent({ tone: 'ok', text: where === 'composer'
+        ? `Put a review of ${count} into the message box. Read it there, then send or queue.`
+        : `Added a review of ${count} to this session's saved draft. Open the message box to read and send it.` });
+    } finally { setSending(false); }
+  }
+
+  function rememberUnsent(next: UnsentNote | null) {
+    if (!sessionId) return;
+    if (next && next.body.trim()) unsentNotes.set(sessionId, next); else unsentNotes.delete(sessionId);
+    setUnsent(next && next.body.trim() ? next : null);
+  }
+
+  function returnToUnsent() {
+    if (!unsent) return;
+    if (unsent.anchor === changesAnchor) { setTab('changes'); setDiffScope('uncommitted'); void openDiff(unsent.file, { scope: 'uncommitted' }); }
+    else if (review?.anchor && unsent.anchor === review.anchor) { setTab('changes'); setDiffScope('branch'); void openDiff(unsent.file, { scope: 'branch' }); }
+    else setTab('turns');
   }
 
   async function openFile(rel: string) {
@@ -373,6 +487,13 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     [changes.files, scope]
   );
   const preexistingCount = changes.files.filter((f) => f.preexisting).length;
+  const needle = filter.trim().toLowerCase();
+  const uncommittedRows = useMemo(() => orderForReview(visible.filter((f) => !needle || f.path.toLowerCase().includes(needle)
+    || (reviewByPath.get(f.path)?.oldPath ?? '').toLowerCase().includes(needle)), order), [visible, needle, order, reviewByPath]);
+  const reviewRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
+  const selectedReview: ReviewWorkFile | null = sel ? reviewByPath.get(sel) ?? null : null;
+  const reviewKey = review ? `${review.base}:${review.files.map((f) => f.contentHash.slice(0, 7)).join('')}` : '';
+  const diffAnchor = scopeNow === 'uncommitted' || !review?.anchor ? changesAnchor : review.anchor;
 
   const crumbs = useMemo(() => {
     const parts = dir ? dir.split('/') : [];
@@ -408,6 +529,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           </button>
         )}
         <details className="code-actions-menu"><summary>Actions <Icon name="chevron-down" /></summary><div className="code-toolbar-actions">
+          {tab === 'changes' && reviewing && (
+            <ReviewViewOptions order={order} onOrder={setOrder} whitespace={whitespace} onWhitespace={changeWhitespace} />
+          )}
           {tab === 'changes' && sessionId && preexistingCount > 0 && (
             <button className="pill" title={`${preexistingCount} file(s) were already modified when this session started`}
                     onClick={() => setScope(scope === 'session' ? 'all' : 'session')}
@@ -544,6 +668,54 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         </div>
       )}
 
+      {sessionId && unsent && !(tab === 'changes' && sel === unsent.file && diffAnchor === unsent.anchor) && (
+        <div className="rw-unsent">
+          {discardUnsent ? (
+            <ConfirmNote what={<>Discard the unsent note on <span className="mono">{unsent.file}</span>? It was never added to the message and cannot be recovered.</>}
+                         verb="Discard note" onCancel={() => setDiscardUnsent(false)}
+                         onRun={() => { rememberUnsent(null); setDiscardUnsent(false); }} />
+          ) : (
+            <Note tone="warn">
+              An unsent note on <span className="mono">{unsent.file}</span> is kept: “{unsent.body}”
+              <div className="rw-unsent-actions">
+                <button type="button" className="btn btn-sm" onClick={returnToUnsent}>Return to it</button>
+                <button type="button" className="btn btn-sm" onClick={() => setDiscardUnsent(true)}>Discard…</button>
+              </div>
+            </Note>
+          )}
+        </div>
+      )}
+
+      {tab === 'changes' && sessionId && (
+        <ReviewSummaryBar work={review} error={reviewErr} onSend={() => void sendReview()} sending={sending}
+                          sent={sent} onDismissSent={() => setSent(null)} />
+      )}
+      {tab === 'changes' && reviewing && review && (
+        <>
+          <ReviewToolbar scope={diffScope} onScope={changeScope} order={order} whitespace={whitespace}
+                         filter={filter} onFilter={setFilter} find={findQuery} onFind={setFindQuery} onRunFind={() => void runFind()}
+                         counts={{ agent: review.files.filter((f) => f.attribution === 'edit-tool' || f.attribution === 'shell-reported').length, uncommitted: visible.length, branch: review.files.length }} />
+          {scopeNow === 'agent' && (
+            <p className="rw-because rw-pad">
+              {review.hooksRecorded
+                ? `Files an edit tool wrote${review.shellDiffReported ? ' or a Bash command reported changing' : ''}. Others read "changed outside edit tools".`
+                : 'This session has no hook record, so no file can be placed in this scope.'}
+              {checkpointsSupported !== false && !staging && (
+                <> <button type="button" className="btn btn-sm" onClick={() => setStaging(true)}>Stage only the session's hunks…</button></>
+              )}
+            </p>
+          )}
+        </>
+      )}
+      {tab === 'changes' && sessionId && staging && (
+        <StageHunksPanel sessionId={sessionId} onClose={() => setStaging(false)}
+                         onStaged={(detail) => { setStaging(false); setSent({ tone: 'ok', text: detail }); loadChanges(); void reloadReview(); }} />
+      )}
+      {tab === 'changes' && find && (
+        <FindResults query={find.query} hits={find.hits} more={find.more} truncated={find.truncated}
+                     onOpen={openHit} onClose={() => setFind(null)} />
+      )}
+
       <div className="code-body">
         {tab === 'turns' ? (
           <>
@@ -569,6 +741,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', flex: 'none' }}>
                     {row.failed.length ? 'capture failed'
                       : row.turn === 0 ? 'restore point'
+                      : row.end && turnStats[row.turn] ? `${turnStats[row.turn].files} file${turnStats[row.turn].files === 1 ? '' : 's'} · ${diffStatLabel(turnStats[row.turn].added, turnStats[row.turn].removed)}`
                       : row.end ? `${row.filesChanged ?? '?'} file${row.filesChanged === 1 ? '' : 's'}`
                       : 'running…'}
                   </span>
@@ -647,8 +820,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   ? `the changes ${row.turn === 0 ? 'before the session' : `in turn ${row.turn}`}, from snapshot ${row.start.commitHash.slice(0, 8)}`
                   : 'the selected turn\u2019s changes';
                 return sessionId
-                  ? <ReviewDiff text={turnDiff.patch} fallbackFile={null} anchor={anchor}
-                                notes={notesAnchor === anchor ? notes : []} onAdd={addNote} />
+                  ? <ReviewDiff text={turnDiff.patch} fallbackFile={null} anchor={anchor} sessionId={sessionId} onUnsent={rememberUnsent}
+                                focusLine={null} notes={notesAnchor === anchor ? notes : []} onAdd={addNote} />
                   : <Diff text={turnDiff.patch} />;
               })()
                 : <p className="faint code-hint">{turnDiffNote ?? 'Select a turn to see exactly what it changed.'}</p>}
@@ -658,7 +831,26 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           <>
             <div className="code-list">
               {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}
-              {changes.isRepo && !visible.length && (
+              {scopeNow !== 'uncommitted' && review && (
+                <>
+                  {!reviewRows.length && (
+                    <p className="faint code-hint">
+                      {filter.trim() ? `No file in this scope matches “${filter.trim()}”.`
+                        : scopeNow === 'agent' ? 'No changed file was written by an edit tool or reported by a shell command.'
+                          : 'Nothing changed against the commit this session started from.'}
+                    </p>
+                  )}
+                  {review.truncated && <p className="faint code-hint">Only the first 2,000 changed files are listed.</p>}
+                  {reviewRows.map((f) => (
+                    <button key={f.path} type="button" className={`code-file${sel === f.path ? ' on' : ''}`} onClick={() => void openDiff(f.path)}>
+                      <span className="stat">{f.status}</span>
+                      <span className={`trunc${f.preexisting ? ' faint' : ''}`}>{f.path}{f.oldPath ? ` ← ${f.oldPath}` : ''}</span>
+                      <FileRowMarks file={f} />
+                    </button>
+                  ))}
+                </>
+              )}
+              {scopeNow === 'uncommitted' && changes.isRepo && !visible.length && (
                 <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>
                   {scope === 'session' && preexistingCount > 0
                     ? `Nothing from this session yet — ${preexistingCount} file(s) were already modified before it started.`
@@ -670,7 +862,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   {changes.commits} commit{changes.commits === 1 ? '' : 's'} since this session started.
                 </p>
               )}
-              {visible.map((f) => (
+              {(scopeNow === 'uncommitted' ? uncommittedRows : []).map((f) => (
                 <button key={f.path} className={`code-file${sel === f.path ? ' on' : ''}`} onClick={() => openDiff(f.path)}>
                   <span className="stat"
                         title={f.committed ? 'committed during this session'
@@ -688,6 +880,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                       ● just now
                     </span>
                   )}
+                  {reviewByPath.get(f.path) && <FileRowMarks file={reviewByPath.get(f.path)!} />}
                 </button>
               ))}
             </div>
@@ -722,15 +915,27 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   <Note tone="ok">{reverted}</Note>
                 </div>
               )}
-              {sel ? (sessionId
-                ? <ReviewDiff text={diff} fallbackFile={sel} anchor={changesAnchor}
-                              notes={notesAnchor === changesAnchor ? notes : []} onAdd={addNote} />
+              {sel && sessionId && selectedReview && (
+                <ReviewFileBar sessionId={sessionId} file={selectedReview} onMarked={() => void reloadReview()} />
+              )}
+              {sel && sessionId && selectedReview?.image ? (
+                <ImageDiff sessionId={sessionId} file={sel} />
+              ) : sel ? (sessionId
+                ? <ReviewDiff text={diff} fallbackFile={sel} anchor={diffAnchor} sessionId={sessionId} onUnsent={rememberUnsent}
+                              focusLine={focusLine?.file === sel ? focusLine : null}
+                              notes={notesAnchor === diffAnchor ? notes : []} onAdd={addNote} />
                 : <Diff text={diff} />) : (
                 <p className="faint code-hint">
                   {lastEdit
                     ? <>The agent last wrote <span className="mono">{lastEdit.path}</span>. Select a file to see its diff.</>
                     : 'Select a changed file to see its diff.'}
                 </p>
+              )}
+              {sessionId && reviewing && (
+                <div className="rw-sections">
+                  <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} />
+                  <ClaimsSection sessionId={sessionId} refreshKey={reviewKey} />
+                </div>
               )}
             </div>
           </>
@@ -829,19 +1034,48 @@ function Diff({ text }: { text: string }) {
  * refused rather than guessed when the selection spans two files or holds no
  * line of code.
  */
-function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
+function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUnsent, focusLine }: {
   text: string;
   fallbackFile: string | null;
   anchor: string;
   /** Notes already waiting on this same diff, marked in the margin. */
   notes: readonly ReviewNote[];
   onAdd: (note: ReviewNote, anchor: string) => string | null;
+  sessionId: string;
+  /** Told whenever the note being written changes, so it outlives this diff. */
+  onUnsent: (note: UnsentNote | null) => void;
+  /** A line to bring into view and mark, from find across the diff. */
+  focusLine: { line: number; side: 'new' | 'old' } | null;
 }) {
   const rows = useMemo(() => parseUnifiedDiff(text, fallbackFile), [text, fallbackFile]);
   const [range, setRange] = useState<{ anchor: number; from: number; to: number } | null>(null);
   const [body, setBody] = useState('');
   const [why, setWhy] = useState<string | null>(null);
-  useEffect(() => { setRange(null); setBody(''); setWhy(null); }, [text]);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const pre = useRef<HTMLPreElement>(null);
+  // A note left unsent on exactly this diff comes back with its selection; one
+  // on anything else stays in the store and the rail offers to return to it.
+  useEffect(() => {
+    const saved = unsentNotes.get(sessionId);
+    if (saved && saved.anchor === anchor && saved.text === text && rows[saved.from]?.file === saved.file) {
+      setRange({ anchor: saved.from, from: saved.from, to: saved.to });
+      setBody(saved.body);
+    } else {
+      setRange(null); setBody('');
+    }
+    setWhy(null); setConfirmDiscard(false);
+  }, [text, anchor, sessionId, rows]);
+  useEffect(() => {
+    if (!focusLine) return;
+    pre.current?.querySelector<HTMLElement>('[data-focus="true"]')?.scrollIntoView({ block: 'center' });
+  }, [focusLine, text]);
+  const track = (next: string, at: { from: number; to: number } | null = range) => {
+    setBody(next); setConfirmDiscard(false);
+    const file = at ? rows[at.from]?.file : null;
+    onUnsent(at && file && next.trim() ? { anchor, file, from: at.from, to: at.to, body: next, text } : null);
+  };
+  const dropNote = () => { setRange(null); setBody(''); setWhy(null); setConfirmDiscard(false); onUnsent(null); };
+  const cancel = () => { if (body.trim()) setConfirmDiscard(true); else dropNote(); };
   const noted = useMemo(() => {
     const marked = new Set<number>();
     rows.forEach((row, i) => {
@@ -861,9 +1095,11 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
     const row = rows[i];
     if (!commentable(row)) return;
     setWhy(null);
-    setRange((current) => extend && current && rows[current.anchor]?.file === row.file
-      ? { anchor: current.anchor, from: Math.min(current.anchor, i), to: Math.max(current.anchor, i) }
-      : { anchor: i, from: i, to: i });
+    const next = extend && range && rows[range.anchor]?.file === row.file
+      ? { anchor: range.anchor, from: Math.min(range.anchor, i), to: Math.max(range.anchor, i) }
+      : { anchor: i, from: i, to: i };
+    setRange(next);
+    if (body.trim()) track(body, next);
   };
   const selected = range ? rows.slice(range.from, range.to + 1).filter(commentable) : [];
   const where = selected.length
@@ -875,12 +1111,12 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
     if (!made.ok) { setWhy(made.reason); return; }
     const refused = onAdd(made.note, anchor);
     if (refused) { setWhy(refused); return; }
-    setRange(null); setBody(''); setWhy(null);
+    dropNote();
   };
 
   return (
     <div className="review-diff">
-      <pre className="diff">
+      <pre className="diff" ref={pre}>
         {shown.map((row, i) => {
           if (row.kind === 'hunk') {
             const hunk = hunkRange(rows, i);
@@ -897,9 +1133,10 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
             );
           }
           const inRange = range !== null && i >= range.from && i <= range.to && commentable(row);
-          const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}`;
+          const focused = !!focusLine && ((focusLine.side === 'new' && row.newLine === focusLine.line) || (focusLine.side === 'old' && row.newLine === null && row.oldLine === focusLine.line));
+          const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}${focused ? ' rw-focus' : ''}`;
           return commentable(row)
-            ? <div key={i} className={cls} onClick={(e) => pick(i, e.shiftKey)}>{row.text || ' '}</div>
+            ? <div key={i} className={cls} data-focus={focused || undefined} onClick={(e) => pick(i, e.shiftKey)}>{row.text || ' '}</div>
             : <div key={i} className={cls}>{row.text || ' '}</div>;
         })}
         {rows.length > DIFF_LINES && (
@@ -914,17 +1151,22 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
           <span className="review-compose-where">{where}</span>
           <textarea aria-label="Review note for the selected lines" value={body} autoFocus
                     placeholder="What should change here, and why?"
-                    onChange={(e) => setBody(e.target.value)}
+                    onChange={(e) => track(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); }
-                      if (e.key === 'Escape') { e.preventDefault(); setRange(null); setBody(''); setWhy(null); }
+                      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
                     }} />
           {why && <p className="review-why" role="status">{why}</p>}
-          <div className="review-compose-actions">
-            <button className="btn btn-primary" type="button" disabled={!body.trim()} onClick={add}>Add note</button>
-            <button className="btn" type="button" onClick={() => { setRange(null); setBody(''); setWhy(null); }}>Cancel</button>
-            <span className="faint">⌘↩ adds · shift-click a line to extend</span>
-          </div>
+          {confirmDiscard ? (
+            <ConfirmNote what="Discard this note? It has not been added, and it cannot be recovered." verb="Discard note"
+                         onRun={dropNote} onCancel={() => setConfirmDiscard(false)} />
+          ) : (
+            <div className="review-compose-actions">
+              <button className="btn btn-primary" type="button" disabled={!body.trim()} onClick={add}>Add note</button>
+              <button className="btn" type="button" onClick={cancel}>Cancel</button>
+              <span className="faint">⌘↩ adds · shift-click a line to extend · kept if you move away</span>
+            </div>
+          )}
         </div>
       )}
     </div>
