@@ -5258,7 +5258,7 @@ function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: 
           return (
             <>
               <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, marginBottom: 8 }}>
-                {plural(d.turns.length, 'turn')} · {bytes(d.bytes)} on this disk. Oldest first, so the
+                {plural(d.turns.filter((t) => !t.compact).length, 'turn')}{d.turns.some((t) => t.compact) ? ` · ${d.turns.filter((t) => t.compact).length} compaction${d.turns.filter((t) => t.compact).length === 1 ? '' : 's'}` : ''} · {bytes(d.bytes)} on this disk. Oldest first, so the
                 end of the conversation is at the bottom.
                 {d.note ? ` ${d.note}` : ''}
               </p>

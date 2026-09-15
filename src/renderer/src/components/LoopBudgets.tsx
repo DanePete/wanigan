@@ -73,8 +73,8 @@ export default function LoopBudgets({ docket, disabled, onChanged }: {
           <strong>{measure?.changedLines != null ? num(measure.changedLines) : '—'}</strong>
           {budgets.maxChangedLines !== null && <span className="faint"> of {num(budgets.maxChangedLines)} allowed</span>}
           <span className="faint dp-fine">{measure?.changedLines == null
-            ? ' not measured: no implementation worktree on disk, or no base commit recorded'
-            : ` numstat against ${docket.baseCommit?.slice(0, 8) ?? 'the base'}, plus untracked files${measure.binaryFiles ? `; ${measure.binaryFiles} binary not counted` : ''}`}</span>
+            ? ' · not measured: no implementation worktree on disk, or no base commit recorded'
+            : ` · numstat against ${docket.baseCommit?.slice(0, 8) ?? 'the base'}, plus untracked files${measure.binaryFiles ? `; ${measure.binaryFiles} binary not counted` : ''}`}</span>
         </dd>
       </dl>
       <div className="dp-loop-form">

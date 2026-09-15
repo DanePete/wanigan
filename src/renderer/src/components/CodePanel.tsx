@@ -512,9 +512,10 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const target = sel ?? file?.rel;
   const inspectorText = sel ? diff : file?.text ?? '';
 
+  /* ── helper sweep · P7 depth ── a scratch file is not a change to count, revert or send; it is listed apart below. */
   const visible = useMemo(
-    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files),
-    [changes.files, scope]
+    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files).filter((f) => !reviewByPath.get(f.path)?.scratch),
+    [changes.files, scope, reviewByPath]
   );
   const preexistingCount = changes.files.filter((f) => f.preexisting).length;
   const needle = filter.trim().toLowerCase();
@@ -919,6 +920,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   {reviewByPath.get(f.path) && <FileRowMarks file={reviewByPath.get(f.path)!} />}
                 </button>
               ))}
+              {/* ── helper sweep · P7 depth ── */}
+              {scopeNow === 'uncommitted' && sessionId && <ScratchFilesSection sessionId={sessionId} files={review?.files.filter((f) => f.scratch) ?? []} selected={sel} onOpen={(p) => void openDiff(p)} onChanged={() => void reloadReview()} />}
             </div>
             <div className="code-view">
               {sel && baseHead && (

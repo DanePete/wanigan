@@ -10,13 +10,14 @@ import '../styles/depth.css';
  */
 export default function CompactionDivider({ mark, where }: {
   mark: { trigger: CompactTrigger; preTokens: number | null; postTokens: number | null; source?: 'hook+transcript' | 'hook' | 'transcript' };
-  /** "after" reads down the page (oldest first), "above" reads up it (newest first). */
+  /** "after" for a page read oldest first, "above" for the Timeline, which reads newest first. */
   where: 'after' | 'above';
 }) {
   const tokens = mark.preTokens !== null
     ? `${num(mark.preTokens)} tokens before${mark.postTokens !== null ? ` · ${num(mark.postTokens)} after` : ''}`
     : null;
-  const note = where === 'after' ? COMPACTION_NOTE : 'turns above this line may be working from a summary of the ones below';
+  // The same words in both places; the Timeline reads newest first, so it says which way "after" is.
+  const note = where === 'after' ? COMPACTION_NOTE : `${COMPACTION_NOTE} (newer rows are above this line)`;
   const source = mark.source === 'transcript' ? 'from the transcript; no hook row'
     : mark.source === 'hook' ? 'hook only; no token counts were recorded'
       : mark.source === 'hook+transcript' ? 'hook and transcript' : 'from the transcript';

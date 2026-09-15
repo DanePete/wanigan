@@ -48,7 +48,7 @@ export function MaintainabilitySection({ sessionId, refreshKey }: { sessionId: s
           </p>
           <dl className="dp-drift-grid">
             <dt>Code lines {HEURISTIC}</dt>
-            <dd><strong>+{num(r.codeAdded)}</strong> added · <strong>−{num(r.codeRemoved)}</strong> removed
+            <dd><span><strong>+{num(r.codeAdded)}</strong> added · <strong>−{num(r.codeRemoved)}</strong> removed</span>
               <span className="faint dp-fine">blank and comment-only lines are not counted</span></dd>
             <dt>Longest function {HEURISTIC}</dt>
             <dd>
@@ -58,7 +58,7 @@ export function MaintainabilitySection({ sessionId, refreshKey }: { sessionId: s
             </dd>
             <dt>New duplicate blocks {HEURISTIC}</dt>
             <dd>
-              <strong>{num(r.duplicatedBlocks.length)}</strong>
+              <span><strong>{num(r.duplicatedBlocks.length)}</strong></span>
               <span className="faint dp-fine">the same normalised six-line window twice or more after the change, and not before</span>
               {r.duplicatedBlocks.length > 0 && (
                 <ul className="dp-dupes">

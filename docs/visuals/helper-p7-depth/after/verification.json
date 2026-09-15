@@ -1,0 +1,814 @@
+{
+  "before": false,
+  "generatedBy": "scripts/probe-helper-p7-depth.mjs",
+  "provenance": "Built renderer from out/renderer of the checkout this script ran in, in plain Chromium with the preload bridge stubbed; synthetic sessions, git, goals and review services; no real agent calls",
+  "commit": "a7e71607454c897701bac111cb6d3c0a91160aec",
+  "uncommittedSourceFiles": 7,
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · asks in this turn: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · asks in this turn: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · asks in this turn: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the checklist counts the operator's ticks"
+    },
+    {
+      "ok": true,
+      "label": "dark · each ask has a tick named by its own text"
+    },
+    {
+      "ok": true,
+      "label": "dark · a command hint carries its exit code"
+    },
+    {
+      "ok": true,
+      "label": "dark · the unticked asks can be drafted, not sent"
+    },
+    {
+      "ok": true,
+      "label": "dark · files this session touched: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · files this session touched: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · files this session touched: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the file panel counts each group"
+    },
+    {
+      "ok": true,
+      "label": "dark · a file in the checkout opens in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "dark · a file outside the checkout says so and is not a button"
+    },
+    {
+      "ok": true,
+      "label": "dark · compaction divider: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · compaction divider: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · compaction divider: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the divider carries the token counts and says what compaction means"
+    },
+    {
+      "ok": true,
+      "label": "dark · rejected step: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · rejected step: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · rejected step: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the gate denial and the classifier denial are both rows labelled Rejected"
+    },
+    {
+      "ok": true,
+      "label": "dark · a rejected row names the rule, or the classifier's reason"
+    },
+    {
+      "ok": true,
+      "label": "dark · the turn counts rejections apart from failures"
+    },
+    {
+      "ok": true,
+      "label": "dark · scratch files section: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · scratch files section: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · scratch files section: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · two scratch files are listed apart and counted nowhere"
+    },
+    {
+      "ok": true,
+      "label": "dark · each scratch file offers Count this file"
+    },
+    {
+      "ok": true,
+      "label": "dark · the verdict counts three files, not five"
+    },
+    {
+      "ok": true,
+      "label": "dark · the tab and the uncommitted scope count three files, not five"
+    },
+    {
+      "ok": true,
+      "label": "dark · code review rules beside the diff: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · code review rules beside the diff: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · code review rules beside the diff: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · rules are cited by file and heading with the instruction to cite"
+    },
+    {
+      "ok": true,
+      "label": "dark · maintainability section: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · maintainability section: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · maintainability section: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · maintainability opens itself when a new duplicate block is found"
+    },
+    {
+      "ok": true,
+      "label": "dark · each of the three numbers is labelled heuristic"
+    },
+    {
+      "ok": true,
+      "label": "dark · no score or grade is given"
+    },
+    {
+      "ok": true,
+      "label": "dark · the held task says why and offers no Start"
+    },
+    {
+      "ok": true,
+      "label": "dark · loop budgets: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · loop budgets: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · loop budgets: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · rounds and changed lines are shown against their limits"
+    },
+    {
+      "ok": true,
+      "label": "dark · both limits have accessible names"
+    },
+    {
+      "ok": true,
+      "label": "dark · the held card is in Blocked with its reason code"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on the selected commit: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on the selected commit: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on the selected commit: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · two commit rows carry run by; the operator's commits do not"
+    },
+    {
+      "ok": true,
+      "label": "dark · the weak join is labelled by time on its row"
+    },
+    {
+      "ok": true,
+      "label": "dark · \"by time\" sits where a narrow row cannot cut it off"
+    },
+    {
+      "ok": true,
+      "label": "dark · the selected commit links to the timeline event"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on branch rows: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on branch rows: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on branch rows: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the switched-to branch and the pushed remote branch are marked"
+    },
+    {
+      "ok": true,
+      "label": "dark · always ask before history-rewriting git: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · always ask before history-rewriting git: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · always ask before history-rewriting git: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · no NaN anywhere in the Projects & safety tab"
+    },
+    {
+      "ok": true,
+      "label": "dark · the project's switch reads on"
+    },
+    {
+      "ok": true,
+      "label": "dark · the panel names what asks and what does not"
+    },
+    {
+      "ok": true,
+      "label": "dark · transcript reader divider: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · transcript reader divider: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · transcript reader divider: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the reader's divider reads down the page"
+    },
+    {
+      "ok": true,
+      "label": "dark · the reader counts turns without the divider"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction files in Context: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction files in Context: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction files in Context: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · labelled not executable, with the change count"
+    },
+    {
+      "ok": true,
+      "label": "dark · the project's ask switch reads on"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction review in the launch dialog: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction review in the launch dialog: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction review in the launch dialog: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the dialog shows the change and says the project asks"
+    },
+    {
+      "ok": true,
+      "label": "dark · an acceptance box is offered where the project asks"
+    },
+    {
+      "ok": true,
+      "label": "dark · the launch summary names the instruction state"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · asks in this turn: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · asks in this turn: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · asks in this turn: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the checklist counts the operator's ticks"
+    },
+    {
+      "ok": true,
+      "label": "light · each ask has a tick named by its own text"
+    },
+    {
+      "ok": true,
+      "label": "light · a command hint carries its exit code"
+    },
+    {
+      "ok": true,
+      "label": "light · the unticked asks can be drafted, not sent"
+    },
+    {
+      "ok": true,
+      "label": "light · files this session touched: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · files this session touched: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · files this session touched: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the file panel counts each group"
+    },
+    {
+      "ok": true,
+      "label": "light · a file in the checkout opens in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "light · a file outside the checkout says so and is not a button"
+    },
+    {
+      "ok": true,
+      "label": "light · compaction divider: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · compaction divider: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · compaction divider: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the divider carries the token counts and says what compaction means"
+    },
+    {
+      "ok": true,
+      "label": "light · rejected step: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · rejected step: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · rejected step: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the gate denial and the classifier denial are both rows labelled Rejected"
+    },
+    {
+      "ok": true,
+      "label": "light · a rejected row names the rule, or the classifier's reason"
+    },
+    {
+      "ok": true,
+      "label": "light · the turn counts rejections apart from failures"
+    },
+    {
+      "ok": true,
+      "label": "light · scratch files section: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · scratch files section: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · scratch files section: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · two scratch files are listed apart and counted nowhere"
+    },
+    {
+      "ok": true,
+      "label": "light · each scratch file offers Count this file"
+    },
+    {
+      "ok": true,
+      "label": "light · the verdict counts three files, not five"
+    },
+    {
+      "ok": true,
+      "label": "light · the tab and the uncommitted scope count three files, not five"
+    },
+    {
+      "ok": true,
+      "label": "light · code review rules beside the diff: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · code review rules beside the diff: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · code review rules beside the diff: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · rules are cited by file and heading with the instruction to cite"
+    },
+    {
+      "ok": true,
+      "label": "light · maintainability section: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · maintainability section: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · maintainability section: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · maintainability opens itself when a new duplicate block is found"
+    },
+    {
+      "ok": true,
+      "label": "light · each of the three numbers is labelled heuristic"
+    },
+    {
+      "ok": true,
+      "label": "light · no score or grade is given"
+    },
+    {
+      "ok": true,
+      "label": "light · the held task says why and offers no Start"
+    },
+    {
+      "ok": true,
+      "label": "light · loop budgets: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · loop budgets: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · loop budgets: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · rounds and changed lines are shown against their limits"
+    },
+    {
+      "ok": true,
+      "label": "light · both limits have accessible names"
+    },
+    {
+      "ok": true,
+      "label": "light · the held card is in Blocked with its reason code"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on the selected commit: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on the selected commit: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on the selected commit: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · two commit rows carry run by; the operator's commits do not"
+    },
+    {
+      "ok": true,
+      "label": "light · the weak join is labelled by time on its row"
+    },
+    {
+      "ok": true,
+      "label": "light · \"by time\" sits where a narrow row cannot cut it off"
+    },
+    {
+      "ok": true,
+      "label": "light · the selected commit links to the timeline event"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on branch rows: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on branch rows: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on branch rows: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the switched-to branch and the pushed remote branch are marked"
+    },
+    {
+      "ok": true,
+      "label": "light · always ask before history-rewriting git: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · always ask before history-rewriting git: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · always ask before history-rewriting git: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · no NaN anywhere in the Projects & safety tab"
+    },
+    {
+      "ok": true,
+      "label": "light · the project's switch reads on"
+    },
+    {
+      "ok": true,
+      "label": "light · the panel names what asks and what does not"
+    },
+    {
+      "ok": true,
+      "label": "light · transcript reader divider: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · transcript reader divider: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · transcript reader divider: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the reader's divider reads down the page"
+    },
+    {
+      "ok": true,
+      "label": "light · the reader counts turns without the divider"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction files in Context: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction files in Context: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction files in Context: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · labelled not executable, with the change count"
+    },
+    {
+      "ok": true,
+      "label": "light · the project's ask switch reads on"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction review in the launch dialog: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction review in the launch dialog: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction review in the launch dialog: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the dialog shows the change and says the project asks"
+    },
+    {
+      "ok": true,
+      "label": "light · an acceptance box is offered where the project asks"
+    },
+    {
+      "ok": true,
+      "label": "light · the launch summary names the instruction state"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while rendering"
+    }
+  ],
+  "pageErrors": [],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-asks-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-files-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-rows-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-scratch-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-review-sections-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-maintainability-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/control-held-task-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/control-loop-budgets-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/board-held-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/git-history-runby-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/git-branches-runby-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/settings-rewrite-ask-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/transcript-divider-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/context-instructions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/launch-instructions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-asks-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-files-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/timeline-rows-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-scratch-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-review-sections-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/code-rail-maintainability-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/control-held-task-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/control-loop-budgets-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/board-held-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/git-history-runby-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/git-branches-runby-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/settings-rewrite-ask-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/transcript-divider-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/context-instructions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p7-depth/after/launch-instructions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

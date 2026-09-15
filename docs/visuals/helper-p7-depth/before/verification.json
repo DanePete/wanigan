@@ -1,0 +1,300 @@
+{
+  "before": true,
+  "generatedBy": "scripts/probe-helper-p7-depth.mjs",
+  "provenance": "Built renderer from out/renderer of the checkout this script ran in, in plain Chromium with the preload bridge stubbed; synthetic sessions, git, goals and review services; no real agent calls",
+  "commit": "cb66db121963c5830dcf438782cbb05017650f8f",
+  "uncommittedSourceFiles": 0,
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · asks in this turn: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · files this session touched: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · compaction divider: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · rejected step: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · scratch files section: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · code review rules beside the diff: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · maintainability section: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · the base build shows the task without a hold (the halt reason is P1-era evidence text)"
+    },
+    {
+      "ok": true,
+      "label": "dark · loop budgets: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · before, the held task is not in Blocked"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on the selected commit: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · run by on branch rows: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · always ask before history-rewriting git: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · no NaN anywhere in the Projects & safety tab"
+    },
+    {
+      "ok": true,
+      "label": "dark · transcript reader divider: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction files in Context: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · instruction review in the launch dialog: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · asks in this turn: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · files this session touched: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · compaction divider: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · rejected step: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · scratch files section: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · code review rules beside the diff: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · maintainability section: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · the base build shows the task without a hold (the halt reason is P1-era evidence text)"
+    },
+    {
+      "ok": true,
+      "label": "light · loop budgets: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · before, the held task is not in Blocked"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on the selected commit: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · run by on branch rows: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · always ask before history-rewriting git: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · no NaN anywhere in the Projects & safety tab"
+    },
+    {
+      "ok": true,
+      "label": "light · transcript reader divider: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction files in Context: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · instruction review in the launch dialog: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while rendering"
+    }
+  ],
+  "pageErrors": [],
+  "shots": [
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-asks-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-files-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-rows-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/code-rail-scratch-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/code-rail-review-sections-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/control-held-task-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/control-loop-budgets-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/board-held-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/git-history-runby-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/git-branches-runby-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/settings-rewrite-ask-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/transcript-divider-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/context-instructions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/launch-instructions-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-asks-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-files-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/timeline-rows-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/code-rail-scratch-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/code-rail-review-sections-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/control-held-task-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/control-loop-budgets-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/board-held-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/git-history-runby-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/git-branches-runby-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/settings-rewrite-ask-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/transcript-divider-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/context-instructions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p7-depth/docs/visuals/helper-p7-depth/before/launch-instructions-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

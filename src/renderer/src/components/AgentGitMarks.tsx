@@ -22,7 +22,8 @@ function title(marks: readonly AgentGitMark[]): string {
 export function RunByInline({ marks }: { marks: readonly AgentGitMark[] | undefined }) {
   if (!marks?.length) return null;
   const weak = marks.every((m) => m.join === 'time');
-  return <span className="dp-runby-inline"> · ⌥ {marks[0].verb} run by {title(marks)}{weak ? ' · by time' : ''}</span>;
+  // "by time" leads, so a narrow row that cuts its end never cuts the word that says the join is weak.
+  return <span className="dp-runby-inline"> · {weak ? '≈ by time: ' : '⌥ '}{marks[0].verb} run by {title(marks)}</span>;
 }
 
 /** The marks on a selected commit or a branch row, each linking to its timeline row when the session is open. */
