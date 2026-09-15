@@ -840,6 +840,11 @@ const api = {
     /** Asks in main, naming what will be replaced, then relaunches Wanigan. */
     restore: () => call<BackupRestoreSummary | null>('backup:restore'),
   },
+  menu: {
+    // Main cannot read the renderer's localStorage, and the View menu names the
+    // dock's state in its label; this is the one fact it is told.
+    composerShown: (shown: boolean) => ipcRenderer.send('menu:composerShown', shown),
+  },
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
       const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);

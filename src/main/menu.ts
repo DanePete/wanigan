@@ -117,6 +117,16 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
           accelerator: 'Alt+CommandOrControl+S', registerAccelerator: false,
           click: send({ kind: 'sidebar' }),
         },
+        // A verb that changes its name, which is Apple's rule for a pane the
+        // user shows and hides and what iTerm2 ships for its own composer. It
+        // is also the one way to the dock that works while a terminal has
+        // focus: ⌘E is printed, not registered, so the PTY keeps the key and
+        // the menu bar is reached with the pointer instead.
+        {
+          label: composerShown ? 'Hide Composer' : 'Show Composer',
+          accelerator: 'CommandOrControl+E', registerAccelerator: false,
+          click: send({ kind: 'composer', show: !composerShown }),
+        },
         { type: 'separator' },
         { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
         { type: 'separator' },
@@ -152,6 +162,22 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
   return Menu.buildFromTemplate(template);
 }
 
+/**
+ * Whether the Sessions dock is open. The renderer owns that preference — it is
+ * a localStorage key read before first paint — so main holds only the last
+ * thing the window reported, and the menu is rebuilt when it changes. Until the
+ * first report it is the preference's own default.
+ */
+let composerShown = true;
+let installed: { getWindow: () => BrowserWindow | null; sidebar?: boolean } | null = null;
+
 export function installApplicationMenu(getWindow: () => BrowserWindow | null, sidebar?: boolean) {
+  installed = { getWindow, sidebar };
   Menu.setApplicationMenu(buildApplicationMenu(getWindow, sidebar));
+}
+
+export function setComposerShown(shown: boolean) {
+  if (shown === composerShown) return;
+  composerShown = shown;
+  if (installed) installApplicationMenu(installed.getWindow, installed.sidebar);
 }
