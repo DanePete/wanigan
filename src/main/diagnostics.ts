@@ -10,6 +10,7 @@ import { allSettings } from './settings';
 import { providerPackRegistry } from './providers';
 import { readPreflight } from './preflight';
 import { redactCredentials } from './redact';
+import { configFilesReport } from './config-files-audit';
 import {
   EXCLUDED, isBundleName, lastLines, scrubForDiagnostics, type DiagnosticsFile, type DiagnosticsPreview,
 } from '../shared/diagnostics';
@@ -126,6 +127,9 @@ async function build(): Promise<Built[]> {
   try { preflight = await readPreflight(); } catch (error) { preflight = { unreadable: error instanceof Error ? error.message : String(error) }; }
   files.push({ name: 'preflight.json', describes: 'The first-run checklist as Wanigan reads it now', content: json(scrub(preflight)) });
   files.push({ name: 'table-counts.json', describes: 'Row counts for every table; no row contents', content: json(facts.counts) });
+  let configFiles: unknown;
+  try { configFiles = configFilesReport(); } catch (error) { configFiles = { unreadable: error instanceof Error ? error.message : String(error) }; }
+  files.push({ name: 'config-files.json', describes: 'Which state files parse, entries the loader refuses and why, and the variable names blanked for MCP servers', content: json(scrub(configFiles)) });
   const log = mainLogPath();
   if (log) {
     let text = '';
@@ -138,7 +142,7 @@ async function build(): Promise<Built[]> {
     content: [
       'Wanigan diagnostics bundle.',
       '',
-      'Contents: ' + ['app.json', 'settings.redacted.json', 'providers.json', 'gate-results.json', 'preflight.json', 'table-counts.json', ...(log ? ['main-log.txt'] : [])].join(', ') + '.',
+      'Contents: ' + ['app.json', 'settings.redacted.json', 'providers.json', 'gate-results.json', 'preflight.json', 'table-counts.json', 'config-files.json', ...(log ? ['main-log.txt'] : [])].join(', ') + '.',
       log ? '' : 'Wanigan writes no main log file today, so none is included.',
       '',
       'Deliberately not included: ' + EXCLUDED.join('; ') + '.',

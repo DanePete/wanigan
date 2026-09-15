@@ -18,6 +18,7 @@ import { BrowserWindow } from 'electron';
 import { envNamesFor, launchProvenanceFor } from './launch-provenance';
 import { goalReviewOnly, preparePrReview, setGoalReviewOnly } from './review-only';
 import { substitutionsFor } from './model-substitutions';
+import { configFilesReport } from './config-files-audit';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -79,6 +80,9 @@ export function registerP5Ipc(handle: Handle): void {
 
   // ── asked for X, answered by Y ──────────────────────────────────────
   handle('models:substitutions', (sessionId: unknown) => substitutionsFor(sessionId));
+
+  // ── config files Wanigan rewrites ───────────────────────────────────
+  handle('configFiles:report', () => configFilesReport());
   // Names only: the dialog shows which variables a profile sets, never a value.
   handle('launchProvenance:envNames', (providerId: unknown) => {
     const def = typeof providerId === 'string' ? providerById(providerId) : null;

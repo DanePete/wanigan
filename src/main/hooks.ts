@@ -8,6 +8,8 @@ import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
+/* ── helper sweep · P5 runtime ── */
+import { atomicWriteFile } from './state-files';
 import type {
   HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
@@ -340,10 +342,11 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
-  // writeFileSync honours mode only when it creates the file; an overwrite keeps
-  // whatever the old one had. This file is a bearer credential.
-  try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
+  // helper sweep · P5 runtime: through a temporary file and a rename, so the
+  // CLI never reads a half-written settings file (and rejects the whole file,
+  // starting with hooks silently off). atomicWriteFile also re-applies 0600:
+  // this file is a bearer credential.
+  atomicWriteFile(file, JSON.stringify({ hooks }, null, 2), 0o600);
 
   const previous = registered.get(waniganSessionId);
   if (previous) capabilitySessions.delete(previous.capability);

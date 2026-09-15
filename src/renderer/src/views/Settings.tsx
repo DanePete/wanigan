@@ -18,7 +18,7 @@ import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 /* helper sweep · P5 runtime */
-import { CodexDoctorPanel, DiagnosticsExport } from '../components/AccountHealth';
+import { CodexDoctorPanel, ConfigFilesSection, DiagnosticsExport, McpEnvironmentNote } from '../components/AccountHealth';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -97,6 +97,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Check a backup', hint: 'Verify a copy you already have', keywords: 'backup verify check integrity' },
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'backup', tabLabel: 'Backup', section: 'Export diagnostics', hint: 'A redacted zip for someone helping you', keywords: 'diagnostics support bundle logs zip export help troubleshoot' },
+  { tab: 'backup', tabLabel: 'Backup', section: 'Config files Wanigan rewrites', hint: 'Which state files parse, and what is refused', keywords: 'config state json parse corrupt trust mcp pack atomic environment NODE_OPTIONS' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
@@ -1093,6 +1094,7 @@ export default function Settings({
             <Backup />
             {/* helper sweep · P5 runtime */}
             <DiagnosticsExport />
+            <ConfigFilesSection />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
@@ -4435,6 +4437,8 @@ function Mcp({ projects, prefs, pending, setFlag }: {
     <Section title="MCP servers"
              hint="Tool servers an agent can call, and Wanigan's own server, which lets an agent call Wanigan back."
              right={!draft && <button className="btn" onClick={() => setDraft(BLANK)}>+ Add server</button>}>
+      {/* helper sweep · P5 runtime */}
+      <McpEnvironmentNote />
 
       <div className="set-sub">Wanigan's own MCP server</div>
       <Callout level="warning" title="Turning this on lets compatible sessions use Wanigan tools.">

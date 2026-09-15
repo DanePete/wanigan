@@ -95,3 +95,7 @@
 .model-subs li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
 .model-subs-facts { color: var(--text-dim); line-height: 1.45; overflow-wrap: anywhere; }
 .model-subs-compact { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.config-files { list-style: none; margin: 0 0 var(--s-3); padding: 0; display: grid; gap: var(--s-3); }
+.config-files li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
+.config-files code { font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
+.config-files-detail { color: var(--text-faint); line-height: 1.45; }

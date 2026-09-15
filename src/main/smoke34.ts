@@ -638,3 +638,98 @@ export async function runModelSubstitutionSmoke(check: Check, say: Say): Promise
     db().prepare('DELETE FROM session_log WHERE id=?').run(id);
   }
 }
+
+/**
+ * helper sweep · P5 runtime — config files Wanigan rewrites.
+ *
+ * Each rule is exercised on the real writer that has to keep it: the MCP
+ * approval file through trustServer, the pack state file through a provider
+ * pack registry rooted in a temporary directory, the per-launch MCP config
+ * through writeMcpConfig with a runtime-altering variable set in this process.
+ */
+export async function runConfigFilesSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · config files Wanigan rewrites');
+  const os = await import('node:os');
+  const { dataDir } = await import('./db');
+  const stateFiles = await import('./state-files');
+  const registry = await import('./mcp/registry');
+  const packs = await import('./provider-packs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-config-files-'));
+  const trustFile = path.join(dataDir(), '.mcp-server-trust.json');
+  const hadTrust = fs.existsSync(trustFile) ? fs.readFileSync(trustFile) : null;
+  const priorPythonPath = process.env.PYTHONPATH;
+  let serverId: string | null = null;
+  let mcpFile: string | null = null;
+  try {
+    // The helper itself.
+    const broken = path.join(root, 'broken.json');
+    fs.writeFileSync(broken, '{"schemaVersion":1,"servers":{');
+    const before = fs.readFileSync(broken);
+    let refused = '';
+    try { stateFiles.guardedStateWrite(broken, { schemaVersion: 1, servers: {} }, 'servers', 1 << 20); }
+    catch (error) { refused = error instanceof Error ? error.message : String(error); }
+    check(/will not overwrite .*broken\.json: it does not parse/.test(refused) && fs.readFileSync(broken).equals(before),
+      'a state file that does not parse is refused by path and parse error, and left byte-identical', refused);
+    const kept = path.join(root, 'kept.json');
+    fs.writeFileSync(kept, JSON.stringify({ schemaVersion: 1, fromNewerBuild: true, servers: { a: { sha256: 'x', note: 'hand-added' } } }));
+    stateFiles.guardedStateWrite(kept, { schemaVersion: 1, servers: { a: { sha256: 'y' } } }, 'servers', 1 << 20);
+    const rewritten = JSON.parse(fs.readFileSync(kept, 'utf8')) as { fromNewerBuild?: boolean; servers: { a: { sha256: string; note?: string } } };
+    check(rewritten.fromNewerBuild === true && rewritten.servers.a.note === 'hand-added' && rewritten.servers.a.sha256 === 'y',
+      'a rewrite keeps keys this build does not know, at the top and inside a surviving entry', rewritten);
+    check(fs.readdirSync(root).every((n) => !n.endsWith('.tmp')), 'and leaves no temporary file behind');
+
+    // The MCP approval file, through the real approval path.
+    const server = registry.upsertServer({ projectId: null, name: 'p5-config-smoke', transport: 'stdio', command: 'node', args: 'server.js', enabled: false });
+    serverId = server.id;
+    const review = registry.reviewServer(server.id)!;
+    fs.writeFileSync(trustFile, '{ this is not json');
+    const trustBefore = fs.readFileSync(trustFile);
+    let trustRefused = '';
+    try { registry.trustServer(server.id, review.sha256); } catch (error) { trustRefused = error instanceof Error ? error.message : String(error); }
+    check(/does not parse/.test(trustRefused) && fs.readFileSync(trustFile).equals(trustBefore),
+      'approving an MCP server never saves over an approval file that does not parse', trustRefused);
+    check(registry.trustFileHealth().state === 'unparseable', 'and the audit names that file as unparseable', registry.trustFileHealth());
+    fs.writeFileSync(trustFile, JSON.stringify({ schemaVersion: 1, servers: { ghost: { sha256: 'short', approved: {} } } }));
+    const health = registry.trustFileHealth();
+    check(health.state === 'ok' && health.rejected.some((r) => r.startsWith('ghost:')),
+      'an impossible entry is refused at load with its reason', health.rejected);
+    fs.rmSync(trustFile, { force: true });
+    registry.trustServer(server.id, review.sha256);
+    registry.setServerEnabled(server.id, true);
+
+    // The per-launch MCP config: runtime-altering variables blanked, atomically.
+    process.env.PYTHONPATH = '/tmp/p5-should-not-reach-the-server';
+    mcpFile = registry.writeMcpConfig(null, root, 's_p5_config');
+    const written = mcpFile ? JSON.parse(fs.readFileSync(mcpFile, 'utf8')) as { mcpServers: Record<string, { env?: Record<string, string> }> } : null;
+    const entry = written?.mcpServers['p5-config-smoke'];
+    check(entry?.env?.PYTHONPATH === '' && !JSON.stringify(written).includes('/tmp/p5-should-not-reach-the-server'),
+      'an inherited PYTHONPATH is blanked for the stdio MCP server, and its value is never copied', entry);
+    const mcpDir = path.join(dataDir(), 'mcp');
+    check(fs.readdirSync(mcpDir).every((n) => !n.endsWith('.tmp')), 'the MCP config is written through a rename, with no temporary left');
+
+    // Pack state, through a registry rooted in a temporary directory.
+    const packRoot = path.join(root, 'packs');
+    fs.mkdirSync(packRoot);
+    const packRegistry = packs.createDefaultProviderPackRegistry({ rootDir: packRoot });
+    const stateFile = path.join(packRoot, '.provider-packs-state.json');
+    fs.writeFileSync(stateFile, '{"schemaVersion":1,"packs":{"wanigan.glm":{"enabled":false');
+    const stateBefore = fs.readFileSync(stateFile);
+    packRegistry.refresh();
+    let packRefused = '';
+    try { packRegistry.setEnabled('wanigan.glm', true); } catch (error) { packRefused = error instanceof Error ? error.message : String(error); }
+    check(/does not parse/.test(packRefused) && fs.readFileSync(stateFile).equals(stateBefore),
+      'enabling a pack never saves over a pack state file that does not parse — its trust grants stay on disk', packRefused);
+    check(packs.packStateHealth(packRoot).state === 'unparseable', 'and the audit names it', packs.packStateHealth(packRoot).detail);
+
+    const hooksSrc = sourceOf('src/main/hooks.ts');
+    const daemonSrc = sourceOf('src/main/daemon.ts');
+    check(/atomicWriteFile\(file, JSON\.stringify\(\{ hooks \}, null, 2\), 0o600\)/.test(hooksSrc) && /atomicWriteFile\(file, body, 0o600\)/.test(daemonSrc),
+      'hook settings and the scheduler plist are written atomically at their call sites');
+  } finally {
+    if (mcpFile) try { registry.cleanupMcpConfig(mcpFile, 's_p5_config'); } catch { /* gone */ }
+    if (serverId) try { registry.removeServer(serverId); } catch { /* gone */ }
+    if (priorPythonPath === undefined) delete process.env.PYTHONPATH; else process.env.PYTHONPATH = priorPythonPath;
+    if (hadTrust) fs.writeFileSync(trustFile, hadTrust); else fs.rmSync(trustFile, { force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}

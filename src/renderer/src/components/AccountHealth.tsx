@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DiagnosticsPreview } from '@shared/diagnostics';
 import type { DoctorReport } from '@shared/codex-doctor';
 import { Mark, Note, Section, ago, size } from './bits';
@@ -71,6 +71,72 @@ export function CodexDoctorPanel({ accountId, label }: { accountId: string; labe
       )}
     </div>
   );
+}
+
+type ConfigReport = Awaited<ReturnType<typeof window.wanigan.configFiles.report>>;
+
+/** The files Wanigan rewrites, and whether each one parses. Settings › Backup. */
+export function ConfigFilesSection() {
+  const [report, setReport] = useState<ConfigReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.configFiles.report().then((r) => { if (live) setReport(r); }).catch((e) => { if (live) setError(msg(e)); });
+    return () => { live = false; };
+  }, []);
+  return (
+    <Section title="Config files Wanigan rewrites"
+             hint="State files keep what you granted. One that does not parse is left untouched and never saved over; generated files are rebuilt at each use and written atomically.">
+      {error && <Note tone="error">{error}</Note>}
+      {!report && !error && <p className="proc-reading">Reading…</p>}
+      {report && (
+        <ul className="config-files" aria-label="Config files">
+          {report.stateFiles.map((file) => (
+            <li key={file.path} data-config-state={file.state}>
+              <Mark glyph={file.state === 'ok' || file.state === 'absent' ? '✓' : '!'}
+                    word={file.state === 'ok' ? 'parses' : file.state === 'absent' ? 'not created yet' : file.state === 'unparseable' ? 'does not parse · kept, never overwritten' : 'unreadable shape · kept'}
+                    tone={file.state === 'ok' || file.state === 'absent' ? 'ok' : 'serious'} />
+              <strong>{file.label}</strong>
+              <code>{file.path}</code>
+              {file.detail && <span className="config-files-detail">{file.detail}</span>}
+              {file.rejected.map((reason) => <span key={reason} className="config-files-detail">Refused at load: {reason}</span>)}
+            </li>
+          ))}
+          {report.generated.map((file) => (
+            <li key={file.label}>
+              <Mark glyph="⟳" word="generated · atomic" tone="quiet" />
+              <strong>{file.label}</strong>
+              <code>{file.path}</code>
+              <span className="config-files-detail">{file.note}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {report && <McpEnvNote names={report.mcpBlankedEnv} />}
+    </Section>
+  );
+}
+
+/** The visible note for MCP server environments. */
+export function McpEnvNote({ names }: { names: string[] }) {
+  return (
+    <p className="proc-reading">
+      {names.length
+        ? <>For every MCP server Wanigan configures, it blanks {names.join(', ')}: they are set in Wanigan&rsquo;s environment and would otherwise change what the server loads.</>
+        : <>For every MCP server Wanigan configures, it would blank NODE_OPTIONS, PYTHONPATH, RUBYOPT, PERL5OPT, DYLD_* and LD_PRELOAD; none is set in Wanigan&rsquo;s environment now.</>}
+    </p>
+  );
+}
+
+/** Settings › MCP servers: the same note, where the servers are configured. */
+export function McpEnvironmentNote() {
+  const [names, setNames] = useState<string[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.configFiles.report().then((r) => { if (live) setNames(r.mcpBlankedEnv); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return names ? <McpEnvNote names={names} /> : null;
 }
 
 /** Export diagnostics: the exact file list first, then the native save dialog. */
