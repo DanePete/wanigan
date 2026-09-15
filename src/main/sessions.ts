@@ -1116,7 +1116,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       if (flags().hooks && detected.capabilities.hooks) {
         // Learning is injected directly below. Keeping it out of SessionStart
         // avoids duplicate context while preserving trust/policy hook output.
-        const settingsFile = writeHookSettings(id0, cwd);
+        // The version is the probed one for the binary about to run: without
+        // it the file names only the base events, and SubagentStart/Stop,
+        // PostModelSwitch, CwdChanged, InstructionsLoaded and Elicitation are
+        // never asked for — every surface reading them sees nothing.
+        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version });
         if (settingsFile) injected.push('--settings', settingsFile);
       }
       if (detected.capabilities.mcp) {

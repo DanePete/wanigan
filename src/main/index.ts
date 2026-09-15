@@ -44,6 +44,7 @@ import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
+import { forecastCollisions } from './collisions';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
@@ -2233,6 +2234,10 @@ function registerIpc() {
   // worktree at the path at all, so ok:false here is the rare case.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
     worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
+  // Whether the agents' worktrees would merge — with their base and with each
+  // other — asked of git in the object database while the work is in flight.
+  // Keyed on a project id; main resolves the repository and every worktree.
+  handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
@@ -2991,6 +2996,22 @@ function registerIpc() {
     agentsChain(projectId, projectPath));
   handle('context:agentsMd', (projectPath: string) =>
     ctxInstructions.agentsMdStatus(assertManagedRoot(projectPath, 'That project folder')));
+  // The prediction above, laid beside what the newest session in this project
+  // reported through InstructionsLoaded. Keyed on the project id alone and the
+  // path resolved here, so a renderer cannot pair one project's session rows
+  // with another project's chain. Null means no session has reported yet —
+  // which, before launches handed the hook file a CLI version, was every one.
+  handle('context:observed', (projectId: string) => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    const root = assertManagedRoot(project.path, 'That project folder');
+    const newest = hooks.instructionsLoadedSessions(project.id, 1)[0];
+    if (!newest) return null;
+    return ctxInstructions.reconcileInstructions(
+      ctxInstructions.resolveInstructions(root),
+      hooks.instructionsLoaded(newest.sessionId),
+    );
+  });
   handle('context:refresh', (projectPath: string) => {
     const root = assertManagedRoot(projectPath, 'That project folder');
     ctxInstructions.refreshInstructions();

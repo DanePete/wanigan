@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-14T22:16:56.281Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git and services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the branches pane lists agent worktree branches with no word on whether they would merge"
+  ],
+  "errors": []
+}

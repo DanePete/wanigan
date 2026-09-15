@@ -760,6 +760,17 @@ async function probeVersion(def: ProviderDef, resolved: string, PATH: string): P
   try { return await work; } finally { versionInFlight.delete(key); }
 }
 
+/**
+ * The `--version` line of one already-resolved binary, read through the same
+ * identity-keyed cache detectProviders() fills. A headless row resolves its
+ * binary without a full detection sweep, and the version is what decides which
+ * hook events its settings file may name, so it must come from the file that
+ * will actually run rather than from whatever the profile last reported.
+ */
+export async function cliVersionOf(def: ProviderDef, resolved: string): Promise<string | null> {
+  return probeVersion(def, resolved, await shellPath());
+}
+
 async function which(def: ProviderDef): Promise<string | null> {
   const p = await shellPath();
   const onPath = path.isAbsolute(def.bin)

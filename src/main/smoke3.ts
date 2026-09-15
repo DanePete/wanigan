@@ -68,7 +68,8 @@ import {
 import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
-import { addProject } from './store';
+import { addProject, removeProject } from './store';
+import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
 import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';
@@ -359,6 +360,100 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     await worktrees.removeWorktree(mwt.path, true);
   } catch (e) {
     check(false, `worktree merge suite threw: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  /* ── phase 9 · forecasting collisions between worktrees ─────────────── */
+  // The merge above is where two agents' conflicting edits are discovered
+  // today: after both were reviewed. The forecast asks git the same question
+  // while the work is in flight, uncommitted files included, and must leave
+  // every working tree, index and ref exactly as it found them.
+  say('── phase 9 · forecasting collisions');
+  const frepo = path.join(tmp, 'frepo');
+  fs.mkdirSync(frepo, { recursive: true });
+  const fgit = (dir: string, ...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: 'pipe' }).toString();
+  const longFile = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+  const withLine = (n: number, text: string) => longFile.map((l, i) => (i === n - 1 ? text : l)).join('\n') + '\n';
+  try {
+    fgit(frepo, 'init', '-q', '-b', 'main');
+    fgit(frepo, 'config', 'user.email', 'smoke@wanigan.test');
+    fgit(frepo, 'config', 'user.name', 'Smoke');
+    fs.writeFileSync(path.join(frepo, 'f.txt'), 'a\nb\nc\n');
+    fs.writeFileSync(path.join(frepo, 'k.txt'), longFile.join('\n') + '\n');
+    fgit(frepo, 'add', '-A');
+    fgit(frepo, 'commit', '-qm', 'base');
+    const forecastProject = await addProject(frepo);
+
+    const one = await worktrees.createWorktree(frepo, 'forecast one', 's_forecast_aaa1');
+    const two = await worktrees.createWorktree(frepo, 'forecast two', 's_forecast_bbb2');
+    const three = await worktrees.createWorktree(frepo, 'forecast three', 's_forecast_ccc3');
+    const idle = await worktrees.createWorktree(frepo, 'forecast idle', 's_forecast_ddd4');
+
+    // one: uncommitted edit to f.txt line 2, an early k.txt line, an untracked file.
+    fs.writeFileSync(path.join(one.path, 'f.txt'), 'a\nONE\nc\n');
+    fs.writeFileSync(path.join(one.path, 'k.txt'), withLine(2, 'one was here'));
+    fs.writeFileSync(path.join(one.path, 'new file.txt'), 'untracked\n');
+    // two: the same f.txt line, committed, and a late k.txt line left uncommitted.
+    fs.writeFileSync(path.join(two.path, 'f.txt'), 'a\nTWO\nc\n');
+    fgit(two.path, 'commit', '-qam', 'two edits f');
+    fs.writeFileSync(path.join(two.path, 'k.txt'), withLine(19, 'two was here'));
+    // three: a middle k.txt line only.
+    fs.writeFileSync(path.join(three.path, 'k.txt'), withLine(10, 'three was here'));
+    // The base moves on without touching anyone's paths.
+    fs.writeFileSync(path.join(frepo, 'h.txt'), 'base moved\n');
+    fgit(frepo, 'add', '-A');
+    fgit(frepo, 'commit', '-qm', 'base moves');
+
+    const before = {
+      one: fgit(one.path, 'status', '--porcelain'), two: fgit(two.path, 'status', '--porcelain'),
+      refs: fgit(frepo, 'for-each-ref', '--format=%(refname) %(objectname)'),
+      branchOne: fgit(frepo, 'rev-parse', one.branch ?? 'HEAD'),
+    };
+    const fc = await forecastCollisions(forecastProject.id);
+    const label = (p: { a: { branch: string | null }; b: { branch: string | null } }) => {
+      const name = (b: string | null) => (b ?? '').replace(/^wanigan\/forecast-/, '').replace(/-.*$/, '');
+      return `${name(p.a.branch)}~${name(p.b.branch)}`;
+    };
+    check(fc.unsupported === null && fc.worktrees.length === 4 && fc.omitted === 0,
+      'the forecast reads every linked worktree of the repository', JSON.stringify({ unsupported: fc.unsupported, n: fc.worktrees.length }));
+    check(fc.worktrees.every((w) => w.snapshot === 'ok' && w.base === 'main' && w.baseRecorded),
+      'each worktree is snapshotted with its recorded base, not a guessed one', JSON.stringify(fc.worktrees));
+    check(fc.worktrees.find((w) => w.worktree === idle.path)?.changed === 0
+      && !fc.pairs.some((p) => p.a.worktree === idle.path || p.b.worktree === idle.path),
+    'a worktree with nothing changed is listed but paired with nothing', JSON.stringify(fc.pairs.map(label)));
+    const pairOf = (a: string, b: string) => fc.pairs.find((p) => label(p) === `${a}~${b}` || label(p) === `${b}~${a}`);
+    const oneTwo = pairOf('one', 'two');
+    check(oneTwo?.outcome === 'conflicts' && JSON.stringify(oneTwo.conflicted) === '["f.txt"]'
+      && JSON.stringify(oneTwo.shared) === '["k.txt"]',
+    'an uncommitted edit and a committed edit to the same line are forecast as a conflict, naming the file; the cleanly merged shared file is named apart',
+    JSON.stringify(oneTwo));
+    check(pairOf('one', 'three')?.outcome === 'overlap' && JSON.stringify(pairOf('one', 'three')?.shared) === '["k.txt"]'
+      && pairOf('two', 'three')?.outcome === 'overlap',
+    'two sessions editing different lines of one file merge, and are reported as overlap rather than clean',
+    JSON.stringify([pairOf('one', 'three'), pairOf('two', 'three')]));
+    const basePairs = fc.pairs.filter((p) => p.kind === 'base');
+    check(basePairs.length === 3 && basePairs.every((p) => p.outcome === 'clean' && p.b.branch === 'main' && p.b.worktree === null),
+      'against a base that moved on other paths, every changed worktree is clean', JSON.stringify(basePairs.map((p) => [label(p), p.outcome])));
+    check(fc.pairs.length === 6 && fc.pairs[0].outcome === 'conflicts',
+      'the pairs are ordered so the conflict leads', JSON.stringify(fc.pairs.map((p) => [label(p), p.outcome])));
+    check(fgit(one.path, 'status', '--porcelain') === before.one && fgit(two.path, 'status', '--porcelain') === before.two
+      && fgit(frepo, 'for-each-ref', '--format=%(refname) %(objectname)') === before.refs
+      && fgit(frepo, 'rev-parse', one.branch ?? 'HEAD') === before.branchOne
+      && fs.readdirSync(os.tmpdir()).every((name) => !name.startsWith('wanigan-forecast-')),
+    'asking left every working tree, index and ref as it was, and no scratch index behind',
+    JSON.stringify({ one: fgit(one.path, 'status', '--porcelain') }));
+
+    const plain = path.join(tmp, 'not-a-repo');
+    fs.mkdirSync(plain, { recursive: true });
+    const plainProject = await addProject(plain);
+    const none = await forecastCollisions(plainProject.id);
+    check(none.unsupported !== null && none.pairs.length === 0 && none.worktrees.length === 0,
+      'a folder that is not a repository says so rather than forecasting nothing as clean', none.unsupported ?? 'null');
+    removeProject(plainProject.id);
+
+    for (const w of [one, two, three, idle]) await worktrees.removeWorktree(w.path, true);
+    removeProject(forecastProject.id);
+  } catch (e) {
+    check(false, `collision forecast suite threw: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   /* ── phase 4 · transcript search survives hostile input ────────────── */
@@ -4290,6 +4385,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && contextSrc.includes('<CodexAgentsPanel'),
     'the Codex AGENTS.md chain reaches a screen — main exposes it, preload types it, and the Context view renders it',
     'wired');
+    // The same defect twice over: reconcileInstructions() and the two hook
+    // readers had tests and no caller, and the events they read were never
+    // requested. The channel takes a project id only, so the renderer cannot
+    // lay one project's session rows against another project's chain, and a
+    // failed read hides the section instead of reading as "nothing loaded".
+    check(indexSrc.includes("handle('context:observed', (projectId: string) =>")
+      && /hooks\.instructionsLoadedSessions\(project\.id, 1\)/.test(indexSrc)
+      && /ctxInstructions\.reconcileInstructions\(\s*ctxInstructions\.resolveInstructions\(root\),\s*hooks\.instructionsLoaded\(newest\.sessionId\),?\s*\)/.test(indexSrc)
+      && preloadSrc.includes("call<import('../shared/types').InstructionReconciliation | null>('context:observed', projectId)")
+      && contextSrc.includes('<ObservedLoads observed={observed} read={observedRead}/>')
+      && contextSrc.includes("const observedRead = rob.status === 'fulfilled' && !!pid;")
+      && contextSrc.includes('if (!read) return null;'),
+    'the loader prediction meets what a session reported — main pairs them per project, preload types it, and Context shows the report or says none exists, never an empty one',
+    'wired');
     const chain = codexSessions.agentsChain(null, appRoot());
     check(chain.files.some((file) => file.scope === 'home')
       && chain.files.some((file) => file.scope === 'project')
@@ -7784,6 +7893,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(asked.length >= 24 && undrawn.length === 0,
     'every hook event Wanigan asks a current CLI for has a word and a glyph in the Timeline, so none of them reaches the operator as a raw identifier',
     JSON.stringify({ asked: asked.length, undrawn }));
+
+  // The gate is half a contract; the launch paths are the other half. Both
+  // wrote their settings file with no version, so every real session was asked
+  // for the base thirteen alone and SubagentStart/Stop, PostModelSwitch,
+  // CwdChanged and InstructionsLoaded never arrived — while the gate's own
+  // checks above, which pass a version by hand, stayed green.
+  const hookLaunchSessionsSrc = sourceOf('src/main/sessions.ts');
+  const hookLaunchHeadlessSrc = sourceOf('src/main/headless.ts');
+  const unversionedWrites = [...hookLaunchSessionsSrc.matchAll(/writeHookSettings\([^;]*?\);/gs),
+    ...hookLaunchHeadlessSrc.matchAll(/writeHookSettings\([^;]*?\) : null;/gs)]
+    .map((m) => m[0]).filter((call) => !call.includes('cliVersion'));
+  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version })')
+    && hookLaunchHeadlessSrc.includes('await cliVersionOf(def, bin)')
+    && hookLaunchHeadlessSrc.includes('}, { cliVersion }) : null;')
+    && unversionedWrites.length === 0,
+  'both launch paths hand the settings file the probed version of the binary they spawn, so a current CLI is asked for the version-gated events and not the base set alone',
+  JSON.stringify({ unversionedWrites }));
 
   // The shell seeds its project list empty and surfaces a failed read as a banner, so `length === 0`
   // was two different facts and this pane printed only one of them.
