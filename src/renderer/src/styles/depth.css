@@ -42,3 +42,14 @@
 .dp-skipped > summary { cursor: pointer; color: var(--text-dim); }
 .dp-skipped ul { margin: var(--s-1) 0 0; padding-left: var(--s-4); display: grid; gap: var(--s-1); }
 @media (max-width: 520px) { .dp-drift-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── files this session touched ────────────────────────────────────────── */
+.dp-files-group { display: grid; gap: var(--s-1); padding-bottom: var(--s-3); min-width: 0; }
+.dp-files-head { margin: 0; font-size: var(--t-small); font-weight: 600; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; }
+.dp-files-head .faint { font-weight: 400; font-size: var(--t-micro); }
+.dp-files-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.dp-file { display: grid; gap: 0; width: 100%; text-align: left; padding: var(--s-1) var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); border: 1px solid transparent; color: var(--text); min-width: 0; }
+.dp-file-open { cursor: pointer; }
+.dp-file-open:hover { border-color: var(--line); }
+.dp-file-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dp-file-path { font-size: var(--t-small); overflow-wrap: anywhere; }

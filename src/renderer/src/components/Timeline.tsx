@@ -7,6 +7,7 @@ import SessionAnatomyPanel from './SessionAnatomyPanel';
 import SessionPolicyEvidence from './SessionPolicyEvidence';
 /* ── helper sweep · P7 depth ── */
 import AskChecklist from './AskChecklist';
+import SessionFilesPanel from './SessionFilesPanel';
 /* ── end helper sweep · P7 depth ── */
 
 /**
@@ -48,9 +49,11 @@ const KINDS = [
 ] as const;
 type Kind = (typeof KINDS)[number]['id'];
 
-export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
+export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onRevealFile }: {
   sessionId: string;
   onOpenFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── open a file in the code rail's reader rather than an external editor. */
+  onRevealFile?: (path: string) => void;
   /** Jump to this turn's diff in the code panel. Offered only for checkpoint-matched turns. */
   onOpenTurnDiff?: (turn: number) => void;
 }) {
@@ -274,6 +277,7 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
         <SessionPolicyEvidence sessionId={sessionId} />
         {/* ── helper sweep · P7 depth ── */}
         <AskChecklist sessionId={sessionId} />
+        <SessionFilesPanel sessionId={sessionId} eventCount={all.length} onReveal={onRevealFile} />
 
         {filtered.length === 0 ? (
           <div className="tl-pad">

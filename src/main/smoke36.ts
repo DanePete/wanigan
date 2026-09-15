@@ -251,3 +251,68 @@ export async function runMaintainabilitySmoke(check: Check, say: Say): Promise<v
   const none = await maintainabilityFor(`p7-drift-none-${Date.now()}`);
   check(none.state === 'no-checkpoints', 'drift: a session with no checkpoints says so');
 }
+
+type HookHandler = { url: string; authorization: string };
+
+function hookHandlerOf(file: string | null): HookHandler | null {
+  if (!file) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { hooks?: { PreToolUse?: Array<{ hooks?: Array<{ url?: unknown; headers?: { Authorization?: unknown } }> }> } };
+    const h = parsed.hooks?.PreToolUse?.[0]?.hooks?.[0];
+    return typeof h?.url === 'string' && typeof h.headers?.Authorization === 'string' ? { url: h.url, authorization: h.headers.Authorization } : null;
+  } catch { return null; }
+}
+
+async function postHook(handler: HookHandler, body: unknown): Promise<Record<string, unknown>> {
+  const res = await fetch(handler.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: handler.authorization }, body: JSON.stringify(body) });
+  return (await res.json()) as Record<string, unknown>;
+}
+
+async function settle(read: () => boolean, ms = 4000): Promise<boolean> {
+  const stop = Date.now() + ms;
+  while (Date.now() < stop) { if (read()) return true; await new Promise((r) => setTimeout(r, 50)); }
+  return read();
+}
+
+/** Item 4: a session's files grouped Edited / Read / Referenced, through the real hook listener. */
+export async function runSessionFilesSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · what the session edited, read and referenced');
+  const repo = repoFixture('wanigan-p7-files-');
+  const hooks = await import('./hooks');
+  const { startDepthServices } = await import('./depth');
+  const { sessionFiles } = await import('./session-files');
+  repo.write('src/cart.ts', 'export const total = 1;\n');
+  repo.write('README.md', '# files\n');
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+  startDepthServices();
+  await hooks.startHookServer();
+  const sid = `p7-files-${Date.now()}`;
+  insertSession(sid, null, repo.dir, null);
+  const handler = hookHandlerOf(hooks.writeHookSettings(sid, repo.dir));
+  check(handler !== null, 'files: the session gets a hook capability to post through');
+  if (!handler) return;
+  const d = repo.dir;
+  await postHook(handler, { hook_event_name: 'UserPromptSubmit', cwd: d, prompt: 'Fix the total in src/cart.ts and check docs/guide.md' });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Grep', cwd: d, tool_input: { pattern: 'total', path: 'src' }, tool_response: { mode: 'files_with_matches', numFiles: 1, filenames: ['cart.ts'] } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Glob', cwd: d, tool_input: { pattern: '**/*.md' }, tool_response: { numFiles: 1, filenames: [`${d}/README.md`], truncated: false } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Read', cwd: d, tool_input: { file_path: `${d}/src/cart.ts` }, tool_response: { type: 'text' } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: d, tool_input: { command: "cat README.md && sed -n '1,5p' src/cart.ts" }, tool_response: { stdout: '', stderr: '' } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: d, tool_input: { command: 'cat src/*.ts' }, tool_response: { stdout: '', stderr: '' } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Edit', cwd: d, tool_input: { file_path: `${d}/src/cart.ts`, old_string: '1', new_string: '2' }, tool_response: {} });
+
+  const ready = await settle(() => sessionFiles(sid).edited.length === 1 && (db().prepare('SELECT COUNT(*) AS n FROM session_file_refs WHERE session_id = ?').get(sid) as { n: number }).n >= 5);
+  const files = sessionFiles(sid);
+  check(ready, 'files: the hook bodies reached the panel', JSON.stringify(files));
+  const cart = files.edited.find((f) => f.rel === 'src/cart.ts');
+  check(!!cart && cart.edits === 1 && cart.reads === 1 && cart.bashReads === 1 && cart.searchHits === 1 && cart.promptMentions === 1 && cart.firstAt <= cart.lastAt,
+    'files: a file read, searched, named and then edited sits under Edited with every count and its first and last time', JSON.stringify(cart));
+  check(files.read.some((f) => f.rel === 'README.md' && f.bashReads === 1 && f.searchHits === 1),
+    'files: a file a Bash cat read is under Read, with the Glob hit that found it', JSON.stringify(files.read));
+  check(files.referenced.some((f) => f.rel === 'docs/guide.md' && f.promptMentions === 1),
+    'files: a path named only in the prompt is Referenced', JSON.stringify(files.referenced));
+  const refs = db().prepare('SELECT kind, path FROM session_file_refs WHERE session_id = ?').all(sid) as { kind: string; path: string }[];
+  check(!refs.some((r) => r.path.includes('*')), 'files: a globbed cat is not guessed into a read');
+  const stored = db().prepare("SELECT COUNT(*) AS n FROM session_events WHERE session_id = ? AND event = 'UserPromptSubmit' AND summary IS NULL").get(sid) as { n: number };
+  check(stored.n === 1 && !refs.some((r) => r.path.includes('Fix the total')), 'files: the prompt itself is not stored, only the paths it named');
+  hooks.cleanupHookSettings(sid);
+}

@@ -264,6 +264,8 @@ export default function Sessions({
   // A "view this turn's diff" jump from the Timeline into the Code pane. The
   // nonce makes repeat jumps to the same turn re-fire the effect.
   const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
+  /* ── helper sweep · P7 depth ── a file the Timeline's file panel asked the code rail to open. */
+  const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; nonce: number } | null>(null);
   /*
    * Three agents in one repo were three identical rows. The launch title is
    * assigned once and is "<provider> · <project>" for all three of them, so the
@@ -1195,6 +1197,9 @@ export default function Sessions({
                                    ? { turn: turnFocus.turn, nonce: turnFocus.nonce }
                                    : null}
                                  onFocusTurnHandled={() => setTurnFocus(null)}
+                                 /* ── helper sweep · P7 depth ── */
+                                 focusFile={fileFocus?.sessionId === active.id ? { path: fileFocus.path, nonce: fileFocus.nonce } : null}
+                                 onFocusFileHandled={() => setFileFocus(null)}
                                  onSendToBatch={(paths) => onSendToBatch({
                                    projectId: active.projectId,
                                    root: active.worktree ?? active.projectPath,
@@ -1205,6 +1210,11 @@ export default function Sessions({
                                 onOpenFile={(p) => { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); }}
                                 onOpenTurnDiff={(turn) => {
                                   setTurnFocus({ sessionId: active.id, turn, nonce: Date.now() });
+                                  setPane(active.id, 'code');
+                                }}
+                                /* ── helper sweep · P7 depth ── */
+                                onRevealFile={(p) => {
+                                  setFileFocus({ sessionId: active.id, path: p, nonce: Date.now() });
                                   setPane(active.id, 'code');
                                 }} />
                     ) : (

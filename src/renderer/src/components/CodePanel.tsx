@@ -70,8 +70,11 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
+export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch, focusFile, onFocusFileHandled }: {
   projectPath: string; projectName: string; sessionId?: string;
+  /* ── helper sweep · P7 depth ── a jump from the Timeline's file panel: open this absolute path in the file reader. */
+  focusFile?: { path: string; nonce: number } | null;
+  onFocusFileHandled?: () => void;
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
   /** A jump from the Timeline: open this turn's diff. Nonce re-fires repeats. */
@@ -232,6 +235,27 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     // above is what makes this effect single-fire per jump.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTurn, sessionId]);
+
+  /* ── helper sweep · P7 depth ── */
+  const handledFileNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusFile || handledFileNonce.current === focusFile.nonce) return;
+    handledFileNonce.current = focusFile.nonce;
+    const root = projectPath.replace(/\/+$/, '');
+    const rel = focusFile.path.startsWith(`${root}/`) ? focusFile.path.slice(root.length + 1) : null;
+    setTab('files');
+    if (rel) {
+      const slash = rel.lastIndexOf('/');
+      setDir(slash > 0 ? rel.slice(0, slash) : '');
+      // The same read openFile makes, inlined so this effect depends on nothing
+      // that changes identity every render.
+      window.wanigan.code.read(projectPath, rel)
+        .then((f) => { setFile({ rel, ...f }); setSel(null); setDiff(''); setErr(null); })
+        .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    }
+    onFocusFileHandled?.();
+  }, [focusFile, projectPath, onFocusFileHandled]);
+  /* ── end helper sweep · P7 depth ── */
 
   async function openTurnDiff(row: TurnRow) {
     setSelTurn(row.key); setTurnDiff(null); setCpPlan(null); setCpResult(null);
