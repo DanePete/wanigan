@@ -41,3 +41,4 @@
 .cost-meter::-webkit-meter-even-less-good-value { background: var(--bad); border-radius: var(--r-pill); }
 .cost-chain td { vertical-align: top; }
 .cost-budget-note { margin-top: var(--s-2); }
+.cost-cold-cache { color: var(--warning); }

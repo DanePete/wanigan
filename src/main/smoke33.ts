@@ -352,3 +352,47 @@ export async function runCodexCreditsSmoke(check: Check, say: Say): Promise<void
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runCacheWarmthSmoke(check: Check, say: Say): Promise<void> {
+  say('── composer · warn before a cold-cache send');
+  const { db } = await import('./db');
+  const ids = [`warm-claude-${Date.now()}`, `warm-codex-${Date.now()}`];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-warmth-'));
+  const prior = process.env.CLAUDE_CODE_PROMPT_CACHE_TTL;
+  try {
+    const now = Date.now();
+    db().prepare(`INSERT INTO session_log (id, provider_id, harness_id, backend_id, project_path, project_name, started_at) VALUES (?,?,?,?,?,?,?)`)
+      .run(ids[0], 'claude', 'claude-code', 'anthropic', dir, 'warmth', now - 3 * 3600_000);
+    db().prepare(`INSERT INTO session_log (id, provider_id, harness_id, project_path, project_name, started_at) VALUES (?,?,?,?,?,?)`)
+      .run(ids[1], 'codex', 'codex', dir, 'warmth', now - 3 * 3600_000);
+    db().prepare(`INSERT INTO session_api_events (session_id, at, kind, model, cost_usd, in_tokens, out_tokens, cache_read, cache_write) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(ids[0], now - 70 * 60_000, 'request', 'claude-fable-5', 0.5, 12, 400, 118_000, 2_000);
+    db().prepare(`INSERT INTO session_events (session_id, at, event) VALUES (?,?,?)`).run(ids[0], now - 68 * 60_000, 'Stop');
+
+    const { cacheWarmth } = await import('./cache-warmth');
+    const { coldCacheNote } = await import('../shared/cache-warmth');
+    process.env.CLAUDE_CODE_PROMPT_CACHE_TTL = '1h';
+    const facts = cacheWarmth(ids[0]);
+    check(facts.supported && facts.lastTurnEndedAt === now - 68 * 60_000 && facts.contextTokens === 120_012 && facts.ttl.basis === 'pinned-env',
+      'a Claude session reports its last Stop, the last request’s input and cache tokens, and a lifetime pinned by the environment', facts);
+    const note = coldCacheNote({ now, lastTurnEndedAt: facts.lastTurnEndedAt, ttl: facts.ttl, contextTokens: facts.contextTokens });
+    check(note?.text.startsWith('Idle 68 min: this message likely re-reads ~120,012 tokens without cache') === true,
+      'the composer note names the idle time and the re-read size, as an estimate', note);
+    delete process.env.CLAUDE_CODE_PROMPT_CACHE_TTL;
+    const inferred = cacheWarmth(ids[0]);
+    check(inferred.ttl.basis !== 'pinned-env', 'without the pin the lifetime is inferred and says so', inferred.ttl);
+    const codex = cacheWarmth(ids[1]);
+    check(!codex.supported, 'a Codex session gets no cache note rather than a guessed lifetime', codex.reason);
+    const composerSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'src', 'components', 'Composer.tsx'), 'utf8');
+    check(/<ColdCacheNote sessionId=\{sessionId\}/.test(composerSrc) && !/ColdCacheNote[^\n]*disabled/.test(composerSrc),
+      'the composer mounts the note and nothing about it gates the send button');
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_CODE_PROMPT_CACHE_TTL; else process.env.CLAUDE_CODE_PROMPT_CACHE_TTL = prior;
+    for (const id of ids) {
+      db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+      db().prepare('DELETE FROM session_api_events WHERE session_id = ?').run(id);
+      db().prepare('DELETE FROM session_events WHERE session_id = ?').run(id);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

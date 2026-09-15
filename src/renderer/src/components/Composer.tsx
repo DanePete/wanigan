@@ -17,6 +17,8 @@ import {
   pruneDrafts,
   type ComposerDraftMap,
 } from '@shared/composer-drafts';
+/* ── helper sweep · P4 cost ── */
+import ColdCacheNote from './ColdCacheNote';
 
 /**
  * A composer beside the PTY, not instead of it.
@@ -625,6 +627,8 @@ export default function Composer({ session, onError }: {
           )}
         </div>
       )}
+      {/* ── helper sweep · P4 cost ── */}
+      {runsClaudeHarness(session) && <ColdCacheNote sessionId={sessionId} active={state.mode === 'send' && draft.trim().length > 0} />}
       {stashOpen && (
         <section className="composer-stash-pop" id="composer-stash-list" aria-label="Saved prompts" onKeyDown={event => {
           if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setStashOpen(false); stashButton.current?.focus(); }

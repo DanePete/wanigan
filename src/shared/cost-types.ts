@@ -139,3 +139,13 @@ export type CodexCreditsReport = {
   tierNotRecorded: number;
   unestimated: number;
 };
+
+export type CacheWarmthFacts = {
+  supported: boolean;
+  reason: string | null;
+  /** The last Stop hook, else the last recorded request. */
+  lastTurnEndedAt: number | null;
+  /** input + cache read + cache write of the last recorded request. */
+  contextTokens: number | null;
+  ttl: import('./cache-warmth').CacheTtl;
+};
