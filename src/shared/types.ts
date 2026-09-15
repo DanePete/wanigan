@@ -3547,3 +3547,13 @@ export type GrantSetting = {
   grants: number;
   newestAt: number | null;
 };
+
+/** A skill's computed capability surface beside the one a person approved. See shared/skill-surface.ts. */
+export type SkillSurfaceView = {
+  skillPath: string;
+  digest: string;
+  computedAt: number;
+  surface: import('./skill-surface').SkillSurface;
+  approved: { digest: string; at: number; how: 'person' | 'projected' } | null;
+  delta: import('./skill-surface').SurfaceDelta;
+};

@@ -11,6 +11,7 @@ import { observeForRewrites } from './rewrite-evidence';
 import { sessionSignals } from './policy-signals';
 import { grantFor, grantSettings, observeForGrants, setGrantSetting } from './grants';
 import { listProjects } from './store';
+import { approveSkillSurface, skillSurface } from './skill-surface';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -76,6 +77,14 @@ export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
   handle('policyEvidence:fatigue', () => fatigueReport());
+  handle('policyEvidence:skillSurface', (skillPath: unknown) => {
+    if (typeof skillPath !== 'string' || !skillPath || skillPath.length > 4096) throw new Error('That is not a skill Wanigan knows.');
+    return skillSurface(skillPath);
+  });
+  handle('policyEvidence:approveSkillSurface', (skillPath: unknown, digest: unknown) => {
+    if (typeof skillPath !== 'string' || !skillPath || skillPath.length > 4096 || typeof digest !== 'string') throw new Error('That is not a skill surface Wanigan can approve.');
+    return approveSkillSurface(skillPath, digest);
+  });
   handle('policyEvidence:grantSettings', () => grantSettings(listProjects().map((p) => p.id)));
   handle('policyEvidence:setGrantSetting', (projectId: unknown, enabled: unknown, days: unknown) => {
     if (typeof projectId !== 'string' || typeof enabled !== 'boolean' || typeof days !== 'number') throw new Error('That grant setting is not one Wanigan accepts.');
