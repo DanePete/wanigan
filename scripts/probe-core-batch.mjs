@@ -80,6 +80,13 @@ try {
         if (key === 'scrollback') return async () => 'Wanigan renderer fixture — no live provider\r\n';
         return obj[key];
       } });
+      if (service === 'attention') return new Proxy(target.attention, { get(obj, key) {
+        if (key === 'list') return async (...args) => (await obj.list(...args)).map((a) => ({ ...a,
+          reason: a.kind === 'permission'
+            ? { rule: 'permission-request', event: { name: 'PermissionRequest', at: now - 120000 }, because: 'The CLI reported it is waiting for a person to approve a step.' }
+            : { rule: 'working', event: { name: 'PostToolUse', at: now - 4000 }, because: 'Hook events or terminal output are still arriving.' } }));
+        return obj[key];
+      } });
       if (service === 'control') return new Proxy(target.control, { get(obj, key) {
         if (key === 'list') return async () => { const d = docket(); delete d.nodes; delete d.claims; delete d.proofs; delete d.checkpoints; return [d]; };
         if (key === 'get') return async () => docket();
@@ -178,6 +185,19 @@ try {
     await shoot('context-accepted');
     record('Context shows the changed configuration and records an acceptance for exactly the digest on screen, then reads as reviewed');
   }
+
+  // 3b · Fleet · why a session needs you
+  await go('Meta+2');
+  await page.locator('.fleet-inspector, .fleet').first().waitFor();
+  const asking = page.locator('button').filter({ hasText: /Asking/ }).first();
+  if (await asking.count()) await asking.click().catch(() => {});
+  if (!before) {
+    const reasonLine = page.locator('.fleet-inspector .fleet-reason');
+    await reasonLine.waitFor();
+    assert.match((await reasonLine.innerText()).replace(/\s+/g, ' '), /^Because the CLI reported it is waiting for a person to approve a step\. Read from PermissionRequest, 2m ago\.$/);
+    record('the Fleet inspector says why a session needs you: the rule, the event it read, and when');
+  }
+  await shoot('fleet-reason');
 
   // 4 · Control · reopening a review that asked for changes
   await go('Meta+3');

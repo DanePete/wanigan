@@ -56,6 +56,20 @@ processes. The first press ends nothing and says why.
 | Before | ![](before/handoff-dark.png) | ![](before/handoff-light.png) |
 | After · first press | ![](after/handoff-dark.png) | ![](after/handoff-light.png) |
 
+## Why a session needs you
+
+Every attention verdict now carries its reason: the rule that decided it, the
+recorded event it read, and the threshold in words. Fleet's inspector shows it
+under the verdict; the queue chip carries it in its accessible description. A
+verdict assembled without the evidence, such as the phone's fallback row, leaves
+it out rather than inventing one — and the phone snapshot copies only kind, label
+and time, so none of it crosses to a device.
+
+| | Dark | Light |
+|---|---|---|
+| Before | ![](before/fleet-reason-dark.png) | ![](before/fleet-reason-light.png) |
+| After | ![](after/fleet-reason-dark.png) | ![](after/fleet-reason-light.png) |
+
 ## Reopening a review that asked for changes
 
 The hint now says what reopening does: implementation and verification go back,

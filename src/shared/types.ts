@@ -761,6 +761,25 @@ export type Attention = {
   detail: string | null;
   /** The tool currently in flight, if one is. */
   tool: string | null;
+  /**
+   * Why this verdict and not another: the rule that decided it, the recorded
+   * event it read, and the rule stated with its threshold. Every verdict the
+   * classifier makes carries one; a verdict assembled elsewhere without the
+   * evidence leaves it out rather than inventing one.
+   */
+  reason?: AttentionReason;
+};
+
+export type AttentionRule =
+  | 'permission-request' | 'nonzero-exit' | 'repeated-failure' | 'recent-failure'
+  | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working';
+
+export type AttentionReason = {
+  rule: AttentionRule;
+  /** The hook event the rule read, by name and arrival time; null when the rule read something else, such as an exit code. */
+  event: { name: string; at: number } | null;
+  /** The rule in words, with its threshold. */
+  because: string;
 };
 
 /* ── P4 · transcripts ───────────────────────────────────────────────── */

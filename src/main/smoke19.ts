@@ -192,3 +192,45 @@ export async function runConfigPinSmoke(check: Check, say: Say): Promise<void> {
     for (const dir of [repo, plain]) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ } }
   }
 }
+
+/**
+ * Every verdict in the attention queue says why: the rule that decided it, the
+ * recorded event it read, and the threshold. A ranking nobody can question is
+ * one nobody can trust.
+ */
+export async function runAttentionReasonSmoke(check: Check, say: Say): Promise<void> {
+  say('── attention · every verdict carries its reason');
+  try {
+    const attention = await import('./attention');
+    const hooks = await import('./hooks');
+    const base = {
+      providerId: 'claude', projectId: 'prj_reason', projectPath: os.tmpdir(), projectName: 'reason', title: 'reason',
+      status: 'running' as const, pid: null, exitCode: null, endedAt: null, unread: 0,
+    };
+    const asking = { ...base, id: 's_reason_asking', createdAt: Date.now() };
+    hooks.recordProviderEvent(asking.id, 'PermissionRequest', 'Waiting for your approval.');
+    const askingVerdict = attention.attentionOf(asking);
+    check(askingVerdict.kind === 'permission' && askingVerdict.reason?.rule === 'permission-request'
+      && askingVerdict.reason.event?.name === 'PermissionRequest' && typeof askingVerdict.reason.event.at === 'number',
+    'an asking verdict names the permission rule and the PermissionRequest event it read, with when it arrived', askingVerdict.reason);
+
+    const crashed = { ...base, id: 's_reason_crash', createdAt: Date.now() - 60_000, status: 'exited' as const, exitCode: 2, endedAt: Date.now() };
+    const crashVerdict = attention.attentionOf(crashed);
+    check(crashVerdict.reason?.rule === 'nonzero-exit' && crashVerdict.reason.event === null && /code 2/.test(crashVerdict.reason.because),
+      'an exit-code verdict names the code and claims no hook event it did not read', crashVerdict.reason);
+
+    const quiet = { ...base, id: 's_reason_quiet', createdAt: Date.now() - 3 * attention.IDLE_MS };
+    const quietVerdict = attention.attentionOf(quiet);
+    check(quietVerdict.kind === 'idle' && quietVerdict.reason?.rule === 'quiet' && /90 seconds/.test(quietVerdict.reason.because),
+      'an idle verdict states its threshold in words', quietVerdict.reason);
+
+    const looping = { ...base, id: 's_reason_loop', createdAt: Date.now() - 120_000 };
+    for (let i = 0; i < 6; i++) hooks.recordProviderEvent(looping.id, 'PostToolUseFailure', 'npm test', Date.now() - (6 - i) * 1000);
+    const loopVerdict = attention.attentionOf(looping);
+    check(!!loopVerdict.reason && ['repeated-failure', 'recent-failure', 'no-progress'].includes(loopVerdict.reason.rule) && loopVerdict.kind !== 'working',
+      'a failing streak is reported as a failure rule, never as working', loopVerdict.reason);
+    for (const id of [asking.id, crashed.id, quiet.id, looping.id]) attention.forgetSession(id);
+  } catch (error) {
+    check(false, 'the attention reason checks ran without throwing', String(error));
+  }
+}
