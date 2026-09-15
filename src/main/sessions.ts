@@ -1,10 +1,10 @@
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
-import type { GoalCapsule, GoalCapsuleDelivery, LaunchOptions, Session, ProviderId } from '../shared/types';
+import type { GoalCapsule, GoalCapsuleDelivery, LaunchOptions, Session, SessionEvent, ProviderId } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
 import {
   providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli,
-  missingCredentialIds,
+  missingCredentialIds, providerProbeEnvironment,
 } from './providers';
 import { projectById } from './store';
 import { db } from './db';
@@ -21,6 +21,8 @@ import * as accounts from './accounts';
 import { readableFromAccount } from './handoff';
 import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
+import { codexHooksAreSource, forgetCodexHookSession, prepareCodexHookLaunch } from './codex-hooks';
+import { CODEX_HOOK_HEADERS_ENV, CODEX_HOOK_URL_ENV } from '../shared/codex-hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor, worktreeStatus } from './worktrees';
@@ -144,6 +146,11 @@ const STRIPPED_ENV = [
   'CLAUDE_CODE_SESSION_ID',
   'CLAUDE_CODE_ENTRYPOINT',
   'CLAUDECODE',
+  // A Wanigan started from inside a Codex session Wanigan launched inherits
+  // that session's hook URL and headers path. They are set per PTY below only
+  // when hooks are injected, and must never ride along into one that is not.
+  CODEX_HOOK_URL_ENV,
+  CODEX_HOOK_HEADERS_ENV,
 ];
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
@@ -611,6 +618,23 @@ function queueUnread(sessionId: string): void {
 const OSC9_PREFIX = '\x1b]9;';
 const MAX_PROVIDER_CONTROL = 2_048;
 export type CodexLifecycleSignal = 'permission' | 'finished';
+
+/**
+ * One OSC 9 lifecycle signal, recorded as the event it stands for — unless
+ * this session's own hooks have delivered, in which case it is not recorded.
+ *
+ * One source per fact. A turn's end would otherwise be two Stop rows, and a
+ * Stop is what runs a goal's review gate and what the checkpoint chain cuts a
+ * turn at. Until the hooks deliver, nothing is known about whether they will,
+ * so OSC 9 is the source; the switch is one-way for the session and recorded
+ * on it (codex-hooks.ts). Returns the stored event, or null when none was.
+ */
+export function recordCodexNotification(sessionId: string, signal: CodexLifecycleSignal, at: number): SessionEvent | null {
+  if (codexHooksAreSource(sessionId)) return null;
+  return signal === 'permission'
+    ? recordProviderEvent(sessionId, 'PermissionRequest', 'Waiting for your approval.', at)
+    : recordProviderEvent(sessionId, 'Stop', 'Turn complete.', at);
+}
 
 /**
  * Pull Codex's opt-in OSC 9 lifecycle messages out of arbitrary PTY chunks.
@@ -1288,6 +1312,28 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         '--config', 'tui.notification_method="osc9"',
     ]
     : [];
+  // Codex's own hook events, observed only (codex-hooks.ts). Beside the OSC 9
+  // arguments, never instead of them: OSC 9 stays this session's source until
+  // its hooks deliver an event. Injected only when Codex has confirmed trust by
+  // hash for the binary about to run; otherwise the launch is exactly the one
+  // above, and the reason is recorded on the session. The headers file this
+  // writes is registered with the hook bus, so rollbackLaunch and the exit
+  // handler's cleanupHookSettings remove it with the rest.
+  const codexHooks = def.harness === 'codex'
+    ? await prepareCodexHookLaunch({
+        sessionId: id0,
+        projectPath: cwd,
+        target: { bin: resolvedBin, version: detected.version, proven: harnessProven },
+        probeEnv: providerProbeEnvironment(PATH),
+        extraArgs: extra,
+        onSwitch: (at) => {
+          const current = sessions.get(id0);
+          if (current?.meta.codexHooks?.state === 'injected') {
+            current.meta.codexHooks = { ...current.meta.codexHooks, switchedAt: at };
+          }
+        },
+      })
+    : null;
   // An exact Codex resume restores the model and reasoning settings embedded
   // in its saved thread. Replaying values from Wanigan's historical row is
   // both unnecessary and brittle: an older CLI recorded `ultra`, for example,
@@ -1299,7 +1345,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   let args: string[];
   try {
     args = [
-      ...idArgs, ...injected, ...attachmentArgs, ...learnedArgs, ...lifecycleArgs,
+      ...idArgs, ...injected, ...attachmentArgs, ...learnedArgs, ...lifecycleArgs, ...(codexHooks?.args ?? []),
       ...def.launchArgs(extra, {
         ...opts.providerOptions,
         model: resumeCodex ? undefined : opts.model || undefined,
@@ -1446,6 +1492,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
   meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
+  if (codexHooks) meta.codexHooks = codexHooks.delivery;
 
   let proc: IPty;
   try {
@@ -1454,7 +1501,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       cols: 120,
       rows: 32,
       cwd,
-      env: agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account)),
+      // The hook URL and headers path last, for this PTY only: nothing
+      // inherited or declared by a pack can point this session's events at
+      // another listener. Neither value is the bearer.
+      env: { ...agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account)), ...(codexHooks?.env ?? {}) },
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1510,8 +1560,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
                                  resumed_from, worktree, trust, bin, capabilities_json,
                                  provider_pack_id,provider_pack_version,provider_profile_json,
                                  backend_id,harness_id,baseline_head,baseline_dirty_json,
-                                 initial_prompt,title,account_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 initial_prompt,title,account_id,codex_hooks_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
              meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
@@ -1527,7 +1577,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
              // readers have to look in the directory this session actually
              // used. Resolving it again later from the default would send them
              // to the wrong account's files and honestly report nothing.
-             initialPrompt, derivedTitle, account?.id ?? null);
+             initialPrompt, derivedTitle, account?.id ?? null,
+             // Whether this Codex session's events came from its own hooks or
+             // from OSC 9 is a question asked of finished sessions, and the
+             // terminal that could have answered it is gone by then.
+             meta.codexHooks ? JSON.stringify(meta.codexHooks) : null);
       // A reused isolated checkout now belongs to this live continuation for
       // reconciliation purposes. Its historical session_log rows retain the
       // original path, so moving this liveness pointer loses no provenance.
@@ -1680,18 +1734,17 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       const scanned = scanCodexNotifications(live.providerControl, data);
       live.providerControl = scanned.pending;
       for (const signal of scanned.signals) {
+        // The flags track OSC 9 whatever the source: they decide what the
+        // operator's next Enter answers, and Codex has no hook for that.
         if (signal === 'permission') {
           live.providerAwaitingApproval = true;
           live.providerFinished = false;
-          if (!live.exactRecovery || live.exactRecovery.historyRecorded) {
-            recordProviderEvent(id, 'PermissionRequest', 'Waiting for your approval.', now);
-          }
         } else {
           live.providerAwaitingApproval = false;
           live.providerFinished = true;
-          if (!live.exactRecovery || live.exactRecovery.historyRecorded) {
-            recordProviderEvent(id, 'Stop', 'Turn complete.', now);
-          }
+        }
+        if (!live.exactRecovery || live.exactRecovery.historyRecorded) {
+          recordCodexNotification(id, signal, now);
         }
       }
     }
@@ -1756,6 +1809,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // them from their final answer. Deleting it on exit destroys those results
     // and turns an intact saved conversation into a page of dead links.
     try { cleanupHookSettings(id); } catch { /* nothing to remove */ }
+    forgetCodexHookSession(id);
     try { cleanupMcpConfig(mcpFile, id); } catch { /* nothing to remove */ }
     if (unrecordedRecovery) {
       // This directory is Wanigan's fresh staging area, not an artifact from
@@ -2263,7 +2317,10 @@ export function writeSession(sessionId: string, data: string): boolean {
       recordProviderEvent(sessionId, 'PermissionResponse');
     } else if (s.providerFinished) {
       s.providerFinished = false;
-      recordProviderEvent(sessionId, 'UserPromptSubmit');
+      // Once the session's hooks deliver, they post the real UserPromptSubmit,
+      // and this one would count every turn twice. The answer to an approval
+      // above has no hook, so it is recorded either way.
+      if (!codexHooksAreSource(sessionId)) recordProviderEvent(sessionId, 'UserPromptSubmit');
     }
   }
   return true;

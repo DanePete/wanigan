@@ -596,6 +596,40 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateCodexHooks(d);
+}
+
+/**
+ * Codex hook trust, and the first real event that proved it. See
+ * codex-hooks.ts.
+ *
+ * One row per binary, version and hook definition, because trust is a fact
+ * about all three: Codex hashes the definition, a different binary can hash
+ * differently, and an upgrade in place is a new version. A restart reads the
+ * answer here instead of starting Codex's app-server again. `first_event_at`
+ * stays NULL until a real session delivers an event on that version, and it
+ * is the only thing Settings may call "observed".
+ *
+ * The session column says what one launch did about hooks, and when its own
+ * hooks took over from OSC 9, so the answer outlives the terminal.
+ */
+function migrateCodexHooks(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS codex_hook_trust (
+      bin                 TEXT NOT NULL,
+      version             TEXT NOT NULL,
+      definition_sha256   TEXT NOT NULL,
+      state               TEXT NOT NULL,
+      reason              TEXT,
+      detail              TEXT,
+      hashes_json         TEXT,
+      probed_at           INTEGER NOT NULL,
+      first_event_at      INTEGER,
+      first_event_session TEXT,
+      PRIMARY KEY (bin, version, definition_sha256)
+    );
+  `);
+  addColumn(d, 'session_log', 'codex_hooks_json', 'TEXT');
 }
 
 /**
