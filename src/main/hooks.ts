@@ -8,6 +8,9 @@ import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
+/* ── helper sweep · P3 review ── */
+import { recordShellResult } from './shell-results';
+/* ── end helper sweep · P3 review ── */
 import type {
   HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
@@ -293,6 +296,39 @@ export function hookEventsFor(cliVersion: string | null | undefined): HookEventN
   return out;
 }
 
+/* ── helper sweep · P3 review ── */
+/**
+ * Settings keys, as opposed to event names, that Wanigan puts in the same file,
+ * each gated on the release that added it for the same reason events are: the
+ * CLI rejects a whole settings file over one key it does not know.
+ *
+ * `bashEditDiffEnabled` — changelog 2.1.269: "Added a diff of the files a Bash
+ * command changed to the Bash tool result when the Bash tool handles file edits
+ * (setting `bashEditDiffEnabled`)". The 2.1.271 binary installed here carries
+ * the key in its settings schema, described as "PostToolUse Bash hooks get the
+ * changed-file list in tool_response … Only user, flag or policy settings can
+ * turn it on outside auto and bypassPermissions modes", and resolves it from the
+ * flag layer first — which is the layer `--settings` writes (checked 2026-09-14).
+ * What is NOT verified end to end is a live session posting a Bash result with
+ * `bashEditDiff.changedFiles` to this listener; no session was started to check.
+ */
+export const VERSION_GATED_SETTINGS: readonly { key: string; value: unknown; since: string; probed: string }[] = [
+  { key: 'bashEditDiffEnabled', value: true, since: '2.1.269', probed: '2.1.271' },
+];
+
+/** Exactly the extra settings keys a file written for this CLI version carries. */
+export function hookSettingsKeysFor(cliVersion: string | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const have = parseCliVersion(cliVersion);
+  if (!have) return out;
+  for (const gated of VERSION_GATED_SETTINGS) {
+    const want = parseCliVersion(gated.since);
+    if (want && versionAtLeast(have, want)) out[gated.key] = gated.value;
+  }
+  return out;
+}
+/* ── end helper sweep · P3 review ── */
+
 /** Only these carry a tool name for a matcher to match against. */
 const TOOL_MATCHED = new Set<HookEventName>([
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied',
@@ -340,7 +376,7 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify({ ...hookSettingsKeysFor(options.cliVersion), hooks }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
@@ -725,6 +761,9 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
       paths.length ? JSON.stringify(paths) : null,
     );
     bumpRevision(sessionId);
+    /* ── helper sweep · P3 review ── */
+    recordShellResult(sessionId, Number(res.lastInsertRowid), event, input, at);
+    /* ── end helper sweep · P3 review ── */
     const stored: SessionEvent = {
       id: Number(res.lastInsertRowid),
       sessionId,

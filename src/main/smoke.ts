@@ -227,6 +227,13 @@ export async function runSmoke(): Promise<void> {
     await runReviewDecisionSmoke(check, say);
     await runConfigPinSmoke(check, say);
     await runAttentionReasonSmoke(check, say);
+    /* ── helper sweep · P3 review ── */
+    const p3 = await import('./smoke32');
+    await p3.runReviewMarksSmoke(check, say);
+    await p3.runReviewEvidenceSmoke(check, say);
+    await p3.runStageHunksSmoke(check, say);
+    await p3.runProofAndPrSmoke(check, say);
+    /* ── end helper sweep · P3 review ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -280,7 +280,8 @@ async function isIgnored(repoRoot: string, rel: string): Promise<boolean> {
   return r.ok;
 }
 
-async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<LinkedPath[]> {
+/* ── helper sweep · P3 review ── exported so a regression proof's scratch checkout gets the same dependencies. */
+export async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<LinkedPath[]> {
   const linked: LinkedPath[] = [];
   const consider = [
     ...LINK_DIRS.map((p) => ({ rel: p, kind: 'dir' as const })),

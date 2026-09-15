@@ -106,6 +106,13 @@ import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
+/* ── helper sweep · P3 review ── */
+import * as reviewWork from './review-work';
+import * as stageHunks from './stage-hunks';
+import * as regressionProof from './regression-proof';
+import { prDraft } from './pr-evidence';
+import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
+/* ── end helper sweep · P3 review ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -2147,7 +2154,7 @@ function registerIpc() {
     code.openInEditor(editorPath, target, line));
   handle('code:changes', (root: string, sessionId?: string) =>
     code.gitChanges(root, sessionId ? sessionBaseline(sessionId) : null));
-  handle('code:diff', (root: string, file: string) => code.gitDiff(root, file));
+  handle('code:diff', (root: string, file: string, opts?: { whitespace?: unknown }) => code.gitDiff(root, file, opts));
   handle('code:list', (root: string, rel: string) => code.listDir(root, rel));
   handle('code:read', (root: string, rel: string) => code.readProjectFile(root, rel));
   // Account limits come from Codex's authenticated local app-server, not a
@@ -2236,8 +2243,11 @@ function registerIpc() {
   // work and no way to land any of them from inside the app. Every refusal
   // comes back as { merged: false, detail }; it only throws when there is no
   // worktree at the path at all, so ok:false here is the rare case.
+  // A high-tier file in the session's diff needs a standing approval before
+  // the merge runs (helper sweep · P3 review). Checked here, in main, so the
+  // renderer's disabled button is a courtesy and not the guard.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
-    worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
+    reviewWork.mergeWorktreeReviewed(assertManagedRoot(p, 'That worktree'), opts));
   // Whether the agents' worktrees would merge — with their base and with each
   // other — asked of git in the object database while the work is in flight.
   // Keyed on a project id; main resolves the repository and every worktree.
@@ -3288,6 +3298,37 @@ function registerIpc() {
     return next;
   });
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
+
+  /* ── helper sweep · P3 review ── */
+  // Reviewing the work. Every channel takes a session, worktree, project or
+  // goal-task id and resolves the checkout in main; no renderer names a path
+  // that becomes a git working directory, and every mark is stored against a
+  // content hash main computed.
+  handle('review:work', (sessionId: unknown, opts?: { whitespace?: unknown }) => reviewWork.reviewWork(sessionId, opts));
+  handle('review:summaries', (ids: unknown) => reviewWork.reviewSummaries(ids));
+  handle('review:setMark', (sessionId: unknown, file: unknown, state: unknown, note?: unknown) =>
+    reviewWork.setReviewMark(sessionId, file, state, note));
+  handle('review:fileDiff', (sessionId: unknown, file: unknown, opts?: { whitespace?: unknown }) => reviewWork.reviewFileDiff(sessionId, file, opts));
+  handle('review:patch', (sessionId: unknown, opts?: { whitespace?: unknown }) => reviewWork.reviewPatch(sessionId, opts));
+  handle('review:image', (sessionId: unknown, file: unknown) => reviewWork.reviewImage(sessionId, file));
+  handle('review:turnStats', (sessionId: unknown) => reviewWork.turnStats(sessionId));
+  handle('review:dependencies', (sessionId: unknown) => reviewWork.dependencyReview(sessionId));
+  handle('review:claims', (sessionId: unknown) => reviewWork.claimsReview(sessionId));
+  handle('review:stagePlan', (sessionId: unknown) => stageHunks.stagePlan(sessionId));
+  handle('review:stageApply', (sessionId: unknown, digest: unknown) => stageHunks.stageApply(sessionId, digest));
+  handle('review:mergeCheck', (p: unknown) => reviewWork.mergeCheck(assertManagedRoot(p, 'That worktree')));
+  handle('review:prDraft', (root: unknown) => prDraft(gitRoot(root)));
+  handle('riskTiers:list', (projectId: unknown) => reviewWork.riskRules(projectId));
+  handle('riskTiers:save', (projectId: unknown, rules: unknown) => reviewWork.saveRiskRules(projectId, rules));
+  handle('riskTiers:defaults', () => DEFAULT_RISK_RULES.map((rule) => ({ ...rule })));
+  handle('proof:regressionCommand', (nodeId: unknown) => regressionProof.proofCommand(nodeId));
+  // Stored only after a dialog, where a compromised renderer cannot decline to
+  // render it — the same rule review:saveRecipe follows.
+  handle('proof:saveRegressionCommand', (nodeId: unknown, command: unknown) =>
+    regressionProof.saveProofCommandWithConsent(win, nodeId, command));
+  handle('proof:runRegression', (nodeId: unknown) => regressionProof.runRegressionProof(nodeId));
+  handle('proof:latestRegression', (nodeId: unknown) => regressionProof.latestRegressionProof(nodeId));
+  /* ── end helper sweep · P3 review ── */
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {

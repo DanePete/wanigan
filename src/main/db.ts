@@ -1473,7 +1473,79 @@ function migrateImprovementScout(d: Database.Database) {
   for (const [id, label, description, url, publisher, kind] of sources) {
     refresh.run(label, description, url, publisher, kind, at, id);
   }
+
+  /* ── helper sweep · P3 review ── */
+  migrateReviewWork(d);
+  /* ── end helper sweep · P3 review ── */
 }
+
+/* ── helper sweep · P3 review ── */
+/**
+ * Reviewing the work: per-file review marks and their history, the files a Bash
+ * command reported changing, per-project risk tiers, and the test command a
+ * goal's regression proof runs. Additive tables only; nothing existing changes.
+ */
+function migrateReviewWork(d: Database.Database) {
+  d.exec(`
+    -- One mark per file per diff identity. The content hash is what the file's
+    -- bytes were when it was marked; a different hash now makes the mark stale.
+    CREATE TABLE IF NOT EXISTS review_marks (
+      session_id   TEXT NOT NULL,
+      worktree     TEXT NOT NULL,
+      base_commit  TEXT NOT NULL,
+      path         TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      state        TEXT NOT NULL,
+      note         TEXT,
+      marked_at    INTEGER NOT NULL,
+      PRIMARY KEY (session_id, worktree, base_commit, path)
+    );
+    -- Every change of a mark's state, so "resolved" (rejected or commented,
+    -- later approved) is read from what happened rather than inferred.
+    CREATE TABLE IF NOT EXISTS review_mark_events (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id   TEXT NOT NULL,
+      path         TEXT NOT NULL,
+      state        TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      at           INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_mark_events ON review_mark_events(session_id, path, at);
+
+    -- A Bash tool result's outcome and, from Claude Code 2.1.269, the files it
+    -- reported changing. Keyed on the session_events row it belongs to.
+    CREATE TABLE IF NOT EXISTS session_shell_results (
+      event_id           INTEGER PRIMARY KEY,
+      session_id         TEXT NOT NULL,
+      at                 INTEGER NOT NULL,
+      outcome            TEXT NOT NULL,
+      exit_code          INTEGER,
+      changed_paths_json TEXT,
+      diff_state         TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_shell_results ON session_shell_results(session_id, at);
+    CREATE INDEX IF NOT EXISTS idx_session_shell_results_at ON session_shell_results(at);
+
+    -- Glob to tier, per project, in Wanigan's database and never in the repo.
+    CREATE TABLE IF NOT EXISTS project_risk_tiers (
+      project_id TEXT NOT NULL,
+      pattern    TEXT NOT NULL,
+      tier       TEXT NOT NULL,
+      position   INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, pattern)
+    );
+
+    -- The one test command a verify task's regression proof runs, stored only
+    -- after the operator confirmed it in a dialog.
+    CREATE TABLE IF NOT EXISTS regression_proof_commands (
+      node_id     TEXT PRIMARY KEY,
+      command     TEXT NOT NULL,
+      approved_at INTEGER NOT NULL
+    );
+  `);
+}
+/* ── end helper sweep · P3 review ── */
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {
   db().prepare('INSERT INTO events (run_id, at, level, message) VALUES (?,?,?,?)')
     .run(runId, Date.now(), level, message);

@@ -169,6 +169,28 @@ export function runGitSync(cwd: string, args: string[], opts: GitRunOpts = {}): 
   }
 }
 
+/**
+ * The same runner, for a caller that needs git's bytes rather than text: an
+ * image blob read out of the object store is not UTF-8, and decoding it as
+ * such replaces every byte that is not with U+FFFD. Same environment and the
+ * same refusal to throw.
+ */
+export async function runGitBuffer(cwd: string, args: string[], opts: GitRunOpts = {}): Promise<{ ok: boolean; out: Buffer; err: string }> {
+  if (typeof cwd !== 'string' || !cwd.trim()) return { ok: false, out: Buffer.alloc(0), err: 'No directory was given for this git command.' };
+  return new Promise((resolve) => {
+    execFile('git', ['-C', cwd, ...args], {
+      timeout: opts.timeout ?? 30_000,
+      maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+      env: gitEnv(opts.env),
+      encoding: 'buffer',
+    }, (error, stdout, stderr) => {
+      const err = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : String(stderr ?? '');
+      if (error) resolve({ ok: false, out: Buffer.alloc(0), err: (err || error.message || 'git failed').trim() });
+      else resolve({ ok: true, out: stdout, err });
+    });
+  });
+}
+
 /** This module's own shorthand; every call it makes wants the same buffer. */
 function git(root: string, args: string[], timeout = 30_000): Promise<GitRun> {
   return runGit(root, args, { timeout });
