@@ -1025,6 +1025,14 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     : null;
   let conversationId = exactRecovery?.conversationId ?? savedResume?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
+  /* ── helper sweep · P2 attention ── */
+  // A fork branches the saved conversation instead of reopening it, so the
+  // "already open" refusals below — which exist to stop two writers on one
+  // conversation — do not apply to it: the fork is never the same writer.
+  const forking = opts.forkSession === true && Boolean(savedResume) && !exactRecovery;
+  if (forking && !runsClaudeCli(def) && def.harness !== 'codex') {
+    throw new Error(`${def.label} has no verified way to fork a conversation, so Wanigan will not try one.`);
+  }
   if (exactRecovery) {
     // The UUID came through validateExactCodexThread above, never the renderer
     // launch form or a saved Wanigan row. It is revalidated immediately before
@@ -1048,7 +1056,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         value.meta.harnessId === 'codex'
         && value.meta.conversationId === conversationId
         && value.meta.status !== 'exited');
-      if (alreadyOpen) {
+      if (alreadyOpen && !forking) {
         throw new Error(
           `That Codex conversation is already open in Wanigan as “${alreadyOpen.meta.title}”.`
         );
@@ -1058,9 +1066,29 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     conversationId = randomUUID();
   }
 
-  const idArgs = isResuming
+  let idArgs = isResuming
     ? def.resumeArgs(conversationId)
     : conversationId ? ['--session-id', conversationId] : [];
+  /* ── helper sweep · P2 attention ── */
+  if (forking) {
+    if (!conversationId) {
+      throw new Error('This conversation has no saved id, so there is nothing exact to fork. Resume it instead.');
+    }
+    if (def.harness === 'codex') {
+      // `codex fork <SESSION_ID>` (0.154.0 --help). Codex names the new thread
+      // itself; the discovery below reads it back as it does for a new session.
+      idArgs = ['fork', conversationId];
+      conversationId = null;
+    } else {
+      // `--fork-session` (2.1.271 --help: "When resuming, create a new session
+      // ID instead of reusing the original"). The binary refuses --session-id
+      // with --resume unless --fork-session is also given, and accepts it when
+      // it is — so Wanigan chooses the fork's id and can resume it exactly later.
+      const forkId = randomUUID();
+      idArgs = [...def.resumeArgs(conversationId), '--fork-session', '--session-id', forkId];
+      conversationId = forkId;
+    }
+  }
 
   // Trust is resolved once, at launch, and travels with the session — a policy
   // that can change under a running agent is a policy nobody can reason about.
@@ -1585,7 +1613,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }, 30_000);
   }
 
-  if ((!isResuming || codexResumeNeedsPicker) && def.harness === 'codex') {
+  if ((!isResuming || codexResumeNeedsPicker || forking) && def.harness === 'codex') {
     void discoverCodexThreadId(id, cwd, meta.createdAt).then((threadId) => {
       if (!threadId) {
         console.warn(`[wanigan] exact Codex thread id was not discovered for session ${id}`);
@@ -2322,7 +2350,42 @@ export function closeSession(sessionId: string) {
     throw new Error('Session is still running — stop it before closing.');
   }
   sessions.delete(sessionId);
+  /* ── helper sweep · P2 attention ── */
+  closedTabs.push(sessionId);
+  if (closedTabs.length > CLOSED_TABS_MAX) closedTabs.splice(0, closedTabs.length - CLOSED_TABS_MAX);
   broadcast('session:list', sessionListEntries());
+}
+
+/* ── helper sweep · P2 attention ── */
+
+/**
+ * Tabs closed this run, newest last. In memory because a closed tab is a
+ * gesture of this sitting; the conversation behind it is in session_log either
+ * way, and reopening it is a resume, since the process is gone.
+ */
+const closedTabs: string[] = [];
+const CLOSED_TABS_MAX = 20;
+
+/** Take the most recently closed tab off the stack. */
+export function popClosedTab(): string | null {
+  return closedTabs.pop() ?? null;
+}
+
+/**
+ * Mark a session as having something to read, from the operator's own hand.
+ *
+ * The count means "seconds in which output arrived while you were elsewhere",
+ * so this raises it to one rather than inventing a number of them; selecting
+ * the tab clears it the same way real output does.
+ */
+export function markUnread(sessionId: string): boolean {
+  const s = sessions.get(sessionId);
+  if (!s) return false;
+  if (s.meta.unread > 0) return true;
+  s.meta.unread = 1;
+  unreadDirty.add(sessionId);
+  flushUnread();
+  return true;
 }
 
 /**

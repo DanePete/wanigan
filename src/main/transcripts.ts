@@ -122,6 +122,19 @@ export function transcriptPathFor(projectPath: string, conversationId: string | 
   return newestIn(dirs)?.path ?? null;
 }
 
+/* ── helper sweep · P2 attention ── */
+
+/**
+ * The transcript for exactly this conversation, or null — never the newest
+ * file in the directory. Callers that read a recap, or ask whether somebody is
+ * still writing a conversation, are asking about one conversation, and the
+ * newest-file fallback above would answer about a different one.
+ */
+export function exactTranscriptPath(cwd: string, conversationId: string | null): string | null {
+  if (!conversationId || !/^[A-Za-z0-9-]{8,80}$/.test(conversationId)) return null;
+  return exactIn(claudeProjectDirs(cwd), conversationId);
+}
+
 /* ── defensive parsing ───────────────────────────────────────────────── */
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -1,7 +1,16 @@
-import type { Attention, AttentionKind, AttentionReason, AttentionRule, Session, SessionEvent } from '../shared/types';
+import type {
+  AccountLimits, AskedQuestion, Attention, AttentionKind, AttentionReason, AttentionRule, HelperAttention, Session, SessionEvent,
+} from '../shared/types';
 import { ATTENTION_ORDER } from '../shared/types';
-import { eventsRevision, liveState, sessionEvents } from './hooks';
+import { eventsRevision, forgetOpenQuestion, liveState, openQuestion, sessionEvents } from './hooks';
 import { getSetting } from './settings';
+/* ── helper sweep · P2 attention ── */
+import {
+  DENIAL_WINDOW_MS, SPIN_WINDOW_MS, denialReasonWords, limitResetFor, limitState, retryDraft, spinning, standingDenial,
+} from '../shared/attention-rules';
+import { wakesSnooze } from '../shared/session-triage';
+import { activeSnooze, clearSnooze } from './snoozes';
+import { incidentForSession } from './provider-incidents';
 
 /**
  * Which of nine running agents needs a human, and which has needed one longest.
@@ -180,6 +189,7 @@ export function noteOutput(sessionId: string, at: number = Date.now()) {
 export function forgetSession(sessionId: string) {
   lastOutput.delete(sessionId);
   snapshots.delete(sessionId);
+  forgetOpenQuestion(sessionId);
 }
 
 /* ── phrasing ────────────────────────────────────────────────────────── */
@@ -353,7 +363,8 @@ function mk(
   tool: string | null,
   now: number,
   reason: AttentionReason,
-  label: string = ATTENTION_LABEL[kind]
+  label: string = ATTENTION_LABEL[kind],
+  helper?: HelperAttention,
 ): Attention {
   return {
     sessionId: session.id,
@@ -366,6 +377,7 @@ function mk(
     detail: clip(detail),
     tool: tool?.trim() || null,
     reason,
+    ...(helper ? { helper } : {}),
   };
 }
 
@@ -390,6 +402,10 @@ function classify(session: Session, now: number): Attention {
   // A permission prompt on an exited session is a question nobody can answer:
   // the process that asked it is gone. Honouring it would pin a dead session to
   // the top of the queue for as long as the app stayed open.
+  // An AskUserQuestion call that is still open. The questions live in memory
+  // in hooks.ts and never on disk; the verdict carries them so the queue and
+  // the fleet can show what is being asked without opening the terminal.
+  const asked = exited ? null : openQuestion(session.id);
   if (!exited && live.blocked) {
     const tool = last?.toolName ?? live.tool;
     return mk(
@@ -397,17 +413,67 @@ function classify(session: Session, now: number): Attention {
       'permission',
       live.since || last?.at || now,
       last ? `event:${last.id}` : `permission:${live.since || now}`,
-      join(tool, last?.summary ?? null) ?? 'Waiting for your approval.',
+      asked ? asked.items[0].question : join(tool, last?.summary ?? null) ?? 'Waiting for your approval.',
       tool,
       now,
       why('permission-request', last, 'The CLI reported it is waiting for a person to approve a step.'),
+      ATTENTION_LABEL.permission,
+      asked ? { questions: questionsOf(asked) } : undefined,
     );
+  }
+  if (asked) {
+    let call: SessionEvent | null = null;
+    for (let i = events.length - 1; i >= 0 && !call; i--) {
+      if (events[i].event === 'PreToolUse' && events[i].toolName === 'AskUserQuestion') call = events[i];
+    }
+    return mk(session, 'permission', asked.at, call ? `event:${call.id}` : `question:${asked.at}`,
+      asked.items[0].question, 'AskUserQuestion', now,
+      why('question-asked', call, 'The agent called AskUserQuestion and nothing has answered it yet.'),
+      ATTENTION_LABEL.permission, { questions: questionsOf(asked) });
   }
 
   if (exited && session.exitCode !== null && session.exitCode !== 0) {
     const ended = session.endedAt ?? now;
     return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now,
       why('nonzero-exit', null, `The process exited with code ${session.exitCode}.`));
+  }
+
+  /* ── helper sweep · P2 attention ── */
+  const denied = exited ? null : standingDenial(events, now);
+  if (denied) {
+    const reasonWords = denialReasonWords(denied.detail);
+    return mk(session, 'error', denied.at, `event:${denied.id}`,
+      `${join(denied.toolName, denied.summary) ?? 'A tool call'} — ${reasonWords ?? 'no reason recorded'}`,
+      denied.toolName, now,
+      why('auto-mode-denied', denied, `Claude Code's auto mode refused a tool call in the last ${minutes(DENIAL_WINDOW_MS)}, and neither a new prompt nor the same call succeeding has settled it.`),
+      DENIED_LABEL,
+      { denial: { tool: denied.toolName, summary: denied.summary, reason: reasonWords, at: denied.at,
+        retryDraft: retryDraft(denied.toolName, denied.summary) } });
+  }
+
+  const limit = exited ? null : limitState(events);
+  if (limit && limit.state !== 'resumed') {
+    const reset = limit.state === 'waiting' ? limitResetOf(session, now) : null;
+    const ev = limit.event;
+    if (limit.state === 'waiting') {
+      return mk(session, 'idle', ev.at, `limit:${ev.id}`,
+        reset
+          ? `Waiting for the ${reset.scope ? `${reset.scope} ` : ''}${reset.kind} limit to reset at ${clock(reset.resetsAt)}.`
+          : 'Stopped on a rate limit. No limit reading predicts when it resets.',
+        null, now,
+        why('limit-wait', ev, 'The turn ended with StopFailure rate_limit and nothing has run since. Claude Code waits in place and continues when a subscription limit resets, if its "Continue automatically at usage limit" setting is on — but a short-lived 429 reports the same code.'),
+        LIMIT_WAIT_LABEL, { limit: { state: 'waiting', reset } });
+    }
+    if (limit.state === 'reset-needs-enter') {
+      return mk(session, 'finished', ev.at, `event:${ev.id}`,
+        ev.summary ?? 'Usage limit reset — press Enter to continue.', null, now,
+        why('limit-reset', ev, 'Claude Code reported the usage limit reset but is waiting for Enter before it continues (Notification quota_auto_resume_stale).'),
+        LIMIT_RESET_LABEL, { limit: { state: 'reset-needs-enter', reset: null } });
+    }
+    return mk(session, 'error', ev.at, `event:${ev.id}`,
+      ev.summary ?? 'Automatic continue was turned off — the task will not resume on its own.', null, now,
+      why('limit-stopped', ev, 'Claude Code reported it will not continue on its own after the usage limit (Notification quota_auto_resume_disabled).'),
+      LIMIT_STOPPED_LABEL, { limit: { state: 'stopped', reset: null } });
   }
 
   // A loop says more than its newest lap does, so it is read before the single
@@ -485,6 +551,15 @@ function classify(session: Session, now: number): Attention {
   // Below the idle threshold something is still arriving, so this is an agent
   // that looks busy. Whether it is getting anywhere is a different question, and
   // the answer comes from what it has finished rather than from what it printed.
+  /* ── helper sweep · P2 attention ── */
+  const spin = spinning(events, now);
+  if (spin) {
+    const call = join(spin.tool, spin.summary) ?? 'The same call';
+    return mk(session, 'idle', spin.first.at, `spin:${spin.first.id}`,
+      `${call} came back the same way ${spin.count} times in ${minutes(SPIN_WINDOW_MS)}.`, spin.tool, now,
+      why('spinning', spin.latest, `${call} ran with the same input and returned the same result ${spin.count} times within ${minutes(SPIN_WINDOW_MS)}, while the session was still busy.`),
+      SPINNING_LABEL, { spin: { tool: spin.tool, summary: spin.summary, count: spin.count, windowMs: SPIN_WINDOW_MS } });
+  }
   const stall = stalled(events, now);
   if (stall) {
     return mk(session, 'idle', stall.since, stall.transitionId, stall.detail, live.tool, now,
@@ -515,7 +590,8 @@ function classify(session: Session, now: number): Attention {
 /* ── the queue ───────────────────────────────────────────────────────── */
 
 export function attentionOf(session: Session): Attention {
-  return classify(session, Date.now());
+  const now = Date.now();
+  return withSnooze(session, withIncident(session, classify(session, now), now), now);
 }
 
 export function attentionFor(sessions: Session[]): Attention[] {
@@ -523,7 +599,7 @@ export function attentionFor(sessions: Session[]): Attention[] {
   // sessions be measured against different instants, and the idle threshold sits
   // close enough to it that the pair can rank inconsistently on the same tick.
   const now = Date.now();
-  return sessions.map((s) => classify(s, now)).sort(rank);
+  return sessions.map((s) => withSnooze(s, withIncident(s, classify(s, now), now), now)).sort(rank);
 }
 
 /**
@@ -532,6 +608,10 @@ export function attentionFor(sessions: Session[]): Attention[] {
  * the main process produced.
  */
 export function rank(a: Attention, b: Attention): number {
+  // A snoozed session ranks after every session that is not, whatever its
+  // state: "not now" is the operator's own ranking, and it outranks the rule's.
+  const snoozed = Number(!!a.helper?.snoozedUntil) - Number(!!b.helper?.snoozedUntil);
+  if (snoozed !== 0) return snoozed;
   const byKind = ATTENTION_ORDER.indexOf(a.kind) - ATTENTION_ORDER.indexOf(b.kind);
   if (byKind !== 0) return byKind;
   if (a.since !== b.since) return a.since - b.since;
@@ -540,4 +620,108 @@ export function rank(a: Attention, b: Attention): number {
   // without this the two sides disagree about two sessions that arrived in the
   // same millisecond, and the row under the cursor moves as the queue refreshes.
   return a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0;
+}
+
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+
+/** The words, as the brief for each rule settled them; see ATTENTION_LABEL for why words. */
+const DENIED_LABEL = 'Denied by auto mode';
+const SPINNING_LABEL = 'Spinning';
+const LIMIT_WAIT_LABEL = 'Limit wait';
+const LIMIT_RESET_LABEL = 'Limit reset';
+const LIMIT_STOPPED_LABEL = 'Limit wait stopped';
+
+/**
+ * Why the questions are shown but cannot be answered by a click. Recorded in
+ * the verdict so the surface says it, not a comment only a reader of this file
+ * would see.
+ */
+const QUESTION_READ_ONLY = 'Answer in the terminal. The 2.1.271 dialog is a numbered list navigated with ↑/↓ and Enter, but which option starts highlighted, and what a digit key does in it, were not verified — so Wanigan does not type an answer for you.';
+
+function questionsOf(asked: { at: number; items: AskedQuestion[] }): NonNullable<HelperAttention['questions']> {
+  return { at: asked.at, items: asked.items, why: QUESTION_READ_ONLY };
+}
+
+/** A short local time for a verdict's detail; the renderer formats its own from the epoch. */
+function clock(ms: number): string {
+  try { return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  catch { return new Date(ms).toISOString(); }
+}
+
+/**
+ * Where a limit wait's reset time comes from. A callback, set by index.ts,
+ * because the reading lives in usage.ts and that module reaches limits,
+ * accounts and the transcript meter — none of which the classifier should
+ * import. The source must never probe: it answers with what a previous read
+ * already established, or null.
+ */
+let limitReading: (() => { at: number; limits: AccountLimits[] } | null) | null = null;
+
+export function setLimitReadingSource(fn: (() => { at: number; limits: AccountLimits[] } | null) | null): void {
+  limitReading = fn;
+}
+
+/** The reading the source answers with now, for the resume-at-reset offer. Never probes. */
+export function currentLimitReading(): { at: number; limits: AccountLimits[] } | null {
+  try { return limitReading?.() ?? null; } catch { return null; }
+}
+
+function limitResetOf(session: Session, now: number) {
+  try {
+    const read = limitReading?.();
+    if (!read) return null;
+    const harness = session.harnessId ?? 'claude-code';
+    return limitResetFor(read.limits, session.accountId ?? null, harness, read.at, now);
+  } catch {
+    return null;
+  }
+}
+
+/** Rules whose evidence is about this session and not about the provider. */
+const NOT_PROVIDER = new Set<AttentionRule>([
+  'auto-mode-denied', 'limit-wait', 'limit-reset', 'limit-stopped', 'question-asked', 'permission-request',
+]);
+
+/**
+ * Name an open provider incident on a verdict it could explain: an error, a
+ * stall, or any verdict on a session whose turn just failed. The original rule
+ * stays in the sentence, so the reason still says what was observed here; the
+ * incident is added as what was observed there.
+ */
+function withIncident(session: Session, v: Attention, now: number): Attention {
+  if (session.status === 'exited' && v.kind !== 'error') return v;
+  if (v.reason && NOT_PROVIDER.has(v.reason.rule)) return v;
+  const failing = v.kind === 'error' || v.label === STALLED_LABEL
+    || (v.reason?.event?.name === 'StopFailure' && now - v.reason.event.at <= ERROR_WINDOW_MS);
+  if (!failing) return v;
+  let incident;
+  try { incident = incidentForSession(session); } catch { incident = null; }
+  if (!incident) return v;
+  const where = incident.components.join(', ');
+  return {
+    ...v,
+    detail: clip(`${v.detail ?? 'The session is failing.'} Open incident: ${incident.name}.`),
+    reason: {
+      rule: 'provider-incident',
+      event: v.reason?.event ?? null,
+      because: `${v.reason?.because ?? ''} ${incident.source} has an open incident (${incident.status}) on ${where}: “${incident.name}”.`.trim(),
+    },
+    helper: { ...v.helper, incident },
+  };
+}
+
+/**
+ * Carry a standing snooze onto the verdict, or end it early. A snooze taken
+ * before the state began is cut short by a permission prompt, a failure or a
+ * denial; see shared/session-triage.ts.
+ */
+function withSnooze(session: Session, v: Attention, now: number): Attention {
+  let snooze;
+  try { snooze = activeSnooze(session.id, now); } catch { snooze = null; }
+  if (!snooze) return v;
+  if (wakesSnooze(v, snooze.snoozedAt)) {
+    clearSnooze(session.id);
+    return v;
+  }
+  return { ...v, helper: { ...v.helper, snoozedUntil: snooze.untilAt } };
 }

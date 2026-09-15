@@ -302,6 +302,12 @@ export type LaunchOptions = {
    * match, so a configuration that moved again is asked about again.
    */
   acceptConfigDigest?: string;
+  /* ── helper sweep · P2 attention ── */
+  /**
+   * With resumeFrom: branch the conversation into a new one instead of adding
+   * a second writer to it. Claude Code's `--fork-session` or `codex fork`.
+   */
+  forkSession?: boolean;
 };
 
 /** A finished session, recoverable after a quit. */
@@ -686,6 +692,17 @@ export type SessionEvent = {
   ok: boolean | null;
   /** Files this event touched, when it touched any. */
   paths: string[];
+  /* ── helper sweep · P2 attention ── */
+  /**
+   * The event's own short verdict, where it carries one: an auto-mode denial's
+   * classifier reason, a StopFailure's error code, a Notification's type.
+   * Absent on rows written before the column existed.
+   */
+  detail?: string | null;
+  /** A short hash of the tool name and its normalised input; never the input. */
+  inputDigest?: string | null;
+  /** A short hash of what the tool returned; never the response. */
+  resultDigest?: string | null;
 };
 
 /* ── per-turn checkpoints ───────────────────────────────────────────── */
@@ -768,11 +785,15 @@ export type Attention = {
    * evidence leaves it out rather than inventing one.
    */
   reason?: AttentionReason;
+  /* ── helper sweep · P2 attention ── */
+  /** What an attention item offers beyond opening the session; see HelperAttention. */
+  helper?: HelperAttention;
 };
 
 export type AttentionRule =
   | 'permission-request' | 'nonzero-exit' | 'repeated-failure' | 'recent-failure'
-  | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working';
+  | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working'
+  | HelperAttentionRule;
 
 export type AttentionReason = {
   rule: AttentionRule;
@@ -3448,4 +3469,141 @@ export type ExpiringResults = {
   runName: string;
   endedAt: number;
   downloadableUntil: number;
+};
+
+/* ── helper sweep · P2 attention ── */
+
+/**
+ * Rules the helper sweep added to the attention classifier. A separate union
+ * so the classifier's original nine stay readable as the base set, and so a
+ * surface that exhaustively words every rule sees these arrive as a group.
+ */
+export type HelperAttentionRule =
+  | 'auto-mode-denied' | 'spinning' | 'limit-wait' | 'limit-reset' | 'limit-stopped'
+  | 'provider-incident' | 'question-asked';
+
+/** A tool call Claude Code's auto-mode classifier refused, as its hook reported it. */
+export type AutoModeDenial = {
+  tool: string | null;
+  /** The one-line input summary the hook bus already keeps for this tool. */
+  summary: string | null;
+  /** The classifier's reason in words; "no classifier verdict" when it had none. */
+  reason: string | null;
+  at: number;
+  /** One line for the session's composer draft. Wanigan never sends it. */
+  retryDraft: string;
+};
+
+/** An open incident on a public status page, matched to a session's provider. */
+export type ProviderIncident = {
+  source: 'status.claude.com' | 'status.openai.com';
+  name: string;
+  /** The page's own word: investigating, identified, monitoring. */
+  status: string;
+  impact: string | null;
+  /** The components the incident names that matched this session's provider. */
+  components: string[];
+  /** The incident's page, opened through the validated external-link path. */
+  url: string;
+  startedAt: number | null;
+  /** When Wanigan read the page. An incident is only as current as this. */
+  readAt: number;
+};
+
+/** The reset a limit reading predicts, and the reading it came from. */
+export type LimitReset = {
+  resetsAt: number;
+  kind: string;
+  scope: string | null;
+  accountLabel: string;
+  /** When the limits were read. A reset time is only as good as its reading. */
+  readAt: number;
+};
+
+/** One AskUserQuestion question, as the hook's tool_input carried it. Never persisted. */
+export type AskedQuestion = {
+  question: string;
+  header: string | null;
+  multiSelect: boolean;
+  options: { label: string; description: string | null }[];
+};
+
+export type HelperAttention = {
+  denial?: AutoModeDenial;
+  incident?: ProviderIncident;
+  limit?: { state: 'waiting' | 'reset-needs-enter' | 'stopped'; reset: LimitReset | null };
+  /**
+   * The questions a live AskUserQuestion call is waiting on. Shown read-only:
+   * `why` says what would have to be verified before a click could answer.
+   */
+  questions?: { at: number; items: AskedQuestion[]; why: string };
+  spin?: { tool: string | null; summary: string | null; count: number; windowMs: number };
+  /** Set while the operator has snoozed this session; it ranks last and leaves the strip. */
+  snoozedUntil?: number | null;
+};
+
+export type SnoozePreset = '15m' | '1h' | '3h' | 'tomorrow';
+
+/** What was recorded while a session's tab was not in front of the operator. */
+export type AwaySummary = {
+  sessionId: string;
+  /** When the operator last had this tab in front of them. */
+  since: number;
+  until: number;
+  /** Stop events: turns the agent reported finishing. */
+  turnsCompleted: number;
+  filesChanged: { count: number; paths: string[]; source: 'hooks' | 'checkpoints' | 'none' };
+  failedCommands: { tool: string | null; summary: string | null; at: number }[];
+  failedTotal: number;
+  /** Reported cost since `since`; null when the session reports none. */
+  costDeltaUsd: number | null;
+  verdict: { kind: AttentionKind; label: string } | null;
+  /** Claude Code's own away_summary line, read from its transcript. Model-written. */
+  recap: { text: string; at: number } | null;
+  nothingRecorded: boolean;
+};
+
+/** 'launching' is the claim between choosing to resume and the launch settling; a row left there was interrupted. */
+export type ResumeAtResetState = 'armed' | 'launching' | 'cancelled' | 'launched' | 'failed' | 'expired';
+
+/** A deliberate, cancellable "resume this conversation when the limit resets". */
+export type ResumeAtReset = {
+  id: string;
+  /** The session_log row whose conversation is resumed. */
+  sessionId: string;
+  providerId: ProviderId;
+  projectName: string;
+  fireAt: number;
+  state: ResumeAtResetState;
+  createdAt: number;
+  /** Where the time came from, in words: the limit reading that predicted it. */
+  source: string;
+  launchedSessionId: string | null;
+  detail: string | null;
+};
+
+/** What resuming a conversation right now would collide with. */
+export type ResumeCheck = {
+  liveInWanigan: { sessionId: string; title: string } | null;
+  /** The transcript was written in the last 30 seconds by a process Wanigan did not start. */
+  outsideWriter: { modifiedAt: number } | null;
+  fork: { supported: boolean; how: string | null; why: string };
+};
+
+export type ProviderStatusReport = {
+  enabled: boolean;
+  lastCheckedAt: number | null;
+  lastError: string | null;
+  nextCheckAt: number | null;
+  incidents: ProviderIncident[];
+};
+
+export type LimitResumeOffer = {
+  sessionId: string;
+  /** Why this session looks like it stopped on a limit, or that the operator said so. */
+  evidence: string;
+  reset: LimitReset | null;
+  /** When no reading predicts a reset, the sentence that says so. */
+  note: string | null;
+  armed: ResumeAtReset | null;
 };

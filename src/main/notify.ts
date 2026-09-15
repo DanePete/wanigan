@@ -186,6 +186,15 @@ export function notify(opts: {
    */
   inApp?: boolean;
   onMobileResult?: (result: MobilePushResult) => void;
+  /* ── helper sweep · P2 attention ── */
+  /**
+   * A typed reply on the macOS banner. What the operator types is handed to
+   * `onReply` and nowhere else; the caller decides where it lands, and the one
+   * caller puts it in a composer draft rather than sending it.
+   */
+  reply?: { placeholder: string; onReply: (text: string) => void };
+  /** Buttons on the macOS banner, in order. */
+  actions?: { label: string; run: () => void }[];
   /**
    * Keep this for the attended app when the process showing it has no window.
    * Opt-in per call, and never set for anything carrying agent detail — see
@@ -257,6 +266,13 @@ export function notify(opts: {
       silent: !opts.urgent,
       urgency: opts.urgent ? 'critical' : 'normal',
       timeoutType: opts.urgent ? 'never' : 'default',
+      /* ── helper sweep · P2 attention ── */
+      // Electron 44's Notification documents both on darwin and win32
+      // (electron.d.ts: hasReply, replyPlaceholder, actions). Whether macOS
+      // draws them also depends on the app's notification style — an alert
+      // rather than a banner — which is the operator's setting, not this one.
+      ...(opts.reply ? { hasReply: true, replyPlaceholder: opts.reply.placeholder } : {}),
+      ...(opts.actions?.length ? { actions: opts.actions.map((a) => ({ type: 'button' as const, text: a.label })) } : {}),
     });
 
     const release = () => { live.delete(n); };
@@ -272,6 +288,23 @@ export function notify(opts: {
         // inside Electron's notification callback.
       }
     });
+    /* ── helper sweep · P2 attention ── */
+    if (opts.reply) {
+      const onReply = opts.reply.onReply;
+      n.on('reply', (details, legacy) => {
+        release();
+        const text = typeof details?.reply === 'string' ? details.reply : typeof legacy === 'string' ? legacy : '';
+        try { if (text.trim()) onReply(text); } catch { /* same contract as click */ }
+      });
+    }
+    if (opts.actions?.length) {
+      const actions = opts.actions;
+      n.on('action', (details, legacyIndex) => {
+        release();
+        const index = typeof details?.actionIndex === 'number' ? details.actionIndex : legacyIndex;
+        try { actions[index]?.run(); } catch { /* same contract as click */ }
+      });
+    }
     live.add(n);
     n.show();
   } catch {
@@ -878,6 +911,9 @@ export function announceSpendCapTrip(name: string, projected: number, cap: numbe
  */
 export function announceAttention(a: Attention): void {
   if (!ANNOUNCE_KINDS.has(a.kind)) return;
+  // A snoozed session is one the operator said "not now" to. A state that is
+  // worth waking it for ends the snooze in attention.ts before it gets here.
+  if (a.helper?.snoozedUntil) return;
 
   // A focused Wanigan window means only that the Mac banner would be redundant.
   // It says nothing about whether the human is still physically at the desk,
@@ -922,7 +958,52 @@ export function announceAttention(a: Attention): void {
     mobile: true,
     onMobileResult: (result) => settleMobileAttention(a, result),
   });
-  if (sendDesktop) notify({ ...message, desktop: true, mobile: false });
+  /* ── helper sweep · P2 attention ── */
+  // A finished turn takes a typed reply, which lands in that session's composer
+  // as a draft; a permission prompt gets a button that opens the session. The
+  // reply is never typed into the terminal from here: an answer to a prompt the
+  // operator has not seen on screen is the kind of thing that should wait for
+  // them to look at it and press Send.
+  const target = message.target;
+  const extras = a.kind === 'finished' && replySink
+    ? { reply: { placeholder: 'Reply — lands in the composer as a draft, not sent', onReply: (text: string) => replySink?.(a.sessionId, text) } }
+    : a.kind === 'permission'
+      ? { actions: [{ label: 'Open session', run: () => { reveal(target)(); actionSink?.(a.sessionId, 'open'); } }] }
+      : {};
+  if (sendDesktop) notify({ ...message, ...extras, desktop: true, mobile: false });
+}
+
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+
+let replySink: ((sessionId: string, text: string) => void) | null = null;
+let actionSink: ((sessionId: string, action: 'open') => void) | null = null;
+
+/** Where a typed notification reply goes. Registered by whoever owns the renderer. */
+export function setNotificationReplySink(fn: ((sessionId: string, text: string) => void) | null): void {
+  replySink = fn;
+}
+
+/** Told when a notification's own button was used, so the action can be recorded. */
+export function setNotificationActionSink(fn: ((sessionId: string, action: 'open') => void) | null): void {
+  actionSink = fn;
+}
+
+/**
+ * A session waiting on a usage limit has started again. Said once per
+ * resumption — keyed on the Notification row that reported it — and not
+ * urgent: nothing is being asked of anyone, it is the answer to a question the
+ * queue's "Limit wait" chip had been holding open.
+ */
+export function announceLimitResumed(sessionId: string, eventId: number, projectName: string | null, message: string | null): void {
+  if (!claim(`limit-resumed:${sessionId}:${eventId}`, RUN_ENDED_DEDUPE_MS)) return;
+  notify({
+    title: projectName ? `Continuing after the usage limit — ${projectName}` : 'Continuing after the usage limit',
+    body: message ?? 'Claude Code reported the limit reset and is continuing the task.',
+    mobileBody: 'The usage limit reset and the session is continuing.',
+    mobileTag: `${sessionId}:limit`,
+    urgent: false,
+    target: { kind: 'session', sessionId },
+  });
 }
 
 export function mobileAttentionBody(a: Attention): string {

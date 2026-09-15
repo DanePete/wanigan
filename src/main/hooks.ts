@@ -2,15 +2,16 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Socket } from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import type {
-  HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
+  AskedQuestion, HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
+import { askedQuestions, canonicalToolInput } from '../shared/attention-rules';
 
 /**
  * The hook bus. Metrics say how much a session spent; hooks say what it did,
@@ -711,18 +712,24 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
   // reconciles its prediction against. Four lifecycle events since do the same.
   const paths = eventPaths(event, input);
   const ok = okOf(event, input);
+  /* ── helper sweep · P2 attention ── */
+  const detail = detailOf(event, input);
+  const { inputDigest, resultDigest } = digestsOf(event, toolName, input);
+  noteQuestion(sessionId, event, toolName, input, at);
 
   try {
     if (!insertStmt) {
       // One insert per tool call on a hot path; prepare it once.
       insertStmt = db().prepare(`
-        INSERT INTO session_events (session_id, at, event, tool_name, summary, duration_ms, ok, paths_json)
-        VALUES (?,?,?,?,?,?,?,?)
+        INSERT INTO session_events (session_id, at, event, tool_name, summary, duration_ms, ok, paths_json,
+                                    detail, input_digest, result_digest)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
       `);
     }
     const res = insertStmt.run(
       sessionId, at, event, toolName, summary, durationMs, ok,
       paths.length ? JSON.stringify(paths) : null,
+      detail, inputDigest, resultDigest,
     );
     bumpRevision(sessionId);
     const stored: SessionEvent = {
@@ -735,6 +742,9 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
       durationMs,
       ok: ok === null ? null : ok === 1,
       paths,
+      detail,
+      inputDigest,
+      resultDigest,
     };
     recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
       toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
@@ -1049,6 +1059,110 @@ function pair(a: string | null, b: string | null): string | null {
   return a || b || null;
 }
 
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+
+/** Longest verdict text a row keeps; a classifier reason is a sentence, not an essay. */
+const MAX_DETAIL = 200;
+
+/**
+ * The one short verdict an event carries, where it carries one.
+ *
+ * Three events, three fields, each read off the 2.1.271 binary's own schema:
+ * PermissionDenied sends the auto-mode classifier's reason as `reason` (the
+ * published docs call it `denial_reason`, so both are read), StopFailure sends
+ * an error code from a closed list (`rate_limit`, `server_error`, …) as
+ * `error`, and Notification sends `notification_type`. None is a prompt, a
+ * response or a file: a classifier's one-line verdict is the same kind of
+ * text a Notification's message already is.
+ */
+function detailOf(event: string, input: HookInput): string | null {
+  const raw = input as Record<string, unknown>;
+  switch (event) {
+    case 'PermissionDenied': return clip(str(raw.reason) ?? str(raw.denial_reason), MAX_DETAIL);
+    case 'StopFailure': return clip(str(raw.error), 40);
+    case 'Notification': return clip(str(raw.notification_type), 64);
+    default: return null;
+  }
+}
+
+/** Sixteen hex characters: plenty to tell two calls apart, nothing to read back. */
+function digest(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+const DIGESTED = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
+
+/**
+ * Hashes of a call's input and of what came back, so "the same call returned
+ * the same thing again" can be asked of the timeline without the timeline
+ * holding either. The body is already in memory — readBody bounds it at a
+ * megabyte — and a digest is sixteen characters, so this adds no content to
+ * disk: a hash of a file's text is not the file.
+ */
+function digestsOf(event: string, toolName: string | null, input: HookInput): {
+  inputDigest: string | null; resultDigest: string | null;
+} {
+  if (!DIGESTED.has(event) || !toolName || input.tool_input === undefined) {
+    return { inputDigest: null, resultDigest: null };
+  }
+  let inputDigest: string | null = null;
+  let resultDigest: string | null = null;
+  try {
+    inputDigest = digest(canonicalToolInput(toolName, input.tool_input));
+    if (event === 'PostToolUse' && input.tool_response !== undefined) {
+      resultDigest = digest(canonicalToolInput(null, input.tool_response));
+    } else if (event === 'PostToolUseFailure') {
+      const failure = (input as Record<string, unknown>).error;
+      if (failure !== undefined) resultDigest = digest(canonicalToolInput(null, failure));
+    }
+  } catch {
+    // A body shaped so oddly it cannot be walked is a row without a digest,
+    // which every reader already treats as no evidence.
+  }
+  return { inputDigest, resultDigest };
+}
+
+/**
+ * The questions a live AskUserQuestion call is waiting on, per session.
+ *
+ * In memory only, on purpose. The question text is the agent's own words, and
+ * this app does not write model output to disk; the one moment it is worth
+ * anything is while the call is still open, which is exactly this process's
+ * lifetime. A settling event clears it, and so does the session ending.
+ */
+const openQuestions = new Map<string, { at: number; toolUseId: string | null; items: AskedQuestion[] }>();
+const QUESTION_SETTLED = new Set(['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'SessionStart']);
+const ASK_TOOL = 'AskUserQuestion';
+
+function noteQuestion(sessionId: string, event: string, toolName: string | null, input: HookInput, at: number): void {
+  if (event === 'PreToolUse' && toolName === ASK_TOOL) {
+    const items = askedQuestions(input.tool_input);
+    if (items) {
+      if (openQuestions.size >= 256) openQuestions.clear();
+      openQuestions.set(sessionId, { at, toolUseId: str(input.tool_use_id), items });
+    }
+    return;
+  }
+  const open = openQuestions.get(sessionId);
+  if (!open) return;
+  if (QUESTION_SETTLED.has(event)) { openQuestions.delete(sessionId); return; }
+  const closesCall = event === 'PostToolUse' || event === 'PostToolUseFailure' || event === 'PermissionDenied';
+  if (closesCall && toolName === ASK_TOOL) {
+    const id = str(input.tool_use_id);
+    if (!open.toolUseId || !id || id === open.toolUseId) openQuestions.delete(sessionId);
+  }
+}
+
+/** The AskUserQuestion call a session is waiting on, or null. */
+export function openQuestion(sessionId: string): { at: number; items: AskedQuestion[] } | null {
+  const open = openQuestions.get(sessionId);
+  return open ? { at: open.at, items: open.items } : null;
+}
+
+export function forgetOpenQuestion(sessionId: string): void {
+  openQuestions.delete(sessionId);
+}
+
 /* ── reading ─────────────────────────────────────────────────────────── */
 
 type Row = {
@@ -1061,6 +1175,9 @@ type Row = {
   duration_ms: number | null;
   ok: number | null;
   paths_json: string | null;
+  detail?: string | null;
+  input_digest?: string | null;
+  result_digest?: string | null;
 };
 
 function toEvent(r: Row): SessionEvent {
@@ -1074,6 +1191,9 @@ function toEvent(r: Row): SessionEvent {
     durationMs: r.duration_ms,
     ok: r.ok === null ? null : r.ok === 1,
     paths: parsePaths(r.paths_json),
+    detail: r.detail ?? null,
+    inputDigest: r.input_digest ?? null,
+    resultDigest: r.result_digest ?? null,
   };
 }
 
@@ -1164,7 +1284,8 @@ export function instructionsLoadedSessions(projectId: string, limit = 5): { sess
 export function sessionEvents(sessionId: string, limit = 200): SessionEvent[] {
   const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 2000);
   const rows = db().prepare(`
-    SELECT id, session_id, at, event, tool_name, summary, duration_ms, ok, paths_json
+    SELECT id, session_id, at, event, tool_name, summary, duration_ms, ok, paths_json,
+           detail, input_digest, result_digest
     FROM session_events WHERE session_id = ? ORDER BY at DESC, id DESC LIMIT ?
   `).all(sessionId, n) as Row[];
   return rows.map(toEvent);

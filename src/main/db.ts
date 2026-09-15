@@ -596,6 +596,8 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  /* ── helper sweep · P2 attention ── */
+  migrateHelperAttention(d);
 }
 
 /**
@@ -1484,4 +1486,70 @@ export function newRunId(): string {
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/* ── helper sweep · P2 attention ── */
+
+/**
+ * What the attention helpers keep: three short columns on the hook timeline,
+ * and four small tables for decisions an operator made that must outlive a
+ * restart. All additive; a build without these simply never reads them.
+ */
+function migrateHelperAttention(d: Database.Database) {
+  // An auto-mode denial's classifier reason, a StopFailure's error code, a
+  // Notification's type — and two sixteen-character hashes that let "the same
+  // call came back the same way" be asked without keeping the call or its
+  // result. Rows written before these existed read null, which every reader
+  // treats as no evidence rather than as a match.
+  addColumn(d, 'session_events', 'detail', 'TEXT');
+  addColumn(d, 'session_events', 'input_digest', 'TEXT');
+  addColumn(d, 'session_events', 'result_digest', 'TEXT');
+  d.exec(`
+    -- A session the operator said "not now" to. One row per session: a second
+    -- snooze replaces the first rather than stacking.
+    CREATE TABLE IF NOT EXISTS session_snoozes (
+      session_id TEXT PRIMARY KEY,
+      until_at   INTEGER NOT NULL,
+      snoozed_at INTEGER NOT NULL,
+      preset     TEXT NOT NULL
+    );
+
+    -- The last time each session's tab was in front of the operator, so
+    -- "since you last looked" is measured from a recorded moment rather than
+    -- from whenever the renderer happened to mount.
+    CREATE TABLE IF NOT EXISTS session_looks (
+      session_id TEXT PRIMARY KEY,
+      looked_at  INTEGER NOT NULL
+    );
+
+    -- "Resume this conversation when the limit resets": armed by a person,
+    -- cancellable, and kept so an app restart neither loses nor silently
+    -- doubles it. The launch it made is written back onto the row.
+    CREATE TABLE IF NOT EXISTS resume_at_reset (
+      id                  TEXT PRIMARY KEY,
+      session_id          TEXT NOT NULL,
+      provider_id         TEXT NOT NULL,
+      project_name        TEXT NOT NULL,
+      fire_at             INTEGER NOT NULL,
+      state               TEXT NOT NULL,
+      source              TEXT NOT NULL,
+      launched_session_id TEXT,
+      detail              TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_resume_at_reset_due ON resume_at_reset(state, fire_at);
+
+    -- Things an operator did from an attention surface that put words in
+    -- front of an agent or started one: a retry line drafted, a notification
+    -- reply, a scheduled resume. The action and its size, never the text.
+    CREATE TABLE IF NOT EXISTS operator_actions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      at         INTEGER NOT NULL,
+      action     TEXT NOT NULL,
+      detail     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_operator_actions_session ON operator_actions(session_id, at DESC);
+  `);
 }

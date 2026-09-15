@@ -9,6 +9,8 @@ import { flags } from './settings';
 import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
 import { providerPackRegistry } from './providers';
+/* ── helper sweep · P2 attention ── */
+import { STATUS_PAGES, statusChecksEnabled } from './provider-incidents';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 
 /**
@@ -367,6 +369,19 @@ function hosts(): EgressHost[] {
       overrideEnv: null,
     },
     ...scoutHosts,
+    /* ── helper sweep · P2 attention ── */
+    // Hosts and paths read out of provider-incidents.ts rather than restated,
+    // so a changed URL cannot leave this row describing the old one.
+    ...(Object.entries(STATUS_PAGES) as [keyof typeof STATUS_PAGES, (typeof STATUS_PAGES)[keyof typeof STATUS_PAGES]][]).map(
+      ([source, urls]): EgressHost => ({
+        host: hostOf(urls.primary, source),
+        paths: [urls.primary, urls.fallback].filter((u): u is string => !!u).map((u) => new URL(u).pathname),
+        by: 'wanigan',
+        purpose: `Reading the public status page, so an error or stall on a ${source === 'status.claude.com' ? 'Claude' : 'Codex'} session can name an open provider incident instead of looking like a problem in your repository.`,
+        when: 'Only while "Provider status checks" is on in Settings, only while a session on that provider is live or failed in the last five minutes, and at most once every three minutes (longer after a failure). The request is a plain GET of a public document: no credential, no cookie, and nothing about your projects or sessions.',
+        activeNow: statusChecksEnabled(),
+        overrideEnv: null,
+      })),
   ];
 
   // Appended last: an installed pack can add destinations to this table, and

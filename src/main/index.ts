@@ -106,6 +106,8 @@ import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
+/* ── helper sweep · P2 attention ── */
+import { registerHelperAttentionIpc, startHelperAttentionServices, stopHelperAttentionServices } from './helper-attention';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -1454,6 +1456,8 @@ async function startAttendedServices(): Promise<StartupState> {
 
       attendedServicesStarted = true;
       startPoller();
+      /* ── helper sweep · P2 attention ── */
+      startHelperAttentionServices(liveWindow, smokeMode);
       return publishStartupState({ phase: 'ready', stage: null, message: null });
     } catch (error) {
       return enterStartupRecovery(stage, error);
@@ -1488,6 +1492,8 @@ function stopServices() {
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
+  /* ── helper sweep · P2 attention ── */
+  try { stopHelperAttentionServices(); } catch { /* already down */ }
 }
 
 /** Switch storage partitions by replacing only the window. The live sessions
@@ -3301,6 +3307,9 @@ function registerIpc() {
   ipcMain.on('menu:composerShown', (event, shown: unknown) => {
     if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);
   });
+
+  /* ── helper sweep · P2 attention ── */
+  registerHelperAttentionIpc(handle);
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

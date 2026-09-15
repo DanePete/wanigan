@@ -35,6 +35,10 @@ import type {
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
+/* ── helper sweep · P2 attention ── */
+import type {
+  AwaySummary, LimitResumeOffer, ProviderStatusReport, ResumeAtReset, ResumeCheck, SnoozePreset,
+} from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -906,6 +910,34 @@ const api = {
       listen('menu:route', h);
       return () => ipcRenderer.removeListener('menu:route', h);
     },
+    /* ── helper sweep · P2 attention ── */
+    // A reply typed into a macOS notification. It is the renderer's to put in
+    // a composer draft; nothing about it is ever written to a terminal here.
+    notificationReply: (cb: (reply: { sessionId: string; text: string }) => void) => {
+      const h = (_e: unknown, reply: { sessionId: string; text: string }) => cb(reply);
+      listen('helper:notificationReply', h);
+      return () => ipcRenderer.removeListener('helper:notificationReply', h);
+    },
+  },
+
+  /* ── helper sweep · P2 attention ── */
+  helper: {
+    snooze: (sessionId: string, preset: SnoozePreset) => call<{ untilAt: number }>('helper:snooze', sessionId, preset),
+    unsnooze: (sessionId: string) => call<boolean>('helper:unsnooze', sessionId),
+    markUnread: (sessionId: string) => call<boolean>('helper:markUnread', sessionId),
+    sessionLeft: (sessionId: string) => call<boolean>('helper:sessionLeft', sessionId),
+    sessionReturned: (sessionId: string) => call<AwaySummary | null>('helper:sessionReturned', sessionId),
+    reopenClosed: () => call<Session | null>('helper:reopenClosed'),
+    resumeCheck: (sessionId: string) => call<ResumeCheck>('helper:resumeCheck', sessionId),
+    resumeAsFork: (sessionId: string) => call<Session>('helper:resumeAsFork', sessionId),
+    limitOffer: (sessionId: string, operatorSays?: boolean) => call<LimitResumeOffer>('helper:limitOffer', sessionId, operatorSays === true),
+    armResume: (sessionId: string, operatorSays?: boolean) => call<ResumeAtReset>('helper:armResume', sessionId, operatorSays === true),
+    cancelResume: (id: string) => call<boolean>('helper:cancelResume', id),
+    resumes: () => call<ResumeAtReset[]>('helper:resumes'),
+    statusReport: () => call<ProviderStatusReport>('helper:statusReport'),
+    setStatusChecks: (on: boolean) => call<ProviderStatusReport>('helper:setStatusChecks', on),
+    denialRetryDrafted: (sessionId: string) => call<boolean>('helper:denialRetryDrafted', sessionId),
+    takeReplies: () => call<{ sessionId: string; text: string; at: number }[]>('helper:takeReplies'),
   },
 };
 
