@@ -1,0 +1,150 @@
+{
+  "at": "2026-09-15T15:20:19.975Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, review and change-note services; no real agent calls",
+  "mode": "after",
+  "commit": "dd6a35695a7b3fe7d8a7ffdb3ca8a9a559bcba0b",
+  "uncommittedChanges": 0,
+  "checks": [
+    "the rail counts \"3 notes written by the agent\", one where the code changed since, and the one the agent withdrew",
+    "a note sits under the last line it covers, marked \"written by the agent\" with the session title, and only its two lines carry the agent rule",
+    "the list runs in file order; opening the test file's note shows \"the code changed since this note\" with the reason",
+    "Walk the agent's notes opens each file's diff at its note in file and line order; → and j step forward, ← and k back, Esc ends it",
+    "\"Make it my review note\" puts a note in the operator's own tray that says it quotes the agent, records the quote, and sends nothing",
+    "Dismiss note records the dismissal, takes the note out of the diff and the walk, and the list keeps it marked dismissed"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p10-notes/after/inline-note-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/inline-note-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/inline-note-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/inline-note-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/stale-note-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/stale-note-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/stale-note-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/stale-note-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-1-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-1-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-1-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-1-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-3-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-3-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-3-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/walk-3-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/quoted-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/quoted-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/quoted-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/quoted-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/dismissed-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/dismissed-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/dismissed-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p10-notes/after/dismissed-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    }
+  ]
+}

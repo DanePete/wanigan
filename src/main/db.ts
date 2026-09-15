@@ -7,6 +7,9 @@ import { migrateCostSchema } from './cost-schema';
 /* ── helper sweep · P7 depth ── */
 import { migrateDepthSchema } from './depth-schema';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P10 notes ── */
+import { migrateChangeNotes } from './change-notes-schema';
+/* ── end helper sweep · P10 notes ── */
 
 let _db: Database.Database | null = null;
 
@@ -618,6 +621,9 @@ function migratePhases(d: Database.Database) {
   /* ── helper sweep · P7 depth ── */
   migrateDepthSchema(d);
   /* ── end helper sweep · P7 depth ── */
+  /* ── helper sweep · P10 notes ── */
+  migrateChangeNotes(d);
+  /* ── end helper sweep · P10 notes ── */
 }
 
 /**

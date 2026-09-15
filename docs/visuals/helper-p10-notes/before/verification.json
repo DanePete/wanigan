@@ -1,0 +1,35 @@
+{
+  "at": "2026-09-15T15:11:00.199Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, review and change-note services; no real agent calls",
+  "mode": "before",
+  "commit": "e77cf97972f69df8b37f0c37c9e062992cb3e46a",
+  "uncommittedChanges": 0,
+  "checks": [
+    "before: the code rail shows the verdict, the file list and the diff, with nothing the agent wrote about its own change"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p10-notes/docs/visuals/helper-p10-notes/before/code-rail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p10-notes/docs/visuals/helper-p10-notes/before/code-rail-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p10-notes/docs/visuals/helper-p10-notes/before/code-rail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../../../Users/dane/Projects/drupal/wanigan-p10-notes/docs/visuals/helper-p10-notes/before/code-rail-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    }
+  ]
+}

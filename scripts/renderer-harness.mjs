@@ -307,6 +307,13 @@ export const STUB = `
     // probe that sends a review timed out. depth.ts depth:reviewRules always
     // returns this shape, and empty is a repository with no review rules.
     'depth.reviewRules': { rules: [], changed: 0, text: '' },
+    // helper sweep · P10 notes: the code rail reads a session's agent notes and
+    // branches on notes.length, withdrawn and the title it prints; anything()
+    // answered withdrawn with a truthy Proxy and the bar drew itself over no
+    // notes. change-notes.ts changeNotesForReview always returns this shape,
+    // and no notes is a session whose agent wrote none.
+    'changeNotes.list': { sessionId: 's1', sessionTitle: 'claude · storefront', base: null, notes: [], withdrawn: 0,
+      written: 0, limit: 60, toolGranted: true, unreadable: null },
     'policyEvidence.autoMode': { trust: 'project', cliVersion: null, status: 'not-verified', block: null,
       providerLabel: null, note: 'No Claude Code CLI was detected, so no auto-mode block is written.' },
     // The model-assist card renders its consent branch off status.consent and

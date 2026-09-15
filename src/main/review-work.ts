@@ -696,4 +696,38 @@ export async function reviewEvidence(sessionId: string): Promise<{ root: string;
   } catch { return null; }
 }
 
+/* ── helper sweep · P10 notes ── */
+/**
+ * The session's branch diff for agent change notes: the checkout, the base, the
+ * changed files and one file's patch on request. Deliberately built from the
+ * target, the branch read and git alone — it never reads review_marks, so a
+ * path that serves an agent's MCP call holds no statement that touches the
+ * operator's notes.
+ */
+export type ChangeNotesDiff = {
+  sessionId: string;
+  root: string;
+  base: string | null;
+  unreadable: string | null;
+  files: ReviewFile[];
+  /** One changed file's patch against base, or null when git could not produce it. */
+  patchOf: (file: ReviewFile) => Promise<string | null>;
+};
+
+export async function changeNotesDiff(sessionId: string): Promise<ChangeNotesDiff> {
+  const t = await targetFor(sessionId);
+  const branch = await readBranch(t);
+  const patchOf = async (hit: ReviewFile): Promise<string | null> => {
+    if (!t.base) return null;
+    const r = hit.status === '?'
+      ? await runGit(t.root, ['diff', '--no-index', '--no-color', '--', '/dev/null', hit.path], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 })
+      : await runGit(t.root, ['diff', '--relative', '-M', '--no-ext-diff', '--no-color', t.base, '--', ...(hit.oldPath ? [hit.oldPath] : []), hit.path],
+        { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+    // `git diff --no-index` exits 1 when the files differ, which is always here.
+    return r.ok || hit.status === '?' ? r.out : null;
+  };
+  return { sessionId: t.sessionId, root: t.root, base: t.base, unreadable: branch.unreadable, files: branch.files, patchOf };
+}
+/* ── end helper sweep · P10 notes ── */
+
 export const __test = { parseNameStatus, parseNumstat, clearCaches: () => { summaryCache.clear(); turnStatCache.clear(); } };

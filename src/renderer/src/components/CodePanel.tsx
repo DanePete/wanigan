@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
 import { ConfirmNote, Note, Icon } from './bits';
 import { useDialog } from './useDialog';
@@ -24,6 +24,19 @@ import { AttributedFileView, AttributionSummaryBar } from './WhoWroteThis';
 /* ── helper sweep · P7 depth ── */
 import { MaintainabilitySection, ReviewRulesSection, ScratchFilesSection } from './DepthReview';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P10 notes ── */
+import { AgentNoteInline, AgentNotesBar, AgentNotesWalk, DetachedAgentNotes, useChangeNotes } from './AgentNotes';
+import { reviewNoteFromChangeNote, rowInNote, type ChangeNoteView } from '@shared/change-notes';
+
+/** What a diff needs to show the agent's own notes beside its lines. */
+type AgentNotesInDiff = {
+  notes: readonly ChangeNoteView[];
+  title: string;
+  currentId: string | null;
+  onDismiss: (note: ChangeNoteView) => void;
+  onQuote: (note: ChangeNoteView) => void;
+};
+/* ── end helper sweep · P10 notes ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -533,6 +546,44 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     setNotesAnchor(null);
   }
 
+  /* ── helper sweep · P10 notes ── */
+  function openAgentNote(note: ChangeNoteView) {
+    setTab('changes'); setDiffScope('branch'); setOpinionsOpen(false);
+    void openDiff(note.path, { scope: 'branch', line: { line: note.startLine, side: note.side } });
+  }
+
+  function stepWalk(next: number) {
+    const note = walkNotes[next];
+    if (!note) return;
+    setWalk(next);
+    openAgentNote(note);
+  }
+
+  async function dismissAgentNote(note: ChangeNoteView) {
+    if (!sessionId) return;
+    try {
+      await window.wanigan.changeNotes.dismiss(sessionId, note.id);
+      setAgentNoteMsg(null);
+      await reloadAgentNotes();
+    } catch (e) { setAgentNoteMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) }); }
+  }
+
+  /** "Make it my review note": a new note in the operator's tray, saying it quotes the agent. The agent's note is untouched. */
+  async function quoteAgentNote(note: ChangeNoteView) {
+    if (!sessionId || !review?.anchor || !agentNotes) return;
+    const copy = reviewNoteFromChangeNote(note, agentNotes.sessionTitle, `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`);
+    const refused = addNote(copy, review.anchor);
+    if (refused) { setAgentNoteMsg({ tone: 'warn', text: refused }); return; }
+    try {
+      await window.wanigan.changeNotes.quote(sessionId, note.id);
+      setAgentNoteMsg({ tone: 'ok', text: 'Copied into your review notes as your own note, marked as quoted from the agent. It reaches the session only when you add your notes to a message.' });
+    } catch (e) {
+      setAgentNoteMsg({ tone: 'warn', text: `Copied into your review notes, but Wanigan could not record that it was quoted: ${e instanceof Error ? e.message : String(e)}` });
+    }
+    void reloadAgentNotes();
+  }
+  /* ── end helper sweep · P10 notes ── */
+
   const changesAnchor = baseHead
     ? `your uncommitted changes against ${baseHead.slice(0, 8)}, the commit this session started from`
     : 'your uncommitted changes';
@@ -558,6 +609,23 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const reviewKey = review ? `${review.base}:${review.files.map((f) => f.contentHash.slice(0, 7)).join('')}` : '';
   const showOpinions = tab === 'changes' && reviewing && opinionsOpen;
   const diffAnchor = scopeNow === 'uncommitted' || !review?.anchor ? changesAnchor : review.anchor;
+
+  /* ── helper sweep · P10 notes ── what the agent wrote about its own diff,
+     and the walk through it. Notes are anchored to the branch diff, so they
+     are drawn only on a diff read against the session's base. */
+  const { data: agentNotes, error: agentNotesErr, reload: reloadAgentNotes } = useChangeNotes(sessionId, tab === 'changes' && reviewing, reviewKey);
+  const [walk, setWalk] = useState<number | null>(null);
+  const [agentNoteMsg, setAgentNoteMsg] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string } | null>(null);
+  const walkNotes = useMemo(() => (agentNotes?.notes ?? []).filter((n) => n.dismissedAt === null), [agentNotes]);
+  const walkIndex = walk === null || !walkNotes.length ? null : Math.min(walk, walkNotes.length - 1);
+  const agentNotesHere = useMemo(
+    () => (sel && review?.anchor && diffAnchor === review.anchor ? walkNotes.filter((n) => n.path === sel) : []),
+    [walkNotes, sel, review, diffAnchor]
+  );
+  useEffect(() => { setWalk(null); setAgentNoteMsg(null); }, [sessionId]);
+  // A walk with nothing left to visit ends, rather than resuming by itself when a note next appears.
+  useEffect(() => { if (walk !== null && !walkNotes.length) setWalk(null); }, [walk, walkNotes.length]);
+  /* ── end helper sweep · P10 notes ── */
 
   const crumbs = useMemo(() => {
     const parts = dir ? dir.split('/') : [];
@@ -753,6 +821,15 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
       {tab === 'changes' && sessionId && (
         <ReviewSummaryBar work={review} error={reviewErr} onSend={() => void sendReview()} sending={sending}
                           sent={sent} onDismissSent={() => setSent(null)} />
+      )}
+      {/* ── helper sweep · P10 notes ── */}
+      {tab === 'changes' && sessionId && reviewing && (walkIndex !== null
+        ? <AgentNotesWalk notes={walkNotes} index={walkIndex} title={agentNotes?.sessionTitle ?? ''} onStep={stepWalk} onEnd={() => setWalk(null)} />
+        : <AgentNotesBar data={agentNotes} error={agentNotesErr} onWalk={() => stepWalk(0)} onOpen={openAgentNote} />)}
+      {agentNoteMsg && (
+        <div className="review-added">
+          <Note tone={agentNoteMsg.tone} onDismiss={() => setAgentNoteMsg(null)}>{agentNoteMsg.text}</Note>
+        </div>
       )}
       {tab === 'changes' && sessionId && reviewing && review && review.files.length > 0 && (
         <SecondOpinionActions runs={opinionRuns} onOpen={setConsent} resultsOpen={opinionsOpen} onToggleResults={() => setOpinionsOpen((v) => !v)} />
@@ -1008,7 +1085,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
               ) : sel ? (sessionId
                 ? <ReviewDiff text={diff} fallbackFile={sel} anchor={diffAnchor} sessionId={sessionId} onUnsent={rememberUnsent}
                               focusLine={focusLine?.file === sel ? focusLine : null}
-                              notes={notesAnchor === diffAnchor ? notes : []} onAdd={addNote} />
+                              notes={notesAnchor === diffAnchor ? notes : []} onAdd={addNote}
+                              agent={{ notes: agentNotesHere, title: agentNotes?.sessionTitle ?? '', currentId: walkIndex !== null ? walkNotes[walkIndex]?.id ?? null : null,
+                                       onDismiss: (n) => void dismissAgentNote(n), onQuote: (n) => void quoteAgentNote(n) }} />
                 : <Diff text={diff} />) : (
                 <p className="faint code-hint">
                   {lastEdit
@@ -1125,7 +1204,7 @@ function Diff({ text }: { text: string }) {
  * refused rather than guessed when the selection spans two files or holds no
  * line of code.
  */
-function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUnsent, focusLine }: {
+function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUnsent, focusLine, agent }: {
   text: string;
   fallbackFile: string | null;
   anchor: string;
@@ -1137,6 +1216,8 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUns
   onUnsent: (note: UnsentNote | null) => void;
   /** A line to bring into view and mark, from find across the diff. */
   focusLine: { line: number; side: 'new' | 'old' } | null;
+  /* ── helper sweep · P10 notes ── the agent's own notes on this file, drawn under the lines they cover. */
+  agent?: AgentNotesInDiff;
 }) {
   const rows = useMemo(() => parseUnifiedDiff(text, fallbackFile), [text, fallbackFile]);
   const [range, setRange] = useState<{ anchor: number; from: number; to: number } | null>(null);
@@ -1178,6 +1259,22 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUns
     });
     return marked;
   }, [rows, notes]);
+  /* ── helper sweep · P10 notes ── each agent note goes under the last shown row it
+     covers; one whose lines are not in this diff any more is listed above it. */
+  const agentPlacement = useMemo(() => {
+    const ends = new Map<number, ChangeNoteView[]>();
+    const covered = new Set<number>();
+    const detached: ChangeNoteView[] = [];
+    for (const note of agent?.notes ?? []) {
+      const hits: number[] = [];
+      rows.forEach((row, i) => { if (i < DIFF_LINES && commentable(row) && rowInNote(row, note)) hits.push(i); });
+      if (!hits.length || note.staleness.state === 'outside-hunk' || note.staleness.state === 'file-left-diff') { detached.push(note); continue; }
+      for (const i of hits) covered.add(i);
+      const last = hits[hits.length - 1];
+      ends.set(last, [...(ends.get(last) ?? []), note]);
+    }
+    return { ends, covered, detached };
+  }, [rows, agent?.notes]);
 
   if (!text.trim()) return <p className="faint code-hint">No textual diff (binary file, or the change is already committed).</p>;
 
@@ -1207,6 +1304,7 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUns
 
   return (
     <div className="review-diff">
+      {agent && <DetachedAgentNotes notes={agentPlacement.detached} title={agent.title} currentId={agent.currentId} onDismiss={agent.onDismiss} onQuote={agent.onQuote} />}
       <pre className="diff" ref={pre}>
         {shown.map((row, i) => {
           if (row.kind === 'hunk') {
@@ -1225,10 +1323,14 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUns
           }
           const inRange = range !== null && i >= range.from && i <= range.to && commentable(row);
           const focused = !!focusLine && ((focusLine.side === 'new' && row.newLine === focusLine.line) || (focusLine.side === 'old' && row.newLine === null && row.oldLine === focusLine.line));
-          const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}${focused ? ' rw-focus' : ''}`;
-          return commentable(row)
+          const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}${focused ? ' rw-focus' : ''}${agentPlacement.covered.has(i) ? ' an-noted' : ''}`;
+          const line = commentable(row)
             ? <div key={i} className={cls} data-focus={focused || undefined} onClick={(e) => pick(i, e.shiftKey)}>{row.text || ' '}</div>
             : <div key={i} className={cls}>{row.text || ' '}</div>;
+          const after = agent ? agentPlacement.ends.get(i) : undefined;
+          return agent && after
+            ? <Fragment key={i}>{line}{after.map((n) => <AgentNoteInline key={n.id} note={n} title={agent.title} current={agent.currentId === n.id} onDismiss={agent.onDismiss} onQuote={agent.onQuote} />)}</Fragment>
+            : line;
         })}
         {rows.length > DIFF_LINES && (
           <div className="dl meta">

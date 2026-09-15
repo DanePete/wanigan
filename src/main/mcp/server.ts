@@ -17,6 +17,10 @@ import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../sha
 import { toolGrantFor } from './tool-grants';
 import { refusal, toolGranted } from '../../shared/mcp-tool-grants';
 import { providerById } from '../providers';
+/* ── helper sweep · P10 notes ── */
+import { annotateChange, listOwnChangeNotes, withdrawOwnChangeNote } from '../change-notes';
+import { MAX_CHANGE_NOTE_CHARS } from '../../shared/change-notes';
+/* ── end helper sweep · P10 notes ── */
 
 /**
  * The outbound half of MCP: Wanigan itself, as a server a running session can
@@ -382,6 +386,53 @@ const TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
+
+  /* ── helper sweep · P10 notes ──────────────────────────────────────
+     A session explaining its own diff. Every tool here acts on the calling
+     session's own notes, named by the capability alone: none takes a session
+     id, and none can reach an operator's review note. ─────────────────── */
+  {
+    name: 'wanigan_annotate_change',
+    title: 'Explain part of your own change',
+    description:
+      'Anchor a short note to a hunk or line range of this session\'s own diff against the commit it started from, to explain a ' +
+      'non-obvious choice to the person reviewing it. The operator sees it beside the diff, marked as written by the agent. ' +
+      'The file must be one this session changed and the range must sit inside one hunk on the side you name. Notes are for ' +
+      'the reviewer, not a changelog; at most 60 per session. You cannot write, edit or delete the operator\'s own review notes.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['path', 'side', 'startLine', 'endLine', 'note'],
+      properties: {
+        path: { type: 'string', maxLength: 1000, description: 'The changed file, relative to this session\'s checkout, as git diff names it.' },
+        side: { enum: ['new', 'old'], description: '"new" for lines as they are now; "old" for lines as they were at the base commit, such as removed ones.' },
+        startLine: { type: 'integer', minimum: 1, description: 'First line of the range, numbered on the side you named.' },
+        endLine: { type: 'integer', minimum: 1, description: 'Last line of the range, inclusive. Same as startLine for one line.' },
+        note: { type: 'string', maxLength: MAX_CHANGE_NOTE_CHARS, description: 'Why this change reads the way it does. Plain text.' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'wanigan_list_change_notes',
+    title: 'List your change notes',
+    description:
+      'The notes this session has written about its own diff and not withdrawn, each with whether the code has changed since it ' +
+      'was written and whether the operator dismissed it. Only this session\'s notes; never anyone else\'s.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'wanigan_withdraw_change_note',
+    title: 'Withdraw one of your change notes',
+    description:
+      'Withdraw a note this session wrote, by the id wanigan_annotate_change returned. It stops being shown; that it was written ' +
+      'stays on record, and it still counts toward the 60-note limit. Works only on this session\'s own notes.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['id'],
+      properties: { id: { type: 'string', description: 'The note id, cn_ followed by 16 hex digits.' } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  /* ── end helper sweep · P10 notes ── */
 ];
 
 /**
@@ -873,6 +924,19 @@ async function callTool(name: string, args: Record<string, unknown>, caller: Mcp
       const claim = control.claimForSession(caller.sessionId, str(args.nodeId, 'nodeId'), str(args.path, 'path'));
       return ok({ claim });
     }
+
+    /* ── helper sweep · P10 notes ── the session is the capability's, never an argument. */
+    case 'wanigan_annotate_change':
+      return ok({ ...(await annotateChange(caller.sessionId, args)) });
+
+    case 'wanigan_list_change_notes':
+      return ok(await listOwnChangeNotes(caller.sessionId));
+
+    case 'wanigan_withdraw_change_note': {
+      if ('sessionId' in args || 'session_id' in args) return toolError('This tool takes no session id. It withdraws only notes the calling session wrote.');
+      return ok(withdrawOwnChangeNote(caller.sessionId, args.id));
+    }
+    /* ── end helper sweep · P10 notes ── */
 
     case 'wanigan_recall_transcripts': {
       // Checked again at call time: a project switched off between tools/list
