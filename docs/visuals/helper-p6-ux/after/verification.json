@@ -1,0 +1,364 @@
+{
+  "generator": "scripts/probe-helper-p6-ux.mjs",
+  "mode": "after",
+  "renderer": "out/renderer served over http with the preload bridge stubbed",
+  "at": "2026-09-15T04:53:17.251Z",
+  "results": [
+    {
+      "ok": true,
+      "label": "palette switched (rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "the session rail rendered its tabs"
+    },
+    {
+      "ok": true,
+      "label": "the Checkout bug tab wears its two tags"
+    },
+    {
+      "ok": true,
+      "label": "the tab menu carries the tag editor: a colour per tag, an add field, and the section choice"
+    },
+    {
+      "ok": true,
+      "label": "tag chips on the tabs are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "Recent conversations rendered"
+    },
+    {
+      "ok": true,
+      "label": "Recent shows the two sections in the operator’s order"
+    },
+    {
+      "ok": true,
+      "label": "each section has named move buttons, and the first cannot move up"
+    },
+    {
+      "ok": true,
+      "label": "pinned first, then each section with its members in order, then the unfiled rows"
+    },
+    {
+      "ok": true,
+      "label": "Recent offers a filter for each tag its rows carry, plus Any tag"
+    },
+    {
+      "ok": true,
+      "label": "a filed Recent row can be moved up and down within its section by named buttons"
+    },
+    {
+      "ok": true,
+      "label": "the tag filter narrows Recent to the rows carrying the tag"
+    },
+    {
+      "ok": true,
+      "label": "the terminal rendered its scrollback"
+    },
+    {
+      "ok": true,
+      "label": "right-clicking a printed path opens the terminal menu"
+    },
+    {
+      "ok": true,
+      "label": "the path menu offers the code rail at the printed line, Reveal in Finder and Copy path"
+    },
+    {
+      "ok": true,
+      "label": "Reveal in Finder asks main with the session and the printed path"
+    },
+    {
+      "ok": true,
+      "label": "right-clicking a URL offers Open link and Copy link"
+    },
+    {
+      "ok": true,
+      "label": "Copy link copies the link without trailing punctuation"
+    },
+    {
+      "ok": true,
+      "label": "a path outside every managed root is not actionable, and the menu says why"
+    },
+    {
+      "ok": true,
+      "label": "the code reader opens on the file with line 42 marked"
+    },
+    {
+      "ok": true,
+      "label": "the side panel rendered its Code / Timeline / Learning bar"
+    },
+    {
+      "ok": true,
+      "label": "the code rail offers Open in new window"
+    },
+    {
+      "ok": true,
+      "label": "opening it says so"
+    },
+    {
+      "ok": true,
+      "label": "the status bar has a copy menu"
+    },
+    {
+      "ok": true,
+      "label": "it offers Copy last response and Copy conversation ID"
+    },
+    {
+      "ok": true,
+      "label": "copying says what was copied and where it was read from"
+    },
+    {
+      "ok": true,
+      "label": "the status bar rendered"
+    },
+    {
+      "ok": true,
+      "label": "a Claude Code session’s composer offers Side question…"
+    },
+    {
+      "ok": true,
+      "label": "the side question carries its label and a single-line question field"
+    },
+    {
+      "ok": true,
+      "label": "the composer rendered"
+    },
+    {
+      "ok": true,
+      "label": "a Codex session offers /side alone, with no question field, and says the question is asked in the fork"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "Fleet roster entries wear their tags"
+    },
+    {
+      "ok": true,
+      "label": "the Fleet tag filter narrows the roster"
+    },
+    {
+      "ok": true,
+      "label": "the command palette opened"
+    },
+    {
+      "ok": true,
+      "label": "typing ? narrows the palette to the Shortcuts group, listing every binding"
+    },
+    {
+      "ok": true,
+      "label": "\"shortcut quote\" finds the quote chord and prints it"
+    },
+    {
+      "ok": true,
+      "label": "running a shortcut from the palette does what its chord does"
+    },
+    {
+      "ok": true,
+      "label": "the transcript reader opened from a palette hit"
+    },
+    {
+      "ok": true,
+      "label": "a mermaid block is shown as labelled source with a note that rendering is not available"
+    },
+    {
+      "ok": true,
+      "label": "the reader offers Copy as Markdown"
+    },
+    {
+      "ok": true,
+      "label": "Copy as Markdown reports turns, size and redaction"
+    },
+    {
+      "ok": true,
+      "label": "⌘> quotes a transcript selection into the session that continues it"
+    },
+    {
+      "ok": true,
+      "label": "the code rail window renders the rail alone, named for its session, with no shell around it"
+    },
+    {
+      "ok": true,
+      "label": "palette switched (rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "the session rail rendered its tabs"
+    },
+    {
+      "ok": true,
+      "label": "the Checkout bug tab wears its two tags"
+    },
+    {
+      "ok": true,
+      "label": "the tab menu carries the tag editor: a colour per tag, an add field, and the section choice"
+    },
+    {
+      "ok": true,
+      "label": "tag chips on the tabs are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "Recent conversations rendered"
+    },
+    {
+      "ok": true,
+      "label": "Recent shows the two sections in the operator’s order"
+    },
+    {
+      "ok": true,
+      "label": "each section has named move buttons, and the first cannot move up"
+    },
+    {
+      "ok": true,
+      "label": "pinned first, then each section with its members in order, then the unfiled rows"
+    },
+    {
+      "ok": true,
+      "label": "Recent offers a filter for each tag its rows carry, plus Any tag"
+    },
+    {
+      "ok": true,
+      "label": "a filed Recent row can be moved up and down within its section by named buttons"
+    },
+    {
+      "ok": true,
+      "label": "the tag filter narrows Recent to the rows carrying the tag"
+    },
+    {
+      "ok": true,
+      "label": "the terminal rendered its scrollback"
+    },
+    {
+      "ok": true,
+      "label": "right-clicking a printed path opens the terminal menu"
+    },
+    {
+      "ok": true,
+      "label": "the path menu offers the code rail at the printed line, Reveal in Finder and Copy path"
+    },
+    {
+      "ok": true,
+      "label": "Reveal in Finder asks main with the session and the printed path"
+    },
+    {
+      "ok": true,
+      "label": "right-clicking a URL offers Open link and Copy link"
+    },
+    {
+      "ok": true,
+      "label": "Copy link copies the link without trailing punctuation"
+    },
+    {
+      "ok": true,
+      "label": "a path outside every managed root is not actionable, and the menu says why"
+    },
+    {
+      "ok": true,
+      "label": "the code reader opens on the file with line 42 marked"
+    },
+    {
+      "ok": true,
+      "label": "the side panel rendered its Code / Timeline / Learning bar"
+    },
+    {
+      "ok": true,
+      "label": "the code rail offers Open in new window"
+    },
+    {
+      "ok": true,
+      "label": "opening it says so"
+    },
+    {
+      "ok": true,
+      "label": "the status bar has a copy menu"
+    },
+    {
+      "ok": true,
+      "label": "it offers Copy last response and Copy conversation ID"
+    },
+    {
+      "ok": true,
+      "label": "copying says what was copied and where it was read from"
+    },
+    {
+      "ok": true,
+      "label": "the status bar rendered"
+    },
+    {
+      "ok": true,
+      "label": "a Claude Code session’s composer offers Side question…"
+    },
+    {
+      "ok": true,
+      "label": "the side question carries its label and a single-line question field"
+    },
+    {
+      "ok": true,
+      "label": "the composer rendered"
+    },
+    {
+      "ok": true,
+      "label": "a Codex session offers /side alone, with no question field, and says the question is asked in the fork"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "Fleet roster entries wear their tags"
+    },
+    {
+      "ok": true,
+      "label": "the Fleet tag filter narrows the roster"
+    },
+    {
+      "ok": true,
+      "label": "the command palette opened"
+    },
+    {
+      "ok": true,
+      "label": "typing ? narrows the palette to the Shortcuts group, listing every binding"
+    },
+    {
+      "ok": true,
+      "label": "\"shortcut quote\" finds the quote chord and prints it"
+    },
+    {
+      "ok": true,
+      "label": "running a shortcut from the palette does what its chord does"
+    },
+    {
+      "ok": true,
+      "label": "the transcript reader opened from a palette hit"
+    },
+    {
+      "ok": true,
+      "label": "a mermaid block is shown as labelled source with a note that rendering is not available"
+    },
+    {
+      "ok": true,
+      "label": "the reader offers Copy as Markdown"
+    },
+    {
+      "ok": true,
+      "label": "Copy as Markdown reports turns, size and redaction"
+    },
+    {
+      "ok": true,
+      "label": "⌘> quotes a transcript selection into the session that continues it"
+    },
+    {
+      "ok": true,
+      "label": "the code rail window renders the rail alone, named for its session, with no shell around it"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "generator": "scripts/probe-helper-p6-ux.mjs",
+  "mode": "before",
+  "renderer": "out/renderer served over http with the preload bridge stubbed",
+  "at": "2026-09-15T04:51:25.343Z",
+  "results": [
+    {
+      "ok": true,
+      "label": "palette switched (rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "the session rail rendered its tabs"
+    },
+    {
+      "ok": true,
+      "label": "Recent conversations rendered"
+    },
+    {
+      "ok": true,
+      "label": "the terminal rendered its scrollback"
+    },
+    {
+      "ok": true,
+      "label": "the side panel rendered its Code / Timeline / Learning bar"
+    },
+    {
+      "ok": true,
+      "label": "the status bar rendered"
+    },
+    {
+      "ok": true,
+      "label": "the composer rendered"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the command palette opened"
+    },
+    {
+      "ok": true,
+      "label": "the transcript reader opened from a palette hit"
+    },
+    {
+      "ok": true,
+      "label": "palette switched (rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "the session rail rendered its tabs"
+    },
+    {
+      "ok": true,
+      "label": "Recent conversations rendered"
+    },
+    {
+      "ok": true,
+      "label": "the terminal rendered its scrollback"
+    },
+    {
+      "ok": true,
+      "label": "the side panel rendered its Code / Timeline / Learning bar"
+    },
+    {
+      "ok": true,
+      "label": "the status bar rendered"
+    },
+    {
+      "ok": true,
+      "label": "the composer rendered"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the command palette opened"
+    },
+    {
+      "ok": true,
+      "label": "the transcript reader opened from a palette hit"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ]
+}
