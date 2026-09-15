@@ -397,3 +397,73 @@ export async function runAttachmentRetentionSmoke(check: Check, say: Say): Promi
     } catch { /* the smoke database is thrown away */ }
   }
 }
+
+/**
+ * A contradiction can be recorded by a person and resolved by a person.
+ *
+ * recordContradiction and the optimizer's "Unresolved contradiction" finding
+ * both existed with nothing to write the relation, so the finding never fired
+ * and two opposite rules were both briefed.
+ */
+export async function runContradictionSmoke(check: Check, say: Say): Promise<void> {
+  say('── knowledge · a contradiction is recorded, quarantines both, and is resolved by keeping one');
+  try {
+    const learningRecords = await import('./learning');
+    const service = await import('./learning-service');
+    const tag = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const promote = (title: string, text: string) => {
+      const signals = ['a', 'b'].map((side) => learningRecords.recordSignal({
+        kind: 'explicit-teach', providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
+        sessionId: `contest-${side}-${title}-${tag}`, taskHash: `contest-${side}-${title}-${tag}`,
+        summary: `${text} ${tag}`, detail: { outcome: 'worked', source: 'explicit-user-teach' }, semanticEligible: true,
+      }));
+      const candidate = learningRecords.createCandidate({
+        targetKind: 'memory', scope: 'personal', providerId: 'orbit.profile-v9',
+        title: `${title} ${tag}`, proposedText: `${text} ${tag}`, rationale: 'Taught explicitly.',
+        confidence: 0.9, signalIds: signals.map((signal) => signal.id),
+      });
+      learningRecords.reviewCandidate(candidate.id, 'approve', 'Smoke verification');
+      return learningRecords.promoteCandidate(candidate.id, { createdBy: 'smoke' }).item;
+    };
+    const tabs = promote('Indent with tabs', 'Indent this project with tabs.');
+    const spaces = promote('Indent with spaces', 'Indent this project with two spaces.');
+    const other = promote('Wrap at 100', 'Wrap lines at 100 columns.');
+
+    let refused = '';
+    try { service.markContradiction(tabs.id, spaces.id, '   '); } catch (error) { refused = String(error); }
+    check(/Say what the two items disagree about/.test(refused) && learningRecords.getKnowledgeItem(tabs.id)?.status === 'active',
+      'a contradiction with no reason is refused, and nothing is quarantined by the attempt', refused);
+
+    service.markContradiction(tabs.id, spaces.id, 'One says tabs, the other two spaces.');
+    const findings = learningRecords.diagnoseKnowledge().filter((finding) => finding.kind === 'contradiction'
+      && finding.itemIds.includes(tabs.id) && finding.itemIds.includes(spaces.id));
+    check(learningRecords.getKnowledgeItem(tabs.id)?.status === 'quarantined' && learningRecords.getKnowledgeItem(spaces.id)?.status === 'quarantined'
+      && findings.length === 1,
+    'recording it quarantines both items and makes the optimizer\'s contradiction finding fire, which it never could before', findings.length);
+
+    service.markContradiction(spaces.id, other.id, 'Two-space indent and a 100-column wrap were taught as one rule.');
+    let wrongPair = '';
+    try { service.keepOverContradiction(tabs.id, other.id, 'not related'); } catch (error) { wrongPair = String(error); }
+    check(/no unresolved contradiction/.test(wrongPair), 'resolving a pair that was never recorded as contradicting is refused', wrongPair);
+
+    const resolved = service.keepOverContradiction(tabs.id, spaces.id, 'The formatter config uses tabs.');
+    const tabsRelations = learningRecords.listRelations(tabs.id, true).filter((relation) => relation.relation === 'contradicts');
+    check(resolved.retired.status === 'retired' && resolved.kept.status === 'active' && tabsRelations.length === 0,
+      'keeping one retires the other, resolves the relation, and returns the kept item to active when nothing else contradicts it');
+    const stillOpen = learningRecords.listRelations(other.id, true).filter((relation) => relation.relation === 'contradicts');
+    check(stillOpen.length === 1 && learningRecords.getKnowledgeItem(other.id)?.status === 'quarantined',
+      'a second contradiction on the retired side is left open, and its other item stays quarantined until someone resolves it');
+
+    let retiredRefusal = '';
+    try { service.markContradiction(spaces.id, other.id, 'again'); } catch (error) { retiredRefusal = String(error); }
+    check(/is retired/.test(retiredRefusal), 'a retired item cannot be named in a new contradiction', retiredRefusal);
+
+    const index = appSource('src/main/index.ts');
+    const learningView = appSource('src/renderer/src/views/Learning.tsx');
+    check(index.includes("handle('learning:markContradiction'") && index.includes("handle('learning:keepOverContradiction'")
+      && learningView.includes('window.wanigan.learning.markContradiction(') && learningView.includes('window.wanigan.learning.keepOverContradiction('),
+    'the Knowledge library reaches both acts through IPC, so the writer is reachable and not only callable');
+  } catch (error) {
+    check(false, 'the contradiction checks ran without throwing', String(error));
+  }
+}

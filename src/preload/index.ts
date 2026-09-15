@@ -768,6 +768,10 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    markContradiction: (firstId: string, secondId: string, reason: string) =>
+      call<KnowledgeRelation>('learning:markContradiction', firstId, secondId, reason),
+    keepOverContradiction: (keepId: string, retireId: string, reason: string) =>
+      call<{ kept: KnowledgeItem; retired: KnowledgeItem }>('learning:keepOverContradiction', keepId, retireId, reason),
     // Main answers this channel with BriefingPreview: the capsule plus the
     // launch state around it — whether learning was on, the profile's declared
     // harness, how a launch would deliver the text, and what proof that

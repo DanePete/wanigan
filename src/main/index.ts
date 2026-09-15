@@ -3203,6 +3203,10 @@ function registerIpc() {
   handle('learning:candidateExplain', (id: string) => learning.explain(id));
   handle('learning:candidateSignals', (id: string) => learning.candidateSignals(id));
   handle('learning:relations', (itemId?: string) => learning.relations(itemId));
+  handle('learning:markContradiction', (firstId: unknown, secondId: unknown, reason: unknown) =>
+    learning.markContradiction(firstId, secondId, reason));
+  handle('learning:keepOverContradiction', (keepId: unknown, retireId: unknown, reason: unknown) =>
+    learning.keepOverContradiction(keepId, retireId, reason));
   handle('learning:freshness', (itemId: string) => learning.freshnessReport(itemId));
 
   // ══ phase 27 · observed sessions ════════════════════════════════════
