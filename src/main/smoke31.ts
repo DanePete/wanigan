@@ -360,3 +360,69 @@ export async function runHelperAttentionSmoke(check: Check, say: Say): Promise<v
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
   }
 }
+
+/**
+ * Evidence other packages hold, as the queue now reads it: a tripwire the
+ * policy gate recorded, and review state for a finished session. Through the
+ * real hook listener and classifier, with the real signal reader.
+ */
+export async function runAttentionEvidenceSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · integration · policy signals and review state in the attention queue');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-attention-evidence-'));
+  const hooks = await import('./hooks');
+  const attention = await import('./attention');
+  const { db } = await import('./db');
+  const { sessionSignals } = await import('./policy-signals');
+  const { cachedReviewSummary } = await import('./review-work');
+  const id = 's_evidence_1';
+  try {
+    const hs = await hooks.startHookServer();
+    const file = hooks.writeHookSettings(id, tmp);
+    const settings = JSON.parse(fs.readFileSync(file!, 'utf8')) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ url: string; headers: { Authorization: string } }> }> };
+    };
+    const handler = settings.hooks.PreToolUse[0].hooks[0];
+    const post = (body: Record<string, unknown>) => fetch(handler.url, {
+      method: 'POST', headers: { 'content-type': 'application/json', Authorization: handler.headers.Authorization },
+      body: JSON.stringify({ session_id: 'cli-side', ...body }),
+    });
+    const session = (over: Record<string, unknown> = {}) => ({
+      id, providerId: 'claude', projectId: 'prj_evidence', projectPath: tmp, projectName: 'evidence', title: 'evidence',
+      status: 'running' as const, pid: null, exitCode: null, endedAt: null, unread: 0, createdAt: Date.now() - 60_000,
+      backendId: 'anthropic', harnessId: 'claude-code', ...over,
+    });
+    check(hs.port > 0, 'the hook listener is up for the evidence checks');
+
+    await post({ hook_event_name: 'UserPromptSubmit', prompt: 'decode the bundle' });
+    await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_response: { stdout: 'x' } });
+    attention.setPolicySignalSource((sid) => sessionSignals(sid, 10));
+    db().prepare('INSERT INTO policy_signals (at, session_id, project_id, kind, rule, summary, detail_json) VALUES (?,?,?,?,?,?,?)')
+      .run(Date.now(), id, 'prj_evidence', 'tripwire', 'tripwire.downloaded-exec', 'python decode.py inside a directory curl created', '{}');
+    const tripped = attention.attentionOf(session());
+    check(tripped.kind === 'error' && tripped.label === 'Tripwire' && tripped.reason?.rule === 'policy-signal'
+      && /lead, not containment/.test(tripped.reason.because) && /^signal:\d+$/.test(tripped.transitionId),
+    'a tripwire the gate recorded turns a working session into an error-kind "Tripwire" verdict with its own reason and transition', tripped);
+
+    await new Promise((r) => setTimeout(r, 5));
+    await post({ hook_event_name: 'UserPromptSubmit', prompt: 'that was expected, carry on' });
+    const answered = attention.attentionOf(session());
+    check(answered.label !== 'Tripwire', 'once the operator sends the session a prompt after it, the tripwire is no longer news', answered.label);
+
+    await post({ hook_event_name: 'Stop' });
+    attention.setReviewStateSource(() => ({ needsReview: true, label: 'Needs review · 1 of 3 files', because: '2 changed files have no approval.' }));
+    const finished = attention.attentionOf(session());
+    check(finished.kind === 'finished' && finished.label === 'Needs review · 1 of 3 files' && finished.reason?.rule === 'needs-review'
+      && /2 changed files have no approval\./.test(finished.reason.because),
+    'a finished session whose diff needs review says so in the queue, keeping its kind', finished);
+  } catch (error) {
+    check(false, 'the attention evidence checks ran without throwing', error instanceof Error ? error.stack : String(error));
+  } finally {
+    // Back to the real sources the helper services set at start.
+    attention.setPolicySignalSource((sid) => sessionSignals(sid, 10));
+    attention.setReviewStateSource((sid) => cachedReviewSummary(sid));
+    attention.forgetSession(id);
+    hooks.cleanupHookSettings(id);
+    try { db().prepare('DELETE FROM policy_signals WHERE session_id = ?').run(id); } catch { /* temp */ }
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
+  }
+}

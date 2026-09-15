@@ -11,6 +11,8 @@ import {
 import { wakesSnooze } from '../shared/session-triage';
 import { activeSnooze, clearSnooze } from './snoozes';
 import { incidentForSession } from './provider-incidents';
+/* ── helper sweep · integration ── */
+import { standingSignal, withReviewState, withSignal, type RecordedSignal, type ReviewState } from '../shared/attention-evidence';
 
 /**
  * Which of nine running agents needs a human, and which has needed one longest.
@@ -599,8 +601,18 @@ function classify(session: Session, now: number): Attention {
 /* ── the queue ───────────────────────────────────────────────────────── */
 
 export function attentionOf(session: Session): Attention {
-  const now = Date.now();
-  return withSnooze(session, withIncident(session, classify(session, now), now), now);
+  return decorate(session, Date.now());
+}
+
+/**
+ * The classifier's verdict with the evidence other surfaces hold laid over it,
+ * innermost first: review state (a finished diff nobody approved), a policy
+ * signal (a tripwire or a pinned rewrite), an open provider incident, and last
+ * the operator's own snooze, which outranks every rule.
+ */
+function decorate(session: Session, now: number): Attention {
+  const v = withPolicySignal(session, withReview(session, classify(session, now)), now);
+  return withSnooze(session, withIncident(session, v, now), now);
 }
 
 export function attentionFor(sessions: Session[]): Attention[] {
@@ -608,7 +620,7 @@ export function attentionFor(sessions: Session[]): Attention[] {
   // sessions be measured against different instants, and the idle threshold sits
   // close enough to it that the pair can rank inconsistently on the same tick.
   const now = Date.now();
-  return sessions.map((s) => withSnooze(s, withIncident(s, classify(s, now), now), now)).sort(rank);
+  return sessions.map((s) => decorate(s, now)).sort(rank);
 }
 
 /**
@@ -689,7 +701,50 @@ function limitResetOf(session: Session, now: number) {
 /** Rules whose evidence is about this session and not about the provider. */
 const NOT_PROVIDER = new Set<AttentionRule>([
   'auto-mode-denied', 'limit-wait', 'limit-reset', 'limit-stopped', 'question-asked', 'permission-request',
+  'policy-signal',
 ]);
+
+/* ── helper sweep · integration ─────────────────────────────────────── */
+
+/**
+ * Where policy signals and review state come from. Callbacks, set by
+ * helper-attention.ts, for the same reason as the limit reading: the readers
+ * live beside the policy gate and the review surface, and review-work.ts
+ * reaches sessions.ts, which imports this module. Neither source may block or
+ * probe: signals are one indexed read, and review state is whatever the review
+ * surface last computed, refreshed behind the caller's back when stale.
+ */
+let signalSource: ((sessionId: string) => RecordedSignal[]) | null = null;
+let reviewSource: ((sessionId: string) => ReviewState | null) | null = null;
+
+export function setPolicySignalSource(fn: ((sessionId: string) => RecordedSignal[]) | null): void {
+  signalSource = fn;
+}
+
+export function setReviewStateSource(fn: ((sessionId: string) => ReviewState | null) | null): void {
+  reviewSource = fn;
+}
+
+function withPolicySignal(session: Session, v: Attention, now: number): Attention {
+  if (!signalSource || v.kind === 'permission') return v;
+  let signals: RecordedSignal[];
+  try { signals = signalSource(session.id); } catch { return v; }
+  if (!signals.length) return v;
+  const { events } = snapshotOf(session.id);
+  let lastPromptAt: number | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].event === 'UserPromptSubmit') { lastPromptAt = events[i].at; break; }
+  }
+  const signal = standingSignal(v, signals, now, lastPromptAt);
+  return signal ? withSignal(v, signal, (text) => clip(text) ?? '') : v;
+}
+
+function withReview(session: Session, v: Attention): Attention {
+  if (!reviewSource || v.kind !== 'finished') return v;
+  let review: ReviewState | null;
+  try { review = reviewSource(session.id); } catch { return v; }
+  return withReviewState(v, review);
+}
 
 /**
  * Name an open provider incident on a verdict it could explain: an error, a

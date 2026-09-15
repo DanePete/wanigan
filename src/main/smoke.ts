@@ -228,8 +228,10 @@ export async function runSmoke(): Promise<void> {
     await runConfigPinSmoke(check, say);
     await runAttentionReasonSmoke(check, say);
     /* ── helper sweep · P2 attention ── */
-    const { runHelperAttentionSmoke } = await import('./smoke31');
+    const { runHelperAttentionSmoke, runAttentionEvidenceSmoke } = await import('./smoke31');
     await runHelperAttentionSmoke(check, say);
+    /* ── helper sweep · integration ── */
+    await runAttentionEvidenceSmoke(check, say);
     /* ── helper sweep · P3 review ── */
     const p3 = await import('./smoke32');
     await p3.runReviewMarksSmoke(check, say);

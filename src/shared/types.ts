@@ -3507,7 +3507,10 @@ export type ExpiringResults = {
  */
 export type HelperAttentionRule =
   | 'auto-mode-denied' | 'spinning' | 'limit-wait' | 'limit-reset' | 'limit-stopped'
-  | 'provider-incident' | 'question-asked';
+  | 'provider-incident' | 'question-asked'
+  /* helper sweep · integration: a tripwire or history rewrite the policy gate
+     recorded, and a finished session whose diff still needs review. */
+  | 'policy-signal' | 'needs-review';
 
 /** A tool call Claude Code's auto-mode classifier refused, as its hook reported it. */
 export type AutoModeDenial = {

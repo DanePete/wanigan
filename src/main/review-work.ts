@@ -431,6 +431,23 @@ async function summaryOf(sessionId: string): Promise<ReviewSummary> {
   return value;
 }
 
+/**
+ * What the review surface last computed for a session, without waiting on git.
+ * The attention queue classifies every session every two seconds, and a git
+ * diff per session per tick would be the queue's whole cost. A missing or
+ * stale entry starts one refresh in the background (never two at once for a
+ * session) and answers with what it had, possibly nothing.
+ */
+const refreshing = new Set<string>();
+export function cachedReviewSummary(sessionId: string): ReviewSummary | null {
+  const hit = summaryCache.get(sessionId) ?? null;
+  if ((!hit || Date.now() - hit.at >= SUMMARY_TTL_MS) && !refreshing.has(sessionId)) {
+    refreshing.add(sessionId);
+    summaryOf(sessionId).catch(() => { /* unreadable review state adds nothing */ }).finally(() => refreshing.delete(sessionId));
+  }
+  return hit?.value ?? null;
+}
+
 /** Summaries for many sessions at once, for Fleet and the Git view. A session that cannot be read is left out, not zeroed. */
 export async function reviewSummaries(ids: unknown): Promise<Record<string, ReviewSummary>> {
   if (!Array.isArray(ids)) return {};

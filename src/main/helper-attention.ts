@@ -11,6 +11,9 @@ import {
 import * as triage from './session-triage';
 import { QUOTA_RESUMED } from '../shared/attention-rules';
 import { ERROR_WINDOW_MS } from './attention';
+/* ── helper sweep · integration ── */
+import { sessionSignals } from './policy-signals';
+import { cachedReviewSummary } from './review-work';
 
 /**
  * The helper sweep's attention features, wired once.
@@ -60,6 +63,9 @@ let stopQuotaListener: (() => void) | null = null;
 
 export function startHelperAttentionServices(liveWindow: () => BrowserWindow | null, smoke: boolean): void {
   attention.setLimitReadingSource(() => knownLimits());
+  // Evidence other packages hold, read by the classifier without importing them.
+  attention.setPolicySignalSource((sessionId) => sessionSignals(sessionId, 10));
+  attention.setReviewStateSource((sessionId) => cachedReviewSummary(sessionId));
 
   stopQuotaListener?.();
   stopQuotaListener = hooks.onHookEvent((e) => {
@@ -99,6 +105,8 @@ export function stopHelperAttentionServices(): void {
   notify.setNotificationReplySink(null);
   notify.setNotificationActionSink(null);
   attention.setLimitReadingSource(null);
+  attention.setPolicySignalSource(null);
+  attention.setReviewStateSource(null);
   stopProviderStatusPoller();
   triage.stopResumeScheduler();
 }
