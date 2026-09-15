@@ -283,14 +283,21 @@ function credentialTarget(input: HookInput, root: string | null): string | null 
  * token can call Wanigan's tools as it. Neither is ever a repository's own
  * work, which is why this is refused at every trust level, Trusted included.
  *
- * The same two paths are what the sandbox block denies to shell commands when
+ * `statusline` is the third. The status line relay (the observed-telemetry
+ * change) writes a curl config per session there, and each one carries that
+ * session's hook bearer in its headers. It is named here before that change
+ * lands, because denying a folder that does not exist yet costs nothing, and a
+ * deny list that learns about a new token folder only after it ships is a
+ * window in which every session can read every other's.
+ *
+ * The same paths are what the sandbox block denies to shell commands when
  * sandboxing is on (sandbox-policy.ts). This gate covers the file tools and a
  * shell command that names the path; the sandbox covers the command that does
  * not name it.
  */
 export function waniganCredentialDirs(): string[] {
   const root = dataDir();
-  return [path.join(root, 'hooks'), path.join(root, 'mcp')];
+  return [path.join(root, 'hooks'), path.join(root, 'mcp'), path.join(root, 'statusline')];
 }
 
 function waniganCredentialTarget(input: HookInput, root: string | null): string | null {

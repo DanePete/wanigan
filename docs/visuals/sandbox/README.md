@@ -10,7 +10,10 @@ call Wanigan's tools as that session.
 **The policy gate refuses it at every trust level.** A read, a search or a
 shell command that names `hooks/` or `mcp/` under the data directory is denied,
 including through a symlink, and the denial is recorded. It sits above trust,
-like the halt, so Trusted's copy now names this one exception.
+like the halt, so Trusted's copy now names this one exception. `statusline/` is
+refused too. The observed-telemetry change writes a curl config per session
+there, holding that session's hook bearer, and the folder is on the list before
+that change lands rather than after.
 
 **Claude Code's sandbox, by trust level, off by default.** Settings › Projects
 & safety offers Off, Below Trusted, or Always. When it applies, the session's
