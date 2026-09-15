@@ -33,6 +33,14 @@
  */
 export type DepsMode = 'link' | 'clone' | 'skip';
 
+/**
+ * The variables Wanigan gives a worktree's setup, teardown and agent. An agent
+ * launched outside a worktree must not inherit them either: a Wanigan started
+ * from inside a worktree session would otherwise hand that session's port
+ * block to every agent it launched, as if the ports were theirs.
+ */
+export const WORKTREE_ENV_NAMES: readonly string[] = ['WANIGAN_PORT', 'WANIGAN_PORT_COUNT', 'WANIGAN_WORKTREE', 'WANIGAN_REPO_ROOT'];
+
 export const DEPS_MODES: readonly DepsMode[] = ['link', 'clone', 'skip'];
 
 export const DEFAULT_DEPS_MODE: DepsMode = 'link';

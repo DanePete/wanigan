@@ -21,7 +21,8 @@ import * as accounts from './accounts';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
-import { createWorktree, removeWorktree, repoRootFor, worktreeStatus } from './worktrees';
+import { createWorktree, removeWorktree, repoRootFor, worktreeLaunchEnv, worktreeStatus } from './worktrees';
+import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
 import { trustFor } from './policy';
 import { slots } from './queue';
 import { budgetBreached } from './spend';
@@ -242,12 +243,13 @@ export function stripAmbientAnthropicCredentials(
  */
 function agentEnv(
   PATH: string, sessionId: string, providerEnv: Record<string, string> = {},
-  accountEnv: Record<string, string> = {},
+  accountEnv: Record<string, string> = {}, worktreeEnv: Record<string, string> = {},
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     if (STRIPPED_ENV.includes(k)) continue;
+    if (WORKTREE_ENV_NAMES.includes(k)) continue;
     // A Wanigan window can itself be launched from a Codex session (for
     // example, from the editor extension).  Those markers identify the
     // *parent* writer.  Passing them to a child makes Codex try to attach to
@@ -277,6 +279,9 @@ function agentEnv(
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
   Object.assign(out, accountEnv);
+  // The worktree's own port block and path, after the pack for the same reason
+  // as the account: a manifest must not be able to name them.
+  Object.assign(out, worktreeEnv);
   stripAmbientAnthropicCredentials(out, providerEnv);
   return out;
 }
@@ -1078,6 +1083,14 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   }
   const cwd = worktree ?? project.path;
+  // Setup ran with the worktree's port block; the agent it was set up for gets
+  // the same one, so its dev server stays off the next worktree's ports. A
+  // block that cannot be assigned costs the agent the variables, not the launch.
+  let worktreeEnv: Record<string, string> = {};
+  if (worktree) {
+    try { worktreeEnv = await worktreeLaunchEnv(worktree); }
+    catch (error) { console.warn('[wanigan] this worktree has no port block for its agent:', error); }
+  }
   let mcpFile: string | null = null;
 
   // A launch has several filesystem side effects before the PTY exists. Keep
@@ -1393,7 +1406,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       cols: 120,
       rows: 32,
       cwd,
-      env: agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account)),
+      env: agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account), worktreeEnv),
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);

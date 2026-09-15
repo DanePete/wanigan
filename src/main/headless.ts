@@ -8,7 +8,8 @@ import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
 import { flags, learningSettings } from './settings';
-import { createWorktree, removeWorktree } from './worktrees';
+import { createWorktree, removeWorktree, worktreeLaunchEnv } from './worktrees';
+import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
@@ -178,11 +179,13 @@ const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
  * data and must not be able to point a run's login at a directory it chose. */
 export function headlessEnv(
   PATH: string, providerEnv: Record<string, string> = {}, accountEnv: Record<string, string> = {},
+  worktreeEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     if (STRIPPED_ENV.includes(k)) continue;
+    if (WORKTREE_ENV_NAMES.includes(k)) continue;
     // Same reason attended sessions strip these (sessions.ts): a CODEX_* marker
     // inherited from a parent writer makes the child attach to that session
     // instead of doing the run it was launched for. CODEX_HOME is deliberately
@@ -194,6 +197,7 @@ export function headlessEnv(
   out.PATH = PATH;
   Object.assign(out, providerEnv);
   Object.assign(out, accountEnv);
+  Object.assign(out, worktreeEnv);
   // The same strip an attended launch applies, and this path needed it more.
   // It copies process.env wholesale, so a fan-out on any profile that redirects
   // ANTHROPIC_BASE_URL — the built-in GLM and DeepSeek profiles among them —
@@ -932,6 +936,13 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     );
     return;
   }
+  // The same port block and path the worktree's setup was given, for the agent
+  // and whatever it starts. Missing them costs the variables, not the run.
+  let worktreeEnv: Record<string, string> = {};
+  if (worktree) {
+    try { worktreeEnv = await worktreeLaunchEnv(worktree); }
+    catch (error) { console.warn('[wanigan] this worktree has no port block for its run:', error); }
+  }
 
   // Two sessions can share a repo, and a non-isolated run starts in whatever
   // state the developer left it. Without this shot of the tree beforehand,
@@ -1093,7 +1104,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       harness: def.harness, projectId,
       appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
     }).account;
-    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account));
+    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account), worktreeEnv);
     args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule);
   } catch (error) {
     releaseHooks();

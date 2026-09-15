@@ -242,6 +242,32 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
       && launchEnv.WANIGAN_WORKTREE === sw.path && setupRun?.env?.WANIGAN_PORT === launchEnv.WANIGAN_PORT,
     'the launch environment names the same port block and worktree the setup was given', { launchEnv, env: setupRun?.env });
 
+    // The agent's environment, not only the function that would build it. A
+    // pack's WANIGAN_PORT, or one inherited from a Wanigan started inside a
+    // worktree session, would tell an agent a port block that is not its own.
+    const { __test: sessionsTest } = await import('./sessions');
+    const { headlessEnv } = await import('./headless');
+    const inheritedPort = process.env.WANIGAN_PORT;
+    process.env.WANIGAN_PORT = '1';
+    try {
+      const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const outside = sessionsTest.agentEnv('/usr/bin', 's_wtboot_outside');
+      const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const headlessOutside = headlessEnv('/usr/bin');
+      check(attended.WANIGAN_PORT === launchEnv.WANIGAN_PORT && attended.WANIGAN_PORT_COUNT === launchEnv.WANIGAN_PORT_COUNT
+        && attended.WANIGAN_WORKTREE === sw.path && headless.WANIGAN_PORT === launchEnv.WANIGAN_PORT && headless.WANIGAN_WORKTREE === sw.path
+        && outside.WANIGAN_PORT === undefined && headlessOutside.WANIGAN_PORT === undefined,
+      'an agent in a worktree, attended or headless, gets the port block and path its setup got, over anything a pack names; an agent outside a worktree inherits none',
+      { attended: attended.WANIGAN_PORT, headless: headless.WANIGAN_PORT, outside: outside.WANIGAN_PORT ?? null });
+    } finally {
+      if (inheritedPort === undefined) delete process.env.WANIGAN_PORT; else process.env.WANIGAN_PORT = inheritedPort;
+    }
+    const launchRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
+    const launchSrc = (file: string) => { try { return fs.readFileSync(path.join(launchRoot, 'src', 'main', file), 'utf8'); } catch { return ''; } };
+    check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('sessions.ts'))
+      && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('headless.ts')),
+    'both launch paths hand the worktree environment to the process they spawn, so the variables are reachable and not only buildable');
+
     const dirtyTree = await create(cmds.dir, 'kept for its files', 's_wtboot_dirty');
     fs.writeFileSync(path.join(dirtyTree.path, 'unsaved.txt'), 'agent work\n');
     const refusedRemoval = await worktrees.removeWorktree(dirtyTree.path, false);

@@ -27,8 +27,11 @@ to git. It stops at 5,000 files or 1 GB and says where it stopped.
 **A port block** — `worktreePortBlock(path)` hands out ten ports in
 42000–48999 from a hash of the canonical path, passing over a block while any of
 its ports answers on loopback or another live worktree holds it. The block is
-recorded at creation so setup, the launch and teardown see the same ten. Ports
-are a convention the agent may use; Wanigan binds and enforces nothing.
+recorded at creation so setup, the launch and teardown see the same ten. An
+attended or headless agent launched in the worktree is given `WANIGAN_PORT`,
+`WANIGAN_PORT_COUNT` and `WANIGAN_WORKTREE` after any provider pack's values,
+and an agent outside a worktree inherits none of them. Ports are a convention
+the agent may use; Wanigan binds and enforces nothing.
 
 **Setup and teardown commands** — stored in Wanigan's database, never in the
 repository, and saved through the same native consent dialog as review recipes

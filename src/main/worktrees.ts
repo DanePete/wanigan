@@ -754,8 +754,8 @@ export function worktreePortBlock(worktreePath: string): Promise<PortBlock> {
  * The environment an agent launched in a worktree is given: its port block and
  * its own path. The same convention as worktreePortBlock — the variables say
  * which ports are this worktree's to use, and Wanigan enforces none of it.
- * sessions.ts and headless.ts do not call this yet; wiring it into a launch is
- * a separate change.
+ * sessions.ts gives it to an attended agent and headless.ts to a headless run,
+ * each after its worktree is chosen, so the agent sees the block setup saw.
  */
 export async function worktreeLaunchEnv(worktreePath: string): Promise<{ WANIGAN_PORT: string; WANIGAN_PORT_COUNT: string; WANIGAN_WORKTREE: string }> {
   const abs = canon(worktreePath);
