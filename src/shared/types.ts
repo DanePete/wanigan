@@ -1165,6 +1165,13 @@ export type WorktreeInfo = {
   ahead: number | null;
   /** Gitignored paths linked back to the main checkout — vendor, node_modules, .env. */
   linked?: { path: string; kind: 'dir' | 'file'; bytes: number | null }[];
+  /**
+   * What Wanigan put in the worktree when it made it — dependency folders,
+   * .worktreeinclude copies, its port block — and the newest setup run there.
+   * Null or absent for a worktree with no such record: one made before this was
+   * recorded, or by hand.
+   */
+  bootstrap?: import('./worktree-bootstrap').WorktreeBootstrap | null;
 };
 
 /* ── P10 · headless runs ────────────────────────────────────────────── */

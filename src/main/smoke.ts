@@ -251,6 +251,8 @@ export async function runSmoke(): Promise<void> {
     await runMergeReadinessSmoke(check, say);
     const { runIssueIntakeSmoke } = await import('./smoke25');
     await runIssueIntakeSmoke(check, say);
+    const { runWorktreeBootstrapSmoke } = await import('./smoke16');
+    await runWorktreeBootstrapSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

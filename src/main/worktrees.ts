@@ -1,9 +1,21 @@
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { db, dataDir } from './db';
 import { runGit, head as headOf, repoState } from './git';
-import { listProjects } from './store';
+import { listProjects, projectById } from './store';
+import {
+  depsModeFor, latestWorktreeRun, projectForDirectory, runWorktreePhase, worktreeCommands,
+} from './worktree-setup';
 import type { WorktreeInfo } from '../shared/types';
+import {
+  DEFAULT_DEPS_MODE, INCLUDE_LIMITS, PORT_ATTEMPTS, PORT_BLOCK_SIZE, bytesText, includePatternCount,
+  isPortBlockBase, isSafeRelative, portBlockBase, runFacts, seedFromHex, summarizeRun,
+  type DepOutcome, type DepsMode, type IncludeLimits, type IncludeOutcome, type PortBlock, type WorktreeBootstrap,
+  type WorktreeCommandEnv, type WorktreeCommandRun, type WorktreeRunSummary, type WorktreeSetupConfig,
+} from '../shared/worktree-bootstrap';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -53,6 +65,11 @@ function canon(p: string): string {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** A `-z` list: NUL-terminated entries, empty ones dropped. */
+const nul = (out: string) => out.split('\0').filter((entry) => entry.length > 0);
+
 /* ── rows ────────────────────────────────────────────────────────────── */
 
 type Row = {
@@ -62,6 +79,9 @@ type Row = {
   session_id: string | null;
   created_at: number;
   removed_at: number | null;
+  project_id: string | null;
+  port_base: number | null;
+  bootstrap_json: string | null;
 };
 
 function rowFor(p: string): Row | undefined {
@@ -250,17 +270,21 @@ function shortId(sessionId: string): string {
    That failure names the missing file, never the missing directory, so it
    reads as a broken hook rather than a broken checkout.
 
-   So the ignored heavyweights are linked back to the source repo. Sharing them
-   is what people already do by hand with worktrees: they are generated or
-   machine-local, not the work under review, and a copy of 258 MB per session
-   is its own bug.
+   So the ignored heavyweights are put back, in the way the project chose (see
+   DepsMode in shared/worktree-bootstrap.ts). Linking them to the source repo
+   is the default and what people already do by hand with worktrees: they are
+   generated or machine-local, not the work under review, and a full copy of
+   258 MB per session is its own bug. A link is also shared, so a project whose
+   agents install packages can clone instead — copy-on-write, so the copy costs
+   no disk until something writes — or skip them and install in setup.
 
-   The small files are copied rather than linked. A symlink is not a copy: an
-   agent that writes .env inside its isolated worktree writes straight through
-   to the user's real checkout, which is the one thing the isolation is there to
-   stop. They are kilobytes, they are read far more often than written, and a
-   copy that has gone stale is a local problem the operator can see — a
-   write-through into the main checkout is neither.
+   The small files are copied rather than linked, whatever the choice. A
+   symlink is not a copy: an agent that writes .env inside its isolated
+   worktree writes straight through to the user's real checkout, which is the
+   one thing the isolation is there to stop. They are kilobytes, they are read
+   far more often than written, and a copy that has gone stale is a local
+   problem the operator can see — a write-through into the main checkout is
+   neither.
    ──────────────────────────────────────────────────────────────────────── */
 
 const LINK_DIRS = [
@@ -280,38 +304,502 @@ async function isIgnored(repoRoot: string, rel: string): Promise<boolean> {
   return r.ok;
 }
 
-async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<LinkedPath[]> {
-  const linked: LinkedPath[] = [];
-  const consider = [
-    ...LINK_DIRS.map((p) => ({ rel: p, kind: 'dir' as const })),
-    ...COPY_FILES.map((p) => ({ rel: p, kind: 'file' as const })),
-  ];
-  for (const { rel, kind } of consider) {
-    const src = path.join(repoRoot, rel);
-    const dst = path.join(worktree, rel);
+/** The first line of the block Wanigan keeps in a repository's local exclude file. */
+const EXCLUDE_HEADER = '# Wanigan links these dependency folders into agent worktrees. A symlink does not match a pattern ending in /.';
+
+/**
+ * Make git ignore a dependency link in every worktree of this repository.
+ *
+ * The link is to a folder the main checkout ignores, usually through a rule
+ * like `node_modules/`. A pattern ending in a slash matches directories only,
+ * and git does not treat a symlink as one, so every linked worktree listed the
+ * link as untracked. Wanigan's own merge and removal then counted it as
+ * uncommitted work, and an agent running `git add -A` committed a symlink to
+ * the operator's checkout into its branch.
+ *
+ * The fix is one anchored line per linked path in the repository's local
+ * exclude file, `info/exclude` under the common git directory. That file is
+ * never committed, and every worktree reads it. It changes nothing in the main
+ * checkout, where each path is only linked because git already ignores it
+ * there. Lines are only added, only once, and under a comment naming Wanigan,
+ * so the operator can see where they came from and remove them.
+ *
+ * Returns why the line could not be written, or null when git now ignores the link.
+ */
+async function excludeLink(repoRoot: string, rel: string): Promise<string | null> {
+  const common = await git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], 5000);
+  const dir = common.ok ? common.stdout.trim() : '';
+  if (!dir) return `the repository’s git directory could not be read (${gitSaid(common)})`;
+  const file = path.join(dir, 'info', 'exclude');
+  const line = `/${rel}`;
+  try {
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    const lines = text.split(/\r?\n/);
+    if (lines.includes(line)) return null;
+    const lead = text && !text.endsWith('\n') ? '\n' : '';
+    const header = lines.includes(EXCLUDE_HEADER) ? '' : `${text ? '\n' : ''}${EXCLUDE_HEADER}\n`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${lead}${header}${line}\n`);
+    return null;
+  } catch (e) {
+    return `the line could not be added to ${file} (${message(e)})`;
+  }
+}
+
+/**
+ * Whether writing `dst` stays inside `root` (already canonical), judged from
+ * the nearest ancestor that exists: every directory below it will be made
+ * fresh, and a directory made fresh cannot be a link. A worktree checks out the
+ * repository's tracked symlinks, so a tracked `config -> /elsewhere` would
+ * otherwise carry a copy, a clone or a new link straight through to wherever it
+ * points — and so would node_modules itself once it is linked to the main
+ * checkout.
+ */
+function landsInside(dst: string, root: string): boolean {
+  let dir = path.dirname(dst);
+  for (;;) {
     try {
-      const st = fs.statSync(src);
-      if (kind === 'dir' ? !st.isDirectory() : !st.isFile()) continue;
-    } catch { continue; }
+      const real = fs.realpathSync(dir);
+      return real === root || real.startsWith(root + path.sep);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return false;
+      const up = path.dirname(dir);
+      if (up === dir) return false;
+      dir = up;
+    }
+  }
+}
+
+/**
+ * Whether a copy from one directory into another can be an APFS clone.
+ *
+ * Asked before `cp -c` runs, because cp will not say. Its manual: where the
+ * two are on different filesystems or the target cannot clone, "cp will
+ * fallback to using copyfile(2) instead to ensure the copy still succeeds" — a
+ * scratch test here watched it exit 0 after a full copy onto a second volume.
+ * A "clone" of a 2 GB node_modules that silently took 2 GB is the thing this
+ * choice exists to avoid. So two facts the filesystem will state: both paths on
+ * one device, and that device formatted like the boot volume, which has been
+ * APFS since macOS 10.15 (statfs type 26 on the machine this was written on;
+ * a mounted HFS+ image reported 25, and an APFS image a different device).
+ * Node's COPYFILE_FICLONE_FORCE would be the direct question, but libuv
+ * answers it with ENOSYS on macOS whatever the volume.
+ */
+function cloneable(from: string, to: string): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    return fs.statSync(from).dev === fs.statSync(to).dev && fs.statfsSync(from).type === fs.statfsSync('/').type;
+  } catch {
+    return false;
+  }
+}
+
+/** Measured at about 15 seconds for 80,000 small files on APFS; five minutes is a tree a clone was never going to suit. */
+const CLONE_TIMEOUT_MS = 5 * 60_000;
+
+/** `cp -c -R`, as argv: a directory name may contain anything a shell would act on. */
+function cloneTree(src: string, dst: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  return new Promise((resolve) => {
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let killer: NodeJS.Timeout | null = null;
+    const child = spawn('/bin/cp', ['-c', '-R', src, dst], { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr?.on('data', (b: Buffer) => { if (stderr.length < 8_192) stderr += b.toString(); });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      killer = setTimeout(() => child.kill('SIGKILL'), 5_000);
+    }, CLONE_TIMEOUT_MS);
+    const finish = (value: { ok: true } | { ok: false; reason: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killer) clearTimeout(killer);
+      resolve(value);
+    };
+    child.once('error', (e) => finish({ ok: false, reason: `cp could not be started (${e.message})` }));
+    child.once('close', (code, signal) => {
+      if (timedOut) finish({ ok: false, reason: `cp -c was still cloning after ${CLONE_TIMEOUT_MS / 60_000} minutes and was stopped` });
+      else if (code === 0) finish({ ok: true });
+      else {
+        const last = stderr.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+        finish({ ok: false, reason: `cp -c ${code === null ? `was stopped by ${signal ?? 'a signal'}` : `exited ${code}`}${last ? ` (${last})` : ''}` });
+      }
+    });
+  });
+}
+
+/**
+ * Puts the gitignored dependency folders and small config files a new
+ * worktree lacks into it, the folders in the project's chosen way.
+ *
+ * A clone that fails falls back to a link rather than to nothing: a worktree
+ * whose agent cannot autoload is the failure this section opened with, and a
+ * link is the behaviour the project had before it chose to clone. The reason
+ * is kept on the outcome, because a link where a clone was asked for is
+ * exactly the sharing the operator chose to avoid, and they need to know it
+ * happened. A half-made clone is removed first; if it cannot be, nothing is
+ * linked over it and the folder is reported missing.
+ */
+async function placeDependencies(repoRoot: string, worktree: string, mode: DepsMode): Promise<{ linked: LinkedPath[]; deps: DepOutcome[] }> {
+  const linked: LinkedPath[] = [];
+  const deps: DepOutcome[] = [];
+  const inside = canon(worktree);
+
+  for (const rel of LINK_DIRS) {
+    const src = path.join(repoRoot, rel);
+    const dst = path.join(inside, rel);
+    try { if (!fs.statSync(src).isDirectory()) continue; } catch { continue; }
     if (fs.existsSync(dst)) continue;
     if (!(await isIgnored(repoRoot, rel))) continue;
+    const record = (result: DepOutcome['result'], detail: string | null = null, durationMs: number | null = null) =>
+      deps.push({ path: rel, requested: mode, result, detail, durationMs });
+
+    if (mode === 'skip') { record('skipped'); continue; }
+    if (!landsInside(dst, inside)) {
+      record('failed', 'its place in the worktree is reached through a link that leads outside the worktree');
+      continue;
+    }
+    try { fs.mkdirSync(path.dirname(dst), { recursive: true }); } catch (e) {
+      record('failed', `its parent folder could not be made (${message(e)})`);
+      continue;
+    }
+
+    let fallback: string | null = null;
+    if (mode === 'clone') {
+      if (process.platform !== 'darwin') {
+        fallback = 'copy-on-write clones use macOS cp -c, and this is not macOS';
+      } else if (!cloneable(src, inside)) {
+        fallback = 'it is not on the same APFS volume as the worktree, so cp -c would have made a full copy rather than a clone';
+      } else {
+        const started = Date.now();
+        const cloned = await cloneTree(src, dst);
+        if (cloned.ok) { record('cloned', null, Date.now() - started); continue; }
+        fallback = cloned.reason;
+        try { fs.rmSync(dst, { recursive: true, force: true }); } catch (e) {
+          record('failed', `${fallback}, and the partial clone could not be removed (${message(e)})`);
+          continue;
+        }
+      }
+    }
+    try {
+      fs.symlinkSync(src, dst, 'dir');
+      linked.push({ path: rel, kind: 'dir', bytes: null });
+      const unexcluded = await excludeLink(repoRoot, rel);
+      record('linked', [fallback, unexcluded && `git will list the link as untracked because ${unexcluded}`].filter(Boolean).join('; ') || null);
+    } catch (e) {
+      record('failed', `${fallback ? `${fallback}, and ` : ''}the link could not be made (${message(e)})`);
+    }
+  }
+
+  for (const rel of COPY_FILES) {
+    const src = path.join(repoRoot, rel);
+    const dst = path.join(inside, rel);
+    try { if (!fs.statSync(src).isFile()) continue; } catch { continue; }
+    if (fs.existsSync(dst)) continue;
+    if (!(await isIgnored(repoRoot, rel))) continue;
+    if (!landsInside(dst, inside)) continue;
     try {
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      if (kind === 'dir') {
-        fs.symlinkSync(src, dst, 'dir');
-      } else {
-        // EXCL rather than the existsSync above alone: the copy must never
-        // overwrite something already sitting in the worktree. copyFileSync
-        // creates the destination from the source's mode, so a 0600 auth.json
-        // never widens on the way in.
-        fs.copyFileSync(src, dst, fs.constants.COPYFILE_EXCL);
-      }
+      // EXCL rather than the existsSync above alone: the copy must never
+      // overwrite something already sitting in the worktree. copyFileSync
+      // creates the destination from the source's mode, so a 0600 auth.json
+      // never widens on the way in.
+      fs.copyFileSync(src, dst, fs.constants.COPYFILE_EXCL);
       let bytes: number | null = null;
-      try { bytes = kind === 'file' ? fs.statSync(src).size : null; } catch { /* size is a nicety */ }
-      linked.push({ path: rel, kind, bytes });
-    } catch { /* a link we cannot make is not worth failing the worktree over */ }
+      try { bytes = fs.statSync(src).size; } catch { /* size is a nicety */ }
+      linked.push({ path: rel, kind: 'file', bytes });
+    } catch { /* a copy we cannot make is not worth failing the worktree over */ }
   }
-  return linked;
+  return { linked, deps };
+}
+
+/* ── .worktreeinclude ────────────────────────────────────────────────── */
+
+const INCLUDE_FILE = '.worktreeinclude';
+/** A pattern file is a few lines. One larger than this is not a pattern file anybody meant. */
+const INCLUDE_FILE_MAX_BYTES = 64 * 1024;
+/** Paths per check-ignore call, so one failing call leaves the rest countable as unexamined. */
+const CHECK_CHUNK = 500;
+/**
+ * git with the repository's filesystem monitor off. collisions.ts gives the
+ * reason: core.fsmonitor is a command git runs, an agent can write repository
+ * config, and a question asked on the operator's behalf must not execute it.
+ */
+const QUIET = ['-c', 'core.fsmonitor=false'];
+
+type IncludeFile = { state: 'absent' } | { state: 'unreadable'; detail: string } | { state: 'present'; file: string; patterns: number };
+
+/** The repository root's `.worktreeinclude`. A symlinked one is followed: it only chooses among files already inside the repository. */
+function readIncludeFile(repoRoot: string): IncludeFile {
+  const file = path.join(repoRoot, INCLUDE_FILE);
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(file);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? { state: 'absent' } : { state: 'unreadable', detail: `it could not be read (${message(e)})` };
+  }
+  if (!st.isFile()) return { state: 'unreadable', detail: 'it is not a regular file' };
+  if (st.size > INCLUDE_FILE_MAX_BYTES) {
+    return { state: 'unreadable', detail: `it is ${bytesText(st.size)}, past the ${bytesText(INCLUDE_FILE_MAX_BYTES)} a pattern file may be` };
+  }
+  try {
+    return { state: 'present', file, patterns: includePatternCount(fs.readFileSync(file, 'utf8')) };
+  } catch (e) {
+    return { state: 'unreadable', detail: `it could not be read (${message(e)})` };
+  }
+}
+
+function gitLast(r: { err: string; killed: boolean }): string {
+  if (r.killed) return 'git timed out';
+  return r.err.split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? 'no output';
+}
+
+/**
+ * Copies into a new worktree every file that matches a pattern in the
+ * repository root's `.worktreeinclude` AND is ignored by git.
+ *
+ * That is Claude Code's rule (code.claude.com/docs/en/worktrees), kept because
+ * the file is its convention and one repository's include file should mean one
+ * thing in both tools. Both conditions are what make it safe: a tracked file is
+ * already in the checkout, and an untracked file git does not ignore is
+ * somebody's work in progress.
+ *
+ * git answers both halves, so the matching is git's own gitignore
+ * implementation — negation, anchoring, `**`, core.ignorecase — rather than a
+ * second one written here. `ls-files --others --ignored --exclude-from` lists
+ * the untracked files the patterns match, and a tracked file cannot appear in
+ * it; `check-ignore` keeps those the repository's own ignore rules cover, and
+ * never reports a tracked path either. One difference from Claude Code
+ * 2.1.271, read out of its shipped source: it looks inside an ignored directory
+ * only when a pattern names that directory, so its `*.pem` finds a key at the
+ * top level and not one under node_modules/. git, asked directly, finds both;
+ * the listing took 0.4 seconds over 80,000 ignored files.
+ *
+ * Each copy is a clone where the volume allows (COPYFILE_FICLONE falls back to
+ * a real copy), is never made over anything already in the worktree
+ * (COPYFILE_EXCL), never follows a symlink, and never lands through a link
+ * that leaves the worktree. The limits stop the copy rather than trim it
+ * quietly, and the outcome says where it stopped and how much it did not look
+ * at. `limits` is a parameter for the smoke suite.
+ */
+export async function copyWorktreeIncludes(repoRoot: string, worktree: string, limits: IncludeLimits = INCLUDE_LIMITS): Promise<IncludeOutcome> {
+  const include = readIncludeFile(repoRoot);
+  if (include.state !== 'present') return include;
+  const inside = canon(worktree);
+  const out: Extract<IncludeOutcome, { state: 'read' }> = {
+    state: 'read', patterns: include.patterns, copied: 0, bytes: 0, present: 0, notIgnored: 0, symlinks: 0,
+    outside: 0, failed: 0, failure: null, stopped: null, cloneable: cloneable(repoRoot, inside),
+  };
+  if (!include.patterns) return out;
+
+  const listed = await runGit(repoRoot, [...QUIET, 'ls-files', '-z', '--others', '--ignored', `--exclude-from=${include.file}`],
+    { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 });
+  if (!listed.ok) return { state: 'unreadable', detail: `git could not list what it matches (${gitLast(listed)})` };
+
+  const fail = (why: string) => { out.failed++; out.failure ??= why; };
+  const entries = [...new Set(nul(listed.out))].sort();
+  // A directory entry is a nested repository git would not look inside. The
+  // patterns chose it, so it is counted rather than dropped without a word.
+  for (const dir of entries.filter((e) => e.endsWith('/'))) fail(`${dir} is a separate git repository, and only files are copied`);
+  const candidates = entries.filter((e) => !e.endsWith('/'));
+
+  let examined = 0;
+  chunks: for (let i = 0; i < candidates.length; i += CHECK_CHUNK) {
+    const chunk = candidates.slice(i, i + CHECK_CHUNK);
+    // Paths on stdin, NUL-terminated both ways: `-z` is fatal without
+    // `--stdin`, and the argv form C-quotes a name holding a quote, backslash
+    // or newline, which would then never match the set below and be counted as
+    // not ignored. No --literal-pathspecs: check-ignore refuses that magic
+    // outright (checked against git 2.50), which failed every call. What that
+    // costs is conservative — a name with glob characters that also matches a
+    // tracked path is answered as tracked, so it is left out, never copied.
+    const asked = await runGit(repoRoot, [...QUIET, 'check-ignore', '--stdin', '-z'],
+      { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, input: chunk.map((rel) => `${rel}\0`).join('') });
+    // Exit 1 is git answering "none of these is ignored", not failing.
+    if (!asked.ok && asked.code !== 1) {
+      out.failure ??= `git check-ignore failed (${gitLast(asked)})`;
+      out.stopped = { by: 'git', limit: null, unexamined: candidates.length - examined };
+      break;
+    }
+    const ignored = new Set(asked.ok ? nul(asked.out) : []);
+    for (const rel of chunk) {
+      if (!ignored.has(rel)) { out.notIgnored++; examined++; continue; }
+      if (out.copied >= limits.files) {
+        out.stopped = { by: 'files', limit: limits.files, unexamined: candidates.length - examined };
+        break chunks;
+      }
+      if (!isSafeRelative(rel)) { fail(`git listed ${rel}, which is not a path inside the repository`); examined++; continue; }
+      const src = path.join(repoRoot, rel);
+      const dst = path.join(inside, rel);
+      let st: fs.Stats;
+      try { st = fs.lstatSync(src); } catch (e) { fail(message(e)); examined++; continue; }
+      if (st.isSymbolicLink()) { out.symlinks++; examined++; continue; }
+      if (!st.isFile()) { fail(`${rel} is not a regular file`); examined++; continue; }
+      if (out.bytes + st.size > limits.bytes) {
+        out.stopped = { by: 'bytes', limit: limits.bytes, unexamined: candidates.length - examined };
+        break chunks;
+      }
+      if (!landsInside(dst, inside)) { out.outside++; examined++; continue; }
+      try {
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.copyFileSync(src, dst, fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE);
+        out.copied++;
+        out.bytes += st.size;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') out.present++;
+        else fail(message(e));
+      }
+      examined++;
+    }
+  }
+  return out;
+}
+
+/* ── ports ───────────────────────────────────────────────────────────── */
+
+/** Long enough for loopback to answer under load; a refused connection on loopback arrives in well under a millisecond. */
+const PROBE_TIMEOUT_MS = 400;
+
+/**
+ * Whether anything accepts a connection at host:port. A probe that hears
+ * nothing in time counts as taken: silence is not proof the port is free.
+ * Refused is the free answer, and so is an address family this machine has no
+ * loopback for, which cannot be holding a port.
+ */
+function answers(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const socket = net.connect({ port, host });
+    const done = (taken: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(taken);
+    };
+    socket.setTimeout(PROBE_TIMEOUT_MS, () => done(true));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+async function blockAnswers(base: number): Promise<boolean> {
+  const probes: Promise<boolean>[] = [];
+  for (let port = base; port < base + PORT_BLOCK_SIZE; port++) {
+    probes.push(answers(port, '127.0.0.1'), answers(port, '::1'));
+  }
+  return (await Promise.all(probes)).some(Boolean);
+}
+
+async function assignPortBlock(abs: string): Promise<PortBlock> {
+  const row = db().prepare('SELECT port_base FROM worktrees WHERE path = ? AND removed_at IS NULL').get(abs) as
+    { port_base: number | null } | undefined;
+  if (row && isPortBlockBase(row.port_base)) {
+    return { base: row.port_base, count: PORT_BLOCK_SIZE, state: 'recorded', skipped: 0 };
+  }
+  const held = new Set((db().prepare('SELECT port_base FROM worktrees WHERE removed_at IS NULL AND port_base IS NOT NULL AND path != ?')
+    .all(abs) as { port_base: number }[]).map((r) => r.port_base));
+  const seed = seedFromHex(createHash('sha256').update(abs).digest('hex'));
+  let block: PortBlock | null = null;
+  for (let attempt = 0; attempt < PORT_ATTEMPTS && !block; attempt++) {
+    const base = portBlockBase(seed, attempt);
+    if (held.has(base) || await blockAnswers(base)) continue;
+    block = { base, count: PORT_BLOCK_SIZE, state: 'free', skipped: attempt };
+  }
+  block ??= { base: portBlockBase(seed), count: PORT_BLOCK_SIZE, state: 'busy', skipped: PORT_ATTEMPTS };
+  if (row) db().prepare('UPDATE worktrees SET port_base = ? WHERE path = ? AND removed_at IS NULL').run(block.base, abs);
+  return block;
+}
+
+/** One assignment at a time, so two worktrees made together cannot both take the block neither has recorded yet. */
+let portChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Ten loopback ports a worktree can call its own.
+ *
+ * The ports are a convention the agent may use, not something Wanigan
+ * enforces. Nothing is bound, held or firewalled: an agent that ignores the
+ * variables can still take 3000, and any process on the machine can still take
+ * one of these. What the block buys is that two agents who both honour it do
+ * not start their dev servers on the same port — the collision Conductor's
+ * ten-port block and worktrunk's hash_port exist for.
+ *
+ * The base is 42000–48999 in steps of ten, from a SHA-256 of the canonical
+ * path, so a resumed session in the same worktree gets the ports it had. A
+ * block is skipped while any of its ports answers on loopback — 127.0.0.1, and
+ * ::1 as well, because Node resolves `localhost` to ::1 first and a dev server
+ * started on it is invisible to an IPv4 probe — or while another live worktree
+ * Wanigan made holds it, which covers two agents whose servers have not started
+ * yet. After PORT_ATTEMPTS blocks it stops and hands out the path's own block,
+ * marked busy.
+ *
+ * A worktree Wanigan made keeps its block on its row, and gets it back from
+ * there unprobed: setup, the launch and teardown must all see the same ports,
+ * and by teardown the worktree's own server may be the thing listening. A path
+ * with no row is computed every time and recorded nowhere.
+ */
+export function worktreePortBlock(worktreePath: string): Promise<PortBlock> {
+  const next = portChain.then(() => assignPortBlock(canon(worktreePath)));
+  portChain = next.catch(() => undefined);
+  return next;
+}
+
+/**
+ * The environment an agent launched in a worktree is given: its port block and
+ * its own path. The same convention as worktreePortBlock — the variables say
+ * which ports are this worktree's to use, and Wanigan enforces none of it.
+ * sessions.ts gives it to an attended agent and headless.ts to a headless run,
+ * each after its worktree is chosen, so the agent sees the block setup saw.
+ */
+export async function worktreeLaunchEnv(worktreePath: string): Promise<{ WANIGAN_PORT: string; WANIGAN_PORT_COUNT: string; WANIGAN_WORKTREE: string }> {
+  const abs = canon(worktreePath);
+  const block = await worktreePortBlock(abs);
+  return { WANIGAN_PORT: String(block.base), WANIGAN_PORT_COUNT: String(block.count), WANIGAN_WORKTREE: abs };
+}
+
+/** What setup and teardown are given: the launch variables plus the repository they came from. */
+function commandEnv(worktree: string, repoRoot: string, block: PortBlock): WorktreeCommandEnv {
+  return {
+    WANIGAN_WORKTREE: worktree, WANIGAN_REPO_ROOT: repoRoot,
+    WANIGAN_PORT: String(block.base), WANIGAN_PORT_COUNT: String(block.count),
+  };
+}
+
+/* ── the project's settings, for the Git view ────────────────────────── */
+
+export async function worktreeSetupConfig(projectId: unknown): Promise<WorktreeSetupConfig> {
+  const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+  if (!project) throw new Error('Project not found.');
+  const commands = worktreeCommands(project.id);
+  const root = await repoRootFor(project.path);
+  const file: IncludeFile = root ? readIncludeFile(root) : { state: 'absent' };
+  return {
+    projectId: project.id, depsMode: depsModeFor(project.id),
+    setup: commands.setup, teardown: commands.teardown, updatedAt: commands.updatedAt,
+    include: file.state === 'present' ? { state: 'present', patterns: file.patterns } : file,
+  };
+}
+
+/**
+ * What creation recorded for a worktree, with its newest setup run read fresh.
+ * Null for a worktree made before any of this was recorded, or by someone
+ * else: there is nothing to say about it, which is not the same as a setup that
+ * ran and said nothing.
+ */
+function bootstrapFor(abs: string): WorktreeBootstrap | null {
+  const row = db().prepare('SELECT bootstrap_json FROM worktrees WHERE path = ? AND removed_at IS NULL').get(abs) as
+    { bootstrap_json: string | null } | undefined;
+  if (!row?.bootstrap_json) return null;
+  let stored: Omit<WorktreeBootstrap, 'setup'>;
+  try { stored = JSON.parse(row.bootstrap_json) as Omit<WorktreeBootstrap, 'setup'>; } catch { return null; }
+  const setup = latestWorktreeRun(abs, 'setup');
+  return { ...stored, setup: setup ? summarizeRun(setup) : null };
 }
 
 export async function createWorktree(repoRoot: string, label: string, sessionId: string): Promise<WorktreeInfo> {
@@ -384,35 +872,79 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
 
   const abs = canon(dir);
   const now = Date.now();
+  // The project is found from the directory the caller named, since callers
+  // pass a path, and kept on the row so teardown finds the same commands.
+  const project = projectForDirectory(repoRoot, root);
+  // A path can come back: the same stem after an earlier worktree was
+  // removed. Its old port block and bootstrap record belong to a checkout that
+  // no longer exists, so they are cleared rather than inherited.
   db().prepare(`
-    INSERT INTO worktrees (path, repo_root, branch, session_id, created_at, removed_at)
-    VALUES (?,?,?,?,?,NULL)
+    INSERT INTO worktrees (path, repo_root, branch, session_id, created_at, removed_at, project_id)
+    VALUES (?,?,?,?,?,NULL,?)
     ON CONFLICT(path) DO UPDATE SET
       repo_root = excluded.repo_root, branch = excluded.branch,
-      session_id = excluded.session_id, created_at = excluded.created_at, removed_at = NULL
-  `).run(abs, root, branch, sessionId, now);
+      session_id = excluded.session_id, created_at = excluded.created_at, removed_at = NULL,
+      project_id = excluded.project_id, port_base = NULL, bootstrap_json = NULL
+  `).run(abs, root, branch, sessionId, now, project?.id ?? null);
 
-  // Link before the caller launches an agent into it: a session that starts
+  // Placed before the caller launches an agent into it: a session that starts
   // without vendor/ fails its first hook and cannot autoload, and the error it
   // prints names a file rather than the directory that is really missing.
-  const linked = await linkIgnoredDeps(root, abs);
+  const depsMode = project ? depsModeFor(project.id) : DEFAULT_DEPS_MODE;
+  const { linked, deps } = await placeDependencies(root, abs, depsMode);
   if (linked.length) {
     db().prepare('UPDATE worktrees SET linked_json = ? WHERE path = ?')
       .run(JSON.stringify(linked.map((l) => l.path)), abs);
   }
+  // An include copy that throws part-way is recorded as not used rather than
+  // failing the creation: the worktree exists by now, and a thrown error here
+  // would reach the operator as "could not create a worktree" beside one that
+  // was created.
+  let include: IncludeOutcome;
+  try { include = await copyWorktreeIncludes(root, abs); } catch (e) {
+    include = { state: 'unreadable', detail: `copying stopped on an error (${message(e)}), and what was already copied stays` };
+  }
+  const ports = await worktreePortBlock(abs);
+  const recorded: Omit<WorktreeBootstrap, 'setup'> = { depsMode, deps, include, ports: { base: ports.base, count: ports.count } };
+  // Written before setup starts, so a Git view opened during a ten-minute
+  // setup already shows what was placed, beside a setup that reads as running.
+  db().prepare('UPDATE worktrees SET bootstrap_json = ? WHERE path = ?').run(JSON.stringify(recorded), abs);
 
-  return { path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked };
+  // Setup is last, once everything it might need is in place, and its result
+  // never removes the worktree: see worktree-setup.ts. A failing command is a
+  // recorded run, not an exception. What can still throw is the recording
+  // itself — a database that refuses the row — and that is caught here for the
+  // include copy's reason: the callers would report "could not create an
+  // isolated worktree" for one that exists and that nothing would clean up.
+  let setup: WorktreeRunSummary | null = null;
+  if (project) {
+    try {
+      const run = await runWorktreePhase('setup', { projectId: project.id, worktree: abs, env: commandEnv(abs, root, ports) });
+      setup = run ? summarizeRun(run) : null;
+    } catch (e) {
+      setup = {
+        id: '', phase: 'setup', status: 'failed', startedAt: Date.now(), endedAt: null, planned: 0, ran: 0, stoppedAt: null,
+        note: `Setup could not be started or recorded (${message(e)}), so none of its commands ran`, tail: '', tailCut: false,
+      };
+    }
+  }
+
+  return {
+    path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked,
+    bootstrap: { ...recorded, setup },
+  };
 }
 
 /**
  * Repair a worktree made before linking existed, or one whose links were
- * removed. Safe to run repeatedly: an existing path is never replaced.
+ * removed. Safe to run repeatedly: an existing path is never replaced. It
+ * links whatever the project's dependency choice is — the name promises links.
  */
 export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]> {
   const row = db().prepare('SELECT repo_root FROM worktrees WHERE path = ?').get(canon(worktreePath)) as
     { repo_root: string } | undefined;
   if (!row) throw new Error(`Wanigan has no record of a worktree at ${worktreePath}.`);
-  return linkIgnoredDeps(row.repo_root, canon(worktreePath));
+  return (await placeDependencies(row.repo_root, canon(worktreePath), 'link')).linked;
 }
 
 /* ── inspect ─────────────────────────────────────────────────────────── */
@@ -488,9 +1020,12 @@ export async function listWorktrees(repoRoot: string): Promise<WorktreeInfo[]> {
     const info = await worktreeStatus(abs);
     // git still lists a worktree whose directory a user deleted by hand. Show it
     // so the UI has something to click; removeWorktree prunes it.
-    out.push(info ?? {
-      path: abs, branch: rec.branch, head: rec.head, repoRoot: root,
-      sessionId: rowFor(abs)?.session_id ?? null, dirty: 0, ahead: 0,
+    out.push({
+      ...(info ?? {
+        path: abs, branch: rec.branch, head: rec.head, repoRoot: root,
+        sessionId: rowFor(abs)?.session_id ?? null, dirty: 0, ahead: 0,
+      }),
+      bootstrap: bootstrapFor(abs),
     });
   }
   return out;
@@ -661,7 +1196,10 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     markRemoved(abs);
     const root = row?.repo_root ?? null;
     if (root && fs.existsSync(root)) await git(root, ['worktree', 'prune'], 30_000);
-    return { removed: true, detail: `Nothing on disk at ${abs}. Wanigan's record was cleared and git's worktree list pruned.` };
+    return {
+      removed: true,
+      detail: `Nothing on disk at ${abs}. Wanigan's record was cleared and git's worktree list pruned.${teardownNotRun(row)}`,
+    };
   }
 
   const found = await inspect(abs);
@@ -685,13 +1223,22 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     };
   }
 
+  // Teardown runs here: after every refusal, so a worktree that is kept is
+  // never torn down underneath its uncommitted files, and before git deletes
+  // anything, so the commands still have the directory and its port block. A
+  // failed teardown does not stop the removal. Whether to keep a worktree is
+  // the dirty check's decision, made above on what the worktree holds; a
+  // teardown that could not stop a container is recorded and said below, not
+  // turned into a checkout left on disk that exit cleanup would retry forever.
+  const teardown = await teardownBefore(abs, info.repoRoot, row);
+
   const res = await git(info.repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), abs], 5 * 60_000);
   if (!res.ok) {
     const said = gitSaid(res);
     if (/lock/i.test(said)) {
-      return { removed: false, detail: `git says this worktree is locked: ${said}. Unlock it with "git worktree unlock ${abs}" and try again. Nothing was deleted.` };
+      return { removed: false, detail: `git says this worktree is locked: ${said}. Unlock it with "git worktree unlock ${abs}" and try again. Nothing was deleted.${teardownSaid(teardown, false)}` };
     }
-    return { removed: false, detail: `git refused to remove the worktree: ${said}. Nothing was deleted.` };
+    return { removed: false, detail: `git refused to remove the worktree: ${said}. Nothing was deleted.${teardownSaid(teardown, false)}` };
   }
 
   await git(info.repoRoot, ['worktree', 'prune'], 30_000);
@@ -700,7 +1247,49 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
   const kept = info.branch
     ? ` Branch ${info.branch} is kept${info.ahead ? ` with ${plural(info.ahead, 'unmerged commit')}` : ''} — delete it yourself when you are sure.`
     : '';
-  return { removed: true, detail: `Removed the worktree at ${abs}.${kept}` };
+  return { removed: true, detail: `Removed the worktree at ${abs}.${kept}${teardownSaid(teardown, true)}` };
+}
+
+/** The project a recorded worktree was made for: the row's own, or the one its repository is registered as. */
+function projectIdFor(row: Row | undefined): string | null {
+  if (!row) return null;
+  return row.project_id ?? projectForDirectory(row.repo_root, row.repo_root)?.id ?? null;
+}
+
+/**
+ * Runs the project's teardown in a worktree about to be removed. Only for a
+ * worktree Wanigan has a row for — one it made, or adopted as an orphan — so a
+ * checkout a person made by hand never has a project's commands run in it.
+ */
+async function teardownBefore(abs: string, repoRoot: string, row: Row | undefined): Promise<WorktreeCommandRun | null> {
+  const projectId = projectIdFor(row);
+  if (!projectId) return null;
+  // Nothing to run means no port block to look up either — an adopted orphan
+  // has none recorded, and probing for one on its way out would be waste. A
+  // row that cannot be read goes on to runWorktreePhase, which records that.
+  try { if (!worktreeCommands(projectId).teardown.length) return null; } catch { /* recorded by the run */ }
+  const ports = await worktreePortBlock(abs);
+  return runWorktreePhase('teardown', { projectId, worktree: abs, env: commandEnv(abs, repoRoot, ports) });
+}
+
+function teardownSaid(run: WorktreeCommandRun | null, removed: boolean): string {
+  if (!run) return '';
+  if (run.status === 'passed') return ' Teardown ran first and passed.';
+  return ` Teardown ran first and failed (${runFacts(summarizeRun(run))}); its output is recorded under Worktree setup in Changes`
+    + `${removed ? ', and the worktree was removed anyway' : ''}.`;
+}
+
+/** Said when the directory is already gone and the project has teardown commands that therefore could not run. */
+function teardownNotRun(row: Row | undefined): string {
+  const projectId = projectIdFor(row);
+  if (!projectId) return '';
+  try {
+    return worktreeCommands(projectId).teardown.length
+      ? ' Its teardown commands were not run: there was no directory left to run them in.'
+      : '';
+  } catch {
+    return ' Wanigan could not read its teardown commands, and there was no directory left to run them in anyway.';
+  }
 }
 
 /* ── reconcile ───────────────────────────────────────────────────────── */
