@@ -7,6 +7,7 @@ import { inAgentScope } from '@shared/edit-attribution';
 import { parseUnifiedDiff } from '@shared/review-notes';
 /* ── helper sweep · P11 deps ── */
 import { attributionPhrase, installPhrase, type DepTurnAttribution } from '@shared/dependency-turns';
+import { DependencyAdvisories } from './DependencyAdvisories';
 import { ConfirmNote, Mark, Note, Segmented, type Tone } from './bits';
 import '../styles/review-work.css';
 
@@ -397,9 +398,10 @@ export function DependenciesSection({ sessionId, refreshKey, onJumpTurn }: { ses
           {deps.installs.length
             ? `Install commands recorded in this session: ${deps.installs.map((i) => `${i.command}${i.ok === false ? ` (failed${i.exitCode !== null ? `, exit ${i.exitCode}` : ''})` : ''}`).join('; ')}.`
             : deps.hooksRecorded ? 'No install command is recorded for this session.' : 'This session has no hook record, so Wanigan cannot say whether an install ran.'}
-          {' '}No registry or advisory lookup was made.
         </p>
       )}
+      {deps && <DependencyAdvisories sessionId={sessionId} refreshKey={refreshKey}
+                                     hasCandidates={deps.manifests.some((m) => !m.error && m.changes.some((c) => c.change === 'added' || c.change === 'upgraded'))} />}
     </details>
   );
 }

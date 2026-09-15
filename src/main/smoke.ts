@@ -302,6 +302,7 @@ export async function runSmoke(): Promise<void> {
     /* ── helper sweep · P11 deps ── */
     const p11 = await import('./smoke40');
     await p11.runDependencyTurnsSmoke(check, say);
+    await p11.runDependencyAdvisorySmoke(check, say);
     /* ── end helper sweep · P11 deps ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);

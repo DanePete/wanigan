@@ -138,6 +138,9 @@ import { registerP8Ipc, startP8Services, stopP8Services } from './helper-p8';
 /* ── helper sweep · P7 depth ── */
 import { recordPhoneAsks, registerDepthIpc, startDepthServices } from './depth';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P11 deps ── */
+import { registerDependencyAdvisoryIpc } from './dependency-advisories';
+/* ── end helper sweep · P11 deps ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3462,6 +3465,10 @@ function registerIpc() {
   /* ── helper sweep · P7 depth ── */
   registerDepthIpc(handle, { gitRoot });
   /* ── end helper sweep · P7 depth ── */
+  /* ── helper sweep · P11 deps ── */
+  // Advisory lookups: opt-in egress, started only by the button, hosts fixed in main.
+  registerDependencyAdvisoryIpc(handle);
+  /* ── end helper sweep · P11 deps ── */
 }
 
 /* ── helper sweep · P8 mac ── */
