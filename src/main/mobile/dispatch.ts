@@ -72,6 +72,16 @@ const actionTimes: number[] = [];
 const pairingAttempts: number[] = [];
 const housekeepingWrites: number[] = [];
 
+/**
+ * Empty the remote-action window, in a smoke run only. The phone suite spends
+ * the whole budget on purpose to prove the 429, and a later suite that drives
+ * one real commit through the route would otherwise be refused by that minute
+ * rather than by the check it exists to exercise. Inert outside WANIGAN_SMOKE.
+ */
+export function clearActionWindowForSmoke(): void {
+  if (process.env.WANIGAN_SMOKE === '1') actionTimes.length = 0;
+}
+
 /** Add one route to the table. Registering the same path and verb twice is a bug. */
 export function registerApiRoute(route: MobileApiRoute): void {
   const byMethod = routes.get(route.path) ?? new Map<string, MobileApiRoute>();

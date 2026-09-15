@@ -2483,6 +2483,8 @@ export type WaniganSettings = {
   mobileRepositoryReview: boolean;
   /** Which Claude Code sessions run shell commands in Claude Code's sandbox; see shared/sandbox-policy.ts. */
   sandboxShell: SandboxShell;
+  /** Whether the Git view's commits carry Assisted-by trailers drawn from recorded sessions. Off by default. */
+  assistedByTrailers: boolean;
   learning: LearningSettings;
 };
 
