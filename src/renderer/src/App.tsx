@@ -28,6 +28,7 @@ import Skills from './views/Skills';
 import Context from './views/Context';
 import { Icon, ago, PageHead, EmptyState, Segmented } from './components/bits';
 import { DEMO_VIEWS } from '@shared/demo';
+import { settingsDoorIn } from '@shared/settings-doors';
 import { startTerminalOutputPump } from './components/TerminalPane';
 import ErrorBoundary from './components/ErrorBoundary';
 import ShortcutSheet from './components/ShortcutSheet';
@@ -273,7 +274,9 @@ export default function App() {
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
   const [newSessionRequest, setNewSessionRequest] = useState<number | null>(null);
-  const [historyRequest, setHistoryRequest] = useState<{ sessionId: string; query: string; nonce: number } | null>(null);
+  // A null sessionId is "open history on whatever is newest": the Resume button
+  // and ⌘⇧T have no conversation in mind, a transcript hit in the palette does.
+  const [historyRequest, setHistoryRequest] = useState<{ sessionId: string | null; query: string; nonce: number } | null>(null);
   // A session handing its changed files to a new batch run.
   const [batchSeed, setBatchSeed] = useState<{ projectId: string; root: string; paths: string[] } | null>(null);
   // Which session the keyboard-less surfaces should talk to.
@@ -344,9 +347,12 @@ export default function App() {
     });
     const off = window.wanigan.on.startupChanged((state) => {
       if (mounted) setStartup(state);
+      if (mounted && state.phase === 'ready') {
+        void loadShell().catch((e) => reportError(e, { label: 'Load providers and projects', run: loadShell }));
+      }
     });
     return () => { mounted = false; off(); };
-  }, [reportError]);
+  }, [loadShell, reportError]);
 
   /** Returns the attempt so a caller can decide what a second failure means. */
   const retryStartup = useCallback((): Promise<void> => {
@@ -626,6 +632,12 @@ export default function App() {
     go('sessions');
   }, [go]);
 
+  // Opens history, never a provider: Resume inside the dialog is the launch.
+  const requestResumeSession = useCallback(() => {
+    setHistoryRequest({ sessionId: null, query: '', nonce: Date.now() });
+    go('sessions');
+  }, [go]);
+
   const consumeNewSessionRequest = useCallback(() => {
     setNewSessionRequest(null);
   }, []);
@@ -689,6 +701,7 @@ export default function App() {
       // New work should be available from every surface, not only after a
       // detour back to Sessions.
       if (bindingMatches(e, 'new-session')) { take(requestNewSession); return; }
+      if (bindingMatches(e, 'resume-session')) { take(requestResumeSession); return; }
       // Demo mode still asks first: a mistyped chord used to rewrite every
       // project name on screen and reload the window with no confirmation.
       if (bindingMatches(e, 'demo')) { take(() => setDemoPrompt({ next: !demoOn })); return; }
@@ -702,7 +715,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [demoOn, go, requestNewSession, toggleSidebar]);
+  }, [demoOn, go, requestNewSession, requestResumeSession, toggleSidebar]);
 
   // A tab strip has a finite width; the command palette does not. It is the
   // keyboard route to every surface, not a second hidden navigation system.
@@ -796,6 +809,7 @@ export default function App() {
       switch (route.kind) {
         case 'tab': go(route.tab); break;
         case 'new-session': requestNewSession(); break;
+        case 'resume-session': requestResumeSession(); break;
         // A menu item that opens a dialog must not hand focus back to a menu
         // that has already closed, which is what the palette's opener
         // restoration would otherwise try to do.
@@ -813,7 +827,7 @@ export default function App() {
       }
     });
     return () => { off(); };
-  }, [go, requestNewSession, toggleSidebar]);
+  }, [go, requestNewSession, requestResumeSession, toggleSidebar]);
 
   // A clicked notification. Main raises the window and says which session or
   // run the banner was about; until now nothing in the renderer listened, so
@@ -919,6 +933,14 @@ export default function App() {
       haystack: 'new session start agent interactive terminal',
       run: requestNewSession,
     }, {
+      key: 'action:resume-session',
+      title: 'Resume a session',
+      hint: 'Browse, search and read saved conversations, then continue one exactly',
+      meta: chordLabels(keymap, 'resume-session').glyphs,
+      group: 'Actions',
+      haystack: 'resume session history restore continue reopen past recent conversation transcript',
+      run: requestResumeSession,
+    }, {
       key: 'action:shortcuts',
       title: 'Keyboard shortcuts',
       hint: 'Every binding, grouped by where it works',
@@ -1013,7 +1035,9 @@ export default function App() {
     });
     return items;
   }, [attention, choose, go, jumpToSettings, keymap, openSession, paletteHits, paletteQuery, spaceId, projects,
-    reportError, requestNewSession, sessions, setTheme, themePreference, themeResolved]);
+    reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved]);
+
+  const errorDoor = settingsDoorIn(error?.message);
 
   return (
     <>
@@ -1023,6 +1047,14 @@ export default function App() {
     <div className="shell mission-shell workbench-shell">
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
+      {startup?.phase === 'starting' && startup.message && (
+        <section className="startup-recovery" data-phase="starting" role="status">
+          <div>
+            <strong>Wanigan is starting.</strong>
+            <span>{startup.message}</span>
+          </div>
+        </section>
+      )}
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>
@@ -1090,14 +1122,26 @@ export default function App() {
                 always-red button in permanent chrome is one you stop seeing. */}
             <HaltControl halt={halt} onChange={setHalt} />
 
-            <button className="nav-new-session" type="button" onClick={requestNewSession}
-                    aria-keyshortcuts={chordLabels(keymap, 'new-session').aria}
-                    title={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').glyphs})`}
-                    aria-label={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').spoken})`}>
-              <span className="nav-new-session-plus" aria-hidden="true">+</span>
-              <span className="nav-new-session-label">New session</span>
-              <span className="nav-shortcut" aria-hidden="true">{chordLabels(keymap, 'new-session').glyphs}</span>
-            </button>
+            {/* Start and continue are one decision — "what am I working on
+                next" — so they sit as one joined control. Resume opens history
+                to read first; it never launches on its own. */}
+            <div className="nav-session-pair" role="group" aria-label="Sessions">
+              <button className="nav-new-session" type="button" onClick={requestNewSession}
+                      aria-keyshortcuts={chordLabels(keymap, 'new-session').aria}
+                      title={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').glyphs})`}
+                      aria-label={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').spoken})`}>
+                <span className="nav-new-session-plus" aria-hidden="true">+</span>
+                <span className="nav-new-session-label">New session</span>
+                <span className="nav-shortcut" aria-hidden="true">{chordLabels(keymap, 'new-session').glyphs}</span>
+              </button>
+              <button className="nav-resume-session" type="button" onClick={requestResumeSession}
+                      aria-keyshortcuts={chordLabels(keymap, 'resume-session').aria}
+                      aria-label={`Resume a saved conversation (${chordLabels(keymap, 'resume-session').spoken})`}>
+                <Icon name="history" size={14} />
+                <span className="nav-resume-session-label">Resume</span>
+                <span className="nav-shortcut" aria-hidden="true">{chordLabels(keymap, 'resume-session').glyphs}</span>
+              </button>
+            </div>
 
             {/* One label, one shortcut, one surface. This button used to open a
                 dropdown while ⌘K — the shortcut printed on it — opened the
@@ -1204,6 +1248,7 @@ export default function App() {
                       activeId={activeSessionId} onActiveChange={focusSession}
                       newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
                       historyRequest={historyRequest} onHistoryRequestConsumed={() => setHistoryRequest(null)}
+                      onOpenSettings={jumpToSettings}
                       onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
           )}
           {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
@@ -1265,6 +1310,15 @@ export default function App() {
             {error.retry && (
               <button className="btn btn-primary" type="button" onClick={runErrorRetry} disabled={retryingError}>
                 {retryingError ? 'Retrying…' : error.retry.label}
+              </button>
+            )}
+            {/* A refusal that names a Settings section opens it. It used to be a
+                breadcrumb to follow by hand, and the session-limit one named a
+                tab that does not exist. */}
+            {errorDoor && (
+              <button className="btn btn-primary" type="button"
+                      onClick={() => { setError(null); jumpToSettings({ tab: errorDoor.tab, section: errorDoor.section }); }}>
+                {errorDoor.label}
               </button>
             )}
             {error.goTo && error.goTo !== tab && (

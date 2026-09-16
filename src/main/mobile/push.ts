@@ -82,10 +82,9 @@ async function responseSnippet(response: Response, limit = 4_096): Promise<strin
 }
 
 function pushTopicQuietly(): string {
-  // Reading the topic decrypts a credential file, which can fail on its own.
-  // This runs on the failure path of a function that is contractually not
-  // allowed to reject, so a second failure here must not become the one that
-  // aborts a hook handler.
+  // The topic is cached, but reading its configuration still reaches SQLite.
+  // A second failure here must not abort a hook handler while reporting the
+  // original delivery failure.
   try { return mobileConfig().pushTopic; } catch { return ''; }
 }
 

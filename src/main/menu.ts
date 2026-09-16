@@ -101,6 +101,10 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null, side
           label: 'New Session…', accelerator: accelerator('new-session'), registerAccelerator: false,
           click: send({ kind: 'new-session' }),
         },
+        {
+          label: 'Resume Session…', accelerator: accelerator('resume-session'), registerAccelerator: false,
+          click: send({ kind: 'resume-session' }),
+        },
         { type: 'separator' },
         {
           label: 'Find Anything…', accelerator: accelerator('palette'), registerAccelerator: false,

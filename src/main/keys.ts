@@ -2,6 +2,7 @@ import { safeStorage, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { credentialEncryptionAvailable, encryptCredential } from './credential-encryption';
 
 /**
  * The Claude Platform API key, encrypted at rest by the OS keychain.
@@ -20,10 +21,88 @@ export function hasKey(): boolean {
 }
 
 export function encryptionAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable();
+  return credentialsInitialized && storageAvailable;
 }
 
 type Creds = { key: string; workspaceId?: string };
+
+let credentialsInitialized = false;
+let storageAvailable = false;
+let initialization: Promise<void> | null = null;
+const decryptedCredentials = new Map<string, string>();
+const credentialGenerations = new Map<string, number>();
+const credentialWrites = new Map<string, Promise<void>>();
+
+/**
+ * Keychain access can wait for the OS for tens of seconds. Do that work through
+ * Electron's asynchronous encryptor once, never while a synchronous status or
+ * provider getter is answering the renderer. Existing ciphertext stays on disk
+ * unchanged, including any file the current login cannot decrypt.
+ */
+export function initializeCredentials(): Promise<void> {
+  if (initialization) return initialization;
+  initialization = (async () => {
+    try {
+      storageAvailable = await credentialEncryptionAvailable();
+      if (!storageAvailable) return;
+      const directory = app.getPath('userData');
+      let names: string[] = [];
+      try { names = fs.readdirSync(directory); } catch { /* a new profile has no credentials */ }
+      const files = [keyFile(), ...names
+        .filter((name) => /^provider-[a-z0-9-]+\.bin$/i.test(name))
+        .map((name) => path.join(directory, name))];
+      await Promise.all(files.map(async (file) => {
+        const generation = credentialGenerations.get(file) ?? 0;
+        try {
+          const encrypted = fs.readFileSync(file);
+          const { result } = await safeStorage.decryptStringAsync(encrypted);
+          if ((credentialGenerations.get(file) ?? 0) === generation) {
+            decryptedCredentials.set(file, result);
+          }
+        } catch { /* absent, unreadable or undecryptable: preserve the file */ }
+      }));
+    } catch {
+      storageAvailable = false;
+    } finally {
+      credentialsInitialized = true;
+    }
+  })();
+  return initialization;
+}
+
+/** Save requests keep their invocation order; a later Remove cancels them. */
+function storeCredential(file: string, plaintext: string, unavailable: string): Promise<void> {
+  const generation = credentialGenerations.get(file) ?? 0;
+  const previous = credentialWrites.get(file) ?? Promise.resolve();
+  const operation = previous.catch(() => {}).then(async () => {
+    await initializeCredentials();
+    if (!encryptionAvailable()) throw new Error(unavailable);
+    const assertCurrent = () => {
+      if ((credentialGenerations.get(file) ?? 0) !== generation) {
+        throw new Error('The credential was removed before this save finished. Save it again to replace it.');
+      }
+    };
+    assertCurrent();
+    const encrypted = await encryptCredential(plaintext);
+    assertCurrent();
+    writeEncryptedCredential(file, encrypted);
+    // Publish only after the flushed replacement is authoritative on disk.
+    decryptedCredentials.set(file, plaintext);
+  });
+  credentialWrites.set(file, operation);
+  const cleanup = () => {
+    if (credentialWrites.get(file) === operation) credentialWrites.delete(file);
+  };
+  void operation.then(cleanup, cleanup);
+  return operation;
+}
+
+function removeCredential(file: string): void {
+  // A failed removal must not claim success or hide a still-persisted secret.
+  fs.rmSync(file, { force: true });
+  credentialGenerations.set(file, (credentialGenerations.get(file) ?? 0) + 1);
+  decryptedCredentials.delete(file);
+}
 
 /**
  * A credential replacement must not leave a zero-byte or half-written blob if
@@ -51,11 +130,16 @@ export function writeEncryptedCredential(file: string, encrypted: Buffer): void 
 }
 
 function readCreds(): Creds | null {
-  if (!hasKey()) return null;
+  if (!credentialsInitialized) return null;
+  const raw = decryptedCredentials.get(keyFile());
+  if (!raw) return null;
   try {
-    const raw = safeStorage.decryptString(fs.readFileSync(keyFile()));
     // Older installs stored the bare key string.
-    if (raw.startsWith('{')) return JSON.parse(raw) as Creds;
+    if (raw.startsWith('{')) {
+      const creds = JSON.parse(raw) as Partial<Creds> | null;
+      if (!creds || typeof creds.key !== 'string') return null;
+      return { key: creds.key, workspaceId: typeof creds.workspaceId === 'string' ? creds.workspaceId : undefined };
+    }
     return { key: raw };
   } catch {
     return null;
@@ -88,7 +172,7 @@ export function authHeaders(key?: string, workspaceId?: string): Record<string, 
   return h;
 }
 
-export function setKey(key: string, workspaceId?: string) {
+export async function setKey(key: string, workspaceId?: string): Promise<void> {
   const trimmed = key.trim();
   if (!trimmed.startsWith('sk-ant-')) {
     throw new Error(
@@ -96,17 +180,15 @@ export function setKey(key: string, workspaceId?: string) {
       'A Claude Code OAuth token will not work here; the Batches API bills against a Platform account.'
     );
   }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('OS encryption is unavailable, so the key cannot be stored safely. Set ANTHROPIC_API_KEY instead.');
-  }
   const creds: Creds = { key: trimmed };
   const ws = workspaceId?.trim();
   if (ws) creds.workspaceId = ws;
-  writeEncryptedCredential(keyFile(), safeStorage.encryptString(JSON.stringify(creds)));
+  await storeCredential(keyFile(), JSON.stringify(creds),
+    'OS encryption is unavailable, so the key cannot be stored safely. Set ANTHROPIC_API_KEY instead.');
 }
 
 export function clearKey() {
-  try { fs.unlinkSync(keyFile()); } catch { /* already gone */ }
+  removeCredential(keyFile());
 }
 
 /** Never return the key itself to the renderer — only enough to recognise it. */
@@ -242,27 +324,20 @@ export function getProviderKey(id: string): string | null {
   // An explicit env var still wins, for CI and scripted runs.
   const fromEnv = process.env[`WANIGAN_${id.toUpperCase()}_KEY`];
   if (fromEnv) return fromEnv;
-  try {
-    return safeStorage.decryptString(fs.readFileSync(providerKeyFile(id))).trim() || null;
-  } catch {
-    return null;
-  }
+  if (!credentialsInitialized) return null;
+  return decryptedCredentials.get(providerKeyFile(id))?.trim() || null;
 }
 
-export function setProviderKey(id: string, key: string) {
+export async function setProviderKey(id: string, key: string): Promise<void> {
   const trimmed = key.trim();
   if (!trimmed) throw new Error('That key is empty.');
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error(
-      'The OS keychain is unavailable, so this key cannot be stored safely. ' +
-      'Wanigan will not write a credential to disk in plaintext.'
-    );
-  }
-  writeEncryptedCredential(providerKeyFile(id), safeStorage.encryptString(trimmed));
+  await storeCredential(providerKeyFile(id), trimmed,
+    'The OS keychain is unavailable, so this key cannot be stored safely. ' +
+    'Wanigan will not write a credential to disk in plaintext.');
 }
 
 export function clearProviderKey(id: string) {
-  try { fs.unlinkSync(providerKeyFile(id)); } catch { /* already gone */ }
+  removeCredential(providerKeyFile(id));
 }
 
 export function providerKeyFingerprint(id: string): string | null {

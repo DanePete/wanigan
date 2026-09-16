@@ -22,7 +22,7 @@ import { listProjects, addProject, removeProject, refreshBranches, projectById }
 import * as batch from './batch';
 import * as code from './code';
 import { setSetting, setTheme, setUserPreference, spendCap } from './settings';
-import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
+import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId, initializeCredentials,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
   AwakeState,
@@ -59,6 +59,7 @@ import * as spend from './spend';
 import { budgetHold } from './budget-gate';
 import * as notify from './notify';
 import * as mobile from './mobile';
+import { initializeMobileSecrets } from './mobile/secrets';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as tailnet from './tailnet';
 import { configureMobileLaunchPinSource, mobileLaunchProviders } from './mobile/launch-options';
@@ -741,6 +742,7 @@ void app.whenReady().then(async () => {
   // has to come first — reaching createWindow() would open a window nobody
   // asked for and never exit, which is what a CLI hanging looks like.
   if (isCliInvocation()) {
+    await initializeCredentials();
     const code = await runCli(process.argv);
     app.exit(code);
     return;
@@ -750,6 +752,7 @@ void app.whenReady().then(async () => {
   // local database, queue and safety limits; it is not a cloud worker and it
   // never starts an attended PTY.
   if (isDaemonInvocation()) {
+    await Promise.all([initializeCredentials(), initializeMobileSecrets()]);
     initSessions(() => null);
     await startServices();
     startPoller();
@@ -1377,10 +1380,20 @@ async function startAttendedServices(): Promise<StartupState> {
   if (attendedServicesStarted) return startupSnapshot();
   if (startupAttempt) return startupAttempt;
 
-  publishStartupState({ phase: 'starting', stage: null, message: null });
-  let stage = 'session recovery';
+  let stage = 'encrypted credentials';
+  publishStartupState({
+    phase: 'starting', stage,
+    message: 'Opening encrypted credentials. Background services will start when this finishes.',
+  });
   const attempt = (async () => {
     try {
+      // Keychain may wait for macOS or the operator. Only the async Electron
+      // APIs run here; the renderer and ordinary status reads stay usable.
+      // Do not start work that needs credentials until the cache is populated.
+      await Promise.all([initializeCredentials(), initializeMobileSecrets()]);
+      if (quitDraining || quitConfirmed) return startupSnapshot();
+      stage = 'session recovery';
+      publishStartupState({ phase: 'starting', stage, message: null });
       initSessions(liveWindow);
       setSessionExitObserver((value) => {
         // A session ending is the one event that changes the Recent list, and
@@ -1583,6 +1596,16 @@ async function copyDemoPrompt(id: unknown): Promise<void> {
 }
 
 function registerIpc() {
+  // The shell can be used while Keychain is pending, but a new agent must not
+  // run before session recovery, collectors and stop handlers are installed.
+  const needsStartedServices = new Set([
+    'sessions:create', 'sessions:recoverExactCodex', 'handover:finish',
+    'headless:start', 'attempts:start', 'companion:ask',
+    'batch:submit', 'batch:dryRun', 'batch:retry',
+    'control:start', 'control:retry', 'control:setAutopilot',
+    'interview:start', 'interview:answer', 'interview:conclude',
+    'schedule:tick', 'learning:phrase',
+  ]);
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!trustedSender(event.sender, event.senderFrame)) {
@@ -1603,6 +1626,11 @@ function registerIpc() {
         // Only the read is shared; a write from a demo window still falls to
         // the demo reader below and is refused.
         if (channel === 'keymap:get') return { ok: true, data: keymapState() };
+        if (!demo && !attendedServicesStarted && needsStartedServices.has(channel)) {
+          throw new Error(startupState.phase === 'recovery'
+            ? 'Local services are in recovery mode. Retry local services before starting work.'
+            : 'Wanigan is still opening encrypted credentials and starting local services. Try again when startup finishes.');
+        }
         const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
         if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
         return { ok: true, data };
@@ -2140,7 +2168,7 @@ function registerIpc() {
       err.needsWorkspaceId = check.needsWorkspaceId;
       throw err;
     }
-    setKey(key, workspaceId);
+    await setKey(key, workspaceId);
     return { detail: check.detail, batches: check.batches, fingerprint: keyFingerprint() };
   });
   handle('key:verify', () => verifyKey());
@@ -2189,7 +2217,7 @@ function registerIpc() {
       const verified = await verifyXaiKey(key);
       if (!verified.ok) throw new Error(verified.detail);
     }
-    setProviderKey(id, key);
+    await setProviderKey(id, key);
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
   handle('key:clearProvider', (rawId: string) => { clearProviderKey(managedProviderCredentialId(rawId)); return true; });
@@ -2738,7 +2766,7 @@ function registerIpc() {
       filters: [{ name: 'JSONL', extensions: ['jsonl'] }],
     });
     if (res.canceled || !res.filePath) return null;
-    return { path: res.filePath, rows: policy.exportLedger(res.filePath) };
+    return { path: res.filePath, rows: await policy.exportLedger(res.filePath) };
   });
 
   // ══ phase 22 · skills ═══════════════════════════════════════════════

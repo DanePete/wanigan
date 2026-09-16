@@ -209,12 +209,12 @@ export async function runAccountabilitySmoke(check: Check, say: Say): Promise<vo
       { tool_name: 'Bash', tool_input: { command: 'echo chained' } } as HookInput,
       { decision: 'ask', rule: 'smoke17.chain', reason: 'The accountability smoke writes one decision through the policy writer.' });
     const newest = db().prepare('SELECT id, prev_hash, hash FROM policy_ledger ORDER BY id DESC LIMIT 1').get() as { id: number; prev_hash: string | null; hash: string | null };
-    const live = verifyLedger();
+    const live = await verifyLedger();
     check(/^[0-9a-f]{64}$/.test(newest.hash ?? '') && /^[0-9a-f]{64}$/.test(newest.prev_hash ?? '')
       && live.firstBreak === null && live.chained > 0 && live.verifiedThrough === live.chained && live.lastVerifiedId === newest.id,
     "a decision recorded through the policy writer is chained, and the app's own ledger verifies through it", JSON.stringify({ newest, live }));
     await new Promise((resolve) => setTimeout(resolve, 700));
-    const liveSigned = verifyLedger();
+    const liveSigned = await verifyLedger();
     check(liveSigned.signature.state === 'signed' && liveSigned.signature.lastId === newest.id,
       'the head is signed shortly after that write, without the writer waiting on the key', JSON.stringify(liveSigned.signature));
 
@@ -238,12 +238,12 @@ export async function runAccountabilitySmoke(check: Check, say: Say): Promise<vo
       summary: `chained ${i}`, decision: i % 2 ? 'ask' : 'allow', rule: 'project.command', reason: `after the chain ${i}`,
     });
     const chainedIds = [0, 1, 2, 3].map((i) => appendLedgerRow(fields(i), old));
-    const fresh = verifyLedger(old);
+    const fresh = await verifyLedger(old);
     check(fresh.unchainedBefore === 2 && fresh.chained === 4 && fresh.verifiedThrough === 4 && fresh.firstBreak === null && fresh.total === 6,
       'records from before the migration are reported as before the chain began and never counted as verified, and the four written after it verify',
       JSON.stringify(fresh));
-    const signing = signLedgerHead(old);
-    const signed = verifyLedger(old);
+    const signing = await signLedgerHead(old);
+    const signed = await verifyLedger(old);
     check(signing.signed && signed.signature.state === 'signed' && signed.signature.lastId === chainedIds[3] && signed.signature.count === 4,
       'the head is signed with the Ed25519 ledger key, and the stored signature checks against the chain as it stands', JSON.stringify({ signing, signature: signed.signature }));
 
@@ -256,7 +256,7 @@ export async function runAccountabilitySmoke(check: Check, say: Say): Promise<vo
       return { status: r.status, report, text: `${r.stdout}${r.stderr}`.slice(0, 600) };
     };
     const exportFile = path.join(base, 'ledger.jsonl');
-    const exported = policy.exportLedger(exportFile, old);
+    const exported = await policy.exportLedger(exportFile, old);
     const good = offline(exportFile, '--json', '--fingerprint', signed.keyFingerprint ?? '');
     check(exported === 6 && good.status === 0 && good.report.ok === true && good.report.signature?.valid === true && good.report.signature.pinMatches === true
       && good.report.verifiedThrough === 4 && good.report.unchainedBefore === 2,
@@ -271,7 +271,7 @@ export async function runAccountabilitySmoke(check: Check, say: Say): Promise<vo
       'an export edited after it was written fails the offline check, at the record that was edited', bad.text);
 
     old.prepare('UPDATE policy_ledger SET summary = ? WHERE id = ?').run('rm -rf nothing-to-see', chainedIds[1]);
-    const edited = verifyLedger(old);
+    const edited = await verifyLedger(old);
     check(edited.firstBreak?.id === chainedIds[1] && edited.firstBreak.kind === 'content' && edited.verifiedThrough === 1 && edited.unchainedBefore === 2,
       'a row changed directly in SQLite is found at that row, and only the chained record before it is still called verified', JSON.stringify(edited.firstBreak));
 
@@ -282,16 +282,16 @@ export async function runAccountabilitySmoke(check: Check, say: Say): Promise<vo
       old.prepare('UPDATE policy_ledger SET prev_hash = ?, hash = ? WHERE id = ?').run(prev, hash, row.id);
       prev = hash;
     }
-    const rewritten = verifyLedger(old);
+    const rewritten = await verifyLedger(old);
     check(rewritten.firstBreak === null && rewritten.signature.state === 'mismatch',
       'a rewrite that recomputes every hash after the edit passes the chain walk but not the signed head, which reports the mismatch', JSON.stringify(rewritten.signature));
     appendLedgerRow(fields(4), old);
-    const after = signLedgerHead(old);
-    const still = verifyLedger(old);
+    const after = await signLedgerHead(old);
+    const still = await verifyLedger(old);
     check(!after.signed && still.signature.state === 'mismatch',
       'the next write does not sign over the rewrite: the stale head is kept, and the mismatch is still reported', JSON.stringify({ after, signature: still.signature }));
     const rewrittenExport = path.join(base, 'ledger-rewritten.jsonl');
-    policy.exportLedger(rewrittenExport, old);
+    await policy.exportLedger(rewrittenExport, old);
     const laundered = offline(rewrittenExport, '--json');
     check(laundered.status === 1 && (laundered.report.problems ?? []).some((p) => /signed head no longer matched/.test(p)),
       "exporting the rewritten ledger does not launder it: the export's signature carries the mismatch, and the offline check fails on it", laundered.text);

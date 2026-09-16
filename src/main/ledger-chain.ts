@@ -8,6 +8,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { db } from './db';
 import { writeEncryptedCredential } from './keys';
+import { credentialEncryptionAvailable, encryptCredential } from './credential-encryption';
 import {
   LEDGER_GENESIS, createLedgerVerifier, exportStatementText, headStatementText, ledgerHashInput,
   signatureState, storedText,
@@ -56,6 +57,7 @@ type KeyRead = { key: LedgerKey; problem: null } | { key: null; problem: string 
 let cachedKey: LedgerKey | null = null;
 /** A failure is remembered so a denied keychain prompt is not raised again on every write. "Verify now" clears it. */
 let keyFailure: string | null = null;
+let pendingKey: { create: boolean; promise: Promise<KeyRead> } | null = null;
 let signTimer: NodeJS.Timeout | null = null;
 
 export function sha256Hex(text: string): string {
@@ -77,8 +79,26 @@ function spkiFingerprint(spkiBase64: string): string {
   return createHash('sha256').update(Buffer.from(spkiBase64, 'base64')).digest('hex');
 }
 
-function readKey(create: boolean): KeyRead {
+async function readKey(create: boolean): Promise<KeyRead> {
   if (cachedKey) return { key: cachedKey, problem: null };
+  if (pendingKey) {
+    const pending = pendingKey;
+    const read = await pending.promise;
+    // A read-only check must not prevent a concurrent first write from making
+    // the key. Otherwise every caller shares the same initialization and key.
+    if (create && !pending.create && !read.key && !keyFailure) return readKey(true);
+    return read;
+  }
+  const pending = { create, promise: loadKey(create) };
+  pendingKey = pending;
+  try {
+    return await pending.promise;
+  } finally {
+    if (pendingKey === pending) pendingKey = null;
+  }
+}
+
+async function loadKey(create: boolean): Promise<KeyRead> {
   // Smoke runs hold the key in memory, as mobile/secrets.ts holds its tokens:
   // reaching the real keychain from a temporary profile can block on a prompt,
   // and it would not exercise the file this process writes in any case.
@@ -87,13 +107,21 @@ function readKey(create: boolean): KeyRead {
     return { key: cachedKey, problem: null };
   }
   if (keyFailure) return { key: null, problem: keyFailure };
-  if (!safeStorage.isEncryptionAvailable()) {
-    return { key: null, problem: 'OS credential encryption is unavailable, so the ledger signing key cannot be opened or made.' };
-  }
   const file = path.join(app.getPath('userData'), KEY_FILE);
-  if (fs.existsSync(file)) {
+  const exists = fs.existsSync(file);
+  if (!exists && !create) return { key: null, problem: 'No ledger signing key has been made yet. One is made the first time a record is written.' };
+  try {
+    if (!await credentialEncryptionAvailable()) {
+      return { key: null, problem: 'OS credential encryption is unavailable, so the ledger signing key cannot be opened or made.' };
+    }
+  } catch {
+    keyFailure = 'OS credential encryption could not be initialized, so the ledger signing key cannot be opened or made.';
+    return { key: null, problem: keyFailure };
+  }
+  if (exists) {
     try {
-      const stored = JSON.parse(safeStorage.decryptString(fs.readFileSync(file))) as { v?: unknown; privateKey?: unknown };
+      const decrypted = await safeStorage.decryptStringAsync(fs.readFileSync(file));
+      const stored = JSON.parse(decrypted.result) as { v?: unknown; privateKey?: unknown };
       if (stored.v !== 1 || typeof stored.privateKey !== 'string') throw new Error('unexpected shape');
       cachedKey = keyFromPrivate(createPrivateKey({ key: Buffer.from(stored.privateKey, 'base64'), format: 'der', type: 'pkcs8' }));
       return { key: cachedKey, problem: null };
@@ -102,11 +130,11 @@ function readKey(create: boolean): KeyRead {
       return { key: null, problem: keyFailure };
     }
   }
-  if (!create) return { key: null, problem: 'No ledger signing key has been made yet. One is made the first time a record is written.' };
   try {
     const pair = generateKeyPairSync('ed25519');
     const privateKey = pair.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64');
-    writeEncryptedCredential(file, safeStorage.encryptString(JSON.stringify({ v: 1, privateKey, createdAt: Date.now() })));
+    const encrypted = await encryptCredential(JSON.stringify({ v: 1, privateKey, createdAt: Date.now() }));
+    writeEncryptedCredential(file, encrypted);
     cachedKey = keyFromPrivate(pair.privateKey);
     return { key: cachedKey, problem: null };
   } catch (e) {
@@ -157,7 +185,7 @@ function scheduleHeadSignature(): void {
     signTimer = null;
     // Best effort by design: a head left unsigned is reported as unsigned, and
     // the next write tries again.
-    try { signLedgerHead(); } catch { /* reported by verifyLedger */ }
+    void signLedgerHead().catch(() => { /* reported by verifyLedger */ });
   }, HEAD_SIGN_DELAY_MS);
   signTimer.unref?.();
 }
@@ -192,8 +220,8 @@ export type HeadSigning = { signed: boolean; reason: string | null };
  * something that no longer verifies. Exported for the smoke suite, which cannot
  * wait on the timer a write schedules.
  */
-export function signLedgerHead(d: Database.Database = db()): HeadSigning {
-  const read = readKey(true);
+export async function signLedgerHead(d: Database.Database = db()): Promise<HeadSigning> {
+  const read = await readKey(true);
   if (!read.key) return { signed: false, reason: read.problem };
   const key = read.key;
   const stored = storedHead(d);
@@ -251,13 +279,13 @@ function judgeHead(verdict: LedgerChainVerdict, stored: StoredHead | null, read:
  * Walk the whole ledger in id order and say how much of it verifies, where it
  * first breaks, and what the stored head signature says about it now.
  */
-export function verifyLedger(d: Database.Database = db(), opts: { retryKey?: boolean } = {}): LedgerChainStatus {
+export async function verifyLedger(d: Database.Database = db(), opts: { retryKey?: boolean } = {}): Promise<LedgerChainStatus> {
   if (opts.retryKey) keyFailure = null;
+  const read = await readKey(false);
   const stored = storedHead(d);
   const verifier = createLedgerVerifier(sha256Hex, stored?.lastId ?? null);
   for (const row of d.prepare(`${CHAIN_SELECT} ORDER BY id ASC`).iterate() as IterableIterator<LedgerChainRow>) verifier.push(row);
   const verdict = verifier.result();
-  const read = readKey(false);
   return { ...verdict, checkedAt: Date.now(), signature: judgeHead(verdict, stored, read), keyFingerprint: read.key?.fingerprint ?? null };
 }
 
@@ -277,9 +305,9 @@ export function beginLedgerExport(d: Database.Database = db()) {
       rows += 1;
       verifier.push(row);
     },
-    finish(): string {
+    async finish(): Promise<string> {
       const verdict = verifier.result();
-      const read = readKey(true);
+      const read = await readKey(true);
       const head = judgeHead(verdict, stored, read);
       if (!read.key) {
         return JSON.stringify({ record: 'signature', algorithm: 'ed25519', statement: null, signature: null, reason: `This export is not signed: ${read.problem}` });

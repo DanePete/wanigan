@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-16T23:25:00.726Z",
+  "provenance": "Isolated Electron renderer and synthetic bridge. No real main, providers, PTY, git or settings writes.",
+  "checks": [
+    "The sidebar lists every area’s views while you are in Sessions",
+    "Only the current area’s views are Tab stops",
+    "Worktree Merge and Discard are on screen without opening Session controls",
+    "The refusal names the tab the setting is really on and offers to open it",
+    "A refused resume is shown inside the Resume dialog, not under its scrim",
+    "The Resume dialog’s refusal opens the Dispatcher section",
+    "Settings has a Repository review switch, and it writes the setting main gates on",
+    "An approved instruction stays on screen with Apply as its next step",
+    "A refusal in the shell toast offers the Settings section it names"
+  ],
+  "failures": [],
+  "errors": []
+}

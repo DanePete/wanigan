@@ -22,6 +22,8 @@
 .session-permissions .label { margin: 0; }
 .session-permissions .btn { font-size: var(--t-small); }
 .session-permissions [role="status"] { flex: 1; }
+.sessions-view .session-worktree-strip { background: var(--bg-raised); }
+.sessions-view .session-worktree-strip + .session-controls { border-top: 1px solid var(--line-soft); }
 .sessions-view .session-controls > summary { cursor: pointer; padding: var(--s-2) var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
 .sessions-view .session-controls > summary > span { margin-left: var(--s-3); font-size: var(--t-micro); }
 .sessions-view .session-controls-content { max-height: min(40vh, 380px); overflow: auto; }
@@ -429,3 +431,27 @@
   .sessions-view .session-dock .composer-identity { padding-bottom: var(--s-1); }
   .sessions-view .session-dock .composer-note { line-height: 1.2; }
 }
+
+/* ── resume: the toolbar button, the rail's history link, the pick-up list ── */
+.sessions-view .session-toolbar .session-resume-button > .icon { color: var(--accent); }
+.sessions-view .rail-history-link {
+  display: inline-flex; align-items: center; gap: var(--s-1); margin-left: auto; padding: 0 var(--s-1);
+  border-radius: var(--r-xs); color: var(--text-faint); font-size: var(--t-micro); font-weight: 600;
+}
+.sessions-view .rail-history-link:hover { color: var(--accent); }
+.sessions-view .sessions-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-2); }
+.sessions-view .sessions-empty-actions .icon { color: currentColor; }
+.sessions-view .sessions-pickup { display: grid; gap: var(--s-2); width: min(520px, 100%); margin-top: var(--s-2); text-align: left; }
+.sessions-view .sessions-pickup > .sec-head { padding-inline: var(--s-1); }
+.sessions-view .sessions-pickup > .sec-head .label { font-size: var(--t-micro); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.sessions-view .sessions-pickup-row {
+  display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised);
+  transition: border-color var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease);
+}
+.sessions-view .sessions-pickup-row:hover { border-color: var(--line); background: var(--bg-soft); }
+.sessions-view .sessions-pickup-read { flex: 1; min-width: 0; display: grid; gap: calc(var(--s-1) / 2); padding-block: var(--s-1); text-align: left; }
+.sessions-view .sessions-pickup-title { overflow: hidden; color: var(--text); font-size: var(--t-body); font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.sessions-view .sessions-pickup-read:hover .sessions-pickup-title { color: var(--accent); }
+.sessions-view .sessions-pickup-meta { overflow: hidden; color: var(--text-faint); font-size: var(--t-small); white-space: nowrap; text-overflow: ellipsis; }
+.sessions-view .sessions-pickup-star { color: var(--accent); }

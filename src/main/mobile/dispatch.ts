@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { theme } from '../settings';
-import { ensureMobileToken, pairingCodeValid } from './secrets';
+import { ensureMobileToken, mobileCredentialsReady, pairingCodeValid } from './secrets';
 import { MOBILE_SERVICE_WORKER_PATH, mobileServiceWorker } from './page/sw';
 import { MOBILE_ICON_PNG_PATH, dashboardHtml, dashboardIcon, dashboardIconPng, dashboardManifest } from './page';
 
@@ -131,6 +131,7 @@ function isLoopback(address: string | undefined): boolean {
 }
 
 function authorized(req: http.IncomingMessage): boolean {
+  if (!mobileCredentialsReady()) return false;
   const header = req.headers.authorization;
   if (typeof header !== 'string') return false;
   const match = /^Bearer\s+(\S+)$/i.exec(header.trim());

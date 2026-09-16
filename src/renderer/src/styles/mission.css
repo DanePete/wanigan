@@ -8,6 +8,8 @@
 .mission-shell .nav-actions { flex: none; margin-left: 0; }
 .mission-shell .nav-new-session { background: var(--bg-raised); border-color: var(--line); color: var(--text); }
 .mission-shell .nav-new-session .nav-shortcut { color: var(--text-faint); }
+.mission-shell .nav-resume-session { background: var(--bg-raised); }
+.mission-shell .nav-resume-session:hover { background: var(--accent-soft); }
 .mission-shell .nav-usage-status { display: none; }
 .mission-shell .nav-views-button { border-color: transparent; background: transparent; }
 .mission-shell .workspace { position: relative; padding: 0 var(--s-3); }

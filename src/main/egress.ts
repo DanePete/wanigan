@@ -1,8 +1,7 @@
-import { safeStorage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dataDir, resultsDir } from './db';
-import { getKey, hasProviderKey } from './keys';
+import { encryptionAvailable, getKey, hasProviderKey } from './keys';
 import { otelEnv } from './otel';
 import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
@@ -497,22 +496,12 @@ const PROVENANCE =
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';
 
 export function egressReport(): EgressReport {
-  let keychainAvailable = false;
-  try {
-    // A hermetic smoke profile must not probe the user's Keychain. Electron
-    // 44 can synchronously wait on Keychain access from a throwaway profile,
-    // which turns an offline report test into an unbounded UI wait.
-    keychainAvailable = process.env.WANIGAN_SMOKE !== '1' && safeStorage.isEncryptionAvailable();
-  } catch {
-    // Before app.whenReady, or on a machine with no credential store. False is
-    // the honest answer: the panel then says Wanigan refuses to store a key.
-  }
   return {
     hosts: hosts(),
     pins: pins(),
     paths: paths(),
     unenumerated: UNENUMERATED,
     provenance: PROVENANCE,
-    keychainAvailable,
+    keychainAvailable: encryptionAvailable(),
   };
 }

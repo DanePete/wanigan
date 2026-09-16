@@ -45,6 +45,11 @@ export const BINDINGS = [
     does: 'Command palette: views, projects, live sessions, settings, transcripts', scope: 'not-terminal', skipsTerminal: false },
   { id: 'new-session', keys: '⌘T',   aria: 'Meta+T Control+T', group: 'Anywhere',
     does: 'New session', scope: 'not-terminal', skipsTerminal: false },
+  // ⌘⇧T is the browser's "reopen closed tab", which is the gesture this is:
+  // bring back a conversation that ended. It opens history; nothing launches
+  // until Resume is pressed inside it.
+  { id: 'resume-session', keys: '⌘⇧T', aria: 'Meta+Shift+T Control+Shift+T', group: 'Anywhere',
+    does: 'Resume a saved conversation — browse, search and read history first', scope: 'not-terminal', skipsTerminal: false },
   // The view routes (⌘1–9, ⌘0, ⌘,, ⌘⇧S …) sit between these two rows in the
   // sheet; shared/keymap.ts derives them from shared/routes.ts.
   { id: 'demo',        keys: '⌘⇧D',  aria: 'Meta+Shift+D Control+Shift+D', group: 'Anywhere',

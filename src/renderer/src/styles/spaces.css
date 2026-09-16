@@ -61,6 +61,11 @@
 .workbench-local-routes > button[aria-current] { color: var(--accent); background: var(--accent-soft); }
 .workbench-local-routes .nav-tab-label { flex: 1; }
 .workbench-local-routes .nav-tab-chord { font-size: var(--t-micro); }
+/* An area you are not in keeps its views listed, a step quieter and tighter, so
+   seventeen destinations fit the rail without the current area losing its weight. */
+.workbench-local-routes[data-area-active='false'] { gap: 0; padding-block: 0 var(--s-1); }
+.workbench-local-routes[data-area-active='false'] > button { min-height: calc(var(--control-h-sm) - var(--s-1)); padding-block: calc(var(--s-1) / 2); }
+.workbench-local-routes[data-area-active='false'] .nav-tab-chord { opacity: .7; }
 .workbench-area-settings { margin-top: var(--s-3); border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
 .workbench-attention, .workbench-key { display: block; text-align: left; margin: var(--s-1) var(--s-3) var(--s-2); padding: var(--s-1) 0; font-size: var(--t-micro); color: var(--text-faint); }
 .workbench-attention { color: var(--warning); }
@@ -94,6 +99,6 @@
   .workbench-context { gap: var(--s-2); }
   .workbench-context .project-spaces { width: auto; flex: 1; }
   .workbench-location { display: none; }
-  .workbench-shell .nav-new-session-label { display: none; }
+  .workbench-shell .nav-new-session-label, .workbench-shell .nav-resume-session-label { display: none; }
   .workbench-shell .nav-views-shortcut { display: none; }
 }

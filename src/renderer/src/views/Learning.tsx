@@ -1435,7 +1435,25 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
       : status === 'decided' ? DECIDED_STATUSES.includes(c.status)
       : c.status === status));
 
-  const selected = visible.find(candidate => candidate.id === selectedId) ?? visible[0] ?? null;
+  // A proposal approved here, kept on screen after the filter lets it go.
+  // Approval promotes it, and "Needs a decision" does not list promoted rows —
+  // so Apply, the one step that writes it into CLAUDE.md or AGENTS.md, vanished
+  // in the same click that made it available. Held for this visit only, and only
+  // for a kind that has a file to write; everything else moves on as before.
+  const [heldId, setHeldId] = useState<string | null>(null);
+  const held = heldId && !visible.some((candidate) => candidate.id === heldId)
+    ? candidates.find((candidate) => candidate.id === heldId) ?? null : null;
+  const listed = held ? [held, ...visible] : visible;
+  const selected = listed.find(candidate => candidate.id === selectedId) ?? listed[0] ?? null;
+  const onApproved = (candidate: KnowledgeCandidate) => {
+    if (!PROJECTABLE_KINDS.includes(candidate.targetKind)) return;
+    setHeldId(candidate.id);
+    setSelectedId(candidate.id);
+  };
+  const nextProposal = () => {
+    setHeldId(null);
+    setSelectedId(visible.find((candidate) => candidate.id !== heldId)?.id ?? null);
+  };
 
   // A narrow scope must never impersonate an empty engine: with nothing open in
   // this scope, one all-scope probe (no projectId key) checks for proposals elsewhere.
@@ -1520,7 +1538,7 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
       </section>
       <Pane read={read} what="the proposal list">
         <>
-          {visible.length === 0 && (query.trim() ? <Empty title="No proposal matches your search" body="Clear the search or try a different phrase." /> : candidates.length === 0
+          {listed.length === 0 && (query.trim() ? <Empty title="No proposal matches your search" body="Clear the search or try a different phrase." /> : candidates.length === 0
             ? <Empty title="No proposals have ever been created in this scope"
                      body="Run a session — tool activity records signals, and repeats across independent tasks become proposals here. Teach Wanigan directly for an immediate proposal, or run a review gate."
                      frame={emptyFrame}>{elsewhereHint}</Empty>
@@ -1529,13 +1547,14 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
                        frame={emptyFrame}>{elsewhereHint}</Empty>
               : <Empty title="No proposals match this filter" body="Proposals exist in other states — another status filter will show them."
                        frame={emptyFrame} />)}
-          {visible.length > 0 && <div className="learning-proposals">
+          {listed.length > 0 && <div className="learning-proposals">
             <aside className="learning-proposal-list" aria-label="Proposals"><input className="field" type="search" aria-label="Search proposals" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a proposal…" />
-              {visible.map(candidate => <button type="button" className="learning-proposal" key={candidate.id} data-candidate-id={candidate.id} aria-current={selected?.id === candidate.id ? 'true' : undefined} onClick={() => setSelectedId(candidate.id)}>
+              {listed.map(candidate => <button type="button" className="learning-proposal" key={candidate.id} data-candidate-id={candidate.id} aria-current={selected?.id === candidate.id ? 'true' : undefined} onClick={() => setSelectedId(candidate.id)}>
                 <span className="label">{candidate.targetKind}</span><strong>{candidate.title}</strong><span><Mark glyph={candidate.status === 'pending' ? '·' : '○'} word={candidate.status} tone={candidate.status === 'pending' ? 'warn' : 'quiet'} />{candidate.evidenceCount} sources</span>
               </button>)}
             </aside>
-            <div className="learning-proposal-reader" aria-label="Selected proposal">{selected && <CandidateCard key={selected.id} candidate={selected} providers={providers} busy={busy} act={act} />}</div>
+            <div className="learning-proposal-reader" aria-label="Selected proposal">{selected && <CandidateCard key={selected.id} candidate={selected} providers={providers} busy={busy} act={act}
+              onApproved={onApproved} held={selected.id === held?.id} onNext={nextProposal} />}</div>
           </div>}
           {visible.length === 0 && query && <div className="learning-actions"><input className="field" type="search" aria-label="Search proposals" value={query} onChange={event => setQuery(event.target.value)} /><button className="btn" onClick={() => setQuery('')}>Clear search</button></div>}
           {candidates.length === 100 && (
@@ -1567,11 +1586,16 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
 
 const REJECT_REASONS = ['Wrong', 'Duplicate', "True but don't store", 'Too broad'];
 
-function CandidateCard({ candidate, providers, busy, act }: {
+function CandidateCard({ candidate, providers, busy, act, onApproved, held = false, onNext }: {
   candidate: KnowledgeCandidate;
   providers: ProviderInfo[];
   busy: string | null;
   act: Act;
+  /** Approval landed; the inbox decides whether to keep this card on screen. */
+  onApproved?: (candidate: KnowledgeCandidate) => void;
+  /** Kept on screen after approval, although the status filter no longer lists it. */
+  held?: boolean;
+  onNext?: () => void;
 }) {
   const [editing, setEditing] = useViewMemory(`candidate/${candidate.id}/editing`, false);
   const [title, setTitle] = useViewMemory(`candidate/${candidate.id}/title`, candidate.title);
@@ -1624,7 +1648,12 @@ function CandidateCard({ candidate, providers, busy, act }: {
   const approve = () => act(key, async () => {
     await window.wanigan.learning.reviewCandidate(candidate.id, 'approve');
     await window.wanigan.learning.promoteCandidate(candidate.id);
-  }, 'Approved into canonical knowledge. Provider files are still unchanged.');
+  }, PROJECTABLE_KINDS.includes(candidate.targetKind)
+    ? 'Approved into canonical knowledge. Provider files are still unchanged — Apply writes it into one.'
+    : 'Approved into canonical knowledge. Provider files are still unchanged.')
+    .then((ok) => { if (ok) onApproved?.(candidate); });
+  const applyReady = PROJECTABLE_KINDS.includes(candidate.targetKind) && ['approved', 'promoted'].includes(candidate.status);
+  const targetLabel = providers.find((p) => p.id === target)?.label ?? target;
   // A rule is the one kind that needs a selector, and repository.ts refuses one
   // without it -- so the button is refused here rather than letting main throw.
   const retargetReady = kind !== 'rule' || selector.trim().length > 0;
@@ -1730,11 +1759,22 @@ function CandidateCard({ candidate, providers, busy, act }: {
         )}
         <p><span className="label">Activation</span><br />Canonical after approval; written to the selected provider only after Apply. New sessions see it after validation.</p>
       </div>
+      {held && (
+        <Note tone={candidate.status === 'applied' ? 'ok' : 'info'}
+              action={onNext ? { label: 'Next proposal', run: onNext } : undefined}>
+          {candidate.status === 'applied'
+            ? <>Applied to {targetLabel}. The exact prior content is kept for Undo.</>
+            : applyReady
+              ? <>Approved. It is canonical knowledge now and new briefings can use it; {targetLabel}’s files are unchanged
+                  until you Apply. It stays here until you move on — later, the Promoted filter finds it.</>
+              : <>Approved.</>}
+        </Note>
+      )}
       <div className="learning-actions">
         {editing ? <><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim() || !retargetReady} title={retargetReady ? undefined : 'A rule needs a path selector, such as src/main/learning/**'} onClick={() => void save().then(ok => { if (ok) setEditing(false); })}>Save edit</button><button className="btn" onClick={() => setEditing(false)}>Cancel</button></>
           : <button className="btn" disabled={busy !== null || !undecided} onClick={() => setEditing(true)}>Edit</button>}
         {candidate.status !== 'promoted' && candidate.status !== 'applied' && <button className="btn btn-primary" disabled={busy !== null || candidate.conflicts.length > 0} onClick={() => void approve()}>{busy === key ? 'Working…' : 'Approve to knowledge'}</button>}
-        {PROJECTABLE_KINDS.includes(candidate.targetKind) && ['approved', 'promoted'].includes(candidate.status) && <button className="btn btn-primary" disabled={busy !== null || !target} onClick={() => void act(key, () => window.wanigan.learning.applyCandidate(candidate.id, target), 'Validated and applied. The exact prior content is available for Undo.')}>Apply to {providers.find((p) => p.id === target)?.label ?? target}</button>}
+        {applyReady && <button className="btn btn-primary" disabled={busy !== null || !target} onClick={() => void act(key, () => window.wanigan.learning.applyCandidate(candidate.id, target), 'Validated and applied. The exact prior content is available for Undo.')}>Apply to {targetLabel}</button>}
         <button className="btn" disabled={busy !== null || candidate.status === 'snoozed'} onClick={() => void act(key, () => window.wanigan.learning.reviewCandidate(candidate.id, 'snooze'), 'Proposal snoozed; its evidence remains.')}>Snooze</button>
         <button className="btn btn-danger" disabled={busy !== null || candidate.status === 'rejected'} onClick={() => void act(key, () => window.wanigan.learning.reviewCandidate(candidate.id, 'reject'), 'Proposal rejected; the decision remains in its audit history.')}>Reject</button>
         {['rejected', 'snoozed'].includes(candidate.status) && (

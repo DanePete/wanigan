@@ -22,10 +22,11 @@ import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import PastSessionEvidence from '../components/PastSessionEvidence';
 import Pet from '../components/Pet';
-import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, SectionHead, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
-import { bindingMatches, modalOpen } from '../bindings';
+import { bindingMatches, modalOpen, useChord } from '../bindings';
+import type { SettingsDoor } from '@shared/settings-doors';
 import '../styles/sessions.css';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
@@ -191,7 +192,7 @@ FocusBtn.displayName = 'FocusBtn';
 export default function Sessions({
   providers, projects: allProjects, selectedProjectId, onAddProject, onError, activeId, onActiveChange,
   newSessionRequest, onNewSessionRequestConsumed, onSendToBatch, onOpenGoal,
-  historyRequest, onHistoryRequestConsumed,
+  historyRequest, onHistoryRequestConsumed, onOpenSettings,
 }: {
   providers: ProviderInfo[]; projects: Project[]; selectedProjectId: string | null;
   onAddProject: () => Promise<void>; onError: (m: string) => void;
@@ -201,8 +202,9 @@ export default function Sessions({
   onNewSessionRequestConsumed: () => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
   onOpenGoal: (goalId: string, nodeId?: string) => void;
-  historyRequest?: { sessionId: string; query: string; nonce: number } | null;
+  historyRequest?: HistoryRequest | null;
   onHistoryRequestConsumed?: () => void;
+  onOpenSettings?: (jump: { tab: SettingsDoor['tab']; section?: string }) => void;
 }) {
   const projects = useMemo(() => selectedProjectId ? allProjects.filter((p) => p.id === selectedProjectId) : allProjects, [allProjects, selectedProjectId]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -319,6 +321,7 @@ export default function Sessions({
   // React state does not change until the next render. The ref closes the
   // same-tick gap so a double click cannot launch two writers for one thread.
   const resumePendingRef = useRef(false);
+  const resumeChord = useChord('resume-session');
   activeRef.current = activeId;
   sessionsRef.current = sessions;
 
@@ -420,7 +423,10 @@ export default function Sessions({
     window.wanigan.policy.defaultTrust().then(setDefaultTrust).catch(() => setDefaultTrust(null));
   }, []);
 
-  async function resume(p: PastSession) {
+  // `report` is where a refusal is said. The shell's toast sits under every
+  // modal's scrim by design, so the Resume dialog passes its own and says it
+  // where the person is looking.
+  async function resume(p: PastSession, report: (message: string) => void = onError) {
     if (resumePendingRef.current) return false;
     resumePendingRef.current = true;
     setResuming(p.id);
@@ -436,7 +442,7 @@ export default function Sessions({
       await refresh();
       onActiveChange(s.id, s.projectId);
       return true;
-    } catch (e) { onError(msg(e)); return false; }
+    } catch (e) { report(msg(e)); return false; }
     finally {
       resumePendingRef.current = false;
       setResuming(null);
@@ -899,7 +905,10 @@ export default function Sessions({
                 <div style={{ marginTop: 16 }}>
                   <div className="group-title">
                     <span className="label">Recent conversations</span>
-                    <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>read · resume</span>
+                    <FocusBtn className="rail-history-link" aria-keyshortcuts={resumeChord.aria}
+                              onClick={() => setHistory({ initial: null })}>
+                      <Icon name="history" size={12} /> All history
+                    </FocusBtn>
                   </div>
                   {pinnedPast.map(renderPast)}
                   {activePast.slice(0, activeShown).map(renderPast)}
@@ -986,7 +995,6 @@ export default function Sessions({
                 {active.status === 'running' ? 'Running' : `Exited ${active.exitCode ?? '—'}`}
               </> : 'Choose a conversation or start something new.'}
               actions={<>
-                <FocusBtn className="btn" onClick={() => setHistory({ initial: null })}>History</FocusBtn>
                 {active && <FocusBtn className="btn" onClick={() => setReviewSession(active)}>Review work</FocusBtn>}
                 <FocusBtn ref={sessionPickerButtonRef} className="btn session-picker-trigger"
                   aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
@@ -997,6 +1005,11 @@ export default function Sessions({
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
+                {/* Resume sits against New session, as it does in the header:
+                    continuing a thread and starting one are the same decision. */}
+                <FocusBtn className="btn session-resume-button" aria-keyshortcuts={resumeChord.aria}
+                  aria-label={`Resume a saved conversation (${resumeChord.spoken})`}
+                  onClick={() => setHistory({ initial: null })}><Icon name="history" /> Resume</FocusBtn>
                 <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
                   title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
                 <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}
@@ -1044,18 +1057,51 @@ export default function Sessions({
                   as they do in your shell.
                 </p>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="sessions-empty-actions">
                 {projects.length === 0
                   ? <FocusBtn className="btn btn-primary" onClick={onAddProject}>Add your first project</FocusBtn>
-                  : <FocusBtn className="btn btn-primary" onClick={() => setDialog(true)}>New session ⌘T</FocusBtn>}
-                {/* A settled conversation is parked by choice; the quick-resume
-                    offer respects that and reaches for the next live one. */}
-                {past.filter((p) => p.live && p.settledAt == null)[0] && (
-                  <FocusBtn className="btn" onClick={() => resume(past.filter((p) => p.live && p.settledAt == null)[0])}>
-                    Resume {past.filter((p) => p.live && p.settledAt == null)[0].projectName}
+                  : <FocusBtn className="btn btn-primary" onClick={() => setDialog(true)}><Icon name="plus" /> New session ⌘T</FocusBtn>}
+                {past.length > 0 && (
+                  <FocusBtn className="btn" aria-keyshortcuts={resumeChord.aria} onClick={() => setHistory({ initial: null })}>
+                    <Icon name="history" /> Resume {resumeChord.glyphs}
                   </FocusBtn>
                 )}
               </div>
+              {/* A settled conversation is parked by choice; the pick-up list
+                  respects that and offers only live, unsettled ones. Each row
+                  resumes on its own button — reading it opens history. */}
+              {(() => {
+                const pickup = past.filter((p) => p.live && p.settledAt == null)
+                  .sort((a, b) => Number(b.pinnedAt != null) - Number(a.pinnedAt != null)
+                    || (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
+                  .slice(0, 3);
+                if (!pickup.length) return null;
+                return (
+                  <section className="sessions-pickup" aria-label="Pick up where you left off">
+                    <SectionHead label="Pick up where you left off" />
+                    {pickup.map((p) => (
+                      <div key={p.id} className="sessions-pickup-row">
+                        <FocusBtn className="sessions-pickup-read"
+                                  aria-label={`Read ${p.title ?? p.projectName} before resuming`}
+                                  onClick={() => setHistory({ initial: { sessionId: p.id, query: '', nonce: Date.now() } })}>
+                          <span className="sessions-pickup-title">
+                            {p.pinnedAt != null && <span className="sessions-pickup-star" aria-label="pinned">★ </span>}
+                            {p.title ?? p.projectName}
+                          </span>
+                          <span className="sessions-pickup-meta">
+                            {p.title ? `${p.projectName} · ` : ''}{providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
+                            {p.model ? ` · ${p.model}` : ''} · {ago(p.endedAt ?? p.startedAt)}
+                          </span>
+                        </FocusBtn>
+                        <FocusBtn className="btn btn-sm" disabled={resuming !== null}
+                                  aria-label={`Resume ${p.title ?? p.projectName}`} onClick={() => void resume(p)}>
+                          {resuming === p.id ? 'Resuming…' : 'Resume'}
+                        </FocusBtn>
+                      </div>
+                    ))}
+                  </section>
+                );
+              })()}
               {!anyInstalled && providers.length > 0 && (
                 // Named from the profiles that are actually loaded. This used to
                 // say "neither claude nor codex", which was one hardcoded pair
@@ -1208,7 +1254,7 @@ export default function Sessions({
 
       {dialog && (
         <NewSessionDialog providers={providers} projects={allProjects} defaultProjectId={dialogProject ?? selectedProjectId ?? active?.projectId}
-                          liveSessions={sessions}
+                          liveSessions={sessions} onOpenSettings={onOpenSettings}
                           onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} />
       )}
       {exactRecoveryDialog && (
@@ -1218,9 +1264,11 @@ export default function Sessions({
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
       )}
-      {history && <SessionHistory key={history.initial?.nonce ?? 'browse'} recent={past}
+      {history && <SessionHistory key={history.initial?.nonce ?? 'browse'} recent={past} providers={providers}
+        scopeProjectId={selectedProjectId}
         scopeName={allProjects.find(project => project.id === selectedProjectId)?.name ?? 'All projects'}
-        initial={history.initial} resuming={resuming} onResume={resume} onClose={() => setHistory(null)} />}
+        initial={history.initial} resuming={resuming} onResume={resume} onOpenSettings={onOpenSettings}
+        onChanged={() => { void refreshPast(); }} onClose={() => setHistory(null)} />}
       {reviewSession && <SessionReview session={reviewSession} onClose={() => setReviewSession(null)}
         onSendToBatch={paths => { setReviewSession(null); onSendToBatch({ projectId: reviewSession.projectId, root: reviewSession.worktree ?? reviewSession.projectPath, paths }); }} />}
       {inspecting && (
@@ -1438,7 +1486,8 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
   const permissionControls = session.status === 'running' && permissionActionsFor(harness).length > 0;
-  const hasControls = !!session.worktree || tunable || codexControls || declaresTuning || permissionControls;
+  const hasTuning = tunable || codexControls || declaresTuning || permissionControls;
+  const hasControls = !!session.worktree || hasTuning;
   if (!elevated && !hasControls) return null;
 
   return (
@@ -1446,13 +1495,22 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
       {elevated && trust && defaultTrust && (
         <TrustBanner level={trust} fallback={defaultTrust} running={session.status !== 'exited'} />
       )}
-      {hasControls && <details className="session-controls">
+      {/* Out of the fold. Merge and Discard are how an isolated session's work
+          gets back to its branch or goes away, and inside "Session controls"
+          they re-collapsed on every session switch — while the launch dialog
+          promised them "from the session header". Commits could sit on an
+          unmerged worktree branch with nothing on screen saying so. */}
+      {session.worktree && (
+        <div className="session-worktree-strip">
+          <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />
+        </div>
+      )}
+      {hasTuning && <details className="session-controls">
         <summary>Session controls<span className="faint">
-          {tunable || codexControls ? `Model, effort & permissions${session.worktree ? ', worktree' : ''}`
-            : permissionControls ? 'Permissions' : session.worktree ? 'Worktree' : 'Provider capabilities'}
+          {tunable || codexControls ? 'Model, effort & permissions'
+            : permissionControls ? 'Permissions' : 'Provider capabilities'}
         </span></summary>
         <div className="session-controls-content">
-          {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
           {tunable && <RunConfigBar session={session} provider={provider} />}
           {/* Keep unsupported controls explicit without sending another harness's commands. */}
           {declaresTuning && (

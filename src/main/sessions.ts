@@ -39,6 +39,7 @@ import { shouldBumpUnread } from '../shared/unread';
 import { flags, learningSettings, sandboxShell } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
+import { settingsBreadcrumb } from '../shared/settings-doors';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
@@ -800,7 +801,7 @@ export function resumeAccountFor(
   if (!owner) {
     throw new Error(
       `This conversation was recorded under an account Wanigan no longer has (${row.account_id}). `
-      + `Add that directory back under Settings › Accounts, or start a new conversation — ${harnessName(harness)} `
+      + `Add that directory back under ${settingsBreadcrumb('Accounts')}, or start a new conversation — ${harnessName(harness)} `
       + 'may not find the saved conversation under another account’s directory, and Wanigan will not guess one.'
     );
   }
@@ -900,7 +901,7 @@ export async function recoverExactCodexThread(input: ExactCodexRecoveryInput): P
   if (!owner) {
     throw new Error(
       `That Codex conversation lives in ${verified.codexHome}, which is not one of Wanigan’s Codex accounts. `
-      + 'Add that directory as an account under Settings › Accounts, then recover it.'
+      + `Add that directory as an account under ${settingsBreadcrumb('Accounts')}, then recover it.`
     );
   }
   const claimKey = codexConversationKey(verified.id);
@@ -948,9 +949,9 @@ function assertSessionSlotAvailable(): void {
   if (live < limit) return;
   throw new Error(
     limit === 0
-      ? 'Interactive sessions are held at 0 in Settings › Dispatcher. Raise the "Interactive sessions" limit to start one.'
+      ? `Interactive sessions are held at 0 in ${settingsBreadcrumb('Dispatcher')}. Raise the "Interactive sessions" limit to start one.`
       : `${live} of ${limit} interactive ${limit === 1 ? 'session is' : 'sessions are'} already running. `
-        + 'Stop one, or raise the "Interactive sessions" limit in Settings › Dispatcher, then start this one again.'
+        + `Stop one, or raise the "Interactive sessions" limit in ${settingsBreadcrumb('Dispatcher')}, then start this one again.`
   );
 }
 

@@ -24,6 +24,7 @@ import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import AttachmentStorage from '../components/AttachmentStorage';
 import ArchiveReader from '../components/TranscriptReader';
+import { hitParts } from '@shared/resume-history';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 
@@ -94,7 +95,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Commit attribution', hint: 'Assisted-by trailers on Git view commits', keywords: 'assisted-by assisted by trailer commit attribution agent model git' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Batch submission limit', hint: 'Cap the estimated cost per batch submission', keywords: 'spending spend cap cost limit usd budget batches' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
-  { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing repository review diff commit review gate' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
@@ -1093,7 +1094,7 @@ export default function Settings({
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
-            <PhoneMonitor />
+            <PhoneMonitor prefs={prefs} pending={pending} setFlag={setFlag} />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
             <GitHubIntakeTimer />
           </SettingsTabPanel>
@@ -2449,7 +2450,9 @@ function PairingQr({ url }: { url: string }) {
   );
 }
 
-function PhoneMonitor() {
+function PhoneMonitor({ prefs, pending, setFlag }: {
+  prefs: WaniganSettings | null; pending: string | null; setFlag: (k: string, on: boolean) => Promise<void>;
+}) {
   const [status, setStatus] = useState<MobileMonitorStatus | null>(null);
   const [server, setServer] = useState('https://ntfy.sh');
   const [topic, setTopic] = useState('');
@@ -2754,6 +2757,21 @@ function PhoneMonitor() {
             Requires the dashboard above. A paired browser can start an agent session, view its live terminal,
             send its next instruction, or interrupt a turn. Typing is the whole of it: a message, or one of the arrow, Enter and Escape keys a waiting prompt needs — which is how a permission prompt gets answered. It cannot manage files or change Wanigan’s settings.
           </Toggle>
+
+          {/* The callout above and the phone's own Device screen both name this
+              switch and say it is changed only at the Mac, and main has gated
+              five routes on it since it shipped — but nothing here wrote it, so
+              it could never be turned on. A separate decision from iPad
+              control on purpose: file paths and diffs leave the machine. */}
+          {prefs && (
+            <Toggle title="Allow Repository review" on={prefs.mobileRepositoryReview}
+                    busy={busy !== null || pending === 'mobile_repository_review'}
+                    onChange={(on) => void setFlag('mobile_repository_review', on)}>
+              Requires the dashboard above. A paired browser can list each project’s changed files, read one file’s
+              diff, run the project’s saved review gate, and commit files git already tracks. It never adds an
+              untracked file and never pushes. Paths and diff text leave this Mac over the paired connection.
+            </Toggle>
+          )}
 
           {status.config.dashboardEnabled && (
             <>
@@ -5539,33 +5557,14 @@ function Storage({ prefs, pending, setPref }: {
    ════════════════════════════════════════════════════════════════════════ */
 
 /*
- * The markers main wraps around a match.
- *
- * They are a copy of HIT_OPEN/HIT_CLOSE in src/main/transcripts.ts, which the
- * renderer cannot import. The pair was chosen there precisely so a renderer
- * could swap them for markup without corrupting a snippet that quotes a bracket
- * or a tag — so the copy is the contract, and if that file ever changes them,
- * highlighting here degrades to showing the raw characters rather than to
- * showing something false. Putting them in shared/types is the right fix and
- * belongs in that file.
+ * The markers main wraps around a match, split by the one shared reader of
+ * them. An unpaired marker degrades to the raw character rather than to
+ * something false.
  */
-const HIT_OPEN = '«';
-const HIT_CLOSE = '»';
-
 function Snippet({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  let rest = text;
-  let key = 0;
-  for (;;) {
-    const open = rest.indexOf(HIT_OPEN);
-    const close = open < 0 ? -1 : rest.indexOf(HIT_CLOSE, open + 1);
-    if (open < 0 || close < 0) break;
-    if (open > 0) parts.push(rest.slice(0, open));
-    parts.push(<mark key={`m${key++}`} className="set-hit">{rest.slice(open + 1, close)}</mark>);
-    rest = rest.slice(close + 1);
-  }
-  if (rest) parts.push(rest);
-  return <>{parts}</>;
+  return <>{hitParts(text).map((part, index) => part.hit
+    ? <mark key={index} className="set-hit">{part.text}</mark>
+    : <Fragment key={index}>{part.text}</Fragment>)}</>;
 }
 
 /** Archive management and Sessions share the same read-only conversation view. */

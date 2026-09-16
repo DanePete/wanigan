@@ -3581,6 +3581,7 @@ export type InAppAlert = {
 export type MenuRoute =
   | { kind: 'tab'; tab: import('./routes').Tab }
   | { kind: 'new-session' }
+  | { kind: 'resume-session' }
   | { kind: 'palette' }
   | { kind: 'shortcuts' }
   | { kind: 'sidebar' }

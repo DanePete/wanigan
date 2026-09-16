@@ -5,6 +5,7 @@ import { app, safeStorage } from 'electron';
 import { getSetting, setSetting } from '../settings';
 import { generateVapidKeys, vapidKeysValid } from './webpush-crypto';
 import type { VapidKeys } from './webpush-crypto';
+import { credentialEncryptionAvailable, encryptCredential } from '../credential-encryption';
 
 /**
  * The phone monitor's credentials: the bearer token a paired device sends, the
@@ -93,12 +94,21 @@ export type MobileSecrets = {
   devices?: MobilePushDevice[];
 };
 let memorySecrets: MobileSecrets | null = null;
-let secretsError: string | null = null;
+let secretsError: string | null = 'Phone-monitor credentials are waiting for the system keychain.';
+let initialization: Promise<boolean> | null = null;
+let writes: Promise<unknown> = Promise.resolve();
+
+function copySecrets(value: MobileSecrets): MobileSecrets {
+  return {
+    ...value,
+    ...(value.vapid ? { vapid: { ...value.vapid } } : {}),
+    ...(value.devices ? { devices: value.devices.map((device) => ({ ...device })) } : {}),
+  };
+}
 
 /**
- * Why the credential state is unusable, or null when it is fine. Callers read
- * it through a function because the value changes as a side effect of reading
- * the credentials, and a copied snapshot would report a stale reason.
+ * Why the credential state is unusable, or null when it is fine. Reading this
+ * status never contacts the system keychain or raises a permission prompt.
  */
 export function secretsIssue(): string | null {
   return secretsError;
@@ -190,26 +200,22 @@ export function secretsFile(): string {
   return path.join(app.getPath('userData'), 'mobile-secrets.bin');
 }
 
-export function persistSecrets(value: MobileSecrets): void {
+async function persistSecrets(value: MobileSecrets): Promise<void> {
   // Smoke runs must be hermetic: probing the real macOS keychain from a
   // temporary Electron profile can block on Keychain UI and never exercises
   // the production encrypted-file path. Test secrets live only in memory.
   if (process.env.WANIGAN_SMOKE === '1') {
-    memorySecrets = { ...value };
+    memorySecrets = copySecrets(value);
     secretsError = null;
     return;
   }
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('OS credential encryption is unavailable.');
-  }
-
   // Encrypt and durably replace the file before changing runtime state. If the
   // keychain or disk write fails, existing paired phones keep using the prior
   // in-memory secret and Settings receives the failure instead of a false
   // success followed by a mysteriously revoked token.
   const file = secretsFile();
   const next = `${file}.next-${process.pid}-${randomBytes(6).toString('hex')}`;
-  const encrypted = safeStorage.encryptString(JSON.stringify(value));
+  const encrypted = await encryptCredential(JSON.stringify(value));
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   let fd: number | null = null;
   try {
@@ -223,27 +229,48 @@ export function persistSecrets(value: MobileSecrets): void {
     if (fd !== null) try { fs.closeSync(fd); } catch { /* best effort */ }
     try { fs.rmSync(next, { force: true }); } catch { /* rename already consumed it */ }
   }
-  memorySecrets = { ...value };
+  memorySecrets = copySecrets(value);
   secretsError = null;
 }
 
+/** Cached snapshots only: a status or configuration read must never block UI. */
 export function mobileSecrets(): MobileSecrets {
   if (process.env.WANIGAN_SMOKE === '1') {
     memorySecrets ??= { token: generateToken(), topic: generateTopic() };
     secretsError = null;
-    return memorySecrets;
+    return copySecrets(memorySecrets);
   }
-  if (!safeStorage.isEncryptionAvailable()) {
-    secretsError = 'OS credential encryption is unavailable, so phone monitoring is paused.';
-    memorySecrets ??= { token: generateToken(), topic: generateTopic() };
-    return memorySecrets;
-  }
-  if (memorySecrets && !secretsError) return memorySecrets;
+  // Empty values cannot be paired, sent to, or persisted. In particular, do
+  // not manufacture replacement credentials when the existing file is locked.
+  return memorySecrets ? copySecrets(memorySecrets) : { token: '', topic: '' };
+}
 
+/** One asynchronous unlock attempt per process, shared by all callers. */
+export function initializeMobileSecrets(): Promise<boolean> {
+  if (process.env.WANIGAN_SMOKE === '1') {
+    mobileSecrets();
+    return Promise.resolve(true);
+  }
+  if (initialization) return initialization;
+  initialization = loadMobileSecrets();
+  return initialization;
+}
+
+async function loadMobileSecrets(): Promise<boolean> {
+  try {
+    if (!await credentialEncryptionAvailable()) {
+      secretsError = 'OS credential encryption is unavailable, so phone monitoring is paused.';
+      return false;
+    }
+  } catch {
+    secretsError = 'Wanigan could not open the system keychain. Phone monitoring is paused.';
+    return false;
+  }
   const file = secretsFile();
   if (fs.existsSync(file)) {
     try {
-      const decoded = JSON.parse(safeStorage.decryptString(fs.readFileSync(file))) as Partial<MobileSecrets>;
+      const decrypted = await safeStorage.decryptStringAsync(fs.readFileSync(file));
+      const decoded = JSON.parse(decrypted.result) as Partial<MobileSecrets>;
       if (!tokenLooksStrong(decoded.token ?? '') || !topicLooksStrong(decoded.topic ?? '')) {
         throw new Error('The decrypted credential shape is invalid.');
       }
@@ -259,14 +286,13 @@ export function mobileSecrets(): MobileSecrets {
         devices: sanitiseDevices(decoded.devices),
       };
       secretsError = null;
-      return memorySecrets;
+      return true;
     } catch {
       // Never silently replace an unreadable credential while monitoring is
       // configured: doing so breaks every pairing and subscription while the
       // UI continues to claim the old setup is active.
       secretsError = 'Wanigan could not decrypt its phone-monitor credentials. Phone monitoring is paused.';
-      memorySecrets ??= { token: generateToken(), topic: generateTopic() };
-      return memorySecrets;
+      return false;
     }
   }
 
@@ -274,27 +300,46 @@ export function mobileSecrets(): MobileSecrets {
   // settings table. Empty the legacy rows after the encrypted blob is written,
   // so the pairing credential and ntfy subscription secret are not left in
   // plaintext beside otherwise harmless feature flags.
-  const legacyToken = getSetting(LEGACY_TOKEN_KEY, '').trim();
-  const legacyTopic = getSetting(LEGACY_TOPIC_KEY, '').trim();
-  const next = {
-    token: tokenLooksStrong(legacyToken) ? legacyToken : generateToken(),
-    topic: topicLooksStrong(legacyTopic) ? legacyTopic : generateTopic(),
-  };
   try {
-    persistSecrets(next);
+    const legacyToken = getSetting(LEGACY_TOKEN_KEY, '').trim();
+    const legacyTopic = getSetting(LEGACY_TOPIC_KEY, '').trim();
+    const next = {
+      token: tokenLooksStrong(legacyToken) ? legacyToken : generateToken(),
+      topic: topicLooksStrong(legacyTopic) ? legacyTopic : generateTopic(),
+    };
+    await persistSecrets(next);
     setSetting(LEGACY_TOKEN_KEY, '');
     setSetting(LEGACY_TOPIC_KEY, '');
   } catch {
     secretsError = 'Wanigan could not persist encrypted phone-monitor credentials. Phone monitoring is paused.';
-    memorySecrets ??= next;
+    return false;
   }
-  return memorySecrets ?? next;
+  return true;
 }
 
 export function mobileCredentialsReady(): boolean {
-  mobileSecrets();
-  return process.env.WANIGAN_SMOKE === '1'
-    || (safeStorage.isEncryptionAvailable() && secretsError === null);
+  if (process.env.WANIGAN_SMOKE === '1') mobileSecrets();
+  return memorySecrets !== null && secretsError === null;
+}
+
+/** Evaluate each mutation after prior encrypted writes commit, never before. */
+export function updateMobileSecrets(update: (current: MobileSecrets) => MobileSecrets): Promise<MobileSecrets> {
+  const task = writes.then(async () => {
+    if (!await initializeMobileSecrets() || !mobileCredentialsReady()) {
+      throw new Error(secretsIssue() ?? 'Encrypted phone-monitor credentials are unavailable.');
+    }
+    const current = mobileSecrets();
+    const next = update(current);
+    if (!tokenLooksStrong(next.token) || !topicLooksStrong(next.topic)) {
+      throw new Error('Phone-monitor credentials are incomplete, so no credential was replaced.');
+    }
+    if (next !== current) await persistSecrets(copySecrets(next));
+    return mobileSecrets();
+  });
+  // A failed write leaves its predecessor authoritative and must not poison
+  // later deliberate actions that can still save against that predecessor.
+  writes = task.catch(() => {});
+  return task;
 }
 
 export function ensureMobileToken(): string {
@@ -306,6 +351,7 @@ export function pairingCode(token: string, slot = Math.floor(Date.now() / PAIR_C
 }
 
 export function pairingCodeValid(value: string): boolean {
+  if (!mobileCredentialsReady()) return false;
   const given = value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   if (!/^[A-F0-9]{10}$/.test(given)) return false;
   const token = ensureMobileToken();
@@ -333,12 +379,11 @@ export function ensurePushTopic(): string {
  * is raised rather than swallowed — a caller that cannot store the key must not
  * hand out subscriptions against it.
  */
-export function ensureVapidKeys(): VapidKeys {
-  const secrets = mobileSecrets();
-  if (secrets.vapid && vapidKeysValid(secrets.vapid)) return secrets.vapid;
-  const vapid = generateVapidKeys();
-  persistSecrets({ ...secrets, vapid });
-  return vapid;
+export async function ensureVapidKeys(): Promise<VapidKeys> {
+  const secrets = await updateMobileSecrets((current) =>
+    current.vapid && vapidKeysValid(current.vapid)
+      ? current : { ...current, vapid: generateVapidKeys() });
+  return secrets.vapid!;
 }
 
 /** Every subscription currently stored. A copy: callers must not mutate it. */
@@ -347,11 +392,14 @@ export function pushDevices(): MobilePushDevice[] {
 }
 
 /** Replace the device list wholesale, capped and de-duplicated by endpoint. */
-export function savePushDevices(next: readonly MobilePushDevice[]): MobilePushDevice[] {
-  const secrets = mobileSecrets();
-  const devices = sanitiseDevices(next.slice(-MAX_PUSH_DEVICES));
-  persistSecrets({ ...secrets, devices });
-  return devices.map((device) => ({ ...device }));
+export async function savePushDevices(
+  next: readonly MobilePushDevice[] | ((current: MobilePushDevice[]) => readonly MobilePushDevice[]),
+): Promise<MobilePushDevice[]> {
+  const secrets = await updateMobileSecrets((current) => {
+    const devices = typeof next === 'function' ? next(current.devices ?? []) : next;
+    return { ...current, devices: sanitiseDevices(devices.slice(-MAX_PUSH_DEVICES)) };
+  });
+  return secrets.devices ?? [];
 }
 
 /**
@@ -362,9 +410,9 @@ export function savePushDevices(next: readonly MobilePushDevice[]): MobilePushDe
  * being deliverable the instant the key changes. Clearing them here is what
  * keeps Settings from listing devices that will never receive another alert.
  */
-export function rotateVapidKeys(): VapidKeys {
-  const secrets = mobileSecrets();
-  const vapid = generateVapidKeys();
-  persistSecrets({ ...secrets, vapid, devices: [] });
-  return vapid;
+export async function rotateVapidKeys(): Promise<VapidKeys> {
+  const secrets = await updateMobileSecrets((current) => ({
+    ...current, vapid: generateVapidKeys(), devices: [],
+  }));
+  return secrets.vapid!;
 }

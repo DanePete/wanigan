@@ -1351,7 +1351,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     let slotRefusal = '';
     try { await createSession({ providerId: 'claude', projectId: gateProject.id }); }
     catch (error) { slotRefusal = error instanceof Error ? error.message : String(error); }
-    check(/held at 0/.test(slotRefusal) && /Settings › Dispatcher/.test(slotRefusal),
+    check(/held at 0/.test(slotRefusal) && /Settings › Automation › Dispatcher/.test(slotRefusal),
       'an interactive launch honours the dispatcher session limit and names the control that would raise it',
       slotRefusal);
     check(gateSessionCount() === 0, 'and the refusal leaves no half-created session behind');
@@ -2159,7 +2159,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !afterSubscribe.includes('web.push.apple.com'),
     'a stored subscription is never readable back over the API — not on the status poll, not from the key route',
     afterSubscribe.slice(0, 0));
-    mobile.forgetAllPushDevices();
+    await mobile.forgetAllPushDevices();
 
     // The emergency stop, over the wire the phone actually uses. Control scope:
     // a device the operator left in read-only mode may watch the fleet and may
@@ -4031,9 +4031,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
     try {
       await mobile.setMobileConfig({ webPushEnabled: true, pushEnabled: false });
-      mobile.rotatePushKeys();
+      await mobile.rotatePushKeys();
 
-      const key = mobile.pushPublicKey();
+      const key = await mobile.pushPublicKey();
       check(mobile.vapidKeysValid({ publicKey: key, privateKey: 'x' }) === false
         && Buffer.from(key, 'base64url').length === 65 && Buffer.from(key, 'base64url')[0] === 0x04,
       'the advertised application server key is a 65-byte uncompressed P-256 point');
@@ -4044,7 +4044,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'with no subscription nothing is sent, and the reason names the action rather than the state',
       noDevices.error);
 
-      mobile.rememberPushDevice({
+      await mobile.rememberPushDevice({
         endpoint,
         p256dh: subscriber.getPublicKey().toString('base64url'),
         auth: subscriberAuth.toString('base64url'),
@@ -4159,20 +4159,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       // Rotation is the revocation that holds. A device re-registered after it
       // must be a new subscription, not the old one coming back.
       pushStatus = 201;
-      mobile.rememberPushDevice({
+      await mobile.rememberPushDevice({
         endpoint,
         p256dh: subscriber.getPublicKey().toString('base64url'),
         auth: subscriberAuth.toString('base64url'),
         label: 'iPhone',
       });
-      const beforeRotation = mobile.pushPublicKey();
-      mobile.rotatePushKeys();
-      check(mobile.pushPublicKey() !== beforeRotation && mobile.listPushDevices().length === 0,
+      const beforeRotation = await mobile.pushPublicKey();
+      await mobile.rotatePushKeys();
+      check(await mobile.pushPublicKey() !== beforeRotation && mobile.listPushDevices().length === 0,
         'replacing the keypair drops every subscription in the same write');
 
       // The merged sink: one channel off is not a failure of the alert.
       captured.length = 0;
-      mobile.rememberPushDevice({
+      await mobile.rememberPushDevice({
         endpoint,
         p256dh: subscriber.getPublicKey().toString('base64url'),
         auth: subscriberAuth.toString('base64url'),
@@ -4190,7 +4190,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     } finally {
       globalThis.fetch = originalFetch;
       await mobile.setMobileConfig({ webPushEnabled: true, pushEnabled: false });
-      mobile.rotatePushKeys();
+      await mobile.rotatePushKeys();
     }
 
     // ── an endpoint is where a device is, not which device it is ──
@@ -4199,7 +4199,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // endpoint alone, one iPhone became a new row on every rotation: the list
     // filled with dead copies of one phone and the cap then evicted the
     // operator's other devices to make room for them.
-    mobile.forgetAllPushDevices();
+    await mobile.forgetAllPushDevices();
     const stable = 'd-smoke-one-phone';
     const asDevice = (endpoint: string) => ({
       endpoint,
@@ -4208,9 +4208,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       label: 'iPhone',
       clientId: stable,
     });
-    mobile.rememberPushDevice(asDevice('https://web.push.apple.com/smoke/rotate-1'));
+    await mobile.rememberPushDevice(asDevice('https://web.push.apple.com/smoke/rotate-1'));
     const firstId = mobile.listPushDevices()[0]?.id;
-    for (let i = 2; i <= 6; i++) mobile.rememberPushDevice(asDevice(`https://web.push.apple.com/smoke/rotate-${i}`));
+    for (let i = 2; i <= 6; i++) await mobile.rememberPushDevice(asDevice(`https://web.push.apple.com/smoke/rotate-${i}`));
     check(mobile.listPushDevices().length === 1,
       'a phone whose endpoint rotated five times is still one device, not six',
       mobile.listPushDevices().length);
@@ -4219,24 +4219,32 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
     // A device that sends no client id — an older build of the page — still
     // matches on its endpoint rather than duplicating on every launch.
-    mobile.forgetAllPushDevices();
+    await mobile.forgetAllPushDevices();
     const legacy = {
       endpoint: 'https://web.push.apple.com/smoke/legacy',
       p256dh: subscriber.getPublicKey().toString('base64url'),
       auth: subscriberAuth.toString('base64url'),
       label: 'iPad',
     };
-    mobile.rememberPushDevice(legacy);
-    mobile.rememberPushDevice(legacy);
+    await mobile.rememberPushDevice(legacy);
+    await mobile.rememberPushDevice(legacy);
     check(mobile.listPushDevices().length === 1,
       'a page that sends no client id still de-duplicates on its endpoint', mobile.listPushDevices().length);
-    mobile.forgetAllPushDevices();
+    await mobile.forgetAllPushDevices();
+
+    await Promise.all([
+      mobile.rememberPushDevice({ ...legacy, endpoint: 'https://web.push.apple.com/smoke/concurrent-1', label: 'First phone' }),
+      mobile.rememberPushDevice({ ...legacy, endpoint: 'https://web.push.apple.com/smoke/concurrent-2', label: 'Second phone' }),
+    ]);
+    check(mobile.listPushDevices().length === 2,
+      'concurrent subscriptions both survive serialized encrypted credential updates', mobile.listPushDevices());
+    await mobile.forgetAllPushDevices();
 
     // The device cap is a property of the store, and the store is the only
     // thing standing between a paired browser that re-subscribes on every
     // launch and a credential file that grows for the life of the install.
     for (let i = 0; i < mobile.MAX_PUSH_DEVICES + 4; i++) {
-      mobile.rememberPushDevice({
+      await mobile.rememberPushDevice({
         endpoint: `https://web.push.apple.com/smoke/cap-${i}`,
         p256dh: subscriber.getPublicKey().toString('base64url'),
         auth: subscriberAuth.toString('base64url'),
@@ -4246,7 +4254,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(mobile.listPushDevices().length === mobile.MAX_PUSH_DEVICES,
       'the device list is capped rather than growing without bound',
       mobile.listPushDevices().length);
-    const repeat = mobile.rememberPushDevice({
+    const repeat = await mobile.rememberPushDevice({
       endpoint: 'https://web.push.apple.com/smoke/cap-9',
       p256dh: subscriber.getPublicKey().toString('base64url'),
       auth: subscriberAuth.toString('base64url'),
@@ -4255,7 +4263,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(repeat.length === mobile.MAX_PUSH_DEVICES
       && repeat.filter((device) => device.label === 'Renamed').length === 1,
     're-subscribing one endpoint replaces its row instead of adding a second');
-    mobile.forgetAllPushDevices();
+    await mobile.forgetAllPushDevices();
 
     // An oversized notification must be refused rather than truncated into a
     // record that decrypts to half a sentence.

@@ -143,8 +143,14 @@ function NavigationContents({ tab, go, goArea, onClose, compact, needs, running,
             <Icon name={area.icon} /><span>{area.label}</span>
             {count !== null && count > 0 && <span className="workbench-area-count" aria-label={area.id === 'fleet' ? `${count} need you` : `${count} active`}>{count}</span>}
           </button>
-          {active && area.tabs.length > 1 && <nav className="workbench-local-routes" aria-label={`${area.label} views`}>
-            {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id}
+          {/* Every area lists its views, not only the one you are in. Rendering
+              them for the active area alone left ten of seventeen views —
+              Changes, Usage, Skills, Batches and the rest — invisible until you
+              happened to open the area above them, the same way resume once
+              hid behind a button called History. Only the current area's rows
+              are Tab stops; the arrow keys still reach every row. */}
+          {area.tabs.length > 1 && <nav className="workbench-local-routes" data-area-active={active} aria-label={`${area.label} views`}>
+            {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id} tabIndex={active ? undefined : -1}
               aria-current={id === tab ? 'page' : undefined} aria-keyshortcuts={chordLabels(keymap, `view:${id}`).aria}
               title={`${labelForTab(id)} (${chordLabels(keymap, `view:${id}`).keys})`} onClick={() => openView(id)}>
               <span className="nav-tab-label">{labelForTab(id)}</span><span className="nav-tab-chord" aria-hidden="true">{chordLabels(keymap, `view:${id}`).keys}</span>

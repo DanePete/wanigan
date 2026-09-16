@@ -928,7 +928,7 @@ export function ledger(limit = 200, opts?: { deniedOnly?: boolean }): LedgerEntr
  * normalises them — the hash is over what was recorded. The last line is the
  * signature record, which scripts/verify-ledger.mjs checks with no Wanigan.
  */
-export function exportLedger(filePath: string, d: Database.Database = db()): number {
+export async function exportLedger(filePath: string, d: Database.Database = db()): Promise<number> {
   const out = path.resolve(filePath);
   let fd: number;
   try {
@@ -954,7 +954,7 @@ export function exportLedger(filePath: string, d: Database.Database = db()): num
         chunk = '';
       }
     }
-    chunk += `${chain.finish()}\n`;
+    chunk += `${await chain.finish()}\n`;
     fs.writeSync(fd, chunk);
   } finally {
     fs.closeSync(fd);

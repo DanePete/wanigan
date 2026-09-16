@@ -9,6 +9,7 @@ import { Hint, Mark, Note, Icon, SectionHead, Segmented, ago } from './bits';
 import '../styles/launch.css';
 import '../styles/worktree-setup.css';
 import { useDialog } from './useDialog';
+import { settingsDoorIn, type SettingsDoor } from '@shared/settings-doors';
 import { useViewMemory } from './viewMemory';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -85,7 +86,7 @@ function OpenField({ id, label, value, choices, placeholder, onChange }: {
 }
 
 export default function NewSessionDialog({
-  providers, projects, defaultProjectId, liveSessions, onClose, onCreate,
+  providers, projects, defaultProjectId, liveSessions, onClose, onCreate, onOpenSettings,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
@@ -94,6 +95,8 @@ export default function NewSessionDialog({
   liveSessions: Session[];
   onClose: () => void;
   onCreate: (opts: LaunchOptions) => Promise<void>;
+  /** Open the Settings section a refusal names. The draft is kept per project, so closing loses nothing. */
+  onOpenSettings?: (jump: { tab: SettingsDoor['tab']; section?: string }) => void;
 }) {
   /*
    * The dialog re-resolves providers itself when you ask it to, because the
@@ -589,7 +592,14 @@ export default function NewSessionDialog({
         </header>
         <div className="launch-layout"><fieldset className="launch-form" disabled={busy} aria-busy={busy}>
         <section className="launch-section" id="launch-message">
-          {err && <Note tone="error"><strong>The session did not start.</strong> {err}</Note>}
+          {err && (() => {
+            // A refusal that names its fix — the session limit, a missing
+            // account — gets a door to it, not only a sentence to follow.
+            const door = onOpenSettings ? settingsDoorIn(err) : null;
+            return <Note tone="error" action={door && onOpenSettings
+              ? { label: door.label, run: () => { onClose(); onOpenSettings({ tab: door.tab, section: door.section }); } }
+              : undefined}><strong>The session did not start.</strong> {err}</Note>;
+          })()}
           <SectionHead label="What should the agent do?" right={initialPrompt ? <button className="btn btn-sm" type="button" onClick={() => setInitialPrompt('')}>Discard draft</button> : undefined} />
           <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
           <textarea id="launch-first-message" data-initial-focus className="field launch-message" aria-label="First message" rows={3}

@@ -215,27 +215,27 @@ export function pushEndpointHosts(): string[] {
 }
 
 /** Forget one device by Wanigan's own id. Its browser keeps a dead subscription. */
-export function forgetPushDevice(id: string): MobilePushDeviceView[] {
-  savePushDevices(pushDevices().filter((device) => device.id !== id));
+export async function forgetPushDevice(id: string): Promise<MobilePushDeviceView[]> {
+  await savePushDevices((devices) => devices.filter((device) => device.id !== id));
   return listPushDevices();
 }
 
 /** Forget every device without touching the key, so each can simply re-subscribe. */
-export function forgetAllPushDevices(): MobilePushDeviceView[] {
-  savePushDevices([]);
+export async function forgetAllPushDevices(): Promise<MobilePushDeviceView[]> {
+  await savePushDevices([]);
   return listPushDevices();
 }
 
 /** New keypair, no devices. Every phone must subscribe again. */
-export function rotatePushKeys(): MobilePushDeviceView[] {
-  rotateVapidKeys();
+export async function rotatePushKeys(): Promise<MobilePushDeviceView[]> {
+  await rotateVapidKeys();
   pushResult = null;
   return listPushDevices();
 }
 
 /** The public half devices subscribe against, generated on first use. */
-export function pushPublicKey(): string {
-  return ensureVapidKeys().publicKey;
+export async function pushPublicKey(): Promise<string> {
+  return (await ensureVapidKeys()).publicKey;
 }
 
 /**
@@ -246,41 +246,42 @@ export function pushPublicKey(): string {
  * re-asserts it, and a Mac that lost the row for any reason gets it back
  * without the operator being asked to notice.
  */
-export function rememberPushDevice(input: {
+export async function rememberPushDevice(input: {
   endpoint: string;
   p256dh: string;
   auth: string;
   label: string;
   /** The device's own stable id, when its browser sent one. */
   clientId?: string;
-}): MobilePushDeviceView[] {
-  const existing = pushDevices();
-  // Matched on the device before its address. Safari rotates a Home Screen
-  // app's endpoint by itself, so an endpoint is where a device can be reached
-  // today rather than which device it is — matching on it alone turned one
-  // iPhone into a new row every week or two, each one dead, until they filled
-  // the list and started evicting the operator's other devices.
-  const clientId = safeString(input.clientId, 64) || undefined;
-  const previous = (clientId ? existing.find((device) => device.clientId === clientId) : undefined)
-    ?? existing.find((device) => device.endpoint === input.endpoint);
-  const device: MobilePushDevice = {
-    id: previous?.id ?? randomBytes(9).toString('base64url'),
-    ...(clientId ? { clientId } : previous?.clientId ? { clientId: previous.clientId } : {}),
-    label: safeString(input.label, 60) || 'Paired device',
-    endpoint: input.endpoint,
-    p256dh: input.p256dh,
-    auth: input.auth,
-    createdAt: previous?.createdAt ?? Date.now(),
-    lastAt: previous?.lastAt ?? null,
-    lastOk: previous?.lastOk ?? null,
-    lastError: previous?.lastError ?? null,
-  };
-  // Oldest out when a ninth device arrives. Appending the new row last is what
-  // makes the cap drop the least recently added rather than the newest one.
-  const kept = existing.filter((row) => row.id !== device.id
-    && row.endpoint !== input.endpoint
-    && !(clientId !== undefined && row.clientId === clientId));
-  savePushDevices([...kept, device].slice(-MAX_PUSH_DEVICES));
+}): Promise<MobilePushDeviceView[]> {
+  await savePushDevices((existing) => {
+    // Matched on the device before its address. Safari rotates a Home Screen
+    // app's endpoint by itself, so an endpoint is where a device can be reached
+    // today rather than which device it is — matching on it alone turned one
+    // iPhone into a new row every week or two, each one dead, until they filled
+    // the list and started evicting the operator's other devices.
+    const clientId = safeString(input.clientId, 64) || undefined;
+    const previous = (clientId ? existing.find((device) => device.clientId === clientId) : undefined)
+      ?? existing.find((device) => device.endpoint === input.endpoint);
+    const device: MobilePushDevice = {
+      id: previous?.id ?? randomBytes(9).toString('base64url'),
+      ...(clientId ? { clientId } : previous?.clientId ? { clientId: previous.clientId } : {}),
+      label: safeString(input.label, 60) || 'Paired device',
+      endpoint: input.endpoint,
+      p256dh: input.p256dh,
+      auth: input.auth,
+      createdAt: previous?.createdAt ?? Date.now(),
+      lastAt: previous?.lastAt ?? null,
+      lastOk: previous?.lastOk ?? null,
+      lastError: previous?.lastError ?? null,
+    };
+    // Oldest out when a ninth device arrives. Appending the new row last is what
+    // makes the cap drop the least recently added rather than the newest one.
+    const kept = existing.filter((row) => row.id !== device.id
+      && row.endpoint !== input.endpoint
+      && !(clientId !== undefined && row.clientId === clientId));
+    return [...kept, device].slice(-MAX_PUSH_DEVICES);
+  });
   return listPushDevices();
 }
 
@@ -330,7 +331,7 @@ async function deliver(device: MobilePushDevice, payload: Buffer, urgent: boolea
   let authorization: string;
   try {
     body = encryptPushPayload(payload, { p256dh: device.p256dh, auth: device.auth });
-    authorization = vapidAuthorization(ensureVapidKeys(), device.endpoint, VAPID_SUBJECT);
+    authorization = vapidAuthorization(await ensureVapidKeys(), device.endpoint, VAPID_SUBJECT);
   } catch (error) {
     // A subscription whose keys will not encrypt is not a network problem and
     // will not fix itself; say so rather than retrying it every alert forever.
@@ -464,7 +465,7 @@ export async function sendWebPush(input: MobilePushInput, force = false): Promis
     // Mac that has never heard of it.
     const byEndpoint = new Map(devices.map((device, index) => [device.endpoint, outcomes[index]]));
     try {
-      savePushDevices(pushDevices().flatMap((device) => {
+      await savePushDevices((current) => current.flatMap((device) => {
         const outcome = byEndpoint.get(device.endpoint);
         if (!outcome) return [device];
         if (outcome.expired) return [];
@@ -528,10 +529,10 @@ export function testWebPush(): Promise<MobilePushResult> {
  * are ordinary authenticated routes rather than anything resembling /api/pair,
  * which is unauthenticated precisely because it is what hands the token out.
  */
-function serveKey(res: http.ServerResponse): void {
+async function serveKey(res: http.ServerResponse): Promise<void> {
   try {
     json(res, 200, {
-      key: pushPublicKey(),
+      key: await pushPublicKey(),
       enabled: webPushEnabled(),
       devices: pushDevices().length,
       max: MAX_PUSH_DEVICES,
@@ -573,7 +574,7 @@ async function serveSubscribe(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
   try {
-    const devices = rememberPushDevice({
+    const devices = await rememberPushDevice({
       endpoint,
       p256dh,
       auth,
@@ -600,8 +601,7 @@ async function serveForget(req: http.IncomingMessage, res: http.ServerResponse):
     return;
   }
   try {
-    const remaining = pushDevices().filter((device) => device.endpoint !== endpoint);
-    savePushDevices(remaining);
+    const remaining = await savePushDevices((devices) => devices.filter((device) => device.endpoint !== endpoint));
     json(res, 200, { ok: true, devices: remaining.length });
   } catch (error) {
     json(res, 503, {

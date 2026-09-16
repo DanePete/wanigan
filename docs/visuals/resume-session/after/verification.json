@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-16T23:25:37.513Z",
+  "provenance": "Isolated Electron renderer and synthetic bridge. No real main, providers, PTY, or archive writes.",
+  "checks": [
+    "The header pairs Resume with New session and names its chord",
+    "Opening Resume reads history and launches nothing",
+    "Recent is banded Pinned, Today, Yesterday, Previous 7 days, Earlier, Settled with the settled shelf closed",
+    "The newest conversation is chosen and its last turn is in view",
+    "The search box has focus when the dialog opens",
+    "Arrow keys from the search box move the selection",
+    "Typing filters names instantly and selects the first match",
+    "Three letters or more also search what was said, with the match marked",
+    "An archive outside Recent is readable and cannot be resumed",
+    "All projects reads Recent unscoped and shows another project",
+    "A conversation whose folder is missing reads but does not resume",
+    "A settled conversation restores to Recent through the lifecycle flag",
+    "Pin writes the flag and the row moves into Pinned",
+    "Turns & restore shows the finished run’s turns without launching",
+    "⌘↵ resumes the exact durable handle and closes the dialog",
+    "⌘⇧T opens Resume from the shell",
+    "Escape closes Resume",
+    "A short window keeps the list, the choice and the Resume button on screen",
+    "With nothing running, Sessions offers the newest live conversations to pick up",
+    "A pick-up row resumes on its own button"
+  ],
+  "failures": [],
+  "errors": []
+}

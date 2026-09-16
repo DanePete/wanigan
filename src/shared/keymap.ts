@@ -277,6 +277,7 @@ const TEXT_FIELD_ENTER = 'Enter and ⇧Enter belong to the text field they are t
 export const KEYMAP_RULES: Record<BindingId, KeymapRule> = {
   palette: { rebindable: true, name: 'Command palette' },
   'new-session': { rebindable: true, name: 'New session' },
+  'resume-session': { rebindable: true, name: 'Resume a session' },
   demo: { rebindable: true, name: 'Demo mode' },
   // `?` stays: it is the bare key for where typing it is free, and a bare key
   // is never something a rebinding may choose. The ⌘/ half is what moves.

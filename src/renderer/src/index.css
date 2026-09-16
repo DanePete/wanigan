@@ -457,6 +457,8 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .startup-recovery > div { min-width: 0; display: grid; gap: 2px; }
 .startup-recovery strong { color: var(--bad); }
+.startup-recovery[data-phase="starting"] { border-bottom-color: var(--line); background: var(--surface); }
+.startup-recovery[data-phase="starting"] strong { color: var(--text); }
 .startup-recovery span, .startup-recovery small { color: var(--text-dim); }
 .startup-recovery small { font-size: var(--t-small); }
 .startup-recovery .btn { flex: none; min-height: 34px; }
@@ -584,6 +586,22 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
    the ⌘T hint was printed and invisible. Accent-ink at .72 clears 4.5:1 on the
    fill in both palettes. */
 .nav-new-session .nav-shortcut { color: var(--accent-ink); opacity: .72; }
+/* New session and Resume are one decision — what to work on next — so they are
+   drawn as one joined control: start something, or pick a thread back up. The
+   seam is a shared 1px border, and the hovered half lifts above its neighbour
+   so its accent edge is never half-covered. */
+.nav-session-pair { display: inline-flex; align-items: stretch; flex: none; }
+.nav-session-pair > .nav-new-session { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.nav-resume-session {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 30px; padding: 0 10px; margin-left: -1px;
+  border: 1px solid var(--line); border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--bg-sunk); color: var(--text); font-size: var(--t-small); font-weight: 650;
+  white-space: nowrap; touch-action: manipulation;
+}
+.nav-resume-session > .icon { color: var(--accent); }
+.nav-session-pair > button:hover, .nav-session-pair > button:focus-visible { position: relative; z-index: 1; }
+.nav-resume-session:hover { border-color: var(--accent); background: var(--accent-soft); }
 /* The Views drop-down menu (.nav-menu*, .nav-views-caret), the project picker
    (.nav-project*) and the unread dot (.nav-dot) were replaced by the command
    palette and the nav marks; App.tsx renders none of them, so their rules and
@@ -629,7 +647,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   .app-header { padding-left: var(--s-4); }
   .nav-tab { min-height: 44px; }
   .hdr-toggle { width: 44px; height: 44px; }
-  .nav-new-session, .nav-views-button, .nav-usage-status, .theme-control { min-height: 44px; }
+  .nav-new-session, .nav-resume-session, .nav-views-button, .nav-usage-status, .theme-control { min-height: 44px; }
   .theme-control select { min-height: 38px; }
 }
 .command-backdrop {

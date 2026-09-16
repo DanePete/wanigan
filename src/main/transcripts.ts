@@ -7,6 +7,9 @@ import { getSetting, setSetting } from './settings';
 import { redactCredentials } from './redact';
 import { titleFromTranscriptText, type ReadTitle } from '../shared/session-title';
 import { claudeProjectSlug } from '../shared/claude-slug';
+// Markers wrapped around the matched term in a hit snippet; one copy, shared
+// with the renderers that swap them for markup.
+import { HIT_CLOSE, HIT_OPEN } from '../shared/resume-history';
 import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptRecall, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
@@ -30,11 +33,6 @@ const MAX_READ_TURNS = 2000;
  *  session's wall-clock lifetime; without slack the fallback finds nothing. */
 const LIFETIME_GRACE_MS = 5 * 60_000;
 
-/** Markers wrapped around the matched term in a hit snippet. Chosen because
- *  they practically never occur in source code, so the renderer can swap them
- *  for markup without corrupting a snippet that quotes a bracket or a tag. */
-export const HIT_OPEN = '«';
-export const HIT_CLOSE = '»';
 
 /**
  * Every directory a transcript for these working directories could be in.
