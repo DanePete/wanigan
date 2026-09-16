@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { db } from './db';
+import type Database from 'better-sqlite3';
+import { dataDir, db } from './db';
 import { halted } from './halt';
+import { appendLedgerRow, beginLedgerExport } from './ledger-chain';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
@@ -30,6 +32,12 @@ export type PolicyContext = {
    * headless fan-out is the one caller that sets it, and it sets it false.
    */
   attended?: boolean;
+  /**
+   * An unattended run that opted into holding calls for the operator, on a CLI
+   * that supports it (src/shared/deferred-approvals.ts). Read only together
+   * with `attended === false`: an attended session has a person to ask.
+   */
+  holdAsks?: boolean;
 };
 
 /* ── trust levels ─────────────────────────────────────────────────────── */
@@ -266,6 +274,53 @@ function credentialTarget(input: HookInput, root: string | null): string | null 
   return null;
 }
 
+/* ── Wanigan's own credentials ──────────────────────────────────────── */
+
+/**
+ * The directories where Wanigan writes the bearer tokens it hands sessions:
+ * one hook settings file and one MCP config per launch, owner-only on disk. An
+ * agent runs as the same user, so file permissions do not keep one session out
+ * of another's. A session holding another's hook token can post events as that
+ * session, including the SessionEnd that revokes its gate; one holding its MCP
+ * token can call Wanigan's tools as it. Neither is ever a repository's own
+ * work, which is why this is refused at every trust level, Trusted included.
+ *
+ * `statusline` is the third. The status line relay (the observed-telemetry
+ * change) writes a curl config per session there, and each one carries that
+ * session's hook bearer in its headers. It is named here before that change
+ * lands, because denying a folder that does not exist yet costs nothing, and a
+ * deny list that learns about a new token folder only after it ships is a
+ * window in which every session can read every other's.
+ *
+ * The same paths are what the sandbox block denies to shell commands when
+ * sandboxing is on (sandbox-policy.ts). This gate covers the file tools and a
+ * shell command that names the path; the sandbox covers the command that does
+ * not name it.
+ */
+export function waniganCredentialDirs(): string[] {
+  const root = dataDir();
+  return [path.join(root, 'hooks'), path.join(root, 'mcp'), path.join(root, 'statusline')];
+}
+
+function waniganCredentialTarget(input: HookInput, root: string | null): string | null {
+  const dirs = waniganCredentialDirs();
+  const hit = (abs: string): string | null => {
+    const real = realish(abs);
+    return dirs.find((dir) => prefixed(dir, abs) || prefixed(realish(dir), real)) ?? null;
+  };
+  const p = targetPath(input);
+  if (p) {
+    const found = hit(absolutise(root, p));
+    if (found) return found;
+  }
+  const cmd = str(input.tool_input?.command);
+  for (const token of cmd.match(PATH_TOKEN) ?? []) {
+    const found = hit(absolutise(root, token));
+    if (found) return found;
+  }
+  return null;
+}
+
 /* ── shell inspection ─────────────────────────────────────────────────── */
 
 /**
@@ -453,8 +508,17 @@ export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
     );
   }
 
-  // Checked before anything else so that TRUST_COPY.trusted — "Nothing is
-  // denied by Wanigan" — stays literally true.
+  // Above trust for the same reason the halt is: see waniganCredentialDirs.
+  const waniganSecret = waniganCredentialTarget(input, ctx.projectPath);
+  if (waniganSecret) {
+    return deny(
+      `This reaches ${waniganSecret}, where Wanigan keeps the bearer tokens of every session it runs. Another session's token is never this session's work, so it is refused at every trust level.`,
+      'wanigan-credentials.deny',
+    );
+  }
+
+  // Checked before anything else except the two refusals above, so that
+  // TRUST_COPY.trusted stays literally true.
   if (ctx.trust === 'trusted') {
     return allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow');
   }
@@ -569,6 +633,35 @@ export function registerPolicyContext(ctx: PolicyContext): void {
  */
 export function releasePolicyContext(sessionId: string): void {
   contexts.delete(sessionId);
+  heldAnswers.delete(sessionId);
+}
+
+/**
+ * The operator's answers to calls a run held, waiting for the resumed run to
+ * re-emit them. Keyed by the hook session id and the CLI's own tool_use id, and
+ * spent on first use: an answer is for that one call, never for the next call
+ * that happens to look like it.
+ */
+type HeldAnswer = { decision: 'allow' | 'deny'; note: string | null };
+const heldAnswers = new Map<string, Map<string, HeldAnswer>>();
+
+export function answerHeldCall(sessionId: string, toolUseId: string, answer: HeldAnswer): void {
+  if (!sessionId || !toolUseId) return;
+  const answers = heldAnswers.get(sessionId) ?? new Map<string, HeldAnswer>();
+  answers.set(toolUseId, answer);
+  heldAnswers.set(sessionId, answers);
+}
+
+function operatorAnswer(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
+  const toolUseId = typeof input.tool_use_id === 'string' ? input.tool_use_id : '';
+  const answers = ctx.sessionId ? heldAnswers.get(ctx.sessionId) : undefined;
+  const answer = toolUseId ? answers?.get(toolUseId) : undefined;
+  if (!answers || !answer) return null;
+  answers.delete(toolUseId);
+  const note = answer.note ? ` Their note: ${answer.note}` : '';
+  return answer.decision === 'allow'
+    ? { decision: 'allow', reason: `The operator approved this call after the run held it.${note}`, rule: 'unattended.held.approved' }
+    : { decision: 'deny', reason: `The operator declined this call after the run held it.${note} Carry on without it.`, rule: 'unattended.held.declined' };
 }
 
 /**
@@ -593,8 +686,17 @@ export function contextForSession(sessionId: string | null): PolicyContext | nul
  * to be asked. Denying says the true thing, costs one tool call rather than the
  * whole timeout, and leaves the agent free to do the rest of its work.
  */
-function nobodyToAsk(d: PolicyDecision): PolicyDecision {
+function nobodyToAsk(ctx: PolicyContext, d: PolicyDecision): PolicyDecision {
   if (d.decision !== 'ask') return d;
+  // A run that opted in holds the question instead: the CLI ends the run with
+  // the call recorded, and a person answers before anything resumes.
+  if (ctx.holdAsks === true) {
+    return {
+      decision: 'defer',
+      reason: `Held for the operator: this run stops here until someone answers. The question was: ${d.reason}`,
+      rule: `${d.rule}.held`,
+    };
+  }
   return {
     decision: 'deny',
     reason: `This run is unattended, so there was nobody to put the question to and Wanigan denied it. The question was: ${d.reason}`,
@@ -633,8 +735,14 @@ function unevaluable(): PolicyDecision {
  */
 export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
   try {
+    // A person already answered this exact call, while its run was held.
+    const answered = ctx.attended === false ? operatorAnswer(ctx, input) : null;
+    if (answered) {
+      recordDecision(ctx, input, answered);
+      return answered;
+    }
     const decided = decideFor(ctx, input);
-    const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
+    const answer = ctx.attended === false ? nobodyToAsk(ctx, decided) : decided;
     recordDecision(ctx, input, answer);
     return answer;
   } catch {
@@ -659,16 +767,16 @@ export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
  * from TRUST_COPY because the label is the half that is true, and the agent
  * should name the level the same way the Settings screen does.
  *
- * No budget figure appears here, and none should be added. Nothing in Wanigan
- * refuses, pauses or throttles work when a budget is breached — budgetBreached()
- * draws a banner and stops there — so a remaining-spend sentence would be
- * announcing a constraint that does not exist.
+ * No budget figure appears here, and none should be added. A reached budget
+ * holds queued work before it starts (budget-gate.ts) and never interrupts a
+ * run already under way, so a remaining-spend sentence to a running agent would
+ * describe a constraint it cannot meet mid-run.
  */
 export function trustBriefing(ctx: PolicyContext): string {
   const where = ctx.projectPath ? ` (${ctx.projectPath})` : '';
   const line =
     ctx.trust === 'trusted'
-      ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
+      ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing except reading other sessions' Wanigan credentials, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
       : ctx.trust === 'readonly'
         ? `Wanigan is running this session at ${TRUST_COPY.readonly.label} trust: reads, searches and lookups are allowed, and a file write, shell command or non-read MCP call is put to the operator as an approval prompt — attempt it when the change is worth asking for, and describe it instead when it is not.`
         : `Wanigan is running this session at ${TRUST_COPY.project.label} trust: writes and shell commands are allowed inside the working directory${where}, and anything resolving outside it, or touching the credential directories under your home folder, is put to the operator as an approval prompt rather than denied outright.`;
@@ -676,9 +784,10 @@ export function trustBriefing(ctx: PolicyContext): string {
   // Only for a run with nobody watching, and only because it changes what the
   // agent should expect back. Everywhere else an unevaluable call becomes a
   // prompt somebody answers, and saying this there would be false.
-  return ctx.attended === false
-    ? `${line} Nobody is watching this run, so a call Wanigan cannot evaluate is denied rather than queued for approval.`
-    : line;
+  if (ctx.attended !== false) return line;
+  return ctx.holdAsks === true
+    ? `${line} Nobody is watching this run live: a call that needs approval ends the run with the call held for the operator, who answers before it resumes, and a call Wanigan cannot evaluate is denied.`
+    : `${line} Nobody is watching this run, so a call Wanigan cannot evaluate is denied rather than queued for approval.`;
 }
 
 /* ── the ledger ───────────────────────────────────────────────────────── */
@@ -732,28 +841,28 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
  * record. Nothing in Wanigan updates or deletes a row here, and nothing should
  * be added that does — the value of the table is that its contents cannot be
  * tidied up after the thing you would want to tidy up has happened.
+ *
+ * Convention was the only thing that said so until the rows were chained. Each
+ * one now carries the hash of the one before it, so an edit made straight into
+ * SQLite is found at the row it touched (ledger-chain.ts).
  */
 export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision): void {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return;
-  if (decision.decision === 'allow' && !notableAllow(ctx, tool, input)) return;
+  // A person's answer to a held call is always written down, allow included.
+  if (decision.decision === 'allow' && !decision.rule.startsWith('unattended.held.') && !notableAllow(ctx, tool, input)) return;
 
-  db()
-    .prepare(
-      `INSERT INTO policy_ledger (at, session_id, project_id, trust, tool_name, summary, decision, rule, reason)
-       VALUES (?,?,?,?,?,?,?,?,?)`
-    )
-    .run(
-      Date.now(),
-      ctx.sessionId,
-      ctx.projectId,
-      ctx.trust,
-      tool,
-      summarise(tool, input),
-      decision.decision,
-      decision.rule,
-      decision.reason
-    );
+  appendLedgerRow({
+    at: Date.now(),
+    session_id: ctx.sessionId,
+    project_id: ctx.projectId,
+    trust: ctx.trust,
+    tool_name: tool,
+    summary: summarise(tool, input),
+    decision: decision.decision,
+    rule: decision.rule,
+    reason: decision.reason,
+  });
 }
 
 type LedgerRow = {
@@ -768,11 +877,13 @@ type LedgerRow = {
   decision: string;
   rule: string;
   reason: string;
+  prev_hash: string | null;
+  hash: string | null;
 };
 
 const LEDGER_SELECT = `
   SELECT l.id, l.at, l.session_id, l.project_id, p.name AS project_name, l.trust,
-         l.tool_name, l.summary, l.decision, l.rule, l.reason
+         l.tool_name, l.summary, l.decision, l.rule, l.reason, l.prev_hash, l.hash
   FROM policy_ledger l
   LEFT JOIN projects p ON p.id = l.project_id
 `;
@@ -787,7 +898,9 @@ function toEntry(r: LedgerRow): LedgerEntry {
     trust: asTrust(r.trust) ?? 'project',
     toolName: r.tool_name,
     summary: r.summary,
-    decision: r.decision === 'deny' || r.decision === 'ask' ? r.decision : 'allow',
+    // Every value the gate writes, named; an unrecognised one is still read as
+    // allow, which is the ledger's behaviour for rows from before a value existed.
+    decision: r.decision === 'deny' || r.decision === 'ask' || r.decision === 'defer' ? r.decision : 'allow',
     rule: r.rule,
     reason: r.reason,
   };
@@ -807,8 +920,15 @@ export function ledger(limit = 200, opts?: { deniedOnly?: boolean }): LedgerEntr
  * append-only log should read like the log. Written through one file descriptor
  * in ~256KB chunks so a long ledger is neither a syscall per row nor a single
  * string the size of the table.
+ *
+ * Id order, not time order: the id is the order of writing, and the chain links
+ * rows by it, so a clock that stepped backwards cannot reorder an export into a
+ * chain that no longer verifies. Each row carries its `prev_hash` and `hash`,
+ * and its trust and decision exactly as stored rather than as the list view
+ * normalises them — the hash is over what was recorded. The last line is the
+ * signature record, which scripts/verify-ledger.mjs checks with no Wanigan.
  */
-export function exportLedger(filePath: string): number {
+export function exportLedger(filePath: string, d: Database.Database = db()): number {
   const out = path.resolve(filePath);
   let fd: number;
   try {
@@ -822,17 +942,20 @@ export function exportLedger(filePath: string): number {
 
   let count = 0;
   try {
-    const rows = db().prepare(`${LEDGER_SELECT} ORDER BY l.at ASC, l.id ASC`).iterate() as IterableIterator<LedgerRow>;
+    const chain = beginLedgerExport(d);
+    const rows = d.prepare(`${LEDGER_SELECT} ORDER BY l.id ASC`).iterate() as IterableIterator<LedgerRow>;
     let chunk = '';
     for (const r of rows) {
-      chunk += `${JSON.stringify(toEntry(r))}\n`;
+      chain.push(r);
+      chunk += `${JSON.stringify({ ...toEntry(r), trust: r.trust, decision: r.decision, prev_hash: r.prev_hash, hash: r.hash })}\n`;
       count++;
       if (chunk.length > 256 * 1024) {
         fs.writeSync(fd, chunk);
         chunk = '';
       }
     }
-    if (chunk) fs.writeSync(fd, chunk);
+    chunk += `${chain.finish()}\n`;
+    fs.writeSync(fd, chunk);
   } finally {
     fs.closeSync(fd);
   }

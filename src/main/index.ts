@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { requireScheduledExecution, SCHEDULED_BUDGET_USD, SCHEDULED_TIMEOUT_MS } from '../shared/scheduled-execution';
 import {
   detectProviders, effectiveProviderBackendId, launchFieldsFor, missingCredentialIds, providerById, providerPackRegistry, refreshProviderPacks,
-  runsClaudeCli, usesAnthropicAccount,
+  runsClaudeCli, usesAnthropicAccount, providerProbeEnvironment, shellPath,
 } from './providers';
+import * as codexHooks from './codex-hooks';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
@@ -33,11 +34,13 @@ import type {
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu, setComposerShown } from './menu';
+import { keymapState, resetAllKeybindings, resetKeybinding, setKeybinding } from './keymap';
 import { automationRun } from './automation';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
+import * as statusline from './statusline';
 import { codexUsageSummary } from './codex-usage';
 import * as claudeUsage from './claude-usage';
 import * as hooks from './hooks';
@@ -45,10 +48,15 @@ import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
+import * as worktreeSetup from './worktree-setup';
+import { forecastCollisions } from './collisions';
+import * as configPins from './config-pins';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
+import * as attempts from './attempts';
 import * as spend from './spend';
+import { budgetHold } from './budget-gate';
 import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
@@ -63,7 +71,13 @@ import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
+import { commitChecked, pushChecked } from './guarded-git';
+import { scanFor } from './secret-scan';
+import { assistedByPreview } from './assisted-by';
+import { verifyLedger } from './ledger-chain';
 import * as gh from './gh';
+import * as prReadiness from './pr-readiness';
+import * as intake from './intake';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
@@ -100,6 +114,7 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as goalGate from './goal-gate';
 import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
@@ -921,6 +936,12 @@ async function startServices() {
   // Turn boundaries feed the checkpoint queue. Idempotent; the subscription
   // outlives window recreation on purpose — captures are per-session facts.
   checkpoints.initCheckpoints();
+  // Verified done. A goal that gates on stop runs its review gate when an
+  // agent stops; the nudge is the channel Control already re-reads on.
+  goalGate.initGoalGate(() => {
+    const w = liveWindow();
+    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+  });
 
   if (f.hooks) {
     try {
@@ -1012,7 +1033,7 @@ async function startServices() {
       // typing in. A schedule fires at 03:00 or while you are mid-edit, and
       // those are the same case as far as the repo is concerned.
       isolate: true,
-    }, schedule.fireFromQueue(payload));
+    }, null, schedule.fireFromQueue(payload));
   });
 
   // Schedules have offered a Batch option since phase 25 and nothing has ever
@@ -1068,6 +1089,10 @@ async function startServices() {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
   });
+  // An attempt is recorded and gated when its run ends, in whichever process
+  // ends it. Here rather than in the attended path alone, because the launchd
+  // scheduler dispatches the same queue and closes the same runs.
+  attempts.watchAttemptRuns();
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
   schedule.startScheduler(queueChanged);
@@ -1075,6 +1100,15 @@ async function startServices() {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId === 'string') control.cancelQueuedNode(nodeId);
   });
+  // GitHub intake tells an open Control view when a poll ends, whoever fired it.
+  // The timer loop always runs here and reads its own setting each minute, so it
+  // polls only once the operator has turned it on; smoke drives tickIntake()
+  // directly, and a loop in the suite's process would poll its fixtures twice.
+  intake.setIntakeChangedNotifier(() => {
+    const w = liveWindow();
+    if (w && !w.isDestroyed()) w.webContents.send('intake:changed');
+  });
+  if (!smokeMode) intake.startIntakeTimer();
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
@@ -1082,6 +1116,9 @@ async function startServices() {
     }
     await control.startQueuedNode(nodeId);
   });
+  // Registered before the dispatcher starts, so no tick can claim paid work in
+  // the moment before the budget is asked. The rules are in budget-gate.ts.
+  queue.registerGate(budgetHold);
   queue.startDispatcher(queueChanged);
   // The sweep only writes queue rows; the dispatcher above still decides when
   // one may start. It runs on its own slower interval because a goal becomes
@@ -1472,6 +1509,8 @@ function stopServices() {
   hooks.setLearningBriefingHook(null);
   hooks.setModelSwitchHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
+  try { intake.stopIntakeTimer(); } catch { /* already down */ }
+  intake.setIntakeChangedNotifier(null);
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
   if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
@@ -1558,6 +1597,12 @@ function registerIpc() {
         if (channel === 'demo:set') return { ok: true, data: switchDemoWindow(args[0]) };
         if (channel === 'demo:copyPrompt') return { ok: true, data: await copyDemoPrompt(args[0]) };
         if (channel === 'window:visible') return { ok: true, data: !!win?.isVisible() && !win?.isMinimized() };
+        // The keymap is the operator's keyboard, not workspace data, and the
+        // one menu bar above a demo window prints it: a demo window that read
+        // the defaults instead would press chords that menu does not print.
+        // Only the read is shared; a write from a demo window still falls to
+        // the demo reader below and is refused.
+        if (channel === 'keymap:get') return { ok: true, data: keymapState() };
         const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
         if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
         return { ok: true, data };
@@ -1626,9 +1671,12 @@ function registerIpc() {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
     return beginHandover(sessionId.trim());
   });
-  handle('handover:finish', (sessionId: unknown) => {
+  handle('handover:finish', (sessionId: unknown, toAccountId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
-    return finishHandover(sessionId.trim());
+    if (toAccountId !== undefined && toAccountId !== null && typeof toAccountId !== 'string') {
+      throw new Error('That is not an account.');
+    }
+    return finishHandover(sessionId.trim(), typeof toAccountId === 'string' && toAccountId.trim() ? toAccountId.trim() : null);
   });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
@@ -1690,6 +1738,25 @@ function registerIpc() {
       supports: def.supports,
       launchFields: launchFieldsFor(def),
     });
+  });
+  /*
+   * Codex hook events for one installed Codex profile, asking Codex when its
+   * version has not been asked yet (codex-hooks.ts). Takes an id and resolves
+   * the binary here, so the renderer cannot name a program for main to start.
+   * What it starts is Codex's app-server with a throwaway home, for a hook
+   * listing only: no thread, no model call, nothing spent.
+   */
+  handle('providers:checkObserveOnlyHooks', async (providerId: unknown) => {
+    if (typeof providerId !== 'string' || !providerId) throw new Error('Name the provider profile to check.');
+    const def = providerById(providerId);
+    const detected = (await detectProviders()).find((provider) => provider.id === providerId);
+    if (!def || !detected) throw new Error('That provider profile is not loaded.');
+    if (def.harness !== 'codex') throw new Error(`${def.label} does not run Codex, so it has no Codex hook events.`);
+    if (!detected.path) throw new Error(`${def.label} is not installed.`);
+    return codexHooks.checkObserveOnlyHooks(
+      { bin: detected.path, version: detected.version, proven: def.source === 'builtin' || detected.capabilities.probed },
+      providerProbeEnvironment(await shellPath()),
+    );
   });
   handle('providerPacks:list', (includeRemoved?: boolean) =>
     publicProviderPacks(includeRemoved === true));
@@ -2184,6 +2251,19 @@ function registerIpc() {
   handle('usage:events', (id: string, limit?: number) => otel.apiEvents(id, limit));
   handle('usage:throughput', (id: string, buckets?: number) => otel.throughput(id, buckets));
   handle('usage:collector', () => ({ port: otel.collectorPort() }));
+  /*
+   * What sessions' status lines and beta traces reported. Local reads only:
+   * neither starts a CLI process, so both are safe on a poll. A session id is
+   * checked for shape before it reaches a query, since it arrives from the
+   * renderer.
+   */
+  const observedSessionId = (id: unknown): string => {
+    if (typeof id !== 'string' || !id || id.length > 200) throw new Error('A session id is required.');
+    return id;
+  };
+  handle('usage:observed', () => statusline.observedLimits());
+  handle('usage:statusLine', (id: string) => statusline.sessionStatusLine(observedSessionId(id)));
+  handle('usage:traces', (id: string) => otel.sessionTraces(observedSessionId(id)));
 
   // ══ phase 2/3/8 · hook bus, attention, timeline ═════════════════════
   handle('events:session', (id: string, limit?: number) => hooks.sessionEvents(id, limit));
@@ -2196,6 +2276,19 @@ function registerIpc() {
   handle('transcripts:get', (id: string) => transcripts.transcriptFor(id));
   handle('transcripts:list', () => transcripts.archivedSessions());
   handle('transcripts:forget', (id: string) => { transcripts.forgetTranscript(id); return true; });
+  // Transcript recall, per project and only ever the operator's act. The
+  // setting and the MCP server's rule that lists the tool by it both existed,
+  // with nothing able to set it, so wanigan_recall_transcripts was reachable
+  // only from the smoke suite.
+  handle('transcripts:recall', () => Object.fromEntries(
+    listProjects().map((project) => [project.id, transcripts.recallEnabled(project.id)])));
+  handle('transcripts:setRecall', (projectId: unknown, enabled: unknown) => {
+    if (typeof projectId !== 'string' || !projectById(projectId)) {
+      throw new Error('That project is no longer in Wanigan. Reopen Settings and choose again.');
+    }
+    if (typeof enabled !== 'boolean') throw new Error('Transcript recall is either on or off.');
+    return transcripts.setRecallEnabled(projectId, enabled);
+  });
   // Context occupancy for the selected session. Resolved from this process's
   // own session record — the renderer names a session, never a path — and
   // gated on the harness that actually writes a transcript.
@@ -2239,9 +2332,48 @@ function registerIpc() {
   // worktree at the path at all, so ok:false here is the rare case.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
     worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
+  // Whether the agents' worktrees would merge — with their base and with each
+  // other — asked of git in the object database while the work is in flight.
+  // Keyed on a project id; main resolves the repository and every worktree.
+  handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
+  // The repository's executable config and whether it matches what was last let
+  // launch. Keyed on a project id and optionally one of that project's own
+  // worktrees; accepting recomputes the digest in main instead of trusting the
+  // one the renderer was shown.
+  const configRoot = async (projectId: unknown, worktree: unknown): Promise<{ id: string; root: string }> => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    if (typeof worktree !== 'string' || !worktree.trim()) return { id: project.id, root: assertManagedRoot(project.path, 'That project folder') };
+    const info = await worktrees.worktreeStatus(assertManagedRoot(worktree, 'That worktree'));
+    const projectRepo = await worktrees.repoRootFor(project.path);
+    if (!info || !projectRepo || fs.realpathSync.native(info.repoRoot) !== fs.realpathSync.native(projectRepo)) {
+      throw new Error('That worktree does not belong to this project.');
+    }
+    return { id: project.id, root: info.path };
+  };
+  handle('configPins:check', async (projectId: unknown, worktree?: unknown) => {
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.checkConfig(id, root);
+  });
+  handle('configPins:accept', async (projectId: unknown, digest: unknown, worktree?: unknown) => {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('That is not a configuration digest.');
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.acceptConfig(id, root, digest);
+  });
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
+  // What each new worktree of a project is given: how dependency folders
+  // arrive, and the setup and teardown commands. Keyed on a project id; main
+  // resolves the repository. Saving commands is command text `$SHELL -lc` runs
+  // in every worktree Wanigan makes for the project, from sessions and headless
+  // runs alike, so the question goes on the save — asked here, where a
+  // compromised renderer cannot decline to render it — and never on the run.
+  handle('worktrees:setup', (projectId: unknown) => worktrees.worktreeSetupConfig(projectId));
+  handle('worktrees:setDepsMode', (projectId: unknown, mode: unknown) => worktreeSetup.setDepsMode(projectId, mode));
+  handle('worktrees:saveCommands', (projectId: unknown, input: unknown) =>
+    worktreeSetup.saveWorktreeCommandsWithConsent(win, projectId, input));
+  handle('worktrees:commandRuns', (projectId: unknown, limit?: unknown) => worktreeSetup.worktreeCommandRuns(projectId, limit));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
   handle('headless:start', async (cfg: HeadlessStartRequest) => {
@@ -2273,6 +2405,23 @@ function registerIpc() {
   });
   handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
+  handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
+    headless.answerHeld(runId, projectId, decision, note));
+
+  // ══ attempts · best of N and the paired bench ═══════════════════════
+  // Every argument is validated in attempts.ts: a start is re-planned from
+  // scratch, ids must match their shape, and a cleanup takes a set id only —
+  // the worktree paths it removes come from the attempts' own records.
+  handle('attempts:sets', (limit?: unknown) => attempts.attemptSets(typeof limit === 'number' ? limit : 50));
+  handle('attempts:set', (setId: unknown) => attempts.attemptSet(setId));
+  handle('attempts:start', async (input: unknown) => {
+    const started = await attempts.startAttemptSet(input);
+    // As for headless:start: the runs are queued and may already be live.
+    syncAwake();
+    return started;
+  });
+  handle('attempts:keep', (setId: unknown, attemptId: unknown) => attempts.keepAttempt(setId, attemptId));
+  handle('attempts:removeOthers', (setId: unknown) => attempts.removeOtherWorktrees(setId));
 
   // ══ phase 11 · dispatcher ═══════════════════════════════════════════
   handle('queue:list', (limit?: number) => queue.listQueue(limit));
@@ -2357,6 +2506,9 @@ function registerIpc() {
   handle('spend:unified', (days?: number) => spend.unifiedSpend(days));
   handle('spend:effort', () => otel.effortBreakdown());
   handle('spend:byDay', (days: number) => otel.spendByDay(days));
+  // The CLI's own attribution on its cost and token metrics; spendBySource
+  // clamps the window, so a non-number from the renderer reads the default.
+  handle('spend:sources', (days?: number) => otel.spendBySource(Number(days)));
   handle('budgets:list', () => spend.budgets());
   handle('budgets:set', (scopeId: string | null, monthly: number, warnAt?: number) => {
     spend.setBudget(scopeId, monthly, warnAt); return spend.budgets();
@@ -2575,6 +2727,10 @@ function registerIpc() {
   handle('policy:setDefaultTrust', (level: TrustLevel) => { policy.setDefaultTrust(level); return level; });
   handle('policy:ledger', (limit?: number, deniedOnly?: boolean) => policy.ledger(limit, { deniedOnly }));
   handle('policy:summary', () => policy.ledgerSummary());
+  // The whole chain walked on request, and the head signature judged against
+  // it. A read: it signs nothing. Asking again also retries a signing key that
+  // could not be opened earlier, which is what "Verify now" is for.
+  handle('policy:chain', () => verifyLedger(undefined, { retryKey: true }));
   handle('policy:export', async () => {
     if (!win) return null;
     const res = await dialog.showSaveDialog(win, {
@@ -2620,13 +2776,18 @@ function registerIpc() {
   handle('git:stage', (root: string, files: string[]) => gitOps.stage(gitRoot(root), files));
   handle('git:unstage', (root: string, files: string[]) => gitOps.unstage(gitRoot(root), files));
   handle('git:discard', (root: string, tracked: string[], untracked: string[]) => gitOps.discard(gitRoot(root), tracked, untracked));
-  handle('git:commit', (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => gitOps.commit(gitRoot(root), msg, opts));
+  // Commit and push scan what they would record or publish, here in main, and
+  // go past a finding only with the digest of the findings as they are now;
+  // the commit also re-derives its Assisted-by lines. See guarded-git.ts.
+  handle('git:commit', (root: string, msg: unknown, opts?: unknown) => commitChecked(gitRoot(root), msg, opts));
+  handle('git:scanSecrets', (root: string, request: unknown) => scanFor(gitRoot(root), request));
+  handle('git:assistedBy', (root: string, opts?: { amend?: unknown }) => assistedByPreview(gitRoot(root), { amend: opts?.amend === true }));
   handle('git:checkout', (root: string, ref: string, create?: boolean) => gitOps.checkout(gitRoot(root), ref, create === true));
   handle('git:deleteBranch', (root: string, name: string, force?: boolean) => gitOps.deleteBranch(gitRoot(root), name, force === true));
   handle('git:merge', (root: string, ref: string) => gitOps.merge(gitRoot(root), ref));
   handle('git:fetch', (root: string) => gitOps.fetchAll(gitRoot(root)));
   handle('git:pull', (root: string) => gitOps.pull(gitRoot(root)));
-  handle('git:push', (root: string, opts?: { setUpstream?: boolean; branch?: string }) => gitOps.push(gitRoot(root), opts));
+  handle('git:push', (root: string, opts?: unknown) => pushChecked(gitRoot(root), opts));
   handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(gitRoot(root), msg));
   handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(gitRoot(root), i, drop));
   handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(gitRoot(root), i));
@@ -2635,6 +2796,20 @@ function registerIpc() {
   // Same confinement as git:*; auth and hosts stay inside gh itself.
   handle('gh:prStatus', (root: string, force?: boolean) => gh.prStatusReport(gitRoot(root), force === true));
   handle('gh:createPr', (root: string, input: unknown) => gh.createPr(gitRoot(root), input));
+  // Merge readiness, read on a press: mergeability, checks and review threads
+  // for the project's branch, then one failing check's log on a second press.
+  // Keyed on a project id; main resolves the repository, and fetches a log only
+  // for a check its own last read of that project returned. Nothing is posted.
+  handle('gh:readiness', (projectId: string) => prReadiness.readinessReport(projectId));
+  handle('gh:failedLog', (projectId: string, link: string) => prReadiness.failedCheckLog(projectId, link));
+  // Issue intake: opened, labelled, commented and CI-failed facts read through
+  // gh on a press or on the opt-in timer, recorded as Control events. A press is
+  // keyed on a project id and main resolves the repository from its remotes; the
+  // timer's input is validated in main before it is stored. Nothing is posted.
+  handle('intake:overview', () => intake.intakeOverview());
+  handle('intake:check', (projectId: string) => intake.checkGitHub(projectId));
+  handle('intake:timer', () => intake.intakeTimer());
+  handle('intake:setTimer', (input: unknown) => intake.setIntakeTimer(input));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
@@ -2761,6 +2936,8 @@ function registerIpc() {
   // setDocketBudget bounds it in the main process.
   handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
     control.setDocketBudget(docketId, budgetUsd));
+  handle('control:setGate', (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+    control.setGoalGate(docketId, input ?? {}));
   // The board reads the same rows the goal graph does, a second way. There is
   // no ticket table behind it — see control.boardCards.
   // ── the interview ────────────────────────────────────────────────────
@@ -2798,6 +2975,10 @@ function registerIpc() {
   handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
   handle('control:resumeReceipts', (docketId: string) => control.resumeReceipts(docketId));
   handle('control:traces', (docketId: string, limit?: number) => control.traces(docketId, limit));
+  handle('control:plan', (docketId: unknown) => {
+    if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
+    return control.goalPlan(docketId);
+  });
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());
@@ -2902,7 +3083,9 @@ function registerIpc() {
     });
     if (answer.response !== 1) return null;
     if (attachments.attachmentRetention().days !== plan.windowDays) throw new Error('The retention window changed. Preview again before cleanup.');
-    return attachments.reclaimAttachments({ sessionIds: candidates.map(item => item.sessionId), approved: candidates.map(item => ({ sessionId: item.sessionId, fingerprint: item.fingerprint })) });
+    const report = attachments.reclaimAttachments({ sessionIds: candidates.map(item => item.sessionId), approved: candidates.map(item => ({ sessionId: item.sessionId, fingerprint: item.fingerprint })) });
+    attachments.recordAttachmentReclaim(report);
+    return report;
   });
   handle('attach:inspect', (p: string) => attachments.inspect(p));
   // attachToSession refuses any path no native file dialog in this app returned.
@@ -2915,6 +3098,17 @@ function registerIpc() {
     attachments.attachBufferToSession(sessionId, Buffer.from(data), name));
   handle('attach:list', (sessionId: string) => attachments.sessionAttachments(sessionId));
   handle('attach:remove', (id: string) => attachments.removeAttachment(id));
+  // Retention for session attachment directories. The preview deletes nothing
+  // and may be asked about any window, so the panel can show what switching on
+  // would remove before anyone does. Only the stored window can delete.
+  handle('attach:retention', () => ({ ...attachments.attachmentRetention(), last: attachments.lastAttachmentReclaim() }));
+  handle('attach:reclaimPreview', (days?: unknown) => {
+    if (days !== undefined && (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 3650)) {
+      throw new Error('Preview a window of 1 to 3650 whole days.');
+    }
+    return attachments.previewAttachmentReclaim({ days: days as number | undefined });
+  });
+  handle('attach:setRetention', (days: unknown) => attachments.setAttachmentRetention(days));
   // Deliberately no trailing return: the human decides when to send.
   handle('attach:type', (sessionId: string, onlyUnreferenced?: boolean) => {
     const list = attachments.promptableSessionAttachments(sessionId)
@@ -3029,6 +3223,22 @@ function registerIpc() {
     agentsChain(projectId, projectPath));
   handle('context:agentsMd', (projectPath: string) =>
     ctxInstructions.agentsMdStatus(assertManagedRoot(projectPath, 'That project folder')));
+  // The prediction above, laid beside what the newest session in this project
+  // reported through InstructionsLoaded. Keyed on the project id alone and the
+  // path resolved here, so a renderer cannot pair one project's session rows
+  // with another project's chain. Null means no session has reported yet —
+  // which, before launches handed the hook file a CLI version, was every one.
+  handle('context:observed', (projectId: string) => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    const root = assertManagedRoot(project.path, 'That project folder');
+    const newest = hooks.instructionsLoadedSessions(project.id, 1)[0];
+    if (!newest) return null;
+    return ctxInstructions.reconcileInstructions(
+      ctxInstructions.resolveInstructions(root),
+      hooks.instructionsLoaded(newest.sessionId),
+    );
+  });
   handle('context:refresh', (projectPath: string) => {
     const root = assertManagedRoot(projectPath, 'That project folder');
     ctxInstructions.refreshInstructions();
@@ -3145,6 +3355,10 @@ function registerIpc() {
   handle('learning:candidateExplain', (id: string) => learning.explain(id));
   handle('learning:candidateSignals', (id: string) => learning.candidateSignals(id));
   handle('learning:relations', (itemId?: string) => learning.relations(itemId));
+  handle('learning:markContradiction', (firstId: unknown, secondId: unknown, reason: unknown) =>
+    learning.markContradiction(firstId, secondId, reason));
+  handle('learning:keepOverContradiction', (keepId: unknown, retireId: unknown, reason: unknown) =>
+    learning.keepOverContradiction(keepId, retireId, reason));
   handle('learning:freshness', (itemId: string) => learning.freshnessReport(itemId));
 
   // ══ phase 27 · observed sessions ════════════════════════════════════
@@ -3277,6 +3491,28 @@ function registerIpc() {
     return next;
   });
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
+
+  // ══ keyboard shortcuts ══════════════════════════════════════════════
+  // Ids and chords from the renderer are untrusted text, so every write is
+  // validated here with shared/keymap.ts — the module the window matches with —
+  // and a refused chord comes back as data naming its reason. The menu bar
+  // prints the effective chords, so it is rebuilt after anything that moved one.
+  handle('keymap:get', () => keymapState());
+  handle('keymap:set', (id: unknown, chord: unknown) => {
+    const result = setKeybinding(id, chord);
+    if (result.applied) installApplicationMenu(() => win);
+    return result;
+  });
+  handle('keymap:reset', (id: unknown) => {
+    const result = resetKeybinding(id);
+    if (result.applied) installApplicationMenu(() => win);
+    return result;
+  });
+  handle('keymap:resetAll', () => {
+    const state = resetAllKeybindings();
+    installApplicationMenu(() => win);
+    return state;
+  });
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {

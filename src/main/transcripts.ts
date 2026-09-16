@@ -6,6 +6,7 @@ import { runsClaudeCli } from './providers';
 import { getSetting, setSetting } from './settings';
 import { redactCredentials } from './redact';
 import { titleFromTranscriptText, type ReadTitle } from '../shared/session-title';
+import { claudeProjectSlug } from '../shared/claude-slug';
 import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptRecall, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
@@ -36,22 +37,41 @@ export const HIT_OPEN = '«';
 export const HIT_CLOSE = '»';
 
 /**
- * Every directory a transcript for this project could be in.
+ * Every directory a transcript for these working directories could be in.
  *
- * Claude Code slugs the working directory by replacing every non-alphanumeric
- * character with '-', so /Users/x/repo becomes -Users-x-repo. There is one such
- * directory per account: Claude Code keys its whole state, credential included,
- * to CLAUDE_CONFIG_DIR, so a session run under a second account writes its
- * transcript somewhere the default root cannot see. Looking in one root would
- * make that session honestly report "no transcript" forever.
+ * Claude Code files a transcript under the directory the CLI was STARTED in,
+ * slugged (src/shared/claude-slug.ts) — not under the repository. A session
+ * Wanigan starts in an isolated worktree therefore writes under the worktree's
+ * folder, and looking only under the project's found no exact file for any of
+ * them: the archive fell through to the newest transcript in the main
+ * checkout's folder, which can be a neighbouring session's. Pass the launch
+ * directory first.
+ *
+ * There is one such folder per account: Claude Code keys its whole state,
+ * credential included, to CLAUDE_CONFIG_DIR, so a session run under a second
+ * account writes its transcript somewhere the default root cannot see. Looking
+ * in one root would make that session honestly report "no transcript" forever.
  *
  * The ambient value is the fallback for an install with no accounts recorded
  * yet — someone who moved their config by hand has no ~/.claude at all, and the
  * archive would otherwise find nothing and blame the session.
  */
-function claudeProjectDirs(projectPath: string): string[] {
-  const slug = path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
-  return accounts.readRoots('claude-code').map((root) => path.join(root, 'projects', slug));
+function claudeProjectDirs(...dirs: Array<string | null | undefined>): string[] {
+  const slugs: string[] = [];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const resolved = path.resolve(dir);
+    // The CLI's cwd is physical, so a session started under /var/folders is
+    // filed as /private/var/folders. A worktree that has since been removed
+    // cannot be resolved and keeps the name it was filed under.
+    let physical = resolved;
+    try { physical = fs.realpathSync.native(resolved); } catch { /* removed since */ }
+    for (const candidate of [physical, resolved]) {
+      const slug = claudeProjectSlug(candidate);
+      if (!slugs.includes(slug)) slugs.push(slug);
+    }
+  }
+  return accounts.readRoots('claude-code').flatMap((root) => slugs.map((slug) => path.join(root, 'projects', slug)));
 }
 
 /**
@@ -108,13 +128,14 @@ function newestJsonl(dir: string, from = 0, to = Infinity): { path: string; mtim
 }
 
 /**
- * The transcript file for a conversation, or the newest one in that project
- * when the exact id is gone. Returns null rather than throwing: Codex writes no
- * such file, and neither does a repo no Claude session has ever run in. That is
- * normal, not an error.
+ * The transcript file for a conversation, or the newest one filed under that
+ * launch directory when the exact id is gone. `launchDir` is where the CLI was
+ * started — the worktree for an isolated session. Returns null rather than
+ * throwing: Codex writes no such file, and neither does a repo no Claude
+ * session has ever run in. That is normal, not an error.
  */
-export function transcriptPathFor(projectPath: string, conversationId: string | null): string | null {
-  const dirs = claudeProjectDirs(projectPath);
+export function transcriptPathFor(launchDir: string, conversationId: string | null): string | null {
+  const dirs = claudeProjectDirs(launchDir);
   if (conversationId) {
     const exact = exactIn(dirs, conversationId);
     if (exact) return exact;
@@ -310,7 +331,9 @@ function frozenHarness(row: SessionRouting): string | null {
   return null;
 }
 
-function locate(sessionId: string, projectPath: string, conversationId: string | null): Located | { note: string } {
+function locate(
+  sessionId: string, projectPath: string, conversationId: string | null, exactOnly: boolean,
+): Located | { note: string; unsupported?: true } {
   const row = db().prepare(
     `SELECT provider_id, started_at, ended_at, harness_id, provider_profile_json, worktree
        FROM session_log WHERE id = ?`
@@ -331,14 +354,25 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
     ? harness !== null ? harness === 'claude-code' : runsClaudeCli(row.provider_id)
     : true;
   if (row && !writesClaudeTranscript) {
-    return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.` };
+    return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.`, unsupported: true };
   }
 
-  // The recorded cwd wins even when a historical caller supplies the base repo.
-  const dirs = claudeProjectDirs(row?.worktree ?? projectPath);
+  // The launch directory is where the CLI filed it. An exact id is exact in any
+  // folder, so the project's is searched too; the lifetime guess below stays
+  // inside the launch directory's folder, where a worktree's is this session's
+  // alone rather than every session the main checkout has seen.
+  const launchDir = row?.worktree ?? projectPath;
+  const dirs = claudeProjectDirs(launchDir);
   if (conversationId) {
-    const exact = exactIn(dirs, conversationId);
+    const exact = exactIn(claudeProjectDirs(launchDir, projectPath), conversationId);
     if (exact) return { path: exact, exact: true, note: '' };
+  }
+  if (exactOnly) {
+    return {
+      note: conversationId
+        ? 'No transcript file under this conversation\'s id. The session was interrupted, so its recorded end is when Wanigan noticed rather than when it stopped, and no other file was guessed at.'
+        : 'This interrupted session has no conversation id, so there is no exact file to archive and none was guessed at.',
+    };
   }
 
   const from = row ? row.started_at - LIFETIME_GRACE_MS : 0;
@@ -380,14 +414,18 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
  *
  * Nothing here throws. This runs on session exit and on the quit path, where a
  * raised error would take down something far more important than an index.
+ *
+ * `exactOnly` is for a session whose exit Wanigan never saw: see
+ * archiveInterruptedTranscripts in sessions.ts.
  */
 export function archiveSession(
   sessionId: string,
   projectPath: string,
   conversationId: string | null,
-): { ok: boolean; note: string } {
-  const found = locate(sessionId, projectPath, conversationId);
-  if (!('path' in found)) return { ok: false, note: found.note };
+  { exactOnly = false }: { exactOnly?: boolean } = {},
+): { ok: boolean; note: string; unsupported?: true } {
+  const found = locate(sessionId, projectPath, conversationId, exactOnly);
+  if (!('path' in found)) return { ok: false, note: found.note, ...(found.unsupported ? { unsupported: true as const } : {}) };
 
   const dest = path.join(transcriptsDir(), `${sessionId}.jsonl`);
   let bytes = 0;
@@ -641,15 +679,19 @@ export function titleFromTranscript(file: string): ReadTitle {
   return read;
 }
 
-/** The Claude conversation's own name, by exact id only. */
-export function conversationTitle(projectPath: string, conversationId: string | null): ReadTitle {
+/**
+ * The Claude conversation's own name, by exact id only. An isolated session's
+ * file is under its worktree's folder, so that is looked in first.
+ */
+export function conversationTitle(projectPath: string, conversationId: string | null, worktree: string | null = null): ReadTitle {
   if (!conversationId) return null;
-  const file = exactIn(claudeProjectDirs(projectPath), conversationId);
+  const file = exactIn(claudeProjectDirs(worktree, projectPath), conversationId);
   return file ? titleFromTranscript(file) : null;
 }
 
-export function lastAssistantTurn(projectPath: string, conversationId: string | null): string | null {
-  const file = transcriptPathFor(projectPath, conversationId);
+/** The last thing the agent said. `launchDir` is the worktree for an isolated session. */
+export function lastAssistantTurn(launchDir: string, conversationId: string | null): string | null {
+  const file = transcriptPathFor(launchDir, conversationId);
   if (!file) return null;
   const { text } = readForParse(file);
   const parsed = parseTranscript(text, Date.now());

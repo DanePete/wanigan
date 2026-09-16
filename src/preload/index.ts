@@ -6,12 +6,22 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
+import type { AssistedByPreview } from '../shared/assisted-by';
+import type { LedgerChainStatus } from '../shared/ledger-chain';
+import type { ObservedLimitsReport, SessionStatusLine } from '../shared/status-line';
+import type { SessionTraces } from '../shared/trace-spans';
+import type { SpendSourceReport } from '../shared/spend-sources';
+import type { KeymapState, KeymapWrite } from '../shared/keymap';
+import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
+import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
+import type { IntakeOverview, IntakePoll, IntakeTimer } from '../shared/intake';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
   AwakeState,
   ExpiringResults,
-  LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
+  LaunchOptions, ObserveOnlyHooks, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
@@ -80,6 +90,9 @@ const api = {
     list: () => call<ProviderInfo[]>('providers:list'),
     modelCatalogue: (providerId: string) =>
       call<LaunchModelCatalogue>('providers:modelCatalogue', providerId),
+    /** Codex profiles only: whether its hook events reach Wanigan, asking Codex once per version. */
+    checkObserveOnlyHooks: (providerId: string) =>
+      call<ObserveOnlyHooks>('providers:checkObserveOnlyHooks', providerId),
   },
   providerPacks: {
     list: (includeRemoved?: boolean) => call<ProviderPackInfo[]>('providerPacks:list', includeRemoved),
@@ -246,6 +259,12 @@ const api = {
     throughput: (id: string, buckets?: number) => call<number[]>('usage:throughput', id, buckets),
     collector: () => call<{ port: number | null }>('usage:collector'),
     burn: (force?: boolean) => call<unknown>('usage:burn', force),
+    /** Limit windows as sessions' status lines reported them, per account. A local read; never probes. */
+    observed: () => call<ObservedLimitsReport>('usage:observed'),
+    /** One session's newest status line reading — its prompt cache, effort and PR — or null. */
+    statusLine: (id: string) => call<SessionStatusLine | null>('usage:statusLine', id),
+    /** One session's beta per-prompt trace spans, laid out as waterfalls. */
+    traces: (id: string) => call<SessionTraces>('usage:traces', id),
   },
   // ── phases 2/3/8 · events, attention, timeline ───────────────────────
   events: {
@@ -262,6 +281,9 @@ const api = {
     get: (id: string) => call<{ turns: TranscriptTurn[]; note: string | null; bytes: number }>('transcripts:get', id),
     list: () => call<{ sessionId: string; bytes: number; turns: number; archivedAt: number }[]>('transcripts:list'),
     forget: (id: string) => call<boolean>('transcripts:forget', id),
+    /** Project id → whether its sessions may call wanigan_recall_transcripts. */
+    recall: () => call<Record<string, boolean>>('transcripts:recall'),
+    setRecall: (projectId: string, enabled: boolean) => call<boolean>('transcripts:setRecall', projectId, enabled),
     context: (sessionId: string) => call<import('../shared/types').ClaudeContextUsage>('transcripts:context', sessionId),
   },
   // ── phase 9 · worktrees ──────────────────────────────────────────────
@@ -276,6 +298,27 @@ const api = {
     // when there is no worktree at the path at all.
     merge: (p: string, opts?: { squash?: boolean; message?: string }) =>
       call<{ merged: boolean; detail: string }>('worktrees:merge', p, opts),
+    forecast: (projectId: string) =>
+      call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
+    // What a new worktree of this project is given. Saving commands asks the
+    // person in a native dialog for any line not already stored, and rejects
+    // with main's sentence when they cancel.
+    setup: (projectId: string) =>
+      call<import('../shared/worktree-bootstrap').WorktreeSetupConfig>('worktrees:setup', projectId),
+    setDepsMode: (projectId: string, mode: import('../shared/worktree-bootstrap').DepsMode) =>
+      call<import('../shared/worktree-bootstrap').DepsMode>('worktrees:setDepsMode', projectId, mode),
+    saveCommands: (projectId: string, input: import('../shared/worktree-bootstrap').WorktreeCommandLists) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandLists & { projectId: string; updatedAt: number | null }>(
+        'worktrees:saveCommands', projectId, input),
+    commandRuns: (projectId: string, limit?: number) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandRun[]>('worktrees:commandRuns', projectId, limit),
+  },
+  /** The repository's executable config against what was last let launch. */
+  configPins: {
+    check: (projectId: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:check', projectId, worktree ?? null),
+    accept: (projectId: string, digest: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:accept', projectId, digest, worktree ?? null),
   },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {
@@ -290,6 +333,20 @@ const api = {
       call<HeadlessRowDetail>('headless:rowDetail', runId, projectId),
     runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
+    /** Answer a call a row held: approve or decline and resume, or stop the row there. */
+    answerHeld: (runId: string, projectId: string, decision: 'allow' | 'deny' | 'stop', note?: string) =>
+      call<HeadlessRowSummary>('headless:answerHeld', runId, projectId, decision, note),
+  },
+  // ── attempts · one task, several runs, one pinned commit ─────────────
+  attempts: {
+    sets: (limit?: number) => call<AttemptSetSummary[]>('attempts:sets', limit),
+    /** The set with every attempt and the report computed from what they recorded. */
+    set: (setId: string) => call<AttemptSetDetail>('attempts:set', setId),
+    /** Queues one pinned headless run per attempt. Main re-validates every field. */
+    start: (input: AttemptStartInput) => call<AttemptSetDetail>('attempts:start', input),
+    keep: (setId: string, attemptId: string) => call<AttemptSetDetail>('attempts:keep', setId, attemptId),
+    /** Removes the other attempts' worktrees without force; main chooses the paths. */
+    removeOthers: (setId: string) => call<AttemptCleanupResult>('attempts:removeOthers', setId),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
   queue: {
@@ -325,6 +382,8 @@ const api = {
     sync: (days?: number) => call<{ day: string; actualUsd: number; syncUsd: number }[]>('spend:sync', days),
     unified: (days?: number) => call<UnifiedSpendDay[]>('spend:unified', days),
     effort: () => call<{ effort: string; requests: number; costUsd: number }[]>('spend:effort'),
+    /** Session spend by the CLI's own attribution: query source, skill, plugin, MCP server, subagent. */
+    sources: (days?: number) => call<SpendSourceReport>('spend:sources', days),
     byDay: (days: number) => call<{ day: string; sessionUsd: number }[]>('spend:byDay', days),
     // Claude Code's own transcripts, which cover the sessions the collector
     // never saw. `unknown` rather than the main-process type: the shape is
@@ -429,6 +488,8 @@ const api = {
     ledger: (limit?: number, deniedOnly?: boolean) => call<LedgerEntry[]>('policy:ledger', limit, deniedOnly),
     summary: () => call<{ denied: number; asked: number; allowed: number; since: number | null }>('policy:summary'),
     exportTo: () => call<{ path: string; rows: number } | null>('policy:export'),
+    /** Walk the hash chain and judge the stored head signature against it. Reads only. */
+    chain: () => call<LedgerChainStatus>('policy:chain'),
   },
   // ── phase 22 · skills ────────────────────────────────────────────────
   skills: {
@@ -448,7 +509,9 @@ const api = {
   /** Carrying a filling conversation into a fresh session. */
   handover: {
     begin: (sessionId: string) => call<HandoverBegun>('handover:begin', sessionId),
-    finish: (sessionId: string) => call<HandoverFinished>('handover:finish', sessionId),
+    /** `toAccountId` only when the operator took an offer that named a different account. */
+    finish: (sessionId: string, toAccountId?: string | null) =>
+      call<HandoverFinished>('handover:finish', sessionId, toAccountId ?? null),
   },
   /** Continuing one conversation on another account of the same harness. */
   handoff: {
@@ -471,13 +534,17 @@ const api = {
     stage: (root: string, files: string[]) => call<boolean>('git:stage', root, files),
     unstage: (root: string, files: string[]) => call<boolean>('git:unstage', root, files),
     discard: (root: string, tracked: string[], untracked: string[]) => call<boolean>('git:discard', root, tracked, untracked),
-    commit: (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => call<string>('git:commit', root, msg, opts),
+    /** Refused in main unless `acknowledge` is the digest of the current findings, when there are any, and `trailers` equals what main derives. */
+    commit: (root: string, msg: string, opts?: { amend?: boolean; all?: boolean; acknowledge?: string; trailers?: string[] }) =>
+      call<string>('git:commit', root, msg, opts),
+    scanSecrets: (root: string, request: SecretScanRequest) => call<SecretScanReport>('git:scanSecrets', root, request),
+    assistedBy: (root: string, opts?: { amend?: boolean }) => call<AssistedByPreview>('git:assistedBy', root, opts),
     checkout: (root: string, ref: string, create?: boolean) => call<boolean>('git:checkout', root, ref, create),
     deleteBranch: (root: string, name: string, force?: boolean) => call<boolean>('git:deleteBranch', root, name, force),
     merge: (root: string, ref: string) => call<string>('git:merge', root, ref),
     fetch: (root: string) => call<string>('git:fetch', root),
     pull: (root: string) => call<string>('git:pull', root),
-    push: (root: string, opts?: { setUpstream?: boolean; branch?: string }) => call<string>('git:push', root, opts),
+    push: (root: string, opts?: { setUpstream?: boolean; branch?: string; acknowledge?: string }) => call<string>('git:push', root, opts),
     stashSave: (root: string, msg: string) => call<string>('git:stashSave', root, msg),
     stashApply: (root: string, i: number, drop: boolean) => call<string>('git:stashApply', root, i, drop),
     stashDrop: (root: string, i: number) => call<boolean>('git:stashDrop', root, i),
@@ -487,6 +554,18 @@ const api = {
     prStatus: (root: string, force?: boolean) => call<any>('gh:prStatus', root, force),
     createPr: (root: string, input: { title: string; body?: string; draft?: boolean; base?: string }) =>
       call<{ url: string | null; detail: string }>('gh:createPr', root, input),
+    // Both contact GitHub through gh, so both are called only from a press.
+    readiness: (projectId: string) => call<PrReadinessReport>('gh:readiness', projectId),
+    failedLog: (projectId: string, link: string) => call<FailedLogReport>('gh:failedLog', projectId, link),
+  },
+  // ── issue intake: GitHub facts into Control's event inbox ────────────
+  intake: {
+    // Local only: recorded polls and events, and each project's remotes read by git.
+    overview: () => call<IntakeOverview>('intake:overview'),
+    // Contacts GitHub through gh, so it is called only from a press.
+    check: (projectId: string) => call<IntakePoll>('intake:check', projectId),
+    timer: () => call<IntakeTimer>('intake:timer'),
+    setTimer: (input: IntakeTimer) => call<IntakeTimer>('intake:setTimer', input),
   },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {
@@ -563,6 +642,8 @@ const api = {
       call<DocketDetail>('control:setAutopilot', docketId, input),
     setBudget: (docketId: string, budgetUsd: number | null) =>
       call<DocketDetail>('control:setBudget', docketId, budgetUsd),
+    setGate: (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+      call<DocketDetail>('control:setGate', docketId, input),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -580,6 +661,8 @@ const api = {
     cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
+    /** The plan captured from this goal's planning session; the agent's text. */
+    plan: (docketId: string) => call<import('../shared/types').GoalPlan | null>('control:plan', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {
@@ -635,6 +718,9 @@ const api = {
     paste: (sessionId: string, data: ArrayBuffer, name: string) => call<any>('attach:paste', sessionId, data, name),
     list: (sessionId: string) => call<any[]>('attach:list', sessionId),
     remove: (id: string) => call<boolean>('attach:remove', id),
+    retention: () => call<{ enabled: boolean; days: number; last: import('../shared/types').AttachmentReclaimSummary | null }>('attach:retention'),
+    reclaimPreview: (days?: number) => call<import('../shared/types').AttachmentReclaimPreview>('attach:reclaimPreview', days),
+    setRetention: (days: number) => call<{ enabled: boolean; days: number }>('attach:setRetention', days),
     // onlyUnreferenced: name just the files that are not already in the prompt,
     // so attaching a second file does not repeat the first.
     type: (sessionId: string, onlyUnreferenced?: boolean) =>
@@ -689,6 +775,8 @@ const api = {
     // deliberately not a prediction of Codex's load order — see agentsChain().
     codexAgents: (projectId: string | null, projectPath: string) =>
       call<CodexAgentsChain>('context:codexAgents', projectId, projectPath),
+    observed: (projectId: string) =>
+      call<import('../shared/types').InstructionReconciliation | null>('context:observed', projectId),
     refresh: (projectPath: string) => call<any>('context:refresh', projectPath),
   },
   // Opening a link is an external side effect, so it is explicit and validated
@@ -700,6 +788,15 @@ const api = {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
     setTheme: (theme: ThemeSetting) => call<WaniganSettings>('settings:setTheme', theme),
+  },
+  // Keyboard shortcuts. Main validates every write against the binding table
+  // and answers a refused chord with its named reason as data, so the row that
+  // asked can print why; only a failure to answer at all rejects.
+  keymap: {
+    get: () => call<KeymapState>('keymap:get'),
+    set: (id: string, chord: string) => call<KeymapWrite>('keymap:set', id, chord),
+    reset: (id: string) => call<KeymapWrite>('keymap:reset', id),
+    resetAll: () => call<KeymapState>('keymap:resetAll'),
   },
   // ── Wanigan Compound · provider-neutral learning ───────────────────
   learning: {
@@ -758,6 +855,10 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    markContradiction: (firstId: string, secondId: string, reason: string) =>
+      call<KnowledgeRelation>('learning:markContradiction', firstId, secondId, reason),
+    keepOverContradiction: (keepId: string, retireId: string, reason: string) =>
+      call<{ kept: KnowledgeItem; retired: KnowledgeItem }>('learning:keepOverContradiction', keepId, retireId, reason),
     // Main answers this channel with BriefingPreview: the capsule plus the
     // launch state around it — whether learning was on, the profile's declared
     // harness, how a launch would deliver the text, and what proof that
@@ -866,6 +967,12 @@ const api = {
       const h = () => cb();
       listen('queue:changed', h);
       return () => ipcRenderer.removeListener('queue:changed', h);
+    },
+    // A GitHub intake poll ended, pressed or timed; its events may be new.
+    intakeChanged: (cb: () => void) => {
+      const h = () => cb();
+      listen('intake:changed', h);
+      return () => ipcRenderer.removeListener('intake:changed', h);
     },
     sessions: (cb: (s: Session[]) => void) => {
       const h = (_e: unknown, s: Session[]) => cb(s);

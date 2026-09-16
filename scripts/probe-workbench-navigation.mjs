@@ -62,6 +62,7 @@ try {
           write: async (...args) => window.__navWrites.push(args),
         }),
         policy: proxy(base.policy, { trust: async () => 'project' }),
+        worktrees: proxy(base.worktrees, { setup: async projectId => ({projectId,depsMode:'link',setup:[],teardown:[],updatedAt:null,include:{state:'absent'}}), commandRuns: async () => [] }),
         transcripts: proxy(base.transcripts, { search: async () => [] }),
         handoff: proxy(base.handoff, { plan: async () => ({ targets: [] }) }),
         prefs: proxy(base.prefs, { all: async () => ({ ...(await base.prefs.all()), motion: 'off', navSidebar: 'closed' }) }),
@@ -169,6 +170,7 @@ try {
   console.log(JSON.stringify({ result: 'pass', checks, screenshots, baselineFailures, errors }, null, 2));
 } catch (error) {
   report.result = 'fail'; report.failure = String(error.stack ?? error);
+  if (page) console.error(await page.locator('body').textContent());
   if (page) await page.screenshot({ path: path.join(out, 'failure.png'), scale: 'css' }).catch(() => {});
   throw error;
 } finally {

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  CodexAgentsChain, KnowledgeProjection, LearningOverview, LearningSettings, Project,
+  CodexAgentsChain, InstructionReconciliation, KnowledgeProjection, LearningOverview, LearningSettings, Project,
 } from '@shared/types';
+import type { ConfigPinCheck } from '@shared/exec-config';
 import { Chip, EmptyState, Explainer, Icon, Mark as SharedMark, Note, PageHead, Pill, Reading, SectionHead, Stat, ago, num, usd, type Tone } from '../components/bits';
+import { chordNow, useChord } from '../bindings';
 import ContextWorkspace, { ContextFileLink } from '../components/ContextWorkspace';
 import { useViewMemory } from '../components/viewMemory';
 
@@ -297,6 +299,14 @@ type Data = {
   managed: Map<string, KnowledgeProjection>;
   /** Learning engine reads are non-fatal: null means "not read this scan", never "zero". */
   learn: { settings: LearningSettings | null; overview: LearningOverview | null };
+  /** What the newest session here reported loading. Null with `observedRead` true
+   *  means no session has reported; `observedRead` false means the read failed
+   *  and the section stays away rather than claiming nothing loaded. */
+  observed: InstructionReconciliation | null;
+  observedRead: boolean;
+  /** The executable-config pin for this project; null with `pinRead` false when the read failed. */
+  pin: ConfigPinCheck | null;
+  pinRead: boolean;
   errors: Errors;
 };
 
@@ -353,7 +363,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     // The three learning reads are additive colour on this view, not its
     // subject, so they degrade silently: a failure hides the badge or section
     // instead of raising a banner.
-    const [ri, rm, rc, ra, rcx, rp, rls, rlo] = await Promise.allSettled([
+    const [ri, rm, rc, ra, rcx, rp, rls, rlo, rob, rpin] = await Promise.allSettled([
       window.wanigan.context.instructions(path),
       window.wanigan.context.memory(path),
       window.wanigan.context.config(path),
@@ -366,6 +376,9 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       window.wanigan.learning.projections({ status: 'applied', limit: 500 }),
       window.wanigan.learning.settings(),
       window.wanigan.learning.overview(pid ?? null),
+      // Colour on the chain, not its subject: a failure hides the section.
+      pid ? window.wanigan.context.observed(pid) : Promise.resolve(null),
+      pid ? window.wanigan.configPins.check(pid) : Promise.resolve(null),
     ]);
 
     if(mine!==read.current || !alive.current)return;
@@ -409,7 +422,11 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     }
 
     if(mine!==read.current || !alive.current)return;
-    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, errors });
+    const observed = rob.status === 'fulfilled' ? rob.value : null;
+    const observedRead = rob.status === 'fulfilled' && !!pid;
+    const pin = rpin.status === 'fulfilled' ? rpin.value : null;
+    const pinRead = rpin.status === 'fulfilled' && !!pid;
+    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, observed, observedRead, pin, pinRead, errors });
     setBusy(false);
   }, [path, pid]);
 
@@ -457,7 +474,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
         && (x.harnessId ?? x.providerProfile?.harness) === 'claude-code');
       if (!s) {
         setInitMsg({ tone: 'info', text:
-          `No Claude Code session is running in ${project.name}. /init is Claude Code's own command, so it needs one: open Sessions, start one with ⌘T, then come back — this button types /init into a live session, it does not start one.` });
+          `No Claude Code session is running in ${project.name}. /init is Claude Code's own command, so it needs one: open Sessions, start one with ${chordNow('new-session').glyphs}, then come back — this button types /init into a live session, it does not start one.` });
         return;
       }
       await window.wanigan.skills.send(s.id, '/init');
@@ -610,7 +627,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     onInit={runInit} initMsg={initMsg} busy={initBusy}/>;
   const panels = {
     chain:e.instructions?<PanelError channel="instructions" detail={e.instructions} onRetry={()=>load(true)}/>
-      :shows.chain&&chain?<InstructionsPanel chain={chain} managed={d.managed}/>:emptyArea('chain'),
+      :shows.chain&&chain?<InstructionsPanel chain={chain} managed={d.managed} observed={d.observed} observedRead={d.observedRead}/>:emptyArea('chain'),
     rules:e.instructions?<PanelError channel="rules" detail={e.instructions} onRetry={()=>load(true)}/>
       :shows.rules?<RulesPanel rules={rules} root={project.path} managed={d.managed} chain={chain!}/>:emptyArea('rules'),
     agents:<>{e.agents?<PanelError channel="AGENTS.md" detail={e.agents} onRetry={()=>load(true)}/>
@@ -618,8 +635,10 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       {d.codexAgents&&<CodexAgentsPanel c={d.codexAgents}/>}</>,
     memory:e.memory?<PanelError channel="memory" detail={e.memory} onRetry={()=>load(true)}/>
       :shows.memory&&d.memory?<MemoryPanel m={d.memory}/>:emptyArea('memory'),
-    config:e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
-      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config'),
+    config:<>{project&&<ConfigPinPanel projectId={project.id} pin={d.pin} read={d.pinRead}
+        onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
+      {e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
+      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config')}</>,
     budget:e.instructions?<PanelError channel="instructions for the budget" detail={e.instructions} onRetry={()=>load(true)}/>
       :e.budget?<PanelError channel="budget" detail={e.budget} onRetry={()=>load(true)}/>
       :shows.budget&&d.budget?<BudgetPanel b={d.budget}/>:emptyArea('budget'),
@@ -646,7 +665,8 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
         config:!!e.config,budget:!!e.budget||!!e.instructions}}
       guide={<Explainer id="context-reading-guide" title="About this reading" defaultHidden>
         This predicts the Claude Code loader from local files, including profiles that use that harness.
-        It does not measure a running session. Codex’s launch order is not predicted here.
+        Where a session has reported the instruction files it actually loaded, that report sits under the load order.
+        Codex’s launch order is not predicted here.
         Readers may use a short-lived cache; Re-scan requests a fresh reading.
         {unfilled.length>0&&<p>{unfilled.length} areas have no project-owned content. Select an area for its setup guidance.</p>}
       </Explainer>}/>
@@ -670,7 +690,67 @@ function fileLoad(chain:InstructionChain,file:InstructionFile):Loads {
     :file.excludedBy?'excluded':!file.exists?'missing':file.duplicate?'duplicate':'skipped';
 }
 
-function InstructionsPanel({chain,managed}: {chain:InstructionChain;managed:Map<string,KnowledgeProjection>}) {
+/* What a real session reported, beside the prediction. The scan reads disk now
+   and the report is from a launch then, so neither column is a verdict on the
+   other: an on-demand rule loads only once something touches a matching path,
+   and a file added since that launch was never there to report. The one
+   difference worth a reader's attention is a file predicted AT LAUNCH that the
+   session never named, so that count is split out rather than folded in. */
+const SEEN: Record<'launch' | 'lazy', { glyph: string; word: string; color: string; blurb: string }> = {
+  launch: { glyph: '●', word: 'reported at start', color: 'var(--good)',
+            blurb: 'The session named this file as it started.' },
+  lazy:   { glyph: '◑', word: 'reported later', color: 'var(--series-1)',
+            blurb: 'The session named this file after it started: a path-scoped rule, a nested instruction file, or a reload after compaction.' },
+};
+
+function ObservedLoads({observed,read}: {observed:InstructionReconciliation|null;read:boolean}) {
+  if (!read) return null;
+  if (!observed) return <>
+    <SectionHead label="Reported by a session"/>
+    <p className="ctx-fine faint">No session in this project has reported what it loaded. Sessions Wanigan launches with
+      hooks on report each instruction file as Claude Code loads it, from version 2.1.69 on.</p>
+  </>;
+  const expectedMissing = observed.rows.filter(row=>row.predicted==='launch'&&row.observed===null);
+  const unforeseen = observed.rows.filter(row=>row.predicted===null);
+  const agreeing = observed.rows.filter(row=>row.predicted!==null&&row.observed!==null);
+  const quiet = observed.rows.filter(row=>row.predicted==='on-demand'&&row.observed===null);
+  const ordered = [...expectedMissing, ...unforeseen, ...agreeing, ...quiet];
+  return <>
+    <SectionHead label="Reported by a session" count={observed.rows.length}/>
+    <div className="stat-grid">
+      <Stat label="Predicted and reported" value={num(agreeing.length)} sub="the scan and the session agree"/>
+      <Stat label="Expected at launch, not reported" value={num(expectedMissing.length)} sub="predicted to load before the first prompt"/>
+      <Stat label="Reported, not predicted" value={num(unforeseen.length)} sub="loaded without appearing in the scan"/>
+      <Stat label="On demand, not reported" value={num(quiet.length)} sub="nothing touched a matching path"/>
+    </div>
+    {expectedMissing.length>0&&<Callout title={`${plural(expectedMissing.length,'file')} predicted at launch never reported loading.`}>
+      The file may have been added or changed since that session started, excluded by a setting the scan cannot see, or skipped
+      by the loader. Start a new session and re-scan before editing anything.
+    </Callout>}
+    <p className="ctx-fine faint">From session <span className="mono">{observed.sessionId}</span>, last report {ago(observed.at)}.</p>
+    <ol className="ctx-file-list">{ordered.map(row=><li key={row.path} className="ctx-instruction-row">
+      <span className="ctx-ord" aria-hidden="true">{row.observed?SEEN[row.observed].glyph:'○'}</span>
+      <div><strong>{fileName(row.path)}</strong> <small className="faint">{dirName(row.path)}</small>
+        <div className="ctx-file-meta">
+          {row.predicted
+            ?<Mark {...LOADS[row.predicted==='launch'?'launch':'demand']} word={`predicted ${LOADS[row.predicted==='launch'?'launch':'demand'].word}`}
+                title={LOADS[row.predicted==='launch'?'launch':'demand'].blurb}/>
+            :<Mark glyph="?" word="not in the scan" color="var(--warning)" title="The session loaded this file, but the scan of disk did not list it."/>}
+          {row.observed
+            ?<Mark {...SEEN[row.observed]} title={SEEN[row.observed].blurb}/>
+            :<Mark glyph="·" word="not reported" color={row.predicted==='launch'?'var(--warning)':'var(--text-faint)'}
+                title="No InstructionsLoaded event from that session named this file."/>}
+          {row.loadReason&&<span className="mono">{row.loadReason}</span>}
+          {row.memoryType&&<span>{row.memoryType}</span>}
+        </div>
+      </div>
+    </li>)}</ol>
+  </>;
+}
+
+function InstructionsPanel({chain,managed,observed,observedRead}: {
+  chain:InstructionChain;managed:Map<string,KnowledgeProjection>;observed:InstructionReconciliation|null;observedRead:boolean;
+}) {
   const [q,setQ]=useViewMemory(`${chain.root}/query`,'');
   const [only,setOnly]=useViewMemory<'all'|Loads>(`${chain.root}/load-state`,'all');
   const ordered=[...chain.files].sort((a,b)=>a.order-b.order);
@@ -718,6 +798,7 @@ function InstructionsPanel({chain,managed}: {chain:InstructionChain;managed:Map<
       </li>)}</ol>}
     {(only!=='all'||q)&&shown.length>0&&<p className="ctx-fine faint">Showing {shown.length} of {ordered.length}. Positions keep the full load order.</p>}
     {chain.notes.length>0&&<details className="ctx-disclosure"><summary>Scan notes</summary><Bullets items={chain.notes}/></details>}
+    <ObservedLoads observed={observed} read={observedRead}/>
   </>;
 }
 
@@ -895,6 +976,51 @@ function IndexMeter({b}: {b:IndexBudget}) {
 
 /* ── 5 · settings and hooks ──────────────────────────────────────────── */
 
+/* ── the executable-config pin ─────────────────────────────────────────
+   What this repository runs of its own before an agent does anything, and
+   whether a launch will be let through with it. A pin taken at first launch is
+   said to be exactly that; only an explicit acceptance here or in the launch
+   dialog is recorded as a review. */
+function ConfigPinPanel({projectId,pin,read,onChanged}: {
+  projectId:string;pin:ConfigPinCheck|null;read:boolean;onChanged:(pin:ConfigPinCheck)=>void;
+}) {
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  if (!read) return <><SectionHead label="What this repository runs"/><p className="ctx-fine faint">Wanigan could not read this repository’s executable configuration. A launch still checks it.</p></>;
+  if (!pin) return null;
+  const accept=async()=>{
+    setBusy(true);setError(null);
+    try { onChanged(await window.wanigan.configPins.accept(projectId,pin.snapshot.digest)); }
+    catch (e) { setError(e instanceof Error?e.message:String(e)); }
+    finally { setBusy(false); }
+  };
+  const status = pin.state==='none' ? {glyph:'○',word:'runs nothing of its own',tone:'quiet' as Tone}
+    : pin.state==='first-use' ? {glyph:'◌',word:'not pinned yet — the next launch pins it',tone:'warn' as Tone}
+      : pin.state==='changed' ? {glyph:'!',word:'changed since it was last accepted',tone:'bad' as Tone}
+        : pin.lastAccepted?.how==='reviewed' ? {glyph:'✓',word:'matches what you reviewed',tone:'ok' as Tone}
+          : {glyph:'◑',word:'matches the pin taken at first launch, never reviewed',tone:'warn' as Tone};
+  return <>
+    <SectionHead label="What this repository runs" count={pin.snapshot.items.length}/>
+    <p className="ctx-pin-status"><SharedMark glyph={status.glyph} word={status.word} tone={status.tone}/>
+      {pin.lastAccepted&&<span className="faint">{pin.lastAccepted.how==='reviewed'?'Reviewed':'Pinned'} {ago(pin.lastAccepted.at)}</span>}</p>
+    {pin.state!=='none'&&<p className="ctx-fine faint">{pin.summary}. These run before the agent does anything, and a launch is asked about them again whenever they change.</p>}
+    {pin.state==='changed'&&pin.diff&&<ul className="ctx-pin-list">
+      {pin.diff.added.map(item=><li key={`a:${item.id}`}><SharedMark glyph="+" word="added" tone="warn"/><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}
+      {pin.diff.changed.map(({before,after})=><li key={`c:${after.id}`}><SharedMark glyph="~" word="changed" tone="warn"/><span><b>{after.label}</b> · {after.file}</span>
+        <code>{before.shown===after.shown?`${after.shown} — the value changed and is not shown`:`${before.shown} → ${after.shown}`}</code></li>)}
+      {pin.diff.removed.map(item=><li key={`r:${item.id}`}><SharedMark glyph="−" word="removed" tone="quiet"/><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}
+    </ul>}
+    {pin.state!=='changed'&&pin.snapshot.items.length>0&&<details className="ctx-disclosure"><summary>Every item ({pin.snapshot.items.length})</summary>
+      <ul className="ctx-pin-list">{pin.snapshot.items.map(item=><li key={item.id}><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}</ul></details>}
+    {pin.snapshot.unreadable.length>0&&<p className="ctx-warn"><span aria-hidden="true">!</span>Could not be read, so what it runs is unknown: {pin.snapshot.unreadable.join(', ')}</p>}
+    {(pin.state==='changed'||(pin.state==='accepted'&&pin.lastAccepted?.how!=='reviewed')||pin.state==='first-use')&&
+      <div className="ctx-pin-actions"><button className="btn" type="button" disabled={busy} onClick={()=>void accept()}>
+        {busy?'Recording…':pin.state==='changed'?'Accept this configuration':'Mark as reviewed'}</button>
+        <span className="faint">Records that you read what is listed here. It does not make it safe.</span></div>}
+    {error&&<Note tone="error">{error}</Note>}
+  </>;
+}
+
 function fmtValue(v: unknown): string {
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean' || v === null) return String(v);
@@ -905,6 +1031,8 @@ function fmtValue(v: unknown): string {
 }
 
 function ConfigPanel({ c }: { c: ProjectConfig }) {
+  const skillsChord = useChord('view:skills').glyphs;
+  const paletteChord = useChord('palette').glyphs;
   const projectHooks = c.hooks.filter((h) => h.from === 'project' || h.from === 'local');
   const shared = c.hooks.filter((h) => h.from === 'project');
   const also = [
@@ -1072,7 +1200,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
       <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 11 }}>
         Skills are not in this table. Everything under <span className="mono">.claude/skills</span> in this
         repo, in your home directory and in every installed plugin is catalogued in the Skills view:{' '}
-        <span className="mono">⌘⇧S</span>, or ⌘K → Skills.
+        <span className="mono">{skillsChord}</span>, or {paletteChord} → Skills.
       </p>
 
       {c.notes.length > 0 && (

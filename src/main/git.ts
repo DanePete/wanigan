@@ -72,12 +72,27 @@ export type GitRun = {
    */
   code: number | null;
   killed: boolean;
+  /**
+   * Set when git printed more than `maxBuffer` and was stopped: `out` then holds
+   * the first part of its answer rather than all of it. A caller that reads the
+   * prefix must say that it did, and one that cannot use a prefix must treat
+   * this as a failure — which is what `ok: false` already makes it.
+   */
+  truncated?: boolean;
 };
 export type GitRunOpts = {
   timeout?: number;
   maxBuffer?: number;
   /** Extra variables (e.g. GIT_INDEX_FILE). The prompt hardening always wins. */
   env?: Record<string, string>;
+  /**
+   * Written to git's stdin, which is then closed. For the commands whose only
+   * NUL-safe form reads paths from stdin: `check-ignore -z` is refused outright
+   * without `--stdin`, and the argv form C-quotes a name with a quote,
+   * backslash or control character in it, so the answer no longer matches the
+   * question.
+   */
+  input?: string;
 };
 
 /**
@@ -126,17 +141,25 @@ export async function runGit(cwd: string, args: string[], opts: GitRunOpts = {})
     return { ok: false, out: '', err: 'No directory was given for this git command.', code: null, killed: false };
   }
   try {
-    const { stdout, stderr } = await exec('git', ['-C', cwd, ...args], {
+    const running = exec('git', ['-C', cwd, ...args], {
       timeout: opts.timeout ?? 30_000,
       maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
       env: gitEnv(opts.env),
     });
+    // A git that exits before reading all of it closes the pipe under the
+    // write; that EPIPE is not this command's result, which `running` carries.
+    if (opts.input !== undefined) {
+      running.child.stdin?.on('error', () => { /* the exit status says what happened */ });
+      running.child.stdin?.end(opts.input);
+    }
+    const { stdout, stderr } = await running;
     return { ok: true, out: stdout, err: stderr, code: 0, killed: false };
   } catch (e) {
     const x = e as { stdout?: string; stderr?: string; message?: string; code?: number | string; killed?: boolean };
     return {
       ok: false, out: x.stdout ?? '', err: (x.stderr || x.message || 'git failed').trim(),
       code: typeof x.code === 'number' ? x.code : null, killed: x.killed === true,
+      truncated: x.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
     };
   }
 }
@@ -294,8 +317,10 @@ export async function scopeOf(dir: string): Promise<Scope | null> {
 /**
  * The gate in front of everything that writes. Reads degrade to the
  * subdirectory; acts stop, and say which repository they would have reached.
+ * Exported for guarded-git.ts, which must refuse before it spends a scan on a
+ * commit this gate was always going to stop.
  */
-async function acting(dir: string, what: string): Promise<Scope> {
+export async function acting(dir: string, what: string): Promise<Scope> {
   const scope = await scopeOf(dir);
   if (!scope) fail(`${path.resolve(dir)} is not a git repository, so there is nothing to ${what}.`);
   if (scope.sub) {
@@ -477,8 +502,9 @@ export async function log(dir: string, opts: { limit?: number; all?: boolean } =
 
 /** Object names only. `git show` takes diff options, and one of them is
  *  `--output=<file>`: an unvalidated leading dash from the renderer is a
- *  write-anywhere primitive, not a bad lookup. */
-const OBJECT_NAME = /^[0-9a-fA-F]{4,64}$/;
+ *  write-anywhere primitive, not a bad lookup. Exported for the worktree start
+ *  point, which reaches `git worktree add` as an argument for the same reason. */
+export const OBJECT_NAME = /^[0-9a-fA-F]{4,64}$/;
 
 /** A patch this long is not going to be read in a pane; the cut is announced
  *  rather than silently returning a diff that stops mid-hunk. */
@@ -626,12 +652,27 @@ export async function discard(dir: string, tracked: string[], untracked: string[
   }
   return true;
 }
-export async function commit(dir: string, message: string, opts: { amend?: boolean; all?: boolean } = {}) {
+/**
+ * One `Token: value` trailer line, checked before it becomes argv. git places
+ * trailers itself — after the body, merged into a trailer block that is already
+ * there — which is why they travel as `--trailer` rather than as text appended
+ * to the message here. A line break in one would start a second trailer nobody
+ * previewed.
+ */
+function trailerArg(line: unknown): string {
+  if (typeof line !== 'string' || !/^[A-Za-z][A-Za-z0-9-]{0,40}: [^\u0000-\u001f\u007f]{1,300}$/.test(line)) {
+    fail('A commit trailer must be one "Token: value" line with no control characters.');
+  }
+  return line;
+}
+
+export async function commit(dir: string, message: string, opts: { amend?: boolean; all?: boolean; trailers?: readonly string[] } = {}) {
   if (!message.trim() && !opts.amend) throw new Error('A commit needs a message.');
   const { repoRoot } = await acting(dir, 'commit');
   const args = ['commit', '-m', message];
   if (opts.amend) args.push('--amend');
   if (opts.all) args.push('-a');
+  for (const line of opts.trailers ?? []) args.push('--trailer', trailerArg(line));
   const r = await git(repoRoot, args);
   if (!r.ok) fail(r.err);
   return r.out.trim();

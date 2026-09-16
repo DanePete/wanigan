@@ -8,6 +8,7 @@ import { checkoutSnapshot } from '../review-checkout';
 import { listProjects } from '../store';
 import { mobileRepositoryReview } from '../settings';
 import type { ReviewCheckoutSnapshot, ReviewFreshness, ReviewRun } from '../../shared/types';
+import { scanFor } from '../secret-scan';
 import { mobileConfig } from './config';
 import { json, registerApiRoute, registerRepoGate, requestJson, send } from './dispatch';
 import { safeString } from './snapshot';
@@ -1329,6 +1330,23 @@ const COMMIT_REFUSED =
   'phone because they routinely carry absolute paths; open the project on the Mac to read what it said.';
 
 /**
+ * A phone cannot say "Commit anyway". Acknowledging a possible secret means
+ * reading each finding — file, line, rule, the redacted line — and this wire
+ * carries none of that, for the same reason it carries no git message: a
+ * finding is made of paths and source. So the refusal is total rather than a
+ * second tap, and it names where the decision can be made. No path, excerpt or
+ * rule leaves the Mac in it; only how many.
+ */
+function secretRefusal(found: number): string {
+  if (!found) {
+    return 'Wanigan could not check every tracked change for secrets, so nothing was committed. A phone cannot ' +
+      'accept a commit that was not fully checked: commit it from the Git view on the Mac, which says what was skipped.';
+  }
+  return `Wanigan found ${found === 1 ? 'a possible secret' : `${found} possible secrets`} in the tracked changes, so nothing ` +
+    'was committed. A phone cannot acknowledge a possible secret: open the Git view on the Mac to see each one and decide there.';
+}
+
+/**
  * The reading this device is holding is one Wanigan has forgotten, so the
  * refusal cannot name what moved — only that the tree does not match it.
  */
@@ -1425,6 +1443,31 @@ async function serveCommit(req: http.IncomingMessage, res: http.ServerResponse):
   }
   const offer = commitOffer(reading);
   if (offer.blocked) { json(res, 409, { error: offer.blocked }); return; }
+
+  // The same scan the Mac's Git view runs before `commit -a`, over exactly what
+  // `commit -a` would record. A finding or an unread part stops the commit here,
+  // because the acknowledgement that lets the Mac go past one cannot be given
+  // from this screen.
+  try {
+    const scan = await withTimeout(scanFor(project.path, { action: 'commit', all: true, amend: false }), MOBILE_REPO_LIMITS.timeoutMs);
+    if (scan.needsAcknowledgement) {
+      json(res, 409, { secrets: true, error: secretRefusal(scan.findings.length + scan.omitted) });
+      return;
+    }
+  } catch {
+    json(res, 503, { error: secretRefusal(0) });
+    return;
+  }
+
+  // The secret scan is asynchronous. Recheck the same content receipt after
+  // it, so a scan cannot open a window in which an unseen edit is committed.
+  const confirmed = await readCommitCheckout(project.path, reading);
+  const confirmedDigest = commitReadingDigest(reading, confirmed);
+  if (!confirmedDigest) { json(res, 409, { error: COMPARISON_UNAVAILABLE }); return; }
+  if (confirmedDigest !== asked) {
+    json(res, 409, { stale: true, error: 'The checkout changed while Wanigan checked it for secrets. Nothing was committed. Read this repository again before committing.' });
+    return;
+  }
 
   try {
     // `all`, which is `git commit -a`: every tracked file git reports as

@@ -39,7 +39,7 @@ try {
       const sessions=proxy(api.sessions,{list:async()=>(await api.sessions.list()).map(s=>({...s,projectPath:s.projectId==='p1'?'/example/storefront':'/example/platform',displayTitle:s.id==='s1'?'Checkout review':null,harnessId:s.providerId==='claude'?'claude-code':'codex',capabilities:{hooks:false}})),baseline:async()=>({head:'abc123',dirty:[],at:now-90000}),buffer:async()=>''});
       const review=proxy(api.review,{recipe:async()=>({projectId:'p1',commands:['npm test','git diff --check'],updatedAt:now}),history:async()=>{state.historyReads++;if(state.historyFail)throw Error('Synthetic review history unavailable');return structuredClone(state.runs);}});
       const prefs=proxy(api.prefs,{all:async()=>({...await api.prefs.all(),motion:'off',navSidebar:'closed'})});
-      window.wanigan=proxy(api,{code,sessions,review,prefs,handoff:proxy(api.handoff,{plan:async()=>({targets:[]})}),policy:proxy(api.policy,{trust:async()=>'project'})});
+      window.wanigan=proxy(api,{code,sessions,review,prefs,worktrees:proxy(api.worktrees,{setup:async projectId=>({projectId,depsMode:'link',setup:[],teardown:[],updatedAt:null,include:{state:'absent'}}),commandRuns:async()=>[]}),handoff:proxy(api.handoff,{plan:async()=>({targets:[]})}),policy:proxy(api.policy,{trust:async()=>'project'})});
     })();
   `);
   await page.goto(rendererURL); await page.locator('.shell').waitFor();
@@ -98,11 +98,11 @@ try {
   }
   // A stored running run is re-read by a fresh component after a route detour.
   await go('Meta+9');await page.getByRole('heading',{name:'Changes',exact:true}).waitFor();
-  await page.locator('.gt-review-controls > summary').click();
+  await page.locator('.gt-review-controls > summary').filter({hasText:'Review gate'}).click();
   await page.locator('.review-result').waitFor();
   await go('Meta+2');await page.getByRole('heading',{name:'Fleet',exact:true}).waitFor();
   await go('Meta+9');await page.getByRole('heading',{name:'Changes',exact:true}).waitFor();
-  await page.locator('.gt-review-controls > summary').click();
+  await page.locator('.gt-review-controls > summary').filter({hasText:'Review gate'}).click();
   await page.locator('.review-result').waitFor();
   await page.getByRole('textbox',{name:'Review gate commands',exact:true}).fill('npm run my-unsaved-check');
   await page.locator('.review-result > summary').click();
@@ -127,7 +127,7 @@ try {
     await page.getByRole('button',{name:'Retry results',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('.review-results')?.textContent?.includes('Synthetic review history unavailable'));
   }
-} catch(error) { failures.push({name:'Probe orchestration',error:String(error.stack??error)}); if(page)await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{}); }
+} catch(error) { if (page) console.error(await page.locator('body').textContent()); failures.push({name:'Probe orchestration',error:String(error.stack??error)}); if(page)await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{}); }
 finally {
   writeFileSync(path.join(out,'verification.json'),JSON.stringify({at:new Date().toISOString(),provenance:'Built renderer in isolated Electron; synthetic code/review bridge. No real main, PTY, Git command, or provider calls.',checks,failures,errors},null,2)+'\n');
   await app.close();

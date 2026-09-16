@@ -4,15 +4,22 @@ import type {
   AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
-  MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
+  MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, ObserveOnlyHooks, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
-import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
-import type { IconName } from '../components/bits';
+import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTimer } from '@shared/intake';
+import type { LedgerBreakKind, LedgerChainStatus } from '@shared/ledger-chain';
+// bits' Mark takes a tone and draws its colour from tokens. This file's own
+// older Mark below takes a literal colour, and is left as it is.
+import { ConfirmNote, Explainer, Icon, Mark as ToneMark, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
+import type { IconName, Tone } from '../components/bits';
+import { observeOnlyHooksSentence } from '@shared/codex-hooks';
+import KeyboardSettings from '../components/KeyboardSettings';
+import { useChord } from '../bindings';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import AttachmentStorage from '../components/AttachmentStorage';
@@ -83,13 +90,15 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
-  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export hash chain tamper signature verify' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Commit attribution', hint: 'Assisted-by trailers on Git view commits', keywords: 'assisted-by assisted by trailer commit attribution agent model git' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Batch submission limit', hint: 'Cap the estimated cost per batch submission', keywords: 'spending spend cap cost limit usd budget batches' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
-  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, status line, traces, checkpoints, archive', keywords: 'telemetry hooks status line limits prompt cache traces waterfall beta checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Storage', hint: 'Retention and locally kept data', keywords: 'storage retention delete data disk days' },
@@ -98,6 +107,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  { tab: 'app', tabLabel: 'App', section: 'Keyboard', hint: 'Change or reset a keyboard shortcut', keywords: 'keyboard shortcuts shortcut keys chord chords rebind remap keymap hotkey hotkeys accelerator' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
 
@@ -160,8 +170,8 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
-    detail: 'Tune motion for comfort and open a fictional workspace before sharing a screenshot or demo.',
-    help: 'These are local presentation preferences. Motion changes immediately; demo mode opens a separate workspace with fictional data.',
+    detail: 'Tune motion for comfort, choose your keyboard shortcuts, and open a fictional workspace before sharing a screenshot or demo.',
+    help: 'These are local presentation preferences. Motion and shortcuts change immediately; demo mode opens a separate workspace with fictional data.',
   },
 ];
 
@@ -263,6 +273,8 @@ const DECISION: Record<LedgerEntry['decision'], MarkSpec> = {
   allow: { glyph: '✓', word: 'allowed', color: 'var(--good)' },
   ask:   { glyph: '?', word: 'asked',   color: 'var(--warning)' },
   deny:  { glyph: '⊘', word: 'denied',  color: 'var(--critical)' },
+  // An unattended run that stopped on the call for a person's answer.
+  defer: { glyph: '⏸', word: 'held',    color: 'var(--warning)' },
 };
 
 /**
@@ -818,7 +830,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('agents')} active={settingsTab === 'agents'}>
             <Section title="Installed agent runtimes" hint="Resolved from your login shell's PATH, then from editor extension directories.">
               {providers.map((p) => (
-                <div className="set-runtime-row" key={p.id}>
+                <Fragment key={p.id}>
+                <div className="set-runtime-row">
                   <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
                   {p.path ? (
                     <>
@@ -829,6 +842,8 @@ export default function Settings({
                     <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
                   )}
                 </div>
+                {p.harnessId === 'codex' && p.path && <CodexHookEvents provider={p} />}
+                </Fragment>
               ))}
             </Section>
 
@@ -1027,6 +1042,8 @@ export default function Settings({
             <Projects projects={projects} onAddProject={onAddProject} onRemoveProject={onRemoveProject} />
             <Worktrees />
             <Trust projects={projects} onAddProject={onAddProject} />
+            <SandboxShellSection prefs={prefs} pending={pending} setPref={setPref} />
+            <CommitAttribution prefs={prefs} pending={pending} setFlag={setFlag} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
@@ -1078,6 +1095,7 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
             <PhoneMonitor />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+            <GitHubIntakeTimer />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
@@ -1095,6 +1113,7 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
             <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            <KeyboardSettings />
             <DemoPanel />
           </SettingsTabPanel>
         </div>
@@ -1215,6 +1234,68 @@ type Review = {
     | { s: 'err'; message: string }
     | { s: 'ready'; text: string; sha256: string | null };
 };
+
+type CodexHookCheck = { s: 'checking' } | { s: 'ok'; v: ObserveOnlyHooks } | { s: 'err'; message: string };
+
+/**
+ * Each of the three sentences opens with its own state word ("observed on",
+ * "injected and trusted on", "not available:"), so the mark is the glyph and
+ * the sentence is its word. A second word beside it read "observed observed".
+ */
+const HOOK_MARKS: Record<ObserveOnlyHooks['state'], { glyph: string; word: string; tone: Tone }> = {
+  observed: { glyph: '✓', word: '', tone: 'ok' },
+  trusted: { glyph: '◐', word: '', tone: 'accent' },
+  unavailable: { glyph: '✕', word: '', tone: 'warn' },
+};
+
+/**
+ * Codex hook events for one installed Codex runtime, in the three shapes the
+ * capability can take (shared/codex-hooks.ts). Detection fills the answer in
+ * when Codex has already been asked on this version; otherwise it is asked
+ * here, once, and "checking" is only ever that wait. A failed read says it
+ * could not read, and is never drawn as one of the three.
+ */
+function CodexHookEvents({ provider }: { provider: ProviderInfo }) {
+  const known = provider.capabilities.observeOnlyHooks ?? null;
+  const [check, setCheck] = useState<CodexHookCheck | null>(null);
+  useEffect(() => {
+    if (known) return;
+    let current = true;
+    setCheck({ s: 'checking' });
+    window.wanigan.providers.checkObserveOnlyHooks(provider.id)
+      .then((v) => { if (current) setCheck({ s: 'ok', v }); })
+      .catch((e: unknown) => { if (current) setCheck({ s: 'err', message: msg(e) }); });
+    return () => { current = false; };
+  }, [known, provider.id]);
+
+  const status = known ?? (check?.s === 'ok' ? check.v : null);
+  const when = (at: number) => new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return (
+    <div className="set-runtime-hooks" data-codex-hooks={status?.state ?? check?.s ?? 'checking'}>
+      <span className="set-runtime-hooks-label">Hook events</span>
+      {status ? (
+        <>
+          <ToneMark {...HOOK_MARKS[status.state]} />
+          <span className="set-runtime-hooks-text">{observeOnlyHooksSentence(status, when)}</span>
+          {status.state === 'unavailable' && status.detail && <span className="set-runtime-hooks-detail faint">{status.detail}</span>}
+        </>
+      ) : check?.s === 'err' ? (
+        <>
+          <ToneMark glyph="?" word="could not read" tone="bad" />
+          <span className="set-runtime-hooks-text">{check.message}</span>
+        </>
+      ) : (
+        <>
+          <ToneMark glyph="…" word="checking" tone="quiet" />
+          <span className="set-runtime-hooks-text">asking Codex's app-server whether it trusts Wanigan's hooks, with a throwaway home and no model call</span>
+        </>
+      )}
+      <span className="set-runtime-hooks-note faint">
+        These hooks only report what a Codex session did. They print nothing and decide nothing, so the trust gate does not cover Codex.
+      </span>
+    </div>
+  );
+}
 
 function ProviderPacks({ providers }: { providers: ProviderInfo[] }) {
   const [tick, setTick] = useState(0);
@@ -1928,6 +2009,22 @@ function Observation({ prefs, pending, setFlag }: {
             Claude-compatible CLIs post an event when a tool starts, finishes, fails, or stops to ask
             for permission. With it off, those providers lose tool-level state. Codex uses its own
             per-session approval and completed-turn notification channel instead.
+          </Toggle>
+
+          <Toggle title="Status line readings" on={prefs.statusLine} busy={pending === 'status_line'}
+                  onChange={(v) => void setFlag('status_line', v)}>
+            New Claude Code sessions draw their status line through a small relay in Wanigan’s own data
+            directory. It records the provider’s five-hour and seven-day limit readings and the prompt cache’s
+            figures, then runs the status line your own settings define and prints exactly what it prints.
+            Rides the hook bus, and writes nothing into your repository or <span className="mono">~/.claude</span>.
+          </Toggle>
+
+          <Toggle title="Record per-prompt traces (beta)" on={prefs.tracesBeta} busy={pending === 'traces_beta'}
+                  onChange={(v) => void setFlag('traces_beta', v)}>
+            New Claude Code sessions export the CLI’s beta trace of each prompt — every model request, tool call
+            and wait on you, with its timing — to the same loopback receiver as telemetry, and the Timeline draws
+            it as a waterfall. Names, ids, durations and token counts are kept; anything carrying prompt, response,
+            command or tool text is dropped before it is stored. Needs Telemetry on.
           </Toggle>
 
           <Toggle title="Per-turn checkpoints" on={prefs.checkpoints} busy={pending === 'checkpoints'}
@@ -3223,6 +3320,152 @@ const LEDGER_WINDOWS: { id: string; word: string; ms: number | null }[] = [
   { id: '30d', word: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
 ];
 
+/**
+ * Claude Code's own sandbox for shell commands, chosen by trust level.
+ *
+ * Off by default, because a sandboxed command that needs the network or a
+ * path outside the allowed ones is refused or asked about, which changes what
+ * an agent gets done. What it is and is not is said before the choice, not in
+ * a tooltip after it: the sandbox confines the shell tool and nothing else.
+ */
+function SandboxShellSection({ prefs, pending, setPref }: {
+  prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
+}) {
+  if (!prefs) return null;
+  return (
+    <Section title="Sandbox shell commands"
+             hint="Ask Claude Code to run the shell commands an agent runs inside its own sandbox.">
+      <Callout level="warning" title="A sandbox for shell commands, not for the agent.">
+        Claude Code’s sandbox confines the commands its shell tool runs. It does not confine the file tools,
+        MCP servers or hooks, and it has been escaped before. When it is on, Wanigan also tells it that no
+        command may read the folders holding other sessions’ Wanigan credentials.
+      </Callout>
+      <div className="set-sub">Which sessions</div>
+      <Options
+        label="Sandbox shell commands"
+        value={prefs.sandboxShell}
+        options={[
+          { id: 'off', word: 'Off', detail: 'Commands run with the agent’s own permissions, as before.' },
+          { id: 'below-trusted', word: 'Below Trusted', detail: 'Read only and Project sessions run commands in the sandbox. Trusted sessions do not.' },
+          { id: 'always', word: 'Always', detail: 'Every Claude Code session runs its commands in the sandbox, Trusted included.' },
+        ]}
+        onPick={(value) => { if (pending !== 'sandbox_shell') void setPref('sandbox_shell', value); }}
+      />
+      <p className="set-sandbox-notes">
+        If the sandbox cannot start on this Mac, a sandboxed session exits at launch and says why, rather than
+        running its commands unsandboxed. A command that reaches the network or writes outside the allowed paths
+        is refused or asked about, and in a headless run nothing can answer. The choice applies to Claude Code
+        sessions started after it; sessions already running, and Codex sessions, are unchanged.
+      </p>
+    </Section>
+  );
+}
+
+const BREAK_WORDS: Record<LedgerBreakKind, string> = {
+  content: 'its contents no longer produce the hash written beside them, so it was changed after it was written',
+  link: 'it does not follow the record before it, so a record was removed, inserted or reordered',
+  unchained: 'it has no hash although it was written after the chain began',
+};
+
+/**
+ * Whether the ledger is still what was written, from a walk of the whole chain
+ * in main. Nothing here is inferred: "verified" appears only over a check that
+ * returned, a check that failed says it failed, and records from before the
+ * chain began are counted as unverified rather than folded into the total.
+ */
+function LedgerChain() {
+  const [chain, setChain] = useState<{ s: 'loading' } | { s: 'ok'; d: LedgerChainStatus } | { s: 'err'; e: string }>({ s: 'loading' });
+  const [checking, setChecking] = useState(false);
+  const verify = useCallback(async () => {
+    setChecking(true);
+    try { setChain({ s: 'ok', d: await window.wanigan.policy.chain() }); }
+    catch (e) { setChain({ s: 'err', e: msg(e) }); }
+    finally { setChecking(false); }
+  }, []);
+  useEffect(() => { void verify(); }, [verify]);
+
+  let mark: React.ReactNode = null;
+  let line: React.ReactNode = null;
+  const notes: string[] = [];
+  if (chain.s === 'loading') {
+    line = <span className="dim">Verifying the chain…</span>;
+  } else if (chain.s === 'err') {
+    mark = <Mark glyph="?" word="Not verified" color="var(--warning)" />;
+    line = <>The chain was not checked: {chain.e}</>;
+  } else {
+    const c = chain.d;
+    const sig = c.signature;
+    const head = sig.state === 'signed'
+      ? (sig.unsignedAfter ? `head signed through #${sig.lastId}, ${plural(sig.unsignedAfter, 'newer record')} not yet signed` : 'head signed')
+      : sig.state === 'unsigned' ? 'head not signed'
+        : sig.state === 'unchecked' ? 'head signature not checked' : 'head signature does not match';
+    if (!c.total) {
+      mark = <Mark glyph="○" word="Nothing to verify" color="var(--text-faint)" />;
+      line = <>No decision has been recorded yet, so there is no chain to check.</>;
+    } else if (c.firstBreak) {
+      mark = <Mark glyph="✕" word="Chain broken" color="var(--critical)" />;
+      line = <>Chain breaks at record #{c.firstBreak.id} ({c.firstBreak.toolName}, {fullDate(c.firstBreak.at)}): {BREAK_WORDS[c.firstBreak.kind]}. {plural(c.verifiedThrough, 'record')} before it verified.</>;
+    } else if (!c.chained) {
+      mark = <Mark glyph="○" word="Not chained" color="var(--text-faint)" />;
+      line = <>Every record here was written before the chain began, so none can be verified. Decisions recorded from now on are chained.</>;
+    } else if (sig.state === 'mismatch') {
+      mark = <Mark glyph="✕" word="Head does not match" color="var(--critical)" />;
+      line = <>Chain recomputes through {plural(c.verifiedThrough, 'record')}, but {head}.</>;
+    } else {
+      mark = sig.state === 'signed' ? <Mark glyph="✓" word="Verified" color="var(--good)" /> : <Mark glyph="◑" word="Verified, unsigned" color="var(--warning)" />;
+      line = <>Chain verified through {plural(c.verifiedThrough, 'record')} · {head}</>;
+    }
+    if (sig.state !== 'signed' && 'reason' in sig && c.chained) notes.push(sig.reason);
+    if (c.unchainedBefore) {
+      notes.push(`${plural(c.unchainedBefore, 'record')} from before the chain began ${c.unchainedBefore === 1 ? 'is' : 'are'} not verified: nothing was computed over ${c.unchainedBefore === 1 ? 'it' : 'them'} when ${c.unchainedBefore === 1 ? 'it was' : 'they were'} written.`);
+    }
+  }
+  const checked = chain.s === 'ok' ? chain.d : null;
+  const fingerprint = checked?.keyFingerprint ? checked.keyFingerprint.slice(0, 16) : null;
+  return (
+    <div className="set-chain sunk" role="group" aria-label="Ledger chain">
+      <div className="set-chain-line">
+        {mark}
+        <span className="set-chain-text">{line}</span>
+        <button className="btn" onClick={() => void verify()} disabled={checking}>{checking ? 'Verifying…' : 'Verify now'}</button>
+      </div>
+      {notes.map((n) => <p key={n} className="set-chain-note">{n}</p>)}
+      {checked && (
+        <p className="set-chain-note">
+          Checked {ago(checked.checkedAt)}.
+          {fingerprint && <> Signing key <span className="mono">{fingerprint.match(/.{4}/g)?.join(' ')}</span>: an export carries its public
+            key, and <span className="mono">node scripts/verify-ledger.mjs &lt;file&gt; --fingerprint {fingerprint}</span> checks it without Wanigan.</>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Assisted-by trailers, opt-in. The switch is here because it changes what gets
+ * published; the lines themselves are shown in the Git view's commit box, where
+ * the commit they will end is.
+ */
+function CommitAttribution({ prefs, pending, setFlag }: {
+  prefs: WaniganSettings | null; pending: string | null; setFlag: (k: string, on: boolean) => Promise<void>;
+}) {
+  return (
+    <Section title="Commit attribution"
+             hint="What a commit made from Wanigan’s Git view says about the agents that helped write it.">
+      {!prefs ? <Reading what="your preferences" /> : (
+        <Toggle title="Add Assisted-by trailers" on={prefs.assistedByTrailers} busy={pending === 'assisted_by_trailers'}
+                onChange={(v) => void setFlag('assisted_by_trailers', v)}>
+          A commit from the Git view ends with one <span className="mono">Assisted-by: agent (model)</span> line
+          for each agent and model Wanigan recorded working in that checkout since its last commit, and the commit box
+          shows the exact lines before you commit. Only sessions Wanigan started count — an agent run in another
+          terminal is never seen, so a commit without the line is not a statement that no agent helped. Commits made
+          anywhere else, the phone included, are left as they are.
+        </Toggle>
+      )}
+    </Section>
+  );
+}
+
 function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: () => void }) {
   const [deniedOnly, setDeniedOnly] = useState(false);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -3289,9 +3532,9 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
     <Section title="Trust and the policy ledger"
              hint="What an agent in a project is allowed to reach for, and a written record of every decision Wanigan made about it.">
       <Callout level="warning" title="This is defence in depth. It is not containment, and it is not a security boundary.">
-        Wanigan checks each tool call against the level below and writes the answer down. It does not
-        sandbox the agent, it cannot see inside a command it allowed, and it cannot stop a process
-        that is already running. The 2026 Claude Code CVEs went <em>through allowlisted commands</em> —
+        Wanigan checks each tool call against the level below and writes the answer down. On its own it
+        does not sandbox the agent (the section below asks Claude Code to, for shell commands only), it
+        cannot see inside a command it allowed, and it cannot stop a process that is already running. The 2026 Claude Code CVEs went <em>through allowlisted commands</em> —
         a permitted tool doing an unexpected thing is exactly the case a policy layer is blind to.
         The OS sandbox is the boundary. Treat this as an audit trail with brakes, and do not point an
         agent at anything on the strength of it.
@@ -3399,6 +3642,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
           );
         }}
       </Frame>
+      <LedgerChain />
 
       <div className="set-filters">
         <div className="set-chips" role="group" aria-label="Ledger decision filter">
@@ -4255,6 +4499,138 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
   );
 }
 
+/**
+ * Which projects' sessions may search their own archived transcripts.
+ *
+ * transcripts.ts kept the per-project setting and the MCP server listed the
+ * tool by it, but nothing could switch it on, so the tool existed only in the
+ * smoke suite. Off by default and never global: a session that can read past
+ * conversations can quote them, so each project is the operator's own choice.
+ * The two conditions it depends on — Wanigan's server running, transcripts
+ * being archived — are stated where they are false rather than left implied.
+ */
+function RecallProjects({ projects, serverOn, archiving }: { projects: Project[]; serverOn: boolean; archiving: boolean }) {
+  const states = useLoad(() => window.wanigan.transcripts.recall(), [projects.length]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function flip(project: Project, on: boolean) {
+    setResult(null);
+    setBusy(project.id);
+    try {
+      await window.wanigan.transcripts.setRecall(project.id, on);
+      states.reload();
+      setResult({
+        tone: 'ok',
+        text: on
+          ? `Sessions in ${project.name} can now call wanigan_recall_transcripts. Sessions that start from now on are offered it; one already running may not see it until it restarts.`
+          : `Recall is off for ${project.name}. The next call from any session there is refused, including one already running.`,
+      });
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <>
+      <div className="set-sub">Transcript recall</div>
+      <p className="set-recall-lede">
+        A project switched on here gives its agents one more tool from Wanigan’s server:
+        {' '}<code>wanigan_recall_transcripts</code>, a search over that project’s archived Claude Code
+        transcripts that returns short, redacted snippets. It never reaches another project, another
+        account or another model backend, and nothing is added to a session unless the agent calls it.
+      </p>
+      {!serverOn && (
+        <Note tone="warn">Wanigan’s MCP server is off, so no session is offered this tool whatever is switched on below.</Note>
+      )}
+      {!archiving && (
+        <Note tone="warn">Transcript archiving is off, so nothing new is added for recall to find.</Note>
+      )}
+      <Frame v={states.v} what="transcript recall" onRetry={states.reload}>
+        {(on) => projects.length ? (
+          <div className="set-recall-list">
+            {projects.map((project) => (
+              <Toggle key={project.id} title={project.name} on={on[project.id] === true} busy={busy === project.id}
+                      onChange={(next) => void flip(project, next)}>
+                {on[project.id] === true
+                  ? 'Its sessions can search this project’s archived transcripts.'
+                  : 'Off. Its sessions are not told past conversations can be searched.'}
+              </Toggle>
+            ))}
+          </div>
+        ) : <p className="set-recall-lede">Add a project first; recall is switched on one project at a time.</p>}
+      </Frame>
+      <Result r={result} />
+    </>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GitHub intake · the timer
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The opt-in half of GitHub intake. Review's event inbox reads GitHub whenever
+ * the operator presses; this decides whether Wanigan also asks on its own while
+ * it is running. Off until turned on, because it reads with the operator's gh
+ * credentials on a clock they did not start. The interval is checked in main,
+ * which refuses a short one rather than clamping it, and the refusal is shown in
+ * main's words with nothing saved.
+ */
+function GitHubIntakeTimer() {
+  const timer = useLoad(() => window.wanigan.intake.timer());
+  // What main answered the last save with. The page shows it at once rather than
+  // re-reading: a re-read that has not landed yet would put the old interval back
+  // in the box, and a switch pressed in that moment would save it.
+  const [stored, setStored] = useState<IntakeTimer | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function save(next: IntakeTimer) {
+    setBusy(true); setResult(null);
+    try {
+      const saved = await window.wanigan.intake.setTimer(next);
+      setStored(saved);
+      setDraft(null);
+      setResult({ tone: 'ok', text: saved.enabled
+        ? `GitHub is checked every ${saved.intervalMinutes} minutes while Wanigan is running. The first check comes within a minute.`
+        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Review.` });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Nothing was saved. ${msg(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into Review’s event inbox.">
+      <Frame v={timer.v} what="the GitHub intake timer" onRetry={timer.reload}>{(loaded) => {
+        const saved = stored ?? loaded;
+        const typed = draft ?? String(saved.intervalMinutes);
+        return <>
+          <Toggle on={saved.enabled} title="Check GitHub on a timer" busy={busy}
+                  onChange={(on) => void save({ enabled: on, intervalMinutes: saved.intervalMinutes })}>
+            While Wanigan is running, read each GitHub project’s opened, labelled and commented issues and its failed runs
+            every {saved.intervalMinutes} minutes, and add what is new to Review’s event inbox for you to triage. Nothing is
+            written to GitHub. Nothing watches while Wanigan is closed or this Mac sleeps, and the next check says for how long.
+          </Toggle>
+          <label className="label" htmlFor="intake-interval">Minutes between checks (at least {INTAKE_MIN_INTERVAL_MINUTES})</label>
+          <div className="set-field-action set-intake-interval">
+            <input id="intake-interval" className="field mono" type="number" min={INTAKE_MIN_INTERVAL_MINUTES} max={INTAKE_MAX_INTERVAL_MINUTES} step={1}
+                   value={typed} onChange={(e) => setDraft(e.target.value)} />
+            <button type="button" className="btn" disabled={busy || draft === null || typed.trim() === ''}
+                    onClick={() => void save({ enabled: saved.enabled, intervalMinutes: Number(typed) })}>Save interval</button>
+          </div>
+          <p className="set-caption">
+            Each check is three reads per repository. A press in Review checks one project at any time, whether this is on or off.
+          </p>
+          <Result r={result} />
+        </>;
+      }}</Frame>
+    </Section>
+  );
+}
+
 function Mcp({ projects, prefs, pending, setFlag }: {
   projects: Project[]; prefs: WaniganSettings | null; pending: string | null;
   setFlag: (k: string, on: boolean) => Promise<void>;
@@ -4478,6 +4854,9 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           </div>
         )}
       </Frame>
+
+      <RecallProjects projects={projects} serverOn={Boolean(prefs?.mcpServerEnabled)}
+                      archiving={prefs?.archiveTranscripts ?? true} />
 
       <div className="set-sub">Servers given to agents</div>
       {draft && (
@@ -5130,8 +5509,9 @@ function Storage({ prefs, pending, setPref }: {
           <h4>How long hook events are kept</h4>
           <p>
             A busy session writes thousands of tool events. This is the window Wanigan keeps them for;
-            the timeline and the tool statistics read no further back than this. It does not touch
-            transcripts, costs or the policy ledger — those have their own controls.
+            the timeline and the tool statistics read no further back than this. Trace spans and status
+            line readings are kept for the same window. It does not touch transcripts, costs or the
+            policy ledger — those have their own controls.
           </p>
         </div>
         <div style={{ flex: 'none', display: 'flex', gap: 7, alignItems: 'center' }}>
@@ -5594,6 +5974,7 @@ function Backup() {
 
 /* Demo controls share the same main-owned window transition as the shortcut. */
 export function DemoPanel() {
+  const demoChord = useChord('demo').glyphs;
   const [state, setState] = useState<import('@shared/demo').DemoState | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -5632,7 +6013,7 @@ export function DemoPanel() {
       <button className="btn btn-primary" disabled={busy} onClick={() => void toggle()}>
         {busy ? 'Switching workspace…' : state.on ? 'Return to real workspace' : 'Open demo workspace'}
       </button>
-      <p className="faint">⌘⇧D opens the same switch from anywhere. Mission, Sessions, Fleet and Usage have sample data; other surfaces are still being prepared.</p>
+      <p className="faint">{demoChord} opens the same switch from anywhere. Mission, Sessions, Fleet and Usage have sample data; other surfaces are still being prepared.</p>
     </>}
     <div className="set-stack">
       <label className="label" htmlFor="demo-prompt">Demo prompts</label>

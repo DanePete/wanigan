@@ -250,3 +250,31 @@
 .tl-workspace .tl-day { text-transform: none; letter-spacing: 0; font-size: var(--t-small); }
 .tl-workspace .tl-turnhead { border-radius: var(--r-md); }
 .tl-workspace .tl-sum { font-family: var(--font-ui); line-height: 1.5; }
+
+/* A turn's per-prompt trace: one row per model call, tool call and wait on the
+   operator, each offset from the prompt. Two lines a row rather than three
+   columns, because the rail is a side panel and a clipped tool name is a row
+   nobody can read. Bars are SVG geometry; only their fill is styled here. */
+.tt { display: grid; gap: var(--s-2); min-width: 0; margin: var(--s-2) 0 var(--s-2) var(--s-4); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-sunk); }
+.tt-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); font-size: var(--t-micro); }
+.tt-totals { color: var(--text-dim); overflow-wrap: anywhere; }
+.tt-rows { display: grid; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.tt-row { display: grid; gap: var(--s-1); min-width: 0; }
+.tt-d1 { padding-left: var(--s-3); }
+.tt-d2 { padding-left: var(--s-5); }
+.tt-d3 { padding-left: var(--s-6); }
+.tt-line { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s-1) var(--s-3); min-width: 0; font-size: var(--t-micro); }
+.tt-label { min-width: 0; overflow-wrap: anywhere; }
+.tt-time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.tt-track { display: block; width: 100%; height: var(--s-2); }
+.tt-rail { fill: var(--line-soft); }
+.tt-bar { fill: var(--series-4); }
+.tt-llm { fill: var(--series-1); }
+.tt-tool { fill: var(--series-2); }
+.tt-exec { fill: var(--series-3); }
+.tt-blocked { fill: var(--warning); }
+.tt-bar.is-open { fill: var(--text-faint); }
+.tt-facts, .tt-note { margin: 0; font-size: var(--t-micro); line-height: 1.5; color: var(--text-dim); overflow-wrap: anywhere; }
+.tt-note { margin: var(--s-1) 0 var(--s-1) var(--s-4); }
+.pc-line { margin: var(--s-1) 0; overflow-wrap: anywhere; }
+.pc-causes { display: grid; gap: var(--s-1); margin: var(--s-1) 0; padding-left: var(--s-4); font-size: var(--t-micro); }

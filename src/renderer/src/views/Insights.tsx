@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@shared/types';
+import { spendKeyLabel, type SpendDimension, type SpendSourceReport } from '@shared/spend-sources';
 import { Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
 import '../styles/insights.css';
 import { useViewMemory } from '../components/viewMemory';
@@ -415,6 +416,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptMeter | null>(null);
   const [burn, setBurn] = useState<BurnWindow[]>([]);
+  const [sources, setSources] = useState<SpendSourceReport | null>(null);
+  const [sourcesErr, setSourcesErr] = useState<string | null>(null);
   const [meterMode, setMeterMode] = useViewMemory<MeterMode>('meter', 'both');
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
@@ -491,6 +494,19 @@ export default function InsightsView({ onOpenRun, projects: given }: {
           if (!alive.current || d !== daysRef.current) return;
           setUnified(un);
         } catch (e) { next.spend = msg(e); }
+      })(),
+      (async () => {
+        if (!due(`sources:${d}`, TTL.spend, force)) return;
+        try {
+          const value = await window.wanigan.spend.sources(d);
+          stamp(`sources:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          setSources(value); setSourcesErr(null);
+        } catch (e) {
+          // Said on the card itself: a failed read must not look like a window
+          // in which nothing was attributed.
+          if (alive.current) setSourcesErr(msg(e));
+        }
       })(),
       (async () => {
         if (!due(`project:${d}`, TTL.spend, force)) return;
@@ -746,7 +762,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             </li>
             <li>
               <strong>Set a budget.</strong> A cap with no spend against it still draws its meter,
-              and it is the only way to be warned before the money is gone.
+              it warns before the money is gone, and once it is reached it holds the work nobody is
+              watching start.
             </li>
           </ul>
           <BudgetEditor projects={projects} buds={buds} onSaved={setBuds} />
@@ -823,6 +840,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
 
             <SpendByProject rows={byProject} days={days} />
+            <SpendBySource report={sources} error={sourcesErr} days={days} />
             <details className="ins-comparison">
               <summary>Compare with synchronous pricing</summary>
               <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
@@ -934,6 +952,7 @@ function BreachBanner({ breached }: { breached: BudgetState[] }) {
       </strong>{' '}
       A cap that only speaks once it has been exceeded is a receipt, not a budget — these are listed
       while there is still a month left to change.
+      {over.length > 0 && ' Headless runs, scheduled batches and autopilot goal tasks in a scope that is over wait in the queue until its budget is raised or the month turns.'}
       <ul className="ins-breach">
         {breached.map((b) => {
           const m = budgetMark(b);
@@ -1448,6 +1467,116 @@ function SpendByProject({ rows, days }: { rows: ProjectSpendRow[]; days: number 
 }
 
 /** The window excluded everything — a different state from "nothing exists". */
+/* ── spend by source ──────────────────────────────────────────────────── */
+
+const SOURCE_DIMENSIONS: { value: SpendDimension; label: string }[] = [
+  { value: 'source', label: 'Source' },
+  { value: 'skill', label: 'Skill' },
+  { value: 'plugin', label: 'Plugin' },
+  { value: 'mcp', label: 'MCP server' },
+  { value: 'agent', label: 'Subagent' },
+];
+
+/** What the CLI's three query sources are, in its own terms. */
+const SOURCE_WORDS: Record<string, string> = {
+  main: 'the conversation itself',
+  subagent: 'agents and hook agents it started',
+  auxiliary: 'the CLI’s own background calls',
+};
+
+/**
+ * Where session money went inside the sessions, by the attribution the CLI
+ * attaches to its own cost and token metrics. Every dimension's rows add back
+ * to the same total, so the unattributed row is shown rather than dropped: a
+ * table of named skills alone would read as the whole bill.
+ */
+function SpendBySource({ report, error, days }: { report: SpendSourceReport | null; error: string | null; days: number }) {
+  const [dimension, setDimension] = useViewMemory<SpendDimension>('spendSource', 'source');
+  const groups = report?.groups[dimension] ?? [];
+  const total = report ? report.totals.costUsd : 0;
+  const unverified = report ? report.totals.unverifiedUsd : 0;
+  return (
+    <section className="chart-card" aria-label="Spend by source">
+      <h3>Spend by source</h3>
+      <p className="sub">
+        Session spend over the last {days} days by what inside the session made the call — the main conversation, a
+        subagent, or the CLI’s own auxiliary requests — and by the skill, plugin, MCP server or subagent it was
+        attributed to.
+      </p>
+      <div className="ins-source-dims">
+        <Segmented label="Group spend by" value={dimension} onChange={setDimension} options={SOURCE_DIMENSIONS} />
+      </div>
+      {error ? (
+        <div className="chart-empty">
+          <p><strong>Could not read spend by source.</strong> {error}</p>
+        </div>
+      ) : !report ? (
+        <div className="chart-empty"><p>Reading attributed spend…</p></div>
+      ) : report.rows === 0 ? (
+        <div className="chart-empty">
+          <p>No attributed spend on record in this window.</p>
+          <p className="ins-zero-sub">
+            Attribution arrives on the CLI’s own cost and token metrics, so it fills from the first session that runs
+            with Telemetry on after this update. Spend recorded before then is in the charts above, unattributed.
+          </p>
+        </div>
+      ) : (
+        <div className="ins-source-scroll">
+          <table className="viz-table">
+            <thead>
+              <tr>
+                <th>{SOURCE_DIMENSIONS.find((d) => d.value === dimension)?.label}</th>
+                <th className="ins-th-r">Spend</th>
+                <th className="ins-th-r">Share</th>
+                <th className="ins-th-r">Input</th>
+                <th className="ins-th-r">Output</th>
+                <th className="ins-th-r">Cache read</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={g.key || '(none)'}>
+                  <td>
+                    <span className="mono">{spendKeyLabel(dimension, g.key)}</span>
+                    {dimension === 'source' && SOURCE_WORDS[g.key] && <span className="ins-dim"> — {SOURCE_WORDS[g.key]}</span>}
+                  </td>
+                  <td className="n">
+                    {cents(g.costUsd)}
+                    {g.unverifiedUsd > 0 && <span className="ins-dim"> + {cents(g.unverifiedUsd)} unbilled</span>}
+                  </td>
+                  <td className="n ins-dim">{total > 0 ? pct(g.costUsd / total, 1) : '—'}</td>
+                  <td className="n">{num(g.inTokens)}</td>
+                  <td className="n">{num(g.outTokens)}</td>
+                  <td className="n">{num(g.cacheReadTokens)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td><strong>All session spend</strong></td>
+                <td className="n">
+                  <strong>{cents(total)}</strong>
+                  {unverified > 0 && <span className="ins-dim"> + {cents(unverified)} unbilled</span>}
+                </td>
+                <td className="n ins-dim">{total > 0 ? '100.0%' : '—'}</td>
+                <td className="n">{num(report.totals.inTokens)}</td>
+                <td className="n">{num(report.totals.outTokens)}</td>
+                <td className="n">{num(report.totals.cacheReadTokens)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Meters of={['cli']} extra={
+        <span>
+          These are the CLI’s own estimated costs at list price, not your bill; “unbilled” is spend on a backend nobody
+          charges at that price. User-defined and third-party names read <code>custom</code> or{' '}
+          <code>third-party</code> unless tool details are logged (<code>OTEL_LOG_TOOL_DETAILS=1</code> in the
+          session’s environment), which Wanigan never sets.
+        </span>
+      } />
+    </section>
+  );
+}
+
 function ZeroResults({ days, onWiden }: { days: number; onWiden: () => void }) {
   return (
     <div className="chart-empty">
@@ -2191,6 +2320,9 @@ function BudgetEditor({ projects, buds, scope, onSaved, onCancel }: {
           : <>Setting a new cap for <strong>{named}</strong>. A cap of 0 tracks the scope without
              capping it. Scopes overlap on purpose: spend in a repo also counts against{' '}
              <em>All projects</em>.</>}
+        {' '}Once this month’s spend reaches a cap, headless runs, scheduled batches and autopilot goal
+        tasks in that scope wait in the queue until it is raised or the month turns. A session you
+        start yourself is not held.
       </p>
 
       {err && (

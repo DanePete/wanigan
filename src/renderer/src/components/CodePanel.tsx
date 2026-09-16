@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
 import { Note, Icon, Reading, ago } from './bits';
 import { useDialog } from './useDialog';
+import { appendToComposerDraft } from './Composer';
+import {
+  commentable, formatReviewNotes, hunkRange, MAX_REVIEW_NOTES, noteFromRows, noteLocation, parseUnifiedDiff,
+  type ReviewNote,
+} from '@shared/review-notes';
 import '../styles/code-reader.css';
 type Editor = { id: string; label: string; path: string };
 type Changes = Awaited<ReturnType<typeof window.wanigan.code.changes>>;
@@ -52,6 +57,10 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  */
 type CodePanelProps = {
   projectPath: string; projectName: string; sessionId?: string;
+  /** The tab it opens on; a finished run is read from its turns. */
+  initialTab?: 'changes' | 'files' | 'turns';
+  /** False for a finished run: there is no agent writing, so nothing to follow. */
+  live?: boolean;
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
   /** A jump from the Timeline: open this turn's diff. Nonce re-fires repeats. */
@@ -67,8 +76,8 @@ export default function CodePanel(props: CodePanelProps) {
   return <ScopedCodePanel key={JSON.stringify([props.projectPath, props.sessionId ?? null])} {...props} />;
 }
 
-function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: CodePanelProps) {
-  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
+function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch, initialTab = 'changes', live = true }: CodePanelProps) {
+  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>(initialTab);
   // Default to this session's work. "All" exists because pre-existing dirt is
   // still worth seeing — it just isn't the agent's doing.
   const [scope, setScope] = useState<'session' | 'all'>('session');
@@ -121,6 +130,15 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ reverted: number; failed: { file: string; detail: string }[] } | null>(null);
   const [inspector, setInspector] = useState(false);
+  /*
+   * Review notes: comments on specific diff lines, waiting to be put into this
+   * session's message box. They share one anchor — the diff they were made on
+   * — so the message can say which version of the code it is about; a note on
+   * a different diff waits until these are added or discarded.
+   */
+  const [notes, setNotes] = useState<ReviewNote[]>([]);
+  const [notesAnchor, setNotesAnchor] = useState<string | null>(null);
+  const [notesAdded, setNotesAdded] = useState<string | null>(null);
   // Turns: boundary checkpoints, the selected turn's diff, and the revert flow.
   const [cps, setCps] = useState<SessionCheckpoint[]>([]);
   const [selTurn, setSelTurn] = useState<string | null>(null);
@@ -374,6 +392,32 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
     } catch (e) { if (request === inspectionSequence.current) setErr(e instanceof Error ? e.message : String(e)); }
   }
 
+  function addNote(note: ReviewNote, anchor: string): string | null {
+    if (notes.length >= MAX_REVIEW_NOTES) return `${MAX_REVIEW_NOTES} notes are waiting. Add them to the message first.`;
+    if (notes.length && notesAnchor !== anchor) {
+      return `The ${notes.length} waiting note${notes.length === 1 ? ' is' : 's are'} on ${notesAnchor}. Add or discard ${notes.length === 1 ? 'it' : 'them'} before commenting on a different diff.`;
+    }
+    setNotes((current) => [...current, note]);
+    setNotesAnchor(anchor);
+    setNotesAdded(null);
+    return null;
+  }
+
+  function addNotesToMessage() {
+    if (!sessionId || !notes.length || !notesAnchor) return;
+    const count = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
+    const where = appendToComposerDraft(sessionId, formatReviewNotes(notes, notesAnchor));
+    setNotesAdded(where === 'composer'
+      ? `Added ${count} to the message box. Read ${notes.length === 1 ? 'it' : 'them'} there, then send or queue.`
+      : `Added ${count} to this session's saved draft. Open the message box to read and send ${notes.length === 1 ? 'it' : 'them'}.`);
+    setNotes([]);
+    setNotesAnchor(null);
+  }
+
+  const changesAnchor = baseHead
+    ? `your uncommitted changes against ${baseHead.slice(0, 8)}, the commit this session started from`
+    : 'your uncommitted changes';
+
   const editor = editors[0] ?? null;
   const target = sel ?? file?.rel;
   const inspectorText = sel ? diff : file?.text ?? '';
@@ -402,7 +446,7 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
             Turns{turns.length > 1 ? ` (${turns.length - 1})` : ''}
           </button>
         )}
-        {sessionId && (
+        {sessionId && live && (
           <button
             className="pill"
             aria-pressed={follow}
@@ -539,6 +583,37 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
         </div>
       )}
 
+      {sessionId && notes.length > 0 && notesAnchor && (
+        <section className="review-tray" aria-label="Review notes">
+          <div className="review-tray-head">
+            <strong>{notes.length} review note{notes.length === 1 ? '' : 's'}</strong>
+            <span className="faint">on {notesAnchor}</span>
+            <span className="review-tray-actions">
+              <button className="btn btn-primary" type="button" onClick={addNotesToMessage}>Add to message</button>
+              <button className="btn" type="button" onClick={() => { setNotes([]); setNotesAnchor(null); }}>Discard</button>
+            </span>
+          </div>
+          <ol className="review-tray-list">
+            {notes.map((n) => (
+              <li key={n.id}>
+                <span className="mono">{n.file}</span>, {noteLocation(n)}: {n.body}
+                <button className="review-remove" type="button" aria-label={`Remove the note on ${n.file}, ${noteLocation(n)}`}
+                        onClick={() => setNotes((current) => {
+                          const next = current.filter((x) => x.id !== n.id);
+                          if (!next.length) setNotesAnchor(null);
+                          return next;
+                        })}>Remove</button>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {notesAdded && (
+        <div className="review-added">
+          <Note tone="ok" onDismiss={() => setNotesAdded(null)}>{notesAdded}</Note>
+        </div>
+      )}
+
       <div className="code-body">
         {tab === 'turns' ? (
           <>
@@ -636,7 +711,16 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
                   Patch truncated for display — {turnDiff.totalFiles} file{turnDiff.totalFiles === 1 ? '' : 's'} changed in this turn.
                 </div>
               )}
-              {turnDiff ? <Diff text={turnDiff.patch} />
+              {turnDiff ? (() => {
+                const row = turns.find((t) => t.key === selTurn) ?? null;
+                const anchor = row?.start?.commitHash
+                  ? `the changes ${row.turn === 0 ? 'before the session' : `in turn ${row.turn}`}, from snapshot ${row.start.commitHash.slice(0, 8)}`
+                  : 'the selected turn\u2019s changes';
+                return sessionId
+                  ? <ReviewDiff text={turnDiff.patch} fallbackFile={null} anchor={anchor}
+                                notes={notesAnchor === anchor ? notes : []} onAdd={addNote} />
+                  : <Diff text={turnDiff.patch} />;
+              })()
                 : <p className="faint code-hint">{turnDiffNote ?? 'Select a turn to see exactly what it changed.'}</p>}
             </div>
           </>
@@ -708,7 +792,10 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
                   <Note tone="ok">{reverted}</Note>
                 </div>
               )}
-              {sel ? <Diff text={diff} /> : (
+              {sel ? (sessionId
+                ? <ReviewDiff text={diff} fallbackFile={sel} anchor={changesAnchor}
+                              notes={notesAnchor === changesAnchor ? notes : []} onAdd={addNote} />
+                : <Diff text={diff} />) : (
                 <p className="faint code-hint">
                   {lastEdit
                     ? <>The agent last wrote <span className="mono">{lastEdit.path}</span>. Select a file to see its diff.</>
@@ -802,6 +889,115 @@ function Diff({ text }: { text: string }) {
         </div>
       )}
     </pre>
+  );
+}
+
+/**
+ * The same diff, with lines a reader can comment on. Click a line to select it
+ * and shift-click to extend within the file; each hunk header also carries a
+ * button that selects the whole hunk, which is the keyboard route. A note is
+ * refused rather than guessed when the selection spans two files or holds no
+ * line of code.
+ */
+function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
+  text: string;
+  fallbackFile: string | null;
+  anchor: string;
+  /** Notes already waiting on this same diff, marked in the margin. */
+  notes: readonly ReviewNote[];
+  onAdd: (note: ReviewNote, anchor: string) => string | null;
+}) {
+  const rows = useMemo(() => parseUnifiedDiff(text, fallbackFile), [text, fallbackFile]);
+  const [range, setRange] = useState<{ anchor: number; from: number; to: number } | null>(null);
+  const [body, setBody] = useState('');
+  const [why, setWhy] = useState<string | null>(null);
+  useEffect(() => { setRange(null); setBody(''); setWhy(null); }, [text]);
+  const noted = useMemo(() => {
+    const marked = new Set<number>();
+    rows.forEach((row, i) => {
+      if (!commentable(row)) return;
+      const hit = notes.some((n) => n.file === row.file && (
+        (row.newLine !== null && n.newStart !== null && n.newEnd !== null && row.newLine >= n.newStart && row.newLine <= n.newEnd)
+        || (row.oldLine !== null && n.oldStart !== null && n.oldEnd !== null && row.oldLine >= n.oldStart && row.oldLine <= n.oldEnd)));
+      if (hit) marked.add(i);
+    });
+    return marked;
+  }, [rows, notes]);
+
+  if (!text.trim()) return <p className="faint code-hint">No textual diff (binary file, or the change is already committed).</p>;
+
+  const shown = rows.slice(0, DIFF_LINES);
+  const pick = (i: number, extend: boolean) => {
+    const row = rows[i];
+    if (!commentable(row)) return;
+    setWhy(null);
+    setRange((current) => extend && current && rows[current.anchor]?.file === row.file
+      ? { anchor: current.anchor, from: Math.min(current.anchor, i), to: Math.max(current.anchor, i) }
+      : { anchor: i, from: i, to: i });
+  };
+  const selected = range ? rows.slice(range.from, range.to + 1).filter(commentable) : [];
+  const where = selected.length
+    ? `${selected[0].file} · ${selected.length} line${selected.length === 1 ? '' : 's'} selected`
+    : '';
+  const add = () => {
+    if (!range) return;
+    const made = noteFromRows(rows, range.from, range.to, body, `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`);
+    if (!made.ok) { setWhy(made.reason); return; }
+    const refused = onAdd(made.note, anchor);
+    if (refused) { setWhy(refused); return; }
+    setRange(null); setBody(''); setWhy(null);
+  };
+
+  return (
+    <div className="review-diff">
+      <pre className="diff">
+        {shown.map((row, i) => {
+          if (row.kind === 'hunk') {
+            const hunk = hunkRange(rows, i);
+            return (
+              <div key={i} className="dl hunk review-hunk">
+                <span>{row.text}</span>
+                {hunk && (
+                  <button type="button" className="review-hunk-btn"
+                          onClick={() => { setWhy(null); setRange({ anchor: hunk.from, from: hunk.from, to: hunk.to }); }}>
+                    Comment on this hunk
+                  </button>
+                )}
+              </div>
+            );
+          }
+          const inRange = range !== null && i >= range.from && i <= range.to && commentable(row);
+          const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}`;
+          return commentable(row)
+            ? <div key={i} className={cls} onClick={(e) => pick(i, e.shiftKey)}>{row.text || ' '}</div>
+            : <div key={i} className={cls}>{row.text || ' '}</div>;
+        })}
+        {rows.length > DIFF_LINES && (
+          <div className="dl meta">
+            — showing {DIFF_LINES.toLocaleString('en-US')} of {rows.length.toLocaleString('en-US')} lines.
+            The remaining {(rows.length - DIFF_LINES).toLocaleString('en-US')} are not displayed.
+          </div>
+        )}
+      </pre>
+      {range && (
+        <div className="review-compose">
+          <span className="review-compose-where">{where}</span>
+          <textarea aria-label="Review note for the selected lines" value={body} autoFocus
+                    placeholder="What should change here, and why?"
+                    onChange={(e) => setBody(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); }
+                      if (e.key === 'Escape') { e.preventDefault(); setRange(null); setBody(''); setWhy(null); }
+                    }} />
+          {why && <p className="review-why" role="status">{why}</p>}
+          <div className="review-compose-actions">
+            <button className="btn btn-primary" type="button" disabled={!body.trim()} onClick={add}>Add note</button>
+            <button className="btn" type="button" onClick={() => { setRange(null); setBody(''); setWhy(null); }}>Cancel</button>
+            <span className="faint">⌘↩ adds · shift-click a line to extend</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

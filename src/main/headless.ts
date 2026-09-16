@@ -3,31 +3,67 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
-import { detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
+import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
 import { listProjects, projectById } from './store';
-import { trustFor, registerPolicyContext, releasePolicyContext } from './policy';
+import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall, waniganCredentialDirs } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
-import { flags, learningSettings } from './settings';
-import { createWorktree, removeWorktree } from './worktrees';
+import { flags, learningSettings, sandboxShell } from './settings';
+import { createWorktree, removeWorktree, worktreeLaunchEnv } from './worktrees';
+import { gateLaunch } from './config-pins';
+import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
-import { announceRunEnded } from './notify';
+import { announceHeld, announceRunEnded } from './notify';
 import { refuseIfHalted } from './halt';
 import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
+import { redactCredentials } from './redact';
+import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
+import { DEFER_SINCE, cliSupportsDefer, heldCallSummary, readDeferredOutcome, type DeferredOutcome } from '../shared/deferred-approvals';
 import type {
-  AgentAccount, HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
+  AgentAccount, HeadlessConfig, HeadlessHeld, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
 } from '../shared/types';
 
 const exec = promisify(execFile);
 
 type ProviderDef = NonNullable<ReturnType<typeof providerById>>;
+
+/**
+ * A run pinned to one commit, as one attempt in a set.
+ *
+ * Only main-process code can ask for this: it is startHeadlessRun's second
+ * argument, never a field of the config the renderer sends, and the stored
+ * config overwrites any `pinned` key that arrived inside that config. What it
+ * changes is narrow. The row must run in its own worktree, cut at `commit` and
+ * verified to be there before the agent spawns; the worktree is kept when the
+ * agent changed nothing, because the set gates and compares every attempt's
+ * tree; and the run does not announce its own end, because a set of twelve
+ * would otherwise send twelve notifications for one decision. `attemptId`
+ * lets the attempts module find its attempt from the run alone, including a run
+ * that ends before the launcher has written the run id down.
+ */
+export type HeadlessPin = { commit: string; attemptId: string };
+
+/** A full commit id: forty hex digits, or sixty-four in a SHA-256 repository. */
+const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/** The pin a stored config carries, validated, or null when it carries none that can be read. */
+export function pinnedOf(value: unknown): HeadlessPin | null {
+  if (!value || typeof value !== 'object') return null;
+  const { commit, attemptId } = value as Record<string, unknown>;
+  if (typeof commit !== 'string' || !FULL_COMMIT.test(commit)) return null;
+  if (typeof attemptId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(attemptId)) return null;
+  return { commit, attemptId };
+}
+
 type StoredHeadlessConfig = HeadlessConfig & {
   providerProfileFingerprint: string;
   /** Set only for a run a schedule paid for; see startHeadlessRun. */
   scheduleFire?: ScheduleFire;
   allProjects?: boolean;
+  /** Set only by the attempts launcher; see HeadlessPin. */
+  pinned?: HeadlessPin;
 };
 
 /**
@@ -178,11 +214,13 @@ const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
  * data and must not be able to point a run's login at a directory it chose. */
 export function headlessEnv(
   PATH: string, providerEnv: Record<string, string> = {}, accountEnv: Record<string, string> = {},
+  worktreeEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     if (STRIPPED_ENV.includes(k)) continue;
+    if (WORKTREE_ENV_NAMES.includes(k)) continue;
     // Same reason attended sessions strip these (sessions.ts): a CODEX_* marker
     // inherited from a parent writer makes the child attach to that session
     // instead of doing the run it was launched for. CODEX_HOME is deliberately
@@ -194,6 +232,7 @@ export function headlessEnv(
   out.PATH = PATH;
   Object.assign(out, providerEnv);
   Object.assign(out, accountEnv);
+  Object.assign(out, worktreeEnv);
   // The same strip an attended launch applies, and this path needed it more.
   // It copies process.env wholesale, so a fan-out on any profile that redirects
   // ANTHROPIC_BASE_URL — the built-in GLM and DeepSeek profiles among them —
@@ -269,6 +308,8 @@ export function headlessArgs(
   gate: { mode: string; clampArgs: string[] },
   settingsFile: string | null,
   learningCapsule: string | null = null,
+  /** A held call that has been answered: continue that conversation, with no new prompt. */
+  resume: { cliSessionId: string } | null = null,
 ): string[] {
   const shared = def.launchArgs(gate.clampArgs, {
     ...cfg.providerOptions,
@@ -276,6 +317,10 @@ export function headlessArgs(
     effort: def.supports.effort ? cfg.effort || undefined : undefined,
     permissionMode: def.supports.permissionMode ? gate.mode : undefined,
   });
+
+  if (resume && def.headless !== 'claude-json') {
+    throw new Error(`${def.label} cannot resume a held call; only Claude Code's print mode holds one.`);
+  }
 
   if (def.headless === 'codex-json') {
     // Codex has no budget flag of its own and reports no cost, so cfg.timeoutMs
@@ -291,7 +336,11 @@ export function headlessArgs(
   }
 
   if (def.headless === 'claude-json') return [
-    '-p', cfg.prompt,
+    // A resume passes no prompt. With the held call's marker in the session the
+    // CLI re-emits that call through PreToolUse, where the operator's answer is
+    // given; without the marker it refuses and says so, rather than inventing
+    // a turn.
+    ...(resume ? ['-p', '--resume', resume.cliSessionId] : ['-p', cfg.prompt]),
     '--output-format', 'json',
     // Wanigan's own hook config, handed over by path out of its userData
     // directory — never .claude/settings.json inside the user's repository.
@@ -338,11 +387,14 @@ type Reported = {
    * the binary, not measured by Wanigan; empty when the shape carried none.
    */
   modelUsage: { model: string; contextWindow: number }[];
+  /** Whether the run ended on a held call, read from the result object only. */
+  outcome: DeferredOutcome;
 };
 
 const NOTHING_REPORTED: Reported = {
   costUsd: null, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0,
   isError: false, message: null, modelUsage: [],
+  outcome: { terminalReason: null, sessionId: null, deferred: null },
 };
 
 /**
@@ -390,6 +442,7 @@ export function parseCliOutput(stdout: string): Reported {
       isError: c.is_error === true,
       message: typeof c.result === 'string' ? c.result : null,
       modelUsage,
+      outcome: readDeferredOutcome(c),
     };
   }
   return NOTHING_REPORTED;
@@ -556,7 +609,20 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
-export async function startHeadlessRun(cfg: HeadlessStart, scheduledFire?: ScheduleFire): Promise<{ runId: string; rows: number }> {
+/** A repository a start named, and the project it resolved to. */
+type Picked = { id: string; project: ReturnType<typeof projectById> };
+
+/**
+ * Every refusal a headless start makes before it writes anything.
+ *
+ * Split out of startHeadlessRun so a caller that launches several runs as one
+ * decision — an attempt set — can learn that every one of them would be
+ * accepted before it starts the first. Otherwise a set whose third arm names a
+ * disabled provider would already have queued, and possibly spawned, the
+ * attempts of the first two. startHeadlessRun still runs these checks itself,
+ * so nothing that skips the preflight can skip the gate.
+ */
+async function vetHeadlessStart(cfg: HeadlessStart): Promise<{ def: ProviderDef; picked: Picked[] }> {
   // Before the run row exists. A halted fleet that still recorded a run would
   // leave a row nobody started and nothing will ever finish.
   refuseIfHalted('start a headless run');
@@ -665,6 +731,28 @@ export async function startHeadlessRun(cfg: HeadlessStart, scheduledFire?: Sched
     throw new Error(`${def.label} changed or was disabled before the run could be queued.`);
   }
   def = finalDef;
+  return { def, picked };
+}
+
+/**
+ * The same refusals as a start, with nothing written and nothing dispatched,
+ * and the facts about the profile that a set freezes onto each arm.
+ */
+export async function checkHeadlessStart(cfg: HeadlessStart): Promise<{ label: string; profileFingerprint: string; budgetFlag: boolean }> {
+  const { def } = await vetHeadlessStart(cfg);
+  // headlessArgs passes --max-budget-usd only on Claude's print protocol.
+  return { label: def.label, profileFingerprint: def.profileFingerprint, budgetFlag: def.headless === 'claude-json' };
+}
+
+export async function startHeadlessRun(cfg: HeadlessStart, pin: HeadlessPin | null = null, scheduledFire?: ScheduleFire): Promise<{ runId: string; rows: number }> {
+  // A pin is one attempt: one repository, one full commit. Anything else asking
+  // for one is a caller bug, and a pinned fan-out would cut every repository's
+  // worktree from a commit that exists in only one of them.
+  if (pin !== null && (!pinnedOf(pin) || cfg.projectIds.length !== 1)) {
+    throw new Error('A pinned run names exactly one repository and a full commit id.');
+  }
+  if (pin !== null && scheduledFire) throw new Error('A pinned attempt cannot claim a scheduled fire.');
+  const { def, picked } = await vetHeadlessStart(cfg);
 
   /* ── who paid for this ──────────────────────────────────────────────
      A schedule spends a fire, records it as 'queued', and until now that was
@@ -679,13 +767,21 @@ export async function startHeadlessRun(cfg: HeadlessStart, scheduledFire?: Sched
      Claimed here — after every refusal above — so a run that never starts
      cannot consume the fire it would have reported on.
      ───────────────────────────────────────────────────────────────── */
+  // Only the schedule dispatcher can supply its exact durable fire receipt.
+  // A manual run or pinned attempt with the same prompt cannot claim it.
   const scheduleFire = scheduledFire ? claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds, fire: scheduledFire }) : null;
 
   const storedConfig: StoredHeadlessConfig = {
     ...cfg,
+    // A boolean, whatever crossed IPC: holding is a deliberate opt-in, and a
+    // truthy string must not be read as one.
+    holdForApproval: cfg.holdForApproval === true,
     // Last on purpose: an IPC caller cannot choose the identity that later rows
     // are authorised to launch.
     providerProfileFingerprint: def.profileFingerprint,
+    // Written even when absent, so a `pinned` key that rode in on the spread
+    // above is replaced by nothing rather than stored as if a launcher set it.
+    pinned: pin ?? undefined,
     ...(scheduleFire ? { scheduleFire } : {}),
   };
 
@@ -826,8 +922,10 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   sweepInterruptedRows();
 
   const row = d.prepare(
-    'SELECT status, project_path, project_name FROM headless_rows WHERE run_id=? AND project_id=?'
-  ).get(runId, projectId) as { status: string; project_path: string; project_name: string } | undefined;
+    'SELECT status, project_path, project_name, worktree, held_json FROM headless_rows WHERE run_id=? AND project_id=?'
+  ).get(runId, projectId) as {
+    status: string; project_path: string; project_name: string; worktree: string | null; held_json: string | null;
+  } | undefined;
   if (!row) throw new Error(`No headless row for project ${projectId} in run ${runId}.`);
   // A dispatcher may retry, and a cancel may have landed while this sat queued.
   if (row.status !== 'pending') {
@@ -897,9 +995,49 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     return;
   }
 
+  // A row whose held call was answered comes back as 'pending' and continues
+  // the CLI's own conversation instead of starting the prompt again. Once, and
+  // only under the permission mode it was held under: the CLI does not restore
+  // the mode on resume, and a resume under another one is a different run.
+  const held = heldRecordOf(row.held_json);
+  const resume = held?.answer && held.answer.decision !== 'stop' && held.resumedAt === null ? held : null;
+  if (resume && resume.permissionMode !== gate.mode) {
+    failRow(runId, projectId,
+      `This project's trust level changed after the call was held (held under ${resume.permissionMode}, now ${gate.mode}), ` +
+      'so the conversation was not resumed under different permissions. Start the run again.');
+    return;
+  }
+
+  // An attempt is only comparable because it ran in its own tree at the set's
+  // commit. A pin that no longer reads, or a row that would run with no
+  // worktree — a read-only project runs agents in plan mode in the checkout
+  // itself — would be an attempt nobody could compare, so it is not run.
+  const pin = cfg.pinned === undefined ? null : pinnedOf(cfg.pinned);
+  if (cfg.pinned !== undefined && !pin) {
+    failRow(runId, projectId, 'This attempt\'s pinned commit could not be read back from its run, so it was not started.');
+    return;
+  }
+  if (pin && (resume ? !row.worktree : (!cfg.isolate || gate.mode === 'plan'))) {
+    d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=? WHERE run_id=? AND project_id=?")
+      .run(
+        resume
+          ? 'This attempt held a call outside its worktree, so it cannot resume at its pinned commit. Start the set again.'
+          : `An attempt runs in its own worktree at the set's pinned commit, and this project's trust level (${trust}) runs agents without one, so it was not run. Set the project to Project or Trusted and start the set again.`,
+        Date.now(), runId, projectId);
+    logEvent(runId, 'warn', `${row.project_name}: blocked, because an attempt cannot run without its own worktree.`);
+    finalize(runId);
+    return;
+  }
+
   const startedAt = Date.now();
   d.prepare("UPDATE headless_rows SET status='running', started_at=? WHERE run_id=? AND project_id=?")
     .run(startedAt, runId, projectId);
+  if (resume) {
+    // Written before anything can fail, so no path back to 'pending' can spend
+    // the same answer on a second resume.
+    d.prepare('UPDATE headless_rows SET held_json=? WHERE run_id=? AND project_id=?')
+      .run(JSON.stringify({ ...resume, resumedAt: startedAt }), runId, projectId);
+  }
   // Claimed at the same moment the row is, not at spawn: everything between
   // here and the spawn is an await, and a row this process is holding open in
   // that window is still a row only this process may cancel.
@@ -917,14 +1055,29 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   let cwd = row.project_path;
   let worktree: string | null = null;
+  // The conversation lives under the directory it ran in (claude-slug.ts), so a
+  // held run resumes where it held or not at all.
+  if (resume && row.worktree) {
+    if (!fs.existsSync(row.worktree)) {
+      failRow(runId, projectId,
+        `The worktree this run was held in (${row.worktree}) is gone, so its conversation cannot be resumed. Start the run again.`, startedAt);
+      return;
+    }
+    worktree = row.worktree;
+    cwd = worktree;
+  }
   try {
     // A read-only agent writes nothing, so a worktree for it would be the only
     // change the whole run made to the repo.
-    if (cfg.isolate && gate.mode !== 'plan') {
+    if (!resume && cfg.isolate && gate.mode !== 'plan') {
       // The worktree is keyed on the row rather than the run: one branch per
       // repo is what a human can review, and every repo here is a separate git
       // repository anyway.
-      const created = await createWorktree(row.project_path, cfg.name || 'headless', rowKey(runId, projectId));
+      // A pinned row is cut at its commit, never at whatever the branch has
+      // moved to since the set started; createWorktree refuses a checkout
+      // whose HEAD reads back as anything else.
+      const created = await createWorktree(row.project_path, cfg.name || 'headless', rowKey(runId, projectId),
+        pin ? { startPoint: pin.commit } : {});
       worktree = created.path;
       cwd = worktree;
       d.prepare('UPDATE headless_rows SET worktree=? WHERE run_id=? AND project_id=?')
@@ -938,12 +1091,52 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     );
     return;
   }
+  // The same port block and path the worktree's setup was given, for the agent
+  // and whatever it starts. Missing them costs the variables, not the run.
+  let worktreeEnv: Record<string, string> = {};
+  if (worktree) {
+    try { worktreeEnv = await worktreeLaunchEnv(worktree); }
+    catch (error) { console.warn('[wanigan] this worktree has no port block for its run:', error); }
+  }
+
+  // The repository's executable configuration, checked in the directory this
+  // row will run in. A change since it was last accepted blocks the row: there
+  // is nobody at a headless run to read the difference, and running a hook or
+  // MCP command nobody approved is exactly what the pin exists to stop.
+  const configGate = await gateLaunch(projectId, cwd, null, false).catch((error: unknown) => ({
+    allowed: false as const,
+    reason: `Wanigan could not read this repository's executable config, so it was not run: ${error instanceof Error ? error.message : String(error)}`,
+  }));
+  if (!configGate.allowed) {
+    if (worktree) {
+      try { await removeWorktree(worktree, false); } catch { /* git refused; a fresh tree with nothing in it is harmless */ }
+    }
+    d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=? WHERE run_id=? AND project_id=?")
+      .run(configGate.reason, Date.now(), runId, projectId);
+    logEvent(runId, 'warn', `${row.project_name}: blocked because its executable config changed since it was last accepted.`);
+    finalize(runId);
+    return;
+  }
 
   // Two sessions can share a repo, and a non-isolated run starts in whatever
   // state the developer left it. Without this shot of the tree beforehand,
   // every file they had already edited would be counted as the agent's work.
-  const baseHead = await headOf(cwd);
-  const before = await changedSet(cwd, null);
+  // A resumed leg counts against the state the row started from, not the state
+  // its first leg left behind, which would hide that leg's work.
+  const baseHead = resume ? resume.baseHead : await headOf(cwd);
+  if (!resume) {
+    d.prepare('UPDATE headless_rows SET base_head=? WHERE run_id=? AND project_id=?').run(baseHead, runId, projectId);
+  }
+  // Read again in the directory the agent is about to run in, after the config
+  // gate's awaits: the pin is checked where the spawn happens, not only where
+  // the checkout did.
+  if (pin && baseHead !== pin.commit) {
+    failRow(runId, projectId,
+      `This attempt's worktree reads ${baseHead ? baseHead.slice(0, 12) : 'no HEAD'} instead of the pinned ${pin.commit.slice(0, 12)}, so it was not run.`,
+      startedAt);
+    return;
+  }
+  const before = resume ? new Set(resume.baseDirty) : await changedSet(cwd, null);
 
   let launchPath: string;
   try {
@@ -987,13 +1180,26 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // arbitrary adapter cannot gain it by naming its executable `claude`.
   const takesHooks = def.harness === 'claude-code';
   const hooksOn = flags().hooks;
+  // Probed from `bin`, the file this row will spawn, through the cache the
+  // run-level detection already filled — so twenty repos cost no extra spawns.
+  // A failed probe is null, and null asks for the base events only.
+  const cliVersion = takesHooks && hooksOn ? await cliVersionOf(def, bin).catch(() => null) : null;
+  const holdAsks = cfg.holdForApproval === true && takesHooks && hooksOn && cliSupportsDefer(cliVersion);
+  if (cfg.holdForApproval === true && !holdAsks) {
+    logEvent(runId, 'warn',
+      `${row.project_name}: calls that need approval are denied, not held — ` +
+      (!takesHooks ? `${def.label} takes no hook configuration`
+        : !hooksOn ? 'Hooks are off in Settings'
+        : `holding needs Claude Code ${DEFER_SINCE} or later, and this is ${cliVersion ?? 'an unreadable version'}`) + '.');
+  }
+  const sandbox = sandboxApplies(sandboxShell(), trust) ? claudeSandboxSettings(waniganCredentialDirs()) : null;
   let hookSettings: string | null = takesHooks && hooksOn ? writeHookSettings(hookId, cwd, {
     providerId: def.id,
     backendId: def.backendId,
     projectId,
     projectPath: row.project_path,
     query: cfg.prompt,
-  }) : null;
+  }, { cliVersion, sandbox }) : null;
   if (hookSettings) {
     registerPolicyContext({
       sessionId: hookId,
@@ -1008,7 +1214,18 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       // would be a row waiting out its whole timeout, and a rule that throws
       // would otherwise let the call run unexamined and unrecorded.
       attended: false,
+      holdAsks,
     });
+    if (resume?.answer && resume.answer.decision !== 'stop') {
+      answerHeldCall(hookId, resume.toolUseId, { decision: resume.answer.decision, note: resume.answer.note });
+    }
+  } else if (resume) {
+    // The answer can only be given through the hook. A resume without it would
+    // run the held call under the CLI's own rules, whatever the person said.
+    failRow(runId, projectId,
+      'The operator answered this held call, but the hook listener is not available to give that answer to the resumed run, so it was not resumed. Turn Hooks on and start the run again.',
+      startedAt);
+    return;
   } else {
     // Said out loud rather than left to be inferred from an empty ledger: a
     // fan-out with no gate is a defensible thing to run and an indefensible
@@ -1035,7 +1252,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   let learningCapsule: string | null = null;
   // The items inside that capsule, kept until the child is actually spawned.
   let learningEntries: { itemId: string }[] = [];
-  if (learningSettings().enabled && (
+  if (!resume && learningSettings().enabled && (
     def.harness === 'codex' || (def.harness === 'claude-code' && !hookSettings)
   )) {
     try {
@@ -1095,8 +1312,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       harness: def.harness, projectId,
       appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
     }).account;
-    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account));
-    args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule);
+    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account), worktreeEnv);
+    args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule, resume ? { cliSessionId: resume.cliSessionId } : null);
   } catch (error) {
     releaseHooks();
     failRow(
@@ -1214,11 +1431,37 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   for (const p of before) after.delete(p);
   const filesChanged = after.size;
 
+  // The CLI stopped on a call Wanigan held for a person. Recorded only from the
+  // result object's own fields, and only for a run that ended on its own.
+  const said = reported.outcome;
+  const heldNow: HeldRecord | null = !timedOut && !canceledRuns.has(runId) && !outcome.spawnError
+    && said.terminalReason === 'tool_deferred' && said.deferred && said.sessionId
+    ? {
+        toolUseId: said.deferred.id,
+        toolName: said.deferred.name,
+        summary: redactCredentials(heldCallSummary(said.deferred.name, said.deferred.input)),
+        cliSessionId: said.sessionId,
+        permissionMode: gate.mode,
+        heldAt: Date.now(),
+        answer: null,
+        resumedAt: null,
+        baseHead,
+        baseDirty: before.size <= HELD_BASE_DIRTY_MAX ? [...before] : [],
+      }
+    : null;
+  if (heldNow && before.size > HELD_BASE_DIRTY_MAX) {
+    logEvent(runId, 'warn', `${row.project_name}: more than ${HELD_BASE_DIRTY_MAX} files were already modified when this row started, so after a resume its file count may include some of them.`);
+  }
+
   // A worktree with work in it is the human's to review and merge. One the agent
   // never touched is litter, and litter is what stops people using isolation.
   // force stays false so that if this count missed something, git refuses and
-  // the checkout survives — the wrong answer here destroys work.
-  if (worktree && filesChanged === 0) {
+  // the checkout survives — the wrong answer here destroys work. A held row
+  // keeps its worktree whatever it holds: the conversation resumes there. So
+  // does a pinned row: its set gates and compares the tree each attempt left,
+  // an attempt that changed nothing included, and removes worktrees only when
+  // the operator asks it to.
+  if (worktree && filesChanged === 0 && !heldNow && !pin) {
     try {
       const removal = await removeWorktree(worktree, false);
       if (removal.removed) worktree = null;
@@ -1237,6 +1480,14 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   } else if (outcome.spawnError) {
     status = 'errored';
     error = `Could not run ${def.label} in ${row.project_name}: ${outcome.spawnError.message}`;
+  } else if (heldNow) {
+    status = 'awaiting';
+  } else if (said.terminalReason === 'tool_deferred') {
+    status = 'errored';
+    error = `${def.label} said it held a call but did not say which one, so it cannot be answered or resumed. Start the run again.`;
+  } else if (said.terminalReason === 'tool_deferred_unavailable') {
+    status = 'errored';
+    error = `${def.label} could not hold this call for approval in this environment (tool_deferred_unavailable), so it did not run.`;
   } else if (outcome.code !== 0 || reported.isError) {
     status = 'errored';
     error = stderr.trim().slice(-2000) ||
@@ -1256,11 +1507,16 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   d.prepare(`
     UPDATE headless_rows
-       SET status=?, cost_usd=?, cost_reported=?, duration_ms=?, exit_code=?, output=?, error=?,
-           files_changed=?, worktree=?, ended_at=?, account_id=?
+       SET status=?, cost_usd=cost_usd + ?, cost_reported=CASE WHEN ? = 1 THEN COALESCE(cost_reported, 1) ELSE 0 END,
+           duration_ms=COALESCE(duration_ms, 0) + ?, exit_code=?, output=?, error=?,
+           files_changed=?, worktree=?, ended_at=?, account_id=?, held_json=COALESCE(?, held_json)
      WHERE run_id=? AND project_id=?
   `).run(
     status,
+    // Added, not replaced: a resumed row's first leg already paid, and the row
+    // is the one record of what this repository cost. For the same reason a
+    // row is "reported" only while every leg reported, and its duration is the
+    // sum of the legs rather than including the time a person took to answer.
     reported.costUsd ?? 0,
     // Recorded beside the zero it is indistinguishable from. Without this the
     // roll-up cannot tell a free run from an unreported one, and the screen
@@ -1279,9 +1535,14 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     // process is gone, and a reported context window is only reusable for
     // sessions under the same account.
     account?.id ?? null,
+    heldNow ? JSON.stringify(heldNow) : null,
     runId,
     projectId
   );
+  if (heldNow) {
+    logEvent(runId, 'warn', `${row.project_name}: waiting for your answer on a held ${heldNow.toolName} call.`);
+    announceHeld(runId, row.project_name, heldNow.toolName);
+  }
 
   // Said on the run, not only on the row. The queue marks a per-repo item
   // 'done' whether the agent succeeded or failed — this function returns
@@ -1290,7 +1551,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // run's event log is where that evidence belongs and how long it should last.
   // Bounded to one line: the full stderr is on the row, which is where the
   // reader is being sent.
-  if (status !== 'succeeded') {
+  if (status !== 'succeeded' && status !== 'awaiting') {
     const why = error ? ` — ${error.split('\n')[0].trim().slice(0, 200)}` : '';
     logEvent(runId, status === 'canceled' ? 'warn' : 'error', `${row.project_name}: ${status}${why}`);
   }
@@ -1354,8 +1615,10 @@ function finalize(runId: string) {
   d.prepare('UPDATE runs SET cost_usd=? WHERE id=?').run(agg.c, runId);
 
   const open = d.prepare(
-    "SELECT COUNT(*) n FROM headless_rows WHERE run_id=? AND status IN ('pending','running')"
+    "SELECT COUNT(*) n FROM headless_rows WHERE run_id=? AND status IN ('pending','running','awaiting')"
   ).get(runId) as { n: number };
+  // A row waiting on a person keeps the run open: it has not finished, and
+  // announcing it finished would tell the operator there is nothing to answer.
   if (open.n > 0) return;
 
   const ended = d.prepare(`
@@ -1368,6 +1631,25 @@ function finalize(runId: string) {
   // fan-out would announce itself twelve times over.
   if (!ended.changes) return;
   reportRunEnded(runId);
+}
+
+/** Told once per run, when its last row closes. */
+export type HeadlessRunEnded = (runId: string) => void;
+
+const runEndedListeners = new Set<HeadlessRunEnded>();
+
+/**
+ * Hear about every headless run that ends in this process.
+ *
+ * A listener rather than a call into the code that needs it: the attempts
+ * module launches through this one, and this one importing it back would be a
+ * runtime cycle. Only this process's closes are heard. A run the launchd
+ * scheduler finished is heard by the scheduler's own listener, which is why
+ * index.ts registers it in service startup, shared by both.
+ */
+export function onHeadlessRunEnded(listener: HeadlessRunEnded): () => void {
+  runEndedListeners.add(listener);
+  return () => { runEndedListeners.delete(listener); };
 }
 
 /** Failures first, so a truncated notification keeps the part worth reading. */
@@ -1415,7 +1697,22 @@ function reportRunEnded(runId: string): void {
     console.warn('[wanigan] could not record the schedule outcome for', runId, error);
   }
 
-  announceRunEnded(runId);
+  for (const listener of runEndedListeners) {
+    // Same rule as the schedule outcome: a listener that throws is its own
+    // failure, and must neither break the run's close-out nor stop the
+    // listeners after it.
+    try { listener(runId); } catch (error) { console.warn('[wanigan] a run-ended listener failed for', runId, error); }
+  }
+
+  // An attempt's run is one of a set, and the set announces once when its last
+  // attempt is recorded. Twelve banners for one decision is how notifications
+  // get switched off wholesale.
+  let pinned: HeadlessPin | null = null;
+  try {
+    const config = d.prepare('SELECT config_json FROM runs WHERE id=?').get(runId) as { config_json: string } | undefined;
+    pinned = config ? pinnedOf((JSON.parse(config.config_json) as Record<string, unknown>).pinned) : null;
+  } catch { /* an unreadable config is announced like any other run */ }
+  if (!pinned) announceRunEnded(runId);
 }
 
 /**
@@ -1459,7 +1756,34 @@ const ROW_READ_LIMIT = 500;
  *  cannot join every read by accident the way `SELECT *` let output do. */
 const ROW_COLUMNS =
   'run_id, project_id, project_name, project_path, status, cost_usd, cost_reported, duration_ms, ' +
-  'exit_code, files_changed, worktree, started_at, ended_at';
+  'exit_code, files_changed, worktree, started_at, ended_at, held_json';
+
+/**
+ * What the database keeps about a held call: the part a person sees, plus the
+ * row's starting state, so a resumed run counts files against the same base
+ * as the leg that held. The base stays in main; the list channel polls.
+ */
+type HeldRecord = HeadlessHeld & { baseHead: string | null; baseDirty: string[] };
+/** Past this many pre-existing dirty paths the base is not kept, and says so. */
+const HELD_BASE_DIRTY_MAX = 2_000;
+
+function heldRecordOf(json: string | number | null | undefined): HeldRecord | null {
+  if (typeof json !== 'string' || !json) return null;
+  try {
+    const value = JSON.parse(json) as HeldRecord;
+    return value && typeof value.toolUseId === 'string' && typeof value.cliSessionId === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The held call as the renderer sees it. */
+function heldOf(json: string | number | null | undefined): HeadlessHeld | null {
+  const record = heldRecordOf(json);
+  if (!record) return null;
+  const { baseHead: _head, baseDirty: _dirty, ...shown } = record;
+  return shown;
+}
 
 type RowRecord = Record<string, string | number | null>;
 
@@ -1488,6 +1812,7 @@ function toRowBase(r: RowRecord): Omit<HeadlessRow, 'output' | 'error'> {
     worktree: r.worktree === null ? null : String(r.worktree),
     startedAt: r.started_at === null ? null : Number(r.started_at),
     endedAt: r.ended_at === null ? null : Number(r.ended_at),
+    held: heldOf(r.held_json),
   };
 }
 
@@ -1561,14 +1886,15 @@ export function headlessRuns(limit = 50): HeadlessRun[] {
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status IN ('errored','timeout')) failed,
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status='blocked') blocked,
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status IN ('pending','running')) open,
+           (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status='awaiting') awaiting,
            (SELECT COALESCE(SUM(files_changed),0) FROM headless_rows h WHERE h.run_id=r.id) files_changed,
            -- Rows that ran, and the subset of those whose agent actually named
            -- a cost. Their difference is what separates a genuinely free run
            -- from one nobody priced; cost_usd alone stores both as 0.
            (SELECT COUNT(*) FROM headless_rows h
-             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout')) priceable,
+             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout','awaiting')) priceable,
            (SELECT COUNT(*) FROM headless_rows h
-             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout') AND h.cost_reported=1) priced
+             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout','awaiting') AND h.cost_reported=1) priced
       FROM runs r WHERE r.kind='headless'
      ORDER BY r.created_at DESC LIMIT ?
   `).all(limit) as Record<string, string | number | null>[];
@@ -1580,7 +1906,7 @@ export function headlessRuns(limit = 50): HeadlessRun[] {
     endedAt: r.ended_at === null ? null : Number(r.ended_at),
     error: r.error === null ? null : String(r.error), succeeded: Number(r.succeeded) || 0,
     failed: Number(r.failed) || 0, blocked: Number(r.blocked) || 0,
-    open: Number(r.open) || 0, filesChanged: Number(r.files_changed) || 0,
+    open: Number(r.open) || 0, awaiting: Number(r.awaiting) || 0, filesChanged: Number(r.files_changed) || 0,
     // Same three words usage.ts uses for the same situation, so one vocabulary
     // covers both screens. A run with nothing priceable yet reads 'reported'
     // rather than inventing a gap out of an empty set.
@@ -1598,12 +1924,58 @@ export function headlessRuns(limit = 50): HeadlessRun[] {
  * under it is a lie the budget finds out about later, and a count of "open rows"
  * reported as "repositories stopped" is the same lie in the other direction.
  */
+/**
+ * A person's answer to a call a row held.
+ *
+ * `allow` and `deny` put the row back to 'pending' and hand it to the
+ * dispatcher, which resumes the CLI's conversation; the hook gives the answer
+ * when the call is re-emitted, and the budget and slot rules apply to the
+ * resume as they did to the first leg. `stop` ends the row where it held,
+ * without spending anything more. An answer is recorded once: a second press,
+ * or a row that is no longer waiting, is refused with the reason.
+ */
+export function answerHeld(runId: unknown, projectId: unknown, decision: unknown, note: unknown): HeadlessRowSummary {
+  if (typeof runId !== 'string' || typeof projectId !== 'string') throw new Error('Choose a held row to answer.');
+  if (decision !== 'allow' && decision !== 'deny' && decision !== 'stop') throw new Error('A held call is approved, declined or stopped.');
+  const cleanNote = typeof note === 'string' && note.trim() ? redactCredentials(note.trim()).slice(0, 1_000) : null;
+  const d = db();
+  const row = d.prepare('SELECT status, project_name, held_json FROM headless_rows WHERE run_id=? AND project_id=?')
+    .get(runId, projectId) as { status: string; project_name: string; held_json: string | null } | undefined;
+  const held = heldRecordOf(row?.held_json);
+  if (!row || !held) throw new Error('That row is not holding a call.');
+  if (row.status !== 'awaiting' || held.answer) {
+    throw new Error(`${row.project_name} is not waiting for an answer any more (it is ${row.status}).`);
+  }
+  if (decision !== 'stop') refuseIfHalted('Resuming a held run');
+  const answeredAt = Date.now();
+  const answered: HeldRecord = { ...held, answer: { decision, note: cleanNote, answeredAt } };
+  if (decision === 'stop') {
+    d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=?, held_json=? WHERE run_id=? AND project_id=? AND status='awaiting'")
+      .run(`Stopped by the operator at a held ${held.toolName} call${cleanNote ? `: ${cleanNote}` : '.'}`, answeredAt, JSON.stringify(answered), runId, projectId);
+    logEvent(runId, 'info', `${row.project_name}: stopped at the held ${held.toolName} call.`);
+    finalize(runId);
+  } else {
+    d.prepare("UPDATE headless_rows SET status='pending', ended_at=NULL, held_json=? WHERE run_id=? AND project_id=? AND status='awaiting'")
+      .run(JSON.stringify(answered), runId, projectId);
+    logEvent(runId, 'info', `${row.project_name}: ${decision === 'allow' ? 'approved' : 'declined'} the held ${held.toolName} call; resuming.`);
+    if (runner) {
+      void Promise.resolve(runner(runId, projectId))
+        .catch((error: unknown) => failRow(runId, projectId, error instanceof Error ? error.message : String(error)));
+    } else {
+      void runOneRepo(runId, projectId);
+    }
+  }
+  const summary = headlessRowSummaries(runId).find((r) => r.projectId === projectId);
+  if (!summary) throw new Error('The answered row could not be read back.');
+  return summary;
+}
+
 export function cancelHeadless(runId: string): number {
   canceledRuns.add(runId);
   const d = db();
 
   const open = d.prepare(
-    "SELECT project_id FROM headless_rows WHERE run_id=? AND status IN ('pending','running')"
+    "SELECT project_id FROM headless_rows WHERE run_id=? AND status IN ('pending','running','awaiting')"
   ).all(runId) as { project_id: string }[];
   if (!open.length) return 0;
 
@@ -1632,7 +2004,7 @@ export function cancelHeadless(runId: string): number {
   // count come from.
   const now = Date.now();
   const stmt = d.prepare(
-    "UPDATE headless_rows SET status='canceled', ended_at=? WHERE run_id=? AND project_id=? AND status IN ('pending','running')"
+    "UPDATE headless_rows SET status='canceled', ended_at=? WHERE run_id=? AND project_id=? AND status IN ('pending','running','awaiting')"
   );
   let marked = 0;
   for (const { project_id } of open) {

@@ -7,6 +7,7 @@ import { isPickedPath, PICKED_MAX } from './browse';
 import { getSetting, setSetting } from './settings';
 import { uploadFile, isUploadable } from './batch/files';
 import { findModel, DEFAULT_MODEL } from './batch/pricing';
+import type { AttachmentReclaimPreview, AttachmentReclaimSummary } from '../shared/types';
 
 /**
  * Attachments — files a person hands to an agent.
@@ -1376,6 +1377,42 @@ export function reclaimAttachments(
   }
 
   return report;
+}
+
+/* ── retention, wired ───────────────────────────────────────────────── */
+
+// Cleanup remains a deliberate selection confirmed by main. A saved age window
+// does not authorize a timer to delete files; keep the measured last-pass record.
+const LAST_RECLAIM_SETTING = 'attachment_reclaim_last';
+
+export function previewAttachmentReclaim(opts: { now?: number; days?: number } = {}): AttachmentReclaimPreview {
+  const plan = planAttachmentReclaim(opts);
+  const kept: AttachmentReclaimPreview['kept'] = {};
+  for (const skip of plan.skipped) kept[skip.reason] = (kept[skip.reason] ?? 0) + 1;
+  return {
+    enabled: plan.enabled, windowDays: plan.windowDays, cutoff: plan.cutoff, scanned: plan.scanned,
+    directories: plan.candidates.length, filesEligible: plan.filesEligible, bytesEligible: plan.bytesEligible, kept,
+  };
+}
+
+export function lastAttachmentReclaim(): AttachmentReclaimSummary | null {
+  try {
+    const parsed = JSON.parse(getSetting(LAST_RECLAIM_SETTING, 'null')) as AttachmentReclaimSummary | null;
+    return parsed && typeof parsed.ranAt === 'number' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist only measured results from an explicitly confirmed cleanup. */
+export function recordAttachmentReclaim(report: AttachmentReclaimReport): AttachmentReclaimSummary {
+  const summary: AttachmentReclaimSummary = {
+    ranAt: report.ranAt, how: 'on-request', windowDays: report.windowDays, scanned: report.scanned,
+    directories: report.reclaimed.length, filesRemoved: report.filesRemoved, bytesFreed: report.bytesFreed,
+    kept: report.skipped.length, errors: report.errors.length, firstError: report.errors[0]?.message ?? null,
+  };
+  if (report.enabled) setSetting(LAST_RECLAIM_SETTING, JSON.stringify(summary));
+  return summary;
 }
 
 /**

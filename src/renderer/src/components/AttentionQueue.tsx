@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Attention, AttentionKind, Session } from '@shared/types';
 import { ago } from './bits';
+import { useChord } from '../bindings';
 
 /**
  * Which of nine agents needs a human, and which has needed one longest.
@@ -46,6 +47,7 @@ const BURST_MS = 250;
 const PREF = 'wanigan.attention.all';
 
 export default function AttentionQueue({ onJump }: { onJump: (sessionId: string) => void }) {
+  const newSessionChord = useChord('new-session').glyphs;
   const [items, setItems] = useState<Attention[] | null>(null);
   const [sessions, setSessions] = useState<Record<string, Session>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -131,7 +133,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
         <span className="atq-none">{err ? 'Attention unavailable.' : items.length === 0 && liveCount > 0 ? 'Waiting for an attention signal.' : 'Nothing waiting.'}</span>
         {!err && items.length === 0 ? (
           <span className="atq-hint">
-            {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : 'No sessions running. Start one with ⌘T and it appears here the moment it blocks.'}
+            {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : `No sessions running. Start one with ${newSessionChord} and it appears here the moment it blocks.`}
           </span>
         ) : !err && (
           // Zero results: the filter excluded everything, so hand back the way in.
@@ -203,14 +205,15 @@ function Chip({ a, session, onJump }: {
   const project = session?.projectName ?? `session ${a.sessionId.slice(0, 6)}`;
   const verb = s.waits ? 'waiting' : 'running';
   const detail = a.detail ?? '';
+  const because = a.reason ? ` Because ${a.reason.because.charAt(0).toLowerCase()}${a.reason.because.slice(1)}` : '';
 
   return (
     <button
       className={`atq-chip${tier}`}
       style={{ '--k': s.color, '--k-soft': s.soft } as React.CSSProperties}
       onClick={() => onJump(a.sessionId)}
-      title={`${a.label} · ${project}\n${verb} ${dur(waited)}${detail ? `\n${detail}` : ''}\nClick to open this session.`}
-      aria-label={`${a.label}: ${project}, ${verb} ${dur(waited)}.${detail ? ` ${detail}.` : ''} Open this session.`}
+      title={`${a.label} · ${project}\n${verb} ${dur(waited)}${detail ? `\n${detail}` : ''}${because ? `\n${because.trim()}` : ''}\nClick to open this session.`}
+      aria-label={`${a.label}: ${project}, ${verb} ${dur(waited)}.${detail ? ` ${detail}.` : ''}${because} Open this session.`}
     >
       <span className="atq-glyph" aria-hidden="true">{s.glyph}</span>
       <span className="atq-body">

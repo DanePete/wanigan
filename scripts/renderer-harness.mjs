@@ -283,6 +283,10 @@ export const STUB = `
       tokenFingerprint: '', error: null, lastPushAt: null, lastPushError: null,
     },
     'demo.state': { on: false, source: 'live' },
+    // The keymap's \`unreadable\` is a string or null, and anything() would answer
+    // it with a truthy Proxy: Settings › App would print a "could not be read"
+    // warning in every sweep. A fresh install stores no rebindings.
+    'keymap.get': { keymap: {}, ignored: [], unreadable: null },
     // The model-assist card renders its consent branch off status.consent and
     // prints providerId into the DOM. anything() answers that with a Proxy,
     // which is truthy, so the card would take the approved branch and then die

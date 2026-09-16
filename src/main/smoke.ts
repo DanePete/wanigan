@@ -229,6 +229,46 @@ export async function runSmoke(): Promise<void> {
     await runPreflightSmoke(check, say);
     const { runOrbStorySmoke } = await import('./smoke14');
     runOrbStorySmoke(check, say);
+    const { runReviewDecisionSmoke, runConfigPinSmoke, runAttentionReasonSmoke } = await import('./smoke19');
+    await runReviewDecisionSmoke(check, say);
+    await runConfigPinSmoke(check, say);
+    await runAttentionReasonSmoke(check, say);
+    const {
+      runTranscriptPlacementSmoke, runQueueSessionKindSmoke, runBudgetGateSmoke, runRecallSwitchSmoke, runAttachmentRetentionSmoke,
+      runContradictionSmoke, runOutcomeEvidenceSmoke, runPastTurnsSmoke,
+    } = await import('./smoke20');
+    await runTranscriptPlacementSmoke(check, say);
+    await runQueueSessionKindSmoke(check, say);
+    await runBudgetGateSmoke(check, say);
+    await runRecallSwitchSmoke(check, say);
+    await runAttachmentRetentionSmoke(check, say);
+    await runContradictionSmoke(check, say);
+    runOutcomeEvidenceSmoke(check, say);
+    await runPastTurnsSmoke(check, say);
+    const { runDeferredApprovalSmoke } = await import('./smoke21');
+    await runDeferredApprovalSmoke(check, say);
+    const { runGoalPlanSmoke } = await import('./smoke22');
+    await runGoalPlanSmoke(check, say);
+    const { runSandboxAndCredentialSmoke } = await import('./smoke24');
+    await runSandboxAndCredentialSmoke(check, say);
+    const { runVerifiedDoneSmoke } = await import('./smoke26');
+    await runVerifiedDoneSmoke(check, say);
+    const { runAttemptsSmoke } = await import('./smoke27');
+    await runAttemptsSmoke(check, say);
+    const { runMergeReadinessSmoke } = await import('./smoke15');
+    await runMergeReadinessSmoke(check, say);
+    const { runIssueIntakeSmoke } = await import('./smoke25');
+    await runIssueIntakeSmoke(check, say);
+    const { runWorktreeBootstrapSmoke } = await import('./smoke16');
+    await runWorktreeBootstrapSmoke(check, say);
+    const { runAccountabilitySmoke } = await import('./smoke17');
+    await runAccountabilitySmoke(check, say);
+    const { runObservedTelemetrySmoke } = await import('./smoke18');
+    await runObservedTelemetrySmoke(check, say);
+    const { runCodexHookSmoke } = await import('./smoke28');
+    await runCodexHookSmoke(check, say);
+    const { runKeymapSmoke } = await import('./smoke23');
+    await runKeymapSmoke(check, say);
     // Real restore closes SQLite. Keep this last, before only reporting/exit.
     const { runAuditBackupSmoke } = await import('./smoke-audit-backup');
     runAuditBackupSmoke(check, say);

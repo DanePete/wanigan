@@ -5,6 +5,7 @@ import {
   type WaniganSettings,
   type MotionSetting,
   type QueueSlots,
+  type SandboxShell,
   type ThemeSetting,
   type TrustLevel,
 } from '../shared/types';
@@ -48,6 +49,15 @@ export function flags() {
   return {
     telemetry: bool('telemetry', true),
     hooks: bool('hooks', true),
+    // Rides the hook settings file, so it does nothing with hooks off. On by
+    // default for the same reason telemetry is: it is the only source of the
+    // provider's own limit windows. It has its own switch because it is the one
+    // piece of the injection that runs inside the CLI's own screen: the relay
+    // stands in for whatever status line a person configured, and calls it.
+    statusLine: bool('status_line', true),
+    // Off by default. Beta in the CLI, and a span per model call, tool call
+    // and permission wait is a great deal more data than a counter.
+    tracesBeta: bool('traces_beta', false),
     // Per-turn workspace snapshots; on because they are local, reversible
     // evidence, and only captured where hooks already prove turn boundaries.
     checkpoints: bool('checkpoints', true),
@@ -57,6 +67,7 @@ export function flags() {
     // Off by default: the first screenshot anyone takes should be the tool.
     pet: bool('pet', false),
     mobileRepositoryReview: mobileRepositoryReview(),
+    assistedByTrailers: assistedByTrailers(),
   };
 }
 
@@ -80,6 +91,16 @@ export function flags() {
  */
 export function mobileRepositoryReview(): boolean {
   return bool('mobile_repository_review', false);
+}
+
+/**
+ * Whether a commit made from the Git view ends with an Assisted-by line for
+ * each agent and model Wanigan recorded working in that repository since the
+ * last commit (assisted-by.ts). Off by default: a commit message is published
+ * history, and which agents helped is the operator's to publish.
+ */
+export function assistedByTrailers(): boolean {
+  return bool('assisted_by_trailers', false);
 }
 
 export function motion(): MotionSetting {
@@ -137,6 +158,8 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
   switch (preferenceKey) {
     case 'telemetry':
     case 'hooks':
+    case 'status_line':
+    case 'traces_beta':
     case 'checkpoints':
     case 'archive_transcripts':
     case 'notifications':
@@ -148,6 +171,9 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     // is listed apart so nobody adds it to a "turn everything on" sweep by
     // reading the group above as a set of harmless switches.
     case 'mobile_repository_review':
+    // Also widens what leaves the machine, one commit message at a time, and is
+    // listed here for the same reason as the line above.
+    case 'assisted_by_trailers':
       if (preferenceValue !== '0' && preferenceValue !== '1') {
         throw new Error(`${preferenceKey} must be enabled or disabled.`);
       }
@@ -163,6 +189,11 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     case 'nav_sidebar':
       if (preferenceValue !== 'open' && preferenceValue !== 'closed') {
         throw new Error('The sidebar is either open or closed.');
+      }
+      break;
+    case 'sandbox_shell':
+      if (preferenceValue !== 'off' && preferenceValue !== 'below-trusted' && preferenceValue !== 'always') {
+        throw new Error('Sandboxing is off, below Trusted, or always.');
       }
       break;
     case 'event_retention_days': {
@@ -233,6 +264,12 @@ function explainerFlags(): Record<`explainer.${string}`, 'hidden' | 'shown'> {
   return out as Record<`explainer.${string}`, 'hidden' | 'shown'>;
 }
 
+/** Off unless chosen: a sandbox changes what an agent can get done. See shared/sandbox-policy.ts. */
+export function sandboxShell(): SandboxShell {
+  const value = getSetting('sandbox_shell', 'off');
+  return value === 'below-trusted' || value === 'always' ? value : 'off';
+}
+
 /** The destination drawer starts closed; an explicit preference still wins. */
 export function navSidebar(): 'open' | 'closed' {
   return getSetting('nav_sidebar', 'closed') === 'open' ? 'open' : 'closed';
@@ -248,15 +285,19 @@ export function allSettings(): WaniganSettings {
     theme: theme(),
     telemetry: f.telemetry,
     hooks: f.hooks,
+    statusLine: f.statusLine,
+    tracesBeta: f.tracesBeta,
     checkpoints: f.checkpoints,
     archiveTranscripts: f.archiveTranscripts,
     notifications: f.notifications,
     mcpServerEnabled: f.mcpServerEnabled,
     pet: f.pet,
     mobileRepositoryReview: f.mobileRepositoryReview,
+    assistedByTrailers: f.assistedByTrailers,
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),
+    sandboxShell: sandboxShell(),
     learning: learningSettings(),
   };
 }

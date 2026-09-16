@@ -45,3 +45,11 @@ Added focused coverage includes:
 - The real-xterm probe exercises post-snapshot input ordering and reply suppression. Separate current-source fixtures validated main's selected-account routing and signal persistence without provider calls.
 
 UI evidence uses isolated Electron or offline mobile fixtures. Both themes are recorded for [Control, backup and retention](../visuals/existing-feature-fixes-2026-09-15/README.md), [session evidence](../visuals/session-evidence-2026-09-15/README.md), and [mobile freshness](../visuals/audit-fixes-mobile-2026-09-15/README.md). Synthetic screenshot data is distinct from the real Git/SQLite/filesystem smoke checks.
+
+## Integration with remote work
+
+The subsequent push found 15 newer commits on `origin/main` through `7ec7e49`. Their features were merged with these repairs, including rebindable shortcuts, worktree setup, stop-triggered verification, pinned attempts, review feedback, GitHub intake, publish checks and observed telemetry.
+
+The two attachment-retention implementations had incompatible consent behavior. The merged application retains selected, confirmed manual cleanup and the remote measured-result record; saving an age window does not activate automatic deletion. The duplicate timer and unconfirmed legacy deletion channel were removed. Exact scheduled-fire identity is passed separately from a pinned attempt, and new gate consumers must respect checkout freshness before presenting a passing result.
+
+Merged verification: the complete `npm test` command passed all eight gates with 349 shared tests and 2,162 smoke assertions, zero failures. The new attempt regression finishes two trials whose successful commands change the checkout; neither counts as a verified pass. Five isolated renderer probes passed 25 checks with no errors, refreshed after screenshots in both themes, and retained the original before images. Scoped probe lint and staged whitespace checks passed.

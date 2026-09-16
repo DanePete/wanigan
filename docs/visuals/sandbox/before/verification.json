@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T03:49:47.326Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Trusted says nothing is denied and names an OS sandbox Wanigan never configured; there is no sandbox choice"
+  ],
+  "errors": []
+}

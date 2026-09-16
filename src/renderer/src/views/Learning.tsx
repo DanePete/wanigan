@@ -1970,6 +1970,11 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
   // selection can never act on a stale snapshot of an item.
   const [picked, setPicked] = useState<string[]>([]);
   const [retiring, setRetiring] = useState<KnowledgeItem[] | null>(null);
+  const [contesting, setContesting] = useState<
+    | { mode: 'record'; first: KnowledgeItem; second: KnowledgeItem }
+    | { mode: 'resolve'; keep: { id: string; title: string }; retire: { id: string; title: string } }
+    | null
+  >(null);
   const [results, setResults] = useState<KnowledgeItem[] | null>(null);
   const [selected, setSelected] = useViewMemory<KnowledgeItem | null>(`library/${scopeParam}/selected`, null);
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof window.wanigan.learning.item>> | null>(null);
@@ -2147,6 +2152,12 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                         onClick={() => setRetiring(pickedItems)}>
                   Retire selected…
                 </button>
+                {pickedItems.length === 2 && pickedItems.every((item) => item.status !== 'retired') && (
+                  <button className="btn" disabled={busy !== null}
+                          onClick={() => setContesting({ mode: 'record', first: pickedItems[0], second: pickedItems[1] })}>
+                    They contradict each other…
+                  </button>
+                )}
                 <button className="btn" onClick={() => setPicked([])}>Clear selection</button>
                 <small className="faint">The selection follows the items, not the filters above.</small>
               </div>
@@ -2167,7 +2178,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
               return (
                 <div key={item.id} className="knowledge-row-wrap">
                   <input type="checkbox" className="knowledge-pick" checked={picked.includes(item.id)}
-                         aria-label={`Select “${item.title}” to retire`}
+                         aria-label={`Select “${item.title}”`}
                          onChange={(e) => toggle(item.id, e.target.checked)} />
                   <button aria-current={selected?.id === item.id ? 'true' : undefined} data-item-id={item.id} className={`knowledge-row ${selected?.id === item.id ? 'on' : ''}`}  onClick={() => void choose(item)}>
                     <span className="label">{item.kind} · {item.scope}</span>
@@ -2252,6 +2263,20 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                         {r.resolvedAt ? `✓ resolved ${ago(r.resolvedAt)}` : '· unresolved'}
                         {reason ? ` — ${reason}` : ''} · confidence {ruleConf(r.confidence)} rule-derived
                       </small>
+                      {r.relation === 'contradicts' && !r.resolvedAt && (
+                        <span className="knowledge-contest-actions">
+                          <button className="btn btn-sm" disabled={busy !== null}
+                                  onClick={() => setContesting({ mode: 'resolve', keep: { id: sel.id, title: sel.title },
+                                    retire: { id: fromThis ? r.toItemId : r.fromItemId, title: other } })}>
+                            Keep this item…
+                          </button>
+                          <button className="btn btn-sm" disabled={busy !== null}
+                                  onClick={() => setContesting({ mode: 'resolve', keep: { id: fromThis ? r.toItemId : r.fromItemId, title: other },
+                                    retire: { id: sel.id, title: sel.title } })}>
+                            Keep “{other}”…
+                          </button>
+                        </span>
+                      )}
                     </div>
                   );
                 })}
@@ -2343,6 +2368,92 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                       onCancel={() => setRetiring(null)}
                       onConfirm={(reason) => void retire(reason, retiring)} />
       )}
+      {contesting && (
+        <ContradictionDialog contest={contesting} busy={busy} onCancel={() => setContesting(null)}
+          onConfirm={(reason) => void (async () => {
+            const ok = contesting.mode === 'record'
+              ? await act('contradict', () => window.wanigan.learning.markContradiction(contesting.first.id, contesting.second.id, reason),
+                  `Recorded. “${contesting.first.title}” and “${contesting.second.title}” are both quarantined — left out of every briefing — until you keep one of them from either item’s Evidence.`)
+              : await act('contradict', () => window.wanigan.learning.keepOverContradiction(contesting.keep.id, contesting.retire.id, reason),
+                  (result) => {
+                    const { kept } = result as { kept: KnowledgeItem };
+                    return `Kept “${contesting.keep.title}” and retired “${contesting.retire.title}” with your reason. `
+                      + (kept.status === 'active'
+                        ? 'The kept item is active again; its citations are re-checked before it is next briefed.'
+                        : `The kept item is still ${kept.status}${kept.status === 'quarantined' ? ': something else still contradicts it' : ''}.`);
+                  });
+            if (ok) { setContesting(null); setPicked([]); }
+          })()} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The two acts a contradiction needs, and nothing more.
+ *
+ * Recording one quarantines both items, because retrieval cannot know which
+ * of two opposite rules to brief. Resolving it keeps one side and retires the
+ * other with the reason. The relation writer and the optimizer finding that
+ * reads it both existed with nothing to reach them, so a library holding two
+ * opposite rules briefed both.
+ */
+function ContradictionDialog({ contest, busy, onCancel, onConfirm }: {
+  contest:
+    | { mode: 'record'; first: KnowledgeItem; second: KnowledgeItem }
+    | { mode: 'resolve'; keep: { id: string; title: string }; retire: { id: string; title: string } };
+  busy: string | null;
+  onCancel: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose: onCancel, initialFocus: 'least-destructive' });
+  const record = contest.mode === 'record';
+  return portal(
+    <div {...backdropProps}>
+      <section {...dialogProps} className="learning-modal card"
+               aria-label={record ? 'Record a contradiction' : 'Resolve a contradiction'}>
+        <div className="learning-card-head">
+          <div>
+            <span className="label">{record ? 'Both leave every briefing until resolved' : 'Status change · nothing is deleted'}</span>
+            <h2>{record ? 'These two cannot both be true' : `Keep “${contest.keep.title}”`}</h2>
+          </div>
+          <button className="btn" onClick={onCancel}>Close</button>
+        </div>
+        {record ? (
+          <>
+            <p>
+              Wanigan never guesses a contradiction from wording. Recording one says a person read both and
+              found they disagree. Both items are quarantined, so neither is retrieved or injected, and
+              either item’s Evidence then offers to keep one of them.
+            </p>
+            <ul className="retire-list">
+              {[contest.first, contest.second].map((item) => (
+                <li key={item.id}><strong>{item.title}</strong><small>{item.kind} · {item.scope} · {item.status}</small></li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p>
+            “{contest.retire.title}” is retired with your reason. Its versions, citations and projections are kept,
+            and the reason is recorded against it. The contradiction is marked resolved. “{contest.keep.title}”
+            returns to active only if nothing else still contradicts it.
+          </p>
+        )}
+        <label>
+          <span className="label">Reason · required</span>
+          <textarea className="field" rows={3} autoFocus value={reason} maxLength={1000}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={record ? 'What do they disagree about?' : 'Why is this one right?'} />
+        </label>
+        <div className="learning-actions">
+          <button className={`btn ${record ? 'btn-primary' : 'btn-danger'}`} disabled={busy !== null || !reason.trim()}
+                  onClick={() => onConfirm(reason.trim())}>
+            {busy === 'contradict' ? 'Recording…' : record ? 'Record the contradiction' : `Keep it, retire “${contest.retire.title}”`}
+          </button>
+          <button className="btn" onClick={onCancel}>Cancel</button>
+        </div>
+      </section>
     </div>
   );
 }

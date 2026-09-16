@@ -171,6 +171,8 @@
 .fleet-inspector .fleet-card:hover { background: none; }
 .fleet-task { font-size: var(--t-display); line-height: 1.15; overflow-wrap: anywhere; }
 .fleet-inspector .fleet-detail { display: block; font-size: var(--t-lead); min-height: 0; overflow-wrap: anywhere; }
+/* The rule and evidence behind the verdict above it, quieter than the verdict itself. */
+.fleet-inspector .fleet-reason { display: block; margin-top: var(--s-1); color: var(--text-faint); font-size: var(--t-small); overflow-wrap: anywhere; }
 .fleet-inspector .fleet-meta { font-size: var(--t-small); }
 .fleet-inspector .fleet-spark, .fleet-inspector .fleet-spark-plot { height: 60px; }
 .fleet-inspector .fleet-metrics { gap: var(--s-3); }

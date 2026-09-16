@@ -214,3 +214,8 @@
 }
 
 .pane.insights > * { flex-shrink: 0; }
+
+/* Spend by source: six numeric columns do not fit a narrow report pane, so the
+   table scrolls inside its card rather than the page scrolling sideways. */
+.ins-source-scroll { overflow-x: auto; }
+.ins-source-dims { margin-block: var(--s-3); }

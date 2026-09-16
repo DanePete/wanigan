@@ -1,7 +1,8 @@
 import type { Project } from '@shared/types';
-import { labelForTab, TAB_SHORTCUTS, type Tab } from '@shared/routes';
+import { labelForTab, type Tab } from '@shared/routes';
 import { areaFor, SPACE_AREAS, type SpaceAreaId } from '@shared/spaces';
 import { Icon } from './bits';
+import { chordLabels, useKeymap } from '../bindings';
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useDialog } from './useDialog';
 
@@ -119,6 +120,7 @@ function NavigationDialog(props: WorkspaceNavigationProps) {
 
 function NavigationContents({ tab, go, goArea, onClose, compact, needs, running, runsInFlight, batchWork, attentionAction, batchAction, companion }: WorkspaceNavigationProps) {
   const current = areaFor(tab);
+  const keymap = useKeymap().map;
   const openArea = (id: SpaceAreaId) => { goArea(id); if (compact) onClose(); };
   const openView = (id: Tab) => { go(id); if (compact) onClose(); };
   return <>
@@ -143,9 +145,9 @@ function NavigationContents({ tab, go, goArea, onClose, compact, needs, running,
           </button>
           {active && area.tabs.length > 1 && <nav className="workbench-local-routes" aria-label={`${area.label} views`}>
             {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id}
-              aria-current={id === tab ? 'page' : undefined} aria-keyshortcuts={TAB_SHORTCUTS[id].aria}
-              title={`${labelForTab(id)} (${TAB_SHORTCUTS[id].label})`} onClick={() => openView(id)}>
-              <span className="nav-tab-label">{labelForTab(id)}</span><span className="nav-tab-chord" aria-hidden="true">{TAB_SHORTCUTS[id].label}</span>
+              aria-current={id === tab ? 'page' : undefined} aria-keyshortcuts={chordLabels(keymap, `view:${id}`).aria}
+              title={`${labelForTab(id)} (${chordLabels(keymap, `view:${id}`).keys})`} onClick={() => openView(id)}>
+              <span className="nav-tab-label">{labelForTab(id)}</span><span className="nav-tab-chord" aria-hidden="true">{chordLabels(keymap, `view:${id}`).keys}</span>
             </button>)}
           </nav>}
           {area.id === 'fleet' && attentionAction}

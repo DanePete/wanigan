@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-15T03:27:06.421Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "a held row names the tool, shows the call it stopped on and offers approve, decline or stop; the run list counts it as waiting for you",
+    "declining sends that row's decision and note once, and the row then says what was answered and that it resumes when a slot is free",
+    "holding is off by default, and choosing it says plainly which calls it cannot hold"
+  ],
+  "errors": []
+}

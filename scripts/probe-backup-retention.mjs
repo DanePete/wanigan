@@ -27,8 +27,9 @@ const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
 for (const key of Object.keys(env)) if (key.startsWith('VSCODE_')) delete env[key];
 const app = await _electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'), args: [path.join(dir, 'main.cjs'), `--user-data-dir=${dir}/profile`], env });
 const errors = []; const checks = [];
+let page;
 try {
-  const page = await app.firstWindow(); page.setDefaultTimeout(10000);
+  page = await app.firstWindow(); page.setDefaultTimeout(10000);
   page.on('pageerror', error => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(STUB);
@@ -47,6 +48,7 @@ try {
         reclaim: async ids => { state.calls.push(['reclaim',ids]);return state.cancel ? null : { ...plan, ranAt:now, reclaimed:[], filesRemoved:2, bytesFreed:4096, errors:[] }; },
       },
       transcripts: { list: async () => [] }, uploads: { list: async () => [] },
+      policy: { chain: async () => ({total:0,chained:0,unchainedBefore:0,verifiedThrough:0,lastVerifiedId:null,firstBreak:null,head:null,watched:null,checkedAt:now,keyFingerprint:null,signature:{state:'unsigned',reason:'This synthetic fixture has no decisions.'}}) },
       backup: {
         create: async () => ({ dir:'/fixture/backup',manifestPath:'/fixture/backup/wanigan-backup.json',createdAt:now,appVersion:'fixture',database:{bytes:20000,sha256:'fixture'},transcripts:{files:2,bytes:4000},attachments:{files:3,bytes:12000},totalBytes:37000,latestEvidenceAt:now,durationMs:8,excluded:['Machine credentials and execution approvals are excluded.'] }),
         inspect: async () => ({dir:'/fixture/older-backup',createdAt:now,appVersion:'fixture',database:{bytes:20000,sha256:'fixture'},transcripts:{files:2,bytes:4000},attachments:null,latestEvidenceAt:now,currentLatestEvidenceAt:now,wouldDiscardNewer:false,problems:[]}),
@@ -106,4 +108,12 @@ try {
   assert.deepEqual(errors,[]);
   fs.writeFileSync(path.join(out,'backup-retention-checks.json'),JSON.stringify({before,provenance:'Actual renderer, synthetic bridge. No main/native deletion exercised.',checks,errors},null,2)+'\n');
   console.log(JSON.stringify({before,checks,errors}));
+} catch (error) {
+  const failure = String(error.stack ?? error);
+  if (page) {
+    await page.screenshot({path:path.join(out,'backup-retention-failure.png')}).catch(() => {});
+    console.error(await page.locator('body').textContent());
+  }
+  fs.writeFileSync(path.join(out,'backup-retention-checks.json'),JSON.stringify({before,provenance:'Actual renderer, synthetic bridge. No main/native deletion exercised.',checks,errors,failure},null,2)+'\n');
+  throw error;
 } finally { await app.close(); server.close(); fs.rmSync(dir,{recursive:true,force:true}); }

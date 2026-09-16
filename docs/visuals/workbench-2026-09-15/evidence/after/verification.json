@@ -1,5 +1,5 @@
 {
-  "at": "2026-09-16T01:58:47.866Z",
+  "at": "2026-09-16T02:54:20.050Z",
   "provenance": "Built renderer in isolated Electron; synthetic code/review bridge. No real main, PTY, Git command, or provider calls.",
   "checks": [
     "Changes starts in a reading state without claiming non-repository",

@@ -107,6 +107,18 @@
 .control-autopilot-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
 .control-autopilot-cap { max-width: 360px; }
 .control-autopilot-act { display: grid; gap: var(--s-2); justify-items: start; }
+/* Verified done: the goal's gate-on-stop choice, and each task's gate state. */
+.control-gate { display: grid; gap: var(--s-3); padding: var(--s-4); border-bottom: 1px solid var(--line-soft); }
+.control-gate > p { margin: 0; color: var(--text-dim); line-height: 1.6; }
+.control-gate-choice { justify-self: start; max-width: 100%; }
+.control-task-gate { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised); }
+.control-task-gate-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); font-size: var(--t-small); }
+.control-task-gate .note { margin: 0; }
+.control-gate-failure > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); overflow-wrap: anywhere; }
+.control-gate-failure > summary code { font-size: var(--t-small); }
+.control-gate-failure pre { max-height: 280px; overflow: auto; margin: var(--s-2) 0 0; padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); font-family: var(--mono); font-size: var(--t-micro); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.control-gate-flags { margin: var(--s-2) 0; padding-left: var(--s-5); display: grid; gap: var(--s-1); overflow-wrap: anywhere; }
+.control-record-gate { color: var(--text-faint); font-size: var(--t-micro); overflow-wrap: anywhere; }
 .control-support { border-top: 1px solid var(--line-soft); max-height: 48%; overflow-y: auto; }
 .control-support > summary { display: flex; align-items: center; gap: var(--s-3); cursor: pointer; padding: var(--s-2) 0; color: var(--text-dim); font-size: var(--t-small); }
 .control-support > summary::before { content: '+'; }
@@ -118,8 +130,13 @@
 .control-lower p { margin: 0; line-height: 1.6; }
 .control-event { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
 .control-event strong { margin-left: var(--s-2); font-size: var(--t-small); }
+/* A GitHub event's kind is a mark, glyph and word, where a typed event has its kind in bold. */
+.control-event > .mark { margin-left: var(--s-2); font-size: var(--t-small); }
 .control-event p { color: var(--text-dim); font-size: var(--t-small); margin: var(--s-2) 0; }
-.control-event .btn { margin-right: var(--s-2); }
+/* Middle, not baseline: .btn is inline-flex, and one that starts with an icon —
+   Open on GitHub — has no text baseline, so on baseline it sat higher than the
+   word-only buttons beside it. */
+.control-event .btn { margin-right: var(--s-2); vertical-align: middle; }
 .control-table { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
 .control-table th { text-align: left; color: var(--text-faint); font-size: var(--t-micro); font-weight: 500; }
 .control-table td, .control-table th { padding: var(--s-2) var(--s-1); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
@@ -196,3 +213,8 @@
   .goal-companion { border-left: 0; padding-left: 0; }
   .goal-companion-copy { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--s-3); }
 }
+/* Recorded outcomes for the task kind, read beside the provider choice. */
+.control-evidence { padding: var(--s-2) var(--s-4) 0; max-width: 90ch; }
+/* A goal's captured plan: the agent's text, kept apart from Wanigan's own copy. */
+.control-plan-note { margin: var(--s-2) 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.control-plan-text { max-height: 360px; overflow: auto; margin: 0; padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); font-size: var(--t-small); white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -49,9 +49,19 @@
 .set-field-action { display: flex; gap: 7px; align-items: center; margin-top: 4px; }
 .set-field-action > .field { min-width: 0; flex: 1; }
 .set-field-action > .btn { flex: none; }
+/* A number of minutes needs a few characters, not the width of a key field. */
+.set-field-action.set-intake-interval { max-width: 20rem; }
 .set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
 .set-key-status .btn:first-of-type { margin-left: auto; }
 .set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }
+/* Codex hook events, under the Codex runtime row they describe and indented
+   from it the same way. The sentence wraps rather than truncates: its reason
+   is the half a reader needs, and a clipped reason reads as a different one. */
+.set-runtime-hooks { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); padding: 0 0 var(--s-2) var(--s-1); font-size: var(--t-small); min-width: 0; }
+.set-runtime-hooks-label { color: var(--text-dim); font-weight: 600; }
+.set-runtime-hooks-text { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
+.set-runtime-hooks-detail, .set-runtime-hooks-note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; font-size: var(--t-micro); }
+
 /* Under the row it belongs to and indented from it, so a repository reads as
    one entry with a setting rather than two list items. */
 .set-project-account { display: flex; align-items: center; gap: 8px; padding: 0 0 8px 2px; font-size: var(--t-small); }
@@ -417,3 +427,53 @@ a.set-mini, a.btn { text-decoration: none; }
 .set-account-seed input { margin-top: var(--s-1); accent-color: var(--accent); flex: none; }
 .set-account-seed-why { display: block; margin-top: var(--s-1); }
 .set-accounts-foot { font-size: var(--t-micro); margin-top: var(--s-3); line-height: 1.45; }
+
+/* Transcript recall: a per-project switch list under Wanigan's own MCP server. */
+.set-recall-lede { margin: 0 0 var(--s-2); color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 72ch; }
+.set-recall-lede code { overflow-wrap: anywhere; }
+.set-recall-list { display: flex; flex-direction: column; }
+
+/* Attachment retention: a preview, a confirmation, and what each pass removed. */
+.set-retention { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-2); }
+.set-retention-lede, .set-retention-last, .set-retention-preview { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; }
+.set-retention-last { color: var(--text-faint); }
+.set-retention-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.set-retention-days { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--t-small); color: var(--text-dim); }
+.set-retention-days .field { width: 7ch; text-align: right; }
+
+/* Sandbox shell commands: what the choice does and does not do, in text. */
+.set-sandbox-notes { margin: var(--s-2) 0 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 80ch; }
+
+/* The ledger's chain check (LedgerChain in Settings.tsx): a mark, one sentence
+   and Verify now on a line, then the notes that say what the mark does not
+   cover — records from before the chain, and a head nobody could sign. */
+.set-chain { display: flex; flex-direction: column; gap: var(--s-1); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); }
+.set-chain-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.set-chain-text { flex: 1 1 18rem; min-width: 0; font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.set-chain-note { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Keyboard: one row per binding — what it does, the chord in effect, and what
+   can be done about it. The chord column is sized by its content so a long
+   composite ("?  ·  ⌘/") never squeezes the name, and every note spans the row
+   so a refusal sits directly under the chord it refused. */
+.set-keys-rules { margin: 0 0 var(--s-3); max-width: 80ch; }
+.set-keys-group { margin-top: var(--s-3); }
+.set-keys-group + .set-keys-group { margin-top: var(--s-4); }
+.set-keys { list-style: none; margin: 0; padding: 0; }
+.set-keys-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--s-1) var(--s-3); align-items: center; padding: var(--s-2) 0; border-top: 1px solid var(--line-soft); }
+.set-keys-row:first-child { border-top: none; }
+.set-keys-what { display: grid; gap: var(--s-1); min-width: 0; }
+.set-keys-name { font-size: var(--t-small); font-weight: 600; overflow-wrap: anywhere; }
+.set-keys-does { color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; overflow-wrap: anywhere; }
+.set-keys-chord { display: flex; align-items: center; gap: var(--s-2); justify-self: end; }
+.set-keys-chord kbd { display: inline-block; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: var(--r-sm); padding: var(--s-1) var(--s-2); background: var(--bg-raised); color: var(--text); font-family: var(--font-ui); font-size: var(--t-small); white-space: nowrap; }
+.set-keys-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); min-width: 0; }
+.set-keys-note, .set-keys-refusal { grid-column: 1 / -1; margin: 0; font-size: var(--t-micro); line-height: 1.5; max-width: 80ch; }
+.set-keys-note { color: var(--text-faint); }
+.set-keys-listening { color: var(--accent); font-weight: 600; }
+.set-keys-refusal { color: var(--critical); font-size: var(--t-small); }
+.set-keys-ignored { margin: var(--s-1) 0 0; padding-left: var(--s-4); }
+@media (max-width: 720px) {
+  .set-keys-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .set-keys-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}

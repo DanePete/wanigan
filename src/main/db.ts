@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -493,6 +494,21 @@ function migratePhases(d: Database.Database) {
       set_at     INTEGER NOT NULL
     );
 
+    -- Digests of a repository's executable configuration that a launch was let
+    -- through with: hooks, MCP servers, helpers, env overrides, git hooks and
+    -- drivers. 'first-use' records trust on first use, never a review; a launch
+    -- whose digest matches no row is asked about (see config-pins.ts).
+    CREATE TABLE IF NOT EXISTS config_pins (
+      id          TEXT PRIMARY KEY,
+      project_id  TEXT NOT NULL,
+      digest      TEXT NOT NULL,
+      items_json  TEXT NOT NULL,
+      how         TEXT NOT NULL,
+      root        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_config_pins_project ON config_pins(project_id, created_at DESC);
+
     -- A review recipe is operator-owned commands plus the immutable evidence
     -- from each execution. Agents may suggest commands; only this surface runs
     -- the configured gate and records its result.
@@ -577,6 +593,26 @@ function migratePhases(d: Database.Database) {
     'CREATE INDEX IF NOT EXISTS idx_schedule_runs_run ON schedule_runs(run_id) '
     + 'WHERE run_id IS NOT NULL'
   );
+  // The policy ledger's hash chain (ledger-chain.ts). Additive: a row written
+  // before these columns existed keeps NULL in both and is reported as before
+  // the chain began, never as verified, because nothing was ever computed over
+  // it that it could be checked against.
+  addColumn(d, 'policy_ledger', 'prev_hash', 'TEXT');
+  addColumn(d, 'policy_ledger', 'hash', 'TEXT');
+  // One row: the last head signed, what it covered, and the public half of the
+  // key that signed it. The key is kept beside the signature so a head signed on
+  // another Mac is recognised as exactly that, rather than read as a forgery.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS policy_ledger_head (
+      id         INTEGER PRIMARY KEY CHECK (id = 1),
+      last_id    INTEGER NOT NULL,
+      count      INTEGER NOT NULL,
+      hash       TEXT NOT NULL,
+      signed_at  INTEGER NOT NULL,
+      signature  TEXT NOT NULL,
+      public_key TEXT NOT NULL
+    )
+  `);
   migrateLearning(d);
   migrateControl(d);
   migrateAccounts(d);
@@ -584,6 +620,264 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateAttempts(d);
+  migrateWorktreeBootstrap(d);
+  migrateObservedTelemetry(d);
+  migrateCodexHooks(d);
+  migrateIntake(d);
+}
+
+/**
+ * What a new worktree is given beyond its tracked files, per project, and the
+ * evidence of every setup and teardown that ran.
+ *
+ * All of it lives here and none of it in the repository: a setup command is a
+ * choice the operator made on this machine, and writing it into the checkout
+ * would hand it to every clone and every agent that can edit the file.
+ */
+function migrateWorktreeBootstrap(d: Database.Database) {
+  d.exec(`
+    -- How gitignored dependency folders reach a new worktree: link, clone or
+    -- skip. The same shape as project_trust — one choice per project — with
+    -- the cascade project_accounts has, so a removed project leaves no row
+    -- behind for a re-added one to inherit.
+    CREATE TABLE IF NOT EXISTS project_worktree_deps (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      mode       TEXT NOT NULL,
+      set_at     INTEGER NOT NULL
+    );
+
+    -- Command text the operator approved in a native dialog, run through the
+    -- login shell in every worktree Wanigan makes for the project. The shape of
+    -- review_recipes, for the same kind of text.
+    CREATE TABLE IF NOT EXISTS worktree_commands (
+      project_id    TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      setup_json    TEXT NOT NULL DEFAULT '[]',
+      teardown_json TEXT NOT NULL DEFAULT '[]',
+      updated_at    INTEGER NOT NULL
+    );
+
+    -- One row per phase that ran, written before its first command starts and
+    -- updated as each one finishes. No cascade: evidence of what ran in a
+    -- worktree outlives the project it ran for, as review_runs does.
+    CREATE TABLE IF NOT EXISTS worktree_command_runs (
+      id           TEXT PRIMARY KEY,
+      project_id   TEXT NOT NULL,
+      worktree     TEXT NOT NULL,
+      phase        TEXT NOT NULL,
+      started_at   INTEGER NOT NULL,
+      ended_at     INTEGER,
+      status       TEXT NOT NULL,
+      planned      INTEGER NOT NULL DEFAULT 0,
+      results_json TEXT NOT NULL DEFAULT '[]',
+      env_json     TEXT,
+      note         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_tree
+      ON worktree_command_runs(worktree, phase, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_project
+      ON worktree_command_runs(project_id, started_at DESC);
+  `);
+  // The project a worktree was made for, so its teardown finds the same
+  // commands its setup ran even when the repository is registered under a
+  // path that is not its root.
+  addColumn(d, 'worktrees', 'project_id', 'TEXT');
+  // The first port of the worktree's ten-port block, fixed at creation. Setup,
+  // the launch and teardown must all see one block; probing again later would
+  // skip the block the worktree's own dev server is listening on.
+  addColumn(d, 'worktrees', 'port_base', 'INTEGER');
+  // What creation put in the worktree — dependency folders, include copies,
+  // the port block — as the JSON the Git view shows beside the branch.
+  addColumn(d, 'worktrees', 'bootstrap_json', 'TEXT');
+}
+
+/**
+ * What the CLI reports about itself beyond cost and tool events: its status
+ * line's limit and cache readings, its beta per-prompt trace spans, and the
+ * attribution its cost and token metrics carry. Four new tables and nothing
+ * altered, so an install that never runs these features has four empty tables
+ * and every existing reader is untouched.
+ */
+function migrateObservedTelemetry(d: Database.Database) {
+  d.exec(`
+    -- One row per distinct status line reading. A reading identical to the
+    -- session's previous one only moves last_seen_at, so an idle session that
+    -- refreshes its status line every few seconds writes no rows. A redraw is
+    -- not a new reading of the provider, so the forecast reads observed_at only.
+    CREATE TABLE IF NOT EXISTS status_observations (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id            TEXT NOT NULL,
+      account_id            TEXT,
+      observed_at           INTEGER NOT NULL,
+      last_seen_at          INTEGER NOT NULL,
+      cli_version           TEXT,
+      reading_key           TEXT NOT NULL,
+      -- A window the CLI did not send is NULL in both columns, never 0.
+      five_hour_pct         REAL,
+      five_hour_resets_at   INTEGER,
+      seven_day_pct         REAL,
+      seven_day_resets_at   INTEGER,
+      spend_limit_pct       REAL,
+      spend_limit_resets_at INTEGER,
+      effort                TEXT,
+      pr_number             INTEGER,
+      pr_url                TEXT,
+      pr_review_state       TEXT,
+      prompt_id             TEXT,
+      cache_json            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_status_obs_session ON status_observations(session_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_status_obs_account ON status_observations(account_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_status_obs_seen ON status_observations(last_seen_at);
+
+    -- Per-prompt trace spans, attributes already stripped of anything that is
+    -- conversation text. An exporter re-sends what it did not get a 2xx for, so
+    -- a span is its own identity and a retry is ignored rather than doubled.
+    CREATE TABLE IF NOT EXISTS session_spans (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id     TEXT NOT NULL,
+      trace_id       TEXT NOT NULL,
+      span_id        TEXT NOT NULL,
+      parent_span_id TEXT,
+      name           TEXT NOT NULL,
+      start_at       INTEGER NOT NULL,
+      end_at         INTEGER,
+      status         TEXT NOT NULL DEFAULT 'unset',
+      attrs_json     TEXT,
+      received_at    INTEGER NOT NULL,
+      UNIQUE (session_id, trace_id, span_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_spans ON session_spans(session_id, start_at);
+    -- Retention deletes by age; this keeps that a range scan.
+    CREATE INDEX IF NOT EXISTS idx_session_spans_start ON session_spans(start_at);
+
+    -- Sessions launched with the trace exporter on. A session that asked and
+    -- exported nothing for a turn is told apart from one that never asked.
+    CREATE TABLE IF NOT EXISTS session_trace_requests (
+      session_id   TEXT PRIMARY KEY,
+      requested_at INTEGER NOT NULL
+    );
+
+    -- Cost and token metrics by the attribution the CLI attaches to them,
+    -- bucketed by local day so a window is exact to the day. Kept beside
+    -- session_metrics rather than in it: adding these attributes to that
+    -- table's key would split every existing running total across new rows.
+    CREATE TABLE IF NOT EXISTS session_spend_sources (
+      session_id   TEXT NOT NULL,
+      day          TEXT NOT NULL,
+      metric       TEXT NOT NULL,
+      token_type   TEXT NOT NULL DEFAULT '',
+      query_source TEXT NOT NULL DEFAULT '',
+      agent_name   TEXT NOT NULL DEFAULT '',
+      skill_name   TEXT NOT NULL DEFAULT '',
+      plugin_name  TEXT NOT NULL DEFAULT '',
+      mcp_server   TEXT NOT NULL DEFAULT '',
+      effort       TEXT NOT NULL DEFAULT '',
+      speed        TEXT NOT NULL DEFAULT '',
+      model        TEXT NOT NULL DEFAULT '',
+      value        REAL NOT NULL DEFAULT 0,
+      last_at      INTEGER NOT NULL,
+      PRIMARY KEY (session_id, day, metric, token_type, query_source, agent_name, skill_name,
+                   plugin_name, mcp_server, effort, speed, model)
+    );
+    CREATE INDEX IF NOT EXISTS idx_spend_sources_day ON session_spend_sources(day);
+  `);
+}
+
+/**
+ * Codex hook trust, and the first real event that proved it. See
+ * codex-hooks.ts.
+ *
+ * One row per binary, version and hook definition, because trust is a fact
+ * about all three: Codex hashes the definition, a different binary can hash
+ * differently, and an upgrade in place is a new version. A restart reads the
+ * answer here instead of starting Codex's app-server again. `first_event_at`
+ * stays NULL until a real session delivers an event on that version, and it
+ * is the only thing Settings may call "observed".
+ *
+ * The session column says what one launch did about hooks, and when its own
+ * hooks took over from OSC 9, so the answer outlives the terminal.
+ */
+function migrateCodexHooks(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS codex_hook_trust (
+      bin                 TEXT NOT NULL,
+      version             TEXT NOT NULL,
+      definition_sha256   TEXT NOT NULL,
+      state               TEXT NOT NULL,
+      reason              TEXT,
+      detail              TEXT,
+      hashes_json         TEXT,
+      probed_at           INTEGER NOT NULL,
+      first_event_at      INTEGER,
+      first_event_session TEXT,
+      PRIMARY KEY (bin, version, definition_sha256)
+    );
+  `);
+  addColumn(d, 'session_log', 'codex_hooks_json', 'TEXT');
+}
+
+/**
+ * Issue intake: GitHub facts read through gh on a press or an opt-in timer,
+ * recorded as Control events. See intake.ts.
+ *
+ * The external key is what makes a poll safe to repeat. Every poll overlaps the
+ * last one on purpose, so the same issue, comment and failed run arrive again
+ * and again; the unique index refuses the second copy inside SQLite, where two
+ * polls racing each other cannot both get past it. Partial, because every event
+ * written before this column existed, and every one typed in by hand, has no
+ * outside identity to be unique about. Ordered after the ALTER for the reason
+ * the queue lease index gives.
+ */
+function migrateIntake(d: Database.Database) {
+  addColumn(d, 'control_events', 'external_key', 'TEXT');
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_control_events_external
+      ON control_events(project_id, external_key) WHERE external_key IS NOT NULL;
+
+    -- One row per poll, written when it fires and finished when it ends, so a
+    -- poll that fired and never ran, or ran and never finished, is still a row
+    -- someone can read. The partial unique index is the claim: one unfinished
+    -- poll per project, across the app and anything else sharing this file.
+    CREATE TABLE IF NOT EXISTS intake_polls (
+      id            TEXT PRIMARY KEY,
+      project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      fired_by      TEXT NOT NULL,
+      fired_at      INTEGER NOT NULL,
+      ran_at        INTEGER,
+      finished_at   INTEGER,
+      outcome       TEXT,
+      reason        TEXT,
+      error         TEXT,
+      repo          TEXT,
+      since_at      INTEGER,
+      until_at      INTEGER,
+      lookback      INTEGER NOT NULL DEFAULT 0,
+      interval_ms   INTEGER,
+      gap_ms        INTEGER,
+      facts_read    INTEGER NOT NULL DEFAULT 0,
+      new_opened    INTEGER NOT NULL DEFAULT 0,
+      new_labelled  INTEGER NOT NULL DEFAULT 0,
+      new_commented INTEGER NOT NULL DEFAULT 0,
+      new_ci_failed INTEGER NOT NULL DEFAULT 0,
+      capped        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_intake_polls_project ON intake_polls(project_id, fired_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_intake_polls_one_running
+      ON intake_polls(project_id) WHERE finished_at IS NULL;
+
+    -- What intake knows about an event that control_events has no column for:
+    -- the kind in GitHub's terms, the link out, GitHub's own time for the fact,
+    -- and the poll that recorded it. Keyed by the event, so dismissing or
+    -- triaging it in Control changes nothing here.
+    CREATE TABLE IF NOT EXISTS intake_events (
+      event_id    TEXT PRIMARY KEY REFERENCES control_events(id) ON DELETE CASCADE,
+      poll_id     TEXT REFERENCES intake_polls(id) ON DELETE SET NULL,
+      kind        TEXT NOT NULL,
+      url         TEXT,
+      happened_at INTEGER
+    );
+  `);
 }
 
 /**
@@ -1054,6 +1348,97 @@ function migrateAccounts(d: Database.Database) {
   // estimated" over the sum of both. Nullable on purpose — a row written
   // before this column existed reads as unknown, never as reported.
   addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
+  // The call a row stopped on for a person's answer, and the answer: JSON,
+  // bounded and redacted before it is written (headless.ts). Null for every
+  // row that never held a call, including all rows from before the column.
+  addColumn(d, 'headless_rows', 'held_json', 'TEXT');
+  // The commit the agent started from, read in the directory it ran in after
+  // any worktree was cut. It was computed for the changed-file count and then
+  // thrown away, so a finished row could not say which tree produced it; an
+  // attempt pinned to a commit is refused when this is not that commit. Null
+  // for rows from before the column and rows that never reached a spawn.
+  addColumn(d, 'headless_rows', 'base_head', 'TEXT');
+}
+
+/**
+ * Attempts: one task run several times from one pinned commit, and what each
+ * run left behind. See src/shared/attempts.ts for the two readings.
+ *
+ * An attempt is a pointer to a real single-repository headless run, plus the
+ * facts copied off it once it ends. The copy is deliberate: the run row is the
+ * runner's record and the attempt is the comparison's, and a comparison has to
+ * stay readable after the run list is pruned. Tokens are per attempt because
+ * each attempt is its own run, and a run is where headless tokens are summed.
+ *
+ * No foreign key to projects. Removing a project must not delete the record of
+ * what was spent comparing work in it, which is the same choice headless_rows
+ * makes.
+ */
+function migrateAttempts(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS attempt_sets (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL,
+      kind            TEXT NOT NULL,
+      prompt          TEXT NOT NULL,
+      prompt_sha256   TEXT NOT NULL,
+      base_commit     TEXT NOT NULL,
+      arms_json       TEXT NOT NULL,
+      repeats         INTEGER NOT NULL,
+      budget_usd      REAL NOT NULL,
+      timeout_ms      INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'running',
+      kept_attempt_id TEXT,
+      decided_at      INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempt_sets_created ON attempt_sets(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS attempts (
+      id              TEXT PRIMARY KEY,
+      set_id          TEXT NOT NULL REFERENCES attempt_sets(id) ON DELETE CASCADE,
+      arm_index       INTEGER NOT NULL,
+      repeat_index    INTEGER NOT NULL,
+      headless_run_id TEXT,
+      worktree        TEXT,
+      base_head       TEXT,
+      status          TEXT NOT NULL DEFAULT 'queued',
+      exit_code       INTEGER,
+      duration_ms     INTEGER,
+      cost_usd        REAL,
+      cost_reported   INTEGER,
+      in_tokens       INTEGER,
+      out_tokens      INTEGER,
+      cache_read      INTEGER,
+      cache_write     INTEGER,
+      files_changed   INTEGER,
+      gate_status     TEXT,
+      gate_note       TEXT,
+      review_run_id   TEXT,
+      tree            TEXT,
+      oracle_json     TEXT,
+      started_at      INTEGER,
+      ended_at        INTEGER,
+      UNIQUE (set_id, arm_index, repeat_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attempts_set ON attempts(set_id, repeat_index, arm_index);
+    CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(headless_run_id) WHERE headless_run_id IS NOT NULL;
+  `);
+  // Why a run could not start or was refused, copied off its row: the run's
+  // error is the only account of a pinned worktree that came out at the wrong
+  // commit, and it has to outlive the run list.
+  addColumn(d, 'attempts', 'error', 'TEXT');
+  // What the run was actually stored with — provider, profile fingerprint,
+  // model, effort and a hash of the prompt — so the evidence label compares
+  // recorded facts against the arm, rather than restating what was asked for.
+  addColumn(d, 'attempts', 'launch_json', 'TEXT');
+  // When this process began gating the attempt. A gate left 'running' by a
+  // process that died is closed as unavailable on the next start, the same
+  // way an interrupted review run is, rather than read as still in flight.
+  addColumn(d, 'attempts', 'gate_started_at', 'INTEGER');
+  // Whether the set holds calls that need approval for the operator: copied to
+  // every attempt's run, and shown on the set so a paused trial is explained.
+  addColumn(d, 'attempt_sets', 'hold_for_approval', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /**
@@ -1277,6 +1662,21 @@ function migrateControl(d: Database.Database) {
   // "not now, but not never" — instead of forcing every known issue to be
   // either in progress or forgotten.
   addColumn(d, 'work_nodes', 'defer_until', 'INTEGER');
+  // When a task was last reopened. A gate proof written before it is evidence
+  // about a tree the reopened work has since replaced, so it must not complete
+  // the task a second time — hasPassedProof in control.ts and the phone's gate
+  // reading both count only proofs from after this moment.
+  addColumn(d, 'work_nodes', 'reopened_at', 'INTEGER');
+  // Verified done, opted into per goal. `gate_on_stop` runs the review gate
+  // each time an implementation or verification agent stops, and holds an
+  // implementation task until a gate has passed. `return_failures` types a
+  // failed gate's error lines back into that session, which starts another
+  // agent turn and so spends tokens: off unless chosen, and never on without
+  // the gate. `gate_returns` counts those per task run so the cap holds across
+  // a restart; starting or reopening the task resets it.
+  addColumn(d, 'work_dockets', 'gate_on_stop', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_dockets', 'return_failures', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_nodes', 'gate_returns', 'INTEGER NOT NULL DEFAULT 0');
   // The interview that produced a goal, kept after it did.
   //
   // Durable rather than in memory because an interview is ten minutes of the
@@ -1466,5 +1866,5 @@ export function newRunId(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+  return `run_${stamp}_${randomBytes(2).toString('hex')}`;
 }

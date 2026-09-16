@@ -5,6 +5,7 @@ import type {
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
 import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { useChord } from '../bindings';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
@@ -142,6 +143,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   /** Fleet watches sessions; the shell is what starts one. */
   onNewSession?: () => void;
 }) {
+  const newSessionChord = useChord('new-session').glyphs;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [attention, setAttention] = useState<Record<string, Attention>>({});
   const [usage, setUsage] = useState<Record<string, SessionUsage>>({});
@@ -477,7 +479,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
         <EmptyState posture="nothing-yet" title="No agents Wanigan started are running"
                     cue={<>Fleet watches sessions that already exist; it does not start them. A new session appears here within three seconds.</>}
                     action={onNewSession
-                      ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">⌘T</kbd></button>
+                      ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">{newSessionChord}</kbd></button>
                       : undefined} />
         {/* This is the branch where "nothing is running" is most likely to be
             wrong — none of Wanigan's own, and three Claude processes started
@@ -719,6 +721,14 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
       <span className="fleet-detail">
         {att?.detail ?? (att?.tool ? `Running ${att.tool}.` : 'No hook events for this session yet.')}
       </span>
+      {/* Why this verdict, from the classifier's own record: the rule, the event
+          it read and when. A ranking nobody can question is not one to trust. */}
+      {att?.reason && (
+        <span className="fleet-reason">
+          Because {att.reason.because.charAt(0).toLowerCase() + att.reason.because.slice(1)}
+          {att.reason.event && <> Read from <span className="mono">{att.reason.event.name}</span>, {ago(att.reason.event.at)}.</>}
+        </span>
+      )}
 
       <Spark values={spark} live={u.lastAt} />
 

@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-14T22:03:52.916Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic files and services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "the report is requested with the project id alone; main resolves the path",
+    "each count matches the fixture: 2 agree, 1 expected at launch and unreported, 1 unforeseen, 1 on-demand and untouched",
+    "the one difference worth attention leads the list and carries its own callout",
+    "the report names its session and its age, and no undefined, NaN or object text reaches the screen",
+    "no report reads as \"no session has reported\", never as an empty report with zero counts",
+    "a failed read hides the section rather than claiming nothing loaded"
+  ],
+  "errors": []
+}

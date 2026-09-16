@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dataDir, db } from './db';
 import { usesAnthropicAccount } from './providers';
+import { claudeProjectSlug as slugForClaude } from '../shared/claude-slug';
 import type { AccountResolution, AgentAccount, NativeMemoryWrites } from '../shared/types';
 
 /**
@@ -497,9 +498,9 @@ export function readRoots(harness: string): string[] {
 
 /* ── native auto-memory, per session ─────────────────────────────────── */
 
-/** Claude Code's slug for a working directory: every non-alphanumeric to '-'. */
+/** Claude Code's folder name for a directory; the rule is in src/shared/claude-slug.ts. */
 function claudeProjectSlug(cwd: string): string {
-  return path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-');
+  return slugForClaude(path.resolve(cwd));
 }
 
 /**

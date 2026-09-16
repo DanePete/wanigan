@@ -1,4 +1,5 @@
 import { Icon } from './bits';
+import { bindingMatches, useChord } from '../bindings';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AttentionKind, Session } from '@shared/types';
 import { runsClaudeHarness } from '@shared/provider-status';
@@ -234,6 +235,29 @@ function writeDrafts(map: ComposerDraftMap) {
   catch { /* the caps are the real bound; a quota error here is the fallback */ }
 }
 
+/** Joins appended text to whatever the operator already had in the box. */
+function joinDraft(current: string, addition: string): string {
+  return current.trim() ? `${current.replace(/\s+$/, '')}\n\n${addition}` : addition;
+}
+
+type ComposerAppend = { sessionId: string; text: string; handled: boolean };
+
+/**
+ * Puts text into a session's message box without sending it. A mounted
+ * composer takes it through its own state, so the operator sees it land and
+ * the debounce persists it; a collapsed one never hears the event, so the
+ * stored draft is appended directly and appears when the box is opened. Either
+ * way the operator reads it and presses Send or Queue.
+ */
+export function appendToComposerDraft(sessionId: string, text: string): 'composer' | 'stored' {
+  const detail: ComposerAppend = { sessionId, text, handled: false };
+  window.dispatchEvent(new CustomEvent<ComposerAppend>('wanigan:composer-append', { detail }));
+  if (detail.handled) return 'composer';
+  const drafts = readDrafts();
+  writeDrafts(putDraft(drafts, sessionId, joinDraft(drafts[sessionId]?.text ?? '', text), Date.now()));
+  return 'stored';
+}
+
 /* ── stash ───────────────────────────────────────────────────────────── */
 
 type StashEntry = { id: number; text: string; at: number };
@@ -287,6 +311,9 @@ export default function Composer({ session, onError }: {
   const [attention, setAttention] = useState<AttentionKind | null>(null);
   const [queued, setQueued] = useState<QueuedMessage[]>(() => queuedFor(sessionId));
   const [stash, setStash] = useState<StashEntry[]>(readStash);
+  // The stash chord as it stands: printed in the saved-prompts note and matched
+  // below through the keymap, so a rebinding moves both.
+  const stashChord = useChord('stash').glyphs;
   const [stashOpen, setStashOpen] = useState(false);
   const [stashQuery, setStashQuery] = useState('');
   const stashButton = useRef<HTMLButtonElement>(null);
@@ -317,6 +344,29 @@ export default function Composer({ session, onError }: {
   // on the way out.
   useEffect(() => () => {
     if (unsavedDraft.current !== null) writeDrafts(putDraft(readDrafts(), sessionId, unsavedDraft.current, Date.now()));
+  }, [sessionId]);
+
+  // Text handed over from elsewhere — review notes from the code rail — lands
+  // in the box, never in the terminal. Marked handled so the sender does not
+  // also append it to the stored draft.
+  useEffect(() => {
+    const onAppend = (e: Event) => {
+      const detail = (e as CustomEvent<ComposerAppend>).detail;
+      if (!detail || detail.sessionId !== sessionId || typeof detail.text !== 'string') return;
+      detail.handled = true;
+      setDraft((current) => joinDraft(current, detail.text));
+      setFlash('Review notes added below your draft. Nothing is sent until you send it.');
+      window.setTimeout(() => setFlash(null), 4000);
+      requestAnimationFrame(() => {
+        const el = areaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+        el.scrollTop = el.scrollHeight;
+      });
+    };
+    window.addEventListener('wanigan:composer-append', onAppend);
+    return () => window.removeEventListener('wanigan:composer-append', onAppend);
   }, [sessionId]);
 
   useEffect(() => {
@@ -431,7 +481,7 @@ export default function Composer({ session, onError }: {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertSkill(menuOptions[menu.index]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
     }
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); stashDraft(); return; }
+    if (bindingMatches(e.nativeEvent, 'stash')) { e.preventDefault(); stashDraft(); return; }
     if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
       e.preventDefault();
       void send();
@@ -585,7 +635,7 @@ export default function Composer({ session, onError }: {
         }}>
           <div className="composer-saved-intro"><strong>Saved for another moment</strong><button type="button" aria-label="Close saved prompts" className="composer-chip-btn" onClick={() => { setStashOpen(false); stashButton.current?.focus(); }}><Icon name="x" /></button></div>
           <input ref={stashSearch} type="search" className="field" aria-label="Search saved prompts" placeholder="Find a saved prompt…" value={stashQuery} onChange={event => setStashQuery(event.target.value)} />
-          {stash.length === 0 && <p className="faint composer-stash-empty">Nothing stashed yet — ⌘S in the composer keeps a prompt for later.</p>}
+          {stash.length === 0 && <p className="faint composer-stash-empty">Nothing stashed yet — {stashChord} in the composer keeps a prompt for later.</p>}
           {stash.length > 0 && saved.length === 0 && <p className="composer-stash-empty">No saved prompts match. <button className="link" type="button" onClick={() => setStashQuery('')}>Clear search</button></p>}
           <div className="composer-saved-list">{saved.map((entry) => (
             <div key={entry.id} className="composer-stash-row">
@@ -598,7 +648,7 @@ export default function Composer({ session, onError }: {
                       onClick={() => { const next = stash.filter((s) => s.id !== entry.id); writeStash(next); setStash(next); }}>×</button>
             </div>
           ))}</div>
-          <p className="composer-saved-note"><kbd>⌘S</kbd> saves the current draft. Choosing a prompt puts it in the composer; it does not send it.</p>
+          <p className="composer-saved-note"><kbd>{stashChord}</kbd> saves the current draft. Choosing a prompt puts it in the composer; it does not send it.</p>
         </section>
       )}
     </div>

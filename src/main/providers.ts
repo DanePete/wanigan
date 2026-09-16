@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { ProviderCapabilities, ProviderId, ProviderInfo, ProviderLaunchField } from '../shared/types';
 import { getProviderKey } from './keys';
 import { probeProviderAdapter } from './provider-adapter';
+import { observeOnlyHooksStatus } from './codex-hooks';
 import {
   createDefaultProviderPackRegistry,
   type ProviderCapabilityDeclaration,
@@ -648,7 +649,13 @@ async function capabilitiesFor(def: ProviderDef, resolved: string | null, PATH: 
   return observed;
 }
 
-function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
+/**
+ * What every probe of an installed CLI runs with: PATH and the few identity
+ * and locale variables a program needs to start, and no credential. Exported
+ * for Codex's hook-trust probe (codex-hooks.ts), which starts the same binary
+ * and must be held to the same environment.
+ */
+export function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH };
   for (const name of ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL']) {
     if (process.env[name] !== undefined) env[name] = process.env[name];
@@ -760,6 +767,17 @@ async function probeVersion(def: ProviderDef, resolved: string, PATH: string): P
   try { return await work; } finally { versionInFlight.delete(key); }
 }
 
+/**
+ * The `--version` line of one already-resolved binary, read through the same
+ * identity-keyed cache detectProviders() fills. A headless row resolves its
+ * binary without a full detection sweep, and the version is what decides which
+ * hook events its settings file may name, so it must come from the file that
+ * will actually run rather than from whatever the profile last reported.
+ */
+export async function cliVersionOf(def: ProviderDef, resolved: string): Promise<string | null> {
+  return probeVersion(def, resolved, await shellPath());
+}
+
 async function which(def: ProviderDef): Promise<string | null> {
   const p = await shellPath();
   const onPath = path.isAbsolute(def.bin)
@@ -799,7 +817,13 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
     PROVIDERS.map(async (def): Promise<ProviderInfo> => {
       const resolved = await which(def);
       const version = resolved ? await probeVersion(def, resolved, p) : null;
-      const capabilities = await capabilitiesFor(def, resolved, p);
+      const probed = await capabilitiesFor(def, resolved, p);
+      // Outside capabilitiesFor's cache, because a first hook event changes
+      // this line while the binary stays the same. Read from what is already
+      // known: detection never starts Codex's app-server to fill it in.
+      const capabilities = def.harness === 'codex' && resolved
+        ? { ...probed, observeOnlyHooks: observeOnlyHooksStatus({ bin: resolved, version, proven: def.source === 'builtin' || probed.probed }) }
+        : probed;
       return {
         id: def.id,
         label: def.label,

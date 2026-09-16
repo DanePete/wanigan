@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ForgedSkill, Project, ProviderInfo, SkillDiagnostic, SkillInstallResult } from '@shared/types';
 import { Chip, EmptyState, Hint, Icon, Mark, Note, PageHead, Reading, Section, SectionHead, Segmented, ago, num } from '../components/bits';
+import { useChord } from '../bindings';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/skills.css';
 
@@ -724,6 +725,8 @@ function SkillEntry({ hit, selected, onRead }: { hit: Hit; selected: boolean; on
  * incomplete. Hiding the built-in caveat would make a partial list look total.
  */
 function Roots({ cat }: { cat: Catalogue }) {
+  const contextChord = useChord('view:context').glyphs;
+  const paletteChord = useChord('palette').glyphs;
   const total = cat.skills.length;
   let x = 0;
   const W = 100;
@@ -818,7 +821,7 @@ function Roots({ cat }: { cat: Catalogue }) {
       <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 11 }}>
         The rest of what a session in these repositories is told before you type anything — the CLAUDE.md
         chain, memory, rules, settings and hooks, and what carrying them costs per session — is the Context
-        view: <span className="mono">⌘⇧C</span>, or ⌘K → Context.
+        view: <span className="mono">{contextChord}</span>, or {paletteChord} → Context.
       </p>
     </Section></div>
   );

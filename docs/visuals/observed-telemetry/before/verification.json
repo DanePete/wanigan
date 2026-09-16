@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-15T03:46:27.629Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic status line readings, trace spans and spend; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Usage shows the /usage probe card and nothing a running session’s status line reported",
+    "before: the Timeline groups tool calls by turn with no model time, no permission wait and no prompt cache",
+    "before: Insights splits spend by surface and project, and nothing says which skill, plugin, MCP server or subagent spent it"
+  ],
+  "errors": []
+}

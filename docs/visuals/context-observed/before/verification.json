@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-14T22:03:23.390Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic files and services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the Instructions area ends at its load order, with no report of what a session loaded"
+  ],
+  "errors": []
+}

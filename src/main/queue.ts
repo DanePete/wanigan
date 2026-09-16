@@ -3,6 +3,8 @@ import { db } from './db';
 import { halted } from './halt';
 import { pruneEvents } from './hooks';
 import { pruneCheckpoints } from './checkpoints';
+import { pruneSpans } from './otel';
+import { pruneStatusObservations } from './statusline';
 import { eventRetentionDays, getSetting, setSetting } from './settings';
 import {
   DEFAULT_SLOTS,
@@ -121,7 +123,19 @@ function mapRow(r: QueueRow): QueueItem {
 
 /* ── enqueue / inspect ───────────────────────────────────────────────── */
 
+/**
+ * Why an interactive session is never queued work.
+ *
+ * A session is a terminal with a person at it. Above its limit it is refused at
+ * launch rather than queued, and nothing starts an unattended terminal, so no
+ * runner has ever been registered for the kind. The CLI offered `queue session`
+ * anyway, and the item it wrote waited on "no runner registered" for ever while
+ * the command said it would start when a slot was free.
+ */
+export const SESSION_NOT_QUEUED = 'Interactive sessions are not queued: a session is a terminal with a person at it, so it starts only when someone starts it in Wanigan. Queue headless work or a batch instead.';
+
 export function enqueue(kind: QueueKind, label: string, payload: unknown, priority = 100): QueueItem {
+  if (kind === 'session') throw new Error(SESSION_NOT_QUEUED);
   const name = label.trim();
   if (!name) throw new Error('A queued item needs a label — it is the only thing the user sees while it waits.');
 
@@ -287,8 +301,27 @@ export function setSlots(next: Partial<QueueSlots>): QueueSlots {
  * The surfaces register themselves. Re-registering replaces, so a dev reload
  * does not leave a dead closure holding a kind hostage.
  */
-export function registerRunner(kind: QueueKind, run: QueueRunner): void {
+export function registerRunner(kind: QueueKind, run: QueueRunner): () => void {
   runners.set(kind, run);
+  return () => { if (runners.get(kind) === run) runners.delete(kind); };
+}
+
+/**
+ * A check a row must pass before it is claimed: a reason to wait, or null.
+ *
+ * Registered from outside so the queue does not import what it asks about.
+ * Asked after the slot check, so a full lane never costs the read, and before
+ * the claim, so a held row stays 'waiting' with its reason in blocked_by and
+ * starts on the first tick after the reason lifts — nothing to retry, nothing
+ * to re-create. A gate that throws holds the row rather than letting it
+ * through: "could not check" is not permission.
+ */
+export type QueueGate = (kind: QueueKind, payload: unknown) => string | null;
+let gate: QueueGate | null = null;
+
+export function registerGate(next: QueueGate): () => void {
+  gate = next;
+  return () => { if (gate === next) gate = null; };
 }
 
 /* ── dispatch ────────────────────────────────────────────────────────── */
@@ -373,6 +406,14 @@ async function dispatch(): Promise<void> {
     const kind = row.kind as QueueKind;
     const run = runners.get(kind);
 
+    // An interactive session written by an older build never gets a runner, so
+    // waiting is not a state it can leave; it ends here, saying why.
+    if (!run && kind === 'session') {
+      d.prepare("UPDATE queue SET state='failed', ended_at=?, blocked_by=NULL, error=? WHERE id=? AND state='waiting'")
+        .run(now, SESSION_NOT_QUEUED, row.id);
+      moved = true;
+      continue;
+    }
     // A kind nobody has wired yet waits rather than fails: the work is still
     // valid, the app simply has not registered that surface in this build.
     if (!run) {
@@ -397,6 +438,14 @@ async function dispatch(): Promise<void> {
       d.prepare("UPDATE queue SET state='failed', ended_at=?, blocked_by=NULL, error=? WHERE id=? AND state='waiting'")
         .run(now, 'Stored payload is not readable JSON — remove this item and start the work again.', row.id);
       moved = true;
+      continue;
+    }
+
+    let held: string | null = null;
+    try { held = gate ? gate(kind, payload) : null; }
+    catch (error) { held = `Could not check whether this may start, so it is waiting: ${error instanceof Error ? error.message : String(error)}`; }
+    if (held) {
+      moved = setBlocked(row, held) || moved;
       continue;
     }
 
@@ -641,6 +690,13 @@ function pruneRetention(): void {
     const checkpointSessions = pruneCheckpoints(days * DAY_MS);
     if (checkpointSessions > 0) {
       console.log(`[wanigan] pruned checkpoints for ${checkpointSessions} session(s) older than ${days} days`);
+    }
+    // Trace spans and status line readings are the same kind of evidence, and
+    // Settings names them under the same window.
+    const spans = pruneSpans(days * DAY_MS);
+    const readings = pruneStatusObservations(days * DAY_MS);
+    if (spans + readings > 0) {
+      console.log(`[wanigan] pruned ${spans} trace span(s) and ${readings} status line reading(s) older than ${days} days`);
     }
   } catch (error) {
     // Housekeeping. A busy database here must not take the dispatch loop's

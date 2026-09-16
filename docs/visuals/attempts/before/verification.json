@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T05:38:08.833Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; report figures computed by src/shared/attempts.ts; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Runs lists headless fan-outs only; there is no way to run one task several times from one commit or compare the results"
+  ],
+  "errors": []
+}
