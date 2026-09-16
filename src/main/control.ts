@@ -560,6 +560,11 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This goal’s project no longer exists.');
   const providerId = safeText(input.providerId, 'Provider', 120);
+  // Refuse before taking a claim or launching an agent. A shared verifier
+  // cannot be handed one arbitrary branch and told it contains the whole goal.
+  const inheritedTree = (node.kind === 'verify' || node.kind === 'review')
+    ? verificationTree(nodeRow(nodeId)) : { kind: 'none' as const };
+  assertVerificationTree(inheritedTree);
   // Take the declared claim before anything is spawned. A conflict found after
   // the PTY is up has already cost tokens and left an agent editing a
   // directory another node owns; found here it costs one refused click.
@@ -585,9 +590,6 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   // A verification or review task runs in the tree it is verifying. Cutting it
   // a fresh worktree from the base branch handed the agent a checkout without
   // the implementation in it and then asked it to check the implementation.
-  const inheritedTree = (node.kind === 'verify' || node.kind === 'review')
-    ? verificationTree(nodeRow(nodeId))
-    : { kind: 'none' as const };
   const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
@@ -736,7 +738,10 @@ export function traces(docketId: string, limit?: number): GoalTraceEvent[] {
  * The tree that matters is the one the implementation was made in: the worktree
  * of the node this one depends on, walking back through the graph.
  *
- * Three answers, because three things are true in practice:
+ * A shared verifier must resolve to one checkout. More than one distinct
+ * implementation root is refused: this graph has no integration operation.
+ *
+ * Other answers distinguish availability from work done in the project:
  *  - `found`   an implementation worktree exists and is on disk. Use it.
  *  - `gone`    one was recorded and is no longer there. Refuse: the change
  *              cannot be verified, and verifying the base branch instead would
@@ -749,7 +754,17 @@ export function traces(docketId: string, limit?: number): GoalTraceEvent[] {
 type VerificationTree =
   | { kind: 'found'; path: string; from: NodeRow }
   | { kind: 'gone'; path: string; from: NodeRow }
+  | { kind: 'ambiguous'; titles: string[] }
   | { kind: 'none' };
+
+function assertVerificationTree(tree: VerificationTree): void {
+  if (tree.kind === 'ambiguous') {
+    throw new Error(`This task spans multiple implementation checkouts (${tree.titles.join(', ')}). Wanigan cannot verify their combined result. Use a separate verification task for each branch, or integrate the work into one checkout before verifying it.`);
+  }
+  if (tree.kind === 'gone') {
+    throw new Error(`The worktree “${tree.from.title}” produced is no longer on disk (${tree.path}), so there is nothing here to verify. Restore that checkout before running the review gate.`);
+  }
+}
 
 function verificationTree(node: NodeRow): VerificationTree {
   // A node that ran in its own worktree and is not a verification of something
@@ -763,38 +778,42 @@ function verificationTree(node: NodeRow): VerificationTree {
   const byId = new Map(rows.map((row) => [row.id, row]));
   const seen = new Set<string>([node.id]);
   const queue = [...parseStrings(node.depends_json)];
-  let missing: VerificationTree | null = null;
+  const roots = new Map<string, { path: string; from: NodeRow; available: boolean; isolated: boolean }>();
+  const projectPath = projectById(docketRow(node.docket_id).project_id)?.path;
   while (queue.length) {
     const id = queue.shift()!;
     if (seen.has(id)) continue;
     seen.add(id);
     const row = byId.get(id);
     if (!row) continue;
-    if (row.kind === 'implement' && row.worktree) {
-      if (pathExists(row.worktree)) return { kind: 'found', path: row.worktree, from: row };
-      // Keep looking: a fan-out can hold more than one implementation, and a
-      // live one outranks a vanished one. Remember this for the refusal.
-      missing ??= { kind: 'gone', path: row.worktree, from: row };
+    if (row.kind === 'implement') {
+      // A manually completed branch with no isolated tree represents work in
+      // the project checkout, which cannot disappear from a mixed fan-in.
+      const root = row.worktree ?? projectPath;
+      if (root) {
+        let canonical = path.resolve(root); let available = false;
+        try { canonical = fs.realpathSync(root); available = fs.statSync(canonical).isDirectory(); } catch { /* retained as unavailable */ }
+        roots.set(canonical, { path: root, from: row, available, isolated: row.worktree !== null });
+      }
     }
     queue.push(...parseStrings(row.depends_json));
   }
-  return missing ?? { kind: 'none' };
+  if (roots.size > 1) return { kind: 'ambiguous', titles: [...roots.values()].map(value => `“${value.from.title}”`) };
+  const root = roots.values().next().value;
+  if (!root) return { kind: 'none' };
+  if (!root.available) return { kind: 'gone', path: root.path, from: root.from };
+  return root.isolated ? { kind: 'found', path: root.path, from: root.from } : { kind: 'none' };
 }
 
 export async function runProof(nodeId: string): Promise<DocketProof> {
   const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const project = projectById(parent.project_id);
   if (!project) throw new Error('Project not found.');
   const tree = verificationTree(node);
-  if (tree.kind === 'gone') {
-    throw new Error(
-      `The worktree “${tree.from.title}” produced is no longer on disk (${tree.path}), so there is `
-      + 'nothing here to verify. Running the gate anyway would test the base branch and record a '
-      + 'pass for a change it never saw.',
-    );
-  }
+  assertVerificationTree(tree);
   const cwd = tree.kind === 'found' ? tree.path : project.path;
   const run = await review.runAt(project.id, cwd);
-  const passed = run.status === 'passed';
+  const commandsPassed = run.status === 'passed';
+  const passed = commandsPassed && run.freshness.state === 'current';
   // Which tree, named by the task that produced it — never by its path.
   //
   // A proof that does not say which working copy it ran in cannot be checked
@@ -807,14 +826,18 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
     : " in this goal's project checkout";
   const summary = passed
     ? `${run.results.length} review command(s) passed${where}.`
-    : `Review gate failed after ${run.results.length} command(s)${where}.`;
-  const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: 'test', status: passed ? 'passed' : 'failed', summary, createdAt: now() };
+    : commandsPassed
+      ? `${run.results.length} review command(s) passed${where}. Current checkout not verified: ${run.freshness.reason}`
+      : `Review gate failed after ${run.results.length} command(s)${where}.`;
+  const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: 'test',
+    status: passed ? 'passed' : commandsPassed ? 'recorded' : 'failed', summary, createdAt: now() };
   db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
     .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
       JSON.stringify({
         // Which working copy the commands actually ran in. Desktop-only: the
         // phone reads `summary`, and this is the field that names a path.
         cwd,
+        reviewRunId: run.id,
         treeFrom: tree.kind === 'found' ? tree.from.title : null,
         results: run.results.map((result) => ({ command: result.command, exitCode: result.exitCode, durationMs: result.durationMs })),
       }), proof.createdAt);
@@ -822,15 +845,33 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
 }
 
 /**
- * The LATEST gate run decides. Accepting any historical pass meant a green run
- * from an hour and three commits ago outvoted the red one just recorded — the
- * proof would say "verified" about a tree that had since failed.
+ * A proof points at the actual review run, whose recorded checkout and recipe
+ * must still match. Old proofs without that binding remain historical evidence;
+ * their status alone cannot establish a current pass.
  */
-function hasPassedProof(docketId: string, nodeId: string): boolean {
-  const latest = db().prepare(`SELECT status FROM work_proofs
+type TestProofRow = { id: string; status: string; detail_json: string };
+type CheckedTestProof = { passed: false } | { passed: true; runId: string; cwd: string };
+
+function latestTestProof(docketId: string, nodeId: string): TestProofRow | null {
+  return db().prepare(`SELECT id,status,detail_json FROM work_proofs
     WHERE docket_id=? AND node_id=? AND kind='test' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-    .get(docketId, nodeId) as { status: string } | undefined;
-  return latest?.status === 'passed';
+    .get(docketId, nodeId) as TestProofRow | undefined ?? null;
+}
+
+async function hasPassedProof(parent: DocketRow, node: NodeRow, proof: TestProofRow | null): Promise<CheckedTestProof> {
+  if (proof?.status !== 'passed') return { passed: false };
+  let runId: unknown;
+  try { runId = (JSON.parse(proof.detail_json) as { reviewRunId?: unknown } | null)?.reviewRunId; }
+  catch { return { passed: false }; }
+  if (typeof runId !== 'string' || !runId.trim()) return { passed: false };
+  const project = projectById(parent.project_id);
+  if (!project) return { passed: false };
+  const tree = verificationTree(node);
+  if (tree.kind === 'gone' || tree.kind === 'ambiguous') return { passed: false };
+  const cwd = tree.kind === 'found' ? tree.path : project.path;
+  return await review.isCurrentPass(runId, project.id, cwd)
+    ? { passed: true, runId, cwd }
+    : { passed: false };
 }
 
 function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): void {
@@ -850,8 +891,9 @@ function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): v
       reported ? usage!.costUsd : 0, reported ? 1 : 0, effort?.effort ?? null, now());
 }
 
-export function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }): DocketNode {
-  const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const current = mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
+export async function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }): Promise<DocketNode> {
+  const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const nodes = rawNodes(parent.id);
+  const current = mapNodes(nodes).find((value) => value.id === nodeId)!;
   if (!['running', 'ready'].includes(current.status)) throw new Error(`Only a ready or running task can be completed; this task is ${current.status}.`);
   const detail = input.detail?.trim() ? safeText(input.detail, 'Completion note', MAX_NOTE) : null;
   const decision = input.decision ?? 'approve';
@@ -859,41 +901,87 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   // first would let one green branch speak for a tree whose other branch failed
   // its gate, both in the approval check below and in the evidence stored for
   // the router — so the whole set decides.
-  const verifyNodes = node.kind === 'review' ? mapNodes(rawNodes(parent.id)).filter((value) => value.kind === 'verify') : [];
-  const testsPassed = node.kind === 'verify' ? hasPassedProof(parent.id, nodeId)
-    : node.kind === 'review' ? verifyNodes.length > 0 && verifyNodes.every((value) => hasPassedProof(parent.id, value.id))
-      : true;
-  if (node.kind === 'verify' && !testsPassed) throw new Error('Run and pass the review gate before completing verification. A claim without command evidence is not proof.');
-  if (node.kind === 'review' && decision === 'approve' && !testsPassed) {
-    const unproven = verifyNodes.filter((value) => !hasPassedProof(parent.id, value.id));
-    throw new Error(verifyNodes.length === 0
-      ? 'Approval requires a passed verification proof, and this goal has no verification task.'
-      : `Approval requires a passed verification proof for every verification task. Still unproven: ${unproven.map((value) => value.title).join(', ')}.`);
-  }
-  const failed = decision !== 'approve';
-  db().prepare('UPDATE work_nodes SET status=?,ended_at=?,detail=? WHERE id=?')
-    .run(failed ? 'failed' : 'completed', now(), detail, nodeId);
-  releaseClaims(nodeId); setTaskStatus(nodeId, failed ? (decision === 'reject' ? 'cancelled' : 'failed') : 'completed');
-  const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: node.kind === 'review' ? 'decision' : 'review',
-    status: failed ? 'failed' : 'recorded', summary: node.kind === 'review' ? `Human decision: ${decision.replace('_', ' ')}.` : (detail ?? `${node.title} completed.`), createdAt: now() };
-  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary, proof.createdAt);
-  // The final decision is evidence about the work-producing agents, not just
-  // about the reviewer. Persist one outcome per launched phase so the router
-  // can compare implementation, verification and review models separately.
-  if (node.kind === 'review') {
-    for (const candidate of rawNodes(parent.id)) {
-      if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
+  const verifyNodes = node.kind === 'review' ? nodes.filter((value) => value.kind === 'verify') : [];
+  const checkedNodes = node.kind === 'verify' ? [node] : verifyNodes;
+  const proofs = checkedNodes.map((value) => latestTestProof(parent.id, value.id));
+  const graphBefore = JSON.stringify(nodes);
+  const parentBefore = JSON.stringify(parent);
+  const projectPath = projectById(parent.project_id)?.path ?? null;
+  const commandsBefore = JSON.stringify(review.recipe(parent.project_id).commands);
+  const checkedProofs = await Promise.all(checkedNodes.map((value, index) => hasPassedProof(parent, value, proofs[index])));
+  const passes = checkedProofs.map((proof) => proof.passed);
+  const testsPassed = node.kind === 'verify' ? passes[0] === true
+    : node.kind === 'review' ? verifyNodes.length > 0 && passes.every(Boolean) : true;
+
+  // Reading the filesystem yields to other decisions and new gate results.
+  // Re-check their exact identities under the same database transaction as the
+  // decision, so another process cannot replace one between the check and write.
+  return db().transaction(() => {
+    const freshNodes = rawNodes(parent.id);
+    if (JSON.stringify(freshNodes) !== graphBefore || JSON.stringify(docketRow(parent.id)) !== parentBefore
+      || (projectById(parent.project_id)?.path ?? null) !== projectPath
+      || JSON.stringify(review.recipe(parent.project_id).commands) !== commandsBefore
+      || checkedNodes.some((value, index) => JSON.stringify(latestTestProof(parent.id, value.id)) !== JSON.stringify(proofs[index]))) {
+      throw new Error('This goal or its verification evidence changed while the checks were being validated. Refresh the goal and review it again. Nothing was decided.');
     }
-  }
-  // No interim row for plan/verify. It was written as accepted=0 expecting the
-  // review pass above to overwrite it — but a goal that is abandoned before
-  // review never reaches that loop, leaving those phases permanently recorded
-  // as rejected work. An unreviewed phase has no verdict, and no verdict is
-  // not a rejection; the router is better served by silence than by a guess.
-  if (node.kind === 'review' && decision === 'reject') db().prepare("UPDATE work_dockets SET status='rejected',updated_at=? WHERE id=?").run(now(), parent.id);
-  else setDocketPhase(parent.id);
-  return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
+    const freshCurrent = mapNodes(freshNodes).find((value) => value.id === nodeId)!;
+    if (!['running', 'ready'].includes(freshCurrent.status)) throw new Error(`Only a ready or running task can be completed; this task is ${freshCurrent.status}.`);
+    if (decision === 'approve') {
+      // Revalidate the subject as well as the old run. A legacy proof that
+      // chose the first branch cannot authorize an ambiguous shared verifier.
+      for (const candidate of checkedNodes) assertVerificationTree(verificationTree(candidate));
+    }
+    if (node.kind === 'verify' && !testsPassed) throw new Error('Run and pass the review gate for the current checkout and commands before completing verification. Historical or stale command evidence is not a current pass.');
+    if (node.kind === 'review' && decision === 'approve' && !testsPassed) {
+      const unproven = verifyNodes.filter((_value, index) => !passes[index]);
+      throw new Error(verifyNodes.length === 0
+        ? 'Approval requires a passed verification proof, and this goal has no verification task.'
+        : `Approval requires a current passed verification proof for every verification task. Run the gate again for: ${unproven.map((value) => value.title).join(', ')}.`);
+    }
+    if (node.kind === 'review' && decision === 'approve') {
+      const canonical = (root: string) => {
+        try { return fs.realpathSync(root); } catch { return path.resolve(root); }
+      };
+      const covered = new Set(checkedProofs.flatMap(proof => proof.passed ? [canonical(proof.cwd)] : []));
+      const uncovered = freshNodes.filter(candidate => candidate.kind === 'implement'
+        && !covered.has(canonical(candidate.worktree ?? projectPath ?? '')));
+      if (uncovered.length) {
+        throw new Error(`Approval requires current verification of every implementation checkout. No passed gate covers: ${uncovered.map(candidate => candidate.title).join(', ')}.`);
+      }
+    }
+    if (decision === 'approve') {
+      // One checkout may start or finish another gate while a sibling's async
+      // snapshot is pending. Check the exact run and path that passed above,
+      // without yielding or resolving the graph to a different checkout.
+      for (const proof of checkedProofs) {
+        if (proof.passed) review.assertPassNotSuperseded(proof.runId, parent.project_id, proof.cwd);
+      }
+    }
+    const failed = decision !== 'approve';
+    db().prepare('UPDATE work_nodes SET status=?,ended_at=?,detail=? WHERE id=?')
+      .run(failed ? 'failed' : 'completed', now(), detail, nodeId);
+    releaseClaims(nodeId); setTaskStatus(nodeId, failed ? (decision === 'reject' ? 'cancelled' : 'failed') : 'completed');
+    const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: node.kind === 'review' ? 'decision' : 'review',
+      status: failed ? 'failed' : 'recorded', summary: node.kind === 'review' ? `Human decision: ${decision.replace('_', ' ')}.` : (detail ?? `${node.title} completed.`), createdAt: now() };
+    db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary, proof.createdAt);
+    // The final decision is evidence about the work-producing agents, not just
+    // about the reviewer. Persist one outcome per launched phase so the router
+    // can compare implementation, verification and review models separately.
+    if (node.kind === 'review') {
+      for (const candidate of rawNodes(parent.id)) {
+        if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
+      }
+    }
+    // No interim row for plan/verify. It was written as accepted=0 expecting the
+    // review pass above to overwrite it — but a goal that is abandoned before
+    // review never reaches that loop, leaving those phases permanently recorded
+    // as rejected work. An unreviewed phase has no verdict, and no verdict is
+    // not a rejection; the router is better served by silence than by a guess.
+    if (node.kind === 'review' && decision === 'reject') db().prepare("UPDATE work_dockets SET status='rejected',updated_at=? WHERE id=?").run(now(), parent.id);
+    else setDocketPhase(parent.id);
+    return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
+  })();
 }
 
 /**
@@ -1175,6 +1263,45 @@ function clearDispatch(nodeId: string): void {
   db().prepare("UPDATE work_nodes SET dispatch_state=NULL WHERE id=? AND dispatch_state='queued'").run(nodeId);
 }
 
+function activeQueuedNodeIds(): Set<string> {
+  const active = new Set<string>();
+  const rows = db().prepare("SELECT payload_json FROM queue WHERE kind='node' AND state IN ('waiting','running')")
+    .all() as { payload_json: string }[];
+  for (const row of rows) {
+    try {
+      const value = JSON.parse(row.payload_json) as { nodeId?: unknown } | null;
+      if (typeof value?.nodeId === 'string') active.add(value.nodeId);
+    } catch { /* corrupt work cannot own a task dispatch */ }
+  }
+  return active;
+}
+
+/** Called synchronously by the queue's cancellation transaction. Cancellation
+ * is a deliberate stop, so leave the task reopenable instead of re-enqueueing
+ * it immediately on the next armed sweep. */
+export function cancelQueuedNode(nodeId: string): boolean {
+  const row = db().prepare("SELECT * FROM work_nodes WHERE id=? AND status='pending' AND dispatch_state='queued' AND session_id IS NULL")
+    .get(nodeId) as NodeRow | undefined;
+  if (!row || activeQueuedNodeIds().has(nodeId)) return false;
+  const changed = db().prepare(`UPDATE work_nodes SET status='canceled',dispatch_state=NULL,ended_at=?,detail=?
+    WHERE id=? AND status='pending' AND dispatch_state='queued' AND session_id IS NULL`)
+    .run(now(), 'The queued dispatch was canceled or removed before this task started. Reopen the task to run it.', nodeId);
+  if (!changed.changes) return false;
+  releaseClaims(nodeId); setTaskStatus(nodeId, 'cancelled'); setDocketPhase(row.docket_id);
+  return true;
+}
+
+/** Repair ownership left by older builds or removed queue rows. Both this read
+ * and its write share a reservation with enqueue/cancel across processes. */
+function reconcileQueuedNodes(): void {
+  db().transaction(() => {
+    const active = activeQueuedNodeIds();
+    const queued = db().prepare("SELECT id FROM work_nodes WHERE status='pending' AND dispatch_state='queued' AND session_id IS NULL")
+      .all() as { id: string }[];
+    for (const node of queued) if (!active.has(node.id)) cancelQueuedNode(node.id);
+  }).immediate();
+}
+
 /**
  * Stop dispatching this goal and say why, in its own evidence.
  *
@@ -1281,6 +1408,7 @@ export function setDocketBudget(docketId: string, budgetUsd: number | null): Doc
  * reported.
  */
 export function sweepAutopilot(): number {
+  reconcileQueuedNodes();
   // Left armed, not disarmed. The halt's own stop pass disarms autopilots and
   // records how many, so an operator can see what it turned off and decide
   // whether to arm them again; a sweep that quietly disarmed them on every tick
@@ -1307,16 +1435,14 @@ export function sweepAutopilot(): number {
       if (node.status !== 'ready' || node.kind === 'review') continue;
       // The marker is claimed in the same statement that tests it, so two
       // ticks — or two processes on this database — cannot both enqueue it.
-      const claimed = db().prepare(`UPDATE work_nodes SET dispatch_state='queued'
-        WHERE id=? AND dispatch_state IS NULL AND status='pending' AND session_id IS NULL`).run(node.id);
-      if (claimed.changes !== 1) continue;
-      try {
+      const claimed = db().transaction(() => {
+        const changed = db().prepare(`UPDATE work_nodes SET dispatch_state='queued'
+          WHERE id=? AND dispatch_state IS NULL AND status='pending' AND session_id IS NULL`).run(node.id);
+        if (changed.changes !== 1) return false;
         enqueue('node', `${row.title} · ${node.title}`, { nodeId: node.id });
-        queued++;
-      } catch (error) {
-        clearDispatch(node.id);
-        throw error;
-      }
+        return true;
+      }).immediate();
+      if (claimed) queued++;
     }
   }
   return queued;
@@ -1357,6 +1483,7 @@ export async function startQueuedNode(nodeId: string): Promise<void> {
  * be running holds claims nobody can release.
  */
 export function reconcileRunningNodes(): number {
+  reconcileQueuedNodes();
   const running = db().prepare("SELECT id,session_id FROM work_nodes WHERE status='running'")
     .all() as { id: string; session_id: string | null }[];
   if (!running.length) return 0;

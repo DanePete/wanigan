@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
+import { modalOpen } from '../bindings';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { splitTerminalInput } from '@shared/terminal-input';
+import { TerminalReplay } from '@shared/terminal-replay';
 
 /**
  * One xterm instance per session, kept alive across tab switches. Terminals are
@@ -26,10 +28,7 @@ type Pane = {
   container: HTMLDivElement;
   /** Set when this session's one scrollback prime has been asked for. */
   primed: boolean;
-  /** True from that request until the buffer is written, or refused. */
-  priming: boolean;
-  /** Text this window composed, held back so the prime cannot bury it. */
-  pendingLocal: string[];
+  replay: TerminalReplay;
 };
 
 const pool = new Map<string, Pane>();
@@ -124,20 +123,20 @@ export function disposePane(sessionId: string) {
  * Feed broadcast PTY output into a session's terminal even while its pane is
  * not mounted.
  *
- * Nothing is written while that pane is priming. Main appends each chunk to its
+ * Nothing is written while awaiting the snapshot. Main appends each chunk to its
  * ring buffer before it broadcasts the chunk, and flushes that buffer before it
  * answers `scrollback()`, so a chunk broadcast during the round trip is already
  * inside the history about to be written. Writing it here as well put it on
  * screen twice — and because TUI output carries cursor addressing, the second
  * copy repaints against a screen that no longer matches. Dropping it loses
  * nothing so long as main's answer reaches this window ahead of the chunks it
- * broadcasts after answering: the ordering that scrollback()'s own comment in
- * src/main/sessions.ts already depends on.
+ * broadcasts after answering. Once the answer arrives, live output queues
+ * behind the snapshot in xterm even while it is still parsing. Outbound replies
+ * remain suppressed until parsing completes; those are separate boundaries.
  */
 export function feed(sessionId: string, data: string) {
   const entry = pool.get(sessionId);
-  if (!entry || entry.priming) return;
-  entry.term.write(data);
+  entry?.replay.feed(data);
 }
 
 /**
@@ -149,15 +148,7 @@ export function feed(sessionId: string, data: string) {
  */
 function feedLocal(sessionId: string, text: string) {
   const entry = pool.get(sessionId);
-  if (!entry) return;
-  if (entry.priming) entry.pendingLocal.push(text);
-  else entry.term.write(text);
-}
-
-/** Open the gate, then release what waited on it — in that order. */
-function finishPrime(pane: Pane) {
-  pane.priming = false;
-  for (const text of pane.pendingLocal.splice(0)) pane.term.write(text);
+  entry?.replay.local(text);
 }
 
 /**
@@ -200,7 +191,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
   // surface is tapped (or reached by keyboard), so the on-screen keyboard is
   // available without hunting for xterm's invisible input.
   const focusInput = () => {
-    if (!visible) return;
+    if (!visible || modalOpen()) return;
     pool.get(sessionId)?.term.focus();
   };
 
@@ -250,7 +241,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
         // closure: this handler is registered once for a pooled terminal, and
         // the `entry` binding it could capture belongs to whichever mount
         // happened to create it.
-        if (pool.get(sessionId)?.priming) return;
+        if (pool.get(sessionId)?.replay.suppressInput) return;
         for (const chunk of splitTerminalInput(data)) {
           window.wanigan.sessions.write(sessionId, chunk);
         }
@@ -265,7 +256,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       const container = document.createElement('div');
       container.style.width = '100%';
       container.style.height = '100%';
-      entry = { term, fit, container, primed: false, priming: false, pendingLocal: [] };
+      entry = { term, fit, container, primed: false, replay: new TerminalReplay((text, parsed) => term.write(text, parsed)) };
       pool.set(sessionId, entry);
       // Opened exactly once, for the life of the session.
       term.open(container);
@@ -278,28 +269,19 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     // an empty screen mid-conversation.
     if (!entry.primed) {
       entry.primed = true;
-      // Shut the gate feed() reads for the round trip; see feed() for what
-      // the buffer below already carries.
-      entry.priming = true;
       const pane = entry;
       window.wanigan.sessions.scrollback(sessionId)
         .then((buf) => {
           // A pane disposed mid-prime has a disposed terminal, and a session
           // re-mounted after that is a new entry with a prime of its own.
           if (pool.get(sessionId) !== pane) return;
-          // write() queues; it does not parse. Opening the gate on the next
-          // line left `priming` false for the whole parse, which is exactly
-          // when the replayed queries are answered — so the guard above would
-          // have been closed at the only moment it mattered. The callback
-          // fires once this buffer has actually been consumed.
-          if (buf) pane.term.write(buf, () => finishPrime(pane));
-          else finishPrime(pane);
+          pane.replay.snapshot(buf);
         })
         .catch(() => {
           // A refused scrollback still has to open the gate. Left shut, feed()
           // would drop every later chunk for the life of the session — a pane
           // deaf to a running agent, which is worse than a missing history.
-          if (pool.get(sessionId) === pane) finishPrime(pane);
+          if (pool.get(sessionId) === pane) pane.replay.failed();
         });
     }
 
@@ -339,7 +321,9 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
           // detached and re-attached the renderer has no dirty region, so it
           // draws nothing until the agent happens to emit its next byte.
           e.term.refresh(0, e.term.rows - 1);
-          e.term.focus();
+          // This delayed layout pass may finish after a launch/review dialog
+          // has claimed focus. Fitting is safe; stealing its keyboard is not.
+          if (!modalOpen()) e.term.focus();
         } catch { /* noop */ }
       });
       cleanup = () => cancelAnimationFrame(raf2);

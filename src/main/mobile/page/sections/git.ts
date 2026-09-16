@@ -365,13 +365,19 @@ export const GIT_SECTION: MobileSection = {
       // gate started on the Mac, or one that outlived the process that started
       // it, has no recorded tree, and 'not known' is not 'the same one'.
       function repoGateSubject(run) {
+        if (run.live || run.freshness === 'running') {
+          return { glyph: '…', tone: 'quiet', words: 'Checks are still running; their checkout comparison is not complete.' };
+        }
         if (!run.ranAgainst) {
           return { glyph: '?', tone: 'quiet', words: 'Wanigan did not record which working tree this run saw, so it cannot say whether this result is about the files above.' };
         }
-        if (run.ranAgainst === repoTreeId) {
-          return { glyph: '✓', tone: 'ok', words: 'It ran against exactly the working tree above.' };
+        if (run.freshness === 'unavailable' || !run.freshness) {
+          return { glyph: '?', tone: 'quiet', words: 'Wanigan cannot compare this run with the current checkout and saved commands.' };
         }
-        return { glyph: '●', tone: 'serious', words: 'The working tree has changed since this ran, so this result is not about the files above.' };
+        if (run.freshness === 'current') {
+          return { glyph: '✓', tone: 'ok', words: 'Git-visible content and saved commands matched this run at the last check. Ignored files are outside this comparison.' };
+        }
+        return { glyph: '●', tone: 'serious', words: 'The checkout content or saved commands have changed since this ran. Run the gate again.' };
       }
 
       function repoGateFailureWords(run) {
@@ -490,12 +496,12 @@ export const GIT_SECTION: MobileSection = {
         const run = repoGate.latest;
         if (!run) return 'The review gate has never run in this project.';
         if (run.live) return 'The review gate is running now. Its result is not in yet.';
-        if (run.ranAgainst && run.ranAgainst !== repoTreeId) {
-          return 'The last review gate ran against a different working tree, so it says nothing about these files.';
+        if (run.freshness === 'stale') {
+          return 'The last review gate no longer matches this checkout and saved commands. Run it again.';
         }
-        if (!run.ranAgainst) return 'Wanigan cannot say which working tree the last gate run saw.';
-        if (run.status === 'passed') return 'The review gate passed against exactly these files.';
-        if (run.status === 'failed') return 'The review gate failed against exactly these files.';
+        if (run.freshness !== 'current') return 'Wanigan cannot confirm the last gate against this checkout and saved commands.';
+        if (run.status === 'passed') return 'The review gate passed; Git-visible content and commands matched at the last check.';
+        if (run.status === 'failed') return 'The review gate failed; Git-visible content and commands matched at the last check.';
         return 'The last review gate ended in a state this screen cannot name.';
       }
 

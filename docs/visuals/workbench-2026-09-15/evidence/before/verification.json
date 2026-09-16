@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-16T01:33:27.592Z",
+  "provenance": "Built renderer in isolated Electron; synthetic code/review bridge. No real main, PTY, Git command, or provider calls.",
+  "checks": [
+    "History refresh preserves the unsaved recipe"
+  ],
+  "failures": [
+    {
+      "name": "Changes starts in a reading state without claiming non-repository",
+      "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Reading (workspace )?changes/. Input:\n\n'Changes\\n' +\n  'Files\\n' +\n  'Turns\\n' +\n  '◉ following\\n' +\n  'Actions\\n' +\n  'Read code\\n' +\n  '\\n' +\n  'Not a git repository.\\n' +\n  '\\n' +\n  'Select a changed file to see its diff.'\n"
+    },
+    {
+      "name": "Unreadable Git response names the failure instead of no changes",
+      "error": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Synthetic Git status unavailable/. Input:\n\n'Changes\\n' +\n  'Files\\n' +\n  'Turns\\n' +\n  '◉ following\\n' +\n  'Actions\\n' +\n  'Read code\\n' +\n  '\\n' +\n  'No changes yet. Edits appear here as the agent makes them.\\n' +\n  '\\n' +\n  'Select a changed file to see its diff.'\n"
+    },
+    {
+      "name": "Remounted review follows recorded running status to completion",
+      "error": "TimeoutError: page.waitForFunction: Timeout 7000ms exceeded."
+    }
+  ],
+  "errors": []
+}

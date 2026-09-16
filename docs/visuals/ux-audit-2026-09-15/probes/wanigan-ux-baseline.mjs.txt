@@ -1,0 +1,162 @@
+#!/usr/bin/env node
+// Audit-only renderer probes. Every bridge call is a synthetic local fixture.
+// No production main/preload, provider calls, PTYs, or real user data are used.
+import { createRequire } from 'node:module';
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+const root = path.resolve(process.env.WANIGAN_REPO ?? process.cwd());
+const { STUB, rendererURL } = await import(path.join(root, 'scripts/renderer-harness.mjs'));
+const require = createRequire(path.join(root, 'package.json'));
+const { _electron } = require('playwright-core');
+const out = path.join(root, 'docs/visuals/ux-audit-2026-09-15/probes');
+mkdirSync(out, { recursive: true });
+const temp = mkdtempSync(path.join(tmpdir(), 'wanigan-ux-baseline-'));
+writeFileSync(path.join(temp, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:940,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
+const env = { ...process.env };
+delete env.ELECTRON_RUN_AS_NODE;
+for (const key of Object.keys(env)) if (key.startsWith('VSCODE_')) delete env[key];
+const app = await _electron.launch({
+  executablePath: path.join(root, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'),
+  args: [path.join(temp, 'main.cjs'), `--user-data-dir=${temp}/profile`], env,
+});
+const errors = [];
+const probes = [];
+let page;
+try {
+  page = await app.firstWindow();
+  page.setDefaultTimeout(15000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  page.on('pageerror', error => errors.push(error.message));
+  // Keep initialization order deterministic within one init script.
+  await page.addInitScript(STUB + `
+    (() => {
+      localStorage.setItem('wanigan.code', '1');
+      const base = window.wanigan;
+      window.__auditCalls = [];
+      window.__codeFailure = true;
+      const proxy = (target, changes) => new Proxy(target, { get(t, p) { return p in changes ? changes[p] : t[p]; } });
+      const sessions = proxy(base.sessions, {
+        list: async () => (await base.sessions.list()).map(s => ({ ...s,
+          projectPath: s.projectId === 'p1' ? '/example/storefront' : '/example/platform',
+          displayTitle: s.id === 's1' ? 'AuroraQuantumFox' : null,
+          harnessId: s.providerId === 'claude' ? 'claude-code' : 'codex',
+          capabilities: { hooks: false },
+        })),
+        baseline: async () => ({ head: 'abc123def456', dirty: [], at: Date.now() - 900000 }),
+        buffer: async () => '',
+      });
+      const code = proxy(base.code, {
+        changes: async (...args) => { window.__auditCalls.push(['code.changes', ...args]); return {
+          isRepo: true, branch: 'main', files: [], headMoved: false, commits: 0,
+          attributed: false, unreadable: window.__codeFailure ? 'SYNTHETIC Git status failed: permission denied' : null,
+        }; },
+        editors: async () => [],
+      });
+      const review = proxy(base.review, { recipe: async () => ({ commands: [] }), history: async () => [] });
+      const handoff = proxy(base.handoff, { plan: async () => ({ targets: [] }) });
+      const prefs = proxy(base.prefs, { all: async () => ({ ...(await base.prefs.all()), motion: 'off', navSidebar: 'closed' }) });
+      const transcripts = proxy(base.transcripts, { search: async () => [] });
+      const policy = proxy(base.policy, { trust: async () => 'project' });
+      window.wanigan = proxy(base, { sessions, code, review, handoff, prefs, transcripts, policy });
+    })();
+  `);
+  await page.goto(rendererURL);
+  await page.locator('.mission-room').waitFor();
+  await page.waitForTimeout(500);
+  const capture = async name => {
+    await page.evaluate(() => {
+      if (document.getElementById('audit-provenance')) return;
+      const label = document.createElement('div'); label.id = 'audit-provenance';
+      label.textContent = 'AUDIT: SYNTHETIC RENDERER FIXTURES · NO REAL AGENTS';
+      label.style.cssText = 'position:fixed;right:8px;bottom:3px;z-index:999999;padding:3px 6px;background:#111;color:#fff;font:10px monospace;pointer-events:none';
+      document.body.append(label);
+    });
+    const shots = [];
+    for (const theme of ['dark', 'light']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      await page.waitForTimeout(80);
+      const file = `${name}-${theme}.png`;
+      await page.screenshot({ path: path.join(out, file), scale: 'css', animations: 'disabled' });
+      shots.push(file);
+    }
+    return shots;
+  };
+  const nav = page.getByRole('navigation', { name: 'Workspace navigation', exact: true });
+  const shellState = () => page.evaluate(() => ({
+    route: document.querySelector('.brand-context')?.textContent ?? null,
+    scope: document.querySelector('.space-switch-trigger')?.getAttribute('aria-label') ?? null,
+    subview: document.querySelector('.space-routes [aria-current="page"]')?.textContent ?? null,
+    focused: { tag: document.activeElement?.tagName, text: document.activeElement?.textContent?.slice(0, 120), aria: document.activeElement?.getAttribute('aria-label') },
+  }));
+  const go = async key => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); };
+
+  // 1. Select project, open Changes, visit Fleet, then return via Projects.
+  await page.getByRole('button', { name: 'Switch project space: All spaces', exact: true }).click();
+  await page.getByRole('option').filter({ hasText: 'storefront' }).click();
+  await nav.getByRole('button', { name: 'Projects', exact: true }).click();
+  await page.locator('.sessions-view').waitFor();
+  await page.getByRole('navigation', { name: 'Projects views', exact: true }).getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.getByRole('heading', { name: 'Changes', exact: true }).waitFor();
+  const beforeFleet = await shellState();
+  const shots1 = await capture('scope-01-project-changes');
+  await nav.getByRole('button', { name: 'Fleet', exact: true }).click();
+  await page.getByRole('heading', { name: 'Fleet', exact: true }).waitFor();
+  const inFleet = await shellState();
+  await nav.getByRole('button', { name: 'Projects', exact: true }).click();
+  await page.locator('.sessions-view').waitFor();
+  const returnedProjects = await shellState();
+  shots1.push(...await capture('scope-02-returned-projects'));
+  probes.push({ id: 'project-return', fixture: 'storefront and platform are synthetic projects', beforeFleet, inFleet, returnedProjects, screenshots: shots1 });
+
+  // 2. Open non-modal destination sidebar and inspect actual focus/Escape behavior.
+  await nav.getByRole('button', { name: 'All destinations', exact: true }).click();
+  await page.locator('#wanigan-sidebar').waitFor();
+  const sidebarOpened = await shellState();
+  const shots2 = await capture('sidebar-open');
+  await page.keyboard.press('Escape');
+  const sidebarAfterEscape = { ...(await shellState()), visible: await page.locator('#wanigan-sidebar').isVisible() };
+  probes.push({ id: 'sidebar-focus-escape', sidebarOpened, sidebarAfterEscape, screenshots: shots2 });
+  if (await page.locator('#wanigan-sidebar').isVisible()) await nav.getByRole('button', { name: 'All destinations', exact: true }).click();
+
+  // 3. Names displayed on-screen versus names recognized by the command palette.
+  await page.getByRole('button', { name: /^Switch project space:/ }).click();
+  await page.getByRole('option').filter({ hasText: 'storefront' }).click();
+  await page.locator('.session-toolbar').getByRole('heading', { name: 'AuroraQuantumFox', exact: true }).waitFor();
+  const visibleSessionTitle = await page.locator('.session-toolbar').innerText();
+  await go('Meta+k');
+  const search = page.getByRole('combobox', { name: 'Search views, projects, live sessions, settings and archived transcripts', exact: true });
+  await search.fill('Changes');
+  await page.waitForTimeout(400);
+  const changesResults = await page.locator('.command-item').allTextContents();
+  const shots3 = await capture('palette-changes');
+  await search.fill('AuroraQuantumFox');
+  await page.waitForTimeout(400);
+  const renamedResults = await page.locator('.command-item').allTextContents();
+  const emptyText = await page.locator('.command-empty').allTextContents();
+  shots3.push(...await capture('palette-renamed-session'));
+  probes.push({ id: 'palette-identity', visibleSessionTitle, changesResults, renamedResults, emptyText, screenshots: shots3 });
+  await page.keyboard.press('Escape');
+
+  // 4. Main's valid structured unreadable response is rendered as no changes.
+  await page.locator('.code-panel').waitFor();
+  await page.waitForFunction(() => window.__auditCalls.some(call => call[0] === 'code.changes'));
+  const codePanelText = await page.locator('.code-panel').innerText();
+  const observedCalls = await page.evaluate(() => window.__auditCalls);
+  probes.push({ id: 'code-unreadable', injected: { isRepo: true, files: [], attributed: false, unreadable: 'SYNTHETIC Git status failed: permission denied' }, observedCalls, codePanelText, screenshots: await capture('code-unreadable-response') });
+} catch (error) {
+  errors.push(String(error.stack ?? error));
+  if (page) await page.screenshot({ path: path.join(out, 'probe-failure.png'), scale: 'css' }).catch(() => {});
+} finally {
+  const provenance = 'Built production renderer in isolated Electron BrowserWindow, synthetic STUB bridge with explicit fixture overrides. Does not verify real main/preload, Git commands, PTYs, persistence, or provider behavior. No provider calls or live-data changes.';
+  const result = { at: new Date().toISOString(), provenance, profile: temp, buildIndexSha256: crypto.createHash('sha256').update(readFileSync(path.join(root, 'out/renderer/index.html'))).digest('hex'), probes, errors };
+  writeFileSync(path.join(out, 'verification.json'), JSON.stringify(result, null, 2) + '\n');
+  const source = fileURLToPath(import.meta.url);
+  if (path.resolve(source) !== path.join(out, 'wanigan-ux-baseline.mjs')) copyFileSync(source, path.join(out, 'wanigan-ux-baseline.mjs'));
+  console.log(JSON.stringify(result, null, 2));
+  await app.close();
+}
+if (errors.length) process.exitCode = 1;

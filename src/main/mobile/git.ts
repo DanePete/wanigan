@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import { devNull } from 'node:os';
 import { commit as gitCommit, runGit, status, type GitFile, type GitStatus } from '../git';
 import { history as gateHistory, recipe as gateRecipe, run as startGate } from '../review';
+import { compareCheckoutEvidence } from '../review';
+import { checkoutSnapshot } from '../review-checkout';
 import { listProjects } from '../store';
 import { mobileRepositoryReview } from '../settings';
-import type { ReviewRun } from '../../shared/types';
+import type { ReviewCheckoutSnapshot, ReviewFreshness, ReviewRun } from '../../shared/types';
 import { mobileConfig } from './config';
 import { json, registerApiRoute, registerRepoGate, requestJson, send } from './dispatch';
 import { safeString } from './snapshot';
@@ -55,11 +57,11 @@ import { safeString } from './snapshot';
  *     what must not be swept into a commit by someone tapping a button on a
  *     train, and a push is the one act on this screen that would leave the
  *     machine. Committing is reversible on the Mac; publishing is not.
- *   - A commit is refused unless the working tree still matches the reading the
- *     device was shown. The digest is computed here, from the same rows that
- *     response carried, so the screen and the Mac cannot drift apart about what
- *     was on offer; the last few readings are kept in memory so the refusal can
- *     name what moved rather than only saying 'stale'. A reading that hit a cap
+ *   - A commit is refused unless a bounded content/HEAD/index comparison matches
+ *     the reading the device received. Unavailable comparisons refuse commits.
+ *     The check observes Git-visible content; it cannot lock out another writer
+ *     between the comparison and Git's commit. The last readings are retained
+ *     so a refusal can name visible changes. A reading that hit a cap
  *     cannot be committed from at all — the screen did not show the whole of
  *     what the commit would carry, and that is the condition CLAUDE.md puts on
  *     a destructive git action being deliberate.
@@ -415,11 +417,8 @@ export function patchFor(read: MobileRepoPatchRead, limits = MOBILE_REPO_LIMITS)
 /**
  * One row of a working-tree reading, as the staleness check sees it.
  *
- * Three fields, and they are the three the screen showed: where git reported
- * the change, git's own two porcelain letters, and the path. Line counts are
- * deliberately not among them — a file whose diff grew by a line is the same
- * file in the same state, and a reading that moved on every keystroke would
- * refuse every commit anyone tried to make while an agent was still typing.
+ * These visible rows describe status changes. They are not a content identity;
+ * commitReadingDigest also requires a bounded checkout snapshot.
  */
 export type MobileRepoRow = { path: string; status: string; where: MobileRepoFile['where'] };
 
@@ -454,15 +453,8 @@ function sortedRows(reading: MobileRepoReading): MobileRepoRow[] {
 }
 
 /**
- * The reading, as one short string a device can hand back with a commit.
- *
- * Computed in this process from the rows a response carries, never in the page.
- * A digest the phone assembled would be the phone's opinion of what it was
- * shown, which is exactly the thing under test — the two must not be able to
- * disagree. It is an integrity check on a screen rather than a credential: a
- * device already holding the bearer token could read this tree and compute it,
- * so it is short enough to travel and long enough that two different trees do
- * not collide.
+ * Order-independent status identity, used for visible drift explanations.
+ * Never sufficient on its own to authorize a commit or match review evidence.
  */
 export function repoDigest(reading: MobileRepoReading): string {
   const text = [
@@ -473,6 +465,26 @@ export function repoDigest(reading: MobileRepoReading): string {
     ...sortedRows(reading).map((row) => row.where + '\t' + row.status + '\t' + row.path),
   ].join('\n');
   return createHash('sha256').update(text).digest('hex').slice(0, 32);
+}
+
+/** No content evidence means no commit token, including historical shallow readings. */
+export function commitReadingDigest(reading: MobileRepoReading, checkout: ReviewCheckoutSnapshot): string | null {
+  return checkout.fingerprint
+    ? createHash('sha256').update(JSON.stringify([repoDigest(reading), checkout.fingerprint])).digest('hex')
+    : null;
+}
+
+const COMPARISON_UNAVAILABLE = 'Wanigan could not compare this checkout completely. Commit is unavailable from this reading; check it on the Mac.';
+
+async function readCommitCheckout(cwd: string, reading: MobileRepoReading): Promise<ReviewCheckoutSnapshot> {
+  const checkout = await checkoutSnapshot(cwd);
+  if (!checkout.fingerprint) return checkout;
+  try {
+    const tree = await withTimeout(status(cwd), MOBILE_REPO_LIMITS.timeoutMs);
+    const current = wireFiles(tree, { counted: false, reason: '' });
+    if (tree.isRepo && repoDigest(readingOf(tree, current.files, current.dropped)) === repoDigest(reading)) return checkout;
+  } catch { /* unavailable status cannot confirm the reading */ }
+  return { ...checkout, fingerprint: null, unavailableReason: 'The visible Git state changed while the checkout was compared.' };
 }
 
 function nameList(paths: readonly string[], limit: number): string {
@@ -525,10 +537,7 @@ export function driftSentence(before: MobileRepoReading, after: MobileRepoReadin
     clauses.push(fileWord(differs.length) + ' with a different status (' + nameList(differs, limit) + ')');
   }
   if (before.dropped !== after.dropped) clauses.push('a different number of rows Wanigan could not show');
-  // Two digests that differ with nothing to name is a bug in this function
-  // rather than a tree that stood still, and saying so is better than printing
-  // a sentence with a hole in the middle of it.
-  if (!clauses.length) clauses.push('Wanigan could not name what moved, which is itself worth reporting');
+  if (!clauses.length) clauses.push('file contents, HEAD or staging changed while the visible paths and statuses stayed the same');
   return 'The working tree has changed since this device read it: ' + clauses.join('; ') +
     '. Nothing was committed. Read this repository again and check what it shows before committing.';
 }
@@ -700,12 +709,11 @@ export type MobileGateRun = {
   reported: number;
   /** The first command that did not exit 0, or null when none has. */
   failed: MobileGateStep | null;
-  /**
-   * The working-tree digest this run was started against, or null when Wanigan
-   * did not record one — a gate started on the Mac, or one that outlived the
-   * process that started it. Null means 'not known', never 'the same tree'.
-   */
+  /** Persisted fingerprint; it never contains paths or contents. */
   ranAgainst: string | null;
+  /** Compared using persisted checkout/recipe evidence, never the status-only digest. */
+  freshness: ReviewFreshness['state'];
+  checkedAt: number | null;
   /**
    * Set only when this process's own run of this gate ended in an error while
    * the record still says it is running.
@@ -749,12 +757,10 @@ function remember<V>(store: Map<string, V>, key: string, value: V, limit: number
 
 /** Readings this module served, so a refused commit can name what moved. */
 const servedReadings = new Map<string, MobileRepoReading>();
-/** The tree each gate run this process started was launched against. */
-const gateReadings = new Map<string, string>();
 /** Runs this process started whose work errored while the row still says running. */
 const gateStalls = new Map<string, string>();
 
-function wireGateRun(run: ReviewRun, commands: number): MobileGateRun {
+export function wireGateRun(run: ReviewRun, commands: number): MobileGateRun {
   const status = GATE_STATUSES.get(String(run.status)) ?? 'unknown';
   const results = Array.isArray(run.results) ? run.results : [];
   const total = Math.max(commands, results.length);
@@ -767,7 +773,9 @@ function wireGateRun(run: ReviewRun, commands: number): MobileGateRun {
     commands: total,
     reported: results.length,
     failed: gateStep(results, total),
-    ranAgainst: gateReadings.get(run.id) ?? null,
+    ranAgainst: run.evidence?.before.fingerprint ?? null,
+    freshness: run.freshness.state,
+    checkedAt: run.freshness.checkedAt,
     stalled: gateStalls.get(run.id) ?? null,
   };
 }
@@ -780,10 +788,12 @@ function wireGateRun(run: ReviewRun, commands: number): MobileGateRun {
 const GATE_UNREADABLE =
   'The Mac answered, but its record of this project\'s review gate would not open. Nothing was run.';
 
-function readGate(projectId: string): MobileRepoGate {
+export function readGate(projectId: string, current?: ReviewCheckoutSnapshot): MobileRepoGate {
   try {
-    const commands = gateRecipe(projectId).commands.length;
+    const recipe = gateRecipe(projectId).commands;
+    const commands = recipe.length;
     const latest = gateHistory(projectId, 1)[0];
+    if (latest && current) latest.freshness = compareCheckoutEvidence(latest, current, recipe);
     return { readable: true, commands, latest: latest ? wireGateRun(latest, commands) : null, reason: null };
   } catch {
     return { readable: false, commands: 0, latest: null, reason: GATE_UNREADABLE };
@@ -1034,13 +1044,14 @@ async function serveRepo(res: http.ServerResponse, url: URL): Promise<void> {
   const listed = files.slice(0, MOBILE_REPO_LIMITS.files);
   const omitted = files.length - listed.length + dropped;
   const changed = files.length + dropped;
-  // The digest the commit route will demand back, taken from the rows this very
-  // response carries rather than from a second read of the tree. That is the
-  // whole point of computing it here: a device is refused because the tree
-  // moved, never because two reads of one tree disagreed with each other.
+  // One bounded snapshot serves both the commit token and persisted gate
+  // comparison. It observes content, HEAD and index; it is not a filesystem lock.
   const reading = readingOf(tree, files, dropped);
-  const digest = repoDigest(reading);
-  remember(servedReadings, project.id + ':' + digest, reading, MOBILE_REPO_LIMITS.readings);
+  const checkout = await readCommitCheckout(project.path, reading);
+  const digest = commitReadingDigest(reading, checkout);
+  if (digest) remember(servedReadings, project.id + ':' + digest, reading, MOBILE_REPO_LIMITS.readings);
+  const offer = commitOffer(reading);
+  if (!digest) offer.blocked = COMPARISON_UNAVAILABLE;
   sendRepoJson(res, {
     generatedAt: Date.now(),
     id: safeString(project.id, 160),
@@ -1063,12 +1074,12 @@ async function serveRepo(res: http.ServerResponse, url: URL): Promise<void> {
         'on the Mac to see the rest.'
       : null,
     digest,
-    commit: commitOffer(reading),
+    commit: offer,
     // The gate rides on the reading rather than on a route of its own. A gate
     // run takes minutes and its outcome is a fact about this working tree, so
     // the screen learns it from the same watched read it is already making
     // instead of holding a second cadence for a second endpoint.
-    gate: readGate(project.id),
+    gate: readGate(project.id, checkout),
   });
 }
 
@@ -1275,22 +1286,6 @@ async function serveGate(req: http.IncomingMessage, res: http.ServerResponse): P
     return;
   }
 
-  // Which working tree this run is about to see, written down before it starts.
-  // A gate that passed against a different tree is not evidence about this one,
-  // and the screen can only say so if something recorded which tree it was.
-  let ranAgainst: string | null = null;
-  try {
-    const tree = await withTimeout(status(project.path), MOBILE_REPO_LIMITS.timeoutMs);
-    if (tree.isRepo) {
-      const { files, dropped } = wireFiles(tree, { counted: false, reason: '' });
-      ranAgainst = repoDigest(readingOf(tree, files, dropped));
-    }
-  } catch {
-    // The gate does not depend on this read, so a tree Wanigan could not read
-    // leaves this null — which the screen renders as 'Wanigan did not record
-    // which tree this saw', never as a match.
-  }
-
   const pending = startGate(projectId);
   // ../review inserts the run row before it awaits its first command, so the
   // record already names this run by the time control comes back here. Reading
@@ -1306,7 +1301,6 @@ async function serveGate(req: http.IncomingMessage, res: http.ServerResponse): P
     });
     return;
   }
-  if (ranAgainst) remember(gateReadings, started.id, ranAgainst, MOBILE_REPO_LIMITS.readings);
   pending.catch(() => {
     // ../review closes its own row on every path it controls, so arriving here
     // means the record may still say 'running' for a gate that is not. This
@@ -1355,12 +1349,9 @@ const READING_FORGOTTEN =
  * agent's leftover — and the way to be sure of that is to have no code path
  * that could.
  *
- * A stale reading is refused rather than committed through. The device sends
- * back the digest of the tree it was shown; this recomputes it from git and
- * refuses on any difference, then names the difference from the reading it kept.
- * CLAUDE.md asks for deliberate user action before a destructive git operation,
- * and a tap is only deliberate about what the screen showed — if the tree has
- * moved, the tap was about something else.
+ * A content/HEAD/index snapshot is compared immediately before asking Git to
+ * commit. Changed or unavailable evidence refuses the request. Other writers
+ * can still change files after this observation; no atomic guarantee is made.
  *
  * Nothing is pushed. Committing is reversible on the Mac; publishing is the one
  * act on this screen that would leave the machine, so there is no route for it
@@ -1421,7 +1412,9 @@ async function serveCommit(req: http.IncomingMessage, res: http.ServerResponse):
   // everything it is checked against comes from this process.
   const { files, dropped } = wireFiles(tree, { counted: false, reason: '' });
   const reading = readingOf(tree, files, dropped);
-  const digest = repoDigest(reading);
+  const checkout = await readCommitCheckout(project.path, reading);
+  const digest = commitReadingDigest(reading, checkout);
+  if (!digest) { json(res, 409, { error: COMPARISON_UNAVAILABLE }); return; }
   if (digest !== asked) {
     const shown = servedReadings.get(projectId + ':' + asked);
     // 409 rather than 400: the request is well formed and the id is real, and
@@ -1464,9 +1457,6 @@ async function serveCommit(req: http.IncomingMessage, res: http.ServerResponse):
     // from before the commit as though it were the one after.
     after = null;
   }
-  if (after) {
-    remember(servedReadings, projectId + ':' + repoDigest(after), after, MOBILE_REPO_LIMITS.readings);
-  }
   sendRepoJson(res, {
     ok: true,
     generatedAt: Date.now(),
@@ -1480,7 +1470,9 @@ async function serveCommit(req: http.IncomingMessage, res: http.ServerResponse):
     commit: commitId,
     branch: after ? after.branch : reading.branch,
     remaining: after ? after.rows.length : null,
-    digest: after ? repoDigest(after) : null,
+    // The next repository read captures a fresh content token. Never return a
+    // status-only digest after mutation as though it could authorize a commit.
+    digest: null,
     // Stated in the answer as well as on the screen. The next question a device
     // that has just committed asks is whether anyone else can see it, and the
     // answer is no until someone pushes from the Mac.

@@ -1,0 +1,11 @@
+{
+  "before": false,
+  "provenance": "Actual renderer, synthetic bridge. No main/native deletion exercised.",
+  "checks": [
+    "preview is read-only; saved window required; only selected session sent; canceled cleanup preserves preview",
+    "cleanup displays measured removal result",
+    "preview failure is visible",
+    "legacy backup discloses missing artifacts and avoids claiming full database equivalence"
+  ],
+  "errors": []
+}

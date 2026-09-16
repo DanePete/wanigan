@@ -561,9 +561,9 @@ export function mobileGoalGate(record: DocketDetail): MobileGoalGate {
     const status = proof ? PROOF_STATUSES.get(String(proof.status)) ?? 'unknown' : undefined;
     return {
       taskTitle: safeString(node?.title, 160, 'Untitled task'),
-      // A 'recorded' gate proof is not a pass and is not a failure; runProof
-      // writes only passed or failed, so anything else is a row this screen
-      // has not been taught to read and says so.
+      // A 'recorded' proof can mean commands passed without a verified content
+      // identity. It is neither a current pass nor a command failure; retain
+      // its explanatory summary without painting it green.
       result: !proof ? 'not-run' : status === 'passed' ? 'passed' : status === 'failed' ? 'failed' : 'unknown',
       summary: proof ? clip(proof.summary, LINE_CHARS) : null,
       ranAt: proof ? stamp(proof.createdAt) || null : null,
@@ -871,7 +871,7 @@ async function serveDecision(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   try {
-    completeNode(nodeId, { detail: note, decision: verdict });
+    await completeNode(nodeId, { detail: note, decision: verdict });
   } catch (error) {
     // control.ts's own words, including the approval refusal that names which
     // verification tasks are still unproven. Rewriting that sentence here

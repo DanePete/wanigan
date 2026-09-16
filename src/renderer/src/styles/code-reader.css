@@ -7,6 +7,9 @@
 .code-toolbar-actions > .btn { justify-content: flex-start; min-height: var(--control-h); }
 .code-workspace .code-read-button { font-size: var(--t-small); gap: var(--s-1); }
 .code-workspace .code-body { border-top: 1px solid var(--line-soft); }
+.code-read-state { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.code-read-state .reading { margin: 0; }
+.code-read-status { margin: var(--s-1) 0; font-size: var(--t-small); color: var(--text-dim); line-height: 1.5; }
 .overlay-backdrop.code-reader-backdrop { padding: var(--s-5); background: var(--scrim-strong); grid-template-columns: minmax(0, 1fr); }
 .code-inspector.code-reader { width: min(1320px, 100%); height: min(900px, 100%); border-radius: var(--r-xl); }
 .code-reader .code-inspector-head { padding: var(--s-4) var(--s-5); gap: var(--s-4); border-color: var(--line-soft); }

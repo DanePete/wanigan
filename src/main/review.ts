@@ -1,9 +1,14 @@
 import { dialog, type BrowserWindow } from 'electron';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import { db } from './db';
 import { projectById } from './store';
-import type { ReviewRecipe, ReviewRun } from '../shared/types';
+import { checkoutSnapshot } from './review-checkout';
+import { repoRootFor } from './worktrees';
+import type { ReviewCheckoutSnapshot, ReviewEvidence, ReviewFreshness, ReviewRecipe, ReviewRun } from '../shared/types';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -84,10 +89,10 @@ export async function saveRecipeWithConsent(
       ? `Add a review command to ${project.name}?`
       : `Add ${added.length} review commands to ${project.name}?`,
     detail:
-      `Wanigan runs a review gate through your login shell in ${project.path}. ` +
+      `Wanigan runs a review gate through your login shell in ${project.path} or the recorded session or task checkout you select. ` +
       `${one ? 'This is the line' : 'These are the lines'} being added:\n\n` +
       added.map((c) => `    ${c}`).join('\n') +
-      '\n\nThis is stored, not run once: the Review panel runs it for the project, and a goal\'s ' +
+      '\n\nThis is stored, not run once: the Review panel runs it for the project or selected session, and a goal\'s ' +
       'verification task runs it again in that task\'s worktree when it has one. Neither asks again. ' +
       'Save only what you would type here yourself.',
   });
@@ -97,10 +102,71 @@ export async function saveRecipeWithConsent(
   return saveRecipe(projectId, safe);
 }
 
-function map(row: { id: string; project_id: string; started_at: number; ended_at: number | null; status: string; results_json: string }): ReviewRun {
+type RunRow = { id: string; project_id: string; started_at: number; ended_at: number | null; status: string; results_json: string; evidence_json: string | null };
+
+function readEvidence(raw: string | null): ReviewEvidence | null {
+  try {
+    const value = JSON.parse(raw ?? 'null') as ReviewEvidence | null;
+    if (value?.version === 1 && value.before && typeof value.recipeHash === 'string'
+      && Array.isArray(value.commands) && value.commands.every(command => typeof command === 'string')) return value;
+  } catch { /* old or unreadable evidence has no content identity */ }
+  return null;
+}
+
+function map(row: RunRow): ReviewRun {
   let results: ReviewRun['results'] = [];
   try { results = JSON.parse(row.results_json) as ReviewRun['results']; } catch { /* preserve row with no fabricated evidence */ }
-  return { id: row.id, projectId: row.project_id, startedAt: row.started_at, endedAt: row.ended_at, status: row.status as ReviewRun['status'], results };
+  const evidence = readEvidence(row.evidence_json);
+  return { id: row.id, projectId: row.project_id, startedAt: row.started_at, endedAt: row.ended_at, status: row.status as ReviewRun['status'], results,
+    evidence, freshness: { state: row.status === 'running' ? 'running' : 'unavailable', reason: 'Current checkout has not been compared.', checkedAt: Date.now() } };
+}
+
+const recipeHash = (commands: string[]) => createHash('sha256').update(JSON.stringify(commands)).digest('hex');
+
+export function compareCheckoutEvidence(run: ReviewRun, current: ReviewCheckoutSnapshot, commands: string[]): ReviewFreshness {
+  const answer = (state: ReviewFreshness['state'], reason: string): ReviewFreshness => ({ state, reason, checkedAt: Date.now() });
+  if (run.status === 'running') return answer('running', 'Checks are still running.');
+  const evidence = run.evidence;
+  if (!evidence) return answer('unavailable', 'This historical run has no recorded checkout or recipe identity. Run checks again.');
+  if (!evidence.before.fingerprint || !evidence.after?.fingerprint) {
+    return answer('unavailable', evidence.before.unavailableReason ?? evidence.after?.unavailableReason ?? 'A complete checkout comparison was not recorded.');
+  }
+  if (evidence.before.fingerprint !== evidence.after.fingerprint) return answer('stale', 'Checkout content changed while these checks ran. Run checks again.');
+  if (evidence.recipeHash !== recipeHash(commands)) return answer('stale', 'The saved commands have changed since this run. Run checks again.');
+  if (!current.fingerprint) return answer('unavailable', current.unavailableReason ?? 'The current checkout could not be compared.');
+  if (evidence.before.cwd !== current.cwd) return answer('stale', 'These checks ran in a different checkout.');
+  if (evidence.before.fingerprint !== current.fingerprint) return answer('stale', 'Checkout content has changed since this run. Run checks again.');
+  return answer('current', 'Git-visible content and saved commands match this run.');
+}
+
+/** Resolve only persisted session identity; the renderer never supplies a cwd. */
+function targetRoot(projectId: string, sessionId?: string): string {
+  if (typeof projectId !== 'string' || !projectId) throw new Error('Choose a recorded project.');
+  const project = projectById(projectId);
+  if (!project) throw new Error('Project not found.');
+  if (sessionId === undefined) return project.path;
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('Choose a recorded session.');
+  const row = db().prepare("SELECT project_id, project_path, worktree FROM session_log WHERE id=? AND origin='wanigan'")
+    .get(sessionId) as { project_id: string | null; project_path: string; worktree: string | null } | undefined;
+  if (!row || row.project_id !== projectId || path.resolve(row.project_path) !== path.resolve(project.path)) {
+    throw new Error('This session does not belong to the selected project checkout.');
+  }
+  return row.worktree ?? row.project_path;
+}
+
+async function sessionRoot(projectId: string, sessionId: string): Promise<string> {
+  const root = targetRoot(projectId, sessionId);
+  let canonical: string;
+  try {
+    canonical = await fs.realpath(root);
+    if (!(await fs.stat(canonical)).isDirectory()) throw new Error('Not a directory.');
+  } catch { throw new Error('The session checkout is missing or unreadable. Restore it before running checks.'); }
+  const project = projectById(projectId)!;
+  if (path.resolve(root) !== path.resolve(project.path)) {
+    const [projectRepo, sessionRepo] = await Promise.all([repoRootFor(project.path), repoRootFor(canonical)]);
+    if (!projectRepo || projectRepo !== sessionRepo) throw new Error('The session checkout no longer belongs to this project.');
+  }
+  return canonical;
 }
 
 const PROCESS_START = Date.now();
@@ -149,11 +215,67 @@ export function sweepInterruptedRuns(): number {
   return closed;
 }
 
-export function history(projectId: string, limit = 12): ReviewRun[] {
+export function history(projectId: string, limit = 12, sessionId?: string): ReviewRun[] {
   // Before the read, so the panel never shows a gate as in flight when the
   // process that was running it is gone.
   sweepInterruptedRuns();
-  return (db().prepare('SELECT * FROM review_runs WHERE project_id=? ORDER BY started_at DESC LIMIT ?').all(projectId, Math.max(1, Math.min(50, limit))) as Parameters<typeof map>[0][]).map(map);
+  const cap = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.trunc(limit))) : 12;
+  return (db().prepare('SELECT * FROM review_runs WHERE project_id=? AND session_id IS ? ORDER BY started_at DESC, rowid DESC LIMIT ?')
+    .all(projectId, sessionId ?? null, cap) as RunRow[]).map(map);
+}
+
+export async function historyWithFreshness(projectId: string, limit = 12, sessionId?: string): Promise<ReviewRun[]> {
+  const root = targetRoot(projectId, sessionId);
+  const runs = history(projectId, limit, sessionId);
+  if (!runs.length) return runs;
+  let current: ReviewCheckoutSnapshot = { cwd: root, head: null, fingerprint: null, unavailableReason: 'Current checkout has not been compared.' };
+  if (runs.some(run => run.status !== 'running' && run.evidence?.before.fingerprint)) {
+    try { current = await checkoutSnapshot(sessionId === undefined ? root : await sessionRoot(projectId, sessionId)); }
+    catch (error) { current.unavailableReason = error instanceof Error ? error.message : 'The session checkout is unavailable.'; }
+  }
+  const commands = recipe(projectId).commands;
+  // Re-read after filesystem work so a completed run is not returned as running.
+  return history(projectId, limit, sessionId).map(run => ({ ...run, freshness: compareCheckoutEvidence(run, current, commands) }));
+}
+
+/** A decision always rechecks the filesystem; no renderer freshness flag is trusted. */
+export async function isCurrentPass(runId: string, projectId: string, cwd: string): Promise<boolean> {
+  const row = db().prepare('SELECT * FROM review_runs WHERE id=? AND project_id=?').get(runId, projectId) as RunRow | undefined;
+  if (!row || row.status !== 'passed') return false;
+  const run = map(row);
+  const current = await checkoutSnapshot(cwd);
+  try { assertPassNotSuperseded(runId, projectId, current.cwd); } catch { return false; }
+  return compareCheckoutEvidence(run, current, recipe(projectId).commands).state === 'current';
+}
+
+/** Synchronous final decision guard, also called inside Control's transaction. */
+export function assertPassNotSuperseded(runId: string, projectId: string, cwd: string): void {
+  let canonical: string;
+  try { canonical = realpathSync(cwd); }
+  catch { throw new Error('The verification checkout is unavailable. Restore it and rerun the checks.'); }
+  if (activeRoots.has(canonical)) throw new Error('Checks are running in a verification checkout. Wait for the new result before deciding.');
+  type IdentityRow = { ordinal: number; status: string; evidence_json: string | null };
+  const recorded = db().prepare('SELECT rowid AS ordinal,status,evidence_json FROM review_runs WHERE id=? AND project_id=?')
+    .get(runId, projectId) as IdentityRow | undefined;
+  const base = recorded ? readEvidence(recorded.evidence_json) : null;
+  if (!recorded || recorded.status !== 'passed' || !base?.before.fingerprint) throw new Error('Run the review gate to record a current verification proof.');
+  if (canonical !== base.before.cwd || canonical !== base.after?.cwd || base.before.fingerprint !== base.after.fingerprint) {
+    throw new Error('The verification checkout identity changed. Run the review gate again before deciding.');
+  }
+  const newer = db().prepare('SELECT rowid AS ordinal,status,evidence_json FROM review_runs WHERE project_id=? AND rowid>? ORDER BY rowid DESC')
+    .iterate(projectId, recorded.ordinal) as Iterable<IdentityRow>;
+  for (const row of newer) {
+    const evidence = readEvidence(row.evidence_json);
+    if (!evidence || evidence.before.cwd !== canonical || evidence.recipeHash !== base.recipeHash) continue;
+    // The latest relevant run decides, including runs started from Session
+    // Review or Changes rather than the goal. Never let an older green result
+    // overrule a newer failure, incomplete run or changed-content result.
+    if (row.status !== 'passed' || evidence.before.fingerprint !== base.before.fingerprint
+      || evidence.after?.fingerprint !== base.before.fingerprint) {
+      throw new Error('A newer run superseded this verification result. Run and pass the review gate again before deciding.');
+    }
+    break;
+  }
 }
 
 async function runCommand(command: string, cwd: string): Promise<ReviewRun['results'][number]> {
@@ -209,42 +331,72 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
 }
 
 /**
- * The control plane may point a gate at a worktree created by Wanigan. Keeping
- * this internal argument out of the IPC surface means no renderer names the
- * directory: review:run passes none, and control.runProof passes the worktree
- * Wanigan recorded for the task it was given, or the project path. It does not
+ * This internal cwd never crosses IPC. Session checks resolve a persisted
+ * session id; control.runProof passes the worktree recorded for its task.
+ * Project checks use the registered project path. This does not
  * confine the command text, which is whatever the recipe holds and reaches
  * `$SHELL -lc` verbatim; that is what saveRecipeWithConsent puts a person in
  * front of.
  */
-export async function runAt(projectId: string, cwd?: string): Promise<ReviewRun> {
+const activeRoots = new Set<string>();
+
+export async function runAt(projectId: string, cwd?: string, sessionId?: string): Promise<ReviewRun> {
   const project = projectById(projectId);
   if (!project) throw new Error('Project not found.');
   const root = cwd ?? project.path;
   const commands = recipe(projectId).commands;
   if (!commands.length) throw new Error('Add at least one review command before running a gate.');
+  // Resolve aliases before claiming the checkout, without deferring the running
+  // receipt. The async reader below still records missing/unreadable directories.
+  let activeKey: string;
+  try { activeKey = realpathSync(root); } catch { activeKey = path.resolve(root); }
+  if (activeRoots.has(activeKey)) throw new Error('Checks are already running in this checkout.');
   // Also here, not only in history(): a gate started right after a crash would
   // otherwise leave the earlier row reading 'running' until something asks for
   // the history.
   sweepInterruptedRuns();
   const id = `rev_${randomUUID().slice(0, 12)}`; const startedAt = Date.now();
-  db().prepare('INSERT INTO review_runs (id, project_id, started_at, status, results_json) VALUES (?,?,?,?,?)').run(id, projectId, startedAt, 'running', '[]');
+  // The phone reads this receipt immediately after starting a run. Insert it
+  // before any asynchronous snapshot, and always close it even on read failure.
+  let evidence: ReviewEvidence = { version: 1, sessionId: sessionId ?? null, recipeHash: recipeHash(commands), commands,
+    before: { cwd: activeKey, head: null, fingerprint: null, unavailableReason: 'The initial checkout comparison did not finish.' }, after: null };
+  db().prepare('INSERT INTO review_runs (id, project_id, session_id, started_at, status, results_json, evidence_json) VALUES (?,?,?,?,?,?,?)')
+    .run(id, projectId, sessionId ?? null, startedAt, 'running', '[]', JSON.stringify(evidence));
+  activeRoots.add(activeKey);
   const results: ReviewRun['results'] = [];
   const record = db().prepare('UPDATE review_runs SET results_json=? WHERE id=?');
-  for (const command of commands) {
-    const result = await runCommand(command, root); results.push(result);
-    // Written as each command finishes: a gate can run for minutes, and a crash
-    // three commands in should leave those three as evidence rather than an
-    // empty array the sweep can say nothing about.
-    record.run(JSON.stringify(results), id);
-    if (result.exitCode !== 0) break;
+  try {
+    const canonical = await fs.realpath(root);
+    if (canonical !== activeKey) throw new Error('The checkout location changed while checks were starting. Refresh and run them again.');
+    if (!(await fs.stat(canonical)).isDirectory()) throw new Error('The review checkout is not a directory.');
+    evidence = { version: 1, sessionId: sessionId ?? null, recipeHash: recipeHash(commands), commands,
+      before: await checkoutSnapshot(canonical), after: null };
+    db().prepare('UPDATE review_runs SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence), id);
+    for (const command of commands) {
+      const result = await runCommand(command, canonical); results.push(result);
+      // Persist each completed command, even if the process later stops.
+      record.run(JSON.stringify(results), id);
+      if (result.exitCode !== 0) break;
+    }
+    evidence.after = await checkoutSnapshot(canonical);
+  } catch (error) {
+    results.push({ command: '[Wanigan review gate]', exitCode: null,
+      output: error instanceof Error ? error.message : String(error), durationMs: 0 });
+  } finally {
+    activeRoots.delete(activeKey);
   }
   const status: ReviewRun['status'] = results.length === commands.length && results.every((r) => r.exitCode === 0) ? 'passed' : 'failed';
   const endedAt = Date.now();
-  db().prepare('UPDATE review_runs SET ended_at=?, status=?, results_json=? WHERE id=?').run(endedAt, status, JSON.stringify(results), id);
-  return { id, projectId, startedAt, endedAt, status, results };
+  db().prepare('UPDATE review_runs SET ended_at=?, status=?, results_json=?, evidence_json=? WHERE id=?')
+    .run(endedAt, status, JSON.stringify(results), JSON.stringify(evidence), id);
+  const run: ReviewRun = { id, projectId, startedAt, endedAt, status, results, evidence,
+    freshness: { state: 'unavailable', reason: 'Checkout comparison unavailable.', checkedAt: endedAt } };
+  if (evidence?.after) run.freshness = compareCheckoutEvidence(run, evidence.after, recipe(projectId).commands);
+  return run;
 }
 
-export async function run(projectId: string): Promise<ReviewRun> {
-  return runAt(projectId);
+export async function run(projectId: string, sessionId?: string): Promise<ReviewRun> {
+  targetRoot(projectId, sessionId);
+  if (sessionId === undefined) return runAt(projectId);
+  return runAt(projectId, await sessionRoot(projectId, sessionId), sessionId);
 }

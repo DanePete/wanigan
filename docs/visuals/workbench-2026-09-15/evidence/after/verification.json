@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-16T01:58:47.866Z",
+  "provenance": "Built renderer in isolated Electron; synthetic code/review bridge. No real main, PTY, Git command, or provider calls.",
+  "checks": [
+    "Changes starts in a reading state without claiming non-repository",
+    "Unreadable Git response names the failure instead of no changes",
+    "A failed refresh keeps last known files visibly stale",
+    "Missing baseline is labeled as workspace changes",
+    "A slow changes read is not superseded by overlapping poll requests",
+    "A delayed read from an unmounted panel cannot replace current evidence",
+    "Remounted review follows recorded running status to completion",
+    "History refresh preserves the unsaved recipe",
+    "History errors retain evidence and recipe with a retry"
+  ],
+  "failures": [],
+  "errors": []
+}

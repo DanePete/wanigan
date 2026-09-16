@@ -1,4 +1,6 @@
+import type { AttachmentReclaimPlan, AttachmentReclaimReport, ReclaimFile } from '../shared/types';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { db, dataDir } from './db';
 import { isPickedPath, PICKED_MAX } from './browse';
@@ -161,7 +163,7 @@ function store(): ReturnType<typeof db> {
   // reached the prompt. `referenced_at` is when its path was typed; `sent_at`
   // is when the operator actually submitted a line afterwards. Both stay NULL
   // for a file that is merely staged.
-  for (const [column, decl] of [['referenced_at', 'INTEGER'], ['sent_at', 'INTEGER']] as const) {
+  for (const [column, decl] of [['referenced_at', 'INTEGER'], ['sent_at', 'INTEGER'], ['content_sha256', 'TEXT']] as const) {
     const present = (d.prepare('PRAGMA table_info(attachments)').all() as { name: string }[])
       .some((c) => c.name === column);
     if (!present) d.exec(`ALTER TABLE attachments ADD COLUMN ${column} ${decl}`);
@@ -191,6 +193,7 @@ type Row = {
   file_id: string | null;
   referenced_at: number | null;
   sent_at: number | null;
+  content_sha256: string | null;
 };
 
 function toAttachment(r: Row): Attachment {
@@ -219,10 +222,10 @@ function asKind(v: string): AttachKind {
 function insert(a: Attachment): Attachment {
   store().prepare(`
     INSERT INTO attachments (id, session_id, name, stored_path, kind, media_type, bytes,
-                             width, height, visual_tokens, added_at, file_id)
+                             width, height, visual_tokens, added_at, file_id, content_sha256)
     VALUES (@id,@sessionId,@name,@storedPath,@kind,@mediaType,@bytes,
-            @width,@height,@visualTokens,@addedAt,@fileId)
-  `).run(a);
+            @width,@height,@visualTokens,@addedAt,@fileId,@sha256)
+  `).run({ ...a, sha256: a.sessionId ? retentionFile(path.dirname(a.storedPath), path.basename(a.storedPath)).sha256 : null });
   return a;
 }
 
@@ -1086,6 +1089,30 @@ export function cleanupSessionAttachments(sessionId: string): number {
  * the agent itself put there.
  */
 
+/** Open only an ordinary file below real owned directories; read in bounded chunks. */
+function retentionFile(dir: string, name: string): ReclaimFile {
+  if (!fs.lstatSync(attachmentsRoot()).isDirectory() || !fs.lstatSync(dir).isDirectory()
+      || name !== path.basename(name) || name === '.' || name === '..') throw new Error('Attachment location is not a real owned directory.');
+  const file = path.join(dir, name);
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(fd);
+    if (!before.isFile()) throw new Error('Attachment is not a regular file.');
+    const hash = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let bytes = 0;
+    for (;;) {
+      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (!count) break;
+      hash.update(buffer.subarray(0, count)); bytes += count;
+    }
+    const after = fs.fstatSync(fd);
+    if (before.size !== bytes || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('Attachment changed while being read.');
+    return { name, bytes, sha256: hash.digest('hex'), device: after.dev, inode: after.ino,
+      modifiedAt: after.mtimeMs, changedAt: after.ctimeMs };
+  } finally { fs.closeSync(fd); }
+}
+
 /** Suggested when someone switches retention on. Not applied unless they do. */
 export const DEFAULT_ATTACHMENT_RETENTION_DAYS = 30;
 
@@ -1111,54 +1138,6 @@ export function setAttachmentRetention(days: unknown): { enabled: boolean; days:
   setSetting(RETENTION_SETTING, String(n));
   return attachmentRetention();
 }
-
-export type ReclaimSkipReason =
-  | 'session-still-open'
-  | 'no-session-record'
-  | 'resumed-later'
-  | 'within-window'
-  | 'referenced'
-  | 'holds-agent-output'
-  | 'unreadable';
-
-export type ReclaimSkip = { sessionId: string; reason: ReclaimSkipReason; detail: string };
-
-export type ReclaimCandidate = {
-  sessionId: string;
-  dir: string;
-  endedAt: number;
-  files: number;
-  /** Sizes read from the files themselves, before anything is deleted. */
-  bytes: number;
-};
-
-export type AttachmentReclaimPlan = {
-  enabled: boolean;
-  windowDays: number;
-  /** Sessions that ended before this instant are in scope. */
-  cutoff: number;
-  /** Session directories looked at. */
-  scanned: number;
-  candidates: ReclaimCandidate[];
-  filesEligible: number;
-  /** Size on disk of the files a reclaim would delete. Nothing has been deleted. */
-  bytesEligible: number;
-  skipped: ReclaimSkip[];
-};
-
-export type AttachmentReclaimReport = {
-  ranAt: number;
-  enabled: boolean;
-  windowDays: number;
-  cutoff: number;
-  scanned: number;
-  reclaimed: { sessionId: string; dir: string; files: number; bytes: number }[];
-  /** Summed from files that were unlinked and then confirmed gone. Measured, not projected. */
-  bytesFreed: number;
-  filesRemoved: number;
-  skipped: ReclaimSkip[];
-  errors: { sessionId: string; message: string }[];
-};
 
 type SessionRow = { id: string; ended_at: number | null };
 
@@ -1301,17 +1280,21 @@ export function planAttachmentReclaim(
       continue;
     }
 
-    let bytes = 0;
-    let files = 0;
-    for (const file of contents) {
-      try {
-        bytes += fs.statSync(path.join(dir, file.name)).size;
-        files += 1;
-      } catch {
-        // Gone between readdir and stat. It frees nothing and blocks nothing.
-      }
+    let entries: ReclaimFile[];
+    try {
+      entries = contents.map(file => retentionFile(dir, file.name)).sort((a, b) => a.name.localeCompare(b.name));
+      if (entries.some(file => {
+        const row = rows.find(item => path.basename(item.stored_path) === file.name);
+        return !row?.content_sha256 || row.content_sha256 !== file.sha256 || row.bytes !== file.bytes;
+      })) throw new Error('A staged file changed, or its original content was not recorded.');
+    } catch {
+      plan.skipped.push({ sessionId, reason: 'holds-agent-output', detail: 'Files with changed or unrecorded original content are kept.' });
+      continue;
     }
-    plan.candidates.push({ sessionId, dir, endedAt, files, bytes });
+    const bytes = entries.reduce((total, entry) => total + entry.bytes, 0);
+    const files = entries.length;
+    const fingerprint = createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+    plan.candidates.push({ sessionId, dir, endedAt, files, bytes, entries, fingerprint });
     plan.filesEligible += files;
     plan.bytesEligible += bytes;
   }
@@ -1332,7 +1315,7 @@ export function planAttachmentReclaim(
  * one setting cannot be routed around by a caller passing a number.
  */
 export function reclaimAttachments(
-  opts: { now?: number } = {}
+  opts: { now?: number; sessionIds?: string[]; approved?: { sessionId: string; fingerprint: string }[] } = {}
 ): AttachmentReclaimReport {
   const ranAt = opts.now ?? Date.now();
   const plan = planAttachmentReclaim({ now: ranAt });
@@ -1344,21 +1327,26 @@ export function reclaimAttachments(
   if (!plan.enabled) return report;
 
   const d = store();
+  const selected = opts.sessionIds ? new Set(opts.sessionIds) : null;
   for (const candidate of plan.candidates) {
+    if (selected && !selected.has(candidate.sessionId)) continue;
+    if (opts.approved && !opts.approved.some(item => item.sessionId === candidate.sessionId && item.fingerprint === candidate.fingerprint)) {
+      report.skipped.push({ sessionId: candidate.sessionId, reason: 'changed-since-preview', detail: 'Directory contents changed after confirmation. Preview again.' });
+      continue;
+    }
     let bytes = 0;
     let files = 0;
     let directoryRemoved = false;
     try {
-      for (const entry of fs.readdirSync(candidate.dir, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
+      // Never enumerate and delete new arrivals. Only the exact files in the
+      // approved receipt may be removed, with their identities checked again.
+      for (const entry of candidate.entries) {
+        const current = retentionFile(candidate.dir, entry.name);
+        if (JSON.stringify(current) !== JSON.stringify(entry)) throw new Error('A file changed before cleanup. Remaining files were kept.');
         const file = path.join(candidate.dir, entry.name);
-        const size = fs.statSync(file).size;
-        fs.rmSync(file, { force: true });
-        // Counted only once the file is confirmed gone. An unlink that a lock
-        // or a permission defeated frees nothing, and saying otherwise would
-        // make this report a projection.
+        fs.unlinkSync(file);
         if (fs.existsSync(file)) continue;
-        bytes += size;
+        bytes += entry.bytes;
         files += 1;
       }
       fs.rmdirSync(candidate.dir);
@@ -1377,8 +1365,10 @@ export function reclaimAttachments(
       // so they are not evidence that anything reached an agent. Leaving them
       // behind would make promptableSessionAttachments filter dead paths for
       // the life of the install.
-      d.prepare('DELETE FROM attachments WHERE session_id = ? AND referenced_at IS NULL AND sent_at IS NULL')
-        .run(candidate.sessionId);
+      const rows = d.prepare('SELECT id, stored_path FROM attachments WHERE session_id = ? AND referenced_at IS NULL AND sent_at IS NULL').all(candidate.sessionId) as Pick<Row, 'id' | 'stored_path'>[];
+      for (const row of rows) {
+        if (!fs.existsSync(row.stored_path)) d.prepare('DELETE FROM attachments WHERE id = ?').run(row.id);
+      }
       report.reclaimed.push({ sessionId: candidate.sessionId, dir: candidate.dir, files, bytes });
       report.bytesFreed += bytes;
       report.filesRemoved += files;

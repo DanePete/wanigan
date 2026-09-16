@@ -41,6 +41,14 @@ export async function runLifecycleSmoke(check: Check, say: Say): Promise<void> {
     check(!!a0 && !!b0 && initial.indexOf(b0!) < initial.indexOf(a0!),
       'unflagged Recent stays newest first');
 
+    // A newer conversation in another project must not consume this project's
+    // cap. Exercise the real database reader with a cap of one, not the UI.
+    db().prepare('UPDATE session_log SET project_id = ? WHERE id = ?').run(`scope-a-${stamp}`, rowA);
+    db().prepare('UPDATE session_log SET project_id = ? WHERE id = ?').run(`scope-b-${stamp}`, rowB);
+    const scoped = pastSessions(1, `scope-a-${stamp}`);
+    check(scoped.length === 1 && scoped[0].id === rowA,
+      'Recent applies project scope before the section cap, retaining the older project conversation', scoped);
+
     const pinned = setConversationFlag(rowA, 'pin', true);
     const a1 = pinned.find((p) => p.id === rowA);
     const b1 = pinned.find((p) => p.id === rowB);

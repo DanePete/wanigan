@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { checklistFrom, countedAgents, installFor, preflightComplete, type Preflight } from '@shared/preflight';
 import { defaultSelection, discoveryDetail, rankDiscovered, type DiscoveryResult } from '@shared/discovery';
 import { EmptyState, Icon, SectionHead } from './bits';
@@ -16,9 +16,10 @@ import { EmptyState, Icon, SectionHead } from './bits';
  * about somebody's machine. `shared/preflight.ts` decides what may be claimed,
  * and this renders that decision without adding to it.
  */
-export default function SetupChecklist({ onAddProject, onNewSession }: {
+export default function SetupChecklist({ onAddProject, onNewSession, refreshKey = '' }: {
   onAddProject: () => void;
   onNewSession: () => void;
+  refreshKey?: string;
 }) {
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,20 +32,35 @@ export default function SetupChecklist({ onAddProject, onNewSession }: {
   const [scanError, setScanError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [importNote, setImportNote] = useState<string | null>(null);
+  const sequence = useRef(0);
 
   const read = useCallback(async () => {
+    const request = ++sequence.current;
     setChecking(true);
     try {
-      setPreflight(await window.wanigan.preflight.read());
+      const next = await window.wanigan.preflight.read();
+      if (request !== sequence.current) return;
+      setPreflight(next);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      if (request === sequence.current) setError(String(e));
     } finally {
-      setChecking(false);
+      if (request === sequence.current) setChecking(false);
     }
   }, []);
+  const stopRead = useCallback(() => { sequence.current++; }, []);
 
-  useEffect(() => { void read(); }, [read]);
+  useEffect(() => {
+    void read();
+    const visible = () => { if (!document.hidden) void read(); };
+    window.addEventListener('focus', visible);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      stopRead();
+      window.removeEventListener('focus', visible);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [read, refreshKey, stopRead]);
 
   const scan = useCallback(async () => {
     setScanning(true); setScanError(null); setImportNote(null); setQuery('');

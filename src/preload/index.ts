@@ -1,3 +1,4 @@
+import type { PermissionControlAction } from '../shared/session-permissions';
 import type { DemoPromptId, DemoState } from '../shared/demo';
 import type { SessionGoal } from '../shared/goal-journey';
 import type { Preflight } from '../shared/preflight';
@@ -14,7 +15,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
-  BackupCheck, BackupRestoreSummary, BackupSummary,
+  BackupCheck, BackupRestoreSummary, BackupSummary, AttachmentReclaimPlan, AttachmentReclaimReport,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   BoardCard, CodexAgentsChain, HaltState, InAppAlert, MobileAlertChannels, Interview, InterviewProposal, InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
   McpServerConfig, McpServerReview, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
@@ -131,12 +132,14 @@ const api = {
     markRead: (id: string) => call<boolean>('sessions:markRead', id),
     reveal: (id: string) => call<boolean>('sessions:reveal', id),
     baseline: (id: string) => call<{ head: string | null; dirty: string[]; at: number } | null>('sessions:baseline', id),
-    past: () => call<PastSession[]>('sessions:past'),
+    past: (projectId?: string | null) => call<PastSession[]>('sessions:past', projectId),
     forget: (id: string) => call<PastSession[]>('sessions:forget', id),
     setConversationFlag: (id: string, flag: 'pin' | 'settle', on: boolean) =>
       call<PastSession[]>('sessions:setConversationFlag', id, flag, on),
     rename: (id: string, title: string) => call<boolean>('sessions:rename', id, title),
     write: (id: string, data: string) => ipcRenderer.send('sessions:write', id, data),
+    permissionControl: (id: string, action: PermissionControlAction) =>
+      call<boolean>('sessions:permissionControl', id, action),
     setTuning: (id: string, field: 'model' | 'effort', value: string) =>
       call<boolean>('sessions:setTuning', id, field, value),
     resize: (id: string, cols: number, rows: number) =>
@@ -179,6 +182,7 @@ const api = {
       call<{ opened: string }>('code:open', editorPath, target, line),
     changes: (root: string, sessionId?: string) => call<{
       isRepo: boolean; branch: string | null; headMoved: boolean; commits: number;
+      attributed: boolean; unreadable: string | null;
       files: { path: string; index: string; work: string; staged: boolean; untracked: boolean;
                preexisting?: boolean; committed?: boolean }[];
     }>('code:changes', root, sessionId),
@@ -189,11 +193,11 @@ const api = {
       call<{ text: string; truncated: boolean; size: number; binary: boolean }>('code:read', root, rel),
   },
   codex: {
-    status: (force?: boolean) => call<{
+    status: (sessionId: string, force?: boolean) => call<{
       fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
       primary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
       secondary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
-    }>('codex:status', force),
+    }>('codex:status', sessionId, force),
     models: () => call<{
       fetchedAt: number; note: string | null;
       models: { id: string; label: string; description: string | null; reasoningEfforts: string[]; defaultReasoningEffort: string | null; isDefault: boolean }[];
@@ -526,8 +530,8 @@ const api = {
   review: {
     recipe: (projectId: string) => call<ReviewRecipe>('review:recipe', projectId),
     saveRecipe: (projectId: string, commands: string[]) => call<ReviewRecipe>('review:saveRecipe', projectId, commands),
-    history: (projectId: string, limit?: number) => call<ReviewRun[]>('review:history', projectId, limit),
-    run: (projectId: string) => call<ReviewRun>('review:run', projectId),
+    history: (projectId: string, limit?: number, sessionId?: string) => call<ReviewRun[]>('review:history', projectId, limit, sessionId),
+    run: (projectId: string, sessionId?: string) => call<ReviewRun>('review:run', projectId, sessionId),
   },
   // ── P30 · durable agent control plane ───────────────────────────────
   accounts: {
@@ -619,6 +623,12 @@ const api = {
     open: (p: string) => call<string | null>('browse:open', p),
   },
   // ── phase 21 · attachments ───────────────────────────────────────────
+  attachmentStorage: {
+    settings: () => call<{ enabled: boolean; days: number }>('attachmentStorage:settings'),
+    setDays: (days: number) => call<{ enabled: boolean; days: number }>('attachmentStorage:setDays', days),
+    preview: (days: number) => call<AttachmentReclaimPlan>('attachmentStorage:preview', days),
+    reclaim: (sessionIds: string[]) => call<AttachmentReclaimReport | null>('attachmentStorage:reclaim', sessionIds),
+  },
   attach: {
     inspect: (p: string) => call<any>('attach:inspect', p),
     add: (sessionId: string, p: string) => call<any>('attach:add', sessionId, p),

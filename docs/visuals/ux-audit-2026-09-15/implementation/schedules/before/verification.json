@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-16T01:43:02.463Z",
+  "renderer": "/private/tmp/wanigan-schedules-before/renderer",
+  "checks": [],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    }
+  ],
+  "provenance": "Built renderer in isolated Electron with synthetic bridge. No live user data, provider calls, agents or real scheduler changes."
+}

@@ -1,0 +1,103 @@
+{
+  "source": "/Users/dane/Projects/drupal/wanigan/docs/research/2026-09-15-workbench-concept.html",
+  "sha256": "2895d011935eff6fd9a9ddc25b3e435afba40ad8e66dffe8a02593c2695bee35",
+  "provenance": "Isolated Electron, standalone fragment wrapper, fictional local work only; no real Wanigan bridge, profile, provider, terminal, repository action, or network access.",
+  "hostSupport": "Tests without optional Tweak or host Lucide; native controls and text remain usable.",
+  "checks": [
+    "Proposal and fictional data provenance remain visibly labeled",
+    "permission work selection updates status/action; local preview opens/closes and returns focus",
+    "finished work selection updates status/action; local preview opens/closes and returns focus",
+    "running work selection updates status/action; local preview opens/closes and returns focus",
+    "Project filter pine controls visible work and inspector",
+    "Project filter harbor controls visible work and inspector",
+    "Project filter grove controls visible work and inspector",
+    "Project filter all controls visible work and inspector",
+    "home navigation control preserves scope and honestly describes proposal boundary",
+    "projects navigation control preserves scope and honestly describes proposal boundary",
+    "fleet navigation control preserves scope and honestly describes proposal boundary",
+    "review navigation control preserves scope and honestly describes proposal boundary",
+    "knowledge navigation control preserves scope and honestly describes proposal boundary",
+    "automation navigation control preserves scope and honestly describes proposal boundary",
+    "Fits 1024px in light with expected layout and no horizontal overflow",
+    "Fits 1024px in dark with expected layout and no horizontal overflow",
+    "Fits 736px in light with expected layout and no horizontal overflow",
+    "Fits 736px in dark with expected layout and no horizontal overflow",
+    "Fits 360px in light with expected layout and no horizontal overflow",
+    "Fits 360px in dark with expected layout and no horizontal overflow",
+    "Fits 320px in light with expected layout and no horizontal overflow",
+    "Fits 320px in dark with expected layout and no horizontal overflow"
+  ],
+  "captures": [
+    {
+      "file": "home-1024-light.png",
+      "width": 1024,
+      "theme": "light",
+      "viewport": 1024,
+      "viewportHeight": 1600,
+      "clientWidth": 1024,
+      "document": 1024,
+      "content": 1024,
+      "height": 736.1796875,
+      "overflow": [],
+      "background": "rgb(244, 246, 248)",
+      "inspectorBelowList": false
+    },
+    {
+      "file": "home-1024-dark.png",
+      "width": 1024,
+      "theme": "dark",
+      "viewport": 1024,
+      "viewportHeight": 1600,
+      "clientWidth": 1024,
+      "document": 1024,
+      "content": 1024,
+      "height": 736.1796875,
+      "overflow": [],
+      "background": "rgb(23, 30, 36)",
+      "inspectorBelowList": false
+    },
+    {
+      "file": "home-360-light.png",
+      "width": 360,
+      "theme": "light",
+      "viewport": 360,
+      "viewportHeight": 1600,
+      "clientWidth": 360,
+      "document": 360,
+      "content": 360,
+      "height": 1126.9765625,
+      "overflow": [],
+      "background": "rgb(244, 246, 248)",
+      "inspectorBelowList": true
+    },
+    {
+      "file": "home-360-dark.png",
+      "width": 360,
+      "theme": "dark",
+      "viewport": 360,
+      "viewportHeight": 1600,
+      "clientWidth": 360,
+      "document": 360,
+      "content": 360,
+      "height": 1126.9765625,
+      "overflow": [],
+      "background": "rgb(23, 30, 36)",
+      "inspectorBelowList": true
+    },
+    {
+      "file": "finished-preview-1024-light.png",
+      "width": 1024,
+      "theme": "light",
+      "state": "finished with changes preview"
+    },
+    {
+      "file": "finished-preview-1024-dark.png",
+      "width": 1024,
+      "theme": "dark",
+      "state": "finished with changes preview"
+    }
+  ],
+  "pageErrors": [],
+  "networkRequests": [],
+  "result": "pass"
+}

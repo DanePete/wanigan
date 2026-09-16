@@ -1,0 +1,6 @@
+{
+  "before": true,
+  "checks": [],
+  "errors": [],
+  "provenance": "Built renderer with synthetic bridge, isolated Electron profile; no providers or user data."
+}

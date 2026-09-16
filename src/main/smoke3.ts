@@ -625,6 +625,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const profileFallback = transcripts.archiveSession('s_smoke_profile_fallback', trepo, conv);
     check(profileFallback.ok,
       'migration-era history falls back to the frozen profile JSON before consulting today\'s provider registry', profileFallback.note);
+
+    const isolatedCwd = path.join(tmp, 'isolated-transcript-checkout');
+    const isolatedSlug = path.resolve(isolatedCwd).replace(/[^a-zA-Z0-9]/g, '-');
+    const isolatedDir = path.join(claudeHome, 'projects', isolatedSlug);
+    fs.mkdirSync(isolatedDir, { recursive: true });
+    const isolatedConv = 'smoke-isolated-conversation';
+    fs.writeFileSync(path.join(isolatedDir, `${isolatedConv}.jsonl`), JSON.stringify({
+      type: 'user', message: { role: 'user', content: 'only the isolated checkout has this conversation' },
+      timestamp: new Date().toISOString(),
+    }) + '\n');
+    logRow.run('s_smoke_isolated_archive', isolatedConv, 'claude', null, trepo, 'trepo', startedAt,
+      '/usr/local/bin/claude', 'claude-code', null);
+    db().prepare('UPDATE session_log SET worktree = ? WHERE id = ?').run(isolatedCwd, 's_smoke_isolated_archive');
+    const isolatedArchive = transcripts.archiveSession('s_smoke_isolated_archive', trepo, isolatedConv);
+    const isolatedRead = transcripts.transcriptFor('s_smoke_isolated_archive');
+    check(isolatedArchive.ok && isolatedRead.turns.some(turn => turn.text.includes('only the isolated checkout'))
+      && !isolatedRead.turns.some(turn => turn.text.includes('zeppelin')),
+    'archival uses the recorded worktree even when a caller supplies the base repo containing a different recent transcript', isolatedArchive.note);
   } finally {
     if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
@@ -2130,7 +2148,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // only refuses the destructive-sounding one is not a gate.
     const readOnlySchedule = schedule.createSchedule({
       name: 'smoke phone read-only schedule', cron: '0 3 * * *', kind: 'headless',
-      payload: { prompt: 'audit', allProjects: true },
+      payload: { prompt: 'audit', allProjects: true, providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint },
     });
     const monitorSchedules = await fetch(new URL('api/schedules', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
     const monitorScheduleBody = await monitorSchedules.json() as { schedules?: { id: string; name: string }[] };
@@ -3080,11 +3098,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     say('── phone fleet · the Manage hub');
     const freshSchedule = schedule.createSchedule({
       name: 'smoke phone never fired', cron: '0 3 * * *', kind: 'headless',
-      payload: { prompt: 'audit', allProjects: true },
+      payload: { prompt: 'audit', allProjects: true, providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint },
     });
     const firedSchedule = schedule.createSchedule({
       name: 'smoke phone last fire ok', cron: '0 4 * * *', kind: 'headless',
-      payload: { prompt: 'audit', allProjects: true },
+      payload: { prompt: 'audit', allProjects: true, providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint },
     });
     // Straight onto the schedule row, which is what a finished fire leaves
     // behind: recordFireOutcome writes last_status through touchSchedule, and
@@ -3240,7 +3258,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // the scheduler is touched at all.
     const budgetSchedule = schedule.createSchedule({
       name: 'smoke phone shared write budget', cron: '0 5 * * *', kind: 'headless',
-      payload: { prompt: 'audit', allProjects: true },
+      payload: { prompt: 'audit', allProjects: true, providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint },
     });
     const pauseAfterBurst = await fetch(new URL('api/schedules', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -4593,7 +4611,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   const sch = schedule.createSchedule({
     name: 'smoke nightly audit', cron: '0 3 * * *', kind: 'headless',
-    payload: { prompt: 'audit' }, projectId: null,
+    payload: { prompt: 'audit', providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint }, projectId: null,
   });
   check(sch.nextAt !== null && sch.nextAt > Date.now(), 'a new schedule is armed for the future');
   check(schedule.listSchedules().some((x) => x.id === sch.id), 'it is listed');
@@ -4605,7 +4623,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Editing in place: the row keeps its history, the kind is fixed, an
   // unpinned headless schedule must declare its fan-out, and the change is
   // written to the same history the operator audits.
-  const edited = schedule.updateSchedule(sch.id, { cron: '0 4 * * *', name: 'smoke nightly audit (04:00)', payload: { prompt: 'audit', allProjects: true } });
+  const edited = schedule.updateSchedule(sch.id, { cron: '0 4 * * *', name: 'smoke nightly audit (04:00)', payload: { prompt: 'audit', allProjects: true, providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint } });
   check(edited?.cron === '0 4 * * *' && edited?.name === 'smoke nightly audit (04:00)', 'an edit changes cron and name in place', edited);
   check((edited?.nextAt ?? 0) > Date.now() && edited?.nextAt !== on?.nextAt, 'an edited cron re-arms from now', { before: on?.nextAt, after: edited?.nextAt });
   check(schedule.scheduleHistory(sch.id).some((h) => h.status === 'edited' && /cron 0 3 \* \* \* → 0 4 \* \* \*/.test(h.detail ?? '')),
@@ -4614,7 +4632,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   try { schedule.updateSchedule(sch.id, { kind: 'batch' }); } catch { kindRefused = true; }
   check(kindRefused, 'an edit cannot change the kind');
   let fanOutRefused = false;
-  try { schedule.updateSchedule(sch.id, { payload: { prompt: 'audit' } }); } catch { fanOutRefused = true; }
+  try { schedule.updateSchedule(sch.id, { payload: { prompt: 'audit', providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint } }); } catch { fanOutRefused = true; }
   check(fanOutRefused, 'an unpinned headless schedule that drops allProjects is refused');
   let cronRefused = false;
   try { schedule.updateSchedule(sch.id, { cron: '0 0 31 2 *' }); } catch { cronRefused = true; }
@@ -4627,7 +4645,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // a firing. This reaches the cross-process CAS, not just the local guard.
   const atomicName = `smoke atomic once ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const atomic = schedule.createSchedule({
-    name: atomicName, cron: '* * * * *', kind: 'headless', payload: { prompt: 'run once' }, projectId: null,
+    name: atomicName, cron: '* * * * *', kind: 'headless', payload: { prompt: 'run once', providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint }, projectId: null,
   });
   db().prepare('UPDATE schedules SET next_at=? WHERE id=?').run(Date.now() - 1, atomic.id);
   try {
@@ -4656,6 +4674,57 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(rejected, 'a schedule that can never fire is refused at creation');
 
   check(schedule.deleteSchedule(sch.id), 'it can be deleted');
+
+  // The desktop now asks who receives an unattended prompt. That choice must
+  // survive storage and edits, and an old row must remain recognisably old.
+  const executionPin = { providerId: 'claude', providerProfileFingerprint: providers.providerById('claude')!.profileFingerprint };
+  const scheduleCount = schedule.listSchedules().length;
+  let missingAgentRefused = false;
+  try { schedule.createSchedule({ name: 'unreviewed agent', cron: '0 3 * * *', kind: 'headless', payload: { prompt: 'audit' } }); }
+  catch (error) { missingAgentRefused = /Choose an agent/.test(String(error)); }
+  check(missingAgentRefused && schedule.listSchedules().length === scheduleCount,
+    'a new headless schedule cannot store implicit provider consent');
+  const pinnedSchedule = schedule.createSchedule({ name: 'explicit scheduled agent', cron: '0 3 * * *', kind: 'headless',
+    payload: { prompt: 'audit', allProjects: true, ...executionPin } });
+  const storedPin = pinnedSchedule.payload as Record<string, unknown>;
+  check(storedPin.executionVersion === 1 && storedPin.providerId === executionPin.providerId
+    && storedPin.providerProfileFingerprint === executionPin.providerProfileFingerprint,
+    'the chosen agent identity round-trips with a reviewed execution version');
+  let droppedAgentRefused = false;
+  try { schedule.updateSchedule(pinnedSchedule.id, { payload: { prompt: 'changed', allProjects: true } }); }
+  catch (error) { droppedAgentRefused = /Choose an agent/.test(String(error)); }
+  check(droppedAgentRefused && JSON.stringify(schedule.listSchedules().find(row => row.id === pinnedSchedule.id)?.payload) === JSON.stringify(storedPin),
+    'an edit cannot drop the agent identity or partially replace the saved payload');
+  schedule.deleteSchedule(pinnedSchedule.id);
+
+  const legacyExecutionId = 'sch_smoke_legacy_execution';
+  db().prepare(`INSERT INTO schedules (id,name,cron,kind,payload_json,project_id,enabled,created_at,next_at)
+    VALUES (?,?,?,?,?,?,1,?,?)`).run(legacyExecutionId, 'legacy dynamic agent', '0 3 * * *', 'headless',
+      JSON.stringify({ prompt: 'audit', allProjects: true }), null, Date.now(), Date.now() + 60_000);
+  schedule.setScheduleEnabled(legacyExecutionId, false);
+  const resumedLegacy = schedule.setScheduleEnabled(legacyExecutionId, true);
+  check(resumedLegacy?.enabled === true && !(resumedLegacy.payload as Record<string, unknown>).providerId,
+    'an untouched legacy schedule can pause and resume without invented provider consent');
+  let legacyEditRefused = false;
+  try { schedule.updateSchedule(legacyExecutionId, { name: 'renamed without review' }); }
+  catch (error) { legacyEditRefused = /Choose an agent/.test(String(error)); }
+  const reviewedLegacy = schedule.updateSchedule(legacyExecutionId, { payload: { prompt: 'audit', allProjects: true, ...executionPin } });
+  check(legacyEditRefused && (reviewedLegacy?.payload as Record<string, unknown>).executionVersion === 1,
+    'editing a legacy schedule asks for an agent; explicit review pins the existing record and preserves history');
+  schedule.deleteSchedule(legacyExecutionId);
+
+  const batchSchedule = schedule.createSchedule({ name: 'API batch stays API', cron: '0 3 * * *', kind: 'batch', payload: { runId: 'fixture-batch' } });
+  check(!(batchSchedule.payload as Record<string, unknown>).providerId, 'batch schedules keep their saved API configuration without an agent profile');
+  schedule.deleteSchedule(batchSchedule.id);
+
+  const runsBeforeChangedProfile = (db().prepare('SELECT COUNT(*) AS n FROM runs').get() as { n: number }).n;
+  let changedProfileRefused = false;
+  try { await headless.startHeadlessRun({ name: 'changed scheduled profile', providerId: 'claude',
+    expectedProfileFingerprint: 'a-profile-the-operator-never-reviewed', projectIds: [], prompt: 'audit',
+    maxBudgetUsd: 2, timeoutMs: 60_000, isolate: true }); }
+  catch (error) { changedProfileRefused = /scheduled agent profile changed/.test(String(error)); }
+  check(changedProfileRefused && (db().prepare('SELECT COUNT(*) AS n FROM runs').get() as { n: number }).n === runsBeforeChangedProfile,
+    'a changed scheduled profile is refused before a run row, provider probe or agent launch');
 
   // 'session' is gone from the Schedules form — no runner was ever registered
   // for the kind, so every session schedule ever created sat in the queue
@@ -4943,10 +5012,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const checkpoint = control.checkpointNode(planNode.id, 'Plan handoff saved.');
     check(checkpoint.repoCommit !== null && checkpoint.conversationId === null,
       'a checkpoint stores a concrete repository point without fabricating a conversation id');
-    control.completeNode(planNode.id, { detail: 'Plan reviewed.' });
+    await control.completeNode(planNode.id, { detail: 'Plan reviewed.' });
     check(control.docket(docket.id).nodes.find((node) => node.id === implementNode.id)?.status === 'ready',
       'completing a prerequisite releases exactly its dependent task');
-    control.completeNode(implementNode.id, { detail: 'Implementation evidence recorded.' });
+    await control.completeNode(implementNode.id, { detail: 'Implementation evidence recorded.' });
     const verifyNode = control.docket(docket.id).nodes.find((node) => node.kind === 'verify')!;
     review.saveRecipe(controlProject.id, ['true']);
     let consentRefusal = '';
@@ -4959,11 +5028,64 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check((await review.saveRecipeWithConsent(null, controlProject.id, ['true'])).commands.join('\n') === 'true',
       're-saving the exact set already stored asks nothing and needs no window, because dropping or reordering commands grants a gate nothing it could not already run and a prompt there would train people to click through the one that matters',
       review.recipe(controlProject.id).commands);
+    review.saveRecipe(controlProject.id, ['echo changed-during-verification >> README.md']);
+    const changedDuringProof = await control.runProof(verifyNode.id);
+    check(changedDuringProof.status === 'recorded' && /Current checkout not verified/.test(changedDuringProof.summary),
+      'passing commands that change checkout content are recorded without a green goal proof');
+    fs.writeFileSync(path.join(controlRepo, 'README.md'), '# control\n');
+    review.saveRecipe(controlProject.id, ['true']);
     const proof = await control.runProof(verifyNode.id);
     check(proof.status === 'passed', 'the review gate becomes a durable passed proof rather than terminal text');
-    control.completeNode(verifyNode.id, { detail: 'Gate passed.' });
+
+    const savedProof = db().prepare('SELECT detail_json FROM work_proofs WHERE id=?').get(proof.id) as { detail_json: string };
+    const proofDetail = JSON.parse(savedProof.detail_json) as { reviewRunId?: string };
+    check(typeof proofDetail.reviewRunId === 'string' && proofDetail.reviewRunId.length > 0,
+      'a goal test proof identifies the review run that recorded its checkout and commands');
+    db().prepare('UPDATE work_proofs SET detail_json=? WHERE id=?').run('{}', proof.id);
+    let unboundProofRefused = false;
+    try { await control.completeNode(verifyNode.id, { detail: 'A historical green is enough.' }); }
+    catch { unboundProofRefused = true; }
+    db().prepare('UPDATE work_proofs SET detail_json=? WHERE id=?').run(savedProof.detail_json, proof.id);
+    check(unboundProofRefused && control.docket(docket.id).nodes.find(node => node.id === verifyNode.id)?.status === 'ready',
+      'a legacy passed proof without a bound review run stays readable but cannot complete verification');
+
+    fs.appendFileSync(path.join(controlRepo, 'README.md'), 'changed after verification\n');
+    let staleContentRefused = false;
+    try { await control.completeNode(verifyNode.id, { detail: 'The old command passed.' }); }
+    catch { staleContentRefused = true; }
+    fs.writeFileSync(path.join(controlRepo, 'README.md'), '# control\n');
+    check(staleContentRefused && control.docket(docket.id).nodes.find(node => node.id === verifyNode.id)?.status === 'ready',
+      'changing checkout content after a passing gate refuses task completion without changing the task state');
+
+    const pendingDecision = control.completeNode(verifyNode.id, { detail: 'Race a new gate result.' })
+      .then(() => '', (error: unknown) => error instanceof Error ? error.message : String(error));
+    const replacementProofId = `${proof.id}_newer`;
+    db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(replacementProofId, docket.id, verifyNode.id, 'test', 'failed', 'A newer result arrived.', proof.createdAt + 1);
+    const racedProofRefusal = await pendingDecision;
+    db().prepare('DELETE FROM work_proofs WHERE id=?').run(replacementProofId);
+    check(/changed while/.test(racedProofRefusal) && control.docket(docket.id).nodes.find(node => node.id === verifyNode.id)?.status === 'ready',
+      'a new proof arriving during asynchronous checkout validation cannot be outvoted by the proof read before it');
+
+    const pendingTopology = control.completeNode(verifyNode.id, { detail: 'Race a graph edit.' })
+      .then(() => '', (error: unknown) => error instanceof Error ? error.message : String(error));
+    db().prepare('UPDATE work_nodes SET depends_json=? WHERE id=?').run('[]', verifyNode.id);
+    const racedTopologyRefusal = await pendingTopology;
+    db().prepare('UPDATE work_nodes SET depends_json=? WHERE id=?').run(JSON.stringify(verifyNode.dependsOn), verifyNode.id);
+    check(/changed while/.test(racedTopologyRefusal) && control.docket(docket.id).nodes.find(node => node.id === verifyNode.id)?.status === 'ready',
+      'a task graph changed during checkout validation must be reviewed again before completion');
+
+    await control.completeNode(verifyNode.id, { detail: 'Gate passed.' });
     const reviewNode = control.docket(docket.id).nodes.find((node) => node.kind === 'review')!;
-    control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
+    review.saveRecipe(controlProject.id, ['true', 'true']);
+    let staleRecipeRefused = false;
+    try { await control.completeNode(reviewNode.id, { detail: 'Approve against the previous recipe.', decision: 'approve' }); }
+    catch { staleRecipeRefused = true; }
+    check(staleRecipeRefused && control.docket(docket.id).status !== 'accepted',
+      'a changed command recipe invalidates final goal approval even after its verification task completed');
+    review.saveRecipe(controlProject.id, ['true']);
+    await control.runProof(verifyNode.id);
+    await control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
     check(control.docket(docket.id).status === 'accepted',
       'a docket is accepted only after verification evidence and a human review decision');
     /* ── the phone's read of one goal ─────────────────────────────────── */
@@ -4976,7 +5098,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const phonePlan = phoneGoal.nodes.find((node) => node.kind === 'plan')!;
     const phoneImplement = phoneGoal.nodes.find((node) => node.kind === 'implement')!;
     control.claimPath(phoneImplement.id, 'src/phone-goal-claim.ts');
-    control.completeNode(phonePlan.id, { decision: 'request_changes', detail: 'The plan needs rework.' });
+    await control.completeNode(phonePlan.id, { decision: 'request_changes', detail: 'The plan needs rework.' });
     const phoneRecord = control.docket(phoneGoal.id);
     const phoneWire = phoneGoals.mobileGoal(phoneRecord);
     const phoneHeld = phoneWire.tasks.find((task) => task.title === phoneImplement.title);
@@ -5034,8 +5156,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'a phone is refused a decision on a review whose upstream tasks have not finished, in a sentence naming that state, and a gate nobody has run reads as not run rather than as nothing being wrong',
     `${blockedDecision.refusal} / ${phoneGoals.mobileGoalGate(decideRead()).state}`);
 
-    control.completeNode(decidePlan.id, { detail: 'Planned.' });
-    control.completeNode(decideImplement.id, { detail: 'Implemented.' });
+    await control.completeNode(decidePlan.id, { detail: 'Planned.' });
+    await control.completeNode(decideImplement.id, { detail: 'Implemented.' });
     review.saveRecipe(controlProject.id, ['false']);
     await control.runProof(decideVerify.id);
     const redGate = phoneGoals.mobileGoalGate(decideRead());
@@ -5048,7 +5170,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     "the phone reads the review gate out of the goal's own proofs, naming the verification task it failed on in the Mac's own sentence, and the newest run decides rather than any historical pass",
     `${redGate.state} → ${greenGate.state}`);
 
-    control.completeNode(decideVerify.id, { detail: 'Gate passed.' });
+    await control.completeNode(decideVerify.id, { detail: 'Gate passed.' });
     const readyDecision = phoneGoals.mobileGoalDecision(decideRead());
     check(readyDecision.awaiting === true && readyDecision.nodeId === decideReview.id
       && readyDecision.refusal === null
@@ -5064,17 +5186,17 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const redUnderReady = phoneGoals.mobileGoalGate(decideRead());
     const stillAwaiting = phoneGoals.mobileGoalDecision(decideRead()).awaiting;
     let approvalRefusal = '';
-    try { control.completeNode(decideReview.id, { decision: 'approve' }); }
+    try { await control.completeNode(decideReview.id, { decision: 'approve' }); }
     catch (error) { approvalRefusal = error instanceof Error ? error.message : String(error); }
     review.saveRecipe(controlProject.id, ['true']);
     await control.runProof(decideVerify.id);
     check(redUnderReady.state === 'failed' && stillAwaiting === true
-      && /Still unproven/.test(approvalRefusal) && approvalRefusal.includes(decideVerify.title)
+      && /Run the gate again/.test(approvalRefusal) && approvalRefusal.includes(decideVerify.title)
       && phoneGoals.mobileGoalDecision(decideRead()).awaiting === true,
     "the phone's gate reading and control.ts's approval rule never disagree: a gate that went red under a ready review is reported as failed, the decision is still offered, and the Mac refuses the approval in its own words — naming the verification task and writing nothing",
     approvalRefusal);
 
-    control.completeNode(decideReview.id, {
+    await control.completeNode(decideReview.id, {
       detail: `${phoneGoals.MOBILE_GOAL_DECISION_NOTE.prefix}Read the diff on the train.`,
       decision: 'approve',
     });
@@ -5603,19 +5725,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0, 1] },
     ], 'Concurrent claims'), 'two tasks that can run at once cannot claim overlapping paths');
 
-    control.completeNode(byTitle(fan, 'Scope both branches').id, { detail: 'Split.' });
+    await control.completeNode(byTitle(fan, 'Scope both branches').id, { detail: 'Split.' });
     const afterPlan = control.docket(fan.id);
     check(byTitle(afterPlan, 'Branch A').status === 'ready' && byTitle(afterPlan, 'Branch B').status === 'ready',
       'completing one prerequisite releases every dependent branch at once, which is what fan-out is for');
-    control.completeNode(byTitle(afterPlan, 'Branch A').id, { detail: 'A done.' });
-    control.completeNode(byTitle(afterPlan, 'Branch B').id, { detail: 'B done.' });
+    await control.completeNode(byTitle(afterPlan, 'Branch A').id, { detail: 'A done.' });
+    await control.completeNode(byTitle(afterPlan, 'Branch B').id, { detail: 'B done.' });
     const verifyA = byTitle(control.docket(fan.id), 'Verify A');
     const verifyB = byTitle(control.docket(fan.id), 'Verify B');
     let unprovenVerifyRefused = false;
-    try { control.completeNode(verifyB.id, { detail: 'Trust me.' }); } catch { unprovenVerifyRefused = true; }
+    try { await control.completeNode(verifyB.id, { detail: 'Trust me.' }); } catch { unprovenVerifyRefused = true; }
     check(unprovenVerifyRefused, 'a verification task still cannot be completed without command evidence');
-    await control.runProof(verifyA.id); control.completeNode(verifyA.id, { detail: 'A gate passed.' });
-    await control.runProof(verifyB.id); control.completeNode(verifyB.id, { detail: 'B gate passed.' });
+    await control.runProof(verifyA.id); await control.completeNode(verifyA.id, { detail: 'A gate passed.' });
+    await control.runProof(verifyB.id); await control.completeNode(verifyB.id, { detail: 'B gate passed.' });
     const decide = byTitle(control.docket(fan.id), 'Decide');
     check(decide.status === 'ready', 'the review task becomes ready only once every branch has completed');
     // A later red run on one branch must outvote both earlier greens.
@@ -5623,11 +5745,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     await control.runProof(verifyB.id);
     review.saveRecipe(controlProject.id, ['true']);
     let partialApprovalRefused = false;
-    try { control.completeNode(decide.id, { decision: 'approve', detail: 'Looks fine.' }); } catch { partialApprovalRefused = true; }
+    try { await control.completeNode(decide.id, { decision: 'approve', detail: 'Looks fine.' }); } catch { partialApprovalRefused = true; }
     check(partialApprovalRefused,
       'one green branch cannot approve a docket whose other branch last failed its gate');
     await control.runProof(verifyB.id);
-    control.completeNode(decide.id, { decision: 'approve', detail: 'Both branches verified.' });
+    await control.completeNode(decide.id, { decision: 'approve', detail: 'Both branches verified.' });
     check(control.docket(fan.id).status === 'accepted',
       'a fanned-out docket is accepted once every verification task holds a passing proof');
 
@@ -6656,7 +6778,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mobileSrc.includes("unknown: { glyph: '?', word: 'Not recognised', tone: 'quiet' },")
     && mobileSrc.includes('This project has no review gate.')
     && mobileSrc.includes('did not record which working tree this run saw')
-    && mobileSrc.includes('The working tree has changed since this ran, so this result is not about the files above.'),
+    && mobileSrc.includes('The checkout content or saved commands have changed since this ran. Run the gate again.'),
   'a review gate that has no commands, a stored status this build cannot name, and a run whose working tree was never recorded each render as their own state on the phone rather than borrowing the shape of a gate that passed');
   const cssSrc = sourceOf('src/renderer/src/index.css');
   const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
@@ -7145,7 +7267,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !appSrc.includes('CodexStatusBadge')
     && appSrc.includes('selectedProviderStatus(session, providers)')
     && appSrc.includes('window.wanigan.usage.session(session.id)')
-    && appSrc.includes('window.wanigan.codex.status(force)')
+    && appSrc.includes('window.wanigan.codex.status(session.id, force)')
     && appSrc.includes('requestEpoch.current')
     && appSrc.includes('epoch !== requestEpoch.current')
     && cssSrc.includes('.nav-usage-status') && !cssSrc.includes('.nav-codex-status'),
@@ -7210,8 +7332,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // field so typing never stops mid-search.
     && appSrc.includes("if (e.key === 'ArrowDown')")
     && appSrc.includes('aria-activedescendant={active >= 0')
-    // The list is a roving tabindex, so it is one tab stop rather than fifteen.
-    && appSrc.includes('tabIndex={roving === id ? 0 : -1}')
+    // The persistent area rail is a roving tab stop. Its component now owns
+    // the focus order while the palette owns its announced highlight.
+    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('tabIndex={active ? 0 : -1}')
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
     // Off-list views are reachable and are labelled with a real shortcut where
     // one exists rather than a blank column. Nothing is off the list any more,
@@ -7367,7 +7490,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !settingsSrc.includes('setSpendCap(Number(cap) || 0)')
     && settingsSrc.includes('setSpendCap(capNumber)')
     && settingsSrc.includes('disabled={!capUsable}')
-    && settingsSrc.includes('<Reading what="the saved spend cap" />'),
+    && settingsSrc.includes('<Reading what="the saved batch submission limit" />'),
     'an unread spend cap renders as unread rather than as $1.00, and there is no Save button to press until a real cap has come back from main');
 
   // A swallowed key-status read left the panel rendering "No … key stored",
@@ -7425,27 +7548,17 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // pump, once inside the primed buffer — and because TUI output carries
   // cursor addressing, the second copy repaints against a screen that no
   // longer matches it.
-  check(terminalPaneSrc.includes('if (!entry || entry.priming) return;')
-    && terminalPaneSrc.includes('entry.priming = true;')
+  check(terminalPaneSrc.includes('entry?.replay.feed(data);')
+    && terminalPaneSrc.includes('new TerminalReplay(')
     && terminalPaneSrc.includes('if (pool.get(sessionId) !== pane) return;')
-    // The callback form, not the bare write: see the outbound check below for
-    // why opening the gate on write()'s return is the whole bug.
-    && terminalPaneSrc.includes('pane.term.write(buf, () => finishPrime(pane));'),
-  'a terminal drops broadcast chunks only while its one scrollback prime is in flight, so bytes that land during the mount round trip are written once — by the buffer that already carries them — instead of twice',
-  `entry.priming mentions: ${terminalPaneSrc.split('entry.priming').length - 1}`);
+    && terminalPaneSrc.includes('pane.replay.snapshot(buf);'),
+  'terminal snapshots and broadcast output share the tested replay ordering, with disposed-pane identity guarded');
 
   // The gate's own failure mode is worse than the bug it closes: a pane left
   // priming forever writes nothing again for the life of the session, and a
   // scrollback that rejects is exactly when that would happen.
-  check(terminalPaneSrc.includes('if (pool.get(sessionId) === pane) finishPrime(pane);')
-    // Three call sites now: the write callback, the empty-buffer branch beside
-    // it, and this one. The empty branch matters — a session with no history
-    // would otherwise never open its gate at all.
-    && terminalPaneSrc.split('finishPrime(pane)').length - 1 === 3
-    && terminalPaneSrc.includes('else finishPrime(pane);')
-    && terminalPaneSrc.includes('pane.priming = false;'),
-  'a refused scrollback opens the gate it shut, so a pane whose history could not be read still shows everything the agent prints after that',
-  `finishPrime call sites: ${terminalPaneSrc.split('finishPrime(pane)').length - 1}`);
+  check(terminalPaneSrc.includes('if (pool.get(sessionId) === pane) pane.replay.failed();'),
+  'a refused scrollback releases the replay gate for its own pane');
 
   // The outbound half of the prime gate, which the inbound half above does not
   // imply. A captured scrollback carries the device queries the agent's own TUI
@@ -7454,10 +7567,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // ESC[c, ESC[>c, ESC[5n — arriving at a running agent as keystrokes nobody
   // pressed. `npm run probe:terminal` fails if either half regresses; this
   // check is what stops the two lines being tidied away between probe runs.
-  check(terminalPaneSrc.includes('if (pool.get(sessionId)?.priming) return;')
+  check(terminalPaneSrc.includes('if (pool.get(sessionId)?.replay.suppressInput) return;')
     && !terminalPaneSrc.includes('if (buf) pane.term.write(buf);'),
-  'a pane forwards nothing to the PTY while it is priming, so replaying a scrollback cannot answer its own device queries into the running agent',
-  `outbound guard present: ${terminalPaneSrc.includes('if (pool.get(sessionId)?.priming) return;')}`);
+  'a pane suppresses replayed device-query replies until parsing finishes');
 
   // Negative, and the one that catches a revert: both one-liners this replaced
   // are short enough to come back as a "tidy-up" without anyone noticing.
@@ -7471,11 +7583,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // ring buffer would replay it if the prime gate simply dropped it — and
   // writing it immediately put it above the history instead of after it.
   check(terminalPaneSrc.includes('function feedLocal(sessionId: string, text: string)')
-    && terminalPaneSrc.includes('if (entry.priming) entry.pendingLocal.push(text);')
-    && terminalPaneSrc.includes('for (const text of pane.pendingLocal.splice(0)) pane.term.write(text);')
+    && terminalPaneSrc.includes('entry?.replay.local(text);')
     && terminalPaneSrc.includes('feedLocal(sessionId, `\\r\\n\\x1b[38;5;244m── session exited'),
-  'the "session exited" line this window composes waits for a prime instead of being dropped by it, and lands after the restored history rather than above it',
-  `pendingLocal mentions: ${terminalPaneSrc.split('pendingLocal').length - 1}`);
+  'the local session-exited line uses replay ordering rather than being dropped as a broadcast');
 
   // Negative: the gate is only worth having if broadcast bytes cannot walk
   // around it through the queue that exists for this window's own text.
@@ -7491,6 +7601,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // sees every chunk whatever tab is on screen and is told which session that
   // is, so it owns both halves now.
   const sessionsMainSrc = sourceOf('src/main/sessions.ts');
+  check(sessionsMainSrc.includes('.run(live.meta.endedAt, live.meta.exitCode, id)')
+    && sessionsMainSrc.includes("broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode })"),
+  'durable session history and exit broadcasts both retain the normalized signal exit code');
   check(sessionsMainSrc.split('bumpUnread').length - 1 >= 2
     && sessionsMainSrc.includes("broadcast('session:unread'")
     && sessionsMainSrc.includes('export function setFocusedSession')
@@ -7948,63 +8061,36 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && new Set(MOBILE_VIEWS.map((view) => view.id)).size === MOBILE_VIEWS.length,
   'exactly four phone destinations claim a thumb-bar slot, every id is distinct, and only Device — which is about this phone — narrows no desktop screen',
   MOBILE_VIEWS.filter((view) => view.bar).map((view) => view.id).join(', '));
-  check(appSrc.includes('<span className="nav-tab-label">{label}</span>')
-    && appSrc.includes('<Icon name={TAB_ICONS[id]} />')
-    && appSrc.includes('<span className="nav-tab-chord" aria-hidden="true">{shortcut.label}</span>'),
-    'a sidebar row prints its word and its chord beside the glyph — the icon is a second way to find a route, never the only one');
-  check(appSrc.includes('<div className="workspace">')
-    && appSrc.includes('{sidebarOpen && (')
-    && appSrc.includes('aria-controls="wanigan-sidebar"')
-    && appSrc.includes("aria-orientation=\"vertical\"")
-    && appSrc.includes("if (event.key === 'ArrowDown')")
-    && !appSrc.includes('nav-titlebar') && !appSrc.includes('className="nav-tabs"')
-    && useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
-    && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
-    && !useDialogSrc.includes('nav-tabs')
-    && !cssSrc.includes('.nav-titlebar') && !cssSrc.includes('--rail-h')
-    && cssSrc.includes('--sidebar-w')
-    && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')")
-    && appSrc.includes("window.wanigan.prefs.set('nav_sidebar'")
-    && settingsSrc.length > 0,
-  'the two-row header became one row plus a hideable vertical list: all fifteen routes, arrow keys on the axis they are drawn on, a durable open/closed preference, and no .nav-tabs left for a closing dialog to hand focus to');
-
-  // A dialog that closes must put focus somewhere real. The selector this used
-  // to name (`.nav-tabs …`) went away with the horizontal rail, so it matched
-  // nothing and every keyboard user landed on document.body.
+  const workspaceNavSrc = sourceOf('src/renderer/src/components/SpaceNavigation.tsx');
+  const workspaceCssSrc = sourceOf('src/renderer/src/styles/spaces.css');
+  check(workspaceNavSrc.includes('SPACE_AREAS.map(area =>')
+    && workspaceNavSrc.includes('<Icon name={area.icon} /><span>{area.label}</span>')
+    && workspaceNavSrc.includes('TAB_SHORTCUTS[id].aria')
+    && workspaceNavSrc.includes('TAB_SHORTCUTS[id].label'),
+    'workspace navigation keeps every named area visible and publishes existing shortcuts on its local destinations');
+  check(appSrc.includes('<WorkspaceNavigation')
+    && appSrc.includes('areaDestination(area, areaMemory.current)')
+    && appSrc.includes('rememberDestination(areaMemory.current, next)')
+    && workspaceNavSrc.includes("['ArrowDown', 'ArrowUp', 'Home', 'End']")
+    && workspaceNavSrc.includes("useDialog<HTMLDivElement>({ onClose: props.onClose, initialFocus: 'first' })")
+    && workspaceNavSrc.includes('data-initial-focus={active ? true : undefined}')
+    && workspaceCssSrc.includes('.workbench-navigation-dialog')
+    && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')"),
+    'the pinned area rail remembers its last destination; compact navigation uses the shared focus and Escape dialog lifecycle');
   check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
+    && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={active ? 0 : -1}')
     && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
-    && !useDialogSrc.includes('nav-tabs'),
-  'a closing dialog whose opener unmounted hands focus to the sidebar roving tab stop and falls back to the header toggle, and names no .nav-tabs ancestor — the class App stopped rendering, whose selector matched nothing in either sidebar state',
-  useDialogSrc.includes('nav-tabs') ? 'useDialog.ts still names nav-tabs' : `no nav-tabs selector in ${useDialogSrc.length} bytes of useDialog.ts`);
-
-  // Negative, and only said about a file that was actually read: MISSING_SOURCE
-  // is a non-empty sentinel, so the length guard is what makes the absence mean
-  // "read it, it is not there" rather than "could not read it".
+    && useDialogSrc.includes('restoreFocus(opener);'),
+    'dialog teardown returns to its opener, a visible current navigation destination, or the compact header toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
-    && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs'),
-  'neither App.tsx nor useDialog.ts names nav-tabs any more, and that absence is reported from a read that returned a whole file rather than the missing-source sentinel',
-  `useDialog.ts ${useDialogSrc.length} bytes, App.tsx ${appSrc.length} bytes`);
-
-  // The fallback's premise, in the file that has to keep it true. If the toggle
-  // ever moves inside {sidebarOpen && (…)}, the collapsed case has no target and
-  // the hook is silently back to dropping focus on the body.
-  check(appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('{sidebarOpen && (')
-    && (appSrc.match(/className="hdr-toggle"/g) ?? []).length === 1
-    && appSrc.includes('<button className="hdr-toggle" type="button" onClick={toggleSidebar}'),
-  'the header toggle useDialog falls back to is rendered once, above the {sidebarOpen && …} guard, so it is still in the document on the frame where the destination list is not',
-  `hdr-toggle at ${appSrc.indexOf('className="hdr-toggle"')}, sidebar guard at ${appSrc.indexOf('{sidebarOpen && (')}`);
-
-  // Catches the whole phase being reverted or dropped: the hook can keep its
-  // docstring and lose its caller, and nothing else in the suite would notice.
-  check(useDialogSrc.includes('function restoreFocus(opener: HTMLElement | null): void {')
-    && useDialogSrc.includes('restoreFocus(opener);')
-    && !useDialogSrc.includes("the rail's single roving tab stop"),
-  'the focus hand-back is still called from the dialog stack teardown, and its comment no longer describes a horizontal rail this app has not rendered since the sidebar landed',
-  useDialogSrc.includes('restoreFocus(opener);') ? 'called on unmount' : 'restoreFocus is defined but never called');
+    && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
+    && appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('<WorkspaceNavigation')
+    && (appSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
+    'the header navigation opener remains outside the compact dialog and no obsolete horizontal-rail selector is used for focus');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
-    && cssSrc.includes('.nav-progress {')
-    && !cssSrc.includes('position: absolute; left: 11px; right: 11px; bottom: 5px;'),
-    'the batch progress bar is a sibling under its row rather than an overlay across the label it would cover');
+    && workspaceNavSrc.includes('<progress className="workbench-batch-progress"')
+    && workspaceNavSrc.includes('value={batchWork.done} max={batchWork.total}'),
+    'batch progress remains a measured native progress control below the automation route, without covering its label');
   // The menu bar is built from the route table and claims no key the window
   // needs. A registered accelerator is taken by the OS before the keydown
   // reaches the renderer, which is where "the PTY owns its keystrokes" lives.
@@ -8121,7 +8207,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'the Recent conversations read and the live session list read are two callbacks with two failure states, and the Recent read is awaited after the session-list try block closes rather than inside it, so a SQLite error in pastSessions() can no longer unmount every live terminal, tab and composer behind a heading that says the session list did not load',
   sessionsSrc.includes(oldSharedPastRead));
 
-  check(sessionsSrc.split('setPastErr(null)').length - 1 >= 3
+  check(sessionsSrc.includes('setPastErr(null)')
+    && sessionsSrc.split('.then(() => refreshPast())').length - 1 >= 2
     && sessionsSrc.includes("action={{ label: 'Retry', run: refreshPast }}")
     && sessionsSrc.includes('Recent conversations did not load:')
     && !sessionsSrc.includes("Running sessions are unaffected — this is Wanigan's own record of them"),
@@ -8143,8 +8230,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // it. Raising main's cap without touching the view fails here rather than
   // printing a stale forty at the operator.
   check(sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;')
-    && sessionsMainSrc.includes('export function pastSessions(limit = 40): PastSession[] {')
-    && mainSrc.includes("handle('sessions:past', () => pastSessions());")
+    && sessionsMainSrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
+    && mainSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
     && sessionsSrc.includes('does not report how many are older')
     && !/Wanigan lists (?:all|every)/.test(sessionsSrc),
   'the cap the renderer prints is the number main actually defaults to and the number the IPC handler actually passes, and the sentence names that cap while explicitly declining to count what sits behind it — a PastSession[] of forty cannot say whether forty-one were recorded, so the renderer states the limit rather than inventing a total',
@@ -8734,7 +8821,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // provider key, queue limit, phone configuration, or MCP draft mid-edit.
   const settingsSurfaces = [
     'Claude Platform API key', 'GLM Coding Plan', 'DeepSeek', 'Installed agent runtimes',
-    'Projects', 'Worktrees', 'Trust and the policy ledger', 'Spending', 'Dispatcher',
+    'Projects', 'Worktrees', 'Trust and the policy ledger', 'Batch submission limit', 'Dispatcher',
     'Phone monitor', 'MCP servers', 'Observation', 'What leaves this machine', 'Storage',
     'Appearance', 'Motion', 'Demo mode', 'Backup & restore',
   ];

@@ -3,14 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { Attention, AttentionKind, ClaudeContextUsage, HaltState, InAppAlert, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
-import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
+import { DIGIT_ROUTES, TABS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
 import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
 import MissionRoom from './views/MissionRoom';
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, SpaceRoutes, SpaceDock } from './components/SpaceNavigation';
+import { ProjectSpaces, WorkspaceNavigation } from './components/SpaceNavigation';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
 import Board from './views/Board';
@@ -26,7 +26,7 @@ import UsageView from './views/Usage';
 import SettingsView, { DemoPanel, SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
-import { Icon, ago, num, PageHead, EmptyState, Segmented } from './components/bits';
+import { Icon, ago, PageHead, EmptyState, Segmented } from './components/bits';
 import { DEMO_VIEWS } from '@shared/demo';
 import { startTerminalOutputPump } from './components/TerminalPane';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -36,7 +36,11 @@ import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './compone
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
-import { claudeContextLabel, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
+import { claudeContextStatus, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
+
+import { areaFor, areaDestination, rememberDestination, projectScopeFor, type AreaMemory, type SpaceAreaId } from '@shared/spaces';
+import { sessionName } from '@shared/session-name';
+import './styles/spaces.css';
 
 type CodexStatus = {
   fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
@@ -72,28 +76,7 @@ type StartupStatus = {
  * aria-keyshortcuts string the control publishes.
  */
 
-// The wide rail follows the digit map: the first nine tabs are ⌘1–9 in
-// order, Runs (⌘0) comes next, then the two surfaces that take named chords
-// (⌘⇧U, ⌘⇧I), and Settings (⌘,) stays last. The rail used to place Usage
-// beside Insights because that is where it belongs thematically — but a
-// 13-tab strip cannot be both a keypad and a thematic list, and once Usage
-// and Scout sat between digits, counting tabs gave the wrong chord for every
-// tab after Insights. The palette's group labels carry the thematic
-// adjacency instead. Skills and Context reach the screen through ⌘⇧S / ⌘⇧C
-// and the ⌘K palette without changing the long-standing ⌘1–9 map or turning
-// the rail into a ticker — and the palette button says which of them is on
-// screen, so an off-rail view is never a surface with no visible route back.
-//
-// Every destination is on the sidebar. The horizontal rail carried thirteen of
-// fifteen and left Skills and Context reachable only through ⌘K — a split that
-// was never a judgement about those two views, only about how many text tabs
-// fit across 960px. A vertical list has no such ceiling, so the compromise is
-// retired and the palette goes back to being a search box rather than the sole
-// route to two screens.
-//
-// This flattened order is what Up/Down walks, so it must match what the eye
-// reads down the column: SIDEBAR_GROUPS is the single record of both.
-const NAV_RAIL_TABS: readonly Tab[] = SIDEBAR_GROUPS.flatMap((section) => section.tabs);
+// Routes keep their stable keyboard ids; areas remember their last destination.
 
 /** A Goal is a durable Control record. Honour its deep link before the first
  * render so opening a copied Goal URL cannot strand someone on Sessions with
@@ -130,9 +113,9 @@ const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: numbe
 };
 
 /** The only parts of a session list the shell reacts to. */
-const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
+const shape = (l: Session[]) => JSON.stringify(l.map(s => [s.id, s.status, s.projectId, s.displayTitle, s.title, s.projectName, s.model, s.providerId]));
 /** Likewise for the ranked attention list: identity, kind and when it began. */
-const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}:${a.transitionId}`).join('|');
+const attentionShape = (l: Attention[]) => JSON.stringify(l.map(a => [a.sessionId, a.kind, a.since, a.transitionId, a.label, a.detail, a.tool]));
 
 /**
  * How many notification cards the window will stack before the oldest drops.
@@ -277,15 +260,16 @@ export default function App() {
   const [demoOn, setDemoOn] = useState(false);
   const [demoPrompt, setDemoPrompt] = useState<{ next: boolean } | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
-  // Which rail button holds the toolbar's single tab stop. Arrow keys move it
-  // without switching view, so it can differ from the view on screen.
-  const [navFocus, setNavFocus] = useState<Tab | null>(null);
-  // Starts open. The stored answer arrives a frame later; rendering closed
+  // Compact navigation opens only on request; the desktop rail stays visible.
+  // Rendering closed
   // until then would flash the shell narrow for everyone who never hid it.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [compactNavigation, setCompactNavigation] = useState(() => window.matchMedia('(max-width: 980px)').matches);
+  const areaMemory = useRef<AreaMemory>(rememberDestination({}, tab));
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
   const [newSessionRequest, setNewSessionRequest] = useState<number | null>(null);
+  const [historyRequest, setHistoryRequest] = useState<{ sessionId: string; query: string; nonce: number } | null>(null);
   // A session handing its changed files to a new batch run.
   const [batchSeed, setBatchSeed] = useState<{ projectId: string; root: string; paths: string[] } | null>(null);
   // Which session the keyboard-less surfaces should talk to.
@@ -383,20 +367,19 @@ export default function App() {
 
   useEffect(() => { void loadMotion(); }, [loadMotion, tab]);
 
-  // ── sidebar ────────────────────────────────────────────────────────
+  // The desktop rail stays put. Narrow windows use the shared dialog lifecycle.
   useEffect(() => {
-    void (async () => {
-      try { setSidebarOpen((await window.wanigan.prefs.all()).navSidebar === 'open'); }
-      catch { /* db not ready; the default stands */ }
-    })();
+    const media = window.matchMedia('(max-width: 980px)');
+    const changed = () => { setCompactNavigation(media.matches); setSidebarOpen(false); };
+    media.addEventListener('change', changed);
+    return () => media.removeEventListener('change', changed);
   }, []);
-
   const toggleSidebar = useCallback(() => {
-    setSidebarOpen((open) => {
-      const next = !open;
-      void window.wanigan.prefs.set('nav_sidebar', next ? 'open' : 'closed').catch(() => {});
-      return next;
-    });
+    if (!window.matchMedia('(max-width: 980px)').matches) {
+      document.querySelector<HTMLElement>('.workbench-area-button[aria-current]')?.focus();
+      return;
+    }
+    setSidebarOpen(open => !open);
   }, []);
 
   useEffect(() => {
@@ -551,7 +534,7 @@ export default function App() {
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null, [sessions, activeSessionId]);
 
-  const orbStory=useContextStory(activeSession?.id??null,activeSession?.displayTitle||activeSession?.id||'');
+  const orbStory=useContextStory(activeSession?.id??null,activeSession ? sessionName(activeSession) : '');
 
   // Main cannot infer which pane the renderer is showing. Keep its suppression
   // target current so the Mac does not show a redundant banner for the session
@@ -570,16 +553,15 @@ export default function App() {
     const known = (id?: string | null) => (id && projects.some((p) => p.id === id) ? id : undefined);
     return known(picked) ?? known(activeSession?.projectId) ?? projects[0]?.id;
   }, [picked, activeSession, projects]);
-  const projectName = useMemo(
-    () => projects.find((p) => p.id === projectId)?.name ?? null, [projects, projectId]);
 
   // Electron takes the window title from document.title. hiddenInset hides the
   // bar itself, but Mission Control and the Window menu read it, and "Wanigan"
   // for every state named nothing.
   useEffect(() => {
     const label = labelForTab(tab);
-    document.title = projectName ? `${label} — ${projectName}` : label;
-  }, [tab, projectName]);
+    const scopedName = projectScopeFor(tab) !== 'workspace' ? projects.find(project => project.id === (spaceId ?? (projectScopeFor(tab) === 'required' ? projectId : null)))?.name : null;
+    document.title = scopedName ? `${label} — ${scopedName}` : label;
+  }, [tab, projects, spaceId, projectId]);
 
   // announce({ tone: 'error' }) lands in the shell toast, which keeps its
   // contract: message, runnable retry, Open <view>, Dismiss, Esc.
@@ -593,9 +575,9 @@ export default function App() {
 
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
+    areaMemory.current = rememberDestination(areaMemory.current, next);
+    setSidebarOpen(false);
     if (next === tabRef.current) return;
-    if (!['mission', 'sessions', 'board', 'git', 'context'].includes(next)) setSpaceId(null);
-    else if (['git', 'context'].includes(next) && !spaceId && projectId) setSpaceId(projectId);
     const swap = () => setTab(next);
     const doc = document as ViewTransitionDoc;
     // A live PTY on either side of the swap means no transition at all.
@@ -609,7 +591,9 @@ export default function App() {
     void transition.finished.catch((cause: unknown) => {
       announceError(`Could not open this view: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
-  }, [spaceId, projectId, announceError]);
+  }, [announceError]);
+
+  const goArea = useCallback((area: SpaceAreaId) => go(areaDestination(area, areaMemory.current)), [go]);
 
   // One-shot deep link into the Learning view: Context's "set in Learning →
   // Optimize" prose becomes a real door. Consumed by nonce, like newSessionRequest.
@@ -778,86 +762,8 @@ export default function App() {
     setProjectsRead(true); setProjects(list);
   }, []);
 
-  // ── nav chrome ─────────────────────────────────────────────────────
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const runBadge = useRef<HTMLSpanElement>(null);
-  const needBadge = useRef<HTMLButtonElement>(null);
-  const lastNeeds = useRef(0);
-
-  // The list behaves like a vertical toolbar. Tab enters it once, and Up/Down
-  // (or Home/End) walks every route without asking a keyboard user to tab
-  // through fifteen small controls. Left/Right are deliberately unbound: the
-  // axis the arrows move on should match the axis the list is drawn on.
-  //
-  // Arrowing moves FOCUS and nothing else. Selection-follows-focus in a
-  // toolbar mounts and unmounts a whole view per keypress, and with a live
-  // terminal on either side of the swap that is a PTY pane torn down and
-  // rebuilt to read a nav label. Enter or Space is the switch, as on any
-  // other button in the app.
-  const onNavTabKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) => {
-    const currentIndex = NAV_RAIL_TABS.indexOf(current);
-    if (currentIndex < 0) return;
-    let nextIndex: number | null = null;
-    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % NAV_RAIL_TABS.length;
-    if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + NAV_RAIL_TABS.length) % NAV_RAIL_TABS.length;
-    if (event.key === 'Home') nextIndex = 0;
-    if (event.key === 'End') nextIndex = NAV_RAIL_TABS.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const next = NAV_RAIL_TABS[nextIndex];
-    setNavFocus(next);
-    requestAnimationFrame(() => {
-      tabsRef.current?.querySelector<HTMLButtonElement>(`[data-nav-tab="${next}"]`)?.focus();
-    });
-  }, []);
-
-  // A view reached any other way (a shortcut, the palette, a deep link) takes
-  // the tab stop back, so Tab always re-enters the rail at the view on screen.
-  useEffect(() => { setNavFocus(null); }, [tab]);
-
-  // A sliding underline was the rail's way of saying which of thirteen
-  // same-looking tabs was live. A sidebar row can simply be filled, so the
-  // measured-geometry ink is gone and only the part that was doing real work
-  // survives: keeping the current destination inside the scroll box when it was
-  // reached by a chord or the palette rather than by clicking it.
-  useEffect(() => {
-    const on = tabsRef.current?.querySelector<HTMLElement>('.nav-tab.on');
-    on?.scrollIntoView({ block: 'nearest' });
-  }, [tab]);
-
-  // The Sessions badge breathes at the rate output actually arrives — measured
-  // bytes per second, never a spinner that implies work nobody is doing.
-  useEffect(() => {
-    let bytes = 0;
-    const off = window.wanigan.on.data(({ data }) => { bytes += data.length; });
-    const t = setInterval(() => {
-      const el = runBadge.current;
-      const seen = bytes; bytes = 0;
-      if (!el) return;
-      if (seen <= 0) { el.removeAttribute('data-flow'); el.style.removeProperty('--mo-period'); return; }
-      const period = Math.round(Math.min(2600, Math.max(700, 1_600_000 / seen)));
-      el.style.setProperty('--mo-period', `${period}ms`);
-      el.dataset.flow = 'live';
-    }, 1000);
-    return () => { off(); clearInterval(t); };
-  }, []);
-
-  // One bump per agent that newly needs you. Counts, not a heartbeat.
-  useEffect(() => {
-    const el = needBadge.current;
-    if (el && needs.total > lastNeeds.current && motionOn()) {
-      el.classList.remove('mo-bump');
-      void el.offsetWidth;
-      el.classList.add('mo-bump');
-    }
-    lastNeeds.current = needs.total;
-  }, [needs.total]);
-
   const mark = needs.worst ? NEED_MARK[needs.worst] : null;
-  const railHasActiveTab = NAV_RAIL_TABS.includes(tab);
-  const navRoving: Tab = navFocus && NAV_RAIL_TABS.includes(navFocus)
-    ? navFocus
-    : (railHasActiveTab ? tab : NAV_RAIL_TABS[0]);
+  const railHasActiveTab = TABS.some(item => item.id === tab);
 
   // Each mode owns a separate browser storage partition and main-process
   // data source. Read only the source label; no personal mapping reaches UI.
@@ -1113,31 +1019,25 @@ export default function App() {
       const a = attentionBySession.get(s.id);
       items.push({
         key: `session:${s.id}`,
-        title: s.title || s.projectName,
+        title: sessionName(s),
         hint: `${s.status} · ${s.projectName}${s.model ? ` · ${s.model}` : ''}`,
         mark: a ? { glyph: ATTENTION_GLYPH[a.kind], word: a.label } : undefined,
         meta: 'Session',
         group: 'Live sessions',
-        haystack: `${s.title} ${s.projectName} ${s.providerId} ${s.model ?? ''} session agent`,
+        haystack: `${sessionName(s)} ${s.title ?? ''} ${s.projectName} ${s.providerId} ${s.model ?? ''} session agent`,
         run: () => openSession(s.id),
       });
     }
     for (const p of projects) {
-      const active = p.id === projectId;
+      const active = p.id === spaceId;
       items.push({
         key: `project:${p.id}`,
         title: p.name,
-        // Says exactly what pressing it does. Choosing a project moves no view,
-        // so a row promising to "open" one would be describing something else.
-        // The header carries no project indicator by design; this row is
-        // where the shell confirms which project it is pointed at.
-        hint: `${active ? 'Already active' : 'Make active'} for Learning, Context and Skills${p.branch ? ` · ${p.branch}` : ''}`,
-        mark: active ? { glyph: '●', word: 'active' } : undefined,
-        meta: 'Project',
-        group: 'Projects',
-        staysPut: true,
+        hint: `Open project work${p.branch ? ` · ${p.branch}` : ''}`,
+        mark: active ? { glyph: '●', word: 'selected' } : undefined,
+        meta: 'Project', group: 'Projects',
         haystack: `${p.name} ${p.path} ${p.branch ?? ''} project repository folder`,
-        run: () => choose(p.id),
+        run: () => { choose(p.id); go(areaDestination('work', areaMemory.current)); },
       });
     }
     for (const entry of SETTINGS_INDEX) {
@@ -1157,14 +1057,14 @@ export default function App() {
       items.push({
         ...transcriptHitRow(hit, index),
         group: 'Transcripts',
-        run: () => jumpToSettings({
-          tab: 'privacy', section: 'Search transcripts',
-          transcriptQuery: paletteQuery.trim(), openSessionId: hit.sessionId,
-        }),
+        run: () => {
+          setHistoryRequest({ sessionId: hit.sessionId, query: paletteQuery.trim(), nonce: Date.now() });
+          go('sessions');
+        },
       });
     });
     return items;
-  }, [attention, choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projectId, projects,
+  }, [attention, choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, spaceId, projects,
     reportError, requestNewSession, sessions, setTheme, themePreference, themeResolved]);
 
   return (
@@ -1172,7 +1072,7 @@ export default function App() {
     {/* The providers wrap the shell's content at the shell's own indentation:
         announce() and per-view memory are reachable from every view, and the
         polite region they feed is rendered inside the shell below the toast. */}
-    <div className="shell mission-shell">
+    <div className="shell mission-shell workbench-shell">
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
       {startup?.phase === 'recovery' && (
@@ -1208,10 +1108,10 @@ export default function App() {
           keeps its left inset for the traffic lights. */}
       <header className="app-header">
           <button className="hdr-toggle" type="button" onClick={toggleSidebar}
-                  aria-expanded={sidebarOpen} aria-controls="wanigan-sidebar"
+                  aria-expanded={sidebarOpen} aria-controls={compactNavigation && !sidebarOpen ? undefined : "wanigan-sidebar"}
                   aria-keyshortcuts="Alt+Meta+S"
-                  title={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (⌥⌘S)`}
-                  aria-label={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (Option Command S)`}>
+                  title={`${compactNavigation ? 'Open navigation' : 'Focus navigation'} (⌥⌘S)`}
+                  aria-label="Open navigation (Option Command S)">
             <Icon name="panel" />
           </button>
           <div className="brand-lockup">
@@ -1223,9 +1123,14 @@ export default function App() {
             <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
 
-        <ProjectSpaces projects={projects} selected={spaceId} ready={projectsRead} onAdd={addProject}
-            onSelect={(id) => { setSpaceId(id); if (id) choose(id);
-              if (!['mission', 'sessions', 'board', 'git', 'context'].includes(tab) || (!id && ['git', 'context'].includes(tab))) go('mission'); }} />
+        <div className="workbench-context">
+          <span className="workbench-location">{labelForTab(tab)}</span>
+          {projectScopeFor(tab) !== 'workspace'
+            ? <ProjectSpaces projects={projects} selected={spaceId ?? (projectScopeFor(tab) === 'required' ? projectId ?? null : null)} ready={projectsRead} onAdd={addProject}
+                onSelect={(id) => { setSpaceId(id); if (id) choose(id);
+                  else if (projectScopeFor(tab) === 'required') go('sessions'); }} />
+            : <span className="workbench-scope">{areaFor(tab).id === 'fleet' || tab === 'control' ? 'Across all projects' : tab === 'settings' ? 'Application settings' : 'Workspace tools'}</span>}
+        </div>
           <div className="nav-actions">
             {/* The Learning view owns its scope control now — a nav-level
                 project select that only sometimes rendered was the invisible
@@ -1307,64 +1212,22 @@ export default function App() {
           it becomes a third column that stretches to the full height of the
           window. */}
       {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
-      <SpaceRoutes tab={tab} go={go} projectName={spaceId ? projectName : null} />
       <div className="workspace">
-        {sidebarOpen && (
-          <nav className="sidebar" id="wanigan-sidebar" aria-label="Primary navigation">
-            <div className="sidebar-scroll" ref={tabsRef} role="toolbar" aria-label="Wanigan views" aria-orientation="vertical">
-              {SIDEBAR_GROUPS.map((section) => (
-                <div className="sidebar-group" key={section.group}>
-                  <div className="sidebar-group-label">{section.group}</div>
-                  {section.tabs.map((id) => (
-                    <NavTab key={id} id={id} tab={tab} go={(next) => { go(next); setSidebarOpen(false); }} label={labelForTab(id)}
-                            roving={navRoving} onKeyDown={onNavTabKeyDown}
-                            badge={id === 'sessions' && running > 0 ? (
-                              <span className="nav-badge mo-breathe" ref={runBadge}
-                                    title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
-                            ) : id === 'batches' && runsInFlight !== null && runsInFlight > 0 ? (
-                              <span className="nav-badge"
-                                    title={`${runsInFlight} run${runsInFlight === 1 ? '' : 's'} in flight — the same runs the Batches list counts as Active`}>{runsInFlight}</span>
-                            ) : null}
-                            progress={id === 'batches' && batchWork ? (
-                              <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}
-                                    aria-valuenow={batchWork.done}
-                                    title={`${num(batchWork.done)} of ${num(batchWork.total)} requests returned`}>
-                                <span className="mo-fill"
-                                      style={{ '--mo-p': batchWork.done / batchWork.total } as React.CSSProperties} />
-                              </span>
-                            ) : null}
-                            marks={id === 'fleet' && mark ? (
-                              // A door, not a badge. The per-kind sentence used to live in a
-                              // hover title while the click landed on Fleet; now the mark opens
-                              // the list of who is waiting, worst first, each row a jump to
-                              // that session.
-                              <button className={`nav-mark tone-${mark.tone}`} type="button" ref={needBadge}
-                                      aria-haspopup="dialog" aria-expanded={needAnchor !== null}
-                                      aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
-                                      onClick={(e) => setNeedAnchor((cur) => (cur ? null : e.currentTarget))}>
-                                <span aria-hidden="true">{mark.glyph}</span>
-                                {needs.total} need you
-                              </button>
-                            ) : id === 'batches' && !hasKey ? (
-                              // The API key gates batch submission and nothing else. On the
-                              // Settings tab it was a permanent warning that read as "Wanigan
-                              // is not set up", from every screen, while Sessions, Fleet,
-                              // Control, Runs, Learning, Git and Schedules all work without
-                              // one. It belongs on the surface it is actually true about.
-                              // Quiet rather than amber for the same reason: a fresh install
-                              // is not agent attention, and --warning stays reserved for that.
-                              <button className="nav-mark tone-quiet" type="button"
-                                      aria-label="Batch submission needs an API key. Open Settings › Agents › Claude Platform API key. Interactive sessions, Fleet, Control, Runs, Learning, Git and Schedules do not need it."
-                                      onClick={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}>
-                                <span aria-hidden="true">!</span>key
-                              </button>
-                            ) : null} />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </nav>
-        )}
+        <WorkspaceNavigation tab={tab} go={go} goArea={goArea} compact={compactNavigation}
+          open={sidebarOpen} onClose={() => setSidebarOpen(false)} needs={needs.total} running={running}
+          runsInFlight={runsInFlight} batchWork={batchWork}
+          attentionAction={mark ? <button className={`workbench-attention tone-${mark.tone}`} type="button"
+            aria-haspopup="dialog" aria-expanded={needAnchor !== null}
+            aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
+            onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
+            <span aria-hidden="true">{mark.glyph}</span> {needs.total} need you
+          </button> : undefined}
+          batchAction={!hasKey ? <button className="workbench-key" type="button"
+            aria-label="Batch submission needs an API key. Open Settings, Agents, Claude Platform API key."
+            onClick={() => { setSidebarOpen(false); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined}
+          companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
+            expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
+            onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
 
       {/* The boundary sits here and not around the shell: a view that cannot
           render must not take the header, the rail or ⌘K with it. `view={tab}`
@@ -1382,7 +1245,7 @@ export default function App() {
                 cue="Explore Mission, Sessions, Fleet and Usage with fictional data. Your real records stay private." />
             </main>
           ) : <>
-          {tab === 'mission' && <MissionRoom story={orbStory} followedSession={activeSessionId} sessions={sessions} onFollow={setActiveSessionId} demo={demoOn} projectId={spaceId} presence={presence} onOpenSession={openSession}
+          {tab === 'mission' && <MissionRoom attention={attention} attentionRead={attentionRead} projects={projects} projectsRead={projectsRead} onFleet={() => go('fleet')} story={orbStory} followedSession={activeSessionId} sessions={sessions} onFollow={setActiveSessionId} demo={demoOn} projectId={spaceId} presence={presence} onOpenSession={openSession}
             onProject={(id) => { choose(id); go('sessions'); }} onAddProject={addProject}
             onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
             onUsage={() => go('usage')} />}
@@ -1391,6 +1254,7 @@ export default function App() {
                       onAddProject={addProject} onError={reportSessionError} onOpenGoal={openGoal}
                       activeId={activeSessionId} onActiveChange={focusSession}
                       newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
+                      historyRequest={historyRequest} onHistoryRequestConsumed={() => setHistoryRequest(null)}
                       onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
           )}
           {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
@@ -1443,10 +1307,6 @@ export default function App() {
       </div>
       </div>
 
-      <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
-        companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
-          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
-          onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
       {error && (
@@ -1556,7 +1416,7 @@ function NeedYouPopover({ anchor, attention, sessions, read, onOpen, onClose }: 
                 <span className={`nav-mark tone-${tone}`}>
                   <span aria-hidden="true">{ATTENTION_GLYPH[a.kind]}</span>{a.label}
                 </span>
-                <span className="need-row-project"><strong>{session?.displayTitle || session?.title || project}</strong><span>{project}{a.detail ? ` · ${a.detail}` : ''}</span><small>{a.kind === 'permission' ? 'Open the permission prompt' : a.kind === 'error' ? 'Inspect the session' : session?.status === 'exited' ? 'Read the ended session' : 'Read the finished turn'} <span aria-hidden="true">↗</span></small></span>
+                <span className="need-row-project"><strong>{session ? sessionName(session, project) : project}</strong><span>{project}{a.detail ? ` · ${a.detail}` : ''}</span><small>{a.kind === 'permission' ? 'Open the permission prompt' : a.kind === 'error' ? 'Inspect the session' : session?.status === 'exited' ? 'Read the ended session' : 'Read the finished turn'} <span aria-hidden="true">↗</span></small></span>
                 <span className="need-row-wait">{ago(a.since)}</span>
               </button>
             );
@@ -1642,7 +1502,7 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
       if (epoch === requestEpoch.current) setLoadingKey(null);
     };
     if (usesCodexAccountLimits) {
-      void window.wanigan.codex.status(force).then((next) => {
+      void window.wanigan.codex.status(session.id, force).then((next) => {
         if (epoch !== requestEpoch.current) return;
         setStatus({ key, value: next });
       }).catch((e) => {
@@ -1706,18 +1566,9 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
   const primary = label(codex?.primary ?? null, 'Now');
   const secondary = label(codex?.secondary ?? null, 'Week');
   const telemetry = selectedSessionTelemetry(sessionUsage, session.status);
-  const ctxText = claudeContextLabel(meter);
-  const ctxTitle = !context.usesClaudeContextMeter ? null
-    : meter?.kind === 'ok'
-      ? `Context: ${meter.tokens.toLocaleString('en-US')} tokens as of the last recorded turn.`
-        + (meter.window
-          ? ` The ${meter.percent}% reads against an assumed ${meter.window.toLocaleString('en-US')}-token window for ${meter.model ?? 'this model'} — the tokens are measured, the window is an assumption.`
-          : ` No context window is known for ${meter.model ?? 'this model'}, so no percentage is invented.`)
-      : meter?.kind === 'no-transcript'
-        ? 'Context meter: no transcript found for this conversation yet.'
-        : meter?.kind === 'no-usage'
-          ? `Context meter: ${meter.detail}`
-          : null;
+  const contextStatus = claudeContextStatus(meter);
+  const ctxText = contextStatus.label;
+  const ctxTitle = context.usesClaudeContextMeter ? contextStatus.title : null;
   const loading = loadingKey === context.key;
   const sessionLine = `${context.label} · selected ${session.status} session${session.model ? ` · ${session.model}` : ''}`;
   const title = error
@@ -1733,7 +1584,7 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
     : error ? 'usage unavailable'
       : loading && !sessionUsage && !ctxText ? 'session…'
         : ctxText ? `${ctxText} · ${telemetry}` : telemetry;
-  const nearFull = meter?.kind === 'ok' && meter.percent !== null && meter.percent >= 80;
+  const nearFull = contextStatus.nearFull;
 
   return (
     <button className={`nav-usage-status${(codex?.primary && codex.primary.remainingPercent <= 20) || nearFull ? ' low' : ''}`}
@@ -2109,43 +1960,6 @@ function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun 
           <span role="status">{transcriptRead === 'loading' ? 'Searching transcripts…' : transcriptRead === 'error' ? 'Transcript search unavailable. Other results are still available.' : scope === 'Transcripts' && normalizedQuery.length < TRANSCRIPT_QUERY_MIN ? 'Type at least 3 characters to search transcripts.' : `${shown.length} results shown`}</span>
         </div>
       </section>
-    </div>
-  );
-}
-
-function NavTab({ id, tab, go, label, badge, progress, marks, onKeyDown, roving }: {
-  id: Tab; tab: Tab; go: (t: Tab) => void; label: string;
-  /** An inert count. Rendered inside the row, between the word and the chord. */
-  badge?: React.ReactNode;
-  /** An inert bar. Rendered under the row so it cannot squeeze the label. */
-  progress?: React.ReactNode;
-  /** Marks that are doors. Rendered as siblings of the row, never inside it:
-   *  a button inside a button is invalid HTML and reads as one control. This
-   *  is the wrapper split the Sessions tab strip already uses. */
-  marks?: React.ReactNode;
-  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) => void;
-  /** The list's single tab stop. It follows arrow-key focus, not the view. */
-  roving: Tab;
-}) {
-  const on = tab === id;
-  const shortcut = TAB_SHORTCUTS[id];
-  return (
-    <div className="nav-tab-wrap">
-      <button className={`nav-tab${on ? ' on' : ''}`} type="button" data-nav-tab={id}
-              tabIndex={roving === id ? 0 : -1} onClick={() => go(id)} onKeyDown={(event) => onKeyDown(event, id)}
-              aria-current={on ? 'page' : undefined}
-              aria-keyshortcuts={shortcut.aria}
-              title={`${label} (${shortcut.label})`}>
-        {/* The glyph is a second way to find a row, never the only one: the
-            word is always printed beside it. At 176px the label is what still
-            fits; the icon is what makes the column scannable at a glance. */}
-        <Icon name={TAB_ICONS[id]} />
-        <span className="nav-tab-label">{label}</span>
-        {badge}
-        <span className="nav-tab-chord" aria-hidden="true">{shortcut.label}</span>
-      </button>
-      {progress}
-      {marks}
     </div>
   );
 }

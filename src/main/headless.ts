@@ -38,7 +38,7 @@ type StoredHeadlessConfig = HeadlessConfig & {
  * out. See the fan-out guard in startHeadlessRun for why that difference has
  * to be stated rather than inferred.
  */
-export type HeadlessStart = HeadlessConfig & { allProjects?: boolean };
+export type HeadlessStart = HeadlessConfig & { allProjects?: boolean; expectedProfileFingerprint?: string };
 
 /** Row output is read in a pane, not streamed; past this it is only weight. */
 const OUTPUT_LIMIT = 64 * 1024;
@@ -556,7 +556,7 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
-export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: string; rows: number }> {
+export async function startHeadlessRun(cfg: HeadlessStart, scheduledFire?: ScheduleFire): Promise<{ runId: string; rows: number }> {
   // Before the run row exists. A halted fleet that still recorded a run would
   // leave a row nobody started and nothing will ever finish.
   refuseIfHalted('start a headless run');
@@ -565,6 +565,9 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
   refreshProviderPacks();
   let def = providerById(cfg.providerId);
   if (!def) throw new Error(`Unknown provider: ${cfg.providerId}`);
+  if (cfg.expectedProfileFingerprint !== undefined && cfg.expectedProfileFingerprint !== def.profileFingerprint) {
+    throw new Error('The scheduled agent profile changed. Review the schedule’s agent before it can run again.');
+  }
   if (def.headless === 'none') {
     throw new Error(
       `${def.label} does not declare a headless protocol. It can run in an attended session, ` +
@@ -584,6 +587,9 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
     throw new Error(`${def.label} is disabled, changed, or no longer installed.`);
   }
   def = refreshedDef;
+  if (cfg.expectedProfileFingerprint !== undefined && cfg.expectedProfileFingerprint !== def.profileFingerprint) {
+    throw new Error('The scheduled agent profile changed while it was checked. Review the schedule’s agent.');
+  }
   if (!detected.capabilities.headlessJson || (def.source === 'local' && !detected.capabilities.probed)) {
     throw new Error(
       `${def.label} has not proven the declared headless protocol. ` +
@@ -673,7 +679,7 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
      Claimed here — after every refusal above — so a run that never starts
      cannot consume the fire it would have reported on.
      ───────────────────────────────────────────────────────────────── */
-  const scheduleFire = claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds });
+  const scheduleFire = scheduledFire ? claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds, fire: scheduledFire }) : null;
 
   const storedConfig: StoredHeadlessConfig = {
     ...cfg,

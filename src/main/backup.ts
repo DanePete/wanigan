@@ -6,12 +6,13 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import { transcriptsDir } from './transcripts';
+import { snapshotBackupFiles, verifyBackupFiles, copyVerifiedBackupFiles } from './backup-files';
 
 /**
  * Backup and restore for the source of truth.
  *
- * Everything Wanigan claims to know lives in two places: `wanigan.db` and the
- * archived transcripts beside it. Goals, proofs, the policy ledger, the
+ * Wanigan records evidence in `wanigan.db` and the
+ * archived transcripts beside it. Session attachment directories also hold generated outputs. Goals, proofs, the policy ledger, the
  * knowledge record and every citation that makes a briefing checkable are rows
  * in that one file. Until this module existed the app could `forgetTranscript`
  * but never copy anything out, so a dead disk or a new laptop ended the record
@@ -33,11 +34,12 @@ import { transcriptsDir } from './transcripts';
 
 /** Bumped only if the layout below stops being readable by an older restore. */
 const BACKUP_FORMAT = 'wanigan-backup';
-const BACKUP_FORMAT_VERSION = 1;
+const BACKUP_FORMAT_VERSION = 2;
 
 const MANIFEST_NAME = 'wanigan-backup.json';
 const DB_NAME = 'wanigan.db';
 const TRANSCRIPTS_NAME = 'transcripts';
+const ATTACHMENTS_NAME = 'attachments';
 
 /** A manifest is Wanigan's own file; anything this size is not one. */
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
@@ -49,7 +51,6 @@ const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
  */
 const EXCLUDED = [
   'The API credential (apikey.bin). It is sealed by this machine’s keychain and would not decrypt anywhere else; re-enter the key after a restore.',
-  'Staged attachments. They are the bulk of the data directory and every one of them is a copy of a file the user already has.',
   'MCP server trust and provider-pack trust. A grant to execute a local command is made on one machine, for one machine; restoring it silently would re-grant it.',
 ];
 
@@ -63,6 +64,7 @@ type Manifest = {
   platform: string;
   database: BackupFileEntry;
   transcripts: { files: number; bytes: number; entries: BackupFileEntry[] };
+  attachments: { files: number; bytes: number; entries: BackupFileEntry[] } | null;
   /** The newest recorded evidence in the copied database; see latestEvidenceAt. */
   latestEvidenceAt: number | null;
   excluded: string[];
@@ -75,6 +77,7 @@ export type BackupReport = {
   appVersion: string;
   database: { path: string; bytes: number; sha256: string };
   transcripts: { path: string; files: number; bytes: number };
+  attachments: { path: string; files: number; bytes: number };
   /** Observed total of the files written, manifest included. */
   totalBytes: number;
   latestEvidenceAt: number | null;
@@ -90,6 +93,8 @@ export type BackupInspection = {
   appVersion: string | null;
   database: { bytes: number; sha256: string } | null;
   transcripts: { files: number; bytes: number };
+  /** Null means a legacy backup without session artifacts; existing artifacts are retained. */
+  attachments: { files: number; bytes: number } | null;
   latestEvidenceAt: number | null;
   /** The same measure taken over the database currently in place. */
   currentLatestEvidenceAt: number | null;
@@ -107,6 +112,8 @@ export type RestoreReport = {
   createdAt: number;
   database: { bytes: number; sha256: string };
   transcripts: { files: number; bytes: number };
+  /** Null means a legacy backup without session artifacts; existing artifacts are retained. */
+  attachments: { files: number; bytes: number } | null;
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
@@ -182,6 +189,9 @@ const EVIDENCE_CLOCKS: readonly (readonly [string, string])[] = [
   // to roll back without noticing.
   ['improvement_scout_runs', 'started_at'],
   ['schedule_runs', 'at'],
+  ['review_runs', 'started_at'],
+  ['review_runs', 'ended_at'],
+  ['review_recipes', 'updated_at'],
 ];
 
 function hasColumn(d: Database.Database, table: string, column: string): boolean {
@@ -213,7 +223,7 @@ function latestEvidenceAt(d: Database.Database): number | null {
 function digestFile(file: string): { sha256: string; bytes: number } {
   const hash = createHash('sha256');
   const buf = Buffer.allocUnsafe(1 << 20);
-  const fd = fs.openSync(file, 'r');
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   let bytes = 0;
   try {
     for (;;) {
@@ -230,20 +240,6 @@ function digestFile(file: string): { sha256: string; bytes: number } {
 
 function contained(base: string, full: string): boolean {
   return full === base || full.startsWith(base + path.sep);
-}
-
-/** Every entry in the transcripts directory that is a real file, sorted. */
-function transcriptFiles(dir: string): string[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (error) {
-    // No transcripts directory is the normal state of a fresh install, not a
-    // failure; anything else is worth surfacing.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw error;
-  }
-  return entries.filter((e) => e.isFile()).map((e) => e.name).sort();
 }
 
 /* ── taking a backup ─────────────────────────────────────────────────── */
@@ -306,20 +302,11 @@ export function createBackup(destDir: string): BackupReport {
     snapshot.close();
   }
 
-  ensurePrivateDir(transcriptDest);
-  const source = transcriptsDir();
-  const entries: BackupFileEntry[] = [];
-  let transcriptBytes = 0;
-  for (const name of transcriptFiles(source)) {
-    const to = path.join(transcriptDest, name);
-    fs.copyFileSync(path.join(source, name), to, fs.constants.COPYFILE_EXCL);
-    ensurePrivateFile(to);
-    // Digest the copy rather than the original, so the manifest describes the
-    // bytes that actually landed.
-    const entry = digestFile(to);
-    entries.push({ name, bytes: entry.bytes, sha256: entry.sha256 });
-    transcriptBytes += entry.bytes;
-  }
+  const entries = snapshotBackupFiles(transcriptsDir(), transcriptDest);
+  const transcriptBytes = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  const attachmentDest = path.join(dest, ATTACHMENTS_NAME);
+  const artifacts = snapshotBackupFiles(path.join(root, ATTACHMENTS_NAME), attachmentDest);
+  const artifactBytes = artifacts.reduce((sum, entry) => sum + entry.bytes, 0);
 
   const manifest: Manifest = {
     format: BACKUP_FORMAT,
@@ -329,6 +316,7 @@ export function createBackup(destDir: string): BackupReport {
     platform: `${process.platform} ${os.release()}`,
     database: { name: DB_NAME, bytes: dbEntry.bytes, sha256: dbEntry.sha256 },
     transcripts: { files: entries.length, bytes: transcriptBytes, entries },
+    attachments: { files: artifacts.length, bytes: artifactBytes, entries: artifacts },
     latestEvidenceAt: evidenceAt,
     excluded: EXCLUDED,
   };
@@ -345,7 +333,8 @@ export function createBackup(destDir: string): BackupReport {
     appVersion: manifest.appVersion,
     database: { path: dbDest, bytes: dbEntry.bytes, sha256: dbEntry.sha256 },
     transcripts: { path: transcriptDest, files: entries.length, bytes: transcriptBytes },
-    totalBytes: dbEntry.bytes + transcriptBytes + manifestBytes,
+    attachments: { path: attachmentDest, files: artifacts.length, bytes: artifactBytes },
+    totalBytes: dbEntry.bytes + transcriptBytes + artifactBytes + manifestBytes,
     latestEvidenceAt: evidenceAt,
     excluded: [...EXCLUDED],
     durationMs: Date.now() - startedAt,
@@ -378,10 +367,10 @@ function readManifest(dir: string): { manifest: Manifest | null; problems: Backu
     problems.push({ code: 'not-a-backup', detail: `${dir} does not contain a Wanigan backup manifest.` });
     return { manifest: null, problems };
   }
-  if (m.formatVersion !== BACKUP_FORMAT_VERSION) {
+  if (m.formatVersion !== 1 && m.formatVersion !== BACKUP_FORMAT_VERSION) {
     problems.push({
       code: 'format-version',
-      detail: `This backup uses format version ${String(m.formatVersion)}; this Wanigan reads version ${BACKUP_FORMAT_VERSION}.`,
+      detail: `This backup uses format version ${String(m.formatVersion)}; this Wanigan reads versions 1 and ${BACKUP_FORMAT_VERSION}.`,
     });
     return { manifest: null, problems };
   }
@@ -390,12 +379,21 @@ function readManifest(dir: string): { manifest: Manifest | null; problems: Backu
     problems.push({ code: 'manifest-incomplete', detail: 'The manifest does not describe a database file.' });
     return { manifest: null, problems };
   }
+  if (m.formatVersion === 2 && !Array.isArray(m.attachments?.entries)) {
+    problems.push({ code: 'manifest-incomplete', detail: 'This backup is missing its session artifact inventory.' });
+    return { manifest: null, problems };
+  }
+  const artifacts = m.formatVersion === 2 ? m.attachments! : null;
   const transcripts = m.transcripts;
-  const list = Array.isArray(transcripts?.entries) ? transcripts.entries : [];
+  if (!Array.isArray(transcripts?.entries)) {
+    problems.push({ code: 'manifest-incomplete', detail: 'The manifest is missing its transcript inventory.' });
+    return { manifest: null, problems };
+  }
+  const list = transcripts.entries;
   return {
     manifest: {
       format: BACKUP_FORMAT,
-      formatVersion: BACKUP_FORMAT_VERSION,
+      formatVersion: m.formatVersion,
       createdAt: typeof m.createdAt === 'number' ? m.createdAt : 0,
       appVersion: typeof m.appVersion === 'string' ? m.appVersion : 'unknown',
       platform: typeof m.platform === 'string' ? m.platform : 'unknown',
@@ -403,9 +401,9 @@ function readManifest(dir: string): { manifest: Manifest | null; problems: Backu
       transcripts: {
         files: list.length,
         bytes: typeof transcripts?.bytes === 'number' ? transcripts.bytes : 0,
-        entries: list.filter((e): e is BackupFileEntry =>
-          !!e && typeof e.name === 'string' && typeof e.bytes === 'number' && typeof e.sha256 === 'string'),
+        entries: list,
       },
+      attachments: artifacts,
       latestEvidenceAt: typeof m.latestEvidenceAt === 'number' ? m.latestEvidenceAt : null,
       excluded: Array.isArray(m.excluded) ? m.excluded.filter((x): x is string => typeof x === 'string') : [],
     },
@@ -428,6 +426,7 @@ export function inspectBackup(dir: string): BackupInspection {
     appVersion: manifest?.appVersion ?? null,
     database: null,
     transcripts: { files: 0, bytes: 0 },
+    attachments: manifest?.attachments ? { files: 0, bytes: 0 } : null,
     latestEvidenceAt: manifest?.latestEvidenceAt ?? null,
     currentLatestEvidenceAt: null,
     wouldDiscardNewer: false,
@@ -480,22 +479,21 @@ export function inspectBackup(dir: string): BackupInspection {
 
   let transcriptBytes = 0;
   let transcriptFilesFound = 0;
-  for (const entry of manifest.transcripts.entries) {
-    // The name is data from a file on disk and becomes a path segment.
-    if (entry.name !== path.basename(entry.name) || entry.name === '.' || entry.name === '..') {
-      problems.push({ code: 'transcript-name', detail: `"${entry.name}" is not a usable transcript file name.` });
-      continue;
-    }
-    const file = path.join(root, TRANSCRIPTS_NAME, entry.name);
+  let attachmentSummary: { files: number; bytes: number } | null = null;
+  try {
+    verifyBackupFiles(path.join(root, TRANSCRIPTS_NAME), manifest.transcripts.entries);
+    transcriptFilesFound = manifest.transcripts.entries.length;
+    transcriptBytes = manifest.transcripts.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  } catch (error) {
+    problems.push({ code: 'transcript-changed', detail: String(error) });
+  }
+  if (manifest.attachments) {
     try {
-      const found = digestFile(file);
-      transcriptFilesFound += 1;
-      transcriptBytes += found.bytes;
-      if (found.sha256 !== entry.sha256) {
-        problems.push({ code: 'transcript-changed', detail: `${entry.name} does not match the digest recorded for it.` });
-      }
-    } catch {
-      problems.push({ code: 'transcript-missing', detail: `${entry.name} is named in the manifest but is not in this folder.` });
+      verifyBackupFiles(path.join(root, ATTACHMENTS_NAME), manifest.attachments.entries);
+      attachmentSummary = { files: manifest.attachments.entries.length,
+        bytes: manifest.attachments.entries.reduce((sum, entry) => sum + entry.bytes, 0) };
+    } catch (error) {
+      problems.push({ code: 'attachment-changed', detail: String(error) });
     }
   }
 
@@ -515,6 +513,7 @@ export function inspectBackup(dir: string): BackupInspection {
     appVersion: manifest.appVersion,
     database: dbDigest,
     transcripts: { files: transcriptFilesFound, bytes: transcriptBytes },
+    attachments: attachmentSummary,
     latestEvidenceAt: backupEvidenceAt,
     currentLatestEvidenceAt: currentEvidenceAt,
     wouldDiscardNewer:
@@ -594,6 +593,9 @@ export function restoreBackup(
   const source = path.resolve(String(dir).trim());
   const liveDb = path.join(root, DB_NAME);
   const liveTranscripts = path.resolve(transcriptsDir());
+  const liveAttachments = path.join(root, ATTACHMENTS_NAME);
+  const { manifest } = readManifest(source);
+  if (!manifest) throw new Error('Backup manifest changed before restore.');
 
   // Stage a verified copy inside the data directory first. Both moves below are
   // then renames on one filesystem, which is the only form of "swap" that
@@ -604,27 +606,52 @@ export function restoreBackup(
 
   const replaced = path.join(root, `replaced-${stamp()}`);
   const moves: { from: string; to: string }[] = [];
+  const installed: string[] = [];
 
   try {
     const stagedDb = path.join(staging, DB_NAME);
     fs.copyFileSync(path.join(source, DB_NAME), stagedDb, fs.constants.COPYFILE_EXCL);
     ensurePrivateFile(stagedDb);
-    const stagedDigest = digestFile(stagedDb);
+    let stagedDigest = digestFile(stagedDb);
     if (stagedDigest.sha256 !== inspection.database.sha256) {
       throw new Error('The database changed while it was being copied. Nothing was replaced.');
     }
 
     const stagedTranscripts = path.join(staging, TRANSCRIPTS_NAME);
-    ensurePrivateDir(stagedTranscripts);
-    let transcriptFileCount = 0;
-    let transcriptByteCount = 0;
-    for (const name of transcriptFiles(path.join(source, TRANSCRIPTS_NAME))) {
-      const to = path.join(stagedTranscripts, name);
-      fs.copyFileSync(path.join(source, TRANSCRIPTS_NAME, name), to, fs.constants.COPYFILE_EXCL);
-      ensurePrivateFile(to);
-      transcriptFileCount += 1;
-      transcriptByteCount += fs.statSync(to).size;
+    copyVerifiedBackupFiles(path.join(source, TRANSCRIPTS_NAME), stagedTranscripts, manifest.transcripts.entries);
+    const transcriptFileCount = manifest.transcripts.entries.length;
+    const transcriptByteCount = manifest.transcripts.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+    const stagedAttachments = path.join(staging, ATTACHMENTS_NAME);
+    if (manifest.attachments) {
+      copyVerifiedBackupFiles(path.join(source, ATTACHMENTS_NAME), stagedAttachments, manifest.attachments.entries);
     }
+
+    // Stored archive paths belong to the destination machine. Rewrite only
+    // structured references backed by a manifested file; raw conversation
+    // text and external provider/project paths remain original evidence.
+    const restoredDb = new Database(stagedDb);
+    try {
+      restoredDb.transaction(() => {
+        if (hasColumn(restoredDb, 'transcripts', 'stored_path')) {
+          const names = new Set(manifest.transcripts.entries.map(entry => entry.name));
+          const rows = restoredDb.prepare('SELECT session_id, stored_path FROM transcripts').all() as { session_id: string; stored_path: string }[];
+          for (const row of rows) {
+            const name = path.posix.basename(row.stored_path.replace(/\\/g, '/'));
+            if (names.has(name)) restoredDb.prepare('UPDATE transcripts SET stored_path=? WHERE session_id=?').run(path.join(liveTranscripts, name), row.session_id);
+          }
+        }
+        if (manifest.attachments && hasColumn(restoredDb, 'attachments', 'stored_path')) {
+          const names = new Set(manifest.attachments.entries.map(entry => entry.name));
+          const rows = restoredDb.prepare('SELECT id, session_id, stored_path FROM attachments').all() as { id: string; session_id: string | null; stored_path: string }[];
+          for (const row of rows) {
+            const name = `${row.session_id}/${path.posix.basename(row.stored_path.replace(/\\/g, '/'))}`;
+            if (names.has(name)) restoredDb.prepare('UPDATE attachments SET stored_path=? WHERE id=?').run(path.join(liveAttachments, name), row.id);
+          }
+        }
+      })();
+      restoredDb.pragma('wal_checkpoint(TRUNCATE)');
+    } finally { restoredDb.close(); }
+    stagedDigest = digestFile(stagedDb);
 
     // Past this point the live files move. Close the connection first: renaming
     // a WAL database out from under an open handle leaves SQLite writing to an
@@ -657,8 +684,20 @@ export function restoreBackup(
       moves.push({ from: to, to: liveTranscripts });
     }
 
+    if (manifest.attachments && fs.existsSync(liveAttachments)) {
+      const to = path.join(replaced, ATTACHMENTS_NAME);
+      fs.renameSync(liveAttachments, to);
+      moves.push({ from: to, to: liveAttachments });
+    }
+
     fs.renameSync(stagedDb, liveDb);
+    installed.push(liveDb);
     fs.renameSync(stagedTranscripts, liveTranscripts);
+    installed.push(liveTranscripts);
+    if (manifest.attachments) {
+      fs.renameSync(stagedAttachments, liveAttachments);
+      installed.push(liveAttachments);
+    }
     fs.rmSync(staging, { recursive: true, force: true });
 
     return {
@@ -666,12 +705,18 @@ export function restoreBackup(
       createdAt: inspection.createdAt ?? 0,
       database: { bytes: stagedDigest.bytes, sha256: stagedDigest.sha256 },
       transcripts: { files: transcriptFileCount, bytes: transcriptByteCount },
+      attachments: inspection.attachments,
       replacedDir: replaced,
       discardedNewer: inspection.wouldDiscardNewer,
       relaunchRequired: true,
     };
   } catch (error) {
-    const stuck = undo(moves);
+    const installFailures: string[] = [];
+    for (const target of installed.reverse()) {
+      try { fs.rmSync(target, { recursive: true, force: true }); }
+      catch (error) { installFailures.push(`${target} (${String(error)})`); }
+    }
+    const stuck = [...installFailures, ...undo(moves)];
     try { fs.rmSync(staging, { recursive: true, force: true }); }
     catch { /* the staged copy is inert; the message below matters more */ }
     const detail = error instanceof Error ? error.message : String(error);

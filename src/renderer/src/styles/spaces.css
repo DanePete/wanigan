@@ -31,3 +31,69 @@
 .space-switch-footer button { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2); font-size: var(--t-small); border-radius: var(--r-sm); color: var(--text); }
 .space-switch-footer button:hover { background: var(--bg-sunk); }
 .space-switch-footer > span { font-size: var(--t-micro); color: var(--text-faint); }
+
+/* One context header and one stable destination rail. Content owns the height. */
+.workbench-shell.mission-shell .app-header { min-height: var(--topbar-h); border-bottom: 1px solid var(--line-soft); gap: var(--s-3); }
+.workbench-shell.mission-shell .workspace { padding: 0; }
+.workbench-shell.mission-shell .body { border: 0; border-radius: 0; }
+.workbench-shell.mission-shell .brand-lockup { display: flex; }
+.workbench-shell .brand-context { display: none; }
+.workbench-shell .hdr-toggle { display: none; }
+.workbench-context { display: flex; align-items: center; gap: var(--s-4); flex: 1; min-width: 0; }
+.workbench-location { color: var(--text); font-size: var(--t-small); white-space: nowrap; }
+.workbench-scope { color: var(--text-faint); font-size: var(--t-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workbench-context .project-spaces { width: 240px; margin: 0; }
+.workbench-context .space-switch-trigger { background: var(--bg-soft); border-radius: var(--r-sm); box-shadow: none; min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); }
+.workbench-context .space-switch-count { display: none; }
+.workbench-navigation { display: flex; flex-direction: column; flex: none; width: var(--sidebar-w); min-height: 0; padding: var(--s-4) var(--s-2); background: var(--bg-chrome); border-right: 1px solid var(--line-soft); }
+.workbench-areas { display: flex; flex-direction: column; gap: var(--s-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.workbench-area { min-width: 0; }
+.workbench-area-button { display: flex; width: 100%; align-items: center; gap: var(--s-3); text-align: left; min-height: var(--control-h); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); }
+.workbench-area-button > .icon { flex: none; color: var(--text-faint); }
+.workbench-area-button > span:first-of-type { flex: 1; }
+.workbench-area-button:hover { background: var(--bg-sunk); color: var(--text); }
+.workbench-area-button[aria-current] { background: var(--bg-selected); color: var(--text); font-weight: 550; }
+.workbench-area-button[aria-current] > .icon { color: var(--text); }
+.workbench-area-count { font-size: var(--t-micro); font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.workbench-local-routes { display: grid; gap: var(--s-1); padding: var(--s-2) 0 var(--s-2) var(--s-4); }
+.workbench-local-routes > button { display: flex; align-items: center; gap: var(--s-2); text-align: left; color: var(--text-faint); border-radius: var(--r-sm); min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); font-size: var(--t-small); }
+.workbench-local-routes > button:hover { color: var(--text); background: var(--bg-sunk); }
+.workbench-local-routes > button[aria-current] { color: var(--accent); background: var(--accent-soft); }
+.workbench-local-routes .nav-tab-label { flex: 1; }
+.workbench-local-routes .nav-tab-chord { font-size: var(--t-micro); }
+.workbench-area-settings { margin-top: var(--s-3); border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.workbench-attention, .workbench-key { display: block; text-align: left; margin: var(--s-1) var(--s-3) var(--s-2); padding: var(--s-1) 0; font-size: var(--t-micro); color: var(--text-faint); }
+.workbench-attention { color: var(--warning); }
+.workbench-attention:hover, .workbench-key:hover { text-decoration: underline; }
+.workbench-batch-status { margin: var(--s-2) var(--s-3); color: var(--text-faint); font-size: var(--t-micro); }
+.workbench-batch-progress { display: block; width: 100%; height: var(--s-1); margin: var(--s-2) 0; accent-color: var(--accent); }
+.workbench-navigation-companion { margin-top: auto; padding: var(--s-3) var(--s-1) 0; }
+.workbench-navigation-companion .companion-presence { width: 100%; }
+.workbench-navigation-companion .companion-caption { display: grid; max-width: 110px; }
+.workbench-navigation-companion .wanigan-orb-small canvas { width: 40px; height: 40px; }
+.workbench-local-note { display: block; padding: var(--s-3); color: var(--text-faint); font-size: var(--t-micro); }
+.workbench-navigation-title { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-3) var(--s-4); color: var(--text-dim); font-size: var(--t-small); }
+.workbench-navigation-title button { display: grid; place-items: center; min-height: var(--control-h); min-width: var(--control-h); border-radius: var(--r-sm); }
+.workbench-navigation-title button:hover { background: var(--bg-sunk); }
+.overlay-backdrop.workbench-navigation-backdrop { justify-content: flex-start; align-items: stretch; padding: var(--s-3); }
+.workbench-navigation-dialog { width: 240px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
+@media (max-width: 1180px) {
+  .workbench-shell.mission-shell .nav-new-session-label { display: inline; }
+  .workbench-shell .nav-shortcut { display: none; }
+}
+@media (max-width: 980px) {
+  .workbench-shell .hdr-toggle { display: inline-flex; }
+  .workbench-shell.mission-shell .brand-lockup { display: none; }
+  .workbench-shell.mission-shell .nav-actions { margin-left: auto; }
+  .workbench-context .project-spaces { width: 220px; }
+  .workbench-navigation-dialog .nav-tab-chord { display: inline; }
+}
+@media (max-width: 720px) {
+  .workbench-shell.mission-shell .app-header { gap: var(--s-2); }
+  .workbench-shell.mission-shell .nav-new-session, .workbench-shell.mission-shell .nav-views { display: inline-flex; }
+  .workbench-context { gap: var(--s-2); }
+  .workbench-context .project-spaces { width: auto; flex: 1; }
+  .workbench-location { display: none; }
+  .workbench-shell .nav-new-session-label { display: none; }
+  .workbench-shell .nav-views-shortcut { display: none; }
+}

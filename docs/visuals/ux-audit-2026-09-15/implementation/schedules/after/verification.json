@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-16T01:51:28.959Z",
+  "renderer": "/Users/dane/Projects/drupal/wanigan/out/renderer",
+  "checks": [
+    "New schedules require explicit agent selection, persist the chosen fingerprint, and retain selection and drafts after failure.",
+    "Legacy schedules disclose runtime selection and need an explicit current agent before an edit can save.",
+    "Missing and changed profiles do not fall back; failed availability reads remain unknown and recover on refresh.",
+    "Batch schedules retain API re-submission semantics without an agent selector or invented profile.",
+    "Closed-app behavior is visible; background installation occurs only on its deliberate action."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 960,
+      "client": 784,
+      "scroll": 784
+    }
+  ],
+  "provenance": "Built renderer in isolated Electron with synthetic bridge. No live user data, provider calls, agents or real scheduler changes."
+}

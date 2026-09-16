@@ -1,0 +1,6 @@
+{
+  "before": true,
+  "provenance": "Actual renderer, synthetic bridge. No main/native deletion exercised.",
+  "checks": [],
+  "errors": []
+}

@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-16T01:46:28.361Z",
+  "provenance": "Isolated Electron renderer and synthetic bridge. No real main, providers, PTY, or archive writes.",
+  "checks": [],
+  "failures": [
+    {
+      "name": "Opening Recent reads without launching an agent",
+      "error": "TimeoutError: locator.waitFor: Timeout 7000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('dialog', { name: 'Conversation history' }) to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Ordinary sessions have a review work action",
+      "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n0 !== 1\n"
+    }
+  ],
+  "errors": []
+}

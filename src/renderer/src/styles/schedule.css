@@ -1,6 +1,13 @@
 /* An agenda beside a schedule reader. Shared tokens supply both themes. */
 .pane.sc-wrap { overflow: hidden; }
 .sc-wrap > .pane-head, .sc-wrap > .sc-read-error, .sc-wrap > .note { flex: none; }
+.sc-availability { flex: none; display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); margin-bottom: var(--s-4); font-size: var(--t-small); color: var(--text-dim); }
+.sc-availability > span { display: grid; gap: var(--s-1); }
+.sc-availability small { color: var(--text-faint); font-size: var(--t-micro); }
+.sc-execution > strong { font-size: var(--t-lead); font-weight: 500; overflow-wrap: anywhere; }
+.sc-execution-details { color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+.sc-execution-details summary { cursor: pointer; }
+.sc-execution-details p { margin: var(--s-3) 0 0; overflow-wrap: anywhere; }
 .sc-workspace { display: grid; grid-template-columns: minmax(280px, .75fr) minmax(0, 1.25fr); flex: 1; min-height: 0; gap: var(--s-6); }
 .sc-agenda { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; min-height: 0; }
 .sc-agenda > .seg { width: fit-content; max-width: 100%; }
@@ -75,6 +82,7 @@
   .sc-editor-title { flex-wrap: wrap; }
 }
 @media (max-width: 760px) {
+  .sc-availability { flex-wrap: wrap; }
   .pane.sc-wrap { overflow-y: auto; }
   .sc-workspace { display: flex; flex-direction: column; flex: none; gap: var(--s-5); }
   .sc-agenda-list { max-height: 260px; }

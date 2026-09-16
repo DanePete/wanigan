@@ -1,3 +1,4 @@
+import { permissionActionsFor, type PermissionControlAction } from '@shared/session-permissions';
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LaunchModelCatalogue, LaunchModelRow, LaunchOptions, PastSession, Project, ProviderInfo,
@@ -13,6 +14,8 @@ import Composer, { hasDraft, useQueuedCount } from '../components/Composer';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from '../components/composerPreference';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
+import SessionHistory, { type HistoryRequest } from '../components/SessionHistory';
+import SessionReview from '../components/SessionReview';
 import AttentionQueue from '../components/AttentionQueue';
 import SessionGoalTrail from '../components/SessionGoalTrail';
 import Timeline from '../components/Timeline';
@@ -187,6 +190,7 @@ FocusBtn.displayName = 'FocusBtn';
 export default function Sessions({
   providers, projects: allProjects, selectedProjectId, onAddProject, onError, activeId, onActiveChange,
   newSessionRequest, onNewSessionRequestConsumed, onSendToBatch, onOpenGoal,
+  historyRequest, onHistoryRequestConsumed,
 }: {
   providers: ProviderInfo[]; projects: Project[]; selectedProjectId: string | null;
   onAddProject: () => Promise<void>; onError: (m: string) => void;
@@ -196,6 +200,8 @@ export default function Sessions({
   onNewSessionRequestConsumed: () => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
   onOpenGoal: (goalId: string, nodeId?: string) => void;
+  historyRequest?: { sessionId: string; query: string; nonce: number } | null;
+  onHistoryRequestConsumed?: () => void;
 }) {
   const projects = useMemo(() => selectedProjectId ? allProjects.filter((p) => p.id === selectedProjectId) : allProjects, [allProjects, selectedProjectId]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -296,6 +302,8 @@ export default function Sessions({
   /** The Recent row whose Forget is awaiting confirmation, if any. */
   const [forgetting, setForgetting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ initial: HistoryRequest | null } | null>(null);
+  const [reviewSession, setReviewSession] = useState<Session | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
   /** The list as of this render, for handlers that outlive the closure. */
@@ -320,14 +328,24 @@ export default function Sessions({
     onNewSessionRequestConsumed();
   }, [newSessionRequest, onNewSessionRequestConsumed]);
 
+  useEffect(() => {
+    if (!historyRequest) return;
+    setHistory({ initial: historyRequest });
+    onHistoryRequestConsumed?.();
+  }, [historyRequest, onHistoryRequestConsumed]);
+
+  const pastRead = useRef(0);
   const refreshPast = useCallback(async () => {
+    const request = ++pastRead.current;
     try {
-      setPast(await window.wanigan.sessions.past());
+      const rows = await window.wanigan.sessions.past(selectedProjectId);
+      if (request !== pastRead.current) return;
+      setPast(rows);
       setPastErr(null);
     } catch (e) {
-      setPastErr(msg(e));
+      if (request === pastRead.current) setPastErr(msg(e));
     }
-  }, []);
+  }, [selectedProjectId]);
   // Declared after refreshPast so the dependency is the real callback, and
   // awaited last so a throw from the Recent read cannot reach this catch.
   const refresh = useCallback(async () => {
@@ -400,7 +418,7 @@ export default function Sessions({
   }, []);
 
   async function resume(p: PastSession) {
-    if (resumePendingRef.current) return;
+    if (resumePendingRef.current) return false;
     resumePendingRef.current = true;
     setResuming(p.id);
     try {
@@ -413,8 +431,9 @@ export default function Sessions({
         resumeFrom: { sessionId: p.id, conversationId: p.conversationId },
       });
       await refresh();
-      select(s.id);
-    } catch (e) { onError(msg(e)); }
+      onActiveChange(s.id, s.projectId);
+      return true;
+    } catch (e) { onError(msg(e)); return false; }
     finally {
       resumePendingRef.current = false;
       setResuming(null);
@@ -779,16 +798,14 @@ export default function Sessions({
                 .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0));
               const setPastFlag = (p: PastSession, flag: 'pin' | 'settle', on: boolean) => {
                 window.wanigan.sessions.setConversationFlag(p.id, flag, on)
-                  .then((rows) => { setPast(rows); setPastErr(null); })
+                  .then(() => refreshPast())
                   .catch((e) => onError(msg(e)));
               };
               const renderPast = (p: PastSession) => (
                 <div key={p.id} className={forgetting === p.id ? 'past-row past-row-confirming' : 'past-row'}>
-                  <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
-                            title={p.live
-                              ? `${pastNameNote(p)}Resume this exact conversation in ${p.projectPath}`
-                              : 'Project folder no longer exists'}
-                            onClick={() => resume(p)}>
+                  <FocusBtn className="past-main"
+                            title={`${pastNameNote(p)}Read the saved conversation in ${p.projectPath}`}
+                            onClick={() => setHistory({ initial: { sessionId: p.id, query: '', nonce: Date.now() } })}>
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span className="past-name">
                         {p.pinnedAt != null && (
@@ -815,7 +832,7 @@ export default function Sessions({
                       </span>
                     </span>
                     <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
-                      {resuming === p.id ? '…' : '↻'}
+                      Read
                     </span>
                   </FocusBtn>
                   {/* Pin, settle and forget are occasional and, for the last
@@ -863,7 +880,7 @@ export default function Sessions({
                       onRun={() => {
                         setForgetting(null);
                         void window.wanigan.sessions.forget(p.id)
-                          .then((rows) => { setPast(rows); setPastErr(null); })
+                          .then(() => refreshPast())
                           .catch((e) => onError(msg(e)));
                       }}
                     />
@@ -874,7 +891,7 @@ export default function Sessions({
                 <div style={{ marginTop: 16 }}>
                   <div className="group-title">
                     <span className="label">Recent conversations</span>
-                    <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
+                    <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>read · resume</span>
                   </div>
                   {pinnedPast.map(renderPast)}
                   {activePast.slice(0, activeShown).map(renderPast)}
@@ -895,6 +912,7 @@ export default function Sessions({
                       returns at most {PAST_ACTIVE_CAP} of them and does not report how many are older, so this
                       is not a count of everything recorded. Pin one while it is here and it stays after it ages
                       past that.
+                      <button className="btn" onClick={() => setHistory({ initial: null })}>Search older history</button>
                     </p>
                   )}
                   {settledPast.length > 0 && (
@@ -960,6 +978,8 @@ export default function Sessions({
                 {active.status === 'running' ? 'Running' : `Exited ${active.exitCode ?? '—'}`}
               </> : 'Choose a conversation or start something new.'}
               actions={<>
+                <FocusBtn className="btn" onClick={() => setHistory({ initial: null })}>History</FocusBtn>
+                {active && <FocusBtn className="btn" onClick={() => setReviewSession(active)}>Review work</FocusBtn>}
                 <FocusBtn ref={sessionPickerButtonRef} className="btn session-picker-trigger"
                   aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
                   aria-label={active ? `Choose a session. Current session: ${nameOf(active) || active.projectName}` : 'Choose a session'}
@@ -1179,7 +1199,7 @@ export default function Sessions({
       </div>
 
       {dialog && (
-        <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? selectedProjectId ?? active?.projectId}
+        <NewSessionDialog providers={providers} projects={allProjects} defaultProjectId={dialogProject ?? selectedProjectId ?? active?.projectId}
                           liveSessions={sessions}
                           onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} />
       )}
@@ -1190,6 +1210,11 @@ export default function Sessions({
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
       )}
+      {history && <SessionHistory key={history.initial?.nonce ?? 'browse'} recent={past}
+        scopeName={allProjects.find(project => project.id === selectedProjectId)?.name ?? 'All projects'}
+        initial={history.initial} resuming={resuming} onResume={resume} onClose={() => setHistory(null)} />}
+      {reviewSession && <SessionReview session={reviewSession} onClose={() => setReviewSession(null)}
+        onSendToBatch={paths => { setReviewSession(null); onSendToBatch({ projectId: reviewSession.projectId, root: reviewSession.worktree ?? reviewSession.projectPath, paths }); }} />}
     </div>
   );
 }
@@ -1400,7 +1425,8 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // collaboration mode.  Treating it as Claude made this whole useful row
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
-  const hasControls = !!session.worktree || tunable || codexControls || declaresTuning;
+  const permissionControls = session.status === 'running' && permissionActionsFor(harness).length > 0;
+  const hasControls = !!session.worktree || tunable || codexControls || declaresTuning || permissionControls;
   if (!elevated && !hasControls) return null;
 
   return (
@@ -1410,8 +1436,8 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
       )}
       {hasControls && <details className="session-controls">
         <summary>Session controls<span className="faint">
-          {tunable || codexControls ? `Model & effort${session.worktree ? ', worktree' : ''}`
-            : session.worktree ? 'Worktree' : 'Provider capabilities'}
+          {tunable || codexControls ? `Model, effort & permissions${session.worktree ? ', worktree' : ''}`
+            : permissionControls ? 'Permissions' : session.worktree ? 'Worktree' : 'Provider capabilities'}
         </span></summary>
         <div className="session-controls-content">
           {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
@@ -1424,8 +1450,47 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
             </div>
           )}
           {codexControls && <CodexControlBar session={session} />}
+          {permissionControls && <SessionPermissionControls key={session.id} session={session} harness={harness} />}
         </div>
       </details>}
+    </div>
+  );
+}
+
+function SessionPermissionControls({ session, harness }: { session: Session; harness: string }) {
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  async function send(action: PermissionControlAction) {
+    setPending(true);
+    setFeedback(null);
+    try {
+      const sent = await window.wanigan.sessions.permissionControl(session.id, action);
+      setFeedback(sent
+        ? action === 'cycle' ? 'Mode switch sent. Check the current mode in the terminal.' : 'Permissions command sent. Continue in the terminal.'
+        : 'Permission control was not sent. Check that the session is running and resolve any approval prompt in the terminal.');
+      if (sent) focusVisibleSessionTerminal();
+    } catch (error) {
+      setFeedback(`Could not open permission controls: ${msg(error)}`);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="session-permissions" role="group" aria-label="Session permissions">
+      <span className="label">Permissions</span>
+      {permissionActionsFor(harness).map((action) => (
+        <button key={action.id} className="btn" aria-description={action.title} disabled={pending}
+          onClick={() => { void send(action.id); }}>
+          {action.label}
+        </button>
+      ))}
+      <span className="faint" role="status">
+        {feedback ?? (harness === 'claude-code'
+          ? 'Auto and bypass appear only when enabled for this session. The terminal shows the current mode.'
+          : 'Choose the permission mode in Codex’s own picker.')}
+      </span>
     </div>
   );
 }

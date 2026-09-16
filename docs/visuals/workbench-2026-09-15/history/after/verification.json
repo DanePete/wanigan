@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-16T01:51:26.882Z",
+  "provenance": "Isolated Electron renderer and synthetic bridge. No real main, providers, PTY, or archive writes.",
+  "checks": [
+    "Opening Recent reads without launching an agent",
+    "Reader opens latest available turns including outcome beyond turn 200",
+    "Earlier turns expand without replacing the latest outcome",
+    "Older archived content is searchable and readable outside Recent",
+    "Explicit resume preserves the exact durable handle",
+    "Ordinary review shows changes plus honest project checkout checks",
+    "Recent is read with project scope",
+    "A short window retains a useful terminal with its draft open",
+    "Closing history restores session draft and focus"
+  ],
+  "failures": [],
+  "errors": []
+}

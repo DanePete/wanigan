@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-16T01:46:59.079Z",
+  "provenance": "Production renderer, synthetic bridge, isolated Electron profile; no real main/preload, processes, agents or model calls. One successful create response is a fixture only.",
+  "checks": [
+    "Home preserves main attention priority and uses readable session titles",
+    "Selecting work reveals reason and relevant next action without launches",
+    "Opening the existing terminal starts no new session or model call",
+    "Home has no horizontal overflow in compact window",
+    "Failed activity refresh is visibly stale and keeps the observed task",
+    "New session initially focuses the task",
+    "Switching projects preserves separate drafts",
+    "Closing and navigating retains the unfinished task",
+    "A failed launch preserves the draft",
+    "Compact launch keeps the task and resolved execution values accessible"
+  ],
+  "errors": [
+    "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert(await message.isDisabled())\n\n    at file:///Users/dane/Projects/drupal/wanigan/scripts/probe-workbench-home.mjs:107:104\n    at async check (file:///Users/dane/Projects/drupal/wanigan/scripts/probe-workbench-home.mjs:55:39)\n    at async file:///Users/dane/Projects/drupal/wanigan/scripts/probe-workbench-home.mjs:107:3"
+  ]
+}

@@ -1,3 +1,5 @@
+import { permissionInputFor } from '../shared/session-permissions';
+import { attentionOf } from './attention';
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
 import type { GoalCapsule, GoalCapsuleDelivery, LaunchOptions, Session, ProviderId } from '../shared/types';
@@ -1658,7 +1660,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     if (!unrecordedRecovery) {
       try {
         db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ?')
-          .run(live.meta.endedAt, exitCode, id);
+          .run(live.meta.endedAt, live.meta.exitCode, id);
       } catch { /* db closing during quit */ }
     }
     // The final tree snapshot, queued before any teardown below can alter the
@@ -1682,7 +1684,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // with them. Archiving here is the only moment the file is guaranteed to
     // exist and be complete.
     if (!unrecordedRecovery && flags().archiveTranscripts) {
-      try { archiveSession(id, live.meta.projectPath, live.meta.conversationId ?? null); }
+      try { archiveSession(id, live.meta.worktree ?? live.meta.projectPath, live.meta.conversationId ?? null); }
       catch { /* an unreadable transcript must never fail a session exit */ }
     }
     // Keep the session directory. It starts as an attachment staging area but
@@ -1725,7 +1727,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       });
     }
 
-    broadcast('session:exit', { sessionId: id, exitCode });
+    broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode });
     broadcast('session:list', sessionListEntries());
   });
 
@@ -1817,7 +1819,7 @@ function codexIdentityRepairPending(): boolean {
  * offered as Recent: opening Codex's broad picker cannot safely identify which
  * conversation the row meant and was the source of duplicate/wrong resumes.
  */
-export function pastSessions(limit = 40): PastSession[] {
+export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {
   try { if (codexIdentityRepairPending()) backfillCodexThreadIds(); }
   catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
   // Exited tabs can remain open for inspection, but they have no writer. Hiding
@@ -1875,7 +1877,7 @@ export function pastSessions(limit = 40): PastSession[] {
   const entries = [...newest.entries()]
     // A failed duplicate launch can be newer than the still-running writer.
     // Exclude a conversation whenever any execution of it is currently live.
-    .filter(([key]) => !openLineages.has(key));
+    .filter(([key, row]) => !openLineages.has(key) && (projectId == null || row.project_id === projectId));
   // Pins survive the cap — a pinned conversation that ages past forty newer
   // ones is exactly the one the pin exists to keep. The other sections are
   // capped separately so the settled shelf cannot crowd out active rows.
@@ -1942,7 +1944,7 @@ function readTitles(shown: Array<[string, SessionLogRow]>): Map<string, NonNulla
       continue;
     }
     try {
-      const found = conversationTitle(String(r.project_path), conversationId);
+      const found = conversationTitle(String(r.worktree || r.project_path), conversationId);
       if (found) out.set(String(r.id), found);
     } catch { /* unnamed is the honest fallback */ }
   }
@@ -2156,6 +2158,17 @@ export function writeSession(sessionId: string, data: string): boolean {
  * inventing a second, looser idea of what a model id looks like.
  */
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,63}$/;
+
+/** Send only a permission control supported by this live session’s harness. */
+export function sendSessionPermissionControl(sessionId: unknown, action: unknown): boolean {
+  if (typeof sessionId !== 'string') return false;
+  const s = sessions.get(sessionId);
+  if (!s) return false;
+  const input = permissionInputFor(s.meta.harnessId ?? s.meta.providerProfile?.harness, s.meta.status, action, attentionOf(s.meta).kind);
+  // The CLI owns mode availability, confirmation and the current mode. Sending
+  // a key or opening a picker is not evidence that any permission changed.
+  return input !== null && writeSession(sessionId, input);
+}
 
 /**
  * `/model` and `/effort` change the running CLI, but the CLI answers in its

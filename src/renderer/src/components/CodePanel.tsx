@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
-import { Note, Icon } from './bits';
+import { Note, Icon, Reading, ago } from './bits';
 import { useDialog } from './useDialog';
 import '../styles/code-reader.css';
 type Editor = { id: string; label: string; path: string };
-type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
+type Changes = Awaited<ReturnType<typeof window.wanigan.code.changes>>;
+type Changed = Changes['files'][number];
+type ChangesRead = { key: string; data: Changes | null; at: number | null; error: string | null; loading: boolean };
+const EMPTY_CHANGES: Changes = { isRepo: false, branch: null, files: [], headMoved: false, commits: 0, attributed: false, unreadable: null };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
 
 /** One conversational turn, derived from its boundary checkpoints. */
@@ -47,7 +50,7 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
+type CodePanelProps = {
   projectPath: string; projectName: string; sessionId?: string;
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
@@ -55,16 +58,34 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   focusTurn?: { turn: number; nonce: number } | null;
   onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
-}) {
+};
+
+export default function CodePanel(props: CodePanelProps) {
+  // A confirmation, selected diff, and baseline are one checkout/session's
+  // evidence. Remount all of them together, even for two sessions in one repo.
+  // A late read/plan from the old instance cannot populate the new one.
+  return <ScopedCodePanel key={JSON.stringify([props.projectPath, props.sessionId ?? null])} {...props} />;
+}
+
+function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: CodePanelProps) {
   const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
   // Default to this session's work. "All" exists because pre-existing dirt is
   // still worth seeing — it just isn't the agent's doing.
   const [scope, setScope] = useState<'session' | 'all'>('session');
   const [editors, setEditors] = useState<Editor[]>([]);
-  const [changes, setChanges] = useState<{ isRepo: boolean; branch: string | null; files: Changed[]; headMoved: boolean; commits: number }>(
-    { isRepo: false, branch: null, files: [], headMoved: false, commits: 0 });
+  const changesKey = JSON.stringify([projectPath, sessionId ?? null]);
+  const changesKeyRef = useRef(changesKey); changesKeyRef.current = changesKey;
+  const changesSequence = useRef(0);
+  const changesPending = useRef<{ key: string; request: number } | null>(null);
+  const [changesRead, setChangesRead] = useState<ChangesRead>({ key: changesKey, data: null, at: null, error: null, loading: true });
+  // Data always belongs to a checkout and session. A prop change cannot briefly
+  // expose the preceding workspace while its new read is still pending.
+  const reading = changesRead.key === changesKey ? changesRead : { key: changesKey, data: null, at: null, error: null, loading: true };
+  const changes = reading.data ?? EMPTY_CHANGES;
+  const canRevertChanges = !!reading.data && changes.attributed && !reading.error && !reading.loading;
   const [sel, setSel] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>('');
+  const inspectionSequence = useRef(0);
   const [dir, setDir] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState<{ rel: string; text: string; truncated: boolean; binary: boolean } | null>(null);
@@ -113,14 +134,36 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
 
   useEffect(() => {
     if (!sessionId) { setBaseHead(null); return; }
+    let current = true;
+    setBaseHead(null);
     window.wanigan.sessions.baseline(sessionId)
-      .then((b) => setBaseHead(b?.head ?? null))
-      .catch(() => setBaseHead(null));
+      .then((b) => { if (current) setBaseHead(b?.head ?? null); })
+      .catch(() => { if (current) setBaseHead(null); });
+    return () => { current = false; };
   }, [sessionId]);
 
   const loadChanges = useCallback(() => {
-    window.wanigan.code.changes(projectPath, sessionId).then(setChanges).catch(() => {});
-  }, [projectPath, sessionId]);
+    if (changesPending.current?.key === changesKey) return;
+    const request = ++changesSequence.current;
+    changesPending.current = { key: changesKey, request };
+    setChangesRead(previous => previous.key === changesKey
+      ? { ...previous, loading: true }
+      : { key: changesKey, data: null, at: null, error: null, loading: true });
+    void window.wanigan.code.changes(projectPath, sessionId).then(data => {
+      if (request !== changesSequence.current || changesKeyRef.current !== changesKey) return;
+      // Main returns an unreadable record for Git failures rather than throwing.
+      // Its empty array is missing evidence, never evidence of a clean tree.
+      if (data.unreadable) throw new Error(data.unreadable);
+      setChangesRead({ key: changesKey, data, at: Date.now(), error: null, loading: false });
+    }).catch(error => {
+      if (request !== changesSequence.current || changesKeyRef.current !== changesKey) return;
+      setChangesRead(previous => ({ key: changesKey,
+        data: previous.key === changesKey ? previous.data : null,
+        at: previous.key === changesKey ? previous.at : null,
+        error: error instanceof Error ? error.message : String(error), loading: false }));
+    }).finally(() => { if (changesPending.current?.request === request) changesPending.current = null; });
+  }, [changesKey, projectPath, sessionId]);
+  const stopChangesRead = useCallback(() => { changesSequence.current++; changesPending.current = null; }, []);
 
   // Poll while an agent is working — the whole point is watching edits land.
   // Not while the window is hidden: this runs git status every four seconds and
@@ -131,8 +174,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     const t = setInterval(() => { if (!document.hidden) loadChanges(); }, 4000);
     const onVis = () => { if (!document.hidden) loadChanges(); };
     document.addEventListener('visibilitychange', onVis);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
-  }, [loadChanges]);
+    return () => { stopChangesRead(); clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [loadChanges, stopChangesRead]);
 
   useEffect(() => { setSel(null); setDiff(''); setFile(null); setDir(''); }, [projectPath]);
 
@@ -269,6 +312,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   }, [tab, dir, projectPath]);
 
   async function askRevert(p: string) {
+    if (!canRevertChanges) return;
     const f = changes.files.find((x) => x.path === p);
     try {
       setPlan(await window.wanigan.revert.plan(projectPath, p, baseHead, f?.preexisting === true));
@@ -277,7 +321,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   }
 
   async function doRevert() {
-    if (!plan) return;
+    if (!plan || !canRevertChanges) return;
     setReverting(true);
     try {
       const f = changes.files.find((x) => x.path === plan.file);
@@ -291,7 +335,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   }
 
   async function doRevertAll() {
-    if (!bulk) return;
+    if (!bulk || !canRevertChanges) return;
     setBulkBusy(true);
     try {
       const r = await window.wanigan.revert.all(
@@ -312,16 +356,22 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   }
 
   async function openDiff(p: string) {
+    const request = ++inspectionSequence.current;
     setSel(p); setFile(null); setPlan(null); setReverted(null);
-    try { setDiff(await window.wanigan.code.diff(projectPath, p)); setErr(null); }
-    catch (e) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); }
+    setDiff('');
+    try {
+      const next = await window.wanigan.code.diff(projectPath, p);
+      if (request === inspectionSequence.current) { setDiff(next); setErr(null); }
+    } catch (e) { if (request === inspectionSequence.current) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); } }
   }
 
   async function openFile(rel: string) {
+    const request = ++inspectionSequence.current;
+    setFile(null); setSel(null); setDiff(''); setPlan(null);
     try {
       const f = await window.wanigan.code.read(projectPath, rel);
-      setFile({ rel, ...f }); setSel(null); setDiff(''); setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+      if (request === inspectionSequence.current) { setFile({ rel, ...f }); setErr(null); }
+    } catch (e) { if (request === inspectionSequence.current) setErr(e instanceof Error ? e.message : String(e)); }
   }
 
   const editor = editors[0] ?? null;
@@ -329,8 +379,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const inspectorText = sel ? diff : file?.text ?? '';
 
   const visible = useMemo(
-    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files),
-    [changes.files, scope]
+    () => (scope === 'session' && changes.attributed ? changes.files.filter((f) => !f.preexisting) : changes.files),
+    [changes.files, changes.attributed, scope]
   );
   const preexistingCount = changes.files.filter((f) => f.preexisting).length;
 
@@ -368,7 +418,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           </button>
         )}
         <details className="code-actions-menu"><summary>Actions <Icon name="chevron-down" /></summary><div className="code-toolbar-actions">
-          {tab === 'changes' && sessionId && preexistingCount > 0 && (
+          {tab === 'changes' && sessionId && changes.attributed && preexistingCount > 0 && (
             <button className="pill" title={`${preexistingCount} file(s) were already modified when this session started`}
                     onClick={() => setScope(scope === 'session' ? 'all' : 'session')}
                     style={scope === 'session'
@@ -379,7 +429,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           )}
           {tab === 'changes' && visible.length > 0 && sessionId && baseHead && (
             <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
-                    disabled={bulkBusy || bulk !== null}
+                    disabled={bulkBusy || bulk !== null || !canRevertChanges}
                     title={`Restore all ${visible.length} listed file(s) to ${baseHead.slice(0, 8)}, the commit this session started from`}
                     onClick={() => {
                       setBulkResult(null);
@@ -390,6 +440,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           )}
           {tab === 'changes' && visible.length > 0 && onSendToBatch && (
             <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
+                    disabled={!!reading.error || reading.loading}
                     title="Run one prompt across these files as a batch"
                     onClick={() => onSendToBatch(visible.map((f) => f.path))}>
               Send {visible.length} to batch
@@ -407,6 +458,21 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         </div></details>
         <button className="btn code-read-button" disabled={!target} onClick={() => setInspector(true)}><Icon name="file-text" />Read code</button>
       </div>
+
+      {tab === 'changes' && <div className="code-read-state">
+        {!reading.data && !reading.error && <Reading what="workspace changes" />}
+        {reading.error && <Note tone="warn" action={{ label: 'Retry changes', run: loadChanges }}>
+          <strong>{reading.data ? 'Changes are stale.' : 'Could not read changes.'}</strong>{' '}{reading.error}
+          {reading.at !== null && <span> Last successful read {ago(reading.at)}. Listed files may have changed.</span>}
+        </Note>}
+        {reading.data && !reading.error && <p className="code-read-status">
+          {changes.attributed ? 'Changes since launch' : 'Workspace changes'}
+          {' · '}{reading.loading ? 'Refreshing…' : `Updated ${ago(reading.at!)}`}
+        </p>}
+        {reading.data && changes.isRepo && !changes.attributed && <p className="code-read-status">
+          No launch baseline is available to attribute these changes to this session. Session reverts are unavailable.
+        </p>}
+      </div>}
 
       {/* A failed read is a Note, not a clickable strip. This was a bare div
           with onClick and the words "click to dismiss": no role, so it was
@@ -436,7 +502,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
             </div>
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                      disabled={bulkBusy} onClick={() => void doRevertAll()}>
+                      disabled={bulkBusy || !canRevertChanges} onClick={() => void doRevertAll()}>
                 {bulkBusy ? 'Reverting…' : `Revert ${bulk.files.length} file${bulk.files.length === 1 ? '' : 's'}`}
               </button>
               <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
@@ -577,8 +643,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         ) : tab === 'changes' ? (
           <>
             <div className="code-list">
-              {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}
-              {changes.isRepo && !visible.length && (
+              {reading.data && !reading.error && !changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}
+              {reading.data && !reading.error && changes.isRepo && !visible.length && (
                 <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>
                   {scope === 'session' && preexistingCount > 0
                     ? `Nothing from this session yet — ${preexistingCount} file(s) were already modified before it started.`
@@ -619,7 +685,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                     against <span className="mono">{baseHead.slice(0, 8)}</span>
                   </span>
                   <button className="btn" style={{ fontSize: 'var(--t-micro)', padding: '2px 8px', marginLeft: 'auto' }}
-                          onClick={() => void askRevert(sel)}>Revert this file…</button>
+                          disabled={!canRevertChanges} onClick={() => void askRevert(sel)}>Revert this file…</button>
                 </div>
               )}
               {plan && (
@@ -628,7 +694,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                     {plan.detail}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                       <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                              disabled={reverting || !plan.safe} onClick={() => void doRevert()}>
+                              disabled={reverting || !plan.safe || !canRevertChanges} onClick={() => void doRevert()}>
                         {reverting ? 'Reverting…' : plan.action === 'delete' ? 'Delete it' : 'Revert it'}
                       </button>
                       <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}

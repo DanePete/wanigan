@@ -516,6 +516,9 @@ function migratePhases(d: Database.Database) {
   // so Insights and budgets never need a special case per surface.
   addColumn(d, 'runs', 'kind', "TEXT NOT NULL DEFAULT 'batch'");
   addColumn(d, 'runs', 'eval_pair_id', 'TEXT');
+  // Existing command results remain historical evidence with no invented identity.
+  addColumn(d, 'review_runs', 'session_id', 'TEXT');
+  addColumn(d, 'review_runs', 'evidence_json', 'TEXT');
   // A session can run in its own worktree; the code panel scopes to it.
   addColumn(d, 'worktrees', 'linked_json', 'TEXT');
   addColumn(d, 'session_log', 'worktree', 'TEXT');

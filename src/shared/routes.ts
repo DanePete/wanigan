@@ -1,3 +1,5 @@
+import { SPACE_AREAS } from './spaces.ts';
+
 /**
  * The route table: every destination the shell can show, with the label the
  * rail prints, the group the palette and a future sidebar and menu bar sort it
@@ -20,34 +22,34 @@
  * results above the row that actually owns the thing they typed.
  */
 export const TABS = [
-  { id: 'sessions',  label: 'Sessions',  group: 'Work',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
-  { id: 'fleet',     label: 'Fleet',     group: 'Work',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Review',   group: 'Work',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'control goals goal dockets tasks work graph' },
-  { id: 'batches',   label: 'Batches',   group: 'Work',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
-  { id: 'insights',  label: 'Insights',  group: 'Explore', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
-  { id: 'learning',  label: 'Learning',  group: 'Explore', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
-  { id: 'plugins',   label: 'Plugins',   group: 'Explore', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
-  { id: 'schedules', label: 'Schedules', group: 'Explore', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
-  { id: 'git',       label: 'Git',       group: 'Manage',  hint: 'History, working tree, branches, stashes and the review gate for one repository', keywords: 'commits diffs stashes review' },
-  { id: 'runs',      label: 'Runs',      group: 'Manage',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
-  { id: 'settings',  label: 'Settings',  group: 'Manage',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
-  { id: 'skills',    label: 'Skills',    group: 'Explore', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },
-  { id: 'context',   label: 'Context',   group: 'Explore', hint: 'Instructions, memory and configuration, per project',     keywords: 'instructions memory configuration' },
+  { id: 'sessions',  label: 'Sessions',  group: 'Projects',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
+  { id: 'fleet',     label: 'Fleet',     group: 'Fleet',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
+  { id: 'control',   label: 'Review',   group: 'Review',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'control goals goal dockets tasks work graph' },
+  { id: 'batches',   label: 'Batches',   group: 'Automation',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
+  { id: 'insights',  label: 'Insights',  group: 'Fleet', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
+  { id: 'learning',  label: 'Learning',  group: 'Knowledge', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
+  { id: 'plugins',   label: 'Plugins',   group: 'Knowledge', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
+  { id: 'schedules', label: 'Schedules', group: 'Automation', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
+  { id: 'git',       label: 'Changes',       group: 'Projects',  hint: 'History, working tree, branches, stashes and the review gate for one repository', keywords: 'git changes commits diffs stashes review' },
+  { id: 'runs',      label: 'Runs',      group: 'Automation',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
+  { id: 'settings',  label: 'Settings',  group: 'Settings',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
+  { id: 'skills',    label: 'Skills',    group: 'Knowledge', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },
+  { id: 'context',   label: 'Context',   group: 'Projects', hint: 'Instructions, memory and configuration, per project',     keywords: 'instructions memory configuration' },
   // Scout reads allow-listed public sources and proposes product changes. It
   // shares no table, IPC namespace or scope control with Learning, and it was
   // only ever findable as a tab inside it.
-  { id: 'scout',     label: 'Scout',     group: 'Explore', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
+  { id: 'scout',     label: 'Scout',     group: 'Knowledge', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
   // Past the digit row deliberately. ⌘1–9 read positionally out of this list,
   // so an entry inserted beside Insights would quietly move every shortcut
   // after it; Usage takes a named chord instead.
-  { id: 'usage',     label: 'Usage',     group: 'Explore', hint: 'What is left on each account, and what you actually spent', keywords: 'usage limits quota remaining left rate limit weekly session plan account work personal model burn' },
+  { id: 'usage',     label: 'Usage',     group: 'Fleet', hint: 'What is left on each account, and what you actually spent', keywords: 'usage limits quota remaining left rate limit weekly session plan account work personal model burn' },
   // The board reads the same tickets Control does, across every goal and
   // project at once, in columns. Control answers "how is this one goal going";
   // this answers "what is outstanding, and what am I doing about it today" —
   // which spans goals and is therefore a different surface, not a tab inside
   // one. Appended past the digit row for the reason stated above Usage.
-  { id: 'board',     label: 'Board',     group: 'Work',    hint: 'Every ticket across every goal, in columns you can move and park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
-  { id: 'mission', label: 'Mission room', group: 'Work', hint: 'Your companion and a briefing across project spaces', keywords: 'home orb assistant companion chat overview spaces' },
+  { id: 'board',     label: 'Board',     group: 'Projects',    hint: 'Every ticket across every goal, in columns you can move and park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
+  { id: 'mission', label: 'Home', group: 'Home', hint: 'Your companion and a briefing across project spaces', keywords: 'home mission room orb assistant companion chat overview spaces' },
 ] as const;
 
 export type Tab = (typeof TABS)[number]['id'];
@@ -79,11 +81,8 @@ export const TAB_ICONS = {
 } as const satisfies Record<Tab, string>;
 
 /** The order the sidebar lists destinations in, grouped by the job they serve. */
-export const SIDEBAR_GROUPS: readonly { group: string; tabs: readonly Tab[] }[] = [
-  { group: 'Work', tabs: ['mission', 'sessions', 'fleet', 'board', 'control', 'batches'] },
-  { group: 'Explore', tabs: ['insights', 'usage', 'learning', 'scout', 'skills', 'context', 'plugins'] },
-  { group: 'Manage', tabs: ['git', 'runs', 'schedules', 'settings'] },
-];
+export const SIDEBAR_GROUPS: readonly { group: string; tabs: readonly Tab[] }[] =
+  SPACE_AREAS.map(area => ({ group: area.label, tabs: area.tabs }));
 
 /** How many leading TABS entries the digit row reaches: ⌘1 through ⌘9. */
 export const DIGIT_ROUTES = 9;

@@ -16,11 +16,12 @@
 // Usage:  node scripts/probe-terminal-replay.mjs
 // Requires playwright-core only for its Electron binary path; the page below
 // loads the same @xterm/xterm build the renderer bundles.
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const XTERM = path.join(REPO, 'node_modules/@xterm/xterm/lib/xterm.js');
@@ -29,6 +30,10 @@ const ELECTRON = path.join(REPO, process.platform === 'darwin'
   : 'node_modules/electron/dist/electron');
 
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-vt-'));
+const ts = createRequire(import.meta.url)('typescript');
+const replaySource = ts.transpileModule(readFileSync(path.join(REPO, 'src/shared/terminal-replay.ts'), 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+}).outputText;
 
 // The queries an agent TUI actually emits, and which xterm answers.
 const QUERIES = String.raw`\x1b[6n\x1b[c\x1b[>c\x1b[5n`;
@@ -36,29 +41,31 @@ const QUERIES = String.raw`\x1b[6n\x1b[c\x1b[>c\x1b[5n`;
 writeFileSync(path.join(dir, 'page.html'), `<!doctype html><meta charset="utf-8">
 <div id="t" style="width:800px;height:400px"></div>
 <script src="${XTERM}"></script>
-<script>
-// The same shape as TerminalPane: a pooled pane carrying a priming flag, a data
-// handler that reads that flag out of the pool, and a prime that writes the
-// scrollback with a completion callback.
+<script type="module">
+${replaySource}
+// Exercise the production replay module with the real xterm parser.
 const pool = new Map(), toPty = [], sessionId = 's1';
 const term = new window.Terminal({ scrollback: 20000, allowProposedApi: true });
-term.onData((d) => { if (pool.get(sessionId)?.priming) return; toPty.push(d); });
+term.onData((d) => { if (pool.get(sessionId)?.replay.suppressInput) return; toPty.push(d); });
 term.open(document.getElementById('t'));
-const pane = { term, priming: false, pendingLocal: [] };
+const pane = { term, replay: new TerminalReplay((text,parsed)=>term.write(text,parsed)) };
 pool.set(sessionId, pane);
-const finishPrime = (p) => { p.priming = false; for (const t of p.pendingLocal.splice(0)) p.term.write(t); };
 
-pane.priming = true;
+pane.replay.feed('PRE-SNAPSHOT-BROADCAST\\r\\n');
 const buf = ('agent output line\\r\\n').repeat(3000) + '${QUERIES}' + 'tail\\r\\n';
-pane.pendingLocal.push('LOCAL-AFTER-HISTORY\\r\\n');
-term.write(buf, () => finishPrime(pane));
+pane.replay.local('LOCAL-AFTER-HISTORY\\r\\n');
+pane.replay.snapshot(buf);
+pane.replay.feed('POST-SNAPSHOT-OUTPUT\\r\\n');
 
 setTimeout(() => {
   const during = toPty.length;
   term.input('x');                       // a real keystroke, once the gate is open
   setTimeout(() => {
+    const lines=[];for(let i=0;i<term.buffer.active.length;i++)lines.push(term.buffer.active.getLine(i)?.translateToString(true));
+    const text=lines.join('\\n');
     document.title = 'RESULT:' + JSON.stringify({
-      during, after: toPty.length - during, cleared: pane.priming === false,
+      during, after: toPty.length - during, cleared: !pane.replay.suppressInput,
+      postSnapshot:text.includes('POST-SNAPSHOT-OUTPUT'),preSnapshot:text.includes('PRE-SNAPSHOT-BROADCAST'),local:text.includes('LOCAL-AFTER-HISTORY'),
     });
   }, 250);
 }, 1500);
@@ -103,6 +110,9 @@ check(seen.after === 1,
   'and a keystroke after the prime still does, so the gate is not simply stuck shut', seen);
 check(seen.cleared === true,
   'the prime gate opens once the buffer has actually been parsed, not when write() returned', seen);
+check(seen.postSnapshot === true && seen.preSnapshot === false,
+  'post-snapshot broadcasts survive parsing and pre-snapshot broadcasts are not duplicated', seen);
+check(seen.local === true, 'local exit text survives replay', seen);
 
 console.log(failures === 0 ? '\n════ terminal replay probe passed ════' : `\n════ ${failures} failed ════`);
 process.exit(failures === 0 ? 0 : 1);

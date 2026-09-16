@@ -1,0 +1,537 @@
+<title>Wanigan Helper Sweep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --paper: #ffffff;
+    --sunk: #e7edf2;
+    --line: #c4cfd8;
+    --line-soft: #dbe2e8;
+    --text: #1c2731;
+    --dim: #4c5c69;
+    --faint: #5d6c78;
+    --accent: #1c608e;
+    --accent-soft: #dcebf6;
+    --ok: #127247;
+    --ok-soft: #d8f1e0;
+    --warn: #8f5b00;
+    --warn-soft: #faebc8;
+    --no: #9b2c2c;
+    --no-soft: #f6dede;
+
+    --display: 'Barlow Condensed', 'DIN Condensed', 'Arial Narrow', sans-serif-condensed, sans-serif;
+    --ui: ui-sans-serif, -apple-system, 'SF Pro Text', system-ui, 'Segoe UI', sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+
+    --t-xs: 0.75rem;
+    --t-sm: 0.8125rem;
+    --t-base: 0.9375rem;
+    --t-md: 1.0625rem;
+    --t-lg: 1.5rem;
+    --t-xl: 2.25rem;
+    --t-xxl: 3.25rem;
+
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 72px;
+    --r: 6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171e24; --paper: #1b242b; --sunk: #26313a; --line: #3e4b55; --line-soft: #2d3841;
+      --text: #f1f5f8; --dim: #c5cfd7; --faint: #aebcc8;
+      --accent: #a6d9f8; --accent-soft: #203e51;
+      --ok: #7be3a2; --ok-soft: #123524; --warn: #ffd16d; --warn-soft: #382b12; --no: #f4a3a3; --no-soft: #3a1e1e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171e24; --paper: #1b242b; --sunk: #26313a; --line: #3e4b55; --line-soft: #2d3841;
+    --text: #f1f5f8; --dim: #c5cfd7; --faint: #aebcc8;
+    --accent: #a6d9f8; --accent-soft: #203e51;
+    --ok: #7be3a2; --ok-soft: #123524; --warn: #ffd16d; --warn-soft: #382b12; --no: #f4a3a3; --no-soft: #3a1e1e;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: var(--t-base);
+    line-height: 1.55;
+    padding-inline: var(--s4);
+    padding-block: var(--s6) var(--s8);
+  }
+  .wrap { max-width: 1060px; margin-inline: auto; display: grid; gap: var(--s8); }
+  a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code { background: var(--sunk); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.05; }
+  p { margin: 0; }
+
+  /* ---- head ---- */
+  header.head { display: grid; gap: var(--s5); padding-bottom: var(--s6); border-bottom: 1px solid var(--line); }
+  .eyebrow {
+    font-family: var(--display); font-weight: 600; font-size: var(--t-sm);
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+  }
+  h1 { font-size: var(--t-xxl); font-weight: 700; letter-spacing: -0.005em; }
+  .dek { font-size: var(--t-md); color: var(--dim); max-width: 68ch; }
+  .ledger {
+    display: flex; flex-wrap: wrap; gap: var(--s2) var(--s5);
+    font-size: var(--t-sm); color: var(--dim); font-variant-numeric: tabular-nums;
+  }
+  .ledger b { color: var(--text); font-weight: 650; }
+  nav.jump { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  nav.jump a {
+    font-size: var(--t-sm); text-decoration: none; color: var(--text);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; background: var(--paper);
+  }
+  nav.jump a:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ---- sections ---- */
+  section { display: grid; gap: var(--s5); scroll-margin-top: var(--s5); }
+  .sec-head { display: grid; gap: var(--s2); max-width: 72ch; }
+  h2 { font-size: var(--t-xl); font-weight: 700; }
+  .sec-head p { color: var(--dim); }
+
+  /* ---- legend / chips ---- */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    font-size: var(--t-xs); font-weight: 600; letter-spacing: 0.02em;
+    border-radius: 999px; padding: 1px 9px; border: 1px solid transparent; line-height: 1.6;
+  }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .c-absent { color: var(--ok); background: var(--ok-soft); }
+  .c-probe { color: var(--warn); background: var(--warn-soft); }
+  .c-flight { color: var(--accent); background: var(--accent-soft); }
+  .c-no { color: var(--no); background: var(--no-soft); }
+  .eff {
+    font-family: var(--mono); font-size: var(--t-xs); font-weight: 600; color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; white-space: nowrap;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-sm); color: var(--dim); align-items: center; }
+
+  /* ---- ranked list ---- */
+  ol.rank { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); counter-reset: r; }
+  ol.rank > li {
+    counter-increment: r;
+    display: grid; grid-template-columns: 3.25rem minmax(0, 1fr) 11rem; gap: var(--s2) var(--s5);
+    padding-block: var(--s5); border-bottom: 1px solid var(--line-soft);
+  }
+  ol.rank > li::before {
+    content: counter(r, decimal-leading-zero);
+    font-family: var(--display); font-weight: 600; font-size: var(--t-lg); color: var(--faint);
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .item { display: grid; gap: var(--s2); min-width: 0; }
+  .item h3 { font-size: var(--t-lg); font-weight: 600; }
+  .item p { max-width: 70ch; }
+  .today, .evid { font-size: var(--t-sm); color: var(--dim); max-width: 72ch; }
+  .today b, .evid b {
+    font-family: var(--display); font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    font-size: var(--t-xs); color: var(--faint); margin-right: 6px;
+  }
+  .meta { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); }
+
+  /* ---- in flight ---- */
+  .flight { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--s4); }
+  .wt { background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--r); padding: var(--s4); display: grid; gap: var(--s2); align-content: start; }
+  .wt .where { font-family: var(--mono); font-size: var(--t-xs); color: var(--faint); overflow-wrap: anywhere; }
+  .wt ul { margin: 0; padding-left: 1.1em; font-size: var(--t-sm); color: var(--dim); display: grid; gap: 2px; }
+
+  /* ---- catalogue tables ---- */
+  .theme { display: grid; gap: var(--s3); }
+  .theme h3 { font-size: var(--t-lg); font-weight: 600; }
+  .tbl { overflow-x: auto; background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--r); }
+  table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: var(--t-sm); }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    font-family: var(--display); font-weight: 600; font-size: var(--t-xs); letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint); background: var(--sunk); white-space: nowrap;
+  }
+  td:first-child { font-weight: 600; color: var(--text); width: 27%; }
+  td { color: var(--dim); }
+  td.e { width: 4.5rem; }
+
+  /* ---- corrections ---- */
+  dl.fix { margin: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
+  dl.fix > div { display: grid; grid-template-columns: minmax(0, 20rem) minmax(0, 1fr); gap: var(--s2) var(--s5); padding-block: var(--s4); border-bottom: 1px solid var(--line-soft); }
+  dl.fix dt { font-weight: 600; }
+  dl.fix dd { margin: 0; color: var(--dim); max-width: 70ch; }
+
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--s6); align-items: start; }
+  ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: var(--s2); color: var(--dim); }
+  ul.plain li::marker { color: var(--faint); }
+  ul.plain b { color: var(--text); font-weight: 600; }
+
+  .note {
+    border-left: 3px solid var(--accent); background: var(--paper); padding: var(--s3) var(--s4);
+    font-size: var(--t-sm); color: var(--dim); max-width: 80ch; border-radius: 0 var(--r) var(--r) 0;
+  }
+  footer { font-size: var(--t-sm); color: var(--faint); display: grid; gap: var(--s2); border-top: 1px solid var(--line); padding-top: var(--s5); }
+  footer code { background: transparent; padding: 0; }
+
+  @media (max-width: 760px) {
+    h1 { font-size: var(--t-xl); }
+    ol.rank > li { grid-template-columns: 2.25rem minmax(0, 1fr); }
+    .meta { grid-column: 2; flex-direction: row; flex-wrap: wrap; }
+    dl.fix > div { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="head">
+  <div class="eyebrow">Wanigan research · 14 September 2026</div>
+  <h1>Wanigan Helper Sweep</h1>
+  <p class="dek">What September's Claude Code, Codex and Google articles, and the third-party helpers around those tools, do that Wanigan does not. This pass read articles, release notes and tool READMEs; this morning's gap report read vendor changelogs. Anything that report already listed, or that another worktree is building, is left out below.</p>
+  <div class="ledger">
+    <span><b>6</b> research passes</span>
+    <span><b>~150</b> items, most read on the primary page</span>
+    <span><b>12</b> to build first</span>
+    <span><b>6</b> already being built elsewhere</span>
+    <span><b>8</b> claims corrected against the code</span>
+  </div>
+  <nav class="jump" aria-label="Sections">
+    <a href="#first">Build first</a>
+    <a href="#flight">Already being built</a>
+    <a href="#catalogue">Everything else, by theme</a>
+    <a href="#fixes">Corrections</a>
+    <a href="#probe">Probe before building</a>
+    <a href="#rejected">Left out on purpose</a>
+  </nav>
+</header>
+
+<section id="first">
+  <div class="sec-head">
+    <h2>Build first</h2>
+    <p>Ordered by what each item does for one operator reviewing agent work, weighed against effort. Every "Wanigan today" line was checked in the code on <code>main</code> and on the open feature worktrees.</p>
+  </div>
+  <div class="legend">
+    <span class="chip c-absent">Checked absent</span>
+    <span class="chip c-probe">Needs a probe first</span>
+    <span class="chip c-flight">Builds on in-flight work</span>
+    <span><span class="eff">S</span> days · <span class="eff">M</span> a week or two · <span class="eff">L</span> more</span>
+  </div>
+
+  <ol class="rank">
+    <li>
+      <div class="item">
+        <h3>Show what <code>npm run build</code> actually runs, in the approval</h3>
+        <p>When a command goes through the gate, expand <code>npm|pnpm|yarn|bun run</code>, <code>make</code> and <code>just</code> targets into the script body from the worktree's current <code>package.json</code>, <code>Makefile</code> or <code>justfile</code>. Flag the script if its entry changed since the launch commit. Add a deterministic line: what the command does, what it touches, whether it can be undone. This matters most on the phone, where there is no terminal to scroll.</p>
+        <p class="today"><b>Wanigan today</b><code>policy.ts</code> matches command strings; nothing reads a manifest's <code>scripts</code>.</p>
+        <p class="evid"><b>Evidence</b>In 409k approve/deny decisions, payloads behind a familiar <code>npm run</code> name were approved 52.5% of the time, against 28.4% for other exfiltration attempts. <a href="https://scalex.dev/blog/ai-agent-permissions-stats/">scalex, 5 Aug</a> · deterministic explainer: <a href="https://github.com/pacejiang-awesome/codex-approval-explainer">codex-approval-explainer</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S–M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Auto-mode denials become attention items</h3>
+        <p>Auto mode has been the default for Pro, Max and Team since 14 August, so sessions now hit a second gate Wanigan cannot see. The <code>PermissionDenied</code> hook carries <code>denial_reason</code> and can answer <code>retry: true</code>. Surface each denial with its matched rule and three actions: allow a retry, add an allow rule, or leave it. Then compile each trust level into <code>autoMode</code> rules passed through <code>--settings</code>. The classifier reads that flag and deliberately ignores a repository's own settings.</p>
+        <p class="today"><b>Wanigan today</b><code>hooks.ts</code> <code>okOf()</code> counts <code>PermissionDenied</code> as a failed step on the Timeline, with no reason and no attention item.</p>
+        <p class="evid"><b>Evidence</b>At Gusto, about 10% of transcripts since mid-May contained an auto-mode denial. <a href="https://code.claude.com/docs/en/auto-mode-config">auto-mode-config docs</a> · <a href="https://claude.com/blog/auto-mode-in-production">Running auto mode in production, 7 Aug</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S–M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>"Needs review" as a state, with a mark on each reviewed file</h3>
+        <p>A session that finished with a non-empty diff and no review mark is its own bucket, separate from idle. Inside it, each changed file gets approve, reject or comment. That state persists in SQLite and survives reopening. Submit sends one message into the session through the existing review-notes path. Sort the bucket by diff size.</p>
+        <p class="today"><b>Wanigan today</b>Attention states are permission, error, finished, idle, working and stalled. Review notes anchor to lines, and no file carries a reviewed state.</p>
+        <p class="evid"><b>Evidence</b><a href="https://superset.sh/changelog">Superset "Needs review", 16 Aug</a> · <a href="https://antigravity.google/docs/cli/artifacts">Antigravity artifact review, CLI 1.1.14</a> · <a href="https://www.agentastic.dev/whats-new">Agentastic guided review, 6 Sep</a></p>
+      </div>
+      <div class="meta"><span class="chip c-flight">Builds on review notes</span><span class="eff">M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>"Since you last looked", built from evidence</h3>
+        <p>When a tab regains focus, show what happened since it lost focus: turns, files changed, commands that failed, cost and current state. It is built from the hook timeline and checkpoints, with no model call. If Claude Code's own recap (one line, at most 400 characters) is persisted somewhere readable, show it beside that summary and label it as the harness's words.</p>
+        <p class="today"><b>Wanigan today</b>No recap of any kind (<code>recap</code> appears only in a handover test).</p>
+        <p class="evid"><b>Evidence</b><a href="https://coollabsio-jean.mintlify.app/features/session-management">Jean session recap</a> · <a href="https://code.claude.com/docs/en/interactive-mode">Claude Code session recap</a> · <a href="https://github.com/openai/codex/pull/45090">Codex recap schema, #45090</a></p>
+      </div>
+      <div class="meta"><span class="chip c-probe">Probe the Claude recap</span><span class="eff">S</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Separate what the agent's edit tools changed from everything else</h3>
+        <p>Offer three scopes in the diff: files an edit tool touched this session, all uncommitted changes, and the whole branch. A file that changed without an edit tool touching it is labelled "changed outside edit tools". That covers <code>sed -i</code>, Python heredocs, formatters and the operator. Turn on <code>bashEditDiffEnabled</code> (2.1.269) in injected settings so Bash results carry their own diffs. The same split lets a commit stage only the hunks the session wrote.</p>
+        <p class="today"><b>Wanigan today</b>Per-turn checkpoints capture the whole tree, and nothing attributes a change to a tool.</p>
+        <p class="evid"><b>Evidence</b><a href="https://antigravity.google/blog/vcs-and-terminal">Antigravity change scopes, 24 Aug</a> · <a href="https://nimbalyst.com/changelog/">Nimbalyst session-hunk staging, 0.75.2</a> · heredoc edits in <a href="https://lucumr.pocoo.org/2026/9/7/astra-why/">Armin Ronacher, 7 Sep</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>A usage-limit wait is named, not called stalled</h3>
+        <p>Since 2.1.234, a subscription session that hits its limit waits in place and continues at reset, and that is on by default. Give it a reason code with the reset time, suppress stall alerts during the wait, and notify when it resumes. For a session that already exited, offer an explicit "resume at reset" that shows the time and can be cancelled. It is never on by default.</p>
+        <p class="today"><b>Wanigan today</b>Limits and burn rate are read per account, and the attention queue has no wait state, so a waiting session reads as stalled after 10 minutes.</p>
+        <p class="evid"><b>Evidence</b><a href="https://code.claude.com/docs/en/interactive-mode">Wait for a usage limit to reset</a> · <a href="https://code.claude.com/docs/en/whats-new/2026-w33">Desktop auto-continue, W33</a> · <a href="https://github.com/asiagenawi/claude-powernap">claude-powernap</a></p>
+      </div>
+      <div class="meta"><span class="chip c-probe">Probe how the wait shows</span><span class="eff">S</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Meter Codex's instruction budget before the learning engine writes</h3>
+        <p>Codex joins AGENTS.md files from the repository root down and stops at 32 KiB (<code>project_doc_max_bytes</code>). It lists skills within 2% of the context window and shortens their descriptions past that. Root files come first, so the most specific rules are the first to fall off, silently. Wanigan projects into nested AGENTS.md and <code>.agents/skills</code>, so it can cut off the very rule it just added. Check before applying a projection and in the Context view. While doing so, flag paths and commands in instruction files that no longer exist.</p>
+        <p class="today"><b>Wanigan today</b><code>context/instructions.ts</code> checks only whether Claude reads AGENTS.md. Nothing models Codex's loader or its byte limit.</p>
+        <p class="evid"><b>Evidence</b><a href="https://learn.chatgpt.com/docs/config-file/config-reference">Codex config reference</a> · <a href="https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra">Rethinking skills and prompts for GPT-6 Astra, 11 Sep</a> · <a href="https://github.com/satoissei/agents-doctor">agents-doctor</a> · <a href="https://github.com/openintelligence-labs/agents-md-lint">agents-md-lint</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Spend yield: shipped, reverted or abandoned</h3>
+        <p>Class each session's cost by what happened to its work: merged, merged then reverted, or discarded. Show cost per merged commit per project and model. Heuristic tools match commits by timestamp; Wanigan can use exact merge and discard records once it stores them. Setting <code>OTEL_METRICS_INCLUDE_REPOSITORY</code> (2.1.269) at launch puts <code>vcs.*</code> attributes on cost metrics, so the join comes from the data rather than the working directory.</p>
+        <p class="today"><b>Wanigan today</b>The <code>worktrees</code> table stores <code>removed_at</code> only. Whether the work was merged or discarded is not recorded, so this needs an additive column first.</p>
+        <p class="evid"><b>Evidence</b><a href="https://github.com/getagentseal/codeburn">CodeBurn <code>yield</code></a> · a 35-hour unattended run: about $1,200 for 79 commits, <a href="https://lucumr.pocoo.org/2026/9/7/astra-why/">Armin Ronacher</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S–M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>New dependencies are review items</h3>
+        <p>For each checkpoint, read manifest and lockfile changes and list every added or upgraded package with its version, and whether an install ran in the session. An optional advisory lookup (OSV, GitHub Advisory) goes in the egress report as disclosed traffic. It must say "unknown" rather than "safe" when no source covers the ecosystem, and flag versions published in the last 72 hours.</p>
+        <p class="today"><b>Wanigan today</b>Diffs show manifest changes as text; nothing lists dependencies as decisions.</p>
+        <p class="evid"><b>Evidence</b>Across 16,893 sessions, the three agents chose the same tool only 42% of the time, and Claude Code searched the web in about 30% of cases. <a href="https://armature.tech/blog/which-tools-coding-agents-install">Armature, 3 Sep</a> · <a href="https://github.com/clidey/deptrust">deptrust</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S–M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>What a session left running: processes and ports</h3>
+        <p>List each session's child processes and listening ports, including those still alive after it exited: pid, port, idle CPU time, and a kill button that asks first. For Codex, list background terminals through app-server <code>thread/backgroundTerminals/*</code>. Otherwise Halt can report success while a dev server keeps running.</p>
+        <p class="today"><b>Wanigan today</b>Halt stops sessions. Nothing scans process trees or ports (no <code>lsof</code>, <code>pgrep</code> or port scan in <code>src/main</code>).</p>
+        <p class="evid"><b>Evidence</b><a href="https://github.com/stefanprodan/cctop">cctop</a> · <a href="https://github.com/graykode/abtop">abtop</a> · <a href="https://github.com/openai/codex/pull/44870">Codex #44870, background terminals</a></p>
+      </div>
+      <div class="meta"><span class="chip c-probe">Probe the Codex daemon</span><span class="eff">S–M</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Triage keys: snooze, mark unread, next session that needs you</h3>
+        <p>Snooze a session for a set time, waking early if it raises an attention event. Mark a session unread after looking. Add a chord for the next session that needs you and one to reopen the last closed tab. On an exited tab, put a Resume button that says plainly it starts a new process.</p>
+        <p class="today"><b>Wanigan today</b>Unread badges and positional <code>⌥⌘←/→</code>. Snooze exists only in the learning inbox. An exited session says "Resume it from Recent".</p>
+        <p class="evid"><b>Evidence</b><a href="https://github.com/pingdotgg/t3code/pull/11800">T3 Code snooze, #11800</a> · <a href="https://www.conductor.build/changelog">Conductor ⌘⌥L, 0.83.0</a> · <a href="https://cmux.com/docs/changelog">cmux ⌘⇧T, 14 Sep</a> · <a href="https://superset.sh/changelog">Superset interrupted-session banner, 9 Aug</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S</span></div>
+    </li>
+
+    <li>
+      <div class="item">
+        <h3>Name the provider outage on a failing session</h3>
+        <p>When a session reports <code>StopFailure</code>, errors or stalls, check <code>status.claude.com/api/v2/incidents.json</code> (and OpenAI's status page for Codex). If an incident is open on a matching component, tag the attention item "provider incident" with its name. That stops the operator debugging a repository that isn't broken. It is a public GET with no user data, listed in the egress report.</p>
+        <p class="today"><b>Wanigan today</b>No status-page read; a provider error looks like any other error.</p>
+        <p class="evid"><b>Evidence</b>"Elevated errors for Claude Mythos 5.1 and Claude Fable 5.1", 11 Sep, marked as affecting Claude Code. <a href="https://status.claude.com/api/v2/incidents.json">incidents.json</a></p>
+      </div>
+      <div class="meta"><span class="chip c-absent">Checked absent</span><span class="eff">S</span></div>
+    </li>
+  </ol>
+</section>
+
+<section id="flight">
+  <div class="sec-head">
+    <h2>Already being built</h2>
+    <p>The sweep turned these up too. Other worktrees are building them now, so they are not new work. Where the sweep found a sharper mechanism, it is noted.</p>
+  </div>
+  <div class="flight">
+    <div class="wt">
+      <h3>Accountability</h3>
+      <div class="where">wanigan-accountability · uncommitted</div>
+      <ul><li>Secret scan, <code>ledger-chain</code>, <code>Assisted-by</code> trailer</li><li>Sharper: claudit's ingest-time detection so raw values never reach disk; Claude now watermarks text, and a trailer should cite recorded evidence, never a watermark</li></ul>
+    </div>
+    <div class="wt">
+      <h3>Merge readiness</h3>
+      <div class="where">wanigan-merge-readiness · uncommitted</div>
+      <ul><li>Per-check detail and PR review threads handed to the session</li><li>Sharper: a PR-keyed session that is resumed each round and re-briefed with the new head SHA (<a href="https://github.com/openai/codex/discussions/45284">Codex #45284</a>)</li></ul>
+    </div>
+    <div class="wt">
+      <h3>Observed telemetry</h3>
+      <div class="where">wanigan-observed-telemetry · uncommitted</div>
+      <ul><li>Status line <code>rate_limits</code> and <code>prompt_cache</code>, trace spans, spend sources, <code>cli_version</code> per session</li><li>Sharper: transcripts already carry <code>diagnostics.cache_miss_reason</code>, with no proxy (<a href="https://github.com/phiat/claude-esp">claude-esp</a>)</li></ul>
+    </div>
+    <div class="wt">
+      <h3>Worktree bootstrap</h3>
+      <div class="where">wanigan-worktree-bootstrap · uncommitted</div>
+      <ul><li><code>.worktreeinclude</code>, port block, setup scripts</li><li>Sharper: Codex also copies an ignored <code>AGENTS.override.md</code>; Paseo asks before running setup in a fork</li></ul>
+    </div>
+    <div class="wt">
+      <h3>History</h3>
+      <div class="where">night/memory-automation, night/history-rail</div>
+      <ul><li>Durable, searchable, revivable History; read any archived session</li><li>Sharper: search operators <code>agent:</code> <code>repo:</code> <code>before:</code> on top of FTS (cmux Vault)</li></ul>
+    </div>
+    <div class="wt">
+      <h3>Committed on feat/batch2-core</h3>
+      <div class="where">e259890, f4c9423</div>
+      <ul><li>Attention verdicts carry a reason code; repo executable config pinned before launch</li><li>Sharper: add AGENTS.md itself to the pinned set; Codex 0.150 stopped reading project AGENTS.md from untrusted projects</li></ul>
+    </div>
+  </div>
+</section>
+
+<section id="catalogue">
+  <div class="sec-head">
+    <h2>Everything else, by theme</h2>
+    <p>Worth doing, just after the twelve above. "Wanigan today" is what the code does now. Items that send session content to a model are marked, because they need the same consent, routing and metering gates as model-assisted consolidation.</p>
+  </div>
+
+  <div class="theme">
+    <h3>Approvals and the policy gate</h3>
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Helper</th><th scope="col">Who has it</th><th scope="col">Wanigan today</th><th scope="col">Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Parse shell before matching</td><td>cc-safety-net, Dippy: <code>bash -c</code> wrappers, reordered flags and <code>$(…)</code> substitutions no longer hide the command; deny messages steer the agent ("use trash instead"); <code>explain</code> prints why a rule fired</td><td>String rules in <code>policy.ts</code></td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Rules that depend on earlier events</td><td>Probity: "no commit until tests ran", read from the session's own history</td><td>Each call judged alone</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Deny unless a person granted it before</td><td>Antigravity <code>deny_unless_prior_grant</code> and <code>force_ask</code>: unattended runs may do only what a human approved in an attended session</td><td>Unattended runs turn every ask into a deny</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Remembered approvals expire when the situation changes</td><td>Codex Guardian ties a cached approval to trust level, rewinds and new user messages, and rechecks it at use</td><td>No remembered approvals yet; applies once added</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Approval scope you can widen, checked</td><td>Antigravity: edit a file grant up to its directory, and the CLI confirms the wider rule still covers the request</td><td>Approvals are answered in the terminal</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Tripwire: running a downloaded file</td><td>Johann Rehberger's attack got past auto mode about 80% of the time by planting <code>struct.py</code> beside a decoder. Flag interpreters run in freshly downloaded directories or next to stdlib-shadowing files. It is a tripwire, not containment.</td><td>No link between what was downloaded and what runs</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>A self-test for the gate</td><td>hstack, cc-safety-net <code>doctor</code>: every guard has one payload it must refuse and one it must allow, run at launch</td><td>Smoke tests only; the gate-blind-spots memory records bypasses found by hand</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Approval-fatigue signal</td><td>scalex found misses rise late in a session. Time from <code>PermissionRequest</code> to the next tool event gives an inferred decision time.</td><td>Ledger stores no decision time</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Record git history rewrites</td><td>Force pushes, amends of commits older than the session and deleted refs get pinned under a private ref so <code>gc</code> can't collect them. Ref placement needs your decision.</td><td>Checkpoints record trees, not ref moves</td><td class="e"><span class="eff">S–M</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="theme">
+    <h3>Reviewing the work</h3>
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Helper</th><th scope="col">Who has it</th><th scope="col">Wanigan today</th><th scope="col">Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Tests and schema first, with alarms</td><td>Practitioners read test diffs before code. Flag removed or loosened assertions, new <code>.skip</code> or <code>.only</code>, rewritten snapshots.</td><td>Diff in path order</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Fails before, passes after</td><td>OpenAI Daybreak runs the named test at the launch commit and at head, or records the proof gap in words; <code>classify-failures</code> also runs base plus test edits only</td><td>Review gate runs at head only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Grade the final summary against the diff</td><td>groundtruth: claims such as "file touched", "test ran" and "symbol added" are checked with no model call; vague claims go to review, never to fail</td><td>Final message is not checked</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Risk tiers by path, per repo</td><td>Pragmatic Engineer, Anthropic's SDLC post: workflows, migrations and auth are high tier, and a high-tier diff needs an explicit reviewed mark before merge. Wiz traced a CI token theft to an AI-written workflow fix.</td><td>All diffs equal</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>PR body from recorded evidence</td><td>Conductor, Jean draft from the model. Evidence version: goal, turns, files, test commands with exit codes, resolved notes.</td><td><code>gh pr create</code> body is blank</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Agent explains its own diff inline</td><td>hunk: agents anchor notes to hunks and steer the reviewer's view, and they cannot write or edit human notes</td><td>Notes flow operator → agent only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>A second vendor reviews, you adjudicate <span class="chip c-no">Model call</span></td><td>codex-plugin-cc findings schema; claude-codex-bridge marks each finding Confirmed, Refuted or Uncertain. Explicit and costed per run, never a Stop gate.</td><td>Batches judge only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Decisions nobody asked for <span class="chip c-no">Model call</span></td><td>Grepathy lists agent choices that were in neither the prompt nor the plan, and every entry must point at real code</td><td>—</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Did every ask get answered</td><td>hstack splits the prompt into items and blocks the turn from ending while one is unanswered, the tree is dirty or commits are unpushed</td><td>"Finished" only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Maintainability drift per checkpoint</td><td>SlopCodeBench measures with deterministic tools: complexity, duplication and SLOC deltas, shown separately and never as a score</td><td>—</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Line-level attribution</td><td>Git AI standard v3: <code>refs/notes/ai</code> maps line ranges to session and checkpoint; reports AI lines generated vs accepted. Computed locally; exporting notes is a separate, deliberate step.</td><td>Checkpoints hold the data</td><td class="e"><span class="eff">L</span></td></tr>
+        <tr><td>Small review conveniences</td><td>Hide whitespace, image before/after, find across the whole diff, filter files by path, @-mention a file in a note, keep unsent notes, diff-stat badge per session and per turn</td><td>Numstat exists in <code>git.ts</code>; no badges</td><td class="e"><span class="eff">S each</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="theme">
+    <h3>Session state and talking to sessions</h3>
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Helper</th><th scope="col">Who has it</th><th scope="col">Wanigan today</th><th scope="col">Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Spinning, not just failing</td><td>The same command with the same result three times is its own reason (Addy Osmani; hstack's probe dedupe matches on what is being asked, not the exact string)</td><td>Stalled after 6 identical failures</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Reply from the notification</td><td>cmux, 14 Sep: typed reply on turn-complete, one button per AskUserQuestion option, "Revise…" on plans</td><td>Notifications open the app</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Questions as buttons</td><td>Paseo, Zed <code>ask_user</code>: AskUserQuestion options come in the PreToolUse payload; send the matching keys, fall back to the terminal</td><td>Answered in the terminal</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>A side question that doesn't touch the session</td><td>Claude Code Desktop <code>/btw</code>, Codex <code>/side</code>, Nimbalyst "Chat with Session"</td><td>—</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Non-blocking question as a reason code</td><td>Codex <code>request_user_input_async</code>: the agent asks and keeps working</td><td>Attention models blocking waits only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Headless runs refuse interactive-only slash commands</td><td>Antigravity CLI 1.1.11: <code>-p "/clear"</code> had reported success while nothing was cleared. Now it fails, naming the replacement flag.</td><td>A <code>/</code> prompt is sent as text</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Finer headless outcomes</td><td>WAITING (ended on a question), STALL (process gone, no terminal event), partial on timeout; check network before credentials, because a blocked network reads as "token invalid"</td><td>Row status set</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Same conversation open twice</td><td>Antigravity 1.1.10 warns and offers a fork, so two writers don't interleave one transcript</td><td>Warns on a shared checkout, not a shared conversation</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Asked for X, answered by Y</td><td>Codex <code>model/rerouted</code> and the Luna Reserve fallback; record requested vs reported model per turn</td><td>Launch model recorded; mismatch not flagged</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Session tags and sections</td><td>Superset tag folders, Conductor sidebar sections</td><td>Project spaces only</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Terminal and rendering helpers</td><td>Link menu (open in diff, copy path), copy last response, Mermaid rendered locally, CPU and memory per session, pop a pane into its own window</td><td>—</td><td class="e"><span class="eff">S–M</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="theme">
+    <h3>Cost, quota and context</h3>
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Helper</th><th scope="col">Who has it</th><th scope="col">Wanigan today</th><th scope="col">Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Cost by cause</td><td>looptax, mcp-prune, CodeBurn: cache rewrites after idle gaps (capped estimate plus upper bound), repeated reads of one file, MCP servers configured but never called</td><td>Spend, cache rate, occupancy; no cause</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Warn before a cold-cache send</td><td>super-token-saver: idle past the cache lifetime means this send re-reads about N tokens (estimate). Warn only, never block.</td><td>—</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Which session is eating the window</td><td>Agent Sessions shows burn per session; quota-autopilot admits scheduled work only with a reserve and when you haven't typed recently, and refuses on unknown data</td><td>Per-account limits; schedules ignore both</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Codex sessions priced in credits</td><td>OpenAI's credit rate card: Fast mode costs 2.5×, and input past 272K tokens costs 2×</td><td>Codex plan sessions counted as unpriced</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Behaviour drift across CLI and model versions</td><td>CodeBurn <code>compare</code>, claude-regression: retry and one-shot rates per version, labelled observational</td><td><code>cli_version</code> arriving on observed-telemetry</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Session anatomy</td><td>decant: orientation vs implementation time, waiting on you, peak context, compactions, each labelled observed or inferred</td><td>Timeline durations</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Skill listing cost and Codex's manual-only switch</td><td>skillzero: tokens per turn for listed skills; <code>allow_implicit_invocation: false</code> in <code>agents/openai.yaml</code></td><td>Claude invocability only</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Byte-stable projections</td><td>Antigravity 1.1.6 sorts discovery so the prompt order doesn't shift and break the cache. A shared test would compile the same versions twice and compare hashes.</td><td>Undo is hash-guarded; determinism untested</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Subagents that skip CLAUDE.md</td><td><code>omitClaudeMd</code> (2.1.271) in agent frontmatter; the Context view predicts the main session only</td><td>—</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Scheduled jobs remember what they did</td><td>Agentastic: a notes file per schedule, kept outside the repo and injected at launch</td><td>Schedules rerun the same prompt</td><td class="e"><span class="eff">S</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="theme">
+    <h3>Across harnesses, and keeping readers honest</h3>
+    <div class="tbl"><table>
+      <thead><tr><th scope="col">Helper</th><th scope="col">Who has it</th><th scope="col">Wanigan today</th><th scope="col">Effort</th></tr></thead>
+      <tbody>
+        <tr><td>Continue a Claude conversation in Codex</td><td>Codex app-server <code>externalAgentConfig/import</code> with the <code>SESSIONS</code> item gives a real, resumable thread (codex-plugin-cc). Import sessions only; the config, hook and memory items would make Claude's artifacts Codex's input.</td><td>Handover within one provider</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Reader gate keyed by CLI version</td><td>Session-Bench, decant diagnostics: count unparsed lines and say "reader unverified for codex 0.15x" rather than showing zero. Codex rollouts may become <code>.jsonl.zst</code>.</td><td><code>codex-sessions.ts:431</code> accepts <code>.jsonl</code> only</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Usage for provider-pack sessions</td><td>tokscale's verified list of where about 50 harnesses store usage on disk</td><td>Spend covers Claude and Codex</td><td class="e"><span class="eff">M per format</span></td></tr>
+        <tr><td>A built-in Google profile should target <code>agy</code></td><td>Gemini CLI stopped serving unpaid, Google One, AI Pro and Ultra users on 18 June; Google's development moved to the Antigravity CLI. <code>agy -p "/usage" --output-format json</code> reads quota without starting a turn.</td><td>Gemini only as a plain pack</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Hook and permission map per harness</td><td>rulesync documents which events each harness has and which can block. Use it as data, returning <code>unsupported</code> where nothing can block.</td><td>Gate is Claude-hooks only</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Where each setting came from</td><td>Antigravity labels overrides; CODEX_TUI <code>inspect --effective</code> names the config layer that set a value</td><td>Context lists layers for Claude</td><td class="e"><span class="eff">S–M</span></td></tr>
+        <tr><td>Per-account health</td><td><code>codex doctor --json</code> per <code>CODEX_HOME</code>; a one-click redacted diagnostics bundle</td><td>Preflight checks install and sign-in</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Skill capability lock</td><td>SkilLock pins the commands, hosts and paths a skill uses and asks when that set grows; SkillSpector and skillshare scan at install</td><td>MCP pinned by digest; skills linted, not scanned</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Sensitive read, then a way out</td><td>Confessor joins "read <code>.env</code>" to "curl POST 15 s later" in the same session, presented as a lead, not proof</td><td>Egress report and timeline, not joined</td><td class="e"><span class="eff">M</span></td></tr>
+        <tr><td>Reviewer sessions with no command tools</td><td><code>--restricted</code> (2.1.248) removes command tools and WebFetch and ignores repo settings. Label it "no command tools", not "sandboxed". Pair with a "review PR #N" worktree launch.</td><td>Review tasks run in plan mode</td><td class="e"><span class="eff">S</span></td></tr>
+        <tr><td>Keep a lid-closed Mac awake</td><td>Adrafinil: reference-counted holds, <code>pmset disablesleep</code> through a narrow root helper, a thermal cutout</td><td>Settings says truthfully that a closed lid sleeps</td><td class="e"><span class="eff">M</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="fixes">
+  <div class="sec-head">
+    <h2>Corrections</h2>
+    <p>Places where a research pass said something the code or a primary source does not support.</p>
+  </div>
+  <dl class="fix">
+    <div><dt>"Wanigan can compute spend yield exactly"</dt><dd>Not yet. <code>worktrees</code> keeps <code>path, repo_root, branch, session_id, created_at, removed_at</code>. Whether a removal was a merge or a discard is not persisted, so an additive column comes first.</dd></div>
+    <div><dt>"Compressed Codex rollouts read as zero usage"</dt><dd>A future risk, not a live bug. PR #42039 writes <code>.jsonl.zst</code>, and <code>codex-sessions.ts</code> would skip those files. But installed Codex 0.154 lists <code>local_thread_store_compression</code> as "under development, false".</dd></div>
+    <div><dt>"Guard model switches with PreModelSwitch"</dt><dd>This reverses a recorded decision. <code>hooks.ts:218</code> asks only for <code>PostModelSwitch</code>, because a recorder that can block can wedge a session when the listener is busy. A warning built on the Post event is still open.</dd></div>
+    <div><dt>"Wrap PR comments in an untrusted envelope"</dt><dd>Mostly done in flight: <code>pr-feedback.ts</code> says the text is quoted and asks for it to be read as information. What is left: a comment body must not be able to forge that header.</dd></div>
+    <div><dt>"Keep-awake silently fails with the lid closed"</dt><dd>It doesn't claim to work. Settings says a closed lid sleeps the Mac unless an external display holds it. Staying awake with the lid closed is a real gap, but it needs a privileged helper, which is a trust-boundary decision.</dd></div>
+    <div><dt>"Lint policy rules that match nothing"</dt><dd>Premature. Antigravity's bug was a user rule that parsed to empty and matched everything. Wanigan's rules are built-in today; this becomes a gate once operators can write rules.</dd></div>
+    <div><dt>rtk, the most-starred helper (80k)</dt><dd>Two passes disagreed on it. It is left out as a default: it rewrites <code>git status</code> to <code>rtk git status</code>, so the transcript no longer shows the command that ran. Acceptable only as a declared per-session opt-in measured in a paired trial.</dd></div>
+    <div><dt>"GPT-6 Astra" looked like an SEO invention</dt><dd>It is real: it appears in openai/codex releases 0.153.1–0.154.0, OpenAI's API model page and the system card. Several other SEO-site claims were not used.</dd></div>
+  </dl>
+</section>
+
+<section class="two">
+  <div id="probe" class="theme">
+    <div class="sec-head"><h2>Probe before building</h2><p>Undocumented, or documented for a different surface.</p></div>
+    <ul class="plain">
+      <li><b>Usage-limit wait.</b> How a waiting Claude session shows it: PTY text, a transcript entry, or a hook.</li>
+      <li><b>Claude's session recap.</b> Whether the recap line is persisted anywhere Wanigan can read without triggering <code>/recap</code>.</li>
+      <li><b>Codex daemon.</b> Whether a PTY-launched Codex TUI on macOS attaches to the shared app-server daemon, which decides whether Halt misses work.</li>
+      <li><b><code>/btw</code> in the CLI.</b> Verified only in Claude Code Desktop.</li>
+      <li><b>Session import.</b> <code>externalAgentConfig/import</code> round trip on the installed Codex, then <code>codex resume</code>.</li>
+      <li><b>Notification replies.</b> Electron <code>hasReply</code> and <code>actions</code> on a signed macOS build.</li>
+    </ul>
+  </div>
+  <div id="rejected" class="theme">
+    <div class="sec-head"><h2>Left out on purpose</h2><p>Seen in the sweep and ruled out by Wanigan's five values.</p></div>
+    <ul class="plain">
+      <li><b>Cloud execution.</b> Conductor Cloud and routines, Codex Agents API, Warp Factories, Ramp Inspect.</li>
+      <li><b>Hosted relays.</b> Happy's relay, Superset Pages, Antigravity's Remote Control hub, chat bridges.</li>
+      <li><b>Merging without a person.</b> Claude Desktop auto-merge, self-landing merge queues, megabatch pitches.</li>
+      <li><b>Hidden routing or fan-out.</b> claude-code-router, better-ccflare, <code>/boost</code>. Codex Ultra delegates automatically, so label it where offered.</li>
+      <li><b>Changing what the agent sees without saying so.</b> rtk as a default, pxpipe's image-compressed context, ccxray's stats footer.</li>
+      <li><b>Installers that write into repositories.</b> Graft, shift-log, chat-history's quiet skill install.</li>
+      <li><b>Spend nobody asked for.</b> Prompt Improver on every message, automatic credit overages.</li>
+      <li><b>Composite grades.</b> CodeBurn A–F, Node9's score. Keep their findings, drop the grade.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <p>Six research passes, each told what Wanigan has and what this morning's report already listed: Claude Code articles, Codex articles and releases, Claude Code helper tools, Codex and cross-agent tools, Google's agent products, desktop-app changelogs and roundups. Claims were labelled read on the primary page, second-hand, or blocked. SEO aggregators were not used as sources.</p>
+  <p>Raw findings: <code>.claude/research-2026-09-14-sweep/</code> (a- through f-). Morning report: <code>docs/research/2026-09-14-advanced-feature-gaps.md</code> on feat/advanced-gaps. Reddit and paywalled Pragmatic Engineer sections could not be read.</p>
+</footer>
+
+</div>

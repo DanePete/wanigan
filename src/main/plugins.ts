@@ -549,26 +549,35 @@ async function runPlugin(args: string[], timeoutMs = 120_000): Promise<PluginAct
 function pluginRows(output: string, key: 'installed' | 'available'): Record<string, unknown>[] | null {
   let parsed: unknown;
   try { parsed = JSON.parse(output || 'null'); } catch { return null; }
-  if (parsed === null || parsed === undefined) return [];
-  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
-  if (typeof parsed === 'object') {
-    const named = (parsed as Record<string, unknown>)[key];
-    if (Array.isArray(named)) return named as Record<string, unknown>[];
-  }
-  return null;
+  const rows: unknown = Array.isArray(parsed) ? parsed
+    : parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>)[key] : null;
+  if (!Array.isArray(rows)) return null;
+  if (!rows.every((row): row is Record<string, unknown> => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+    const value = row as Record<string, unknown>;
+    const id = key === 'installed' ? value.id : value.pluginId ?? value.id;
+    return typeof id === 'string' && id.trim().length > 0;
+  })) return null;
+  return rows;
 }
 
 /** Everything the marketplaces offer, with installed/enabled folded in. */
 export async function catalog(): Promise<{ plugins: CatalogPlugin[]; note: string | null }> {
   const avail = await runPlugin(['list', '--json', '--available'], 60_000);
   const inst = await runPlugin(['list', '--json'], 30_000);
+  return catalogFromResults(avail, inst);
+}
+
+/** A failed installed-state read must not override the local scan with invented absence. */
+export function catalogFromResults(avail: PluginAction, inst: PluginAction): { plugins: CatalogPlugin[]; note: string | null } {
   if (!avail.ok) {
-    return { plugins: [], note: avail.error };
+    return { plugins: [], note: avail.error || 'The CLI catalog could not be read.' };
   }
+  if (!inst.ok) return { plugins: [], note: inst.error || 'The CLI installed plugin list could not be read.' };
+  const installed = pluginRows(inst.output, 'installed');
+  if (installed === null) return { plugins: [], note: 'The installed plugin list came back in a shape Wanigan does not recognise. Using the local scan.' };
   const installedById = new Map<string, { enabled: boolean }>();
-  // An unreadable installed list just means nothing is marked as installed; the
-  // catalogue itself is still worth showing.
-  for (const r of pluginRows(inst.output, 'installed') ?? []) {
+  for (const r of installed) {
     if (typeof r.id === 'string') installedById.set(r.id, { enabled: r.enabled !== false });
   }
 

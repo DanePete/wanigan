@@ -1,0 +1,110 @@
+{
+  "at": "2026-09-16T01:59:51.770362+00:00",
+  "baseCommit": "8a7a7b2890091cd43c6fc93d522bb575ab1d25b9",
+  "sourceScope": "Modified tracked and untracked src/scripts files, plus the lint baseline. Includes preserved pre-existing permission controls.",
+  "sources": {
+    "eslint-suppressions.json": "bc496bda776d25d2075e5c33d712bee1b12f137ccc93b3d9655da605c5cc719b",
+    "scripts/probe-schedule-execution.mjs": "a58b33908de2a92947718a116a03b9f6ce53e1b75fc7eb59b98a274d79fd05eb",
+    "scripts/probe-schedules-workspace.mjs": "62b205b65d91e6d041d2dff29b73856d14f665c86f651a053191d58ee59bd1ea",
+    "scripts/probe-session-history.mjs": "c86a689be0cc84fe52b7490bf16dd7d9c88df6f08e432d54c7be102dc883d06b",
+    "scripts/probe-settings-workspace.mjs": "0623f178dffb004a46a7fc8b2b19751e755f32db84dcb04ba46f49ea81f72c15",
+    "scripts/probe-workbench-evidence.mjs": "88e94253a91db1f0bf8a1b2210f3eef475b6e7f9ebdc27f5b435136b25da692c",
+    "scripts/probe-workbench-home.mjs": "a27fbbab5aa21e73161c64b28714718da8e0f63f7123ef09fd2faef8488d9fce",
+    "scripts/probe-workbench-navigation.mjs": "a3417476b5bc1d5923c88356c1ca19379daf2945eb3245856f61ad4f81dc58f4",
+    "scripts/shots.mjs": "51ee07bda44c4b7bf703ee6664e74e93d61ede97fbdf19599771e1b12ee8f868",
+    "src/main/headless.ts": "9d46210ded58541563a8d267023ed5b6e1e576342c663ef5dd738fa158b298fb",
+    "src/main/index.ts": "a625fc96c09191607cdc8818d5dea7ad57c8db4440aedb8a98a6aa715d15c867",
+    "src/main/schedule.ts": "cb68165b1111b1ac6e93c9be97c659fcaf0403ab8bb7c9b6e5d83469ab54048b",
+    "src/main/sessions.ts": "3b48c8a05f903a4a5fc4ff64a633a7a7d554ba8ad690dcda8aa3e0c3c575d5ab",
+    "src/main/smoke3.ts": "7766849bf484b242d3e840f0c3c7f97f9053605006e89bfe62635bd1451886c5",
+    "src/main/smoke7.ts": "73555bf291bfdb8bc9f8f30effe23f257913240ea10a00c06894caee7e24d867",
+    "src/preload/index.ts": "4576698f57d1d0d56955c7c5155f99bf9bef7c128ae83e420f271a62c3d8c22b",
+    "src/renderer/src/App.tsx": "0fa445723ef3a3d56fc36c9cf222a8dd3914ab919bde11792ae10785ba59322a",
+    "src/renderer/src/components/CodePanel.tsx": "3a3f4ce22d4e260a4abda3d8cc28a0a3bd1feeb57d733b28b287c27c46b8b98d",
+    "src/renderer/src/components/HomeWork.tsx": "84867d31aa1557af3f90c86f09f7edee966722eb0c59f8fa713dd2ca301956b4",
+    "src/renderer/src/components/NewSessionDialog.tsx": "3bc6f674f656a4f0333e60f591ecb470ea380220d876118aa7d16d2e73db62fb",
+    "src/renderer/src/components/ReviewGate.tsx": "26da34d013abdd6d977f58257d3555dd3b6f39c3af3d539f4e087e8729ecb24a",
+    "src/renderer/src/components/SessionHistory.tsx": "f27281d983095aa8a3a370799dd85378bd79bd59528ab0411b23f70f6d506de7",
+    "src/renderer/src/components/SessionReview.tsx": "5797d077477c5eabb8f360823cf4303a93871075b19022b00113e24675d341e5",
+    "src/renderer/src/components/SetupChecklist.tsx": "aa6260a04e6c0fd0bb77d1b2024cb4749bd7502bc4fc4892e9eac7895d173107",
+    "src/renderer/src/components/SpaceNavigation.tsx": "c4ae91594809cdb2cca9b78a81f1c30cb67448643e88f560eea28bab001e502d",
+    "src/renderer/src/components/TerminalPane.tsx": "787a5f430dacf537c316ed755324f79e66eb25858f6bf94b03e79490b9f5e09e",
+    "src/renderer/src/components/TranscriptReader.tsx": "74bc59b2a195931ad69f93c66d4663b4dae2a84939473a7be60c95f34e18f62d",
+    "src/renderer/src/styles/code-reader.css": "cfa22295ef08d42e8f04e8a5021e2b211b8bcd532cf42fea52b9c110519beda4",
+    "src/renderer/src/styles/home.css": "bceaa0fe5744793e3633e37703576946760e2be3da590aa9ee931e58fb6a79d9",
+    "src/renderer/src/styles/launch.css": "f64f36289b6a2ef7bf55babaa6c8b9cf487ca8924622b411e7ef08fc043703f8",
+    "src/renderer/src/styles/schedule.css": "7990ffc2cfdda2cace8113041dcf3523cd268d889136232d11db327df48af9a3",
+    "src/renderer/src/styles/session-history.css": "a15e31c17417abf2da5760755740890580e4f87d427b20659738543c892f2220",
+    "src/renderer/src/styles/sessions.css": "7564c6fd7df438129c1298d5978c9d0fe63581af91775dd967390fef8d53545f",
+    "src/renderer/src/styles/spaces.css": "122cb26574f88486d9c063abb63416d4ada60d6f85091f4b58d9dea8f07001eb",
+    "src/renderer/src/views/MissionRoom.tsx": "fd916c0dbb35ad6585e2dc496bbcc65068d7bb4c6d184ae8f82601b655b39dd2",
+    "src/renderer/src/views/Schedules.tsx": "64daa7472957cab6630191f7428a551b51199f1681e436baec4188a6495067fb",
+    "src/renderer/src/views/Sessions.tsx": "cb698c9f6f87884de6d105740b727a4d5f115f9e90965a722c6dcdbd918fc7d8",
+    "src/renderer/src/views/Settings.tsx": "3ca498ed9c17daa3b08c9f33831c51d57c265b30c06cd1d4abbffa9874598a9f",
+    "src/shared/routes.ts": "bb155e2e00c6bf36aefb33f78faba5cc1f7ec40f90eca03524e9354bcc312afa",
+    "src/shared/scheduled-execution.test.ts": "4754698f87e618dc41eb544de87174f86f1d80667b6ea5ab4636bf1413460275",
+    "src/shared/scheduled-execution.ts": "d8dade2ae61122dc0fcf7cedbf135424648223507ccc8abd0a05b0045b337405",
+    "src/shared/session-name.ts": "7a37337b9b41ff65d74bff9334039c73c5321b5f408f826d412e15d612df83aa",
+    "src/shared/session-permissions.test.ts": "e1c46bf39c7c8114003cae80afa8aee543c53473a5b3a7b70596bb5587362562",
+    "src/shared/session-permissions.ts": "7cc0fe3716d476b3b4820a07fa624b9dd52dc4de03e2485f10d866f55b596fae",
+    "src/shared/spaces.ts": "071ae95892bfc0b7b9c32ebb839ee8af7b78e9d7622f815c201da5fd3e8845d7",
+    "src/shared/workspace-navigation.test.ts": "a4d2c3a8fc8f122149e7c5ac494305e3f022fec2738e124b4a2e959e6219079c"
+  },
+  "build": {
+    "out/main/index.js": "bdc2b8339de32cacd45bc26eadef3d2c15985f4982c55248405f66c919806bc5",
+    "out/preload/index.js": "79875dea337c4ff096bc183fc6aef4ff15a39eda304213a044106e3534fa9777",
+    "out/renderer/assets/index-DB0btC-3.css": "91025b9a74674424e61e43c0562aa08fee837cbf37c885c172c7e7e33ce34166",
+    "out/renderer/assets/index-wH0OcGqR.js": "f42f2e825b2902ffe0afc8c70c3caa7b830dce3eafe825855b1c5b3719afc7ed",
+    "out/renderer/assets/mission-studio-Zt8j2igs.png": "84202a2bd73bf833a9a508b57241da7cd8c8f2cd1912106014cfb8068f41320d",
+    "out/renderer/assets/runtime-DPC_1S4f.js": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+    "out/renderer/assets/studio_small_04_1k-Beh5sjOa.hdr": "dd0ca972513d35f55f55f79daf945315a6f25f8ccc7a797816b4945b201f293c",
+    "out/renderer/index.html": "aa9824b6dfae26baed0a2c8fe9df4aad741878cd5d25194384c2cea3c6347860"
+  },
+  "reports": {
+    "home": {
+      "report": "docs/visuals/workbench-2026-09-15/home/verification.json",
+      "checks": 17,
+      "sha256": "2f8cde4a1990ef9ce7ce2edfa4082ddaf2a3870acd721e50eb2bf110604f7799"
+    },
+    "navigation": {
+      "report": "docs/visuals/workbench-2026-09-15/navigation/verification.json",
+      "checks": 5,
+      "sha256": "ef304af4fbabaa13d688606aad3954182b24a9a7667120729a27eac3de90ce2a"
+    },
+    "history": {
+      "report": "docs/visuals/workbench-2026-09-15/history/after/verification.json",
+      "checks": 9,
+      "sha256": "ddabefbf1f25b54258df7ef2818b204c0413bec18c535694370c8a74888ace56"
+    },
+    "evidence": {
+      "report": "docs/visuals/workbench-2026-09-15/evidence/after/verification.json",
+      "checks": 9,
+      "sha256": "c8aaeb2884a1197258d6dc8a5c6bfed6bff753472a4621d01014b741f5af215e"
+    },
+    "schedules": {
+      "report": "docs/visuals/ux-audit-2026-09-15/implementation/schedules/after/verification.json",
+      "checks": 5,
+      "sha256": "3563c131d2016e0a347071ce20ea377f2ba890260d922b9170cc5570841e9b70"
+    },
+    "realApp": {
+      "report": "docs/visuals/workbench-2026-09-15/real-app/verification.json",
+      "checks": 11,
+      "sha256": "7782b66547d38ff8189193e5147ba072b773dac2fcd3108552dabe90a46e7efd"
+    }
+  },
+  "repositoryTests": {
+    "command": "npm test",
+    "node": "22.23.2",
+    "exitCode": 0,
+    "stages": 8,
+    "sharedTests": 66,
+    "smokeAssertions": 1625,
+    "logSha256": "4fabf60ea25cd5490d44ac2b9a298c668d555f6002e79b94a4477d4d1c4a868e"
+  },
+  "diffCheck": {
+    "command": "git diff --check",
+    "exitCode": 0
+  },
+  "rendererFixtureChecks": 45,
+  "realMainPreloadChecks": 11
+}

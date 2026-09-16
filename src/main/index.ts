@@ -3,6 +3,7 @@ import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireScheduledExecution, SCHEDULED_BUDGET_USD, SCHEDULED_TIMEOUT_MS } from '../shared/scheduled-execution';
 import {
   detectProviders, effectiveProviderBackendId, launchFieldsFor, missingCredentialIds, providerById, providerPackRegistry, refreshProviderPacks,
   runsClaudeCli, usesAnthropicAccount,
@@ -11,7 +12,7 @@ import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
+  setSessionTuning, sendSessionPermissionControl, setConversationFlag, renameSession, redirectsAnthropicApiFor,
   setFocusedSession, recordObservedModel, killAll,
 } from './sessions';
 import { clearHalt, haltState, halted, pullHalt, registerHaltStopper } from './halt';
@@ -325,20 +326,6 @@ function publicProviderPacks(includeRemoved = false) {
     } : null,
   }));
 }
-
-/**
- * What a scheduled headless run is capped at.
- *
- * A schedule fires with nobody at the keyboard, so these are the only two
- * numbers standing between a bad prompt and a run that spends all night. The
- * Schedules form collects a prompt and nothing else — deliberately, because a
- * form with a budget box is a form people fill in once and never revisit — so
- * the ceiling lives here where it can be read. Not the Settings spend cap:
- * that one is the per-batch-run cap and is checked in dollars against an
- * estimate, whereas this is handed to the CLI's own --max-budget-usd.
- */
-const SCHEDULED_BUDGET_USD = 2;
-const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
 const demoWindows = new WeakMap<WebContents, DemoWorkspace>();
@@ -972,7 +959,7 @@ async function startServices() {
   queue.registerRunner('headless', async (payload) => {
     const p = payload as {
       runId?: unknown; projectId?: unknown; prompt?: unknown; scheduleId?: unknown;
-      providerId?: unknown; allProjects?: unknown;
+      providerId?: unknown; providerProfileFingerprint?: unknown; executionVersion?: unknown; allProjects?: unknown;
     };
     if (typeof p.runId === 'string' && p.runId) {
       if (typeof p.projectId !== 'string' || !p.projectId) {
@@ -981,11 +968,11 @@ async function startServices() {
       await headless.runOneRepo(p.runId, p.projectId);
       return;
     }
-    // A schedule fired. Its payload is a prompt, because a prompt is the only
-    // thing the Schedules form collects — the provider, the budget and the
-    // timeout belong on this side, where the defaults live. This turns it into
-    // a real headless run, which enqueues one row per repo back through this
-    // same runner and arrives at the branch above.
+    // Reviewed schedules retain the exact profile the operator selected.
+    // Untouched older rows keep their former runtime selection; a malformed
+    // reviewed row must never fall back to that legacy behavior.
+    const execution = p.executionVersion !== undefined || p.providerProfileFingerprint !== undefined
+      ? requireScheduledExecution(p) : null;
     const prompt = typeof p.prompt === 'string' ? p.prompt.trim() : '';
     if (!prompt) {
       throw new Error(
@@ -1012,9 +999,10 @@ async function startServices() {
       : null;
     await headless.startHeadlessRun({
       name: `${from ?? 'scheduled'} · ${new Date().toLocaleString()}`,
-      providerId: typeof p.providerId === 'string' && p.providerId
+      providerId: execution?.providerId ?? (typeof p.providerId === 'string' && p.providerId
         ? p.providerId
-        : await defaultHeadlessProviderId(),
+        : await defaultHeadlessProviderId()),
+      expectedProfileFingerprint: execution?.providerProfileFingerprint,
       projectIds: ids,
       allProjects,
       prompt,
@@ -1024,7 +1012,7 @@ async function startServices() {
       // typing in. A schedule fires at 03:00 or while you are mid-edit, and
       // those are the same case as far as the repo is concerned.
       isolate: true,
-    });
+    }, schedule.fireFromQueue(payload));
   });
 
   // Schedules have offered a Batch option since phase 25 and nothing has ever
@@ -1083,6 +1071,10 @@ async function startServices() {
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
   schedule.startScheduler(queueChanged);
+  queue.registerCancellationHandler('node', payload => {
+    const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
+    if (typeof nodeId === 'string') control.cancelQueuedNode(nodeId);
+  });
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
@@ -1984,6 +1976,7 @@ function registerIpc() {
   // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
   // slash command and its session-record update cannot drift apart.
   handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => setSessionTuning(id, field, value));
+  handle('sessions:permissionControl', (id: unknown, action: unknown) => sendSessionPermissionControl(id, action));
   // The status bar may reveal only the folder of a live Wanigan session. A
   // generic renderer-controlled shell.openPath bridge would let a compromised
   // renderer invoke arbitrary file handlers on this Mac.
@@ -1999,7 +1992,12 @@ function registerIpc() {
     return true;
   });
   handle('sessions:baseline', (id: string) => sessionBaseline(id));
-  handle('sessions:past', () => pastSessions());
+  handle('sessions:past', (projectId?: unknown) => {
+    if (projectId != null && (typeof projectId !== 'string' || !projectId.trim() || projectId.length > 200)) {
+      throw new Error('Choose a valid project to read recent conversations.');
+    }
+    return pastSessions(40, projectId as string | null | undefined);
+  });
   handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
   handle('sessions:setConversationFlag', (id: string, flag: unknown, on: unknown) => {
     if (flag !== 'pin' && flag !== 'settle') throw new Error('That is not a lifecycle flag Wanigan knows.');
@@ -2147,7 +2145,15 @@ function registerIpc() {
   handle('code:read', (root: string, rel: string) => code.readProjectFile(root, rel));
   // Account limits come from Codex's authenticated local app-server, not a
   // token estimate. This endpoint is intentionally read-only.
-  handle('codex:status', (force?: boolean) => codexStatus.readCodexStatus(force === true));
+  handle('codex:status', (sessionId: unknown, force?: boolean) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('Choose a recorded Codex session to read its account limits.');
+    const session = listSessions().find(item => item.id === sessionId);
+    if (!session || (session.harnessId ? session.harnessId !== 'codex' : session.providerId !== 'codex')) {
+      throw new Error('This session does not have a recorded Codex account.');
+    }
+    if (!session.accountId) throw new Error('The account used by this session was not recorded.');
+    return codexStatus.readCodexStatus(force === true, session.accountId);
+  });
   handle('codex:models', (force?: boolean) => codexStatus.readCodexModels(force === true));
   handle('codex:usageSummary', () => codexUsageSummary());
   // The cap is the one control that stands between a mistyped row count and a
@@ -2632,11 +2638,17 @@ function registerIpc() {
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
-  handle('schedule:create', (input: { name: string; cron: string; kind: schedule.ScheduleKind; payload: unknown; projectId?: string | null }) =>
-    schedule.createSchedule(input));
+  handle('schedule:create', async (input: { name: string; cron: string; kind: schedule.ScheduleKind; payload: unknown; projectId?: string | null }) =>
+    schedule.createSchedule(input.kind === 'headless'
+      ? { ...input, payload: await schedule.reviewScheduledExecution(input.payload) } : input));
   handle('schedule:setEnabled', (id: string, on: boolean) => schedule.setScheduleEnabled(id, on));
-  handle('schedule:update', (id: string, patch: Record<string, unknown>) =>
-    schedule.updateSchedule(String(id), patch && typeof patch === 'object' ? patch : {}));
+  handle('schedule:update', async (id: string, patch: Record<string, unknown>) => {
+    const key = String(id), values = patch && typeof patch === 'object' ? patch : {};
+    const current = schedule.listSchedules().find(row => row.id === key);
+    if (current?.kind !== 'headless') return schedule.updateSchedule(key, values);
+    const payload = await schedule.reviewScheduledExecution('payload' in values ? values.payload : current.payload);
+    return schedule.updateSchedule(key, { ...values, payload });
+  });
   handle('schedule:delete', (id: string) => schedule.deleteSchedule(id));
   handle('schedule:history', (id: string, limit?: number) => schedule.scheduleHistory(id, limit));
   handle('schedule:preview', (cron: string) => {
@@ -2685,9 +2697,9 @@ function registerIpc() {
   // to render it. Only commands the stored recipe does not already hold are shown.
   handle('review:saveRecipe', (projectId: string, commands: string[]) =>
     review.saveRecipeWithConsent(win, projectId, commands));
-  handle('review:history', (projectId: string, limit?: number) => review.history(projectId, limit));
-  handle('review:run', async (projectId: string) => {
-    const result = await review.run(projectId);
+  handle('review:history', (projectId: string, limit?: number, sessionId?: string) => review.historyWithFreshness(projectId, limit, sessionId));
+  handle('review:run', async (projectId: string, sessionId?: string) => {
+    const result = await review.run(projectId, sessionId);
     try { learning.observeReviewResult(result); }
     catch (error) { console.warn('[wanigan] review learning signal skipped:', error); }
     return result;
@@ -2866,6 +2878,32 @@ function registerIpc() {
   handle('shell:openExternal', (url: string) => openSafeExternal(url));
 
   // ══ phase 21 · attachments ══════════════════════════════════════════
+  handle('attachmentStorage:settings', () => attachments.attachmentRetention());
+  handle('attachmentStorage:setDays', (days: unknown) => attachments.setAttachmentRetention(days));
+  handle('attachmentStorage:preview', (days: unknown) => {
+    if (typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 3650) {
+      throw new Error('Choose a whole number of days from 0 to 3650.');
+    }
+    return attachments.planAttachmentReclaim({ days });
+  });
+  handle('attachmentStorage:reclaim', async (ids: unknown) => {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 10000 || ids.some(id => typeof id !== 'string' || !id)) {
+      throw new Error('Select session directories from the cleanup preview.');
+    }
+    const selected = new Set(ids as string[]);
+    const plan = attachments.planAttachmentReclaim();
+    const candidates = plan.candidates.filter(item => selected.has(item.sessionId));
+    if (!candidates.length) throw new Error('None of the selected directories is eligible. Save the retention window and preview again.');
+    const answer = await dialog.showMessageBox(win!, {
+      type: 'warning', title: 'Remove unused staged attachments?',
+      message: `Remove ${candidates.reduce((sum, item) => sum + item.files, 0)} files from ${candidates.length} selected session directories?`,
+      detail: `Only ended sessions older than ${plan.windowDays} days with unused, unchanged staged files are eligible. Referenced files and generated outputs are kept. No automatic cleanup is enabled.\n\n${candidates.map(item => item.sessionId).slice(0, 20).join('\n')}`,
+      buttons: ['Keep files', 'Remove selected files'], defaultId: 0, cancelId: 0,
+    });
+    if (answer.response !== 1) return null;
+    if (attachments.attachmentRetention().days !== plan.windowDays) throw new Error('The retention window changed. Preview again before cleanup.');
+    return attachments.reclaimAttachments({ sessionIds: candidates.map(item => item.sessionId), approved: candidates.map(item => ({ sessionId: item.sessionId, fingerprint: item.fingerprint })) });
+  });
   handle('attach:inspect', (p: string) => attachments.inspect(p));
   // attachToSession refuses any path no native file dialog in this app returned.
   // The check lives there, not here, so it holds for every caller rather than only

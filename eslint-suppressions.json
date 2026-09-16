@@ -92,11 +92,6 @@
       "count": 3
     }
   },
-  "src/renderer/src/components/ReviewGate.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 1
-    }
-  },
   "src/renderer/src/components/SessionGoalTrail.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
@@ -163,11 +158,6 @@
   "src/renderer/src/views/Plugins.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
-    }
-  },
-  "src/renderer/src/views/Schedules.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 4
     }
   },
   "src/renderer/src/views/Skills.tsx": {

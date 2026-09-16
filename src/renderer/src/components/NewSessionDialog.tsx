@@ -6,6 +6,7 @@ import { providerTint } from '@shared/provider-status';
 import { Hint, Note, Icon, SectionHead } from './bits';
 import '../styles/launch.css';
 import { useDialog } from './useDialog';
+import { useViewMemory } from './viewMemory';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
 
@@ -133,7 +134,10 @@ export default function NewSessionDialog({
   const [effort, setEffort] = useState('');
   const [permissionMode, setPermissionMode] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
-  const [initialPrompt, setInitialPrompt] = useState('');
+  const [tuningOpen, setTuningOpen] = useState(false);
+  const [launchDrafts, setLaunchDrafts] = useViewMemory<Record<string, string>>('launch-drafts', {});
+  const initialPrompt = launchDrafts[projectId] ?? '';
+  const setInitialPrompt = (text: string) => setLaunchDrafts(previous => ({ ...previous, [projectId]: text }));
   const [providerOptions, setProviderOptions] = useState<Record<string, string | boolean>>({});
   const [isolate, setIsolate] = useState(false);
   // null means "whatever this project resolves to" rather than a chosen account,
@@ -141,6 +145,7 @@ export default function NewSessionDialog({
   const [accountId, setAccountId] = useState<string | null>(null);
   const [accountList, setAccountList] = useState<AgentAccount[]>([]);
   const [accountRes, setAccountRes] = useState<AccountResolution | null>(null);
+  const [accountRead, setAccountRead] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   /*
    * What this launch would use if nothing were chosen here, resolved on its own.
    * `accountRes` follows the CURRENT selection, so the moment you pick an
@@ -173,12 +178,24 @@ export default function NewSessionDialog({
     return [...projects, ...picked.filter((p) => !seen.has(p.id))];
   }, [projects, picked]);
 
+  function selectProject(nextId: string) {
+    // A task written before the first folder is chosen has no project yet.
+    // Assign it once; switching between named projects keeps separate drafts.
+    if (!projectId) setLaunchDrafts(previous => {
+      if (!previous[''] || previous[nextId]) return previous;
+      const next = { ...previous, [nextId]: previous[''] };
+      delete next[''];
+      return next;
+    });
+    setProjectId(nextId);
+  }
+
   async function browseForFolder() {
     setBrowsing(true);
     setBrowseErr(null);
     try {
       const p = await window.wanigan.projects.pick();
-      if (p) { setPicked((x) => [...x, p]); setProjectId(p.id); }
+      if (p) { setPicked((x) => [...x, p]); selectProject(p.id); }
     } catch (e) {
       /*
        * Cancelling resolves with null; anything that throws is a real failure —
@@ -236,7 +253,8 @@ export default function NewSessionDialog({
    */
   useEffect(() => {
     let live = true;
-    if (!providerId) { setAccountList([]); setAccountRes(null); setFollowRes(null); return; }
+    setAccountRead('loading'); setAccountRes(null); setFollowRes(null);
+    if (!providerId) { setAccountList([]); setAccountRead('ready'); return; }
     void (async () => {
       try {
         const [rows, resolution, follow] = await Promise.all([
@@ -250,10 +268,11 @@ export default function NewSessionDialog({
         setAccountList(rows);
         setAccountRes(resolution);
         setFollowRes(follow ?? resolution);
+        setAccountRead('ready');
       } catch {
         // A removed account or an uninstalled provider: show no picker rather
         // than a stale one naming a login this launch would not use.
-        if (live) { setAccountList([]); setAccountRes(null); setFollowRes(null); }
+        if (live) { setAccountList([]); setAccountRes(null); setFollowRes(null); setAccountRead('unavailable'); }
       }
     })();
     return () => { live = false; };
@@ -318,6 +337,7 @@ export default function NewSessionDialog({
       if (field.defaultValue !== undefined) next[field.id] = field.defaultValue;
     }
     setProviderOptions(next);
+    setTuningOpen((provider?.launchFields ?? []).some(field => field.required && field.defaultValue === undefined));
   }, [providerId, provider?.launchFields]);
 
   /*
@@ -466,10 +486,11 @@ export default function NewSessionDialog({
           : field.id === 'permissionMode' ? permissionMode : providerOptions[field.id];
       return value === undefined || value === null || value === '';
     });
-    if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
+    if (missingField) { setTuningOpen(true); setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
       await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId });
+      setLaunchDrafts(previous => { const next = { ...previous }; delete next[projectId]; return next; });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -479,8 +500,12 @@ export default function NewSessionDialog({
 
   const elevated = !!trust && !!trustDefault
     && TRUST_LEVELS.indexOf(trust) > TRUST_LEVELS.indexOf(trustDefault);
+  const accountSummary = accountRead === 'loading' ? 'Reading…' : accountRead === 'unavailable' ? 'Could not read'
+    : accountRes?.override ? `Environment credential (${accountRes.override})`
+      : accountRes?.account?.label ?? accountRes?.reason ?? 'Managed by the agent CLI';
 
-  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
+  const close = () => { if (!busy) onClose(); };
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose: close, initialFocus: 'first' });
 
   // onClick on the backdrop discarded the whole form when a text-selection drag
   // that started inside the dialog happened to release outside it: the click
@@ -491,10 +516,20 @@ export default function NewSessionDialog({
     <div {...backdropProps}>
       <div {...dialogProps} className="modal session-launch" aria-labelledby="new-session-title">
         <header className="launch-intro"><div><h2 id="new-session-title">New session</h2>
-          <p>Choose who’s working, where they work, and how they begin.</p></div>
-          <button className="btn" type="button" onClick={onClose} aria-label="Close new session"><Icon name="x" /></button>
+          <p>Start with the task. Review who runs it and where.</p></div>
+          <button className="btn" type="button" disabled={busy} onClick={close} aria-label="Close new session"><Icon name="x" /></button>
         </header>
-        <div className="launch-layout"><div className="launch-form">
+        <div className="launch-layout"><fieldset className="launch-form" disabled={busy} aria-busy={busy}>
+        <section className="launch-section" id="launch-message">
+          {err && <Note tone="error"><strong>The session did not start.</strong> {err}</Note>}
+          <SectionHead label="What should the agent do?" right={initialPrompt ? <button className="btn btn-sm" type="button" onClick={() => setInitialPrompt('')}>Discard draft</button> : undefined} />
+          <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
+          <textarea id="launch-first-message" data-initial-focus className="field launch-message" aria-label="First message" rows={3}
+            placeholder="Describe the task and what a good result looks like."
+            value={initialPrompt} onChange={event => setInitialPrompt(event.target.value)} />
+          <p className="launch-draft-note">{initialPrompt ? projectId ? 'Draft kept for this project when you close this window.' : 'Draft kept until you choose a project.' : 'Leave blank to start an interactive terminal.'}</p>
+          <p className="launch-resolved">{provider?.label ?? 'Choose an agent'} · {project?.name ?? 'Choose a project'} · {isolate ? 'Isolated worktree' : 'Project checkout'}<br />Permissions: {permissionMode || 'CLI default'} · Account: {accountSummary}</p>
+        </section>
         <section className="launch-section" id="launch-space"><SectionHead label="Agent and space" />
         <div className="label">Agent</div>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 14px' }}>
@@ -583,7 +618,7 @@ export default function NewSessionDialog({
         {options.length ? (
           <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>
             <select className="field" aria-label="Project" style={{ flex: 1, minWidth: 0 }}
-                    value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                    value={projectId} onChange={(e) => selectProject(e.target.value)}>
               {options.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}{p.branch ? ` — ${p.branch}` : ''}
@@ -661,6 +696,8 @@ export default function NewSessionDialog({
         </div>
 
         </section><section className="launch-section" id="launch-controls"><SectionHead label="How this session starts" />
+        <details className="launch-tuning" open={tuningOpen} onToggle={event => setTuningOpen(event.currentTarget.open)}>
+          <summary>Model, effort and permissions</summary>
         {modelField.supported && <>
           <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— blank leaves the model to the CLI</span></div>
           {/* "Not read yet" and "read, and there is nothing" are different
@@ -930,6 +967,8 @@ export default function NewSessionDialog({
           </label>
         ))}
 
+        </details>
+
         {/* ── P32 · which account ──────────────────────────────────────── */}
         {accountList.length > 0 && (
           <>
@@ -1025,11 +1064,7 @@ export default function NewSessionDialog({
           </span>
         </label>
 
-        </section><section className="launch-section" id="launch-message"><SectionHead label="Give it a starting point" />
-        <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
-        <textarea id="launch-first-message" className="field launch-message" aria-label="First message" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
-                  placeholder="Typed into the session once it is up."
-                  value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)} />
+        </section><section className="launch-section" id="launch-extra"><SectionHead label="Additional options" />
 
         <details style={{ margin: '10px 0 4px' }}>
           <summary className="faint" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>Extra CLI flags</summary>
@@ -1038,17 +1073,7 @@ export default function NewSessionDialog({
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>
 
-        {err && (
-          // role="alert" because this text appears where nothing was, after a
-          // button press that a screen reader otherwise reports as silence.
-          <div role="alert" style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
-                        borderRadius: 'var(--r-sm)', padding: '7px 10px', margin: '10px 0', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
-            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
-            <span style={{ fontWeight: 650 }}>The session did not start. </span>{err}
-          </div>
-        )}
-
-        </section></div>
+        </section></fieldset>
         <aside className="launch-summary" aria-label="Session launch summary">
           <span className="launch-summary-symbol"><Icon name="terminal" /></span>
           <h3>{project?.name ?? 'Your next session'}</h3>
@@ -1060,10 +1085,11 @@ export default function NewSessionDialog({
             <div><dt>Workspace</dt><dd>{isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
             <div><dt>Trust</dt><dd>{trust ? trustCopy(trust).label : trustErr ? 'Could not read' : 'Reading…'}</dd></div>
             <div><dt>Permissions</dt><dd>{permissionMode || 'CLI default'}</dd></div>
+            <div><dt>Account</dt><dd>{accountSummary}</dd></div>
           </dl>
           <nav aria-label="Launch sections">
-            {[['launch-space', 'Agent and space'], ['launch-controls', 'Session controls'], ['launch-message', initialPrompt.trim() ? 'First message added' : 'Add a first message']].map(([id, label]) =>
-              <button key={id} type="button" onClick={() => { const section = document.getElementById(id); section?.scrollIntoView({ block: 'start', behavior: 'instant' }); section?.querySelector<HTMLElement>('input, select, textarea, button')?.focus({ preventScroll: true }); }}><span>{label}</span><Icon name="chevron-right" /></button>)}
+            {[['launch-message', initialPrompt.trim() ? 'First message added' : 'Your task'], ['launch-space', 'Agent and project'], ['launch-controls', 'Session controls']].map(([id, label]) =>
+              <button key={id} type="button" onClick={() => { const section = document.getElementById(id); if (id === 'launch-controls') setTuningOpen(true); section?.scrollIntoView({ block: 'start', behavior: 'instant' }); section?.querySelector<HTMLElement>('summary, input, select, textarea, button')?.focus({ preventScroll: true }); }}><span>{label}</span><Icon name="chevron-right" /></button>)}
           </nav>
           <p className="launch-summary-note">Starts a real agent in the selected folder. Review the settings, then start when you’re ready.</p>
         </aside></div>
@@ -1075,7 +1101,7 @@ export default function NewSessionDialog({
             </p>
           )}
           <div className="launch-submit"><span className="launch-key" aria-hidden="true">⌘↵</span>
-          <FocusBtn className="btn" onClick={onClose}>Cancel</FocusBtn>
+          <FocusBtn className="btn" disabled={busy} onClick={close}>Cancel</FocusBtn>
           <FocusBtn className="btn btn-primary" onClick={go} disabled={!!blocker || busy}
                     aria-describedby={blocker ? 'new-session-blocked' : undefined}>
             {busy ? 'Starting…' : isolate ? 'Start in a worktree' : 'Start session'}

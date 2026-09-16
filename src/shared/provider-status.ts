@@ -133,8 +133,35 @@ export function selectedSessionTelemetry(
 /** The badge text for a measured context, or null when there is nothing measured. */
 export function claudeContextLabel(usage: ClaudeContextUsage | null | undefined): string | null {
   if (!usage || usage.kind !== 'ok') return null;
+  if (usage.conversationMatch !== 'exact') return 'ctx unconfirmed';
   const tokens = compactCount(usage.tokens);
   return usage.percent !== null && usage.window !== null
     ? `ctx ${usage.percent}% · ${tokens}/${compactCount(usage.window)}`
     : `ctx ${tokens}`;
+}
+
+/** Match, age and window provenance travel together wherever context is shown. */
+export function claudeContextStatus(usage: ClaudeContextUsage | null | undefined, now = Date.now()): {
+  label: string | null; title: string | null; nearFull: boolean;
+} {
+  const label = claudeContextLabel(usage);
+  if (!usage || usage.kind !== 'ok') {
+    const title = usage?.kind === 'no-transcript' ? 'Context meter: no transcript found for this conversation yet.'
+      : usage?.kind === 'no-usage' ? `Context meter: ${usage.detail}` : null;
+    return { label, title, nearFull: false };
+  }
+  const matched = usage.conversationMatch === 'exact';
+  const hasTime = usage.at !== null && Number.isFinite(usage.at);
+  const fresh = hasTime && now - usage.at! <= 120_000;
+  const title = [
+    matched ? `Context: ${usage.tokens.toLocaleString('en-US')} tokens as of the last recorded turn.`
+      : 'Context match unconfirmed: this reading is from a fallback transcript and is not attributed to the selected conversation.',
+    hasTime ? `Recorded at ${new Date(usage.at!).toISOString()}${fresh ? '.' : ' (older than two minutes).'}`
+      : 'The transcript did not report a reading time.',
+    usage.window !== null
+      ? `${usage.percent === null ? 'Known' : `${usage.percent}% of the`} ${usage.window.toLocaleString('en-US')}-token window for ${usage.model ?? 'this model'}; ${usage.windowSource === 'cli-reported' ? 'CLI-reported, not measured' : 'assumed, not measured'}.`
+      : `No context window is known for ${usage.model ?? 'this model'}, so no percentage is invented.`,
+    usage.windowNote,
+  ].filter(Boolean).join(' ');
+  return { label, title, nearFull: matched && fresh && usage.percent !== null && usage.percent >= 80 };
 }

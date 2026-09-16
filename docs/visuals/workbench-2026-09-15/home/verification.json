@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-16T01:57:54.045Z",
+  "provenance": "Production renderer, synthetic bridge, isolated Electron profile; no real main/preload, processes, agents or model calls. One successful create response is a fixture only.",
+  "checks": [
+    "Home preserves main attention priority and uses readable session titles",
+    "Selecting work reveals reason and relevant next action without launches",
+    "Opening the existing terminal starts no new session or model call",
+    "Home has no horizontal overflow in compact window",
+    "Failed activity refresh is visibly stale and keeps the observed task",
+    "New session initially focuses the task",
+    "Switching projects preserves separate drafts",
+    "Closing and navigating retains the unfinished task",
+    "A failed launch preserves the draft",
+    "Compact launch keeps the task and resolved execution values accessible",
+    "An in-flight launch cannot erase a newer draft or close a replacement dialog",
+    "Only a successful launch clears its project draft",
+    "First-run setup is visible before the first fold and needs a project",
+    "Canceling folder selection keeps setup incomplete",
+    "Adding a folder refreshes setup readiness without reopening Home",
+    "Returning to the window rechecks external agent readiness",
+    "A task written before the first folder is chosen follows that folder"
+  ],
+  "errors": []
+}

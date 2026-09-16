@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-16T02:36:19.726Z",
+  "provenance": "Built renderer in isolated Electron, synthetic Control bridge; no real main process, agent calls, or user-data writes.",
+  "checks": [
+    "Completed verification retains its task and recorded proof",
+    "Completed verification offers an explicit rerun action",
+    "A refused rerun displays the refusal without adding proof",
+    "Rerun targets the completed verifier and reloads its new evidence"
+  ],
+  "failures": [],
+  "errors": []
+}

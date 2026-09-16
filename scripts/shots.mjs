@@ -63,6 +63,7 @@ await page.waitForSelector('.nav-tabs, .sidebar, nav', { timeout: 120_000 });
 await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1440, 900); w.show(); });
 await page.waitForTimeout(800);
 await page.waitForSelector('.mission-room');
+await page.locator('.home-intro [aria-controls="home-companion"]').click();
 await page.waitForFunction(()=>document.querySelector('.wanigan-orb')?.dataset.physics==='ready');
 const canvas=page.locator('.wanigan-orb canvas');
 await page.evaluate(()=>{document.documentElement.dataset.motion='full';});
@@ -134,9 +135,9 @@ async function setTheme(theme) {
 }
 async function goTo(label) {
   if (CHORDS[label]) {
-    // The floating dock groups destinations; the keyboard contract reaches all
-    // of them without depending on the drawer's remembered open state.
-    await page.getByRole('button', { name: 'All destinations', exact: true }).focus();
+    // Blur text inputs before the app-level chord. A focused terminal owns
+    // these keys, and the shell deliberately does not steal them.
+    await page.evaluate(() => document.activeElement?.blur());
     await page.keyboard.press(CHORDS[label].replace('Meta', process.platform === 'darwin' ? 'Meta' : 'Control'));
     return true;
   }
@@ -155,12 +156,13 @@ for (const theme of themes) {
     await shot(theme, label.toLowerCase());
     if(label==='Mission') layoutMeasurements.push(await page.evaluate(theme=>({
       theme,width:innerWidth,height:innerHeight,
-      stageHeight:document.querySelector('.mission-stage').getBoundingClientRect().height,
-      shelfBottom:document.querySelector('.mission-shelf')?.getBoundingClientRect().bottom,
+      introHeight:document.querySelector('.home-intro').getBoundingClientRect().height,
+      projectsBottom:document.querySelector('.home-projects')?.getBoundingClientRect().bottom,
       workspaceBottom:document.querySelector('.body').getBoundingClientRect().bottom,
     }),theme));
   }
   await goTo('Mission'); await page.waitForSelector('.mission-room');
+  await page.locator('.home-intro [aria-controls="home-companion"]').click();
   await page.getByRole('button',{name:'Wanigan appearance and play',exact:true}).click();
   assert(await page.locator('#wanigan-personality').evaluate(el=>{
     const r=el.getBoundingClientRect();return r.width>0&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;
@@ -168,6 +170,7 @@ for (const theme of themes) {
   await shot(theme,'companion-controls');
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#wanigan-personality').isVisible(),false);
+  await page.getByRole('button',{name:'Back to work',exact:true}).click();
   await goTo('Control'); await page.waitForSelector('.control-detail');
   const newGoal=page.getByRole('button',{name:'New goal',exact:true});
   await newGoal.click();

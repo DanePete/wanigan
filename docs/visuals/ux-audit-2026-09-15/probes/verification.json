@@ -1,0 +1,118 @@
+{
+  "at": "2026-09-16T01:25:23.606Z",
+  "provenance": "Built production renderer in isolated Electron BrowserWindow, synthetic STUB bridge with explicit fixture overrides. Does not verify real main/preload, Git commands, PTYs, persistence, or provider behavior. No provider calls or live-data changes.",
+  "profile": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-ux-baseline-ATGWrD",
+  "buildIndexSha256": "1ef30b3c2b4cd95ecce887ed75d71654ddabfca7b9653a1086e381e2611d4519",
+  "probes": [
+    {
+      "id": "project-return",
+      "fixture": "storefront and platform are synthetic projects",
+      "beforeFleet": {
+        "route": "Git",
+        "scope": "Switch project space: storefront",
+        "subview": "Changes",
+        "focused": {
+          "tag": "BUTTON",
+          "text": "Changes",
+          "aria": null
+        }
+      },
+      "inFleet": {
+        "route": "Fleet",
+        "scope": "Switch project space: All spaces",
+        "subview": "Fleet",
+        "focused": {
+          "tag": "BUTTON",
+          "text": "Fleet1",
+          "aria": "Fleet"
+        }
+      },
+      "returnedProjects": {
+        "route": "Sessions",
+        "scope": "Switch project space: All spaces",
+        "subview": "Sessions",
+        "focused": {
+          "tag": "TEXTAREA",
+          "text": "",
+          "aria": "Terminal input"
+        }
+      },
+      "screenshots": [
+        "scope-01-project-changes-dark.png",
+        "scope-01-project-changes-light.png",
+        "scope-02-returned-projects-dark.png",
+        "scope-02-returned-projects-light.png"
+      ]
+    },
+    {
+      "id": "sidebar-focus-escape",
+      "sidebarOpened": {
+        "route": "Sessions",
+        "scope": "Switch project space: All spaces",
+        "subview": "Sessions",
+        "focused": {
+          "tag": "BUTTON",
+          "text": "",
+          "aria": "All destinations"
+        }
+      },
+      "sidebarAfterEscape": {
+        "route": "Sessions",
+        "scope": "Switch project space: All spaces",
+        "subview": "Sessions",
+        "focused": {
+          "tag": "BUTTON",
+          "text": "",
+          "aria": "All destinations"
+        },
+        "visible": true
+      },
+      "screenshots": [
+        "sidebar-open-dark.png",
+        "sidebar-open-light.png"
+      ]
+    },
+    {
+      "id": "palette-identity",
+      "visibleSessionTitle": "AuroraQuantumFox\n\nClaude Code/storefront/Running\n\nNew session\nHide details",
+      "changesResults": [],
+      "renamedResults": [],
+      "emptyText": [
+        "No matches here.Try a shorter name or search another category."
+      ],
+      "screenshots": [
+        "palette-changes-dark.png",
+        "palette-changes-light.png",
+        "palette-renamed-session-dark.png",
+        "palette-renamed-session-light.png"
+      ]
+    },
+    {
+      "id": "code-unreadable",
+      "injected": {
+        "isRepo": true,
+        "files": [],
+        "attributed": false,
+        "unreadable": "SYNTHETIC Git status failed: permission denied"
+      },
+      "observedCalls": [
+        [
+          "code.changes",
+          "/example/storefront",
+          "s1"
+        ],
+        [
+          "code.changes",
+          "/example/storefront",
+          "s1"
+        ]
+      ],
+      "codePanelText": "Changes\nFiles\nTurns\n◉ following\nActions\nRead code\n\nNo changes yet. Edits appear here as the agent makes them.\n\nSelect a changed file to see its diff.",
+      "screenshots": [
+        "code-unreadable-response-dark.png",
+        "code-unreadable-response-light.png"
+      ]
+    }
+  ],
+  "errors": []
+}

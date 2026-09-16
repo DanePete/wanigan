@@ -15,8 +15,13 @@
 .sessions-view .session-toolbar .pane-head > div:first-child { min-width: 0; flex: 1; }
 .sessions-view .session-toolbar h1 { overflow-wrap: anywhere; }
 .sessions-view .session-toolbar .pane-actions { flex: none; }
+.sessions-view .session-toolbar .pane-actions { flex-wrap: wrap; }
 .sessions-view .session-context-separator { margin-inline: var(--s-2); color: var(--text-faint); }
 .sessions-view .session-config { flex: none; border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); }
+.session-permissions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--line-soft); }
+.session-permissions .label { margin: 0; }
+.session-permissions .btn { font-size: var(--t-small); }
+.session-permissions [role="status"] { flex: 1; }
 .sessions-view .session-controls > summary { cursor: pointer; padding: var(--s-2) var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
 .sessions-view .session-controls > summary > span { margin-left: var(--s-3); font-size: var(--t-micro); }
 .sessions-view .session-controls-content { max-height: min(40vh, 380px); overflow: auto; }
@@ -410,3 +415,17 @@
 .session-handoff-label { font-size: var(--t-small); font-weight: 550; color: var(--text); }
 .session-handoff-why { font-size: var(--t-micro); color: var(--text-dim); line-height: 1.4; }
 .session-handoff-note { font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; padding: 0 var(--s-2) var(--s-1); }
+
+/* Keep a useful terminal when a short window also has an unsent draft. */
+@media (max-height: 650px) {
+  .sessions-view .session-toolbar, .sessions-view .sessions--compact-picker .session-toolbar { padding: var(--s-2) var(--s-3); }
+  .sessions-view .session-toolbar .pane-head { gap: var(--s-2); }
+  .sessions-view .session-toolbar h1 { font-size: var(--t-lead); }
+  .sessions-view .session-toolbar .pane-head p { margin-top: var(--s-1); }
+  .sessions-view .session-toolbar .pane-actions { gap: var(--s-1); }
+  .sessions-view .session-toolbar .btn { min-height: var(--control-h-sm); padding-inline: var(--s-2); font-size: var(--t-small); }
+  .sessions-view .session-dock .composer { padding: var(--s-2); }
+  .sessions-view .session-dock .composer-area { min-height: 42px; max-height: 75px; padding: var(--s-2); }
+  .sessions-view .session-dock .composer-identity { padding-bottom: var(--s-1); }
+  .sessions-view .session-dock .composer-note { line-height: 1.2; }
+}

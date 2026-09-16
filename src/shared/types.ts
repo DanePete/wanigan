@@ -1242,10 +1242,23 @@ export type HeadlessRun = {
 };
 
 export type ReviewRecipe = { projectId: string; commands: string[]; updatedAt: number | null };
+/** Git-visible content only: ignored files, tools and environment are not captured. */
+export type ReviewCheckoutSnapshot = {
+  cwd: string; head: string | null; fingerprint: string | null; unavailableReason: string | null;
+};
+export type ReviewEvidence = {
+  version: 1; sessionId: string | null; recipeHash: string; commands: string[];
+  before: ReviewCheckoutSnapshot; after: ReviewCheckoutSnapshot | null;
+};
+export type ReviewFreshness = {
+  state: 'current' | 'stale' | 'unavailable' | 'running'; reason: string; checkedAt: number;
+};
 export type ReviewRun = {
   id: string; projectId: string; startedAt: number; endedAt: number | null;
   status: 'running' | 'passed' | 'failed';
   results: { command: string; exitCode: number | null; output: string; durationMs: number }[];
+  evidence: ReviewEvidence | null;
+  freshness: ReviewFreshness;
 };
 
 /* ── P30 · durable agent control plane ─────────────────────────────── */
@@ -3362,6 +3375,7 @@ export type BackupSummary = {
   appVersion: string;
   database: { path: string; bytes: number; sha256: string };
   transcripts: { path: string; files: number; bytes: number };
+  attachments: { path: string; files: number; bytes: number };
   /** Observed total of the files written, manifest included. */
   totalBytes: number;
   latestEvidenceAt: number | null;
@@ -3376,6 +3390,7 @@ export type BackupCheck = {
   appVersion: string | null;
   database: { bytes: number; sha256: string } | null;
   transcripts: { files: number; bytes: number };
+  attachments: { files: number; bytes: number } | null;
   latestEvidenceAt: number | null;
   /** The same measure taken over the database currently in place. */
   currentLatestEvidenceAt: number | null;
@@ -3390,6 +3405,7 @@ export type BackupRestoreSummary = {
   createdAt: number;
   database: { bytes: number; sha256: string };
   transcripts: { files: number; bytes: number };
+  attachments: { files: number; bytes: number } | null;
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
@@ -3410,4 +3426,58 @@ export type ExpiringResults = {
   runName: string;
   endedAt: number;
   downloadableUntil: number;
+};
+
+/* Manual session attachment retention. Generated or referenced files are protected. */
+export type ReclaimSkipReason =
+  | 'session-still-open'
+  | 'no-session-record'
+  | 'resumed-later'
+  | 'within-window'
+  | 'referenced'
+  | 'holds-agent-output'
+  | 'changed-since-preview'
+  | 'unreadable';
+
+export type ReclaimSkip = { sessionId: string; reason: ReclaimSkipReason; detail: string };
+
+export type ReclaimFile = { name: string; bytes: number; sha256: string; device: number; inode: number; modifiedAt: number; changedAt: number };
+
+export type ReclaimCandidate = {
+  fingerprint: string;
+  entries: ReclaimFile[];
+  sessionId: string;
+  dir: string;
+  endedAt: number;
+  files: number;
+  /** Sizes read from the files themselves, before anything is deleted. */
+  bytes: number;
+};
+
+export type AttachmentReclaimPlan = {
+  enabled: boolean;
+  windowDays: number;
+  /** Sessions that ended before this instant are in scope. */
+  cutoff: number;
+  /** Session directories looked at. */
+  scanned: number;
+  candidates: ReclaimCandidate[];
+  filesEligible: number;
+  /** Size on disk of the files a reclaim would delete. Nothing has been deleted. */
+  bytesEligible: number;
+  skipped: ReclaimSkip[];
+};
+
+export type AttachmentReclaimReport = {
+  ranAt: number;
+  enabled: boolean;
+  windowDays: number;
+  cutoff: number;
+  scanned: number;
+  reclaimed: { sessionId: string; dir: string; files: number; bytes: number }[];
+  /** Summed from files that were unlinked and then confirmed gone. Measured, not projected. */
+  bytesFreed: number;
+  filesRemoved: number;
+  skipped: ReclaimSkip[];
+  errors: { sessionId: string; message: string }[];
 };

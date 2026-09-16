@@ -163,9 +163,9 @@ export async function runContextMeterSmoke(check: Check, say: Say): Promise<void
     // ── the pure pieces ──────────────────────────────────────────────
     check(contextUsageFromTail('') === null && contextUsageFromTail('not json\n{"broken') === null,
       'empty and malformed tails measure nothing rather than throwing');
-    check(claudeContextLabel({ kind: 'ok', tokens: 124_000, window: 200_000, percent: 62, model: 'claude-sonnet-4-5', at: null }) === 'ctx 62% · 124k/200k',
+    check(claudeContextLabel({ kind: 'ok', tokens: 124_000, window: 200_000, percent: 62, model: 'claude-sonnet-4-5', at: null, conversationMatch: 'exact' }) === 'ctx 62% · 124k/200k',
       'the badge label states percent against the window');
-    check(claudeContextLabel({ kind: 'ok', tokens: 42_000, window: null, percent: null, model: 'glm-4.6', at: null }) === 'ctx 42k',
+    check(claudeContextLabel({ kind: 'ok', tokens: 42_000, window: null, percent: null, model: 'glm-4.6', at: null, conversationMatch: 'exact' }) === 'ctx 42k',
       'without a window the label is tokens only');
     check(claudeContextLabel({ kind: 'no-transcript' }) === null && claudeContextLabel(null) === null,
       'absences render as absence, never as a zero meter');

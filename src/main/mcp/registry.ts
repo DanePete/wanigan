@@ -306,7 +306,7 @@ function reviewOf(row: Row, state: TrustState): McpServerReview {
       ? {
           projectPath,
           command: command.split(PROJECT_PATH_SLOT).join(projectPath),
-          args: args ? splitArgs(args.split(PROJECT_PATH_SLOT).join(projectPath)) : [],
+          args: expandMcpArgs(args, projectPath),
         }
       : null,
     sha256,
@@ -644,6 +644,11 @@ function splitArgs(s: string): string[] {
   return out;
 }
 
+/** Expand paths after parsing the template so spaces/quotes stay inside one argv entry. */
+export function expandMcpArgs(template: string, projectPath: string): string[] {
+  return splitArgs(template).map(arg => arg.split(PROJECT_PATH_SLOT).join(projectPath));
+}
+
 type StdioEntry = { command: string; args: string[] };
 type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> };
 
@@ -693,7 +698,7 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
         );
         continue;
       }
-      entries[s.name] = { command: fill(s.command), args: s.args ? splitArgs(fill(s.args)) : [] };
+      entries[s.name] = { command: fill(s.command), args: expandMcpArgs(s.args ?? '', projectPath) };
     }
   }
 

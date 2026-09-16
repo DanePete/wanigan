@@ -25,6 +25,7 @@ import {
  */
 
 export type QueueRunner = (payload: unknown, item: QueueItem) => Promise<void>;
+type QueueCancellationHandler = (payload: unknown, item: QueueItem) => void;
 
 const DISPATCH_INTERVAL = 3_000;
 /** Bounds the work one tick can do; the next tick picks up the rest. */
@@ -68,6 +69,7 @@ const PRUNE_EVERY_TICKS = 100;
 const DAY_MS = 24 * 60 * 60_000;
 
 const runners = new Map<QueueKind, QueueRunner>();
+const cancellationHandlers = new Map<QueueKind, QueueCancellationHandler>();
 /** Ids this process has handed to a runner and not yet finalised. */
 const inFlight = new Map<string, Promise<void>>();
 
@@ -191,11 +193,30 @@ export function queueCounts(): Record<QueueState, number> {
  * that surface's own bookkeeping behind, so cancel it there instead.
  */
 export function cancelQueued(id: string): boolean {
-  const res = db().prepare(
-    "UPDATE queue SET state='canceled', ended_at=?, blocked_by=NULL, next_attempt_at=NULL WHERE id=? AND state='waiting'"
-  ).run(Date.now(), id);
-  if (res.changes) emit();
-  return res.changes > 0;
+  const d = db();
+  const canceled = d.transaction(() => {
+    const row = d.prepare("SELECT * FROM queue WHERE id=? AND state='waiting'").get(id) as QueueRow | undefined;
+    if (!row) return false;
+    const changed = d.prepare(
+      "UPDATE queue SET state='canceled', ended_at=?, blocked_by=NULL, next_attempt_at=NULL WHERE id=? AND state='waiting'"
+    ).run(Date.now(), id);
+    if (!changed.changes) return false;
+    const handler = cancellationHandlers.get(row.kind as QueueKind);
+    if (handler) {
+      let payload: unknown = null;
+      try { payload = JSON.parse(row.payload_json); } catch { /* an unreadable item can still be canceled */ }
+      // Owner bookkeeping commits with cancellation or rolls it back. A
+      // dispatcher cannot lease the row between these two state changes.
+      handler(payload, mapRow(row));
+    }
+    return true;
+  }).immediate();
+  if (canceled) emit();
+  return canceled;
+}
+
+export function registerCancellationHandler(kind: QueueKind, handler: QueueCancellationHandler): void {
+  cancellationHandlers.set(kind, handler);
 }
 
 /* ── slots ───────────────────────────────────────────────────────────── */

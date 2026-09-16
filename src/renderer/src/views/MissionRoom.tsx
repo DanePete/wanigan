@@ -1,27 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CompanionSnapshot, CompanionSource, CompanionTurn } from '@shared/companion';
-import type { Session } from '@shared/types';
+import type { Attention, Project, Session } from '@shared/types';
 import type { OrbStory } from '@shared/orb-story';
-import type { CompanionPresenceState } from '@shared/companion-presence';
+import type { CompanionPresenceState, PresenceRead } from '@shared/companion-presence';
 import Orb from '../components/Orb';
 import SetupChecklist from '../components/SetupChecklist';
+import HomeWork from '../components/HomeWork';
+import { useViewMemory } from '../components/viewMemory';
 import { TEMPERAMENTS, readTemperament, type Temperament } from '../orb/expression';
 import type { OrbPlay } from '../orb/runtime';
 import { usePresenceReactions } from '../orb/presence';
-import { Icon, Note, PageHead, Pill, SectionHead, Segmented, ago } from '../components/bits';
+import { Icon, Note, PageHead, SectionHead, Segmented, ago } from '../components/bits';
 import '../styles/mission.css';
+import '../styles/home.css';
 
-const stateWord = { permission: 'Permission needed', error: 'Needs a look', finished: 'Turn finished',
-  idle: 'Idle', working: 'Working', unknown: 'No attention signal' };
 const numerals = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
 const count = (n: number) => numerals[n] ?? String(n);
 
-export default function MissionRoom({ story, followedSession, sessions=[], onFollow, projectId, presence, onOpenSession, onProject, onAddProject, onNewSession, onSettings, onUsage, demo = false }: {
+export default function MissionRoom({ story, followedSession, sessions=[], attention, attentionRead, projects, projectsRead, onFleet, onFollow, projectId, presence, onOpenSession, onProject, onAddProject, onNewSession, onSettings, onUsage, demo = false }: {
   demo?: boolean;story?:OrbStory;followedSession?:string|null;sessions?:Session[];onFollow?:(id:string|null)=>void;
   presence:CompanionPresenceState;
+  attention: Attention[]; attentionRead: PresenceRead; projects: Project[]; projectsRead: boolean; onFleet: () => void;
   projectId: string | null; onOpenSession: (id: string) => void; onProject: (id: string) => void;
   onAddProject: () => void; onNewSession: () => void; onSettings: () => void; onUsage: () => void;
 }) {
+  const [companionOpen, setCompanionOpen] = useViewMemory('companion-open', false);
   const [snapshot, setSnapshot] = useState<CompanionSnapshot | null>(null);
   const [turns, setTurns] = useState<CompanionTurn[]>([]);
   const [question, setQuestion] = useState('');
@@ -99,9 +102,26 @@ export default function MissionRoom({ story, followedSession, sessions=[], onFol
     : snapshot.needsYou ? <>{count(snapshot.totalProjects)} {snapshot.totalProjects === 1 ? 'space' : 'spaces'}, together.<br />{count(snapshot.needsYou)} {snapshot.needsYou === 1 ? 'session needs' : 'sessions need'} you.</>
     : snapshot.running ? <>{count(snapshot.running)} {snapshot.running === 1 ? 'session' : 'sessions'} running.<br />Room to think.</>
     : <>A quiet moment.<br />What shall we make?</>;
-  const priority = snapshot?.projects.flatMap((p) => p.sessions.filter((s) => ['permission', 'error', 'finished'].includes(s.state)).map((s) => ({ project: p, session: s }))).slice(0, 2) ?? [];
 
-  return <main className="pane mission-room">
+  const setupKey = `${projectsRead}:${projects.map(project => project.id).join('|')}:${sessions.length}`;
+  return <main className="pane mission-room home-room">
+    <div className="home-intro">
+      {!companionOpen && <Orb compact signal={presence.signal} story={story} temperament={temperament}
+        label="Talk to Wanigan" onActivate={() => setCompanionOpen(true)} />}
+      <PageHead title={companionOpen ? 'With Wanigan' : 'Home'} lead={companionOpen
+        ? 'An optional conversation about your recorded workspace.'
+        : projectId ? projects.find(project => project.id === projectId)?.name ?? 'Project unavailable' : 'Your work, across projects.'}
+        actions={<><button className="btn" aria-expanded={companionOpen} aria-controls="home-companion" onClick={() => setCompanionOpen(!companionOpen)}>
+          {companionOpen ? 'Back to work' : 'Talk to Wanigan'}</button>
+          <button className="btn btn-primary" onClick={onNewSession}><Icon name="plus" />New session</button></>} />
+    </div>
+    {!companionOpen && <>
+      <SetupChecklist refreshKey={setupKey} onAddProject={onAddProject} onNewSession={onNewSession} />
+      <HomeWork sessions={sessions} attention={attention} read={attentionRead} projects={projects}
+        projectId={projectId} onOpenSession={onOpenSession} onProject={onProject} onNewSession={onNewSession} onFleet={onFleet} />
+      <button className="btn home-add-project" onClick={onAddProject}><Icon name="plus" />Add project</button>
+    </>}
+    {companionOpen && <div id="home-companion">
     <section className="mission-stage" aria-label="Wanigan companion">
       <div className="mission-presence" onKeyDown={event=>{
         if(event.key==='Escape'&&appearance.current?.matches(':popover-open')){
@@ -144,11 +164,7 @@ export default function MissionRoom({ story, followedSession, sessions=[], onFol
       <div className="mission-briefing">
         <span className="mission-scope">{projectId ? snapshot?.projects[0]?.name ?? 'Project space' : 'Across your spaces'}</span>
         <PageHead title={title} />
-        <div className="mission-summary">
-          {priority.length ? priority.map(({ project, session }) => <button key={session.id} type="button" onClick={() => onOpenSession(session.id)}>
-            <span>{project.name}</span><span>{stateWord[session.state]}</span><Icon name="external" />
-          </button>) : <p>{snapshot ? snapshot.totalProjects ? 'Ask about your agents, pick up a project, or make room for something new.' : 'Bring in a project. I’ll keep the moving pieces in view.' : 'Reading your local project and session records…'}</p>}
-        </div>
+        <div className="mission-summary"><p>Ask about your agents or the recorded overview of your projects.</p></div>
         <form className="mission-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
           <textarea ref={input} aria-label="Talk to Wanigan" readOnly={demo} placeholder={demo ? "Companion answers are off in this demo" : "Talk to Wanigan…"} value={question} maxLength={4_000} rows={1}
             onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
@@ -180,29 +196,7 @@ export default function MissionRoom({ story, followedSession, sessions=[], onFol
         <small>{turn.model} · {ago(turn.at)}{turn.status !== 'pending' && (turn.costUsd === null ? ' · Cost not reported' : ` · $${turn.costUsd.toFixed(4)} from reported tokens`)}</small>
       </article>)}
     </section>}
-    <section className="mission-projects" aria-label="Your project spaces">
-      <SectionHead label="Your spaces" count={snapshot?.totalProjects} right={<button type="button" className="btn btn-sm" onClick={onAddProject}><Icon name="plus" />Add space</button>} />
-      {/* The checklist is the invitation on a fresh machine and self-hides once
-          setup is complete, so it stands in for the nothing-yet empty state
-          rather than stacking a second call to action above it. Zero projects
-          always means an unsatisfied item, so nothing is left unsaid here. */}
-      <SetupChecklist onAddProject={onAddProject} onNewSession={onNewSession} />
-      {snapshot?.projects.length === 0 ? null :
-        <div className="mission-shelf">{snapshot?.projects.map((project) => <article className="mission-space" key={project.id}>
-          <div className="mission-space-title"><span className="mission-project-mark" aria-hidden="true">{project.name.slice(0, 1).toUpperCase()}</span>
-            <button type="button" onClick={() => onProject(project.id)}>{project.name}</button>
-            {project.needsYou > 0 && <Pill tone="warn" status={`${project.needsYou} ${project.needsYou === 1 ? 'needs' : 'need'} you`} />}
-          </div>
-          <p className="mission-branch"><Icon name="branch" />{project.branch ?? 'No branch recorded'}</p>
-          <div className="mission-session-list">{project.sessions.slice(0, 3).map((session) => <button type="button" key={session.id} onClick={() => onOpenSession(session.id)}>
-            <span className={`mission-state state-${session.state}`} aria-hidden="true">{session.state === 'permission' ? '?' : session.state === 'error' ? '!' : session.state === 'finished' ? '✓' : '·'}</span>
-            <span>{session.provider}<small>{stateWord[session.state]}</small></span><Icon name="external" />
-          </button>)}{project.sessions.length === 0 && <p className="mission-space-empty">A clear desk.<br />Start something here.</p>}</div>
-          <button className="mission-open" type="button" onClick={() => onProject(project.id)}>Open space <Icon name="external" /></button>
-        </article>)}</div>}
-      {!snapshot && !error && <p className="dim">Loading your spaces…</p>}
-      {snapshot && snapshot.running === 0 && snapshot.projects.length > 0 && <button className="mission-start" type="button" onClick={onNewSession}><Icon name="plus" />Start a session</button>}
-    </section>
     <div className="mission-observed">{snapshot && <>{demo ? 'Fictional sample workspace' : <>From local records · Updated {ago(snapshot.readAt)}</>}{snapshot.sessionsTruncated && ' · Recent sessions shown'}</>}</div>
+    </div>}
   </main>;
 }

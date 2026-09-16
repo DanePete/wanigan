@@ -1,6 +1,8 @@
 import { app } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import { byId as accountById } from './accounts';
 import { db } from './db';
 import { getSetting, learningSettings, setSetting } from './settings';
 import { projectById } from './store';
@@ -1797,26 +1799,70 @@ export async function freshnessReport(itemId: string) {
 /** Formats the skill compilers write; their target path ends in <skill-name>/SKILL.md. */
 const SKILL_PROJECTION_FORMATS = ['claude-skill', 'agent-skill'];
 
-/**
- * The knowledge item behind a skill the agent's `Skill` tool ran, found
- * through the applied projection that wrote its SKILL.md — the directory name
- * is the skill's identity for both harnesses. A plugin-namespaced identifier
- * (`plugin:name`) matches on the name; the projection of the session's own
- * provider wins when several providers carry the same skill. Null when Wanigan
- * never installed a skill by that name: a built-in or hand-written skill is
- * not knowledge Wanigan can account for.
- */
-function skillProjectionFor(identifier: string, providerId: string): { itemId: string; versionId: string | null; projectionId: string } | null {
-  const name = identifier.split(':').pop()?.trim().toLowerCase();
-  if (!name) return null;
+type SkillProjectionRow = {
+  id: string; item_id: string; version_id: string | null; provider_id: string;
+  project_id: string | null; scope: string; target_path: string; target_format: string; applied_hash: string | null;
+};
+
+/** Resolve only an unambiguous, unchanged skill in this session's actual roots. */
+export function matchSkillProjection(
+  identifier: string,
+  session: Pick<Session, 'providerId' | 'projectId' | 'projectPath' | 'worktree' | 'harnessId'>,
+  rows: readonly SkillProjectionRow[],
+  personalConfigRoot: string | null,
+): { itemId: string; versionId: string | null; projectionId: string } | null {
+  // Wanigan's compiler installs standalone skills, never plugin namespaces.
+  const name = identifier.trim();
+  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name)) return null;
+  const harness = session.harnessId ?? providerById(session.providerId)?.harness;
+  const format = harness === 'claude-code' ? 'claude-skill' : harness === 'codex' ? 'agent-skill' : null;
+  if (!format) return null;
+  const canonical = (root: string): string | null => {
+    try { return fs.realpathSync(root); } catch { return null; }
+  };
+  const cwd = canonical(session.worktree ?? session.projectPath);
+  const personal = personalConfigRoot ? canonical(personalConfigRoot) : null;
+  const hashes = new Map<string, string | null>();
+  const matching = rows.filter(row => {
+    if (row.provider_id !== session.providerId || row.target_format !== format || !row.applied_hash) return false;
+    const base = row.scope === 'personal' && row.project_id === null ? personal
+      : row.scope !== 'personal' && row.project_id === session.projectId && cwd
+        ? path.join(cwd, harness === 'claude-code' ? '.claude' : '.agents') : null;
+    if (!base) return false;
+    const expected = path.join(base, 'skills', name, 'SKILL.md');
+    // A moved target, symlink escape or a projection in the original checkout
+    // cannot prove which skill an isolated session invoked.
+    if (canonical(row.target_path) !== expected) return false;
+    if (!hashes.has(expected)) {
+      try {
+        const stat = fs.statSync(expected);
+        hashes.set(expected, stat.isFile() && stat.size <= 512 * 1024
+          ? createHash('sha256').update(fs.readFileSync(expected)).digest('hex') : null);
+      } catch { hashes.set(expected, null); }
+    }
+    return hashes.get(expected) === row.applied_hash;
+  });
+  // Reinstalling the same item can leave older applied receipts with identical
+  // bytes. They describe one file/item; the newest receipt (query order) wins.
+  // Distinct files or items remain ambiguous, including personal/project names.
+  if (!matching.length || new Set(matching.map(row => JSON.stringify([row.target_path, row.item_id]))).size !== 1) return null;
+  const chosen = matching[0];
+  return { itemId: chosen.item_id, versionId: chosen.version_id, projectionId: chosen.id };
+}
+
+function skillProjectionFor(identifier: string, session: Session): { itemId: string; versionId: string | null; projectionId: string } | null {
   const rows = db().prepare(`
-    SELECT id, item_id, version_id, provider_id, target_path FROM knowledge_projections
-    WHERE status='applied' AND item_id IS NOT NULL AND target_format IN (${SKILL_PROJECTION_FORMATS.map(() => '?').join(',')})
+    SELECT id, item_id, version_id, provider_id, project_id, scope, target_path, target_format, applied_hash FROM knowledge_projections
+    WHERE status='applied' AND item_id IS NOT NULL AND provider_id=?
+      AND (project_id IS NULL OR project_id=?) AND target_format IN (${SKILL_PROJECTION_FORMATS.map(() => '?').join(',')})
     ORDER BY applied_at DESC LIMIT 500
-  `).all(...SKILL_PROJECTION_FORMATS) as { id: string; item_id: string; version_id: string | null; provider_id: string; target_path: string }[];
-  const matching = rows.filter((row) => path.basename(path.dirname(row.target_path)).toLowerCase() === name);
-  const chosen = matching.find((row) => row.provider_id === providerId) ?? matching[0];
-  return chosen ? { itemId: chosen.item_id, versionId: chosen.version_id, projectionId: chosen.id } : null;
+  `).all(session.providerId, session.projectId, ...SKILL_PROJECTION_FORMATS) as SkillProjectionRow[];
+  const harness = session.harnessId ?? providerById(session.providerId)?.harness;
+  const account = session.accountId ? accountById(session.accountId) : null;
+  const personal = harness === 'claude-code'
+    ? session.accountId ? account?.configDir ?? null : process.env.CLAUDE_CONFIG_DIR || path.join(app.getPath('home'), '.claude')
+    : harness === 'codex' ? path.join(app.getPath('home'), '.agents') : null;
+  return matchSkillProjection(identifier, session, rows, personal);
 }
 
 /**
@@ -1830,7 +1876,7 @@ function skillProjectionFor(identifier: string, providerId: string): { itemId: s
 function recordSkillInvocation(event: SessionEvent, session: Session): void {
   if (event.event !== 'PostToolUse' || event.toolName !== 'Skill' || !event.summary) return;
   const identifier = redactCredentials(event.summary).trim().slice(0, 200);
-  const resolved = skillProjectionFor(identifier, session.providerId);
+  const resolved = skillProjectionFor(identifier, session);
   if (!resolved) return;
   try {
     recordMetric({

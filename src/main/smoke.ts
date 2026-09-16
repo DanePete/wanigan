@@ -206,6 +206,12 @@ export async function runSmoke(): Promise<void> {
     await runScoutSmoke(check, say);
     const { runCheckpointSmoke } = await import('./smoke6');
     await runCheckpointSmoke(check, say);
+    const { runReviewSmoke } = await import('./smoke-review');
+    await runReviewSmoke(check, say);
+    const { runAuditControlSmoke } = await import('./smoke-audit-control');
+    await runAuditControlSmoke(check, say);
+    const { runAuditIntegrationsSmoke } = await import('./smoke-audit-integrations');
+    await runAuditIntegrationsSmoke(check, say);
     const { runLifecycleSmoke, runSessionTitleSmoke } = await import('./smoke7');
     await runLifecycleSmoke(check, say);
     await runSessionTitleSmoke(check, say);
@@ -223,6 +229,9 @@ export async function runSmoke(): Promise<void> {
     await runPreflightSmoke(check, say);
     const { runOrbStorySmoke } = await import('./smoke14');
     runOrbStorySmoke(check, say);
+    // Real restore closes SQLite. Keep this last, before only reporting/exit.
+    const { runAuditBackupSmoke } = await import('./smoke-audit-backup');
+    runAuditBackupSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

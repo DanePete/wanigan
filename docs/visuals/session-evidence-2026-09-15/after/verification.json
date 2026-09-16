@@ -1,0 +1,10 @@
+{
+  "before": false,
+  "checks": [
+    "Fallback has no selected-session pressure and discloses identity.",
+    "Exact current context identifies a reported window and can carry pressure.",
+    "Codex quota requests retain the selected session identity."
+  ],
+  "errors": [],
+  "provenance": "Built renderer with synthetic bridge, isolated Electron profile; no providers or user data."
+}

@@ -1,0 +1,269 @@
+<div id="wanigan-workbench-proposal" aria-label="Wanigan Home workbench proposal" data-density="comfortable" data-balance="work-first">
+  <style>
+    #wanigan-workbench-proposal {
+      --wg-bg: light-dark(#f4f6f8, #171e24);
+      --wg-paper: light-dark(#ffffff, #1b242b);
+      --wg-chrome: light-dark(#eef2f5, #141b21);
+      --wg-raised: light-dark(#e7edf2, #26313a);
+      --wg-selected: light-dark(#e4eff7, #203e51);
+      --wg-ink: light-dark(#1c2731, #f1f5f8);
+      --wg-muted: light-dark(#4c5c69, #c5cfd7);
+      --wg-faint: light-dark(#5d6c78, #aebcc8);
+      --wg-line: light-dark(#dbe2e8, #2d3841);
+      --wg-accent: light-dark(#1c608e, #a6d9f8);
+      --wg-on-accent: light-dark(#ffffff, #122633);
+      --wg-warning: light-dark(#8f5b00, #ffd16d);
+      --wg-warning-bg: light-dark(#faebc8, #382b12);
+      --wg-good: light-dark(#127247, #7be3a2);
+      --wg-good-bg: light-dark(#d8f1e0, #123524);
+      --wg-row-pad: 19px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px; line-height: 1.5; color: var(--wg-ink); width: 100%;
+    }
+    #wanigan-workbench-proposal * { box-sizing: border-box; }
+    #wanigan-workbench-proposal button, #wanigan-workbench-proposal select { font: inherit; }
+    #wanigan-workbench-proposal button { cursor: pointer; }
+    #wanigan-workbench-proposal p, #wanigan-workbench-proposal h1, #wanigan-workbench-proposal h2, #wanigan-workbench-proposal h3 { margin: 0; }
+    #wanigan-workbench-proposal .wg-proposal-label { color: var(--wg-faint); font-size: 12px; padding: 0 2px 10px; }
+    #wanigan-workbench-proposal .wg-window { background: var(--wg-bg); border: 1px solid var(--wg-line); border-radius: 14px; overflow: hidden; }
+    #wanigan-workbench-proposal .wg-titlebar { min-height: 54px; display: flex; align-items: center; gap: 20px; padding: 10px 18px; background: var(--wg-chrome); border-bottom: 1px solid var(--wg-line); }
+    #wanigan-workbench-proposal .wg-window-controls { display: flex; gap: 6px; }
+    #wanigan-workbench-proposal .wg-window-controls span { width: 10px; height: 10px; border-radius: 50%; background: var(--wg-raised); border: 1px solid var(--wg-line); }
+    #wanigan-workbench-proposal .wg-brand { font-weight: 500; letter-spacing: -.3px; }
+    #wanigan-workbench-proposal .wg-project-context { display: flex; align-items: center; gap: 9px; margin-left: auto; font-size: 12px; color: var(--wg-muted); }
+    #wanigan-workbench-proposal .wg-project-context select { background: var(--wg-paper); color: var(--wg-ink); border: 1px solid var(--wg-line); border-radius: 7px; padding: 5px 24px 5px 9px; max-width: 190px; }
+    #wanigan-workbench-proposal .wg-shell { display: grid; grid-template-columns: 152px minmax(0, 1fr); }
+    #wanigan-workbench-proposal .wg-sidebar { background: var(--wg-chrome); padding: 20px 10px 14px; display: flex; flex-direction: column; border-right: 1px solid var(--wg-line); }
+    #wanigan-workbench-proposal .wg-nav { display: grid; gap: 4px; }
+    #wanigan-workbench-proposal .wg-nav button { display: flex; align-items: center; gap: 10px; min-height: 39px; width: 100%; background: transparent; border: 0; border-radius: 7px; text-align: left; padding: 8px 11px; color: var(--wg-muted); font-size: 13px; }
+    #wanigan-workbench-proposal .wg-nav button[aria-current] { color: var(--wg-ink); background: var(--wg-raised); }
+    #wanigan-workbench-proposal .wg-nav button:hover { background: var(--wg-raised); }
+    #wanigan-workbench-proposal .wg-nav i, #wanigan-workbench-proposal .wg-nav svg { width: 16px; height: 16px; flex: none; }
+    #wanigan-workbench-proposal .wg-sidebar-bottom { margin-top: auto; padding: 38px 9px 0; display: flex; gap: 8px; align-items: center; color: var(--wg-faint); font-size: 12px; }
+    #wanigan-workbench-proposal .wg-local-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--wg-good); }
+    #wanigan-workbench-proposal .wg-main { min-width: 0; padding: 28px; }
+    #wanigan-workbench-proposal .wg-brief { display: flex; align-items: center; gap: 16px; padding-bottom: 25px; }
+    #wanigan-workbench-proposal .wg-companion { flex: none; width: 48px; height: 48px; border-radius: 50%; background: radial-gradient(circle at 33% 28%, light-dark(#ffffff, #c9e9fb), light-dark(#c4deed, #76b3d8) 24%, light-dark(#91bad3, #39607c) 62%, light-dark(#52768e, #1d3448)); box-shadow: inset 0 0 0 1px light-dark(#c5dbe8, #8cbbd3); position: relative; }
+    #wanigan-workbench-proposal .wg-companion:before, #wanigan-workbench-proposal .wg-companion:after { content: ""; position: absolute; width: 3px; height: 4px; border-radius: 50%; top: 24px; background: light-dark(#284c61, #102939); }
+    #wanigan-workbench-proposal .wg-companion:before { left: 17px; }
+    #wanigan-workbench-proposal .wg-companion:after { right: 17px; }
+    #wanigan-workbench-proposal .wg-home-word { font-size: 12px; color: var(--wg-faint); margin-bottom: 4px; }
+    #wanigan-workbench-proposal h1 { font-size: 25px; line-height: 1.2; letter-spacing: -.75px; font-weight: 500; }
+    #wanigan-workbench-proposal .wg-summary { color: var(--wg-muted); font-size: 13px; margin-top: 7px; }
+    #wanigan-workbench-proposal .wg-workspace { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(248px, 1fr); gap: 22px; align-items: start; }
+    #wanigan-workbench-proposal .wg-worklist { min-width: 0; }
+    #wanigan-workbench-proposal .wg-section-label { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 0 1px 10px; border-bottom: 1px solid var(--wg-line); font-size: 13px; font-weight: 500; }
+    #wanigan-workbench-proposal .wg-section-label span { color: var(--wg-faint); font-size: 12px; font-weight: 400; }
+    #wanigan-workbench-proposal .wg-rows { display: grid; gap: 5px; padding-top: 7px; }
+    #wanigan-workbench-proposal .wg-work-row { width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 11px; text-align: left; padding: var(--wg-row-pad) 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--wg-ink); }
+    #wanigan-workbench-proposal .wg-work-row:hover { background: var(--wg-paper); }
+    #wanigan-workbench-proposal .wg-work-row[aria-pressed="true"] { background: var(--wg-selected); border-color: var(--wg-accent); }
+    #wanigan-workbench-proposal .wg-status-symbol { font-size: 15px; font-weight: 500; line-height: 1.6; }
+    #wanigan-workbench-proposal [data-tone="permission"] .wg-status-symbol { color: var(--wg-warning); }
+    #wanigan-workbench-proposal [data-tone="finished"] .wg-status-symbol { color: var(--wg-good); }
+    #wanigan-workbench-proposal .wg-row-title { display: block; font-weight: 500; font-size: 14px; line-height: 1.4; }
+    #wanigan-workbench-proposal .wg-row-detail { display: block; color: var(--wg-muted); font-size: 12px; margin-top: 5px; }
+    #wanigan-workbench-proposal .wg-row-status { display: block; color: var(--wg-faint); font-size: 12px; margin-top: 10px; }
+    #wanigan-workbench-proposal .wg-row-status strong { font-weight: 500; color: var(--wg-ink); }
+    #wanigan-workbench-proposal .wg-inspector { min-width: 0; background: var(--wg-paper); border: 1px solid var(--wg-line); border-radius: 11px; padding: 19px; }
+    #wanigan-workbench-proposal .wg-inspector-top { color: var(--wg-faint); font-size: 12px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-bottom: 21px; }
+    #wanigan-workbench-proposal .wg-status-chip { display: inline-flex; gap: 6px; font-size: 12px; border-radius: 5px; padding: 3px 7px; background: var(--wg-raised); color: var(--wg-ink); }
+    #wanigan-workbench-proposal .wg-status-chip[data-tone="permission"] { background: var(--wg-warning-bg); color: var(--wg-warning); }
+    #wanigan-workbench-proposal .wg-status-chip[data-tone="finished"] { background: var(--wg-good-bg); color: var(--wg-good); }
+    #wanigan-workbench-proposal h2 { font-size: 18px; font-weight: 500; line-height: 1.3; letter-spacing: -.35px; margin: 11px 0 9px; }
+    #wanigan-workbench-proposal .wg-reason { color: var(--wg-muted); font-size: 13px; }
+    #wanigan-workbench-proposal .wg-evidence { margin: 23px 0 19px; padding-top: 15px; border-top: 1px solid var(--wg-line); }
+    #wanigan-workbench-proposal .wg-evidence h3 { color: var(--wg-faint); font-size: 12px; font-weight: 400; margin-bottom: 8px; }
+    #wanigan-workbench-proposal .wg-evidence p { font-size: 13px; }
+    #wanigan-workbench-proposal .wg-action { display: flex; gap: 9px; align-items: center; justify-content: center; min-height: 39px; width: 100%; border: 1px solid var(--wg-accent); border-radius: 7px; padding: 8px 12px; background: var(--wg-accent); color: var(--wg-on-accent); font-size: 13px; font-weight: 500; }
+    #wanigan-workbench-proposal .wg-action-note { font-size: 11px; color: var(--wg-faint); text-align: center; margin-top: 9px; }
+    #wanigan-workbench-proposal .wg-source-note { margin-top: 24px; font-size: 12px; color: var(--wg-faint); }
+    #wanigan-workbench-proposal .wg-example-reader { border-top: 1px solid var(--wg-line); padding-top: 14px; margin-top: 16px; }
+    #wanigan-workbench-proposal .wg-example-reader h3 { font-weight: 500; font-size: 12px; margin-bottom: 8px; }
+    #wanigan-workbench-proposal .wg-example-reader pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 ui-monospace, "SF Mono", Menlo, monospace; margin: 0; padding: 11px; background: var(--wg-bg); color: var(--wg-ink); border-radius: 6px; }
+    #wanigan-workbench-proposal .wg-example-reader button { color: var(--wg-accent); font-size: 12px; background: transparent; border: 0; padding: 10px 0 0; }
+    #wanigan-workbench-proposal .wg-notice { color: var(--wg-faint); font-size: 12px; margin-top: 14px; }
+    #wanigan-workbench-proposal .wg-notice:empty { display: none; }
+    #wanigan-workbench-proposal [hidden] { display: none !important; }
+    #wanigan-workbench-proposal[data-density="compact"] { --wg-row-pad: 12px; }
+    #wanigan-workbench-proposal[data-balance="companion-first"] .wg-brief { padding-top: 12px; padding-bottom: 36px; }
+    #wanigan-workbench-proposal[data-balance="companion-first"] .wg-companion { width: 84px; height: 84px; }
+    #wanigan-workbench-proposal[data-balance="companion-first"] .wg-companion:before { top: 43px; left: 31px; }
+    #wanigan-workbench-proposal[data-balance="companion-first"] .wg-companion:after { top: 43px; right: 31px; }
+    @media (max-width: 800px) {
+      #wanigan-workbench-proposal .wg-shell { grid-template-columns: 128px minmax(0, 1fr); }
+      #wanigan-workbench-proposal .wg-sidebar { padding-left: 7px; padding-right: 7px; }
+      #wanigan-workbench-proposal .wg-nav button { gap: 7px; padding-left: 8px; padding-right: 8px; font-size: 12px; }
+      #wanigan-workbench-proposal .wg-main { padding: 22px 18px; }
+      #wanigan-workbench-proposal .wg-workspace { grid-template-columns: minmax(0, 1fr); gap: 21px; }
+      #wanigan-workbench-proposal .wg-work-row { padding-top: 13px; padding-bottom: 13px; }
+      #wanigan-workbench-proposal .wg-inspector-top { margin-bottom: 12px; }
+      #wanigan-workbench-proposal .wg-evidence { margin-top: 16px; }
+    }
+    @media (max-width: 520px) {
+      #wanigan-workbench-proposal .wg-titlebar { padding: 11px 12px; gap: 9px; flex-wrap: wrap; }
+      #wanigan-workbench-proposal .wg-window-controls { display: none; }
+      #wanigan-workbench-proposal .wg-project-context { gap: 6px; }
+      #wanigan-workbench-proposal .wg-project-context > span { display: none; }
+      #wanigan-workbench-proposal .wg-project-context select { max-width: 160px; }
+      #wanigan-workbench-proposal .wg-shell { grid-template-columns: minmax(0, 1fr); }
+      #wanigan-workbench-proposal .wg-sidebar { padding: 8px; border-right: 0; border-bottom: 1px solid var(--wg-line); }
+      #wanigan-workbench-proposal .wg-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+      #wanigan-workbench-proposal .wg-nav button { justify-content: center; padding: 8px 3px; min-height: 36px; }
+      #wanigan-workbench-proposal .wg-nav i, #wanigan-workbench-proposal .wg-nav svg { display: none; }
+      #wanigan-workbench-proposal .wg-sidebar-bottom { display: none; }
+      #wanigan-workbench-proposal .wg-main { padding: 21px 14px; }
+      #wanigan-workbench-proposal .wg-brief { gap: 12px; }
+      #wanigan-workbench-proposal h1 { font-size: 22px; }
+      #wanigan-workbench-proposal .wg-companion { width: 39px; height: 39px; }
+      #wanigan-workbench-proposal .wg-companion:before { top: 19px; left: 13px; }
+      #wanigan-workbench-proposal .wg-companion:after { top: 19px; right: 13px; }
+      #wanigan-workbench-proposal .wg-inspector { padding: 16px; }
+    }
+    @media (pointer: coarse) {
+      #wanigan-workbench-proposal .wg-nav button, #wanigan-workbench-proposal .wg-action { min-height: 44px; }
+      #wanigan-workbench-proposal .wg-project-context select { font-size: 16px; min-height: 44px; }
+    }
+  </style>
+  <p class="wg-proposal-label">Design proposal · fictional example work</p>
+  <section class="wg-window" aria-label="Wanigan application design proposal">
+    <header class="wg-titlebar">
+      <div class="wg-window-controls" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span class="wg-brand">Wanigan</span>
+      <label class="wg-project-context"><span>Project context</span><select aria-label="Project context"><option value="all">All projects</option><option value="pine">Pine</option><option value="harbor">Harbor</option><option value="grove">Grove</option></select></label>
+    </header>
+    <div class="wg-shell">
+      <aside class="wg-sidebar">
+        <nav class="wg-nav" aria-label="Primary navigation">
+          <button type="button" data-view="home" aria-current="page"><i data-lucide="house" aria-hidden="true"></i>Home</button>
+          <button type="button" data-view="projects"><i data-lucide="folder" aria-hidden="true"></i>Projects</button>
+          <button type="button" data-view="fleet"><i data-lucide="panels-top-left" aria-hidden="true"></i>Fleet</button>
+          <button type="button" data-view="review"><i data-lucide="check-check" aria-hidden="true"></i>Review</button>
+          <button type="button" data-view="knowledge"><i data-lucide="book-open" aria-hidden="true"></i>Knowledge</button>
+          <button type="button" data-view="automation"><i data-lucide="clock-3" aria-hidden="true"></i>Automation</button>
+        </nav>
+        <div class="wg-sidebar-bottom"><span class="wg-local-dot" aria-hidden="true"></span>Local workspace</div>
+      </aside>
+      <main class="wg-main">
+        <header class="wg-brief">
+          <span class="wg-companion" role="img" aria-label="Wanigan companion, visual concept"></span>
+          <div><p class="wg-home-word">Home</p><h1>Two things need you.</h1><p class="wg-summary">One permission. One finished turn to inspect.</p></div>
+        </header>
+        <div class="wg-workspace">
+          <section class="wg-worklist" aria-label="Example work">
+            <h2 class="wg-section-label">Your work <span data-role="scope-label">Across 3 projects</span></h2>
+            <div class="wg-rows">
+              <button type="button" class="wg-work-row" data-work="permission" data-tone="permission" aria-pressed="true" aria-controls="wg-work-inspector">
+                <span class="wg-status-symbol" aria-hidden="true">?</span>
+                <span><span class="wg-row-title">Finish sign-in recovery</span><span class="wg-row-detail">Pine · Claude Code</span><span class="wg-row-status"><strong>Waiting for permission</strong><br>Test command needs your decision</span></span>
+              </button>
+              <button type="button" class="wg-work-row" data-work="finished" data-tone="finished" aria-pressed="false" aria-controls="wg-work-inspector">
+                <span class="wg-status-symbol" aria-hidden="true">✓</span>
+                <span><span class="wg-row-title">Tighten the empty search state</span><span class="wg-row-detail">Harbor · Codex</span><span class="wg-row-status"><strong>Finished turn</strong><br>3 changed files ready to inspect</span></span>
+              </button>
+              <button type="button" class="wg-work-row" data-work="running" data-tone="running" aria-pressed="false" aria-controls="wg-work-inspector">
+                <span class="wg-status-symbol" aria-hidden="true">›</span>
+                <span><span class="wg-row-title">Trace a slow repository scan</span><span class="wg-row-detail">Grove · Claude Code</span><span class="wg-row-status"><strong>Working</strong><br>No decision needed</span></span>
+              </button>
+            </div>
+          </section>
+          <aside id="wg-work-inspector" class="wg-inspector" aria-label="Selected example work">
+            <div class="wg-inspector-top"><span data-role="identity">Pine / sign-in recovery</span><span>Example session</span></div>
+            <span class="wg-status-chip" data-role="status" data-tone="permission">? Waiting for permission</span>
+            <h2 data-role="detail-title">The next move is yours.</h2>
+            <p class="wg-reason" data-role="reason">Claude is waiting to run the sign-in tests. Open the original prompt to decide.</p>
+            <div class="wg-evidence"><h3 data-role="evidence-label">Requested command</h3><p data-role="evidence">npm test -- auth</p></div>
+            <button type="button" class="wg-action" data-role="action">Open terminal</button>
+            <p class="wg-action-note" data-role="action-note">Continue in the permission prompt.</p>
+            <section class="wg-example-reader" data-role="reader" hidden aria-label="Fictional detail preview">
+              <h3 data-role="reader-title"></h3><pre data-role="reader-content"></pre><button type="button" data-role="close-reader">Close preview</button>
+            </section>
+          </aside>
+        </div>
+        <p class="wg-source-note">Example states only. Selecting work shows its next action.</p>
+        <p class="wg-notice" role="status" aria-live="polite"></p>
+      </main>
+    </div>
+  </section>
+  <script>
+    (() => {
+      const root = document.getElementById('wanigan-workbench-proposal');
+      const get = (role) => root.querySelector('[data-role="' + role + '"]');
+      const state = { balance: 'work-first', density: 'comfortable', project: 'all', work: 'permission' };
+      const records = {
+        permission: {
+          project: 'pine', identity: 'Pine / sign-in recovery', status: '? Waiting for permission',
+          title: 'The next move is yours.', reason: 'Claude is waiting to run the sign-in tests. Open the original prompt to decide.',
+          evidenceLabel: 'Requested command', evidence: 'npm test -- auth', action: 'Open terminal', note: 'Continue in the permission prompt.',
+          readerTitle: 'Terminal preview · fictional', reader: '$ npm test -- auth\n\nPermission requested.\nThe real session would show its original\napproval choices here.'
+        },
+        finished: {
+          project: 'harbor', identity: 'Harbor / empty search', status: '✓ Finished turn',
+          title: 'Review the result.', reason: 'Codex has finished this turn. Inspect the changes and verification before deciding what to do next.',
+          evidenceLabel: 'Recorded in this example', evidence: '3 files changed. Test output available.', action: 'Inspect changes', note: 'Finished does not mean accepted.',
+          readerTitle: 'Changes preview · fictional', reader: 'SearchEmpty.tsx\n\n− No results.\n+ No matches for this search.\n+ Try a different name or clear filters.\n\nVerification output is available in\nthe session before acceptance.'
+        },
+        running: {
+          project: 'grove', identity: 'Grove / repository scan', status: '› Working',
+          title: 'Investigation in progress.', reason: 'Claude is tracing directory traversal. Nothing in this example is waiting for your input.',
+          evidenceLabel: 'Latest activity in this example', evidence: 'Reading the repository scanner.', action: 'Open terminal', note: 'See the session’s current output.',
+          readerTitle: 'Terminal preview · fictional', reader: 'Reading src/main/scanner.ts…\n\nTracing directory traversal and\nchecking repeated filesystem reads.\n\nNo result has been recorded yet.'
+        }
+      };
+      const notice = root.querySelector('.wg-notice');
+      function render() {
+        root.dataset.balance = state.balance;
+        root.dataset.density = state.density;
+        const visible = Object.keys(records).filter((key) => state.project === 'all' || records[key].project === state.project);
+        if (!visible.includes(state.work)) state.work = visible[0];
+        root.querySelectorAll('[data-work]').forEach((button) => {
+          button.hidden = !visible.includes(button.dataset.work);
+          button.setAttribute('aria-pressed', String(button.dataset.work === state.work));
+        });
+        const record = records[state.work];
+        const names = { pine: 'Pine', harbor: 'Harbor', grove: 'Grove' };
+        const count = visible.filter((key) => key !== 'running').length;
+        root.querySelector('h1').textContent = count === 2 ? 'Two things need you.' : count === 1 ? 'One thing needs you.' : 'Work is moving along.';
+        root.querySelector('.wg-summary').textContent = state.project === 'all' ? 'One permission. One finished turn to inspect.' : state.work === 'permission' ? 'A permission prompt is waiting in Pine.' : state.work === 'finished' ? 'A finished turn is ready to inspect in Harbor.' : 'No decision is waiting in Grove.';
+        get('scope-label').textContent = state.project === 'all' ? 'Across 3 projects' : names[state.project];
+        get('identity').textContent = record.identity;
+        get('status').textContent = record.status;
+        get('status').dataset.tone = state.work;
+        get('detail-title').textContent = record.title;
+        get('reason').textContent = record.reason;
+        get('evidence-label').textContent = record.evidenceLabel;
+        get('evidence').textContent = record.evidence;
+        get('action').textContent = record.action;
+        get('action-note').textContent = record.note;
+        get('reader').hidden = true;
+      }
+      root.querySelectorAll('[data-work]').forEach((button) => button.addEventListener('click', () => {
+        state.work = button.dataset.work; render();
+        notice.textContent = records[state.work].identity + ' selected. ' + records[state.work].action + ' is available.';
+      }));
+      root.querySelector('select').addEventListener('change', (event) => {
+        state.project = event.target.value; render();
+        notice.textContent = event.target.selectedOptions[0].textContent + ' shown. Project context stays visible.';
+      });
+      get('action').addEventListener('click', () => {
+        const record = records[state.work];
+        get('reader-title').textContent = record.readerTitle;
+        get('reader-content').textContent = record.reader;
+        get('reader').hidden = false;
+        notice.textContent = record.readerTitle + '. No session or repository action was performed.';
+      });
+      get('close-reader').addEventListener('click', () => {
+        get('reader').hidden = true; get('action').focus(); notice.textContent = 'Preview closed.';
+      });
+      root.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => {
+        notice.textContent = button.dataset.view === 'home' ? 'Home workbench shown.' : button.textContent.trim() + ' keeps this navigation and project context. Its page is outside this Home proposal.';
+      }));
+      render();
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root, onChange: render });
+        tweak.addSelect(state, 'balance', { label: 'Home balance', options: [{ label: 'Work first', value: 'work-first' }, { label: 'Companion first', value: 'companion-first' }] });
+        tweak.addSelect(state, 'density', { label: 'Work density', options: [{ label: 'Comfortable', value: 'comfortable' }, { label: 'Compact', value: 'compact' }] });
+      }
+    })();
+  </script>
+</div>

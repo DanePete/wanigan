@@ -6,7 +6,7 @@ import type {
   EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
   MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
-  TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
+  TranscriptHit, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
@@ -15,6 +15,8 @@ import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, Section
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
+import AttachmentStorage from '../components/AttachmentStorage';
+import ArchiveReader from '../components/TranscriptReader';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 
@@ -82,7 +84,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
-  { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
+  { tab: 'automation', tabLabel: 'Automation', section: 'Batch submission limit', hint: 'Cap the estimated cost per batch submission', keywords: 'spending spend cap cost limit usd budget batches' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
@@ -1028,8 +1030,8 @@ export default function Settings({
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
-            <Section title="Spending"
-                     hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
+            <Section title="Batch submission limit"
+                     hint="Applies to batch API submissions, including scheduled batch re-runs. Interactive sessions, unattended agent runs and learning use their own controls.">
               {/* The box does not exist until a real cap has been observed, so
                   Save cannot write a number this panel invented over the one
                   the operator set — including a deliberate 0, which is how the
@@ -1037,36 +1039,36 @@ export default function Settings({
                   apart from "unread". */}
               {capError ? (
                 <Note tone="error">
-                  Wanigan could not read the saved spend cap: {capError}. The field is withheld rather than
+                  Wanigan could not read the saved batch submission limit: {capError}. The field is withheld rather than
                   filled with a guess, because saving a number this panel invented would overwrite the cap
                   you set. Reopen Settings to try the read again.
                 </Note>
               ) : cap === null ? (
-                <Reading what="the saved spend cap" />
+                <Reading what="the saved batch submission limit" />
               ) : (
                 <>
-                  <label className="label" htmlFor="spend-cap">Maximum estimated cost per run (USD)</label>
+                  <label className="label" htmlFor="spend-cap">Maximum estimated cost per batch submission (USD)</label>
                   <div className="set-field-action" style={{ maxWidth: 320 }}>
                     <input id="spend-cap" className="field mono" type="number" min={0} step="0.25" value={cap}
                            onChange={(e) => setCap(e.target.value)} />
                     <button className="btn" disabled={!capUsable}
-                            title={capUsable ? undefined : 'Enter a cap of 0 or more. 0 disables the cap.'}
+                            title={capUsable ? undefined : 'Enter a limit of 0 or more. 0 means no batch submission limit.'}
                             onClick={async () => {
                       if (!capUsable) return;
                       try {
                         const v = await window.wanigan.settings.setSpendCap(capNumber);
                         setCap(v.toFixed(2));
-                        setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
+                        setMsg({ tone: 'ok', text: v > 0 ? `Batch submissions estimated above $${v.toFixed(2)} will be blocked.` : 'No batch submission limit. Other execution limits are unchanged.' });
                       } catch (e) {
-                        setMsg({ tone: 'error', text: `Wanigan could not save the spend cap: ${msg(e)}. The saved cap is unchanged.` });
+                        setMsg({ tone: 'error', text: `Wanigan could not save the batch submission limit: ${msg(e)}. The saved limit is unchanged.` });
                       }
                     }}>Save</button>
                   </div>
                 </>
               )}
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
-                0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
-                leave headroom — the builder shows the upper bound beside it.
+                0 means no batch submission limit. The check uses the estimate before submission, which
+                assumes caching engages; the batch builder also shows the upper bound. A submitted batch cannot be un-submitted.
               </p>
               {msgState && <div style={{ marginTop: 11 }}><Note tone={msgState.tone === 'ok' ? 'ok' : 'error'}>{msgState.text}</Note></div>}
             </Section>
@@ -5116,23 +5118,7 @@ function Storage({ prefs, pending, setPref }: {
                 </>
               )}
 
-              <div className="set-sub">Session attachment directories</div>
-              <div className="sunk" style={{ padding: '11px 13px' }}>
-                <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
-                  Each session gets a directory that starts as an attachment staging area and stays
-                  the agent’s only writable non-project location, so reports and generated images
-                  linked from a saved conversation live there too. It is deliberately kept when the
-                  session exits — deleting it would turn an intact conversation into a page of dead
-                  links — which means the tree only grows.
-                </p>
-                <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 7 }}>
-                  <strong>This screen cannot yet measure or reclaim it.</strong> The two figures above
-                  cover transcripts and uploaded batch files only, so they are not the size of
-                  Wanigan’s data directory. Until an age-based retention control reaches this panel,
-                  the honest answer is that these directories are not listed here and nothing in the
-                  app removes them.
-                </p>
-              </div>
+              <AttachmentStorage />
             </>
           );
         }}
@@ -5202,68 +5188,15 @@ function Snippet({ text }: { text: string }) {
   return <>{parts}</>;
 }
 
-const TURN_ROLE: Record<TranscriptTurn['role'], string> = {
-  user: 'You', assistant: 'Agent', system: 'System', tool: 'Tool',
-};
-
-/** Rendered before the "show the rest" button; the rest is one click away. */
-const READER_TURN_CAP = 200;
-
-/** The whole archived conversation, read on demand rather than with the hits. */
+/** Archive management and Sessions share the same read-only conversation view. */
 function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
-  const doc = useLoad(() => window.wanigan.transcripts.get(sessionId), [sessionId]);
-  const [all, setAll] = useState(false);
-
-  return (
-    <div className="set-reader">
-      <div className="set-reader-head">
-        <div>
-          <div className="label">Archived conversation</div>
-          <div className="set-path set-wrap">{sessionId}</div>
-        </div>
-        <button className="btn" onClick={onClose}>Close</button>
-      </div>
-      <Frame v={doc.v} what="this transcript" onRetry={doc.reload}>
-        {(d) => {
-          if (!d.turns.length) {
-            return (
-              <div className="sunk set-empty">
-                The archive holds {bytes(d.bytes)} for this session but no readable turns.
-                {d.note && <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>{d.note}</div>}
-              </div>
-            );
-          }
-          const shown = all ? d.turns : d.turns.slice(0, READER_TURN_CAP);
-          return (
-            <>
-              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, marginBottom: 8 }}>
-                {plural(d.turns.length, 'turn')} · {bytes(d.bytes)} on this disk. Oldest first, so the
-                end of the conversation is at the bottom.
-                {d.note ? ` ${d.note}` : ''}
-              </p>
-              <div className="set-turns">
-                {shown.map((t, i) => (
-                  <article key={`${t.at}-${i}`} className="set-turn" data-role={t.role}>
-                    <header>
-                      <strong>{TURN_ROLE[t.role]}</strong>
-                      {t.toolName && <span className="mono faint"> · {t.toolName}</span>}
-                      <span className="faint set-sub-line"> {fullDate(t.at)}</span>
-                    </header>
-                    <pre>{t.text}</pre>
-                  </article>
-                ))}
-              </div>
-              {d.turns.length > shown.length && (
-                <button className="btn" style={{ marginTop: 9 }} onClick={() => setAll(true)}>
-                  Show the remaining {num(d.turns.length - shown.length)} turns
-                </button>
-              )}
-            </>
-          );
-        }}
-      </Frame>
+  return <div className="set-reader">
+    <div className="set-reader-head">
+      <div><div className="label">Archived conversation</div><div className="set-path set-wrap">{sessionId}</div></div>
+      <button className="btn" onClick={onClose}>Close</button>
     </div>
-  );
+    <ArchiveReader sessionId={sessionId} />
+  </div>;
 }
 
 /**
@@ -5453,7 +5386,7 @@ function Backup() {
   return (
     <>
       <Section title="Back up Wanigan’s record"
-               hint="One folder holding a verified copy of the database and every archived transcript. Written where you choose; nothing is uploaded and nothing is scheduled.">
+               hint="One folder holding a verified copy of the database, archived transcripts and session files. Written where you choose; nothing is uploaded and nothing is scheduled.">
         <Callout level="warning" title="Wanigan takes no backup on its own. Nothing here is scheduled.">
           Its Goals, proofs, decisions, costs, learned items and archived conversations all live in
           one SQLite database on this Mac. A whole-disk backup may happen to carry it; nothing inside
@@ -5468,7 +5401,7 @@ function Backup() {
           </button>
           <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 420 }}>
             You choose the folder. Wanigan writes a consistent copy of the live database, every
-            archived transcript, and a manifest carrying a SHA-256 of each file.
+            archived transcript, session attachments and generated outputs, and a manifest carrying a SHA-256 of each file.
           </span>
         </div>
 
@@ -5485,7 +5418,7 @@ function Backup() {
                   </tr>
                   <tr>
                     <td>Total on disk</td>
-                    <td>{bytes(made.totalBytes)} across the database, the transcripts and the manifest</td>
+                    <td>{bytes(made.totalBytes)} across the database, transcripts, session files and manifest</td>
                   </tr>
                   <tr>
                     <td>Database</td>
@@ -5498,6 +5431,7 @@ function Backup() {
                     <td>Transcripts copied</td>
                     <td>{plural(made.transcripts.files, 'file')} · {bytes(made.transcripts.bytes)}</td>
                   </tr>
+                  <tr><td>Session files copied</td><td>{plural(made.attachments.files, 'file')} · {bytes(made.attachments.bytes)}</td></tr>
                   <tr>
                     <td>Newest evidence in the copy</td>
                     <td>{evidenceClock(made.latestEvidenceAt)}</td>
@@ -5566,6 +5500,7 @@ function Backup() {
                     </td>
                   </tr>
                   <tr><td>Transcripts</td><td>{plural(checked.transcripts.files, 'file')} · {bytes(checked.transcripts.bytes)}</td></tr>
+                  <tr><td>Session files</td><td>{checked.attachments ? `${plural(checked.attachments.files, 'file')} · ${bytes(checked.attachments.bytes)}` : 'Not included in this older backup. Existing session files will be kept.'}</td></tr>
                   <tr><td>Newest evidence in this backup</td><td>{evidenceClock(checked.latestEvidenceAt)}</td></tr>
                   <tr><td>Newest evidence in the database now</td><td>{evidenceClock(checked.currentLatestEvidenceAt)}</td></tr>
                 </tbody>
@@ -5579,8 +5514,7 @@ function Backup() {
                 </Callout>
               ) : (
                 <Note tone="info">
-                  The database in place records nothing newer than this backup, so restoring it would
-                  drop no recorded work.
+                  No newer evidence was found in the recorded activity clocks. This is not a comparison of every setting or file; back up the current record before restoring.
                 </Note>
               )}
             </div>
@@ -5590,7 +5524,7 @@ function Backup() {
       </Section>
 
       <Section title="Restore a backup"
-               hint="Replaces the database and the transcript archive in place, then relaunches Wanigan.">
+               hint="Replaces the database, transcript archive and included session files, then relaunches Wanigan.">
         <Callout level="critical" title="Read this before you start: a restore relaunches Wanigan, and it is refused while any agent is live.">
           <p>
             <strong>Every running agent must be stopped first.</strong> A restore swaps the database
@@ -5606,7 +5540,7 @@ function Backup() {
             different thing from a running PTY.
           </p>
           <p style={{ marginTop: 6 }}>
-            <strong>Nothing is deleted.</strong> The replaced database and transcripts are moved into
+            <strong>Nothing is deleted.</strong> The replaced database, transcripts and session files are moved into
             a dated folder inside Wanigan’s data directory, and the restore names it. Your API
             credential and your provider-pack and MCP approvals are <em>not</em> restored — those are
             granted on one machine, for one machine.

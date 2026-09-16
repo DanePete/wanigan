@@ -287,6 +287,7 @@ type SessionRouting = {
   ended_at: number | null;
   harness_id: string | null;
   provider_profile_json: string | null;
+  worktree: string | null;
 };
 
 /**
@@ -311,7 +312,7 @@ function frozenHarness(row: SessionRouting): string | null {
 
 function locate(sessionId: string, projectPath: string, conversationId: string | null): Located | { note: string } {
   const row = db().prepare(
-    `SELECT provider_id, started_at, ended_at, harness_id, provider_profile_json
+    `SELECT provider_id, started_at, ended_at, harness_id, provider_profile_json, worktree
        FROM session_log WHERE id = ?`
   ).get(sessionId) as SessionRouting | undefined;
 
@@ -333,7 +334,8 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
     return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.` };
   }
 
-  const dirs = claudeProjectDirs(projectPath);
+  // The recorded cwd wins even when a historical caller supplies the base repo.
+  const dirs = claudeProjectDirs(row?.worktree ?? projectPath);
   if (conversationId) {
     const exact = exactIn(dirs, conversationId);
     if (exact) return { path: exact, exact: true, note: '' };

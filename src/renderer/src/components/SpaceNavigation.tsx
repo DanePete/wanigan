@@ -1,10 +1,9 @@
 import type { Project } from '@shared/types';
-import { labelForTab, TAB_ICONS, type Tab } from '@shared/routes';
-import { areaFor, SPACE_AREAS, spaceLabel } from '@shared/spaces';
+import { labelForTab, TAB_SHORTCUTS, type Tab } from '@shared/routes';
+import { areaFor, SPACE_AREAS, type SpaceAreaId } from '@shared/spaces';
 import { Icon } from './bits';
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useDialog } from './useDialog';
-import '../styles/spaces.css';
 
 export function ProjectSpaces({ projects, selected, ready, onSelect, onAdd }: {
   projects: Project[]; selected: string | null; ready: boolean;
@@ -94,33 +93,71 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
   </div>);
 }
 
-export function SpaceRoutes({ tab, go, projectName }: { tab: Tab; go: (tab: Tab) => void; projectName: string | null }) {
-  const area = areaFor(tab);
-  if (area.tabs.length === 1) return null;
-  return <nav className="space-routes" aria-label={`${area.label} views`}>
-    <span className="space-scope">{area.id === 'work' ? projectName ?? 'All projects' : area.label}</span>
-    {area.tabs.map((id) => <button key={id} type="button" aria-current={tab === id ? 'page' : undefined}
-      onClick={() => go(id)}>{spaceLabel(id) ?? labelForTab(id)}</button>)}
-  </nav>;
+type WorkspaceNavigationProps = {
+  tab: Tab; go: (tab: Tab) => void; goArea: (area: SpaceAreaId) => void;
+  open: boolean; onClose: () => void; compact: boolean;
+  needs: number; running: number; runsInFlight: number | null;
+  batchWork: { done: number; total: number } | null;
+  attentionAction?: ReactNode; batchAction?: ReactNode; companion?: ReactNode;
+};
+
+/** The area list is stable; only its local destinations change with the work. */
+export function WorkspaceNavigation(props: WorkspaceNavigationProps) {
+  if (props.compact) return props.open ? <NavigationDialog {...props} /> : null;
+  return <aside className="workbench-navigation" id="wanigan-sidebar"><NavigationContents {...props} /></aside>;
 }
 
-export function SpaceDock({ tab, go, needs, expanded, onMore, companion }: {
-  tab: Tab; go: (tab: Tab) => void; needs: number; expanded: boolean; onMore: () => void; companion?: ReactNode;
-}) {
+function NavigationDialog(props: WorkspaceNavigationProps) {
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose: props.onClose, initialFocus: 'first' });
+  return portal(<div {...backdropProps} className={`${backdropProps.className} workbench-navigation-backdrop`}>
+    <div {...dialogProps} id="wanigan-sidebar" className="workbench-navigation workbench-navigation-dialog" aria-label="Workspace navigation">
+      <div className="workbench-navigation-title"><span>Navigation</span><button type="button" onClick={props.onClose} aria-label="Close navigation"><Icon name="x" /></button></div>
+      <NavigationContents {...props} />
+    </div>
+  </div>);
+}
+
+function NavigationContents({ tab, go, goArea, onClose, compact, needs, running, runsInFlight, batchWork, attentionAction, batchAction, companion }: WorkspaceNavigationProps) {
   const current = areaFor(tab);
-  return <footer className="space-foot">
-    {companion ?? <span className="space-foot-note">Local first. Your work, together.</span>}
-    <nav className="space-dock" aria-label="Workspace navigation">
-      {SPACE_AREAS.slice(0, 5).map((area) => <button type="button" key={area.id}
-        aria-label={area.label} aria-current={current.id === area.id ? 'page' : undefined} onClick={() => go(area.tabs[0])}>
-        <Icon name={area.icon} /><span>{area.label}</span>
-        {area.id === 'fleet' && needs > 0 && <span className="space-count" aria-label={`${needs} need you`}>{needs}</span>}
-      </button>)}
-      <button type="button" aria-expanded={expanded} aria-controls="wanigan-sidebar"
-        aria-label="All destinations" title="All destinations (⌥⌘S)" onClick={onMore}><Icon name="panel" /></button>
+  const openArea = (id: SpaceAreaId) => { goArea(id); if (compact) onClose(); };
+  const openView = (id: Tab) => { go(id); if (compact) onClose(); };
+  return <>
+    <nav className="workbench-areas" aria-label="Workspace navigation" onKeyDown={(event) => {
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
+      const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (at < 0) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (at + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    }}>
+      {SPACE_AREAS.map(area => {
+        const active = current.id === area.id;
+        const count = area.id === 'fleet' ? needs : area.id === 'work' ? running : area.id === 'automation' ? runsInFlight : null;
+        return <div key={area.id} className={`workbench-area${area.id === 'settings' ? ' workbench-area-settings' : ''}`}>
+          <button type="button" className="workbench-area-button" aria-label={area.label}
+            aria-current={active ? 'page' : undefined} data-nav-tab={active ? tab : area.tabs[0]} tabIndex={active ? 0 : -1}
+            data-initial-focus={active ? true : undefined} onClick={() => openArea(area.id)}>
+            <Icon name={area.icon} /><span>{area.label}</span>
+            {count !== null && count > 0 && <span className="workbench-area-count" aria-label={area.id === 'fleet' ? `${count} need you` : `${count} active`}>{count}</span>}
+          </button>
+          {active && area.tabs.length > 1 && <nav className="workbench-local-routes" aria-label={`${area.label} views`}>
+            {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id}
+              aria-current={id === tab ? 'page' : undefined} aria-keyshortcuts={TAB_SHORTCUTS[id].aria}
+              title={`${labelForTab(id)} (${TAB_SHORTCUTS[id].label})`} onClick={() => openView(id)}>
+              <span className="nav-tab-label">{labelForTab(id)}</span><span className="nav-tab-chord" aria-hidden="true">{TAB_SHORTCUTS[id].label}</span>
+            </button>)}
+          </nav>}
+          {area.id === 'fleet' && attentionAction}
+          {area.id === 'automation' && <>
+            {batchWork && <div className="workbench-batch-status"><span>{batchWork.done} / {batchWork.total} batch requests</span>
+              <progress className="workbench-batch-progress" value={batchWork.done} max={batchWork.total}
+                aria-label={`${batchWork.done} of ${batchWork.total} batch requests returned`} /></div>}
+            {batchAction}
+          </>}
+        </div>;
+      })}
     </nav>
-    <button className="space-settings" type="button" aria-label="Settings" onClick={() => go('settings')}>
-      <Icon name={TAB_ICONS.settings} />
-    </button>
-  </footer>;
+    <div className="workbench-navigation-companion">{companion ?? <span className="workbench-local-note">Local workspace</span>}</div>
+  </>;
 }

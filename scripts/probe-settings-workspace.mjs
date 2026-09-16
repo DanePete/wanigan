@@ -104,7 +104,7 @@ try {
     await choose('automation');
     assert.equal(await page.locator('#spend-cap').inputValue(), '17.75');
     assert.deepEqual(await page.evaluate(() => window.__settingsCalls), []);
-    await page.locator('[data-section-title="Spending"]').getByRole('button',{name:'Save',exact:true}).click();
+    await page.locator('[data-section-title="Batch submission limit"]').getByRole('button',{name:'Save',exact:true}).click();
     assert.deepEqual(await page.evaluate(() => window.__settingsCalls), [['settings','setSpendCap',17.75]]);
     record('category changes preserve the same mounted credential field and spend-cap draft; only deliberate Save writes the entered cap');
 
