@@ -1,66 +1,35 @@
+import { DIGIT_SLOTS, iconMap, routeRows, shortcutMap, shortcutOrder, type RouteRow } from './view-module.ts';
+import { VIEW_AREAS, VIEWS, type Tab } from './view-registry.ts';
 import { SPACE_AREAS } from './spaces.ts';
 
-/**
- * The route table: every destination the shell can show, with the label the
- * rail prints, the group the palette and a future sidebar and menu bar sort it
- * under, and the shortcut that reaches it. Pure data with no closures, like
- * shared/palette.ts, so the main-process smoke suite can hold it to account
- * and the cheat sheet, the palette, the key handler and the tab titles all
- * read the same record rather than four copies that drift.
- *
- * Every destination, in ⌘1–9 order. `hint` is a sentence about what the
- * surface does, not a restatement of its label: the palette prints it under
- * the view's name, and "Explore view" told a newcomer nothing about which of
- * them held the thing they were looking for. The palette was once the only
- * route to the views the rail could not fit; SIDEBAR_GROUPS carries all
- * fifteen now, so the hint earns its keep by being searched rather than by
- * being the only description anywhere. It is matched, not just printed:
- * filterPalette tests the query against the title, the hint and the keywords
- * as one string, and surviving rows keep their order in this table rather than
- * being ranked. So a word left in a hint after the feature it named moved
- * somewhere else does not merely mislead a reader — it puts this view in the
- * results above the row that actually owns the thing they typed.
- */
-export const TABS = [
-  { id: 'sessions',  label: 'Sessions',  group: 'Projects',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
-  { id: 'fleet',     label: 'Fleet',     group: 'Fleet',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Review',   group: 'Review',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'control goals goal dockets tasks work graph' },
-  { id: 'batches',   label: 'Batches',   group: 'Automation',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
-  { id: 'insights',  label: 'Insights',  group: 'Fleet', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
-  { id: 'learning',  label: 'Learning',  group: 'Knowledge', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
-  { id: 'plugins',   label: 'Plugins',   group: 'Knowledge', hint: 'Claude Code’s own plugins and marketplaces, read from this machine', keywords: 'claude code marketplace integrations' },
-  { id: 'schedules', label: 'Schedules', group: 'Automation', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
-  { id: 'git',       label: 'Changes',       group: 'Projects',  hint: 'History, working tree, branches, stashes and the review gate for one repository', keywords: 'git changes commits diffs stashes review' },
-  { id: 'runs',      label: 'Runs',      group: 'Automation',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
-  { id: 'settings',  label: 'Settings',  group: 'Settings',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
-  { id: 'skills',    label: 'Skills',    group: 'Knowledge', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },
-  { id: 'context',   label: 'Context',   group: 'Projects', hint: 'Instructions, memory and configuration, per project',     keywords: 'instructions memory configuration' },
-  // Scout reads allow-listed public sources and proposes product changes. It
-  // shares no table, IPC namespace or scope control with Learning, and it was
-  // only ever findable as a tab inside it.
-  { id: 'scout',     label: 'Scout',     group: 'Knowledge', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
-  // Past the digit row deliberately. ⌘1–9 read positionally out of this list,
-  // so an entry inserted beside Insights would quietly move every shortcut
-  // after it; Usage takes a named chord instead.
-  { id: 'usage',     label: 'Usage',     group: 'Fleet', hint: 'What is left on each account, and what you actually spent', keywords: 'usage limits quota remaining left rate limit weekly session plan account work personal model burn' },
-  // The board reads the same tickets Control does, across every goal and
-  // project at once, in columns. Control answers "how is this one goal going";
-  // this answers "what is outstanding, and what am I doing about it today" —
-  // which spans goals and is therefore a different surface, not a tab inside
-  // one. Appended past the digit row for the reason stated above Usage.
-  { id: 'board',     label: 'Board',     group: 'Projects',    hint: 'Every ticket across every goal, in columns, to start, retry or park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
-  { id: 'mission', label: 'Home', group: 'Home', hint: 'Your companion and a briefing across project spaces', keywords: 'home mission room orb assistant companion chat overview spaces' },
-  // Wanigan's own installable bundles — MCP servers, skills, gates and
-  // instructions somebody declared and somebody else installs. Deliberately a
-  // different word from the Plugins row above, which reads Claude Code's
-  // plugins out of ~/.claude: those are installed by Claude Code's own CLI and
-  // are not ours to enable. One word for both would make the two rows
-  // unanswerable from the sidebar, and the keywords below are why searching
-  // "plugin" still finds this one.
-  { id: 'extensions', label: 'Extensions', group: 'Knowledge', hint: 'Install MCP servers and skills as one bundle, or package your own', keywords: 'extension plugin marketplace shop install mcp figma bundle author publish' },
-] as const;
+export type { Tab };
 
-export type Tab = (typeof TABS)[number]['id'];
+/**
+ * The route table, derived rather than hand-kept.
+ *
+ * Before this conversion, `TABS`, `TAB_ICONS`, `TAB_SHORTCUTS`,
+ * `VIEW_SHORTCUT_ORDER` and `Tab` itself were five hand-written tables in this
+ * file — part of the seven-places problem `view-registry.ts` describes.
+ * `VIEWS` and `VIEW_AREAS` now declare every destination once, and
+ * `view-module.ts` holds the derivations that turn that declaration back into
+ * the shapes this file's consumers already import. This file is what is left:
+ * the wiring that names each derivation under the export a caller already
+ * reaches for, so no importer of `routes.ts` had to change for this conversion
+ * to be reviewable as a move. The per-destination decisions that used to sit
+ * beside a row here — why Scout is ⌘⇧I, why Board is appended past the digit
+ * row, why Extensions is a different word from Plugins — live once now, as
+ * comments beside the view they explain in `view-registry.ts`, rather than a
+ * second time here.
+ *
+ * `TABS` still prints in ⌘1–9 order, because `VIEWS` is declared in that order
+ * for exactly that reason (see `view-registry.ts`). `hint` is still a sentence
+ * about what the surface does, not a restatement of its label: the palette
+ * matches a query against the title, the hint and the keywords as one string,
+ * and surviving rows keep this table's order rather than being ranked — so a
+ * stale word left in a hint after the feature it named moved elsewhere still
+ * outranks the view that actually owns the thing somebody typed.
+ */
+export const TABS: readonly RouteRow<Tab>[] = routeRows(VIEWS, VIEW_AREAS);
 
 /**
  * The icon each destination wears in the sidebar. Data, not decoration: it is
@@ -68,77 +37,42 @@ export type Tab = (typeof TABS)[number]['id'];
  * beside it — a sidebar of glyphs alone is a quiz. Names match the small
  * inline set in components/bits.tsx.
  */
-export const TAB_ICONS = {
-  mission: 'compass',
-  sessions: 'terminal',
-  fleet: 'grid',
-  control: 'target',
-  batches: 'layers',
-  insights: 'chart',
-  learning: 'brain',
-  plugins: 'plug',
-  schedules: 'clock',
-  git: 'branch',
-  runs: 'play',
-  settings: 'sliders',
-  skills: 'book',
-  context: 'file-text',
-  scout: 'compass',
-  usage: 'gauge',
-  board: 'columns',
-  extensions: 'plug',
-} as const satisfies Record<Tab, string>;
+export const TAB_ICONS: Record<Tab, string> = iconMap(VIEWS);
 
 /** The order the sidebar lists destinations in, grouped by the job they serve. */
 export const SIDEBAR_GROUPS: readonly { group: string; tabs: readonly Tab[] }[] =
   SPACE_AREAS.map(area => ({ group: area.label, tabs: area.tabs }));
 
-/** How many leading TABS entries the digit row reaches: ⌘1 through ⌘9. */
-export const DIGIT_ROUTES = 9;
+/**
+ * How many leading `TABS` entries the digit row reaches: ⌘1 through ⌘9. Equal
+ * to `view-module.ts`'s `DIGIT_SLOTS`, which is what a `digit: true` view is
+ * validated against; kept under this name because it is the one other files
+ * already import.
+ */
+export const DIGIT_ROUTES = DIGIT_SLOTS;
 
 /**
  * The direct routes, written out once so the rail, the palette, the cheat
- * sheet and the key handler cannot drift apart. ⌘1–9 follow the first nine
- * TABS entries and ⌘0 takes Runs; the surfaces past the digit row get named
- * chords rather than a blank shortcut column that implies they cannot be
- * reached at all. `aria` is the aria-keyshortcuts string, and it is also what
- * the key handler matches against, so a published chord is a working chord.
+ * sheet and the key handler cannot drift apart. ⌘1–9 go to the nine views
+ * `VIEWS` marks `digit: true`, and every other surface carries the named chord
+ * recorded on its own entry in `view-registry.ts`. `aria` is the
+ * aria-keyshortcuts string, and it is also what the key handler matches
+ * against, so a published chord is a working chord.
  */
-export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
-  mission:   { label: '⌘⇧H', aria: 'Meta+Shift+H Control+Shift+H' },
-  sessions:  { label: '⌘1', aria: 'Meta+1 Control+1' },
-  fleet:     { label: '⌘2', aria: 'Meta+2 Control+2' },
-  control:   { label: '⌘3', aria: 'Meta+3 Control+3' },
-  batches:   { label: '⌘4', aria: 'Meta+4 Control+4' },
-  insights:  { label: '⌘5', aria: 'Meta+5 Control+5' },
-  learning:  { label: '⌘6', aria: 'Meta+6 Control+6' },
-  plugins:   { label: '⌘7', aria: 'Meta+7 Control+7' },
-  schedules: { label: '⌘8', aria: 'Meta+8 Control+8' },
-  git:       { label: '⌘9', aria: 'Meta+9 Control+9' },
-  runs:      { label: '⌘0', aria: 'Meta+0 Control+0' },
-  settings:  { label: '⌘,', aria: 'Meta+, Control+,' },
-  skills:    { label: '⌘⇧S', aria: 'Meta+Shift+S Control+Shift+S' },
-  context:   { label: '⌘⇧C', aria: 'Meta+Shift+C Control+Shift+C' },
-  usage:     { label: '⌘⇧U', aria: 'Meta+Shift+U Control+Shift+U' },
-  // I for Improvement Scout — S and C are taken. On macOS, the platform this
-  // ships to, ⌘⇧I is free: the inspector is ⌥⌘I there.
-  scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
-  // B for Board. Free on macOS, and the digit row is full.
-  board:     { label: '⌘⇧B', aria: 'Meta+Shift+B Control+Shift+B' },
-  // E for Extensions. X reads as "close" on every other surface in this app.
-  extensions: { label: '⌘⇧E', aria: 'Meta+Shift+E Control+Shift+E' },
-};
+export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = shortcutMap(VIEWS);
 
 /**
  * The view rows of the cheat sheet, in the order a reader expects: the digit
- * row, ⌘0, ⌘, and then the named chords. Derived from the tables above so a
- * route added to TABS appears here in the same change, which is the promise
- * the sheet's header makes.
+ * row, then everything else. `shortcutOrder` puts every `digit` view first, in
+ * `VIEWS` order, and every remaining view after, also in `VIEWS` order — so a
+ * route added to `VIEWS` appears here in the same change, and there is no
+ * hand-listed tail left to drift out of step with the digit row. There used to
+ * be one: this table's old hand-listed tail had Extensions before Home, and
+ * `TABS` had already reached Home first. Deriving the order resolves that
+ * drift by construction rather than pinning it as a finding — see
+ * `view-registry.ts` and this conversion's commit message.
  */
-export const VIEW_SHORTCUT_ORDER: readonly Tab[] = [
-  ...TABS.slice(0, DIGIT_ROUTES).map((item) => item.id),
-  'runs', 'settings', 'skills', 'context', 'scout', 'usage', 'board', 'extensions', 'mission',
-];
+export const VIEW_SHORTCUT_ORDER: readonly Tab[] = shortcutOrder(VIEWS);
 
 export function labelForTab(id: Tab): string {
   return TABS.find((item) => item.id === id)?.label ?? id;

@@ -70,7 +70,7 @@ if (MEASURE) {
 // reviewed when both of its themes have been looked at, and half of what goes
 // wrong in a theme (a hard-coded colour, a border that vanishes) is invisible
 // in the other one.
-const ROUTES = ['sessions', 'fleet', 'control', 'batches', 'insights', 'usage', 'learning',
+const ROUTES = ['mission', 'sessions', 'board', 'relay', 'fleet', 'control', 'batches', 'insights', 'usage', 'learning',
                 'scout', 'skills', 'context', 'plugins', 'git', 'runs', 'schedules', 'settings'];
 for (const theme of ['dark', 'light']) {
   const bg = await setTheme(theme);

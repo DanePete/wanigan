@@ -38,7 +38,7 @@ export function createDemoWorkspace(now = Date.now()) {
     activeSeconds: i ? 300 : 900, commits: i ? 0 : 1, lastAt: now - 12_000,
   }]));
   const settings: WaniganSettings = {
-    spendCapUsd: 1, motion: 'full', navSidebar: 'closed', theme: 'dark', telemetry: false, hooks: false,
+    spendCapUsd: 1, motion: 'full', fluid: 'auto', navSidebar: 'closed', theme: 'dark', telemetry: false, hooks: false,
     statusLine: false, tracesBeta: false, checkpoints: false, archiveTranscripts: false, notifications: false, mcpServerEnabled: false,
     pet: false, mobileRepositoryReview: false, assistedByTrailers: false, defaultTrust: 'project', eventRetentionDays: 30, sandboxShell: 'off',
     slots: { session: 4, headless: 2, batch: 1, scout: 1, node: 4 },

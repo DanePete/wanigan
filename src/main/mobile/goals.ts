@@ -377,7 +377,7 @@ const TASK_STATUSES = new Map<string, MobileGoalTaskStatus>([
   ['failed', 'failed'], ['canceled', 'canceled'], ['blocked', 'blocked'],
 ]);
 const TASK_KINDS = new Map<string, DocketNodeKind>([
-  ['plan', 'plan'], ['implement', 'implement'], ['verify', 'verify'], ['review', 'review'],
+  ['plan', 'plan'], ['estimate', 'estimate'], ['implement', 'implement'], ['verify', 'verify'], ['review', 'review'],
 ]);
 const PROOF_KINDS = new Map<string, MobileGoalProof['kind']>([
   ['plan', 'plan'], ['test', 'test'], ['diff', 'diff'], ['review', 'review'], ['decision', 'decision'],

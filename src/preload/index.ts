@@ -25,6 +25,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
+  RelayCreateInput, RelayForecast, RelayRead,
   BackupCheck, BackupRestoreSummary, BackupSummary, AttachmentReclaimPlan, AttachmentReclaimReport,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   BoardCard, CodexAgentsChain, HaltState, InAppAlert, MobileAlertChannels, Interview, InterviewProposal, InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
@@ -706,6 +707,20 @@ const api = {
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
     /** The plan captured from this goal's planning session; the agent's text. */
     plan: (docketId: string) => call<import('../shared/types').GoalPlan | null>('control:plan', docketId),
+  },
+  // ── relay · a staged pipeline with per-stage routing ─────────────────
+  //
+  // A relay is a goal (control above) created from one intent with every
+  // agent stage routed first. Its stages start through `control.start`; these
+  // calls create, read, price and list it. Nothing here launches an agent.
+  relay: {
+    create: (input: RelayCreateInput) => call<RelayRead>('relay:create', input),
+    read: (docketId: string) => call<RelayRead>('relay:read', docketId),
+    /** The forecast, recomputed now from this project's history. Local, free, and always an estimate. */
+    forecast: (docketId: string) => call<RelayForecast>('relay:forecast', docketId),
+    /** Run the estimate phase by hand when it is ready and did not run itself. */
+    estimate: (docketId: string) => call<RelayRead>('relay:estimate', docketId),
+    list: (projectId: string, limit?: number) => call<WorkDocket[]>('relay:list', projectId, limit),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

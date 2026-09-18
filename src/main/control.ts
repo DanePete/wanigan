@@ -37,6 +37,8 @@ type DocketRow = {
   created_at: number; updated_at: number;
   autopilot: number; autopilot_provider: string | null; autopilot_model: string | null;
   gate_on_stop: number; return_failures: number;
+  /** 1 when the goal was created as a relay (relay.ts), which is the only kind that hands a failed review back on its own. */
+  relay: number;
 };
 type NodeRow = {
   id: string; docket_id: string; kind: string; title: string; instructions: string; depends_json: string;
@@ -47,7 +49,8 @@ type NodeRow = {
   gate_returns: number;
 };
 
-const MAX_OBJECTIVE = 12_000;
+/** Longest objective a goal takes. Exported so a relay's intent is bounded by the same number, not a second one. */
+export const MAX_OBJECTIVE = 12_000;
 const MAX_NOTE = 4_000;
 const MAX_INSTRUCTIONS = 8_000;
 const RISKS: DocketRisk[] = ['low', 'elevated', 'high'];
@@ -87,6 +90,44 @@ const now = () => Date.now();
  * or, for a gate an agent's stop asked for, folded into the one running.
  */
 const gateRuns = new Map<string, { since: number; trigger: ProofTrigger }>();
+
+/**
+ * What `completeNode` tells whoever asked to be told, after the decision is
+ * durable.
+ *
+ * This is the one transition seam Control offers, and it is deliberately
+ * narrow: a listener learns that a task settled and how, and nothing else
+ * about it. The relay module registers here to run the estimate phase when a
+ * plan completes and to hand a failed review back to its implementer, so that
+ * neither this module nor `completeNode` has to know a relay exists — the same
+ * arrangement `registerHaltStopper` in halt.ts makes for the halt.
+ */
+export type CompletionEvent = {
+  docketId: string;
+  nodeId: string;
+  kind: DocketNodeKind;
+  status: 'completed' | 'failed';
+  decision: 'approve' | 'request_changes' | 'reject';
+  /** Whether the goal was created as a relay. An ordinary goal never hands back on its own. */
+  relay: boolean;
+};
+export type CompletionListener = (event: CompletionEvent) => Promise<void> | void;
+const completionListeners: CompletionListener[] = [];
+
+/**
+ * Register for completions. Listeners run after the transaction commits and
+ * are awaited in order, so a listener that itself completes a task opens its
+ * own transaction against a decision that is already on disk. A listener owns
+ * its own failures: one that throws fails the completion call that fired it,
+ * so a listener that can fail records the failure and returns.
+ */
+export function registerCompletionListener(listener: CompletionListener): () => void {
+  completionListeners.push(listener);
+  return () => {
+    const at = completionListeners.indexOf(listener);
+    if (at >= 0) completionListeners.splice(at, 1);
+  };
+}
 
 /**
  * The commit a goal or checkpoint was recorded against.
@@ -646,6 +687,13 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const node = readyNode(nodeId); const parent = docketRow(node.docketId);
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This goal’s project no longer exists.');
+  // Refused before a provider is even named: the estimate phase is Wanigan's
+  // own arithmetic over this project's history (relay.ts), and an agent
+  // launched into it would spend tokens producing a guess where a query
+  // produces a record.
+  if (node.kind === 'estimate') {
+    throw new Error('The estimate phase is Wanigan’s own computation from this project’s history and starts no agent. It runs when the plan before it completes, or from the Relay view.');
+  }
   const providerId = safeText(input.providerId, 'Provider', 120);
   // Refuse before taking a claim or launching an agent. A shared verifier
   // cannot be handed one arbitrary branch and told it contains the whole goal.
@@ -1099,7 +1147,7 @@ export async function completeNode(nodeId: string, input: { detail?: string; dec
   // Reading the filesystem yields to other decisions and new gate results.
   // Re-check their exact identities under the same database transaction as the
   // decision, so another process cannot replace one between the check and write.
-  return db().transaction(() => {
+  const settled = db().transaction(() => {
     const freshNodes = rawNodes(parent.id);
     if (JSON.stringify(freshNodes) !== graphBefore || JSON.stringify(docketRow(parent.id)) !== parentBefore
       || (projectById(parent.project_id)?.path ?? null) !== projectPath
@@ -1172,6 +1220,14 @@ export async function completeNode(nodeId: string, input: { detail?: string; dec
     else setDocketPhase(parent.id);
     return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
   })();
+  // After the commit, never inside it: see registerCompletionListener.
+  for (const listener of completionListeners) {
+    await listener({
+      docketId: parent.id, nodeId, kind: current.kind, status: decision === 'approve' ? 'completed' : 'failed',
+      decision, relay: parent.relay === 1,
+    });
+  }
+  return settled;
 }
 
 /**
@@ -1732,10 +1788,13 @@ export function recordHandBack(proofId: string, handBack: NonNullable<GateProofD
  * autopilot task is recovered after a crash by exactly the same machinery that
  * recovers a headless run, and a second Wanigan process cannot double-start it.
  *
- * Two tasks are never dispatched. A `review` task is the human decision, and an
- * agent sent to it would let the goal approve its own work — the gate this
- * whole module exists to hold. And a goal whose reported spend has reached
- * its budget stops, rather than continuing on the strength of costs nobody
+ * Three tasks are never dispatched. A `review` task is the human decision, and
+ * an agent sent to it would let the goal approve its own work — the gate this
+ * whole module exists to hold. An `estimate` task is Wanigan's own query over
+ * this project's history (relay.ts) and runs itself when the plan before it
+ * completes; an agent launched into it would be spending tokens to guess at a
+ * number a query records. And a goal whose reported spend has reached its
+ * budget stops, rather than continuing on the strength of costs nobody
  * reported.
  */
 export function sweepAutopilot(): number {
@@ -1763,7 +1822,7 @@ export function sweepAutopilot(): number {
       continue;
     }
     for (const node of mapNodes(rawNodes(row.id))) {
-      if (node.status !== 'ready' || node.kind === 'review') continue;
+      if (node.status !== 'ready' || node.kind === 'review' || node.kind === 'estimate') continue;
       // The marker is claimed in the same statement that tests it, so two
       // ticks — or two processes on this database — cannot both enqueue it.
       const claimed = db().transaction(() => {
@@ -1793,7 +1852,7 @@ export async function startQueuedNode(nodeId: string): Promise<void> {
   const node = nodeRow(nodeId);
   const parent = docketRow(node.docket_id);
   const mapped = mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId);
-  if (parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review') {
+  if (parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review' || mapped.kind === 'estimate') {
     clearDispatch(nodeId);
     return;
   }

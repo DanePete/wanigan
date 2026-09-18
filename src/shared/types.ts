@@ -1398,7 +1398,7 @@ export type ReviewRun = {
 /** A Docket is the human-owned contract for a piece of agent work. */
 export type DocketStatus = 'draft' | 'executing' | 'review' | 'accepted' | 'rejected' | 'blocked';
 export type DocketRisk = 'low' | 'elevated' | 'high';
-export type DocketNodeKind = 'plan' | 'implement' | 'verify' | 'review';
+export type DocketNodeKind = 'plan' | 'estimate' | 'implement' | 'verify' | 'review';
 export type DocketNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'canceled' | 'blocked';
 
 export type WorkDocket = {
@@ -1465,14 +1465,19 @@ export type DocketPlanNode = {
 };
 
 /**
- * The four task kinds, as a runtime list beside the union.
+ * The five task kinds, as a runtime list beside the union, in pipeline order.
  *
  * Validation in the main process interpolates this array straight into the
  * refusal a planner reads, so the order is part of the message. Anything that
- * offers the choice reads the same four words from here rather than retyping
- * them and quietly gaining a fifth.
+ * offers the choice reads the same five words from here rather than retyping
+ * them and quietly gaining a sixth.
+ *
+ * `estimate` is the one kind that runs no agent: it prices the plan from this
+ * project's own recorded history (src/main/relay.ts) and completes itself. It
+ * sits between plan and implement so the hold for approval can say what the
+ * approval will cost.
  */
-export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
+export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'estimate', 'implement', 'verify', 'review'];
 
 /** A docket is one reviewable contract. Past this, split it. */
 export const MAX_DOCKET_PLAN_NODES = 40;
@@ -1481,23 +1486,30 @@ export const MAX_DOCKET_NODE_DEPENDENCIES = 16;
 /**
  * The shape a docket gets when nobody proposed a graph.
  *
- * It is the same four phases Control always created, expressed as a plan so
- * there is exactly one code path that writes nodes. A planner that proposes
- * something richer is validated by the same rules this passes trivially.
+ * It is the four phases Control always created plus the estimate between plan
+ * and implement, expressed as a plan so there is exactly one code path that
+ * writes nodes. A planner that proposes something richer is validated by the
+ * same rules this passes trivially.
  *
  * It sits in shared rather than in the main process because the renderer's
  * plan editor seeds a new graph from this same array. A second copy of the
  * instruction text would read as identical and then drift, and the operator
  * would be editing phases that are not the ones main would have written.
+ *
+ * `dependsOn` holds indices into this array, so inserting a phase means
+ * renumbering every edge after it — which is why the estimate was added here
+ * with the three edges below it rewritten in the same change.
  */
 export const DEFAULT_DOCKET_PLAN: readonly DocketPlanNode[] = [
   { kind: 'plan', title: 'Plan and identify risks', dependsOn: [],
     instructions: 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.' },
-  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [0],
+  { kind: 'estimate', title: 'Forecast the cost from this project’s history', dependsOn: [0],
+    instructions: 'Wanigan runs this phase itself: it prices the phases after this one from the median duration and reported cost of completed phases of the same kind on this project, at the same provider, model and effort. No agent, no provider call, no spend. With too little comparable history it records that there is not enough history yet rather than a number.' },
+  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [1],
     instructions: 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.' },
-  { kind: 'verify', title: 'Verify the change', dependsOn: [1],
+  { kind: 'verify', title: 'Verify the change', dependsOn: [2],
     instructions: 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.' },
-  { kind: 'review', title: 'Independent review and decision', dependsOn: [2],
+  { kind: 'review', title: 'Independent review and decision', dependsOn: [3],
     instructions: 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.' },
 ];
 
@@ -1618,7 +1630,14 @@ export type DocketProof = {
   id: string;
   docketId: string;
   nodeId: string | null;
-  kind: 'plan' | 'test' | 'diff' | 'review' | 'decision';
+  /**
+   * `route` is which provider, model and effort a stage was routed to and why,
+   * written once per routed node when a relay is created; `estimate` is the
+   * forecast the estimate phase drew from this project's history. Both keep
+   * their full record in `detail_json` on the Mac and cross to the phone as
+   * `summary` only, like every other kind.
+   */
+  kind: 'plan' | 'test' | 'diff' | 'review' | 'decision' | 'route' | 'estimate';
   status: 'recorded' | 'passed' | 'failed';
   summary: string;
   createdAt: number;
@@ -1687,6 +1706,104 @@ export type DocketDetail = WorkDocket & {
   checkpoints: DocketCheckpoint[];
   /** Commands in the project's review gate, so a gate setting can say why it cannot turn on beside the control. */
   reviewCommands: number;
+};
+
+/* ── Relay · a staged pipeline with per-stage routing ─────────────── */
+
+/**
+ * What the operator may pin on a stage before the relay exists: a profile, a
+ * model, an effort. Every value is checked in the main process against what
+ * that profile actually declares, and one it does not declare refuses the
+ * whole relay with the router's own sentence rather than being moved to the
+ * nearest legal value (src/shared/relay-route.ts).
+ */
+export type RelayRouteInput = Partial<Record<DocketNodeKind, { providerId?: string; model?: string; effort?: string }>>;
+
+export type RelayCreateInput = {
+  projectId: string;
+  /** The outcome in the operator's words. Becomes the docket's objective. */
+  intent: string;
+  /** The profile every stage runs on unless `routes` names another for it. */
+  providerId: string;
+  routes?: RelayRouteInput;
+  /** Acceptance checks; with none, Wanigan writes its two standard ones. */
+  acceptance?: string[];
+};
+
+/** The router's decision as `src/shared/relay-route.ts` declares it — one declaration, referenced here. */
+export type RelayStageRoute = import('./relay-route.ts').StageRoute;
+
+/**
+ * Which history a phase's numbers were drawn from, weakest last. `exact` is
+ * the same provider, model and effort; `model` drops the effort; `provider`
+ * drops the model too; `none` is fewer comparable phases than the minimum at
+ * every rung, and carries no number at all.
+ */
+export type RelayForecastBasis = 'exact' | 'model' | 'provider' | 'none';
+
+export type RelayPhaseForecast = {
+  nodeId: string;
+  kind: DocketNodeKind;
+  /** The route this phase is priced at. */
+  route: { providerId: string | null; model: string | null; effort: string | null };
+  /** Comparable completed phases the duration was drawn from. */
+  n: number;
+  /** How many of those carried a cost their provider actually reported. The dollar figure is drawn from these alone. */
+  nPriced: number;
+  basis: RelayForecastBasis;
+  medianMs: number | null;
+  medianUsd: number | null;
+};
+
+/**
+ * What the phases of a docket are likely to take and cost, from this project's
+ * own recorded history and nothing else. Every number travels with the N it
+ * was drawn from and the rung it was drawn at, and a total exists only when
+ * every phase has a number: three priced phases of four summed and shown as
+ * the total would be the invented figure this surface refuses.
+ */
+export type RelayForecast = {
+  perPhase: RelayPhaseForecast[];
+  totalMs: number | null;
+  totalUsd: number | null;
+  /** The smallest N any number above was drawn from; 0 when none was. */
+  n: number;
+  /** Phases that got a number, over phases the plan holds — the estimate basin's gauge. */
+  priced: number;
+  phases: number;
+  /** Always `estimate`: nothing here fixes provider, model, effort and commit in a controlled run. */
+  evidenceLevel: EvidenceLevel;
+  computedAt: number;
+};
+
+export type RelayNodeRead = {
+  nodeId: string;
+  /** The effort recorded on the node, or null when nobody named one. */
+  effort: string | null;
+  /** Automatic hand-backs this task has taken since it was created. */
+  handbacks: number;
+  /**
+   * When this node's session finished its most recent tool calls, oldest
+   * first, at most the last 64. The renderer derives the basin's breathing
+   * period and its silt from these (src/shared/relay.ts); nothing is computed
+   * here so the same arithmetic runs in `test:shared`.
+   */
+  completions: number[];
+  /** Every completed tool call of that session, counted — the number the pile shows once it is full. */
+  completed: number;
+  /** The latest recorded route for this node, or null for a node that runs no agent. */
+  route: { proofId: string; createdAt: number; providerId: string | null; route: RelayStageRoute } | null;
+};
+
+export type RelayRead = {
+  docket: DocketDetail;
+  /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */
+  relay: boolean;
+  nodes: RelayNodeRead[];
+  /** The latest recorded estimate, or null until the estimate phase has run. */
+  forecast: RelayForecast | null;
+  /** The cap on automatic hand-backs, so the counter can be drawn against it. */
+  handbackLimit: number;
 };
 
 /**
@@ -2622,6 +2739,15 @@ export type LedgerEntry = {
 export type MotionSetting = 'auto' | 'full' | 'off';
 
 /**
+ * Whether the Relay rail's water is the real Position Based Fluids surface or
+ * the CSS body that renders the same facts without it. `auto` installs the
+ * module when the device can run it; the tier itself is computed by
+ * `fluidTier` in `relay-rig.ts` from this setting, WebGL2 availability, the
+ * motion setting and the OS preference.
+ */
+export type FluidSetting = 'auto' | 'on' | 'off';
+
+/**
  * Colour is a presentation preference, never a guess based on ambient light.
  * `system` follows macOS (and changes with it); the other values deliberately
  * win until the operator switches back.
@@ -2635,6 +2761,8 @@ export type WaniganSettings = {
   [explainer: `explainer.${string}`]: 'hidden' | 'shown';
   spendCapUsd: number;
   motion: MotionSetting;
+  /** Whether the Relay rail renders the real fluid module or its CSS fallback. */
+  fluid: FluidSetting;
   /** Whether the destination sidebar is showing. Persisted, not per-window. */
   navSidebar: 'open' | 'closed';
   theme: ThemeSetting;

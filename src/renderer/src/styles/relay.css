@@ -1,0 +1,312 @@
+/* relay — the sluice. Imported by views/Relay.tsx, not by index.css.
+
+   One apparatus, one body of water. Five open vessels with funnel floors run
+   DOWNWARD, each with a gated drain into a pipe that feeds the vessel below.
+   The vessels, gates and pipes are an SVG the view draws from the geometry in
+   src/shared/relay-rig.ts; the water is either the fluid module's canvas (the
+   companion's Position Based Fluids solver against the rig as its boundary) or,
+   without that module, the SVG level and stream this sheet animates itself.
+   Gravity is the engine: a completing phase does not fade into the next, its
+   gate parts and it lets go.
+
+   This sheet obeys motion.css and adds nothing to its vocabulary. Every
+   animated property is transform or opacity, every duration is a token, and
+   the one loop here — the level's swell at a MEASURED cadence — switches off
+   under motion-off and reduced-motion explicitly, because `--mo-period` is not
+   zeroed by either and a second copy of that override is how the two drift.
+
+   Geometry reaches CSS through custom properties written on a ref with
+   setProperty — the same channel motion.css intends for `--mo-period`, and the
+   one the spec keeps for measured values — never through an inline style
+   object. `--rl-w` and `--rl-h` are the rig's world size and `--rl-y` a tag's
+   world offset, all from relay-rig.ts, so the world constants live in one
+   file. `--rl-unit` below is the pixel scale of one world unit, expressed in
+   the spacing system rather than as a bare length. */
+
+:root {
+  --rl-unit: calc(var(--s-6) * 3.6);
+}
+
+/* ── the rig ─────────────────────────────────────────────────────────── */
+
+.rl-rig {
+  position: relative;
+  inline-size: calc(var(--rl-unit) * var(--rl-w, 2.4));
+  block-size: calc(var(--rl-unit) * var(--rl-h, 6.7));
+  max-inline-size: 100%;
+}
+
+.rl-rig > svg,
+.rl-rig > canvas {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.rl-rig > svg { overflow: visible; }
+.rl-rig > canvas { pointer-events: none; }
+.rl-rig > canvas[hidden] { display: none; }
+
+/* glass: a faint fill and a lit edge, both from the accent */
+.rl-vessel { fill: color-mix(in srgb, var(--accent) 6%, transparent); }
+.rl-wall {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.rl-wall-soft { fill: none; stroke: var(--line); stroke-width: 1; }
+
+/* ── the gate ────────────────────────────────────────────────────────── */
+
+/* A vessel's floor over the drain. Shut while its phase runs; slides clear
+   when the phase completes, and stays clear — a drained vessel has nothing to
+   hold, and shutting it again would trap the last of the water as a puddle. */
+.rl-gate {
+  fill: var(--line);
+  stroke: color-mix(in srgb, var(--accent) 55%, transparent);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--mo-view) var(--mo-ease);
+}
+.rl-gate[data-rl-open='true'] { transform: translateX(110%); }
+
+/* The return line, for a hand-back: what leaves the last drain is pumped back
+   in above implement. Drawn only while that is happening. */
+.rl-return {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: 0;
+  transition: opacity var(--mo-state) linear;
+}
+.rl-return[data-rl-on='true'] { opacity: .8; }
+
+/* ── the Simple tier: the rig's own water ────────────────────────────── */
+
+/* A level sitting on the funnel and a stream in the pipe, no solver. The
+   level swells at the measured cadence — motion.css's contract, applied by the
+   view only once three completions have given it a period — and the stream
+   shows while a gate is open. Same facts as the fluid tier, no per-frame cost. */
+.rl-level {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: bottom center;
+  opacity: 0;
+  transition: opacity var(--mo-state) linear;
+}
+.rl-level[data-rl-on='true'] { opacity: .9; }
+.rl-level[data-flow='live'] { animation: rl-swell var(--mo-period) ease-in-out infinite; }
+@keyframes rl-swell {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.06); }
+}
+
+.rl-stream {
+  fill: var(--accent);
+  opacity: 0;
+  transition: opacity var(--mo-state) linear;
+}
+.rl-stream[data-rl-on='true'] { opacity: .7; }
+
+/* Exactly one tier draws the water. */
+.rl-rig[data-rl-tier='fluid'] .rl-level,
+.rl-rig[data-rl-tier='fluid'] .rl-stream { display: none; }
+
+/* ── labels etched on the glass ──────────────────────────────────────── */
+
+.rl-hud { position: absolute; inset: 0; pointer-events: none; }
+
+/* One block per vessel, top-left, above the water line. Its vertical offset
+   is the vessel's top in world units, written by the view from the rig. */
+.rl-tag {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: calc(var(--rl-unit) * var(--rl-y, 0));
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--t-micro);
+  pointer-events: auto;
+}
+.rl-tag-name {
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text);
+}
+.rl-tag-route {
+  font-family: var(--mono);
+  font-size: var(--t-tiny);
+  color: var(--text-dim);
+}
+.rl-tag-grains {
+  font-family: var(--mono);
+  font-size: var(--t-tiny);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* State, at the top right of the vessel. The word is the signal; colour only
+   agrees with it, so with motion off nothing is lost. */
+.rl-tag-state {
+  position: absolute;
+  inset-inline-end: var(--s-2);
+  inset-block-start: var(--s-1);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-pill);
+  font-size: var(--t-tiny);
+  line-height: var(--control-h-sm);
+  color: var(--accent-ink);
+  background: var(--dead);
+  transition: background var(--mo-state) linear, opacity var(--mo-state) linear;
+}
+.rl-tag-state[data-rl-v='pending'] { opacity: .5; }
+.rl-tag-state[data-rl-v='running'] { background: var(--accent); }
+.rl-tag-state[data-rl-v='completed'],
+.rl-tag-state[data-rl-v='pass'] { background: var(--ok); }
+.rl-tag-state[data-rl-v='failed'] { background: var(--bad); }
+.rl-tag-state[data-rl-v='hold'],
+.rl-tag-state[data-rl-v='stalled'] { background: var(--warn); }
+
+/* A real total gets a real <progress>. Only the estimate and verify phases
+   have one; a fill claims a denominator and the other three have none. */
+.rl-tag progress {
+  appearance: none;
+  border: 0;
+  inline-size: calc(var(--s-6) * 4);
+  block-size: var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.rl-tag progress::-webkit-progress-bar { background: transparent; }
+/* No transition: this advances on discrete recorded milestones and steps
+   between them. Tweening would draw progress for moments nothing observed. */
+.rl-tag progress::-webkit-progress-value { background: var(--accent); }
+
+/* ── sediment ────────────────────────────────────────────────────────── */
+
+/* One grain per completed tool call, settling on the funnel floor. A pile
+   that grew is a fact; a percentage of an unknown total is not, so this is
+   deliberately not a gauge. Positions are a bounded set of slots in the
+   stylesheet — the inline-style channel a computed position would need is
+   one the gate denies a new file — and each vessel picks one of eight
+   scatters by `data-rl-seed`, derived from the node id, so the same relay
+   silts up the same way twice. The slot count is pinned to SEDIMENT_CAP in
+   src/shared/relay.ts and the two must change together: a grain past the
+   last slot matches no rule and stacks in the corner, silently. */
+.rl-silt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-origin: center;
+}
+.rl-silt[data-rl-seed='1'] { transform: scaleX(-1); }
+.rl-silt[data-rl-seed='2'] { transform: translateX(4%); }
+.rl-silt[data-rl-seed='3'] { transform: translateX(-4%); }
+.rl-silt[data-rl-seed='4'] { transform: scaleX(-1) translateX(4%); }
+.rl-silt[data-rl-seed='5'] { transform: scaleX(-1) translateX(-4%); }
+.rl-silt[data-rl-seed='6'] { transform: translateY(-3%); }
+.rl-silt[data-rl-seed='7'] { transform: scaleX(-1) translateY(-3%); }
+
+.rl-grain {
+  position: absolute;
+  inline-size: var(--s-1);
+  block-size: var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  opacity: .34;
+  /* Arrives once. The view applies the class from a diff against the previous
+     snapshot, so a poll never replays it. */
+  animation: rl-settle var(--mo-view) var(--mo-ease) both;
+}
+/* Grains already on the floor when the view opened do not arrive again: the
+   first read is a baseline, and history is never replayed. */
+.rl-grain[data-rl-arrived='before'] { animation: none; }
+@keyframes rl-settle {
+  from { opacity: 0;   transform: translateY(-60%) scale(.6); }
+  70%  { opacity: .42; transform: translateY(0) scale(1.18); }
+  to   { opacity: .34; transform: translateY(0) scale(1); }
+}
+
+/* Twenty-four slots in the lower half of a vessel, a scatter rather than a
+   grid: a pile that looks counted reads as a progress bar. */
+.rl-grain[data-rl-i='0']  { inset-inline-start: 12%; inset-block-start: 74%; }
+.rl-grain[data-rl-i='1']  { inset-inline-start: 31%; inset-block-start: 82%; }
+.rl-grain[data-rl-i='2']  { inset-inline-start: 54%; inset-block-start: 70%; }
+.rl-grain[data-rl-i='3']  { inset-inline-start: 72%; inset-block-start: 84%; }
+.rl-grain[data-rl-i='4']  { inset-inline-start: 22%; inset-block-start: 64%; }
+.rl-grain[data-rl-i='5']  { inset-inline-start: 63%; inset-block-start: 77%; }
+.rl-grain[data-rl-i='6']  { inset-inline-start: 41%; inset-block-start: 88%; }
+.rl-grain[data-rl-i='7']  { inset-inline-start: 84%; inset-block-start: 72%; }
+.rl-grain[data-rl-i='8']  { inset-inline-start: 17%; inset-block-start: 86%; }
+.rl-grain[data-rl-i='9']  { inset-inline-start: 47%; inset-block-start: 62%; }
+.rl-grain[data-rl-i='10'] { inset-inline-start: 68%; inset-block-start: 90%; }
+.rl-grain[data-rl-i='11'] { inset-inline-start: 36%; inset-block-start: 73%; }
+.rl-grain[data-rl-i='12'] { inset-inline-start: 78%; inset-block-start: 65%; }
+.rl-grain[data-rl-i='13'] { inset-inline-start: 26%; inset-block-start: 92%; }
+.rl-grain[data-rl-i='14'] { inset-inline-start: 58%; inset-block-start: 86%; }
+.rl-grain[data-rl-i='15'] { inset-inline-start: 8%;  inset-block-start: 81%; }
+.rl-grain[data-rl-i='16'] { inset-inline-start: 89%; inset-block-start: 83%; }
+.rl-grain[data-rl-i='17'] { inset-inline-start: 44%; inset-block-start: 79%; }
+.rl-grain[data-rl-i='18'] { inset-inline-start: 65%; inset-block-start: 68%; }
+.rl-grain[data-rl-i='19'] { inset-inline-start: 14%; inset-block-start: 67%; }
+.rl-grain[data-rl-i='20'] { inset-inline-start: 51%; inset-block-start: 93%; }
+.rl-grain[data-rl-i='21'] { inset-inline-start: 76%; inset-block-start: 78%; }
+.rl-grain[data-rl-i='22'] { inset-inline-start: 33%; inset-block-start: 66%; }
+.rl-grain[data-rl-i='23'] { inset-inline-start: 93%; inset-block-start: 89%; }
+
+/* ── the tier badge ──────────────────────────────────────────────────── */
+
+.rl-tier { display: inline-flex; align-items: center; gap: var(--s-2); }
+.rl-tier-dot {
+  inline-size: var(--s-2);
+  block-size: var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--ok);
+}
+.rl-tier[data-rl-tier='simple'] .rl-tier-dot { background: var(--warn); }
+.rl-tier[data-rl-tier='still'] .rl-tier-dot { background: var(--dead); }
+
+/* ── the no-motion contract ──────────────────────────────────────────── */
+
+/* Values stay, movement goes. The swell is the one loop and `--mo-period` is
+   not zeroed by the motion setting, so it is switched off here by name — under
+   both the setting and the OS preference, as motion.css does for .mo-breathe. */
+:root[data-motion='off'] .rl-level,
+:root[data-motion='off'] .rl-grain,
+:root[data-motion='off'] .rl-gate,
+:root[data-motion='off'] .rl-stream,
+:root[data-motion='off'] .rl-return,
+:root[data-motion='off'] .rl-tag-state {
+  animation: none;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .rl-level,
+  :root:not([data-motion='full']) .rl-grain,
+  :root:not([data-motion='full']) .rl-gate,
+  :root:not([data-motion='full']) .rl-stream,
+  :root:not([data-motion='full']) .rl-return,
+  :root:not([data-motion='full']) .rl-tag-state {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* The PTY's pane is a no-motion zone whatever a caller put in it. */
+.terminal-host .rl-level,
+.terminal-host .rl-grain,
+.terminal-host .rl-gate,
+.terminal-host .rl-stream {
+  animation: none;
+  transition: none;
+}

@@ -5110,17 +5110,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const docket = control.createDocket({ projectId: controlProject.id, title: 'Control smoke',
       objective: 'Prove the work contract survives without a live terminal.',
       acceptance: ['Review gate passes.', 'A human review decision is recorded.'], risk: 'elevated' });
-    check(docket.nodes.length === 4 && docket.nodes[0].status === 'ready' && docket.nodes[1].status === 'blocked',
-      'a docket creates a dependency graph rather than four uncoordinated sessions');
-    // The four default phases, their kinds and the plan limits left control.ts
+    check(docket.nodes.length === 5 && docket.nodes[0].status === 'ready' && docket.nodes[1].status === 'blocked',
+      'a docket creates a dependency graph rather than five uncoordinated sessions');
+    // The five default phases, their kinds and the plan limits left control.ts
     // for shared/types so a renderer plan editor seeds from exactly what main
     // would have written. Loaded dynamically because this one check is the only
     // place the smoke needs the values, and the static import above is shared.
     const sharedPlan = await import('../shared/types');
-    check(sharedPlan.DEFAULT_DOCKET_PLAN.length === 4
+    check(sharedPlan.DEFAULT_DOCKET_PLAN.length === 5
       && sharedPlan.DEFAULT_DOCKET_PLAN.at(-1)?.kind === 'review'
-      && sharedPlan.DOCKET_NODE_KINDS.length === 4,
-      'the default docket plan still ends in review, and its four node kinds are declared once for both processes');
+      && sharedPlan.DEFAULT_DOCKET_PLAN[1]?.kind === 'estimate'
+      && sharedPlan.DOCKET_NODE_KINDS.length === 5,
+      'the default docket plan still ends in review, holds the estimate between plan and implement, and its five node kinds are declared once for both processes');
     const planNode = docket.nodes.find((node) => node.kind === 'plan')!;
     const implementNode = docket.nodes.find((node) => node.kind === 'implement')!;
     check(control.sessionGoal('unlinked-session') === null && control.sessionGoal("' OR 1=1 --") === null,
@@ -5148,7 +5149,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // every line a stored fact and the whole thing labelled a snapshot.
     const capsule = control.goalCapsuleFor(implementNode.id);
     check(capsule.nodeId === implementNode.id && capsule.docketId === docket.id && capsule.claimPath === 'src/control.ts'
-      && capsule.dependsOn.some((dep) => dep.nodeId === planNode.id && dep.status === 'ready')
+      && capsule.dependsOn.some((dep) => {
+        const prereq = docket.nodes.find((node) => node.id === dep.nodeId);
+        return prereq?.kind === 'estimate' && dep.status === prereq.status;
+      })
       && !capsule.siblingClaims.some((claim) => claim.nodeId === implementNode.id),
     'a goal capsule carries the node id, its declared claim and its prerequisites, and never lists its own claim as a sibling', capsule);
     const siblingDocket = control.createDocket({ projectId: controlProject.id, title: 'Sibling', objective: 'Hold another path.',
@@ -5255,7 +5259,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     await control.completeNode(phonePlan.id, { decision: 'request_changes', detail: 'The plan needs rework.' });
     const phoneRecord = control.docket(phoneGoal.id);
     const phoneWire = phoneGoals.mobileGoal(phoneRecord);
-    const phoneHeld = phoneWire.tasks.find((task) => task.title === phoneImplement.title);
+    // With the estimate phase between plan and implement, the task whose own
+    // prerequisite failed is the estimate; implement waits on it, unfinished.
+    const phoneHeld = phoneWire.tasks.find((task) => task.kind === 'estimate');
     const phoneWaiting = phoneWire.tasks.find((task) => task.kind === 'verify');
     // 'blocked' is two situations in one word — a prerequisite that failed, and
     // one that has not finished yet — and the operator's next move differs.
@@ -6068,7 +6074,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(control.listEvents('triaged').some((item) => item.docketId === triaged.id),
       'event triage creates a durable docket without automatically starting an agent');
     const tasks = control.mcpTasks(docket.id);
-    check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
+    check(tasks.length === 5 && tasks.some((task) => task.status === 'completed'),
       'docket nodes expose durable MCP-compatible task lifecycle state');
     // cancelMcpTask returned a bare boolean, so Control announced the same
     // sentence whether it had killed a live agent or found nothing at all.
@@ -6110,7 +6116,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && control.docket(endedGoal.id).nodes.find((node) => node.id === endedNode.id)?.status === 'completed',
       'cancelling a record whose task had already finished marks the record alone and reports that: the goal task is still completed afterwards and no claim was touched',
       endedCancel);
-    check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
+    check(tasks.length === 5 && tasks.some((task) => task.status === 'completed'),
       'docket nodes expose durable MCP-compatible task lifecycle state');
     const receiptSession = `s_receipt_${Date.now().toString(36)}`;
     const receiptConversation = '01a04e58-e0eb-7a41-82b7-ddcacf7a9038';
@@ -6828,6 +6834,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
+  // The view elements moved out of App.tsx's branch chain into a registry that
+  // is exhaustively typed over Tab — a destination with no renderer is now a
+  // compile error rather than a blank pane. Assertions about WHICH element a
+  // destination renders, and with which props, read the registry; assertions
+  // about the shell around it still read App.tsx.
+  const registrySrc = sourceOf('src/renderer/src/views/registry.tsx');
+  // Route rows — id, hint, keywords — are declared once in view-registry.ts and
+  // routes.ts derives TABS from it, so an assertion about what a row SAYS reads
+  // the registry; routes.ts no longer contains a hint to grep.
+  const viewRegistrySrc = sourceOf('src/shared/view-registry.ts');
   check(/handle\(\s*'batch:runsInFlight'/.test(mainSrc)
     && /runsInFlight:\s*\(\)/.test(preloadSrc)
     && appSrc.includes('window.wanigan.batch.runsInFlight()')
@@ -6839,7 +6855,6 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // The route table left App.tsx for shared/routes.ts so the rail, palette,
   // cheat sheet and key handler read one record; assertions about routes read
   // it from there.
-  const routesSrc = sourceOf('src/shared/routes.ts');
   const themeSrc = sourceOf('src/renderer/src/theme.ts');
   const themeBootSrc = sourceOf('src/renderer/src/theme-boot.ts');
   const terminalPaneSrc = sourceOf('src/renderer/src/components/TerminalPane.tsx');
@@ -7405,8 +7420,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'the shell has a validated durable system/light/dark preference, semantic palette tokens, and terminal repaint/readable touch sizing without replacing a live session');
   check(appSrc.includes('const requestNewSession')
     && appSrc.includes('className="nav-new-session"')
-    && appSrc.includes('newSessionRequest={newSessionRequest}')
-    && appSrc.includes('onNewSessionRequestConsumed={consumeNewSessionRequest}')
+    && registrySrc.includes('newSessionRequest={newSessionRequest}')
+    && registrySrc.includes('onNewSessionRequestConsumed={consumeNewSessionRequest}')
     // The palette became a command list, so "new session" is one entry that
     // runs after the palette closes. staysPut carries the old closePalette(false)
     // intent: an action that opens a dialog must not hand focus back to the
@@ -7431,8 +7446,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // proposes product improvements from public sources rather than recording
   // knowledge from your own sessions. The safety properties below are unchanged
   // and are the reason this assertion exists — only its host moved.
-  check(routesSrc.includes("id: 'scout'")
-    && appSrc.includes('<ImprovementScout projects={projects} onOpenGoal={openGoal} />')
+  check(viewRegistrySrc.includes("id: 'scout'")
+    && registrySrc.includes('<ImprovementScout projects={projects} onOpenGoal={openGoal} />')
     && !learningSrc.includes('ImprovementScout')
     && scoutViewSrc.includes("allowNetwork: true")
     && scoutViewSrc.includes("mode === 'manual'")
@@ -7470,10 +7485,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // survivors in table order, so the stale word had to leave both halves of
   // the Git row, not just the keywords; "working tree" is two words on purpose
   // and matches nothing.
-  check(routesSrc.includes("hint: 'Goals — a contract, a task graph, evidence and your decision'")
-    && routesSrc.includes("hint: 'History, working tree, branches, stashes and the review gate for one repository'")
-    && !/keywords: '[^']*worktree/.test(routesSrc)
-    && !/hint: '[^']*[Dd]ocket/.test(routesSrc),
+  check(viewRegistrySrc.includes("hint: 'Goals — a contract, a task graph, evidence and your decision'")
+    && viewRegistrySrc.includes("hint: 'History, working tree, branches, stashes and the review gate for one repository'")
+    && !/keywords: '[^']*worktree/.test(viewRegistrySrc)
+    && !/hint: '[^']*[Dd]ocket/.test(viewRegistrySrc),
   'the palette calls Control’s record a goal, and no route row claims worktrees, so searching for one lands in Settings rather than on a Git view that cannot show it');
   check(appSrc.includes('aria-modal="true"')
     && appSrc.includes('const focusable = Array.from(dialog.current')
@@ -7824,7 +7839,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // expose the repository destinations; the command palette still searches
   // their full vocabulary without a permanent instructional paragraph.
   const gitNouns = ['working tree', 'branches', 'stashes', 'review gate'];
-  const gitHint = /\{ id: 'git',[^}]*hint: '([^']+)'/.exec(routesSrc)?.[1] ?? '';
+  const gitHint = /id: 'git',[\s\S]*?hint: '([^']+)'/.exec(viewRegistrySrc)?.[1] ?? '';
   check(gitHint.length > 0 && gitNouns.every((noun) => gitHint.toLowerCase().includes(noun))
     && /histor/i.test(gitHint) && !/worktree/i.test(gitHint)
     && gitViewSrc.includes('title="Changes"')
@@ -7984,7 +7999,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // a directory the operator had merely opened a panel on. The hardening that
   // stops that lives in gitEnv(), which only the wrapper sets.
   const mainTs = filesUnder(path.join(appRoot(), 'src/main'))
-    .filter((f) => f.endsWith('.ts') && !/\/(?:git|smoke\d*)\.ts$/.test(f));
+    .filter((f) => f.endsWith('.ts') && !/\/(?:git|smoke[-\w]*)\.ts$/.test(f));
   const bareGit = mainTs.filter((f) => {
     const src = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     return /(?:execFileSync|execFile|spawnSync|spawn)\(\s*['"]git['"]/.test(src);
@@ -8074,12 +8089,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // was two different facts and this pane printed only one of them.
   check(appSrc.includes('const [projectsRead, setProjectsRead] = useState(false);')
     && appSrc.includes('setProviders(pv); setProjects(pj); setHasKey(ks.present); setProjectsRead(true);')
-    && /<Git\s[^>]*projects=\{projects\}[^>]*projectsRead=\{projectsRead\}/.test(appSrc)
+    && /<Git\s[^>]*projects=\{projects\}[^>]*projectsRead=\{projectsRead\}/.test(registrySrc)
     && gitViewSrc.includes('projectsRead: boolean;')
     && gitViewSrc.includes('title="Your project list has not been read yet"')
     && gitViewSrc.includes('title="No project to read git from"'),
   'Git can tell an unread project list from an empty one and says which it is, so an operator with a dozen repositories is no longer told they have none and offered “Add your first project” before the shell’s first read has returned',
-  JSON.stringify({ wiredInApp: appSrc.includes('projectsRead={projectsRead}') }));
+  JSON.stringify({ wiredInRegistry: registrySrc.includes('projectsRead={projectsRead}') }));
 
   // A count is a read. Before one returned this printed 0 and “No commits yet.”, and left that
   // sentence up beside the error Note when the read failed.
@@ -8650,7 +8665,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'saving a review recipe asks the person and running one does not, because the stored text is written once and run many times from both review:run and a goal’s verify task, so the consent sits where the capability is made rather than on each use of it',
     /review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc));
   check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
-    && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
+    && /<Control/.test(registrySrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
   // control.ts kept its own DEFAULT_PLAN and NODE_KINDS until the renderer
   // needed to seed a plan editor from them. A reintroduced local copy would
@@ -8908,9 +8923,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(planEditorSrc.includes("import type { DocketNodeKind, DocketPlanNode } from '@shared/types';")
     && /DOCKET_NODE_KINDS\.map\(\(kind\) => <option key=\{kind\} value=\{kind\}>\{kind\}<\/option>\)/.test(planEditorSrc)
     && !/\[\s*'plan',\s*'implement'/.test(planEditorSrc)
-    && planTypesSrc.includes("export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];")
+    && planTypesSrc.includes("export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'estimate', 'implement', 'verify', 'review'];")
     && /use one of: \$\{NODE_KINDS\.join\(', '\)\}/.test(controlSrc),
-    'the plan editor offers exactly the four task kinds shared/types declares and main names in its own refusal, rather than a private list beside them that can drift');
+    'the plan editor offers exactly the five task kinds shared/types declares and main names in its own refusal, rather than a private list beside them that can drift');
 
   // A cycle needs a forward edge, so the editor does not render the control that
   // would draw one: a task's prerequisite chips are built from rows.slice(0, index)

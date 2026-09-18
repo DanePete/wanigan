@@ -1,7 +1,19 @@
+import { demoViews } from './view-module.ts';
+import { VIEWS, type Tab } from './view-registry.ts';
+
 export type DemoState = { on: boolean; source: 'fictional' | 'live' };
 
-/** Only surfaces with authored fixtures are available in the sample workspace. */
-export const DEMO_VIEWS = ['mission', 'sessions', 'fleet', 'usage', 'settings'] as const;
+/**
+ * Only surfaces with authored fixtures are available in the sample workspace.
+ *
+ * Derived from `VIEWS`'s own `demo` field rather than hand-listed a second
+ * time: a view whose fixtures ship marks itself `demo: true` in
+ * `view-registry.ts`, and this is that set, read back. The order below is now
+ * `VIEWS` order rather than this table's old hand-listed order, which is not a
+ * behaviour change — this table's only consumer, `App.tsx`, only ever tests
+ * membership (`DEMO_VIEWS.includes(tab)`), never position.
+ */
+export const DEMO_VIEWS: readonly Tab[] = demoViews(VIEWS);
 export const DEMO_UNAVAILABLE = 'This action is unavailable in the read-only demo. Return to your workspace to use it.';
 
 /** Authored preparation prompts; choosing one never dispatches work. */

@@ -31,7 +31,7 @@ import type {
   BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
-  ProviderManifestInspection, QueueSlots, RunConfig, Session,
+  ProviderManifestInspection, QueueSlots, RelayCreateInput, RunConfig, Session,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
@@ -121,6 +121,7 @@ import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as goalGate from './goal-gate';
 import * as interview from './interview';
+import * as relay from './relay';
 import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
@@ -3107,6 +3108,19 @@ function registerIpc() {
     if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
     return control.goalPlan(docketId);
   });
+
+  // ══ relay · a staged pipeline with per-stage routing ════════════════
+  //
+  // None of these starts an agent. `relay:create` writes a docket and its
+  // route proofs; the plan session is started through `control:start`, which
+  // is already held until services are up. `relay:estimate` is a query over
+  // this project's own history. Everything arriving here is validated in
+  // relay.ts before a row is touched.
+  handle('relay:create', (input: RelayCreateInput) => relay.createRelay(input));
+  handle('relay:read', (docketId: unknown) => relay.readRelay(docketId));
+  handle('relay:forecast', (docketId: unknown) => relay.forecast(docketId));
+  handle('relay:estimate', (docketId: unknown) => relay.estimate(docketId));
+  handle('relay:list', (projectId: unknown, limit?: number) => relay.listRelays(projectId, limit));
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());

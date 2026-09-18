@@ -3,6 +3,7 @@ import {
   DEFAULT_SLOTS,
   type LearningSettings,
   type WaniganSettings,
+  type FluidSetting,
   type MotionSetting,
   type QueueSlots,
   type SandboxShell,
@@ -108,6 +109,18 @@ export function motion(): MotionSetting {
   return v === 'full' || v === 'off' ? v : 'auto';
 }
 
+/**
+ * Whether the Relay rail's basin renders the real fluid module or the CSS
+ * fallback the sluice already draws without it. `auto` is not "on": the tier
+ * that actually renders also weighs WebGL2 availability, the motion setting
+ * and `prefers-reduced-motion` — see `fluidTier` in `relay-rig.ts`. This
+ * getter reports only the stored operator preference.
+ */
+export function fluid(): FluidSetting {
+  const v = getSetting('fluid', 'auto');
+  return v === 'on' || v === 'off' ? v : 'auto';
+}
+
 /** A narrow guard at the privileged boundary; renderer text is never trusted. */
 export function isThemeSetting(value: unknown): value is ThemeSetting {
   return value === 'system' || value === 'light' || value === 'dark';
@@ -181,6 +194,11 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     case 'motion':
       if (preferenceValue !== 'auto' && preferenceValue !== 'full' && preferenceValue !== 'off') {
         throw new Error('Motion must be auto, full, or off.');
+      }
+      break;
+    case 'fluid':
+      if (preferenceValue !== 'auto' && preferenceValue !== 'on' && preferenceValue !== 'off') {
+        throw new Error('Fluid must be auto, on, or off.');
       }
       break;
     // Whether the destination list is on screen. Durable rather than
@@ -281,6 +299,7 @@ export function allSettings(): WaniganSettings {
     ...explainerFlags(),
     spendCapUsd: spendCap(),
     motion: motion(),
+    fluid: fluid(),
     navSidebar: navSidebar(),
     theme: theme(),
     telemetry: f.telemetry,

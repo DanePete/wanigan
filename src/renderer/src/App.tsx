@@ -5,30 +5,14 @@ import type { Attention, AttentionKind, ClaudeContextUsage, HaltState, InAppAler
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
 import { TABS, labelForTab, type Tab } from '@shared/routes';
 import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retiredChordPressed, useKeymap } from './bindings';
-import Sessions from './views/Sessions';
-import MissionRoom from './views/MissionRoom';
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
 import { ProjectSpaces, WorkspaceNavigation } from './components/SpaceNavigation';
-import Fleet from './views/Fleet';
-import Control from './views/Control';
-import Board from './views/Board';
-import Batches from './views/Batches';
-import InsightsView from './views/Insights';
-import Learning from './views/Learning';
-import Plugins from './views/Plugins';
-import Extensions from './views/Extensions';
 import SessionChatter from './components/SessionChatter';
-import Schedules from './views/Schedules';
-import Git from './views/Git';
-import HeadlessRuns from './views/HeadlessRuns';
-import ImprovementScout from './views/ImprovementScout';
-import UsageView from './views/Usage';
-import SettingsView, { DemoPanel, SETTINGS_INDEX, type SettingsJump } from './views/Settings';
-import Skills from './views/Skills';
-import Context from './views/Context';
-import { Icon, ago, PageHead, EmptyState, Segmented } from './components/bits';
+import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
+import { VIEW_RENDERERS, type ViewContext } from './views/registry';
+import { Icon, ago, PageHead, EmptyState } from './components/bits';
 import { DEMO_VIEWS } from '@shared/demo';
 import { settingsDoorIn } from '@shared/settings-doors';
 import { startTerminalOutputPump } from './components/TerminalPane';
@@ -1039,6 +1023,19 @@ export default function App() {
   }, [attention, choose, go, jumpToSettings, keymap, openSession, paletteHits, paletteQuery, spaceId, projects,
     reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved]);
 
+  // The shell state each view renderer reads, under the shell's own names.
+  // A plain object rather than a memo: the branches it replaced read these
+  // values on every render and memoised nothing, and the renderers are called
+  // on every render exactly as the branches were.
+  const viewContext: ViewContext = {
+    projects, projectsRead, providers, sessions, attention, attentionRead, presence, orbStory, hasKey, demoOn, theme,
+    projectId, spaceId, setSpaceId, activeSessionId, setActiveSessionId,
+    newSessionRequest, consumeNewSessionRequest, historyRequest, setHistoryRequest, batchSeed, setBatchSeed,
+    learningTarget, settingsJump,
+    go, choose, openSession, openGoal, openLearning, focusSession, requestNewSession, jumpToSettings,
+    addProject, removeProject, loadShell, reportSessionError,
+  };
+
   const errorDoor = settingsDoorIn(error?.message);
 
   return (
@@ -1239,66 +1236,7 @@ export default function App() {
               <EmptyState posture="nothing-yet" title="This demo surface is still being prepared."
                 cue="Explore Mission, Sessions, Fleet and Usage with fictional data. Your real records stay private." />
             </main>
-          ) : <>
-          {tab === 'mission' && <MissionRoom attention={attention} attentionRead={attentionRead} projects={projects} projectsRead={projectsRead} onFleet={() => go('fleet')} story={orbStory} followedSession={activeSessionId} sessions={sessions} onFollow={setActiveSessionId} demo={demoOn} projectId={spaceId} presence={presence} onOpenSession={openSession}
-            onProject={(id) => { choose(id); go('sessions'); }} onAddProject={addProject}
-            onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
-            onUsage={() => go('usage')} />}
-          {tab === 'sessions' && (
-            <Sessions providers={providers} projects={projects} selectedProjectId={spaceId}
-                      onAddProject={addProject} onError={reportSessionError} onOpenGoal={openGoal}
-                      activeId={activeSessionId} onActiveChange={focusSession}
-                      newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
-                      historyRequest={historyRequest} onHistoryRequestConsumed={() => setHistoryRequest(null)}
-                      onOpenSettings={jumpToSettings}
-                      onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
-          )}
-          {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
-          {tab === 'board' && (
-            <Board projects={projects} providers={providers} projectId={projectId} selectedProjectId={spaceId}
-                   onPickProject={(id) => { setSpaceId(id); if (id) choose(id); }}
-                   onOpenGoal={openGoal} onOpenSession={openSession} />
-          )}
-          {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
-          {/* Land on the key, not on Settings. The nav mark beside this tab
-              already deep-links to the exact section; sending the operator to
-              the top of a 5,000-line surface to find it themselves was the one
-              door that did not. */}
-          {tab === 'batches' && (
-            <Batches projects={projects} hasKey={hasKey}
-                     onNeedKey={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
-                     seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
-          )}
-          {tab === 'insights' && <InsightsView />}
-          {tab === 'usage' && <UsageView />}
-          {tab === 'learning' && (
-            <Learning projectId={projectId} projects={projects} providers={providers}
-                      onPickProject={choose} initialTarget={learningTarget} />
-          )}
-          {/* Scout talks to window.wanigan.scout and nothing else in this app
-              does. Its props are unchanged from when it hung off Learning. */}
-          {tab === 'scout' && <ImprovementScout projects={projects} onOpenGoal={openGoal} />}
-          {tab === 'skills' && (
-            <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
-          )}
-          {tab === 'context' && (
-            <Context projectId={projectId} projects={projects} projectsRead={projectsRead} onPickProject={choose}
-                     onReloadProjects={loadShell} onOpenLearning={openLearning} />
-          )}
-          {tab === 'plugins' && <Plugins />}
-          {tab === 'extensions' && <Extensions />}
-          {tab === 'schedules' && <Schedules projects={projects} />}
-          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
-          {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
-          {tab === 'settings' && (demoOn ? <main className="pane">
-            <PageHead title="Settings" eyebrow="Demo workspace" lead="These appearance choices apply only to this demo." />
-            <Segmented label="Demo theme" value={theme.preference} options={[{value:'dark',label:'Dark'},{value:'light',label:'Light'},{value:'system',label:'System'}]} onChange={theme.setTheme} />
-            <DemoPanel />
-          </main> : <SettingsView providers={providers} projects={projects} jump={settingsJump} onOpenSession={openSession}
-                          onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
-                          themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
-          )}
-          </>}
+          ) : VIEW_RENDERERS[tab](viewContext)}
           </ViewMemoryScope>
         </ErrorBoundary>
       </div>

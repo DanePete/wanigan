@@ -29,7 +29,7 @@ const PARK_FOR = [
   { label: 'Next quarter', ms: 90 * 24 * 60 * 60_000 },
 ];
 const RISK_WORD: Record<string, string> = { low: 'Low risk', elevated: 'Elevated risk', high: 'High risk' };
-const KIND_WORD = { plan: 'Plan', implement: 'Implement', verify: 'Verify', review: 'Review' };
+const KIND_WORD = { plan: 'Plan', estimate: 'Forecast', implement: 'Implement', verify: 'Verify', review: 'Review' };
 type BoardSnapshot = { scope: string | null; rows: BoardCard[]; at: number };
 type Selection = { id: string; title: string; scope: string | null };
 type ActionNote = { nodeId: string; title: string; text: string; tone: 'ok' | 'error' };

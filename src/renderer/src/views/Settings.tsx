@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 import type {
   AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
-  EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
+  EgressHost, FluidSetting, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
   MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, ObserveOnlyHooks, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TrustLevel, UploadedFile, WorktreeInfo,
@@ -108,6 +108,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  { tab: 'app', tabLabel: 'App', section: 'Fluid', hint: 'The Relay rail’s water: real fluid or the CSS fallback', keywords: 'fluid relay water webgl gpu simulation basin rail' },
   { tab: 'app', tabLabel: 'App', section: 'Keyboard', hint: 'Change or reset a keyboard shortcut', keywords: 'keyboard shortcuts shortcut keys chord chords rebind remap keymap hotkey hotkeys accelerator' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
@@ -1114,6 +1115,7 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
             <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            <Fluid prefs={prefs} pending={pending} setPref={setPref} />
             <KeyboardSettings />
             <DemoPanel />
           </SettingsTabPanel>
@@ -5312,6 +5314,35 @@ function Motion({ prefs, pending, setPref }: {
             />
           </fieldset>
           <p className="set-caption">Applies immediately. Status and progress always remain readable with motion off.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function Fluid({ prefs, pending, setPref }: {
+  prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
+}) {
+  return (
+    <Section title="Fluid"
+             hint="Choose what the Relay rail’s basin renders.">
+      {!prefs ? (
+        <p className="dim">Reading your preferences…</p>
+      ) : (
+        <>
+          <fieldset disabled={pending === 'fluid'} className="set-motion-options">
+            <Options<FluidSetting>
+              label="Fluid"
+              value={prefs.fluid}
+              options={[
+                { id: 'auto', word: 'Auto', detail: 'The Relay rail draws real water when this machine can, and a simpler level when it cannot.' },
+                { id: 'on',   word: 'On',   detail: 'Always the fluid, even on a machine that struggles with it.' },
+                { id: 'off',  word: 'Off',  detail: 'The rail’s own animated level. Nothing simulated, nothing on the GPU.' },
+              ]}
+              onPick={(v) => void setPref('fluid', v)}
+            />
+          </fieldset>
+          <p className="set-caption">Applies to the next basin drawn. The rail is legible with motion off either way.</p>
         </>
       )}
     </Section>

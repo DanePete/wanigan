@@ -898,7 +898,7 @@ function NodeCard({ node, busy, note, claim, gate, gateProof, prereqs, sendsBack
   const held = gated && gateProof?.status !== 'passed';
   const gateRunning = node.gateRunningSince !== null;
   return <article className="control-node">
-    <SectionHead label={node.kind === 'review' ? 'Your decision' : node.kind === 'verify' ? 'Verification' : 'Selected task'} right={<Pill status={node.status} />} />
+    <SectionHead label={node.kind === 'review' ? 'Your decision' : node.kind === 'verify' ? 'Verification' : node.kind === 'estimate' ? 'Forecast' : 'Selected task'} right={<Pill status={node.status} />} />
     <h3 id="control-task-title" tabIndex={-1}>{node.title}</h3>
     <p className="control-instructions">{node.instructions}</p>
     {node.detail && <Note tone={reopenable ? 'warn' : 'info'} role="none">{node.detail}</Note>}

@@ -276,6 +276,7 @@ export function withRow(rows: PlanRow[]): PlanRow[] {
 
 const KIND_HINT: Record<DocketNodeKind, string> = {
   plan: 'Produces the plan the rest of the graph implements. Makes no changes.',
+  estimate: 'Wanigan prices the phases after it from this project’s own history. Runs no agent, spends nothing, and says so when there is too little history for a number.',
   implement: 'Does the work in an isolated worktree, holding whatever path it claims.',
   verify: 'Runs the review gate; a passing command result is required to complete it.',
   review: 'The human decision. Never dispatched by autopilot, and the goal is accepted through it.',

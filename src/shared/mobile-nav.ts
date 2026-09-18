@@ -1,17 +1,23 @@
 import type { Tab } from './routes';
+import { phoneAbsences } from './view-module.ts';
+import { VIEWS } from './view-registry.ts';
 
 /**
  * What the paired phone can reach, and what it deliberately cannot.
  *
- * The phone is a *narrowing* of the desktop taxonomy in shared/routes.ts, not a
- * second taxonomy that happens to look similar. Every entry below names the
- * desktop destinations it stands in for, and every desktop destination that has
- * no phone surface is listed in MOBILE_ABSENT with the sentence the Device
- * screen prints. The smoke suite holds those two lists to `TABS`: a new desktop
- * view that appears in neither fails the build. That is the point. The failure
- * mode this prevents is not an ugly menu — it is a phone that quietly stops
- * being a view of the same product, where the operator's mental map of Wanigan
- * depends on which screen they are holding.
+ * The phone is a *narrowing* of the desktop taxonomy `view-registry.ts`
+ * declares, not a second taxonomy that happens to look similar. Every entry
+ * below names the desktop destinations it stands in for, and every desktop
+ * destination that has no phone surface is listed in MOBILE_ABSENT with the
+ * sentence the Device screen prints. `MOBILE_ABSENT` is now read straight off
+ * `VIEWS`'s own `phone.absent` field rather than hand-listed a second time —
+ * see the comment above it. `MOBILE_VIEWS` and its `narrows` lists stay
+ * hand-written; the comment above `narrows` says why. Either way, the smoke
+ * suite still holds both lists to `TABS`: a new desktop view that appears in
+ * neither fails the build. That is the point. The failure mode this prevents
+ * is not an ugly menu — it is a phone that quietly stops being a view of the
+ * same product, where the operator's mental map of Wanigan depends on which
+ * screen they are holding.
  *
  * Narrowing is not renaming. Insights and Usage become one Spend screen because
  * away from the desk the question is a single one — what has this cost me and
@@ -62,6 +68,18 @@ export type MobileNavEntry = {
   /**
    * The desktop destinations this screen narrows. Empty for `device` alone,
    * which is about this phone rather than about a desktop screen.
+   *
+   * Membership is checked against `VIEWS`'s own `phone.narrowedBy` field —
+   * view-registry.test.ts pins that the two agree in both directions — but the
+   * ORDER here stays hand-written rather than derived from registry order.
+   * Element 0 is read as this screen's primary desktop route in two places:
+   * the iPad rail's chord lookup (`TAB_SHORTCUTS[view.narrows[0]]` in
+   * smoke3.ts) and the phone page's own tab pick (`view.narrows[0]` in
+   * mobile/page/nav.ts). For `runs`, registry order would put `schedules`
+   * first — `schedules` is declared before `runs` in `VIEWS` — which would
+   * silently swap which desktop chord and route the Runs screen picks. That is
+   * a behaviour change a derivation is not entitled to make, so this list, and
+   * only its order, remains authored here.
    */
   narrows: readonly Tab[];
 };
@@ -108,15 +126,18 @@ export type MobileAbsentView = {
  * reason reads as an unfinished build rather than a decision — and three of the
  * four are consent decisions Wanigan is only willing to take at the machine
  * that holds the credentials.
+ *
+ * Derived from `VIEWS`'s own `phone.absent` field — id and sentence both —
+ * rather than hand-listed a second time. The sentences below used to live only
+ * here; they were moved onto each view's own `phone` entry in
+ * `view-registry.ts` when this table was converted to a derivation, verbatim,
+ * so this reads as a move rather than new copy. Order follows `VIEWS`
+ * declaration order now rather than the old hand list's order, which is not a
+ * behaviour change: the Device screen renders every entry, and nothing reads
+ * this array positionally the way `MOBILE_VIEWS[].narrows` is.
  */
-export const MOBILE_ABSENT: readonly MobileAbsentView[] = [
-  { tab: 'mission', reason: 'The companion conversation and its live 3D scene stay on the Mac. This phone reads project and session status through Fleet and Projects.' },
-  { tab: 'skills', reason: 'Writing and editing a skill is work against a repository, so the Skills screen stays on the Mac. Typing one you already have into a live agent is on the Agent screen.' },
-  { tab: 'context', reason: 'Instructions, memory and configuration are edited against a working tree, which this device does not have.' },
-  { tab: 'plugins', reason: 'Installing or trusting a plugin is a consent decision Wanigan only takes at the Mac.' },
-  { tab: 'extensions', reason: 'Installing an extension means reading a folder the operator chose and approving the exact commands, hosts and credentials it declares. Both halves belong at the Mac: this phone has no folder to pick, and a consent screen answered on a small screen away from the desk is the one place Wanigan will not take that decision.' },
-  { tab: 'settings', reason: 'Keys, provider packs and privacy controls stay on the Mac. This phone is paired to Wanigan; it does not configure it.' },
-];
+export const MOBILE_ABSENT: readonly MobileAbsentView[] = phoneAbsences(VIEWS)
+  .map(({ id, reason }) => ({ tab: id, reason }));
 
 /** Where a phone with no remembered route starts. */
 export const MOBILE_DEFAULT_VIEW: MobileViewId = 'fleet';
