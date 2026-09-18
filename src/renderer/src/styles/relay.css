@@ -470,3 +470,42 @@
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.55; }
 }
+
+/* ── starting one ────────────────────────────────────────────────────────
+   Before a relay exists there is nothing to watch, so the rig is not drawn
+   and the composer has the pane to itself: one column, measured for reading,
+   centred. The two-column split returns the moment there is a relay to watch,
+   because then the left half is carrying something. */
+
+.pane > .rl-start {
+  display: grid;
+  gap: var(--s-4);
+  /* Long enough for the guess panel's reasons to breathe, short enough that a
+     sentence is still one eye movement. */
+  max-inline-size: 62rem;
+  margin-inline: auto;
+  inline-size: 100%;
+}
+
+/* The one question, given the room a question deserves. */
+.rl-start textarea.field {
+  min-block-size: calc(var(--s-6) * 3);
+  font-size: var(--t-body);
+  line-height: 1.5;
+}
+
+/* Profile and account are settings, not the subject. Side by side, out of the
+   way of the sentence above them. */
+.rl-start-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--s-2) var(--s-3);
+}
+
+.rl-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  margin-block-start: var(--s-2);
+}

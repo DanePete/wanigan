@@ -45,10 +45,18 @@ const INSTRUMENT = `
       },
     },
   };
+  // No relay for this project, which is the state a person meets first and the
+  // one the generic stub cannot produce: its proxy answers every read truthily,
+  // so the view believes a relay is selected and draws the rig.
+  const relayApi = {
+    preview: async () => preview,
+    list: async () => [],
+    read: async () => { throw new Error('no relay selected'); },
+  };
   const original = window.wanigan;
   window.wanigan = new Proxy(original, {
     get: (target, prop) => prop === 'relay'
-      ? new Proxy(target.relay ?? {}, { get: (r, m) => (m === 'preview' ? async () => preview : r[m]) })
+      ? new Proxy(target.relay ?? {}, { get: (r, m) => (m in relayApi ? relayApi[m] : r[m]) })
       : target[prop],
   });
 })();

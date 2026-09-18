@@ -331,21 +331,18 @@ export default function Relay({ projects, projectId, providers, openSession, ope
       <PageHead
         eyebrow={project ? project.name : 'No project'}
         title="Relay"
-        lead="One intent, five phases, and the handoffs between them. Each phase runs on its own profile; the water runs between them when a phase lets go."
+        lead="Say what you want done. Wanigan plans it, prices it from this project's own history, and waits for you before building anything."
       />
       {error && <Note tone="warn" onDismiss={() => setError(null)}>{error}</Note>}
 
-      <div className="row2">
-        <div>
+      <div className={read ? 'row2' : 'rl-start'}>
+        {read && <div>
           <SectionHead label="The sluice" right={
             <span className="rl-tier" data-rl-tier={tier.tier}>
               <i className="rl-tier-dot" aria-hidden="true" />
               {tier.tier === 'fluid' ? 'Fluid module' : tier.tier === 'simple' ? 'Animated level' : 'Every value, no movement'}
             </span>
           } />
-          {!read && (
-            <Hint>{relays.length ? 'Choose a relay to watch.' : 'No relay yet for this project. Start one on the right.'}</Hint>
-          )}
           <div className="rl-rig" ref={rigEl} data-rl-tier={tier.tier}>
             <svg viewBox={shapes.viewBox} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
               {shapes.basins.map((b, i) => (
@@ -397,16 +394,17 @@ export default function Relay({ projects, projectId, providers, openSession, ope
               })}
             </div>
           </div>
-        </div>
+        </div>}
 
         <div>
-          <Section n={1} title="Start a relay" hint="The planner proposes, the forecast prices it, and you decide before anything is built.">
+          <Section n={1} title="Start a relay" hint="Nothing runs until you press Start.">
             <label>
               <span className="label">What should this relay accomplish?</span>
               <textarea className="field" aria-label="What should this relay accomplish" value={intent}
                 onChange={(e) => { setIntent(e.target.value); setPreview(null); }} rows={3}
                 placeholder="First line becomes the title. Say what done looks like." disabled={busy !== null} />
             </label>
+            <div className="rl-start-meta">
             <label>
               <span className="label">Profile</span>
               <select className="field" aria-label="Profile for this relay" value={providerId}
@@ -440,10 +438,16 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                 </select>
               </label>
             )}
+            </div>
             <button className={busy === 'preview' ? 'btn rl-guess-asking' : 'btn'} onClick={suggest}
                     disabled={busy !== null || !intent.trim() || !providerId}>
               {busy === 'preview' ? 'Asking…' : 'Suggest routes'}
             </button>
+            {/* A disabled control that does not say why reads as a broken one.
+                This is the only reason it is ever disabled with a profile set. */}
+            {!intent.trim() && providerId && (
+              <Hint>Say what the relay should accomplish first, and Suggest routes will ask which model fits each phase.</Hint>
+            )}
 
             {preview && !preview.asked && (
               <Note tone="info">
