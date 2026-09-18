@@ -1,3 +1,5 @@
+// First, before any import that can open the database: see modules/register.ts.
+import './modules/register';
 import { app, BrowserWindow, ipcMain, dialog, shell, session, clipboard } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
@@ -99,6 +101,7 @@ import * as browse from './browse';
 import * as attachments from './attachments';
 import * as mcpRegistry from './mcp/registry';
 import * as extensionStore from './extensions/store';
+import { installBuiltinExtensions } from './extensions/builtin';
 import * as mcpServer from './mcp/server';
 import { mcpTrustPrompt } from './mcp/consent';
 import * as refusal from './batch/refusal';
@@ -121,7 +124,7 @@ import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
-import * as scout from './improvement-scout';
+import { moduleSchedules, registerModuleIpc } from './module-registry';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -893,6 +896,20 @@ app.on('before-quit', (event) => {
 async function startServices() {
   const f = flags();
 
+  // The extensions Wanigan ships with — today the five Scout sources — go in
+  // through the same installer a stranger's extension uses, as the first thing
+  // that runs once the database is open. Before the hook server and before
+  // any module reads its rows, because a Scout that started on an empty source
+  // table would honestly report "no sources" for the seconds until this ran.
+  // Idempotent on the same digest. A failure is logged and does not stop the
+  // app: the smoke suite asserts the seed by name, so a broken built-in fails
+  // there rather than here, where it would take every session down with it.
+  try {
+    installBuiltinExtensions();
+  } catch (error) {
+    console.warn('[wanigan] could not install the built-in extensions:', error);
+  }
+
   // The hook server owns delivery; the learning service owns retrieval and its
   // privacy/token boundary. Registering before the listener opens means the
   // first SessionStart cannot race an empty context source.
@@ -1070,25 +1087,14 @@ async function startServices() {
     );
     void batch.pollOnce().catch(() => {});
   });
-  // The Scout is a fourth dispatcher lane rather than a loose timer. That
-  // gives its weekly schedule the same durable lease and attended/launchd
-  // cross-process behavior as every other scheduled task. The runner only
-  // accepts Wanigan's fixed schedule payload; renderer text cannot name a URL.
-  queue.registerRunner('scout', async (payload) => {
-    const value = payload as { scout?: unknown; version?: unknown };
-    if (value.scout !== true || value.version !== 1) {
-      throw new Error('This Scout queue item is not a Wanigan weekly-research schedule. Remove it and re-enable the Scout schedule from its dashboard.');
-    }
-    // A queue item may have been claimed just before the operator disabled
-    // weekly/network research. Do not make it fail/retry; it has no authority
-    // to override the newer persisted preference.
-    if (!scout.scheduledResearchAllowed()) return;
-    await scout.runScheduled();
-  });
-  // Upsert a stable schedule id on both the attended app and launchd. It is
-  // disabled by default and only arms after the operator permits unattended
-  // allow-listed source requests in Scout settings.
-  scout.syncWeeklySchedule();
+
+  // Recurring work each module declared: the runner on its lane, then the
+  // durable row it arms — the same two steps, in the same order, that were
+  // hand-wired here per feature.
+  for (const job of moduleSchedules()) {
+    queue.registerRunner(job.kind, job.run);
+    job.sync();
+  }
   headless.registerHeadlessRunner((runId, projectId) => {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
@@ -2978,29 +2984,10 @@ function registerIpc() {
   handle('schedule:installDaemon', () => installDaemon());
   handle('schedule:uninstallDaemon', () => uninstallDaemon());
 
-  // ── AI Improvement Scout ──────────────────────────────────────────
-  handle('scout:overview', () => scout.overview());
-  handle('scout:settings', () => scout.settings());
-  handle('scout:setSettings', (patch: Partial<import('../shared/types').ImprovementScoutSettings>) =>
-    scout.updateSettings(patch));
-  handle('scout:sources', () => scout.listSources());
-  handle('scout:setSourceEnabled', (id: string, enabled: boolean) => scout.setSourceEnabled(id, enabled === true));
-  handle('scout:runs', (limit?: number) => scout.listRuns(limit));
-  handle('scout:suggestions', (filter?: Parameters<typeof scout.listSuggestions>[0]) => scout.listSuggestions(filter));
-  handle('scout:suggestion', (id: string) => scout.suggestion(id));
-  handle('scout:updateSuggestion', (id: string, patch: Parameters<typeof scout.updateSuggestion>[1]) =>
-    scout.updateSuggestion(id, patch));
-  // Scheduled mode belongs only to the durable queue runner above. A renderer
-  // can explicitly ask for a visible manual pass or a hard local-only preview,
-  // but cannot borrow the stored unattended-network permission by forging a
-  // `scheduled` IPC payload.
-  handle('scout:run', (input?: { mode?: 'manual' | 'preview'; allowNetwork?: boolean }) => {
-    if (input?.mode !== undefined && input.mode !== 'manual' && input.mode !== 'preview') {
-      throw new Error('Scout IPC supports manual research or a local preview. Weekly research runs only through its durable schedule.');
-    }
-    return scout.run({ mode: input?.mode ?? 'manual', allowNetwork: input?.allowNetwork === true });
-  });
-  handle('scout:createGoal', (id: string, input: { projectId: string }) => scout.createGoal(id, input));
+  // ── module-owned channels ──────────────────────────────────────────
+  // Each module registers through this same `handle`, inside its own
+  // `${id}:` namespace; the registry refuses a channel outside it.
+  registerModuleIpc(handle);
 
   // ── reproducible review gates ──────────────────────────────────────
   handle('review:recipe', (projectId: string) => review.recipe(projectId));

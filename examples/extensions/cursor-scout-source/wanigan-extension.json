@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "acme.cursor-changelog",
+  "label": "Cursor changelog for Scout",
+  "version": "1.0.0",
+  "description": "Adds the Cursor changelog to Improvement Scout's weekly reading list.",
+  "publisher": { "id": "acme", "name": "Acme", "url": "https://example.com" },
+  "requires": { "wanigan": ">=0.1.0" },
+  "provides": {
+    "scoutSources": [
+      {
+        "id": "cursor-changelog",
+        "label": "Cursor changelog",
+        "description": "Official Cursor editor and agent changes.",
+        "url": "https://cursor.com/changelog",
+        "publisher": "Cursor",
+        "kind": "changelog"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-18T08:45:45.608Z",
+  "provenance": "Actual Electron renderer; synthetic services; no production operations",
+  "checks": [
+    "three provider-key sections captured in both themes; key.provider asked for glm, deepseek, xai; nothing written"
+  ],
+  "calls": [
+    [
+      "provider",
+      "glm"
+    ],
+    [
+      "provider",
+      "deepseek"
+    ],
+    [
+      "provider",
+      "xai"
+    ]
+  ],
+  "errors": []
+}

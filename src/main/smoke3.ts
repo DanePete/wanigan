@@ -5050,7 +5050,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // undeclared egress and, worse, invite someone to "fix" it by adding an
     // attacker-shaped host to the Settings table. Every module that can actually
     // open a socket is still scanned.
-    if (/[\\/]smoke\d*\.ts$/.test(file)) continue;
+    // Both spellings: the numbered suites and the hyphenated ones that came
+    // after this sweep was written. A fixture host in smoke-extensions.ts is
+    // no more an egress than one in smoke3.ts.
+    if (/[\\/]smoke(?:\d*|-[a-z-]+)\.ts$/.test(file)) continue;
     for (const m of fs.readFileSync(file, 'utf8').matchAll(/https:\/\/([A-Za-z0-9.-]+)/g)) {
       named.add(m[1].toLowerCase());
     }

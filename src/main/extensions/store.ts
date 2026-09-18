@@ -6,9 +6,11 @@ import { db } from '../db';
 import { removeServer, setServerEnabled, upsertServer } from '../mcp/registry';
 import {
   EXTENSION_MANIFEST_FILE, declaredArtifacts, extensionConsent, extensionOwner,
-  mcpFingerprint, ownerExtensionId, validateExtensionManifest,
+  mcpFingerprint, ownerExtensionId, scoutFingerprint, validateExtensionManifest,
 } from '../../shared/extension-manifest';
-import type { ExtensionManifest, ExtensionMcpServer } from '../../shared/extension-manifest';
+import type {
+  ExtensionManifest, ExtensionMcpServer, ExtensionScoutSource, ExtensionScoutSourceKind,
+} from '../../shared/extension-manifest';
 import type {
   ExtensionArtifactInfo, ExtensionInfo, ExtensionInspection, ExtensionOrigin,
   ExtensionRemoval, ExtensionStatus,
@@ -19,11 +21,16 @@ import type {
  * real path for, and taking back only what it still owns.
  *
  * Nothing here loads code. An extension is a manifest plus the files it points
- * at, and the only surface it reaches in v1 is the MCP registry — every other
- * declaration is listed with `applied: false` and a note naming the consented
- * path it still needs. A partial installer that says so is honest; one that
- * writes a skill file out of a stranger's manifest because the manifest asked
- * is the thing this refuses to be.
+ * at, and it reaches two surfaces: the MCP registry and Improvement Scout's
+ * source table. Every other declaration is listed with `applied: false` and a
+ * note naming the consented path it still needs. A partial installer that says
+ * so is honest; one that writes a skill file out of a stranger's manifest
+ * because the manifest asked is the thing this refuses to be.
+ *
+ * A built-in extension goes through exactly this file. It has no directory and
+ * no private path — `installBuiltinExtension` hands a manifest to the same
+ * transaction a folder install runs — so the defaults Wanigan ships are proof
+ * the extension point works rather than a special case beside it.
  *
  * The tables are `plugins` and `plugin_artifacts` while the concept is called
  * an extension everywhere else: renaming a shipped table is a destructive
@@ -102,6 +109,19 @@ type ArtifactRow = {
   detail: string | null; fingerprint: string | null; created_at: number; removed_at: number | null;
 };
 
+/**
+ * One row of `improvement_scout_sources`. `owner` is NULL on the rows db.ts
+ * seeded before extensions existed and on any row an uninstall disowned;
+ * `last_*` are what Scout recorded the last time it read the page, and are the
+ * operator's history rather than anything an install may rewrite.
+ */
+type SourceRow = {
+  id: string; label: string; description: string; url: string; publisher: string; kind: string;
+  official: number; enabled: number; owner: string | null;
+  created_at: number; updated_at: number;
+  last_checked_at: number | null; last_status: string | null; last_detail: string | null;
+};
+
 function pluginRow(id: string): PluginRow | null {
   return (db().prepare('SELECT * FROM plugins WHERE id = ?').get(id) as PluginRow | undefined) ?? null;
 }
@@ -109,6 +129,15 @@ function pluginRow(id: string): PluginRow | null {
 function serverRowsNamed(name: string): ServerRow[] {
   return db().prepare('SELECT * FROM mcp_servers WHERE name = ? ORDER BY project_id IS NOT NULL')
     .all(name) as ServerRow[];
+}
+
+function sourceRowById(id: string): SourceRow | null {
+  return (db().prepare('SELECT * FROM improvement_scout_sources WHERE id = ?').get(id) as SourceRow | undefined) ?? null;
+}
+
+/** The `url` column is UNIQUE, so at most one row can hold a page. */
+function sourceRowByUrl(url: string): SourceRow | null {
+  return (db().prepare('SELECT * FROM improvement_scout_sources WHERE url = ?').get(url) as SourceRow | undefined) ?? null;
 }
 
 /**
@@ -119,6 +148,24 @@ function serverRowsNamed(name: string): ServerRow[] {
 function ownedRows(extensionId: string): ServerRow[] {
   const rows = db().prepare('SELECT * FROM mcp_servers WHERE owner IS NOT NULL ORDER BY name').all() as ServerRow[];
   return rows.filter((row) => ownerExtensionId(row.owner) === extensionId);
+}
+
+function ownedSourceRows(extensionId: string): SourceRow[] {
+  const rows = db().prepare('SELECT * FROM improvement_scout_sources WHERE owner IS NOT NULL ORDER BY id')
+    .all() as SourceRow[];
+  return rows.filter((row) => ownerExtensionId(row.owner) === extensionId);
+}
+
+/**
+ * How many pieces of Scout evidence cite a source. The evidence table keeps its
+ * source (`ON DELETE RESTRICT`), because an excerpt whose page nobody can name
+ * is not evidence — so a cited source cannot be deleted, and uninstall has to
+ * know that before it tries rather than surfacing a constraint error.
+ */
+function evidenceCiting(sourceId: string): number {
+  const row = db().prepare('SELECT COUNT(*) AS n FROM improvement_scout_evidence WHERE source_id = ?')
+    .get(sourceId) as { n: number };
+  return row.n;
 }
 
 function liveArtifacts(extensionId: string, kind?: string): ArtifactRow[] {
@@ -207,6 +254,43 @@ function describeServer(row: ServerRow): string {
   return row.transport === 'http'
     ? `http · ${row.url ?? ''}`.trim()
     : `stdio · ${[row.command ?? '', row.args ?? ''].join(' ').trim()}`;
+}
+
+/* ── scout sources as the table holds them ───────────────────────────── */
+
+/**
+ * The declared shape of a Scout source as it stands in the table right now.
+ * Every column the manifest can set is in it, so the fingerprint of a freshly
+ * written row equals the fingerprint of the declaration that wrote it.
+ *
+ * `kind` is carried across unchecked on purpose. A row whose kind is not one of
+ * the three the manifest allows was edited by something other than this file,
+ * and the fingerprint it produces matches no declaration — which is the right
+ * answer, since "edited, keep it" is what uninstall does with a mismatch.
+ */
+function sourceShapeOf(row: SourceRow): ExtensionScoutSource {
+  return {
+    id: row.id,
+    label: row.label,
+    description: row.description,
+    url: row.url,
+    publisher: row.publisher,
+    kind: row.kind as ExtensionScoutSourceKind,
+  };
+}
+
+function liveSourceFingerprint(row: SourceRow): string {
+  return scoutFingerprint(sourceShapeOf(row));
+}
+
+function describeSource(row: SourceRow): string {
+  return `${row.publisher} · ${row.label} · ${row.url}`;
+}
+
+/** Who holds a source row, in the words the artifact notes use. */
+function heldBy(owner: string | null): string {
+  const by = ownerExtensionId(owner);
+  return by ? `by the extension "${by}"` : 'by hand';
 }
 
 /* ── argument validation ─────────────────────────────────────────────── */
@@ -399,11 +483,18 @@ function readExtensionDirectory(directory: string): ReadResult {
  * handed a server over; whether that server still exists, and whether it is
  * still this extension's, is a question only the current database can answer.
  */
-function artifactState(manifest: ExtensionManifest): ExtensionArtifactInfo[] {
+function artifactState(manifest: ExtensionManifest, builtin = false): ExtensionArtifactInfo[] {
   const installed = pluginRow(manifest.id) !== null;
   const declared = new Map((manifest.provides.mcpServers ?? []).map((s) => [s.name, s]));
+  const declaredSources = new Map((manifest.provides.scoutSources ?? []).map((s) => [s.id, s]));
 
   return declaredArtifacts(manifest).map((info): ExtensionArtifactInfo => {
+    if (info.kind === 'scout-source') {
+      const source = declaredSources.get(info.ref);
+      if (!source) return { ...info, applied: false, note: info.note ?? 'The manifest no longer declares this source.' };
+      return sourceState(manifest, source, info, installed, builtin);
+    }
+
     if (info.kind !== 'mcp-server') {
       const note = info.note
         ?? (info.kind === 'skill' ? SKILL_NOTE : info.kind === 'gate' ? GATE_NOTE : INSTRUCTION_NOTE);
@@ -454,8 +545,68 @@ function artifactState(manifest: ExtensionManifest): ExtensionArtifactInfo[] {
   });
 }
 
+/**
+ * What became of one declared Scout source. Mirrors the MCP branch above: the
+ * row this extension owns is applied, a row somebody else holds is named and
+ * left alone, and — the one case with no MCP counterpart — a page some other
+ * row already reads is named too, because `url` is UNIQUE and the schema would
+ * refuse the insert; the note is so a person learns why instead of seeing a
+ * constraint error.
+ */
+function sourceState(
+  manifest: ExtensionManifest, source: ExtensionScoutSource, info: ExtensionArtifactInfo,
+  installed: boolean, builtin: boolean,
+): ExtensionArtifactInfo {
+  const byId = sourceRowById(source.id);
+  if (byId && ownerExtensionId(byId.owner) === manifest.id) {
+    return {
+      ...info,
+      detail: describeSource(byId),
+      applied: true,
+      note: byId.enabled === 1
+        ? null
+        : 'Registered and switched off. Improvement Scout reads a source every week unattended, so turn it on ' +
+          'in Improvement Scout → Sources yourself; the extension does not do that for you.',
+    };
+  }
+  if (byId) {
+    if (byId.owner === null && builtin && !installed) {
+      return {
+        ...info,
+        detail: describeSource(byId),
+        applied: false,
+        note: 'Installing adopts the row Wanigan seeded before extensions existed, keeping whether you had it on ' +
+          'and what Scout last read.',
+      };
+    }
+    return {
+      ...info,
+      detail: describeSource(byId),
+      applied: false,
+      note: `A Scout source with the id "${source.id}" is already registered ${heldBy(byId.owner)}, and was left ` +
+        'exactly as it is. Give this one a different id — a source id is the key every piece of evidence cites.',
+    };
+  }
+  const byUrl = sourceRowByUrl(source.url);
+  if (byUrl) {
+    return {
+      ...info,
+      applied: false,
+      note: `${source.url} is already read as the source "${byUrl.id}", registered ${heldBy(byUrl.owner)}. Scout ` +
+        'reads each page once, so this declaration was left out: drop it, or point it at a different page.',
+    };
+  }
+  return {
+    ...info,
+    applied: false,
+    note: installed
+      ? `No Scout source "${source.id}" is registered any more. It was removed after this extension was installed.`
+      : 'Installing this extension adds it to Improvement Scout’s weekly read, switched on.',
+  };
+}
+
 function toOrigin(value: string): ExtensionOrigin {
-  return value === 'development' || value === 'export' ? value : 'folder';
+  return value === 'builtin' || value === 'development' || value === 'export' ? value : 'folder';
 }
 
 function toInfo(row: PluginRow): ExtensionInfo {
@@ -495,7 +646,7 @@ function toInfo(row: PluginRow): ExtensionInfo {
     sourcePath: row.source_path,
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
-    artifacts: manifest ? artifactState(manifest) : [],
+    artifacts: manifest ? artifactState(manifest, row.origin === 'builtin') : [],
     consent: manifest ? extensionConsent(manifest) : [],
   };
 }
@@ -576,13 +727,57 @@ export function installExtension(directory: string, approvedSha256: string): Ext
     );
   }
 
-  const manifest = read.manifest;
-  const root = read.root;
-  const sha256 = read.sha256;
+  applyManifest({ manifest: read.manifest, origin: 'folder', sourcePath: read.root, sha256: read.sha256 });
+  return listExtensions();
+}
 
+/**
+ * Record a shipped manifest as installed, and apply it.
+ *
+ * The digest is over the canonical JSON — the same bytes `applyManifest` stores
+ * in `manifest_json` — because there is no file to hash. It is written to both
+ * digest columns: a built-in is approved by being shipped, and recording what
+ * was approved is what makes an edit to the bundle show up as `needs-trust` on
+ * the next start, exactly as a stranger's would.
+ *
+ * Idempotent on the digest. The same manifest twice changes nothing, so a
+ * start is not an install; a manifest that differs — a new Wanigan version
+ * changing a source — re-applies through the one path a folder uses.
+ */
+export function installBuiltinExtension(manifest: ExtensionManifest): { changed: boolean; sha256: string } {
+  const json = JSON.stringify(manifest);
+  const sha256 = createHash('sha256').update(json).digest('hex');
+  const existing = pluginRow(manifest.id);
+  if (existing && existing.origin === 'builtin' && existing.manifest_sha256 === sha256) {
+    return { changed: false, sha256 };
+  }
+  applyManifest({ manifest, origin: 'builtin', sourcePath: null, sha256 });
+  return { changed: true, sha256 };
+}
+
+type ApplyInput = {
+  manifest: ExtensionManifest;
+  origin: ExtensionOrigin;
+  /** The directory a folder install read; null for a built-in, which has none. */
+  sourcePath: string | null;
+  /** sha256 of the exact bytes being installed — the file's, or the canonical JSON's. */
+  sha256: string;
+};
+
+/**
+ * The one transaction every install runs: the plugin row, the closed artifact
+ * history, then each surface in turn. Folder installs and built-ins both land
+ * here, which is what makes "no private path" a fact rather than a promise.
+ */
+function applyManifest({ manifest, origin, sourcePath, sha256 }: ApplyInput): void {
   db().transaction(() => {
     const now = Date.now();
     const owner = extensionOwner(manifest.id, manifest.version);
+    // On a folder reinstall `enabled` goes back to 1: a person clicked install,
+    // and install means on. A built-in re-applies when a Wanigan update changed
+    // it, and an update that switches back on something the operator turned
+    // off is the same silent re-enable db.ts's seed comment refuses — so a
+    // built-in keeps whatever the row already says.
     db().prepare(`
       INSERT INTO plugins (id, label, version, origin, source_path, manifest_json, manifest_sha256,
                            trusted_sha256, enabled, installed_at, updated_at)
@@ -591,10 +786,11 @@ export function installExtension(directory: string, approvedSha256: string): Ext
         label=excluded.label, version=excluded.version, origin=excluded.origin,
         source_path=excluded.source_path, manifest_json=excluded.manifest_json,
         manifest_sha256=excluded.manifest_sha256, trusted_sha256=excluded.trusted_sha256,
-        enabled=1, updated_at=excluded.updated_at
+        enabled=CASE WHEN excluded.origin = 'builtin' THEN plugins.enabled ELSE 1 END,
+        updated_at=excluded.updated_at
     `).run({
-      id: manifest.id, label: manifest.label, version: manifest.version, origin: 'folder',
-      source: root, json: JSON.stringify(manifest), sha: sha256, now,
+      id: manifest.id, label: manifest.label, version: manifest.version, origin,
+      source: sourcePath, json: JSON.stringify(manifest), sha: sha256, now,
     });
 
     // An update re-applies from the new manifest, so the previous install's
@@ -603,69 +799,138 @@ export function installExtension(directory: string, approvedSha256: string): Ext
     // adopting a server the operator has since made their own.
     closeArtifacts(manifest.id, now);
 
-    for (const server of manifest.provides.mcpServers ?? []) {
-      if (mcpUnsupported(server)) continue;
-
-      const rows = serverRowsNamed(server.name);
-      const mine = rows.find((row) => ownerExtensionId(row.owner) === manifest.id);
-      // A name already taken by somebody else's row is never overwritten. Two
-      // extensions both declaring "figma" would otherwise take turns winning,
-      // and the loser's tools would vanish from an agent's list with nothing on
-      // screen to explain it. artifactState reports the collision by name.
-      if (!mine && rows.length > 0) continue;
-
-      const applied = upsertServer({
-        id: mine?.id,
-        projectId: null,
-        name: server.name,
-        transport: server.transport,
-        command: server.command,
-        args: server.args?.length ? joinArgs(server.args) : undefined,
-        url: server.url,
-        // Destination names and where each value comes from, never a value: the
-        // secret is resolved out of the keychain when a session's config is
-        // written, so this row survives a backup or a support dump carrying no
-        // credential.
-        // '' rather than undefined when a version declares no environment: the
-        // installer is the only caller that knows the whole truth about this
-        // field, so it states it either way. undefined would mean "leave what is
-        // there", which on an update that dropped a variable would keep handing
-        // the old credential to a server that no longer asks for it.
-        env: server.env && Object.keys(server.env).length ? JSON.stringify(server.env) : '',
-        // The attribution uninstall reads. Without it, removing an extension is
-        // a guess at which rows were its.
-        owner,
-        // Never enabled by the installer. An enabled stdio server is a standing
-        // grant to run a command at every session launch, and the registry
-        // refuses to enable one whose exact command line has not been approved.
-        enabled: false,
-      });
-
-      const stored = db().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(applied.id) as ServerRow;
-      if (ownerExtensionId(stored.owner) !== manifest.id) {
-        // A row Wanigan cannot attribute is a row no uninstall may touch, so
-        // the install fails here rather than leaving an orphan behind.
-        throw new Error(`"${server.name}" could not be attributed to this extension, so nothing was installed.`);
-      }
-      recordArtifact(
-        manifest.id, 'mcp-server', stored.name, stored.project_id,
-        describeServer(stored), liveFingerprint(stored),
-      );
-    }
+    applyMcpServers(manifest, owner);
+    applyScoutSources(manifest, owner, origin === 'builtin', now);
   })();
+}
 
-  return listExtensions();
+function applyMcpServers(manifest: ExtensionManifest, owner: string): void {
+  for (const server of manifest.provides.mcpServers ?? []) {
+    if (mcpUnsupported(server)) continue;
+
+    const rows = serverRowsNamed(server.name);
+    const mine = rows.find((row) => ownerExtensionId(row.owner) === manifest.id);
+    // A name already taken by somebody else's row is never overwritten. Two
+    // extensions both declaring "figma" would otherwise take turns winning,
+    // and the loser's tools would vanish from an agent's list with nothing on
+    // screen to explain it. artifactState reports the collision by name.
+    if (!mine && rows.length > 0) continue;
+
+    const applied = upsertServer({
+      id: mine?.id,
+      projectId: null,
+      name: server.name,
+      transport: server.transport,
+      command: server.command,
+      args: server.args?.length ? joinArgs(server.args) : undefined,
+      url: server.url,
+      // Destination names and where each value comes from, never a value: the
+      // secret is resolved out of the keychain when a session's config is
+      // written, so this row survives a backup or a support dump carrying no
+      // credential.
+      // '' rather than undefined when a version declares no environment: the
+      // installer is the only caller that knows the whole truth about this
+      // field, so it states it either way. undefined would mean "leave what is
+      // there", which on an update that dropped a variable would keep handing
+      // the old credential to a server that no longer asks for it.
+      env: server.env && Object.keys(server.env).length ? JSON.stringify(server.env) : '',
+      // The attribution uninstall reads. Without it, removing an extension is
+      // a guess at which rows were its.
+      owner,
+      // Never enabled by the installer. An enabled stdio server is a standing
+      // grant to run a command at every session launch, and the registry
+      // refuses to enable one whose exact command line has not been approved.
+      enabled: false,
+    });
+
+    const stored = db().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(applied.id) as ServerRow;
+    if (ownerExtensionId(stored.owner) !== manifest.id) {
+      // A row Wanigan cannot attribute is a row no uninstall may touch, so
+      // the install fails here rather than leaving an orphan behind.
+      throw new Error(`"${server.name}" could not be attributed to this extension, so nothing was installed.`);
+    }
+    recordArtifact(
+      manifest.id, 'mcp-server', stored.name, stored.project_id,
+      describeServer(stored), liveFingerprint(stored),
+    );
+  }
+}
+
+/**
+ * Register each declared Scout source, the way `applyMcpServers` registers a
+ * server: a row this extension already owns is brought up to date, a row it
+ * does not own is left exactly as it is, and a page some other row already
+ * reads is left out. Nothing is written for a collision; `sourceState` names
+ * it so a person learns why rather than seeing a UNIQUE constraint error.
+ *
+ * Adoption is the one asymmetry. A row with `owner` NULL is either one db.ts
+ * seeded before extensions existed or one an uninstall disowned, and the
+ * built-in extension declaring the same id takes it over — setting the owner
+ * and refreshing the copy, leaving `enabled` and the `last_*` columns alone
+ * because those are the operator's history. Only a built-in may adopt: a third
+ * party declaring `claude-code-changelog` would be taking over a page the
+ * operator trusts under Anthropic's name, and its uninstall would then delete a
+ * row Wanigan shipped. For a stranger the same row is a collision, by name.
+ */
+function applyScoutSources(manifest: ExtensionManifest, owner: string, builtin: boolean, now: number): void {
+  const update = db().prepare(`
+    UPDATE improvement_scout_sources
+    SET label=@label, description=@description, url=@url, publisher=@publisher, kind=@kind,
+        official=@official, owner=@owner, updated_at=@now
+    WHERE id=@id
+  `);
+  const insert = db().prepare(`
+    INSERT INTO improvement_scout_sources
+      (id, label, description, url, publisher, kind, official, enabled, owner, created_at, updated_at)
+    VALUES (@id, @label, @description, @url, @publisher, @kind, @official, 1, @owner, @now, @now)
+  `);
+
+  for (const source of manifest.provides.scoutSources ?? []) {
+    const byId = sourceRowById(source.id);
+    const mine = byId !== null && ownerExtensionId(byId.owner) === manifest.id;
+    const adoptable = byId !== null && byId.owner === null && builtin;
+    if (byId && !mine && !adoptable) continue;
+
+    // `url` is UNIQUE. The check is here rather than left to the schema so
+    // that one colliding page leaves the rest of the manifest applying, and so
+    // an adoption whose row was pointed elsewhere by hand does not fail the
+    // whole transaction over a page another row now holds.
+    const holder = sourceRowByUrl(source.url);
+    if (holder && holder.id !== source.id) continue;
+
+    // `official` is what Scout shows as Wanigan's own allow-list, so only a
+    // manifest Wanigan ships may set it. A new row arrives switched on: a Scout
+    // source is a public page read once a week, not a command run at every
+    // launch, and the consent line for the host was already shown at install.
+    // An existing row keeps its `enabled`, on the same rule as db.ts's seed —
+    // a refreshed copy must never re-enable a source the operator turned off.
+    const params = {
+      id: source.id, label: source.label, description: source.description, url: source.url,
+      publisher: source.publisher, kind: source.kind, official: builtin ? 1 : 0, owner, now,
+    };
+    if (byId) update.run(params); else insert.run(params);
+
+    const stored = sourceRowById(source.id);
+    if (!stored || ownerExtensionId(stored.owner) !== manifest.id) {
+      // A row Wanigan cannot attribute is a row no uninstall may touch, so
+      // the install fails here rather than leaving an orphan behind.
+      throw new Error(`Scout source "${source.id}" could not be attributed to this extension, so nothing was installed.`);
+    }
+    recordArtifact(manifest.id, 'scout-source', stored.id, null, describeSource(stored), liveSourceFingerprint(stored));
+  }
 }
 
 /* ── enable / disable ────────────────────────────────────────────────── */
 
 /**
- * Disabling stops the extension's servers being handed to sessions and leaves
- * every row exactly where it is — it is not a quiet uninstall.
+ * Disabling stops the extension's servers being handed to sessions and its
+ * Scout sources being read, and leaves every row exactly where it is — it is
+ * not a quiet uninstall.
  *
- * Enabling deliberately does not switch those servers back on. Wanigan does not
- * record which of them the operator had running, and an extension toggle that
- * starts an HTTP endpoint or asks the registry to spawn a command is the kind of
+ * Enabling deliberately does not switch those servers or sources back on.
+ * Wanigan does not record which of them the operator had running, and an
+ * extension toggle that starts an HTTP endpoint, asks the registry to spawn a
+ * command, or puts five pages back on a weekly unattended fetch is the kind of
  * grant this app makes people give one at a time. The artifact note names the
  * switch to use.
  */
@@ -675,8 +940,13 @@ export function setExtensionEnabled(extensionId: string, enabled: boolean): Exte
   if (!pluginRow(id)) throw new Error(`No extension "${id}" is installed.`);
 
   db().transaction(() => {
-    db().prepare('UPDATE plugins SET enabled = ?, updated_at = ? WHERE id = ?').run(enabled ? 1 : 0, Date.now(), id);
-    if (!enabled) for (const row of ownedRows(id)) setServerEnabled(row.id, false);
+    const now = Date.now();
+    db().prepare('UPDATE plugins SET enabled = ?, updated_at = ? WHERE id = ?').run(enabled ? 1 : 0, now, id);
+    if (!enabled) {
+      for (const row of ownedRows(id)) setServerEnabled(row.id, false);
+      const off = db().prepare('UPDATE improvement_scout_sources SET enabled = 0, updated_at = ? WHERE id = ?');
+      for (const row of ownedSourceRows(id)) off.run(now, row.id);
+    }
   })();
 
   return listExtensions();
@@ -692,19 +962,35 @@ export function setExtensionEnabled(extensionId: string, enabled: boolean): Exte
  * disowned — `owner` goes to NULL, which is both what it now is and what stops a
  * reinstall adopting it again. Silently reverting a person's own edit is the one
  * outcome that would teach people never to uninstall anything.
+ *
+ * A Scout source that evidence cites is kept the same way even when it still
+ * matches: the evidence table keeps its source, so deleting the row is not on
+ * offer, and the note says so rather than the constraint.
+ *
+ * A built-in is refused. It ships with Wanigan and would be back at the next
+ * start, so "uninstalled" would be a lie for one restart; disabling is the
+ * honest verb, and it works.
  */
 export function uninstallExtension(extensionId: string): ExtensionRemoval {
   const id = requireExtensionId(extensionId);
   const row = pluginRow(id);
   if (!row) throw new Error(`No extension "${id}" is installed.`);
+  if (row.origin === 'builtin') {
+    throw new Error(
+      `"${row.label}" ships with Wanigan and cannot be uninstalled — it would be back at the next start. ` +
+      'Disable it instead, which switches off everything it registered and leaves it there.'
+    );
+  }
 
   const removed: ExtensionArtifactInfo[] = [];
   const kept: ExtensionArtifactInfo[] = [];
 
   db().transaction(() => {
-    const installedFingerprints = new Set(
-      liveArtifacts(id, 'mcp-server').map((artifact) => artifact.fingerprint).filter((f): f is string => !!f)
+    const fingerprintsOf = (kind: string) => new Set(
+      liveArtifacts(id, kind).map((artifact) => artifact.fingerprint).filter((f): f is string => !!f)
     );
+    const installedServers = fingerprintsOf('mcp-server');
+    const installedSources = fingerprintsOf('scout-source');
 
     for (const server of ownedRows(id)) {
       const base = {
@@ -713,7 +999,7 @@ export function uninstallExtension(extensionId: string): ExtensionRemoval {
         projectId: server.project_id,
         detail: describeServer(server),
       };
-      if (installedFingerprints.has(liveFingerprint(server))) {
+      if (installedServers.has(liveFingerprint(server))) {
         removeServer(server.id);
         removed.push({ ...base, applied: false, note: 'Removed with the extension; it was still exactly as installed.' });
       } else {
@@ -728,16 +1014,51 @@ export function uninstallExtension(extensionId: string): ExtensionRemoval {
       }
     }
 
+    const disown = db().prepare('UPDATE improvement_scout_sources SET owner = NULL, updated_at = ? WHERE id = ?');
+    for (const source of ownedSourceRows(id)) {
+      const base = {
+        kind: 'scout-source' as const,
+        ref: source.id,
+        projectId: null,
+        detail: describeSource(source),
+      };
+      const cited = evidenceCiting(source.id);
+      if (cited === 0 && installedSources.has(liveSourceFingerprint(source))) {
+        db().prepare('DELETE FROM improvement_scout_sources WHERE id = ?').run(source.id);
+        removed.push({ ...base, applied: false, note: 'Removed with the extension; it was still exactly as installed.' });
+      } else {
+        disown.run(Date.now(), source.id);
+        kept.push({
+          ...base,
+          detail: `${base.detail} — ${cited ? 'cited by Scout evidence' : 'edited after it was installed'}`,
+          applied: true,
+          note: cited
+            ? `Kept. ${cited === 1 ? 'One piece' : `${cited} pieces`} of Scout evidence cite this source, and evidence ` +
+              'keeps its source, so the row stays and is yours now: switch it off in Improvement Scout → Sources if ' +
+              'you do not want the page read again.'
+            : 'Kept. Its page, label or sentence no longer matches what the extension installed, so it is yours now: ' +
+              'the extension is gone and this row is not.',
+        });
+      }
+    }
+
     closeArtifacts(id, Date.now());
     db().prepare('DELETE FROM plugins WHERE id = ?').run(id);
   })();
 
+  const count = (list: ExtensionArtifactInfo[], kind: ExtensionArtifactInfo['kind']) =>
+    list.filter((entry) => entry.kind === kind).length;
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const took = [
+    plural(count(removed, 'mcp-server'), 'MCP server'),
+    plural(count(removed, 'scout-source'), 'Scout source'),
+  ].join(' and ');
   const keptNames = kept.map((k) => `"${k.ref}"`).join(', ');
   const detail = kept.length
-    ? `Removed ${removed.length} of ${removed.length + kept.length} registered MCP servers. Kept ${keptNames}: ` +
-      `edited after install, so ${kept.length === 1 ? 'it is' : 'they are'} yours now and owned by no extension.`
-    : `Removed ${removed.length} MCP server${removed.length === 1 ? '' : 's'}. Skills, gates and instructions were ` +
-      'only ever declared, so there was nothing of theirs to take back.';
+    ? `Removed ${took}. Kept ${keptNames}: edited after install or cited by evidence, so ` +
+      `${kept.length === 1 ? 'it is' : 'they are'} yours now and owned by no extension.`
+    : `Removed ${took}. Skills, gates and instructions were only ever declared, so there was nothing of theirs ` +
+      'to take back.';
 
   return { pluginId: id, removed, kept, detail };
 }
@@ -753,11 +1074,23 @@ export function uninstallExtension(extensionId: string): ExtensionRemoval {
  * re-exporting it under a new id is a way to launder ownership of somebody
  * else's server.
  */
-export function exportableConfiguration(): { mcpServers: { id: string; name: string; detail: string }[] } {
+export function exportableConfiguration(): {
+  mcpServers: { id: string; name: string; detail: string }[];
+  scoutSources: { id: string; label: string; detail: string }[];
+} {
   const rows = db().prepare(
     'SELECT * FROM mcp_servers WHERE project_id IS NULL AND owner IS NULL ORDER BY name'
   ).all() as ServerRow[];
-  return { mcpServers: rows.map((row) => ({ id: row.id, name: row.name, detail: describeServer(row) })) };
+  // The same ownership rule for Scout sources. Once the built-in has adopted
+  // the shipped five they are owned and withheld — and would collide on url
+  // wherever the export was installed anyway.
+  const sources = db().prepare(
+    'SELECT * FROM improvement_scout_sources WHERE owner IS NULL ORDER BY id'
+  ).all() as SourceRow[];
+  return {
+    mcpServers: rows.map((row) => ({ id: row.id, name: row.name, detail: describeServer(row) })),
+    scoutSources: sources.map((row) => ({ id: row.id, label: row.label, detail: describeSource(row) })),
+  };
 }
 
 /**
@@ -784,7 +1117,7 @@ function repositoryRootAbove(directory: string): string | null {
  * read it back so the caller sees exactly what any other install would see.
  */
 export function exportExtension(
-  input: { directory: string; id: string; label: string; mcpServerIds: string[] },
+  input: { directory: string; id: string; label: string; mcpServerIds: string[]; scoutSourceIds?: string[] },
 ): ExtensionInspection {
   if (!input || typeof input !== 'object') throw new Error('An export needs a directory, an id, a label and a selection.');
   const directory = requireDirectory(input.directory);
@@ -792,6 +1125,12 @@ export function exportExtension(
   const label = requireText(input.label, 'A label', 120);
   if (!Array.isArray(input.mcpServerIds) || input.mcpServerIds.length > 100) {
     throw new Error('Select up to 100 MCP servers to save into the extension.');
+  }
+  // Optional so a caller that predates Scout sources still exports what it
+  // asked for; a manifest with no sources declares none.
+  const scoutSourceIds = input.scoutSourceIds ?? [];
+  if (!Array.isArray(scoutSourceIds) || scoutSourceIds.length > 100) {
+    throw new Error('Select up to 100 Scout sources to save into the extension.');
   }
 
   // Resolved against what is exportable rather than against the whole table, so
@@ -804,6 +1143,15 @@ export function exportExtension(
   const chosen = input.mcpServerIds.map((serverId) => {
     const row = offered.get(requireText(serverId, 'An MCP server id', 120));
     if (!row) throw new Error(`No MCP server ${String(serverId)} can be saved into an extension. Nothing was written.`);
+    return row;
+  });
+  const offeredSources = new Map(
+    (db().prepare('SELECT * FROM improvement_scout_sources WHERE owner IS NULL').all() as SourceRow[])
+      .map((row) => [row.id, row])
+  );
+  const chosenSources = scoutSourceIds.map((sourceId) => {
+    const row = offeredSources.get(requireText(sourceId, 'A Scout source id', 120));
+    if (!row) throw new Error(`No Scout source ${String(sourceId)} can be saved into an extension. Nothing was written.`);
     return row;
   });
 
@@ -832,6 +1180,9 @@ export function exportExtension(
         }
         return shapeOf(row);
       }),
+      // A row whose kind the manifest does not allow is caught by the
+      // validation below, before a byte is written, rather than here.
+      ...(chosenSources.length ? { scoutSources: chosenSources.map(sourceShapeOf) } : {}),
     },
   };
 

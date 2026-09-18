@@ -84,6 +84,10 @@ const STATUS_READING: Record<ExtensionStatus, { glyph: string; word: string; ton
 };
 
 const ORIGIN_READING: Record<ExtensionOrigin, string> = {
+  // Read through the same validator as everything else, and digest-recorded
+  // like everything else — "ships with" is a fact about where it came from,
+  // never a reason it was trusted.
+  builtin: 'Ships with Wanigan',
   folder: 'Added from a folder you chose',
   development: 'Loaded in place from a working directory',
   export: 'Saved out of this Wanigan’s own configuration',
@@ -94,8 +98,12 @@ const PROVIDE_READING: Record<Provide, { one: string; many: string; glyph: strin
   skill: { one: 'skill', many: 'skills', glyph: '✎' },
   gate: { one: 'review gate', many: 'review gates', glyph: '⊘' },
   instruction: { one: 'instruction', many: 'instructions', glyph: '¶' },
+  // A public page Scout fetches on its weekly schedule — the second kind an
+  // install applies, after MCP servers. Named as what it is to a person
+  // ("a source Scout reads") rather than the manifest's key.
+  'scout-source': { one: 'Scout source', many: 'Scout sources', glyph: '◎' },
 };
-const PROVIDE_ORDER: Provide[] = ['mcp-server', 'skill', 'gate', 'instruction'];
+const PROVIDE_ORDER: Provide[] = ['mcp-server', 'scout-source', 'skill', 'gate', 'instruction'];
 
 const STATE_WORD: Record<StateFacet, string> = {
   enabled: 'Enabled',

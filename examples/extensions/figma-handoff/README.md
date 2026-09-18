@@ -1,8 +1,9 @@
 # Figma handoff — an example Wanigan extension
 
 A complete, valid extension directory. It declares one MCP server, one skill,
-one review gate and one project instructions file, so it exercises all four
-surfaces an extension can declare. Copy it, change the ids, and make it yours.
+one review gate and one project instructions file — four of the five surfaces
+an extension can declare; the fifth, a Scout source, has its own example in
+`../cursor-scout-source/`. Copy it, change the ids, and make it yours.
 
 ```
 figma-handoff/

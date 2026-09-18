@@ -2,7 +2,7 @@
  * What a valid Wanigan extension is — the one definition, read by three.
  *
  * An extension is a bundle of DECLARATIONS across surfaces that already exist:
- * MCP servers, skills, review gates, instructions. It is never a place to load
+ * MCP servers, skills, review gates, instructions, Scout sources. It is never a place to load
  * code, and nothing it ships runs inside Wanigan's process. An extension that
  * needs to compute something does it behind a protocol Wanigan already speaks
  * out of process — an MCP server, or a provider pack's v1 capability adapter.
@@ -61,6 +61,7 @@ const MAX_MCP_SERVERS = 20;
 const MAX_SKILLS = 50;
 const MAX_GATES = 20;
 const MAX_INSTRUCTIONS = 20;
+const MAX_SCOUT_SOURCES = 20;
 const MAX_CREDENTIALS = 20;
 /** Matches `saveRecipe` in `src/main/review.ts`, which stores at most 20 and refuses one over 2,000 characters. */
 const MAX_GATE_COMMANDS = 20;
@@ -70,6 +71,13 @@ const MAX_ENV_ENTRIES = 50;
 const MAX_FILE_CHARS = 200;
 const MAX_LABEL = 80;
 const MAX_DESCRIPTION = 500;
+const MAX_URL_CHARS = 2_000;
+/**
+ * Shorter than MAX_DESCRIPTION because Scout renders it beside the row, not
+ * behind a disclosure: a paragraph there pushes the url it describes off the
+ * screen it was meant to explain.
+ */
+const MAX_SCOUT_DESCRIPTION = 200;
 
 /**
  * Environment destinations an extension may not choose.
@@ -129,6 +137,28 @@ export type ExtensionSkill = { name: string; file: string; description?: string 
 export type ExtensionGate = { label: string; commands: string[] };
 export type ExtensionInstruction = { scope: 'project' | 'personal'; title: string; file: string };
 
+/** The same three Improvement Scout already reads; the manifest mirrors the code, not the other way round. */
+const SCOUT_SOURCE_KINDS = ['changelog', 'release-notes', 'documentation'] as const;
+export type ExtensionScoutSourceKind = typeof SCOUT_SOURCE_KINDS[number];
+
+/**
+ * A public page Improvement Scout reads on its weekly schedule and proposes
+ * product changes from. The five built-in sources are this shape wearing a
+ * TypeScript costume, and this is how a sixth arrives without a code change.
+ *
+ * `description` is required, unlike an MCP server's. Scout shows it beside the
+ * row, and a source with no sentence is a url nobody can judge before it is
+ * polled on their behalf every week.
+ */
+export type ExtensionScoutSource = {
+  id: string;
+  label: string;
+  description: string;
+  url: string;
+  publisher: string;
+  kind: ExtensionScoutSourceKind;
+};
+
 export type ExtensionManifest = {
   schemaVersion: 1;
   id: string;
@@ -143,6 +173,7 @@ export type ExtensionManifest = {
     skills?: ExtensionSkill[];
     gates?: ExtensionGate[];
     instructions?: ExtensionInstruction[];
+    scoutSources?: ExtensionScoutSource[];
   };
 };
 
@@ -376,7 +407,7 @@ function parseMcpServer(
 
   const command = text(own(raw, 'command'), `${where}.command`, errors, { max: 1_000 });
   const args = argList(own(raw, 'args'), `${where}.args`, errors, MAX_ARGS);
-  const url = text(own(raw, 'url'), `${where}.url`, errors, { max: 2_000 });
+  const url = text(own(raw, 'url'), `${where}.url`, errors, { max: MAX_URL_CHARS });
   const description = text(own(raw, 'description'), `${where}.description`, errors, { max: MAX_DESCRIPTION });
 
   const scopeRaw = own(raw, 'scope');
@@ -466,6 +497,55 @@ function validateHttpUrl(value: string, where: string, errors: string[]): void {
   if (parsed.username || parsed.password) {
     errors.push(`${where} carries a username or password in the URL. Declare a credential instead; a secret in a URL is shown, logged and never redacted.`);
   }
+}
+
+/**
+ * A Scout source's address, and deliberately not `validateHttpUrl`.
+ *
+ * The loopback exception above exists because a session reaches an MCP server
+ * while a person is running that session. Scout fetches a source unattended,
+ * on a schedule, with nobody watching: a loopback source here is a way for an
+ * extension to make Wanigan poll something on the machine every Saturday, from
+ * a bundle whose consent screen says it reads a changelog. So there is no
+ * exception — a source is a public page over https, or it is not a source.
+ *
+ * Userinfo is refused for the reason the MCP rule gives, and a source has no
+ * credential block to point at instead: a public changelog needs no secret.
+ */
+function validateScoutUrl(value: string, where: string, errors: string[]): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    errors.push(`${where} must be a valid URL.`);
+    return;
+  }
+  if (parsed.protocol !== 'https:') {
+    errors.push(`${where} must use https. Scout fetches a source unattended on a schedule, so there is no loopback exception here.`);
+  }
+  if (parsed.username || parsed.password) {
+    errors.push(`${where} carries a username or password in the URL. A Scout source is a public page and takes no secret; one in the URL is shown, logged and never redacted.`);
+  }
+}
+
+function parseScoutSource(raw: unknown, where: string, errors: string[]): ExtensionScoutSource | null {
+  if (!isObject(raw)) {
+    errors.push(`${where} must be an object.`);
+    return null;
+  }
+  const id = text(own(raw, 'id'), `${where}.id`, errors, { required: true, max: MAX_ID, pattern: EXTENSION_ID_RE });
+  const label = text(own(raw, 'label'), `${where}.label`, errors, { required: true, max: MAX_LABEL });
+  const description = text(own(raw, 'description'), `${where}.description`, errors, { required: true, max: MAX_SCOUT_DESCRIPTION });
+  const url = text(own(raw, 'url'), `${where}.url`, errors, { required: true, max: MAX_URL_CHARS });
+  const publisher = text(own(raw, 'publisher'), `${where}.publisher`, errors, { required: true, max: MAX_LABEL });
+  const kindRaw = own(raw, 'kind');
+  const kind = (SCOUT_SOURCE_KINDS as readonly unknown[]).includes(kindRaw) ? kindRaw as ExtensionScoutSourceKind : null;
+  if (!kind) errors.push(`${where}.kind must be ${SCOUT_SOURCE_KINDS.map((entry) => `"${entry}"`).join(', ')}.`);
+  if (url !== undefined) validateScoutUrl(url, `${where}.url`, errors);
+  if (id === undefined || label === undefined || description === undefined || url === undefined || publisher === undefined || !kind) {
+    return null;
+  }
+  return { id, label, description, url, publisher, kind };
 }
 
 function parseSkill(raw: unknown, where: string, errors: string[]): ExtensionSkill | null {
@@ -702,12 +782,34 @@ export function validateExtensionManifest(value: unknown, opts: { appVersion?: s
       }
     }
 
+    const scoutSourcesRaw = own(providesRaw, 'scoutSources');
+    if (scoutSourcesRaw !== undefined) {
+      if (!Array.isArray(scoutSourcesRaw)) errors.push('provides.scoutSources must be an array.');
+      else {
+        if (scoutSourcesRaw.length > MAX_SCOUT_SOURCES) errors.push(`provides.scoutSources has more than ${MAX_SCOUT_SOURCES} entries.`);
+        const sources: ExtensionScoutSource[] = [];
+        scoutSourcesRaw.slice(0, MAX_SCOUT_SOURCES).forEach((entry, i) => {
+          const parsed = parseScoutSource(entry, `provides.scoutSources[${i}]`, errors);
+          if (parsed) sources.push(parsed);
+        });
+        // The id is what Scout's enable/disable setting and a proposal's
+        // `sources` citation both name. Two rows with one id are one switch
+        // and one citation pointing at whichever url was registered last.
+        const seen = new Set<string>();
+        for (const source of sources) {
+          if (seen.has(source.id)) errors.push(`provides.scoutSources declares "${source.id}" twice.`);
+          seen.add(source.id);
+        }
+        if (sources.length) provides.scoutSources = sources;
+      }
+    }
+
     // An extension that declares nothing installs nothing, and an install
     // dialog with an empty consent list is a dialog that cannot be answered
     // honestly: there is no wording for "this will do nothing" that a person
     // would read as anything other than a bug.
     if (!Object.keys(provides).length && !errors.some((entry) => entry.startsWith('provides.'))) {
-      errors.push('provides must declare at least one MCP server, skill, gate or instruction.');
+      errors.push('provides must declare at least one MCP server, skill, gate, instruction or Scout source.');
     }
   }
 
@@ -777,7 +879,8 @@ function commandText(server: ExtensionMcpServer): string {
  * gates and skills gain an installed path, this constant grows and every
  * surface changes with it.
  */
-export const APPLIED_ARTIFACT_KINDS: readonly ExtensionArtifactInfo['kind'][] = ['mcp-server'];
+// 'scout-source' joined once extensions/store.ts applied it and its smoke suite proved the row.
+export const APPLIED_ARTIFACT_KINDS: readonly ExtensionArtifactInfo['kind'][] = ['mcp-server', 'scout-source'];
 
 const applies = (kind: ExtensionArtifactInfo['kind']) => APPLIED_ARTIFACT_KINDS.includes(kind);
 
@@ -809,6 +912,21 @@ export function extensionConsent(manifest: ExtensionManifest): ExtensionConsentL
         text: `The MCP server "${server.name}" sends this machine's requests to ${host}.`,
       });
     }
+  }
+
+  // A Scout source is a url Wanigan will fetch on a schedule with nobody
+  // watching, which is exactly what a `host` line is for. The line says when
+  // as well as where: "sends requests to" would let a person picture a fetch
+  // they trigger, and the truth is a fetch that happens every week on its own.
+  // The hostname only, for the MCP line's reason — a path is where a long url
+  // hides which machine it reaches.
+  for (const source of manifest.provides.scoutSources ?? []) {
+    let host = source.url;
+    try { host = new URL(source.url).host; } catch { host = source.url; }
+    hosts.push({
+      kind: 'host',
+      text: `Wanigan will fetch ${host} on Scout's weekly schedule to look for changes, for the source “${source.label}”.`,
+    });
   }
 
   // A gate's commands reach `$SHELL -lc`, which makes them the largest thing
@@ -942,6 +1060,9 @@ export function declaredArtifacts(manifest: ExtensionManifest): ExtensionArtifac
   for (const instruction of manifest.provides.instructions ?? []) {
     out.push(row('instruction', instruction.title, instruction.file));
   }
+  for (const source of manifest.provides.scoutSources ?? []) {
+    out.push(row('scout-source', source.id, `${source.publisher} · ${source.label}`));
+  }
   return out;
 }
 
@@ -996,5 +1117,27 @@ export function mcpFingerprint(server: ExtensionMcpServer): string {
     args: server.args ?? [],
     url: server.url ?? null,
     env,
+  });
+}
+
+/**
+ * The Scout-source counterpart of `mcpFingerprint`, compared on uninstall the
+ * same way and for the same reason: a row that still matches was installed and
+ * may go, a row that differs was edited and stays.
+ *
+ * Every field is in it, `description` included. For an MCP server the
+ * description changes nothing about what runs; for a Scout source it is the
+ * sentence a person reads to decide whether to keep being polled, so a source
+ * whose sentence was rewritten is no longer the one the extension declared.
+ */
+export function scoutFingerprint(source: ExtensionScoutSource): string {
+  return JSON.stringify({
+    v: EXTENSION_SCHEMA_VERSION,
+    id: source.id,
+    label: source.label,
+    description: source.description,
+    url: source.url,
+    publisher: source.publisher,
+    kind: source.kind,
   });
 }

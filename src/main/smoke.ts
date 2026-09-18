@@ -196,6 +196,14 @@ export async function runSmoke(): Promise<void> {
   // Everything above is the batch pipeline. Phases 1-24 are exercised here,
   // in the same real main process, because compiling is not working.
   try {
+    // What startServices() does first in the app: the shipped extensions land
+    // through the installer before any module reads its rows. First here too,
+    // ahead of every suite — the egress table is derived from those rows, and
+    // the audit that holds every host named in main to that table runs early.
+    {
+      const { installBuiltinExtensions } = await import('./extensions/builtin');
+      installBuiltinExtensions();
+    }
     const { runPhaseSmoke } = await import('./smoke2');
     await runPhaseSmoke(check, say);
     const { runPhaseSmoke2 } = await import('./smoke3');
@@ -210,6 +218,8 @@ export async function runSmoke(): Promise<void> {
     await runReviewSmoke(check, say);
     const { runExtensionsSmoke } = await import('./smoke-extensions');
     await runExtensionsSmoke(check, say);
+    const { runBackendCatalogsSmoke } = await import('./smoke-backend-catalogs');
+    await runBackendCatalogsSmoke(check, say);
     const { runAuditControlSmoke } = await import('./smoke-audit-control');
     await runAuditControlSmoke(check, say);
     const { runAuditIntegrationsSmoke } = await import('./smoke-audit-integrations');

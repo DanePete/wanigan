@@ -1,11 +1,11 @@
 # Writing a Wanigan extension
 
 A Wanigan extension is a bundle of **declarations** across surfaces that
-already exist: MCP servers, skills, review gates, instructions. It is never a
-place to load code. Nothing an extension ships runs inside Wanigan's process.
-An extension that needs to compute something does it behind a protocol Wanigan
-already speaks out of process — an MCP server, or a provider pack's v1
-capability adapter.
+already exist: MCP servers, skills, review gates, instructions, Scout sources.
+It is never a place to load code. Nothing an extension ships runs inside
+Wanigan's process. An extension that needs to compute something does it behind
+a protocol Wanigan already speaks out of process — an MCP server, or a provider
+pack's v1 capability adapter.
 
 That rule is the whole design, and it was chosen rather than conceded. An
 extension host that loads JavaScript into the app hands its author the
@@ -58,7 +58,11 @@ One file, `wanigan-extension.json`, at the root of the extension directory.
                      "env": { "FIGMA_TOKEN": { "source": "credential", "id": "acme.figma" } } }],
     "skills": [{ "name": "figma-handoff", "file": "skills/figma-handoff/SKILL.md" }],
     "gates": [{ "label": "Design tokens in sync", "commands": ["npm run tokens:check"] }],
-    "instructions": [{ "scope": "project", "title": "Figma conventions", "file": "docs/figma.md" }]
+    "instructions": [{ "scope": "project", "title": "Figma conventions", "file": "docs/figma.md" }],
+    "scoutSources": [{ "id": "figma-release-notes", "label": "Figma release notes",
+                       "description": "Official Figma product and plugin API changes.",
+                       "url": "https://www.figma.com/release-notes/",
+                       "publisher": "Figma", "kind": "release-notes" }]
   }
 }
 ```
@@ -144,14 +148,118 @@ to be able to make — plus every environment destination and every credential
 the server will be handed. Trust is then pinned to the sha256 of the manifest
 bytes. You approve a specific command line, not a category.
 
+### Scout sources: `scoutSources`
+
+Improvement Scout reads allow-listed public changelogs on a weekly schedule —
+Saturday 09:00 local by default — and proposes product changes as an evidence
+inbox. It never edits anything itself; a proposal cites the source it came
+from and waits for a person. The five sources Wanigan ships are declared by a
+built-in extension, `wanigan.scout-sources` (origin `builtin`, cannot be
+uninstalled, can be disabled), and any extension may declare more in exactly
+the same shape:
+
+```json
+"scoutSources": [{
+  "id": "cursor-changelog",
+  "label": "Cursor changelog",
+  "description": "Official Cursor editor and agent changes.",
+  "url": "https://cursor.com/changelog",
+  "publisher": "Cursor",
+  "kind": "changelog"
+}]
+```
+
+Every field is required. `publisher` is who publishes the page, not who wrote
+the extension; the consent screen shows both. The rules, and what each one
+prevents:
+
+- **`id`** is the same shape as every other id here
+  (`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`, at most 64 characters), because it is
+  the key Scout's enable switch, the egress report and a proposal's citation
+  all name. A manifest that declares one id twice is refused: two rows with one
+  id are one switch and one citation pointing at whichever url was registered
+  last.
+- **`description`** is required, unlike an MCP server's, and is at most 200
+  characters. Scout shows it beside the row, not behind a disclosure — a
+  source with no sentence is a url nobody can judge before it is polled on
+  their behalf every week, and a paragraph pushes the url it describes off the
+  screen it was meant to explain.
+- **`url` is https, and there is no loopback exception.** An MCP server may
+  point at `127.0.0.1` because a session reaches it while a person is running
+  that session. Scout fetches unattended, on a schedule, with nobody watching,
+  so a loopback source is a way for a bundle whose consent screen says it reads
+  a changelog to make Wanigan poll something on the machine every Saturday.
+  A source is a public page over https or it is not a source. A username or
+  password in the url is refused too, and a source has no credential block to
+  point at instead: a public changelog needs no secret, and a secret in a url
+  is shown, logged and never redacted.
+- **`kind`** is one of `changelog`, `release-notes` or `documentation` — the
+  three Scout already reads. The manifest mirrors the code, not the other way
+  round.
+- **At most 20 per extension**, the same ceiling as MCP servers, gates and
+  instructions.
+
+**Scout sources are applied at install.** Unlike skills, gates and
+instructions, a source needs no file written into anyone's repository and runs
+no command: it is a row in Scout's source registry, so installing lands that
+row with the extension recorded as its owner, enabled. The consent screen
+therefore shows each source as a **host** line that says when as well as where:
+
+> Wanigan will fetch cursor.com on Scout's weekly schedule to look for changes,
+> for the source “Cursor changelog”.
+
+"Sends requests to" would let a person picture a fetch they trigger; the truth
+is a fetch that happens every week on its own, so the line says so. It shows
+the hostname only, for the same reason the MCP host line does: a path is where
+a long url hides which machine it actually reaches.
+
+What "on Scout's weekly schedule" means is bounded by two switches the operator
+owns. Scout's weekly research and its separate unattended-network permission
+are both off by default, and installing an extension turns neither on. Until
+both are on, an installed source is fetched only when the operator presses
+**Research now**. The Privacy & data panel's egress report lists every source's
+host, with when it will be fetched — so installing an extension with a source
+visibly adds a network destination there, and uninstalling it visibly removes
+one.
+
+The registry is shared between the built-in extension, every installed
+extension and rows the operator added by hand, so two collisions are checked
+at install and neither is resolved by overwriting:
+
+- an `id` already held by another extension or added by hand is left as it is,
+  and the source is reported unapplied naming the holder;
+- a `url` already registered under another id is likewise refused, because the
+  registry's url column is unique — a second row for the same changelog would
+  be refused by the schema before it could be refused by anyone.
+
+Uninstall follows the rule every other artifact obeys: the sources the
+extension owns are removed only where the row still matches what it declared.
+Every field is in that comparison, `description` included — for an MCP server
+the description changes nothing about what runs, but for a source it is the
+sentence a person reads to decide whether to keep being polled, so a source
+whose sentence was rewritten is no longer the one the extension declared. A
+row the operator edited is kept and named on the card.
+
+Disabling an extension disables its sources. Re-enabling the extension does
+**not** re-enable them: a source the operator switched off while the extension
+was disabled would otherwise come back on with the extension, and nobody asked
+for that. The switch that turns a source back on is in AI Improvement Scout,
+and the card says so.
+
 ## What installing actually does today
 
-Installing an extension **applies MCP servers only.**
+Installing an extension **applies MCP servers and Scout sources.** Everything
+else is parsed, validated, counted and listed on the extension's card with
+`applied: false` and a note naming exactly what it still needs. Nothing is
+silently dropped, and nothing unapplied is counted as installed.
 
-Skills, gates and instructions are parsed, validated, counted and listed on the
-extension's card with `applied: false` and a note naming exactly what they
-still need. They are not silently dropped, and they are never counted as
-installed.
+| Declaration    | Applied at install | Where it lands, or what it still needs |
+| -------------- | ------------------ | -------------------------------------- |
+| `mcpServers`   | yes                | The MCP registry, owned by the extension. Started by your agent's CLI, out of process. |
+| `scoutSources` | yes                | Scout's source registry, owned by the extension, enabled. Fetched on Scout's schedule once the operator has turned weekly research and unattended network on. |
+| `gates`        | not yet            | Routing through the existing review-recipe consent. |
+| `skills`       | not yet            | The base-hash-guarded projection path. |
+| `instructions` | not yet            | The base-hash-guarded projection path. |
 
 - **Gates** run shell commands on the operator's machine. A gate becomes a
   project review recipe, and Wanigan already asks before a review recipe is
@@ -172,8 +280,8 @@ in both directions. An extension that quietly dropped its three non-MCP
 declarations would leave you debugging a skill that was never written. An
 extension that claimed to install a gate by writing commands into a project
 without asking would be running a stranger's shell commands on the strength of
-a JSON file. The card tells you which of your four declarations is live, and
-the note tells you why the other three are not.
+a JSON file. The card tells you which of your declarations is live, and the
+note tells you why the others are not.
 
 ## The authoring loop
 
@@ -278,9 +386,34 @@ So: approve a command you would run by hand, from a publisher you would give a
 token to. The consent screen exists to make that judgement possible, not to
 make it unnecessary.
 
-## A worked example
+## Modules
 
-`examples/extensions/figma-handoff/` is the manifest in this document as a
-complete, valid extension directory: a manifest, a skill, and the instructions
-file the manifest points at. Copy it, change the ids, and run
-`extension-preview` on it.
+An extension is the declarative half of "everything is a module"; the
+main-process half is a **module**, registered through
+`src/main/module-registry.ts` with its schema, its IPC namespace and its
+schedule. Improvement Scout is one. Its five shipped sources moved out of its
+code and into the `wanigan.scout-sources` extension, and Scout itself is one
+registration instead of a table in `db.ts`, a handler in `index.ts`, a route in
+`App.tsx` and a schedule wired by hand.
+
+Scout is a module that is *not* required, and it says why: it reads the public
+web, and nothing that Wanigan calls verified depends on it. Removable today
+means exactly this much — its schedule and every one of its sources can be
+disabled, and its main-process registration is one place rather than four
+hand-wired edits. Its route in the renderer is still registered by hand,
+pending the renderer view seam, so disabling the module does not yet take the
+view off the sidebar. That is the honest size of it; do not read "removable"
+as more.
+
+## Two worked examples
+
+`examples/extensions/figma-handoff/` is the manifest in this document, minus
+the Scout source, as a complete, valid extension directory: a manifest, a
+skill, and the instructions file the manifest points at.
+
+`examples/extensions/cursor-scout-source/` is the smallest extension that does
+something — a manifest declaring exactly one Scout source and nothing else —
+and its README says what installing it adds to your machine's weekly network
+traffic.
+
+Copy either, change the ids, and run `extension-preview` on it.

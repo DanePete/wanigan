@@ -23,8 +23,17 @@ export async function runScoutSmoke(check: Check, say: Say): Promise<void> {
   let fixtureText = 'Claude Code now exposes an LSP language server diagnostic bridge for workspace diagnostics.';
 
   try {
-    // Start from a known source subset. The default registry is intentionally
-    // useful, but testing all five would obscure whether its allow-list is
+    // The five shipped sources are no longer a constant in improvement-scout.ts:
+    // they are rows the built-in extension (extensions/builtin.ts) applies at
+    // startup through the same installer a stranger's extension uses. Everything
+    // below presumes two of those rows exist, so their absence is asserted by
+    // name here rather than surfacing five checks later as "not installed".
+    const seeded = new Set(scout.listSources().map((source) => source.id));
+    check(seeded.has('claude-code-changelog') && seeded.has('anthropic-platform-release-notes'),
+      'the built-in source extension seeded the shipped Scout sources before the Scout suite ran',
+      [...seeded]);
+    // Start from a known source subset. The shipped set is intentionally
+    // useful, but testing all five would obscure whether the enabled flag is
     // actually respected.
     scout.updateSettings({ enabled: true, weeklyEnabled: false, networkEnabled: false, weekday: 6, hour: 9 });
     for (const source of scout.listSources()) scout.setSourceEnabled(source.id, source.id === 'claude-code-changelog');

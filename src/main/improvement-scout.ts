@@ -23,10 +23,22 @@ import type {
 } from '../shared/types';
 
 /**
- * The Scout is an operator-owned research inbox. It can collect only these
- * public, HTTPS, official pages; no renderer-provided URL is ever fetched.
- * This keeps a compromised page or a local database edit from turning a
- * background feature into a generic network client.
+ * The Scout is an operator-owned research inbox. It collects only public,
+ * HTTPS pages that an installed extension declared; no renderer-provided URL
+ * is ever fetched. This keeps a compromised page from turning a background
+ * feature into a generic network client.
+ *
+ * The sources used to be a constant array in this file — five official
+ * changelogs, with `db.ts` seeding the same five as rows and this module
+ * mapping over the array while the table held only the enabled flag. They are
+ * now rows in `improvement_scout_sources`, written by the extension installer
+ * (`src/main/extensions/store.ts`) from a manifest's `provides.scoutSources`;
+ * the five shipped ones moved to the built-in extension in
+ * `src/main/extensions/builtin.ts`, which the installer applies at startup.
+ * The allow-list is therefore "what an installed extension declared", checked
+ * where it is declared: the manifest validator refuses anything but https and
+ * a URL carrying credentials, and the installer records the row's owner and
+ * fingerprint. This module reads the table and does not second-guess it.
  */
 type TrustedSource = {
   id: string;
@@ -37,50 +49,6 @@ type TrustedSource = {
   kind: ImprovementScoutSourceKind;
 };
 
-const TRUSTED_SOURCES: readonly TrustedSource[] = [
-  {
-    id: 'openai-release-notes',
-    label: 'OpenAI developer changelog',
-    description: 'Official OpenAI developer and product capability changes.',
-    url: 'https://learn.chatgpt.com/docs/changelog',
-    publisher: 'OpenAI',
-    kind: 'changelog',
-  },
-  {
-    id: 'claude-code-changelog',
-    label: 'Claude Code changelog',
-    description: 'Official Claude Code changes and developer-workflow additions.',
-    url: 'https://code.claude.com/docs/en/changelog',
-    publisher: 'Anthropic',
-    kind: 'changelog',
-  },
-  {
-    id: 'anthropic-platform-release-notes',
-    label: 'Anthropic Platform release notes',
-    description: 'Official API and platform changes relevant to agent integrations.',
-    url: 'https://platform.claude.com/docs/en/release-notes/overview',
-    publisher: 'Anthropic',
-    kind: 'release-notes',
-  },
-  {
-    id: 'github-changelog',
-    label: 'GitHub changelog',
-    description: 'Official GitHub platform and MCP ecosystem announcements.',
-    url: 'https://github.blog/changelog/',
-    publisher: 'GitHub',
-    kind: 'changelog',
-  },
-  {
-    id: 'github-releases-rest-docs',
-    label: 'GitHub Releases REST API',
-    description: 'Official release-discovery API reference and change context.',
-    url: 'https://docs.github.com/en/rest/releases',
-    publisher: 'GitHub',
-    kind: 'documentation',
-  },
-];
-
-const SOURCE_BY_ID = new Map(TRUSTED_SOURCES.map((value) => [value.id, value]));
 const DEFAULT_WEEKDAY = 6; // Saturday, local time.
 const DEFAULT_HOUR = 9;
 const SCOUT_SCHEDULE_ID = IMPROVEMENT_SCOUT_SCHEDULE_ID;
@@ -96,6 +64,12 @@ const MAX_NOTE = 4_000;
 
 type SourceRow = {
   id: string;
+  label: string;
+  description: string;
+  url: string;
+  publisher: string;
+  kind: string;
+  official: number;
   enabled: number;
   last_checked_at: number | null;
   last_status: string | null;
@@ -269,41 +243,45 @@ function validLastStatus(value: string | null): ImprovementScoutSource['lastStat
   return value === 'ok' || value === 'failed' || value === 'skipped' ? value : 'never';
 }
 
-/** Static source metadata comes from code, not a mutable database row. */
-export function listSources(): ImprovementScoutSource[] {
-  const rows = db().prepare(`SELECT id,enabled,last_checked_at,last_status,last_detail
-    FROM improvement_scout_sources ORDER BY id`).all() as SourceRow[];
-  const state = new Map(rows.map((row) => [row.id, row]));
-  return TRUSTED_SOURCES.map((source) => {
-    const row = state.get(source.id);
-    return {
-      id: source.id,
-      label: source.label,
-      description: source.description,
-      url: source.url,
-      publisher: source.publisher,
-      kind: source.kind,
-      official: true,
-      enabled: row ? row.enabled === 1 : true,
-      lastCheckedAt: row?.last_checked_at ?? null,
-      lastStatus: validLastStatus(row?.last_status ?? null),
-      lastDetail: row?.last_detail ?? null,
-    };
-  });
+function validKind(value: string): ImprovementScoutSourceKind {
+  return value === 'release-notes' || value === 'documentation' ? value : 'changelog';
 }
 
+/**
+ * Every row the installer has written, in id order. The row is the source:
+ * its metadata, its `official` flag and the operator's enabled preference all
+ * live there now, so an extension's source and a shipped one read the same.
+ */
+export function listSources(): ImprovementScoutSource[] {
+  const rows = db().prepare(`SELECT id,label,description,url,publisher,kind,official,enabled,last_checked_at,last_status,last_detail
+    FROM improvement_scout_sources ORDER BY id`).all() as SourceRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    label: row.label,
+    description: row.description,
+    url: row.url,
+    publisher: row.publisher,
+    kind: validKind(row.kind),
+    official: row.official === 1,
+    enabled: row.enabled === 1,
+    lastCheckedAt: row.last_checked_at,
+    lastStatus: validLastStatus(row.last_status),
+    lastDetail: row.last_detail,
+  }));
+}
+
+/** Any id the table holds may be toggled; the allow-list was enforced when the
+ * extension that declared it was installed, not here. */
 export function setSourceEnabled(id: string, enabled: boolean): ImprovementScoutSource[] {
-  if (!SOURCE_BY_ID.has(id)) throw new Error('That source is not in Wanigan’s official Scout allow-list.');
   const result = db().prepare('UPDATE improvement_scout_sources SET enabled=?,updated_at=? WHERE id=?')
     .run(enabled ? 1 : 0, Date.now(), id);
-  if (result.changes !== 1) throw new Error('The Scout source registry is unavailable. Restart Wanigan to repair its local schema.');
+  if (result.changes !== 1) throw new Error('That source is not installed. A Scout source is declared by an extension; install one that provides it.');
   return listSources();
 }
 
 function sourceRows(enabledOnly = false): Array<TrustedSource & { enabled: boolean }> {
-  const states = new Map(listSources().map((source) => [source.id, source]));
-  return TRUSTED_SOURCES
-    .map((source) => ({ ...source, enabled: states.get(source.id)?.enabled ?? true }))
+  return listSources()
+    .map(({ id, label, description, url, publisher, kind, enabled }) => ({ id, label, description, url, publisher, kind, enabled }))
     .filter((source) => !enabledOnly || source.enabled);
 }
 
@@ -492,10 +470,16 @@ function localInventory(): Record<string, unknown> {
   };
 }
 
+/**
+ * The last check before egress, kept even though the manifest validator
+ * already refused a non-https source at install: the row is what is fetched,
+ * a row can be edited by hand in the file, and a fetch is the one place a
+ * wrong URL costs something. Host identity is no longer compared against a
+ * code constant — there is none — so what remains is the scheme.
+ */
 function sourceHostMatches(source: TrustedSource): boolean {
   try {
-    const url = new URL(source.url);
-    return url.protocol === 'https:' && url.hostname === new URL(SOURCE_BY_ID.get(source.id)!.url).hostname;
+    return new URL(source.url).protocol === 'https:';
   } catch { return false; }
 }
 
@@ -563,8 +547,8 @@ async function boundedText(response: Response): Promise<string> {
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
-/** GET-only and credential-free. Redirects are refused so the static host
- * allow-list cannot be bypassed by a source changing destination. */
+/** GET-only and credential-free. Redirects are refused so the declared source
+ * cannot be bypassed by a page changing destination. */
 async function fetchTrustedSource(source: TrustedSource): Promise<CollectedSource> {
   if (!sourceHostMatches(source)) throw new Error('Scout source failed its static HTTPS allow-list check.');
   const response = await fetch(source.url, {
@@ -836,8 +820,8 @@ export async function run(input: RunScoutInput = {}): Promise<ImprovementScoutRu
   const failures: string[] = [];
   for (const source of activeSources) {
     try {
-      // `source` comes from the static registry, never from the database nor
-      // IPC. The DB only stores a local enabled/disabled preference.
+      // `source` is a row the extension installer wrote, never IPC: the only
+      // column the renderer can reach is `enabled`, through setSourceEnabled.
       const document = await sourceFetcher(source);
       const evidence = insertEvidence(row.id, source, document);
       evidenceCount++;
@@ -953,12 +937,11 @@ export function createGoal(id: string, input: { projectId: string }): Improvemen
 /** Test-only hooks: no browser/renderer can reach these. They make source
  * collection and rule/dedup paths verifiable without real egress. */
 export const __test = {
-  trustedSources: () => TRUSTED_SOURCES.map((source) => ({ ...source })),
   normalizeDocument: (raw: string, fallback = 'Test source') => ({
     title: sourceTitle(raw, fallback), text: textFromDocument(raw), publishedAt: maybePublishedAt(raw),
   }),
   matchingRuleIds: (sourceId: string, text: string) => {
-    const source = SOURCE_BY_ID.get(sourceId);
+    const source = sourceRows().find((row) => row.id === sourceId);
     return source ? rulesFor(source, { title: source.label, text, excerpt: text.slice(0, MAX_EXCERPT), publishedAt: null }, localInventory()).map((rule) => rule.id) : [];
   },
   setFetcher: (fetcher: SourceFetcher | null) => { sourceFetcher = fetcher ?? fetchTrustedSource; },

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dataDir, resultsDir } from './db';
-import { encryptionAvailable, getKey, hasProviderKey } from './keys';
+import { encryptionAvailable, getKey, getProviderKey, hasProviderKey } from './keys';
 import { otelEnv } from './otel';
 import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
@@ -9,6 +9,7 @@ import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
+import { catalogUrl } from '../shared/backend-catalog';
 
 /**
  * What leaves this machine, assembled where it is actually knowable.
@@ -23,11 +24,15 @@ import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/
  * worse than no claim at all.
  *
  * The table is enumerated by hand from `fetch(` in src/main, and that is stated
- * in `provenance` rather than left for the reader to assume. It is exhaustive
- * for Wanigan's own code and for nothing else, which is what `unenumerated` is
- * for: the agent CLI is a separate program with its own network behaviour, and
- * a panel that implied otherwise would be the exact overclaim it exists to
- * avoid.
+ * in `provenance` rather than left for the reader to assume. The exception is
+ * the one fetch whose destination is data rather than code: a model catalogue
+ * is read from wherever the backend's pack declares it, so those rows are
+ * derived from the enabled manifests (`declaredCatalogHosts`) — a pack a
+ * stranger installs can add a destination, and it must not be able to add one
+ * this panel does not print. The table is exhaustive for Wanigan's own code and
+ * for nothing else, which is what `unenumerated` is for: the agent CLI is a
+ * separate program with its own network behaviour, and a panel that implied
+ * otherwise would be the exact overclaim it exists to avoid.
  *
  * Nothing here reports a connection. Wanigan holds none open — every row is a
  * request made at the moment the thing under "why" happens — so the only fact
@@ -105,6 +110,9 @@ function xaiKey(): boolean {
  * override sends the session elsewhere. What keeps that list current is the
  * smoke check that every https host named anywhere in the main process — the
  * built-in manifests included — appears on this table.
+ *
+ * Catalogue reads are the other way round, and `declaredCatalogHosts` below
+ * says why: there the manifest IS the socket Wanigan opens.
  */
 function packBackendHosts(): EgressHost[] {
   let profiles: ReturnType<typeof providerPackRegistry.listProfiles>;
@@ -151,6 +159,101 @@ function packBackendHosts(): EgressHost[] {
   return rows;
 }
 
+/**
+ * Whether a provider credential is reachable — stored, or handed in by the
+ * shell as WANIGAN_<ID>_KEY. The value is read and dropped; only its presence
+ * is reported, the same way providerKeyFingerprint resolves it.
+ */
+function providerKeyReachable(id: string): boolean {
+  try {
+    return getProviderKey(id) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The model catalogues Wanigan itself reads, one row per declared catalog,
+ * read out of the enabled packs rather than typed here.
+ *
+ * These rows are the strong kind, not the weak kind above: `by` is 'wanigan'
+ * because the socket is opened by `backend-catalog.ts` in this process, with
+ * the pack's declared credential as a bearer token. What makes them derivable
+ * where the base-url rows are not is that the manifest is the whole of the
+ * truth about the destination — the reader resolves `catalog.url` through the
+ * same `catalogUrl` this row calls, so the host printed is the host fetched,
+ * override included, and `overrideEnv` names the variable only when the
+ * manifest declares one. Z.ai, DeepSeek and xAI used to sit here as three rows
+ * typed by hand beside three source files; they are now three catalog blocks
+ * on their packs and this one loop.
+ *
+ * Only enabled packs: a disabled pack's catalog is never fetched (the launch
+ * dialog reads the registry with the same filter), so a row for it would name
+ * traffic that cannot happen.
+ */
+function declaredCatalogHosts(): EgressHost[] {
+  let profiles: ReturnType<typeof providerPackRegistry.listProfiles>;
+  try {
+    profiles = providerPackRegistry.listProfiles({ includeDisabled: false });
+  } catch {
+    // Same rule as packBackendHosts: the Providers panel reports a registry
+    // that will not read; the privacy report must not go down with it.
+    return [];
+  }
+
+  const rows: EgressHost[] = [];
+  // One row per backend, not per profile: the reader caches by backend id, so
+  // two profiles on one backend are one catalogue read. Keyed the way the
+  // registry namespaces a local pack's backend, so a local pack that reuses a
+  // built-in backend id still gets its own row.
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    const catalog = profile.backend.catalog;
+    if (!catalog) continue;
+    const key = profile.source === 'local' ? `${profile.packId}:${profile.backend.id}` : profile.backend.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    let host = '';
+    let pathname = '/';
+    try {
+      const parsed = new URL(catalogUrl(catalog, process.env));
+      host = parsed.hostname;
+      pathname = parsed.pathname || '/';
+    } catch {
+      // The manifest url is validated on load and an override that fails the
+      // same rule is ignored by catalogUrl, so nothing reaches here. If
+      // something does there is no host to name, and inventing one is worse
+      // than the row's absence.
+      continue;
+    }
+    if (!host) continue;
+
+    const overrideEnv = typeof catalog.url === 'string' ? null : catalog.url.name;
+    const credentialId = catalog.auth?.source === 'credential' ? catalog.auth.id : null;
+    const backend = profile.backend.label;
+    const origin = profile.source === 'local'
+      ? `Declared by the “${profile.packLabel}” provider pack (${profile.packId}@${profile.packVersion}).`
+      : `Declared on Wanigan's built-in ${profile.packLabel} pack.`;
+    rows.push({
+      host,
+      paths: [pathname],
+      by: 'wanigan',
+      purpose: `Reading ${backend}'s model list live, so a stale table cannot quietly offer the wrong model` +
+        (credentialId ? `, and verifying a ${backend} key you paste against the same catalogue.` : '.') +
+        ` ${origin}`,
+      when: credentialId
+        ? `Only when a ${backend} key is stored (or WANIGAN_${credentialId.toUpperCase()}_KEY is set), and only on Verify, ` +
+          'when a launch dialog opens on this backend, or on a catalogue refresh. Answers are cached for six hours.'
+        : `Whenever a launch dialog opens on this backend or its catalogue is refreshed. No key is sent — the pack declares none. ` +
+          'Answers are cached for six hours.',
+      activeNow: credentialId ? providerKeyReachable(credentialId) : true,
+      overrideEnv,
+    });
+  }
+  return rows;
+}
+
 /* ── hosts ───────────────────────────────────────────────────────────── */
 
 /**
@@ -163,15 +266,13 @@ function packBackendHosts(): EgressHost[] {
  */
 function hosts(): EgressHost[] {
   const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com';
-  // Same default as glm.ts: a Coding Plan token must use the coding endpoint.
-  const glmModels = process.env.WANIGAN_GLM_MODELS_URL?.trim() || 'https://api.z.ai/api/coding/paas/v4/models';
+  // The base urls sessions post to. Their catalogue counterparts are no longer
+  // typed here: each is a `catalog` block on the backend's pack and reaches
+  // this table through declaredCatalogHosts, override and all.
   const glmBase = process.env.WANIGAN_GLM_BASE_URL?.trim() || 'https://api.z.ai/api/anthropic';
-  const deepseekModels = process.env.WANIGAN_DEEPSEEK_MODELS_URL?.trim() || 'https://api.deepseek.com/models';
   const deepseekBase = process.env.WANIGAN_DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com/anthropic';
-  // Two hosts on one service: xAI serves the Anthropic surface from the root
-  // and the OpenAI-compatible catalog from /v1, so the two rows below differ in
-  // path rather than in host.
-  const xaiModels = process.env.WANIGAN_XAI_MODELS_URL?.trim() || 'https://api.x.ai/v1/models';
+  // xAI serves the Anthropic surface from the host root; its catalogue is on
+  // /v1 of the same host, and that row comes from the manifest.
   const xaiBase = process.env.WANIGAN_XAI_BASE_URL?.trim() || 'https://api.x.ai';
   const key = platformKey();
   const glm = glmKey();
@@ -191,7 +292,15 @@ function hosts(): EgressHost[] {
       const parsed = new URL(source.url);
       host = parsed.hostname;
       pathname = parsed.pathname || '/';
-    } catch { /* source metadata is code-owned; retain a visible fallback */ }
+    } catch {
+      // A source url here was declared by an installed extension — the built-in
+      // Scout extension seeds the shipped five, and a third party can add more —
+      // and the installer refuses a url that is not https or that carries
+      // userinfo. So a url that will not parse is not a code constant gone
+      // wrong; it is a row edited outside Wanigan after install. The raw text
+      // stays on the table as the host, which is the honest thing to print
+      // about a destination Wanigan could not resolve.
+    }
     return {
       host,
       paths: [pathname],
@@ -255,15 +364,9 @@ function hosts(): EgressHost[] {
       activeNow: Boolean(process.env.ANTHROPIC_ADMIN_KEY?.trim()),
       overrideEnv: null,
     },
-    {
-      host: hostOf(glmModels, 'api.z.ai'),
-      paths: ['/api/coding/paas/v4/models'],
-      by: 'wanigan',
-      purpose: 'The GLM model list, read live so a stale table cannot quietly offer the wrong model.',
-      when: 'Only when a Z.ai provider key is stored.',
-      activeNow: glm,
-      overrideEnv: 'WANIGAN_GLM_MODELS_URL',
-    },
+    // Every catalogue Wanigan reads, from the packs that declare them. Placed
+    // here, where the three built-in catalogue rows used to be typed by hand.
+    ...declaredCatalogHosts(),
     {
       host: hostOf(glmBase, 'api.z.ai'),
       paths: ['/v1/messages'],
@@ -274,25 +377,11 @@ function hosts(): EgressHost[] {
       overrideEnv: 'WANIGAN_GLM_BASE_URL',
     },
     {
-      host: hostOf(deepseekModels, 'api.deepseek.com'),
-      paths: ['/models'], by: 'wanigan',
-      purpose: 'Verifying a DeepSeek key and reading its model list before Wanigan offers it.',
-      when: 'Only when you save or verify a DeepSeek key, or refresh its catalog.',
-      activeNow: deepseek, overrideEnv: 'WANIGAN_DEEPSEEK_MODELS_URL',
-    },
-    {
       host: hostOf(deepseekBase, 'api.deepseek.com'),
       paths: ['/v1/messages'], by: 'agent',
       purpose: 'Where Claude Code sends requests for DeepSeek sessions; Wanigan supplies the endpoint and key but does not inspect the traffic.',
       when: 'Only for DeepSeek sessions and only while a DeepSeek key is stored.',
       activeNow: deepseek, overrideEnv: 'WANIGAN_DEEPSEEK_BASE_URL',
-    },
-    {
-      host: hostOf(xaiModels, 'api.x.ai'),
-      paths: ['/v1/models'], by: 'wanigan',
-      purpose: 'Verifying an xAI key and reading its Grok model list before Wanigan offers it.',
-      when: 'Only when you save or verify an xAI key, or refresh its catalog.',
-      activeNow: xai, overrideEnv: 'WANIGAN_XAI_MODELS_URL',
     },
     {
       host: hostOf(xaiBase, 'api.x.ai'),
@@ -490,9 +579,10 @@ const UNENUMERATED = [
 ];
 
 const PROVENANCE =
-  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the Scout's static official-source registry. " +
-  'The rows marked “agent” are the exception: they are where each CLI sends your prompts, which Wanigan supplies for GLM and DeepSeek and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
-  'Any row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +
+  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the official-source registry the Scout's installed extensions declare — " +
+  'with one derived exception: model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
+  'The rows marked “agent” are where each CLI sends your prompts, which Wanigan supplies for GLM, DeepSeek and Grok and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
+  'An “agent” row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';
 
 export function egressReport(): EgressReport {

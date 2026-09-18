@@ -744,6 +744,11 @@ function declaredCredentialIds(profiles: readonly ProviderProfileManifest[]): st
     for (const spec of Object.values(profile.environment ?? {})) {
       if (spec.source === 'credential') ids.push(spec.id ?? profile.id);
     }
+    // A catalog read carries its credential as a bearer token, to a url the
+    // same manifest chose. It is a credential spend like any environment entry
+    // and is owned, and checked, the same way.
+    const auth = profile.backend.catalog?.auth;
+    if (auth?.source === 'credential') ids.push(auth.id);
   }
   return [...new Set(ids)];
 }
@@ -821,6 +826,18 @@ export function validateProviderPackManifest(raw: unknown): ValidationResult {
         errors.push(
           `profiles.${profile.id}.environment.${name}.id is "${spec.id}", which is not a profile in ` +
           'this pack. A pack may only read a credential stored under one of its own profile ids.'
+        );
+      }
+      // The same theft through the catalog: `catalog.auth.id: "glm"` in a
+      // stranger's manifest would put the operator's Z.ai token in a bearer
+      // header to whatever url that manifest declares, from Wanigan's own
+      // process rather than the CLI's. The catalog's id has no "omit it and
+      // spend your own" form, so it is checked outright.
+      const auth = profile.backend.catalog?.auth;
+      if (auth?.source === 'credential' && !ids.has(auth.id)) {
+        errors.push(
+          `profiles.${profile.id}.backend.catalog.auth.id is "${auth.id}", which is not a profile in ` +
+          'this pack. A catalog may only read a credential stored under one of its own profile ids.'
         );
       }
     }
@@ -949,7 +966,36 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       id: 'glm',
       label: 'GLM · Z.ai',
       harness: 'claude-code',
-      backend: { id: 'zai', label: 'Z.ai', baseUrl: 'https://api.z.ai/api/anthropic' },
+      backend: {
+        id: 'zai', label: 'Z.ai', baseUrl: 'https://api.z.ai/api/anthropic',
+        catalog: {
+          // The Coding Plan's own endpoint, not the general PaaS one. A Coding
+          // Plan token can list the general catalogue, which includes models
+          // that token cannot run, so a perfectly valid-looking choice failed
+          // only after a session was already open. This is the url glm.ts read
+          // for the same reason, and the override it honoured.
+          url: { source: 'process', name: 'WANIGAN_GLM_MODELS_URL', fallback: 'https://api.z.ai/api/coding/paas/v4/models' },
+          auth: { source: 'credential', id: 'glm' },
+          shape: 'openai-models',
+          // glm.ts kept only ids matching /glm/i — an include, where a manifest
+          // has only `exclude`. The negative lookahead is that include turned
+          // inside out: an id with no "glm" anywhere in it is dropped, and an
+          // id with one is kept, which is the same set the include kept. The
+          // reader compiles it case-insensitively, as the include was. Anchored
+          // and without a nested quantifier, so a long id costs one scan.
+          exclude: '^(?!.*glm)',
+          // What glm.ts knew had shipped, newest first, verbatim. Served only
+          // when the catalogue cannot be read, and always with a note saying so.
+          fallback: [
+            { id: 'glm-5.3', label: 'GLM 5.3' },
+            { id: 'glm-5.3-flash', label: 'GLM 5.3 Flash' },
+            { id: 'glm-5.2', label: 'GLM 5.2' },
+            { id: 'glm-5-turbo', label: 'GLM 5 Turbo' },
+            { id: 'glm-4.7', label: 'GLM 4.7' },
+            { id: 'glm-4.5-air', label: 'GLM 4.5 Air' },
+          ],
+        },
+      },
       command: CLAUDE_COMMAND,
       launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
       resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },
@@ -975,7 +1021,23 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
     publisher: { id: 'wanigan', name: 'Wanigan' },
     profiles: [{
       id: 'deepseek', label: 'DeepSeek', harness: 'claude-code',
-      backend: { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic' },
+      backend: {
+        id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic',
+        // DeepSeek exposes both OpenAI- and Anthropic-compatible surfaces; the
+        // catalogue is on the OpenAI-shaped one and sessions post to the other.
+        catalog: {
+          url: { source: 'process', name: 'WANIGAN_DEEPSEEK_MODELS_URL', fallback: 'https://api.deepseek.com/models' },
+          auth: { source: 'credential', id: 'deepseek' },
+          shape: 'openai-models',
+          // deepseek.ts's fallback, verbatim: the two ids the launch
+          // environment above names as defaults, so an unreachable catalogue
+          // still offers exactly what a session would start on.
+          fallback: [
+            { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+          ],
+        },
+      },
       command: CLAUDE_COMMAND,
       launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
       resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },
@@ -1004,7 +1066,29 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       // xAI serves the Anthropic surface from the host root, not from /v1 —
       // that path is the OpenAI-compatible one, and pointing the Anthropic SDK
       // at it fails on the first request rather than at configuration time.
-      backend: { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai' },
+      backend: {
+        id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai',
+        // The catalogue lives on the /v1 (OpenAI-compatible) side of the same
+        // service, so this url differs from the base url by path, not host.
+        catalog: {
+          url: { source: 'process', name: 'WANIGAN_XAI_MODELS_URL', fallback: 'https://api.x.ai/v1/models' },
+          auth: { source: 'credential', id: 'xai' },
+          shape: 'openai-models',
+          // The catalogue lists image, video and voice models alongside the
+          // text ones. A session launched against those fails at the first
+          // turn, so they are not offered as a choice — xai.ts's filter as it
+          // shipped, with the reader supplying the case-insensitive flag.
+          exclude: 'imagine|voice|image|video|embed',
+          // xai.ts's fallback, verbatim, newest first. The two ids the launch
+          // environment below names are the first and last of these.
+          fallback: [
+            { id: 'grok-4.6', label: 'Grok 4.6' },
+            { id: 'grok-4.5', label: 'Grok 4.5' },
+            { id: 'grok-4.3', label: 'Grok 4.3' },
+            { id: 'grok-build-0.1', label: 'Grok Build 0.1' },
+          ],
+        },
+      },
       command: CLAUDE_COMMAND,
       launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
       resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },

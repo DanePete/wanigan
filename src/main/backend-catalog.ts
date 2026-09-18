@@ -135,11 +135,15 @@ export async function backendModels(input: {
       token = null;
     }
     if (!token) {
-      return readOf(remember(backendId, {
+      // Not cached, unlike the failed read below. This answer opens no socket,
+      // so it costs nothing to give again — and remembering it would hide the
+      // key an operator saves next from the launch dialog for six hours, with
+      // the "no key is set yet" entry still answering for a key that is set.
+      return readOf({
         at: Date.now(),
         models: fallbackModels(catalog),
         note: fallbackNote(backendLabel, 'no key is set yet'),
-      }));
+      });
     }
   }
 

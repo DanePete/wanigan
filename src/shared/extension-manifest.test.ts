@@ -22,8 +22,8 @@ import {
   APPLIED_ARTIFACT_KINDS,
   EXTENSION_SCHEMA_VERSION,
   declaredArtifacts, extensionConsent, extensionOwner, mcpFingerprint,
-  ownerExtensionId, validateExtensionManifest,
-  type ExtensionManifest, type ExtensionMcpServer,
+  ownerExtensionId, scoutFingerprint, validateExtensionManifest,
+  type ExtensionManifest, type ExtensionMcpServer, type ExtensionScoutSource,
 } from './extension-manifest.ts';
 
 /** A manifest that passes, so every test below changes exactly one thing. */
@@ -51,6 +51,19 @@ const errorsFor = (over: Record<string, unknown>): string[] => {
 
 const server = (over: Partial<ExtensionMcpServer> = {}): ExtensionMcpServer =>
   ({ name: 'acme-search', transport: 'stdio', command: 'npx', args: ['-y', '@acme/search-mcp'], ...over });
+
+/** The shape of a built-in Scout source, as an extension would declare it. */
+const source = (over: Partial<Record<keyof ExtensionScoutSource, unknown>> = {}): Record<string, unknown> => ({
+  id: 'acme-changelog',
+  label: 'Acme changelog',
+  description: 'Official Acme changes and developer-workflow additions.',
+  url: 'https://acme.example/docs/changelog',
+  publisher: 'Acme',
+  kind: 'changelog',
+  ...over,
+});
+
+const scout = (...sources: Record<string, unknown>[]) => ({ provides: { scoutSources: sources } });
 
 test('an extension cannot name another extension\'s credential', () => {
   // The credential store is one flat id space. Without the namespace rule this
@@ -356,6 +369,121 @@ test('a fingerprint is the server, not the JSON it arrived in', () => {
     server({ env: { ACME_KEY: { source: 'credential', id: 'acme.search' } } }),
   ]) {
     assert.notEqual(mcpFingerprint(server()), mcpFingerprint(edited), JSON.stringify(edited));
+  }
+});
+
+test('a Scout source is a whole extension, and one that Scout can show', () => {
+  // A changelog to watch is a complete thing to ship: refusing it alone would
+  // make an author pad the bundle with an MCP server nobody asked for.
+  const result = validateExtensionManifest(raw(scout(source())));
+  assert.deepEqual(result.errors, [], result.errors.join(' | '));
+  assert.deepEqual(result.manifest!.provides.scoutSources, [source()]);
+  // And `provides` still cannot be empty just because a new block exists.
+  assert.ok(errorsFor({ provides: { scoutSources: [] } }).some((e) => /at least one MCP server/.test(e)));
+
+  // Scout renders the description beside the row. A source without one is a
+  // url the operator is asked to keep being polled for and cannot judge.
+  const missing = errorsFor(scout(source({ description: undefined })));
+  assert.ok(missing.some((e) => /scoutSources\[0\]\.description must be a non-empty string/.test(e)), missing.join(' | '));
+  assert.ok(errorsFor(scout(source({ description: 'x'.repeat(201) }))).some((e) => /description is longer than 200/.test(e)));
+  assert.ok(errorsFor(scout(source({ publisher: undefined }))).some((e) => /publisher must be a non-empty string/.test(e)));
+  assert.ok(errorsFor(scout(source({ label: 'x'.repeat(81) }))).some((e) => /label is longer than 80/.test(e)));
+
+  // A kind Scout does not know is a row it cannot file, which reads on screen
+  // as a source that never produces anything.
+  const unknown = errorsFor(scout(source({ kind: 'blog' })));
+  assert.ok(unknown.some((e) => /kind must be "changelog", "release-notes", "documentation"/.test(e)), unknown.join(' | '));
+  for (const kind of ['changelog', 'release-notes', 'documentation']) {
+    assert.equal(validateExtensionManifest(raw(scout(source({ kind })))).ok, true, kind);
+  }
+
+  // The id is the enable switch and the citation. Two rows with one id are one
+  // switch for two urls, and a proposal citing it names whichever won.
+  const duplicated = errorsFor(scout(source(), source({ url: 'https://acme.example/other' })));
+  assert.ok(duplicated.some((e) => /scoutSources declares "acme-changelog" twice/.test(e)), duplicated.join(' | '));
+  assert.ok(errorsFor(scout(source({ id: 'Acme Changelog' }))).some((e) => /scoutSources\[0\]\.id is not in the required format/.test(e)));
+  assert.ok(errorsFor(scout(...Array.from({ length: 21 }, (_, i) => source({ id: `acme-${i}` }))))
+    .some((e) => /scoutSources has more than 20/.test(e)));
+});
+
+test('a Scout source is a public https page and nothing on this machine', () => {
+  const url = (value: string) => validateExtensionManifest(raw(scout(source({ url: value }))));
+  // Fetched unattended, a plain-http page is one an attacker on the path
+  // rewrites and Wanigan then proposes product changes from.
+  const http = url('http://acme.example/docs/changelog');
+  assert.equal(http.ok, false);
+  assert.ok(http.errors.some((e) => /scoutSources\[0\]\.url must use https/.test(e)), http.errors.join(' | '));
+  // No loopback exception, unlike an MCP server: the MCP one exists for a
+  // server a person is using in a live session. Scout fetches on a schedule
+  // with nobody watching, so a loopback source is a way to make Wanigan poll
+  // something on this machine every Saturday from a bundle that says it reads
+  // a changelog.
+  for (const local of ['http://127.0.0.1:8931/changelog', 'http://localhost:8931/changelog', 'https://localhost/changelog']) {
+    const refused = url(local);
+    assert.equal(refused.ok, local.startsWith('https://'), `${local}: https on loopback is still https, plain http is not`);
+  }
+  assert.equal(url('http://127.0.0.1:8931/changelog').errors.some((e) => /no loopback exception/.test(e)), true,
+    'the refusal says why the MCP rule does not apply, or an author copies the MCP url and files a bug');
+  // A secret in a field consent renders and logs record, for a page that
+  // needs no secret at all.
+  const userinfo = url('https://token@acme.example/changelog');
+  assert.equal(userinfo.ok, false);
+  assert.ok(userinfo.errors.some((e) => /username or password in the URL/.test(e)), userinfo.errors.join(' | '));
+  assert.ok(url('not a url').errors.some((e) => /must be a valid URL/.test(e)));
+  assert.ok(url(`https://acme.example/${'x'.repeat(2_000)}`).errors.some((e) => /url is longer than 2000/.test(e)));
+});
+
+test('consent says which host Scout will fetch, and when, and not the path', () => {
+  const lines = extensionConsent(valid(scout(source({ url: 'https://docs.acme.example/changelog?feed=full&token=shown' }))));
+  const host = lines.filter((line) => line.kind === 'host');
+  assert.equal(host.length, 1, 'a fetch nobody watches is a host line, not a note');
+  // Where, when, and which row on the Scout screen this consent was for.
+  assert.match(host[0]!.text, /docs\.acme\.example/);
+  assert.match(host[0]!.text, /weekly schedule/, 'the line says when: an unattended fetch is the thing being consented to');
+  assert.match(host[0]!.text, /“Acme changelog”/);
+  // The path is where a long url hides which machine it reaches.
+  assert.doesNotMatch(host[0]!.text, /changelog\?/);
+  assert.doesNotMatch(host[0]!.text, /token=shown/);
+  assert.match(host[0]!.text, /\.$/, 'consent is sentences, not JSON');
+  // Nothing else is invented for it: a source runs no command and writes no file.
+  assert.equal(lines.filter((line) => line.kind === 'command' || line.kind === 'file').length, 0);
+});
+
+test('a declared Scout source claims nothing about what was installed', () => {
+  // The installer sets `applied` and `note`; this build's APPLIED_ARTIFACT_KINDS
+  // does not yet include the kind, and a row that said otherwise here would be
+  // the lie the type exists to prevent.
+  const artifacts = declaredArtifacts(valid(scout(source(), source({ id: 'acme-docs', label: 'Acme docs', kind: 'documentation' }))));
+  assert.deepEqual(artifacts.map((a) => a.kind), ['scout-source', 'scout-source']);
+  assert.deepEqual(artifacts.map((a) => a.ref), ['acme-changelog', 'acme-docs']);
+  assert.equal(artifacts[0]!.detail, 'Acme · Acme changelog');
+  for (const artifact of artifacts) {
+    assert.equal(artifact.applied, false);
+    assert.equal(artifact.note, null);
+    assert.equal(artifact.projectId, null);
+  }
+  assert.equal(APPLIED_ARTIFACT_KINDS.includes('scout-source'), true,
+    'the kind joins APPLIED_ARTIFACT_KINDS when the store applies it, not when the manifest learns it');
+});
+
+test('a Scout fingerprint is the source, not the JSON it arrived in', () => {
+  // Uninstall removes a row only while this matches. Key order changing it
+  // would strand every row; a url change not changing it would revert a
+  // source somebody repointed on purpose.
+  const a = valid(scout(source())).provides.scoutSources![0]!;
+  const b: ExtensionScoutSource = {
+    kind: 'changelog', publisher: 'Acme', url: 'https://acme.example/docs/changelog',
+    description: 'Official Acme changes and developer-workflow additions.', label: 'Acme changelog', id: 'acme-changelog',
+  };
+  assert.equal(scoutFingerprint(a), scoutFingerprint(b), 'key order is not a difference');
+  for (const edited of [
+    { ...b, url: 'https://acme.example/docs/changelog-v2' },
+    { ...b, kind: 'release-notes' as const },
+    { ...b, publisher: 'Somebody else' },
+    { ...b, label: 'Acme changes' },
+    { ...b, description: 'Rewritten.' },
+  ]) {
+    assert.notEqual(scoutFingerprint(a), scoutFingerprint(edited), JSON.stringify(edited));
   }
 });
 

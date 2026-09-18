@@ -2207,6 +2207,14 @@ export type McpServerReview = {
  * valid extension" is three answers to a question that has to have one.
  */
 export type ExtensionOrigin =
+  /**
+   * Shipped inside Wanigan and read through the same validator as everything
+   * else — the defaults prove the extension point is real, so they take no
+   * private path. Not trusted by fiat either: a built-in's manifest digest is
+   * recorded at startup like any other, so an edit to the app's own bundle is
+   * as visible as an edit to a stranger's.
+   */
+  | 'builtin'
   /** Installed from a directory the operator chose. */
   | 'folder'
   /** Loaded in place from a working directory, for someone writing one. */
@@ -2243,7 +2251,9 @@ export type ExtensionConsentLine = {
  * extension is a guess at which rows were its.
  */
 export type ExtensionArtifactInfo = {
-  kind: 'mcp-server' | 'skill' | 'gate' | 'instruction';
+  // 'scout-source' is the second kind an install actually applies: a row in
+  // Improvement Scout's source registry, fetched on its weekly schedule.
+  kind: 'mcp-server' | 'skill' | 'gate' | 'instruction' | 'scout-source';
   /** What it created or would create: an MCP server name, a skill name. */
   ref: string;
   projectId: string | null;
