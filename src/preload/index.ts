@@ -66,6 +66,19 @@ function listen(channel: string, handler: (...args: any[]) => void): void {
   if (!demoWindow || channel === 'window:visibility' || channel === 'menu:route') ipcRenderer.on(channel, handler);
 }
 
+/** What the routing suggester reports about itself. Never the key, only a fingerprint. */
+export type SuggestStatusShape = {
+  hasKey: boolean;
+  fingerprint: string | null;
+  /** In force: switched on and credentialed. */
+  enabled: string[];
+  /** As switched, whether or not a credential makes them count. */
+  stored: string[];
+  capabilities: { id: string; label: string; describe: string; withoutIt: string }[];
+  host: string;
+  estimatedUsdPerCall: number;
+};
+
 const api = {
   windowVisibility: {
     current:()=>call<boolean>('window:visible'),
@@ -272,6 +285,20 @@ const api = {
       call<{ present: boolean; fingerprint: string | null }>('key:setProvider', id, key),
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
     clear: () => call<boolean>('key:clear'),
+  },
+
+  /**
+   * The routing suggester. Off unless a key is stored and a capability is
+   * switched on, so most installs never call anything here but `status`.
+   * No channel returns the stored key; `status` carries a fingerprint.
+   */
+  suggest: {
+    status: () => call<SuggestStatusShape>('suggest:status'),
+    setEnabled: (ids: string[]) => call<SuggestStatusShape>('suggest:setEnabled', ids),
+    /** Makes one real, billed call. Only on an explicit press. */
+    verify: () => call<{ ok: boolean; detail: string }>('suggest:verify'),
+    setKey: (key: string) => call<{ ok: boolean; detail: string; fingerprint: string | null }>('suggest:setKey', key),
+    clearKey: () => call<boolean>('suggest:clearKey'),
   },
 
   // ── phase 1 · telemetry ──────────────────────────────────────────────

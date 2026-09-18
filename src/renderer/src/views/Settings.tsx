@@ -98,6 +98,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing repository review diff commit review gate' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Routing suggester', hint: 'Optional model that proposes which model and which stages a relay runs', keywords: 'typesafe jev suggester routing relay system one model choice effort stages pipeline credential api key' },
   { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, status line, traces, checkpoints, archive', keywords: 'telemetry hooks status line limits prompt cache traces waterfall beta checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -1120,6 +1121,7 @@ export default function Settings({
             <PhoneMonitor prefs={prefs} pending={pending} setFlag={setFlag} />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
             <GitHubIntakeTimer />
+            <RoutingSuggester />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
@@ -6090,4 +6092,140 @@ export function DemoPanel() {
       </div>
     </div>
   </Section>;
+}
+
+/**
+ * The routing suggester: an optional connection to a System One model that
+ * proposes which declared model a relay stage should run on, and whether work
+ * this well-specified needs a planning stage at all.
+ *
+ * It lives under Connections rather than Agents because it is not something a
+ * session runs on. No agent ever talks to it — Wanigan does, on its own behalf,
+ * about the words you typed and the model names your own profile already
+ * declares. Nothing else is sent, and the panel says so where a person is
+ * deciding whether to switch it on rather than in a document they will not read.
+ *
+ * Off is the default and the common case, so the panel reads as an offer rather
+ * than as something broken: no key is a plain state, not a warning.
+ */
+function RoutingSuggester() {
+  type Status = Awaited<ReturnType<typeof window.wanigan.suggest.status>>;
+  const loaded = useLoad(() => window.wanigan.suggest.status(), []);
+  const [live, setLive] = useState<Status | null>(null);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function run(fn: () => Promise<{ tone: 'ok' | 'error'; text: string } | null>) {
+    setBusy(true); setResult(null);
+    try {
+      setResult(await fn());
+      setLive(await window.wanigan.suggest.status());
+    } catch (e) {
+      setResult({ tone: 'error', text: `Nothing was changed. ${msg(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const save = () => run(async () => {
+    const saved = await window.wanigan.suggest.setKey(key);
+    if (!saved.ok) return { tone: 'error' as const, text: `Nothing was stored. ${saved.detail}` };
+    setKey('');
+    return { tone: 'ok' as const, text: `Key verified and stored. ${saved.detail}` };
+  });
+
+  const check = () => run(async () => {
+    const answer = await window.wanigan.suggest.verify();
+    return { tone: answer.ok ? 'ok' as const : 'error' as const, text: answer.detail };
+  });
+
+  const forget = () => run(async () => {
+    await window.wanigan.suggest.clearKey();
+    return { tone: 'ok' as const, text: 'The key is removed. Your switches are kept, and take effect again if you add a key.' };
+  });
+
+  const toggle = (id: string, on: boolean, current: readonly string[]) => run(async () => {
+    const next = on ? [...new Set([...current, id])] : current.filter((entry) => entry !== id);
+    await window.wanigan.suggest.setEnabled(next);
+    return null;
+  });
+
+  return (
+    <Section title="Routing suggester"
+             hint="An optional model that proposes which of your declared models a relay stage should run on, and whether well-specified work still needs a planning stage. It proposes; it never decides.">
+      <Frame v={loaded.v} what="the routing suggester" onRetry={loaded.reload}>{(first) => {
+        const shown = live ?? first;
+        const idle = !shown.hasKey && shown.stored.length === 0;
+        return <>
+          {idle && (
+            <Note tone="info">
+              Nothing is switched on and no key is stored, which is how Wanigan ships. Every relay stage runs on
+              its profile’s own default model and effort, and no request leaves this Mac.
+            </Note>
+          )}
+
+          {shown.hasKey ? (
+            <div className="set-key-status">
+              <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>TypeSafe key installed</span>
+              <span className="mono faint">{shown.fingerprint}</span>
+              <button className="btn" onClick={() => void check()} disabled={busy}>Verify</button>
+              <button className="btn btn-danger" onClick={() => void forget()} disabled={busy}>Remove</button>
+            </div>
+          ) : null}
+
+          <label className="label" htmlFor="suggest-api-key">{shown.hasKey ? 'Replace TypeSafe key' : 'TypeSafe API key'}</label>
+          <div className="set-field-action">
+            <input id="suggest-api-key" className="field mono" type="password" placeholder="TypeSafe API key"
+                   value={key} autoComplete="off" spellCheck={false}
+                   onChange={(e) => setKey(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) void save(); }} />
+            <button className="btn btn-primary" onClick={() => void save()} disabled={busy || !key.trim()}>
+              {busy ? 'Checking…' : 'Save & verify'}
+            </button>
+          </div>
+
+          {/* Each switch states what turning it off costs, from the module's own
+              declaration rather than a sentence written twice. */}
+          {shown.capabilities.map((capability) => (
+            <Toggle key={capability.id} title={capability.label} busy={busy}
+                    on={shown.stored.includes(capability.id)}
+                    onChange={(on) => void toggle(capability.id, on, shown.stored)}>
+              {capability.describe} Without it: {capability.withoutIt}
+            </Toggle>
+          ))}
+
+          {/* A switch a person turned on that is not actually running is the one
+              state this panel must never draw as "off". */}
+          {!shown.hasKey && shown.stored.length > 0 && (
+            <Note tone="warn">
+              These switches are saved, but nothing is asked and nothing is spent until a TypeSafe key is stored.
+              Relay stages run on their profile defaults in the meantime.
+            </Note>
+          )}
+
+          {result && <Note tone={result.tone === 'ok' ? 'ok' : 'error'}>{result.text}</Note>}
+
+          <Explainer id="suggest-egress" title="What is sent, and what it costs" compact defaultHidden>
+            <p>
+              Requests go to <span className="mono">{shown.host}</span>. What leaves this Mac is the stage name, the words you
+              typed describing the work, and the labels of the models your own profile declares. Project files, diffs,
+              paths, prompts, transcripts and agent output do not, and there is no setting that would add them — the model
+              is not hardened against text written to steer it, so repository content is kept out by construction.
+            </p>
+            <p>
+              A typical call is about ${shown.estimatedUsdPerCall.toFixed(5)} of input, priced from a local rate table.
+              That is Wanigan’s own arithmetic, not a reported cost: output is free and the vendor says early pricing may be
+              subsidised, so there is no invoice line to reconcile it against. A rate-limited or unreachable call is not
+              retried; the stage runs on its profile default instead.
+            </p>
+            <p>
+              A suggestion is a guess, shown as a guess, and overridable. It can never move a stage to a model or an effort
+              your profile does not declare, and it can never remove the stages that check the work.
+            </p>
+          </Explainer>
+        </>;
+      }}</Frame>
+    </Section>
+  );
 }

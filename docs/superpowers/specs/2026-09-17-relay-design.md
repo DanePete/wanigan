@@ -248,13 +248,19 @@ and the router UI shows the profile's own default as the pick. This is
 deliberate — an honest unsupported state beats an invented integration, and it
 means the animation work is not blocked behind an early-access API.
 
-A suggester is an optional source of a `StageSuggestion { model, effort,
-distribution, confidence }`. TypeSafe/Jev fits this interface exactly: model
-selection is a `choice` over the candidate rows, effort is a `score` over the
-declared levels (2–10 ordered levels maps onto the declared set), ~100 ms and
-~$0.0004 per call, and it returns a distribution plus confidence rather than a
-bare pick. Below a configured confidence threshold the suggestion is dropped and
-the profile default stands.
+A suggester is an optional source of a `StageSuggestion`. TypeSafe/Jev fits
+that interface: model selection is a `choice` over the candidate rows, and it
+returns a distribution plus confidence rather than a bare pick, at ~100 ms and
+roughly $0.00003 per call on a state this small. Below a configured confidence
+threshold the suggestion is dropped and the profile default stands.
+
+Effort is where this paragraph was wrong. `score` takes one fixed ordered array
+of 2–10 levels per question, but a candidate declares its *own* ladder — four
+levels for Codex, two for Sonnet, none for Opus — so no single score question
+covers them. The fix is a model-independent deliberation question with the
+ladder arithmetic done in code, and it is specified in
+`2026-09-18-typesafe-suggester.md`, which supersedes this section. The cost
+figure originally given here, ~$0.0004, was also roughly 10–30× high.
 
 Jev's documented weaknesses constrain the question shapes. It is unreliable at
 counting and arithmetic, so the state must never ask "how many files will this
@@ -265,8 +271,10 @@ hostile, so the state is the operator's own typed intent plus the enumerated
 candidate labels, never repository content or agent output.
 
 Adopting a suggester carries the same infrastructure as any other egress: a
-hand-enumerated row in `egress.ts`, a credential in `keys.ts` with a
-`GET /v1/models` validation ping, `refuseIfHalted()`, and a local rate table.
+hand-enumerated row in `egress.ts`, a credential in `keys.ts`,
+`refuseIfHalted()`, and a local rate table. There is no catalogue endpoint to
+ping — `/v1/systemone` is the only route — so verifying a key means making one
+minimal real call, which is a difference from every other provider here.
 Jev prices input at $0.042/MTok with free output and states the price may be
 subsidised, so a computed cost is Wanigan's own arithmetic and carries the
 label `spend.ts` already uses for that. It is never presented as a reported

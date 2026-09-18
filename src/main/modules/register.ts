@@ -1,5 +1,6 @@
 import { registerModule } from '../module-registry';
 import { scoutModule } from './scout';
+import { suggestModule } from './suggest';
 
 /**
  * Every module Wanigan ships, registered in one place.
@@ -11,3 +12,4 @@ import { scoutModule } from './scout';
  * modules does this build carry" is one file rather than a grep.
  */
 registerModule(scoutModule);
+registerModule(suggestModule);

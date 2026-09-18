@@ -7,6 +7,7 @@ import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
 import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
+import { SUGGEST_HOST, SUGGEST_PATH, enabled as suggesterEnabled } from './modules/suggest';
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 import { catalogUrl } from '../shared/backend-catalog';
@@ -284,6 +285,11 @@ function hosts(): EgressHost[] {
   // which is the one failure mode worse than an incomplete list.
   let pushHosts: string[] = [];
   try { pushHosts = pushEndpointHosts(); } catch { pushHosts = []; }
+  // Reading this decrypts a credential file and touches settings, either of
+  // which can fail on its own. A privacy panel that threw would show no hosts
+  // at all, which is the one failure worse than an incomplete list.
+  let suggesterOn = false;
+  try { suggesterOn = suggesterEnabled().length > 0; } catch { suggesterOn = false; }
   const scout = improvementScoutSettings();
   const scoutHosts: EgressHost[] = listSources().map((source) => {
     let host = source.url;
@@ -389,6 +395,17 @@ function hosts(): EgressHost[] {
       purpose: 'Where Claude Code sends requests for Grok sessions; Wanigan supplies the endpoint and key but does not inspect the traffic.',
       when: 'Only for Grok sessions and only while an xAI key is stored.',
       activeNow: xai, overrideEnv: 'WANIGAN_XAI_BASE_URL',
+    },
+    {
+      host: SUGGEST_HOST,
+      paths: [SUGGEST_PATH],
+      by: 'wanigan',
+      purpose: 'Asking a System One model which of the models your profile declares best fits a relay stage, and whether work this well-specified still needs a planning stage before it is written.',
+      when: 'Only while a TypeSafe credential is stored and one of its capabilities is switched on, and only when a stage is routed or a docket created. What leaves this machine is the stage name, the words you typed describing the work, and the labels of the models your own profile declares. Project files, diffs, paths, prompts, transcripts and agent output do not, and there is no setting that would add them.',
+      activeNow: suggesterOn,
+      // The endpoint is the only route this service has, and it is a literal
+      // in the module. No base-url override applies.
+      overrideEnv: null,
     },
     {
       host: hostOf(phone.pushServer, 'ntfy.sh'),
