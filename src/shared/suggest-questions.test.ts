@@ -514,3 +514,21 @@ test('a batched body nobody can parse reads as nothing said, for every stage', (
   }
   assert.deepEqual(readRelayPlan(null, ALL_PHASES, ASKS), NO_RELAY_PLAN);
 });
+
+test('a described model is offered by its description; an undescribed one falls back to its label', () => {
+  // Without this the choice is name recognition: "Opus" against "Sonnet" with
+  // nothing to tell them apart. A backend that describes its rows gets to say
+  // so, and one that does not is not spoken for.
+  const request = relayPlanRequest('add a retry', ALL_PHASES, [{
+    phase: 'implement',
+    candidates: CANDIDATES,
+    descriptions: { sonnet: 'Fast and cheap; the default for ordinary edits.' },
+  }], ['route']);
+  assert.ok(request);
+  const choice = request.questions.model_implement;
+  assert.equal(choice.type, 'choice');
+  if (choice.type === 'choice') {
+    assert.equal(choice.criteria.sonnet, 'Fast and cheap; the default for ordinary edits.');
+    assert.equal(choice.criteria.opus, 'Opus', 'an undescribed row is offered by its label');
+  }
+});

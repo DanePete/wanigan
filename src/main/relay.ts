@@ -136,6 +136,21 @@ function accountFor(id: string | null | undefined, harness: string, where: strin
 type Profile = {
   providerId: string;
   candidates: RouteCandidate[];
+  /**
+   * The rows a suggester may propose, which is not every row the router accepts.
+   *
+   * A catalogue lists what this backend *offers* and, beneath it, ids Wanigan has
+   * merely *seen* run here. Both launch, so both are candidates. But an observed
+   * id usually resolves to the same model as an alias above it — `claude-opus-5`
+   * is what `opus` resolved to — and offering the pair as rival answers makes
+   * them split one vote between them. Measured on a real relay: opus took 0.35
+   * and claude-opus-5 0.16, a 0.51 preference reported as a 0.21 confidence and
+   * refused by its own gate. The choice is offered what the profile offers; the
+   * router still accepts anything declared, so an operator may still type one.
+   */
+  offers: RouteCandidate[];
+  /** What each offered row says about itself, for the criteria. Empty when a backend describes none. */
+  descriptions: Record<string, string>;
   defaults: RouteDefaults;
   /** Where the candidate rows came from, kept on the proof so a later reader knows what "declared" meant that day. */
   catalogue: string;
@@ -161,13 +176,24 @@ async function profileFor(providerId: string): Promise<Profile> {
   const efforts = launchFieldChoices(info, 'effort');
   const catalogue = models.supported ? await providerModelCatalogue(info) : { rows: [], source: 'none' as const, note: null };
   const levels = efforts.supported ? efforts.choices : [];
-  const candidates: RouteCandidate[] = catalogue.rows.map((row) => {
+  const asCandidate = (row: typeof catalogue.rows[number]): RouteCandidate => {
     const declared = intersectChoices(levels, row.efforts).map((choice) => choice.value);
     return { model: row.value, label: row.label, efforts: declared.length ? declared : null };
-  });
+  };
+  const candidates: RouteCandidate[] = catalogue.rows.map(asCandidate);
+  // Evidence rows are evidence. If a catalogue is nothing but observed ids there
+  // is no offer to narrow to, so the whole list stands rather than none of it.
+  const offered = catalogue.rows.filter((row) => !row.observed);
+  const offers = (offered.length ? offered : catalogue.rows).map(asCandidate);
+  const descriptions: Record<string, string> = {};
+  for (const row of offered.length ? offered : catalogue.rows) {
+    if (row.description) descriptions[row.value] = row.description;
+  }
   return {
     providerId,
     candidates,
+    offers,
+    descriptions,
     defaults: { model: models.defaultValue || null, effort: efforts.defaultValue || null },
     catalogue: catalogue.source,
     note: catalogue.note,
@@ -256,7 +282,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     const wants = routes[kind];
     if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
     const profile = await load(wants?.providerId ?? providerId);
-    asks.push({ phase: kind, candidates: profile.candidates });
+    asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
   }
   const plan = await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks);
 
@@ -373,7 +399,7 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
     const wants = routes[kind];
     if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
     const profile = await load(wants?.providerId ?? providerId);
-    asks.push({ phase: kind, candidates: profile.candidates });
+    asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
   }
   const plan = await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks);
   const pipelineReading = plan.pipeline;

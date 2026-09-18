@@ -77,7 +77,7 @@ function observedBackendModels(backendId: string, published: LaunchModelRow[]): 
       const value = r.model.trim();
       if (already.has(value.toLowerCase())) continue;
       already.add(value.toLowerCase());
-      out.push({ value, label: value, description: 'seen on this backend', efforts: null });
+      out.push({ value, label: value, description: 'seen on this backend', efforts: null, observed: true });
       if (out.length >= MAX_OBSERVED_MODELS) break;
     }
     return out;

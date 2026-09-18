@@ -183,6 +183,16 @@ export type LaunchModelRow = {
   label: string;
   description: string | null;
   efforts: string[] | null;
+  /**
+   * True for a row Wanigan has merely *seen* run, as opposed to one this
+   * backend offers.
+   *
+   * Both launch. The difference matters to anything that has to choose between
+   * them: an observed id usually resolves to the same model as the alias above
+   * it, so presenting the two as rival answers makes them split a vote against
+   * themselves. A picker shows both; a chooser is offered only what is offered.
+   */
+  observed?: boolean;
 };
 
 /**
