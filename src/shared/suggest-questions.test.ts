@@ -303,24 +303,22 @@ test('the relay question offers only pipelines this docket could actually run', 
   const choice = request.questions.pipeline;
   assert.equal(choice.type, 'choice');
   if (choice.type === 'choice') {
-    assert.deepEqual(Object.keys(choice.criteria).sort(), ['direct', 'full', 'planned']);
+    assert.deepEqual(Object.keys(choice.criteria).sort(), ['direct', 'full']);
   }
 
-  // A docket with no estimate stage cannot be offered the pipeline that has one.
-  const noEstimate = relayRequest('rename a variable', ['plan', 'implement', 'verify', 'review'], PIPELINE);
-  assert.ok(noEstimate);
-  const narrowed = noEstimate.questions.pipeline;
-  if (narrowed.type === 'choice') assert.deepEqual(Object.keys(narrowed.criteria).sort(), ['direct', 'planned']);
+  // Every pipeline needs an estimate now, so a docket without one admits none
+  // and the question is not asked at all.
+  assert.equal(relayRequest('rename a variable', ['plan', 'implement', 'verify', 'review'], PIPELINE), null);
 
   // Only the operator's own words reach it, bounded as everywhere else.
-  assert.deepEqual(Object.keys(noEstimate.state), ['operator_intent']);
+  assert.deepEqual(Object.keys(request.state), ['operator_intent']);
   const long = relayRequest('y'.repeat(9000), ALL_PHASES, PIPELINE);
   assert.ok((long?.state.operator_intent as string).length <= 2000);
 });
 
 test('a question with one answer is not asked', () => {
   // Exactly one pipeline fits, so there is nothing to decide and nothing to bill.
-  assert.equal(relayRequest('x', ['implement', 'verify', 'review'], PIPELINE), null);
+  assert.equal(relayRequest('x', ['estimate', 'implement', 'verify', 'review'], PIPELINE), null);
   // A docket missing a stage every pipeline needs admits none at all.
   assert.equal(relayRequest('x', ['plan', 'implement'], PIPELINE), null);
   assert.equal(relayRequest('x', [], PIPELINE), null);
@@ -328,7 +326,7 @@ test('a question with one answer is not asked', () => {
 
 test('a confident pipeline answer narrows the docket to that pipeline', () => {
   const reading = readPipeline(pipelineBody(), ALL_PHASES);
-  assert.deepEqual(reading?.phases, ['implement', 'verify', 'review']);
+  assert.deepEqual(reading?.phases, ['estimate', 'implement', 'verify', 'review']);
   assert.equal(reading?.pipeline, 'direct');
   assert.equal(reading?.confidence, 0.93);
   assert.deepEqual(reading?.distribution, { direct: 0.93, planned: 0.07 });
@@ -408,7 +406,7 @@ test('without a pipeline answer a docket runs exactly the stages it declared', (
   assert.deepEqual(phasesFor(ALL_PHASES, readPipeline('overloaded', ALL_PHASES)), ALL_PHASES);
 
   // And a narrowing that did clear every gate is the only thing that changes it.
-  assert.deepEqual(phasesFor(ALL_PHASES, readPipeline(pipelineBody(), ALL_PHASES)), ['implement', 'verify', 'review']);
+  assert.deepEqual(phasesFor(ALL_PHASES, readPipeline(pipelineBody(), ALL_PHASES)), ['estimate', 'implement', 'verify', 'review']);
 });
 
 test('every capability is declared with what switching it off costs', () => {

@@ -321,7 +321,19 @@ export default function Relay({ projects, projectId, providers, openSession, ope
   const forecast: RelayForecast | null = read?.forecast ?? null;
   const returnLineOn = returnOn(phases);
   const holdKey = read ? `${read.docket.id}:${implement?.node.status ?? ''}` : null;
-  const holdOpen = !!(read && estimate?.node.status === 'completed' && implement?.node.status !== 'running'
+  /**
+   * The hold before building, and why it no longer waits on a phase that may
+   * not exist.
+   *
+   * A relay narrowed to `direct` has no estimate phase, so `estimate` is null
+   * and `estimate.status === 'completed'` can never be true. Together with the
+   * missing plan phase that left the rail offering nothing at all: a docket
+   * with three pending nodes and no way to start any of them. There is nothing
+   * to wait for when the phase that would have produced it was never created,
+   * so the hold opens immediately instead.
+   */
+  const holdOpen = !!(read && (estimate ? estimate.node.status === 'completed' : true)
+    && implement?.node.status !== 'running'
     && implement?.node.status !== 'completed' && holdDismissed !== holdKey);
 
   /* ── render ────────────────────────────────────────────────────────── */
@@ -581,13 +593,21 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                 <ConfirmNote
                   what={forecast && forecast.totalMs !== null
                     ? `Build it on ${implement.routeText}. The forecast says about ${dur(forecast.totalMs)} and ${usd(forecast.totalUsd ?? 0)} (from ${forecast.n} recorded phases).`
-                    : `Build it on ${implement.routeText}. There is not enough history to price it yet.`}
+                    : estimate
+                      ? `Build it on ${implement.routeText}. There is not enough history to price it yet.`
+                      : `Build it on ${implement.routeText}. This relay skipped planning and estimating, so there is no forecast for it.`}
                   verb="Start implement" busy={busy === `start-${implement.node.id}`}
                   onRun={() => startPhase(implement.node)} onCancel={() => setHoldDismissed(holdKey)} tone="warn" />
               )}
               {review?.node.status === 'ready' && (
                 <ConfirmNote what={`Start the review on ${review.routeText}`} verb="Start review" busy={busy === `start-${review.node.id}`}
                   onRun={() => startPhase(review.node)} onCancel={() => undefined} />
+              )}
+              {!plan && !estimate && !holdOpen && implement?.node.status === 'pending' && (
+                <Note tone="warn">
+                  This relay has no phase ready to start. That is a defect rather than a state — tell Wanigan, and
+                  meanwhile you can start a phase from the rail above.
+                </Note>
               )}
               {review?.node.status === 'running' && review.node.sessionId && (
                 <div className="control-review-actions">

@@ -362,14 +362,22 @@ export function readSuggestion(
  * Stages a suggester may never propose skipping.
  *
  * `implement` is the work, and `verify` and `review` are the two things that
- * check it. Dropping a preparation stage is cheap and visible — you get a
- * worse-informed implementation and can see that you did. Dropping a check is
- * invisible, and it is how a relay ships a bug while reporting five green
- * nodes. So the legal move set here is narrowing the front of the pipeline and
- * nothing else, which also means no answer this model can give, however
- * confident and however wrong, can remove a gate.
+ * check it. Dropping a check is invisible, and it is how a relay ships a bug
+ * while reporting green nodes.
+ *
+ * `estimate` is here for a different reason, learned from a real relay that
+ * was narrowed to `direct` and went straight to building with no price on it.
+ * Relay's promise is that the forecast prices the work and you decide before
+ * anything is built; skipping the estimate takes the number out of that
+ * decision. And it buys nothing — the estimate is Wanigan's own arithmetic
+ * over recorded history, with no agent, no provider call and no spend. A stage
+ * that costs nothing to run is never worth proposing away.
+ *
+ * So the legal move set is narrowing the front of the pipeline to the planning
+ * phase and nothing else, which means no answer this model can give, however
+ * confident and however wrong, can remove a gate or a price.
  */
-export const UNSKIPPABLE: readonly RelayPhase[] = ['implement', 'verify', 'review'];
+export const UNSKIPPABLE: readonly RelayPhase[] = ['estimate', 'implement', 'verify', 'review'];
 
 /** A coherent pipeline a suggester may propose, and the situation it is for. */
 export type Pipeline = { id: string; phases: readonly RelayPhase[]; criterion: string };
@@ -395,13 +403,8 @@ export const PIPELINES: readonly Pipeline[] = [
     criterion: 'The instruction describes an outcome, and both the approach and the amount of work involved still have to be worked out before any code is written.',
   },
   {
-    id: 'planned',
-    phases: ['plan', 'implement', 'verify', 'review'],
-    criterion: 'The approach is worth working out first, but the amount of work involved is already apparent from the instruction.',
-  },
-  {
     id: 'direct',
-    phases: ['implement', 'verify', 'review'],
+    phases: ['estimate', 'implement', 'verify', 'review'],
     criterion: 'The instruction already says what to change, and writing it can begin immediately.',
   },
 ];
