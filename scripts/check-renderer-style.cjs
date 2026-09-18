@@ -213,6 +213,10 @@ const DURATION_BASELINE = {};
 //    for itself, when one of them grows a new modifier tomorrow.
 const SHADOWED_MODIFIER_BASELINE = {
   'attention.css': 0,
+  // Written after the gate landed, so they start at zero and stay there — the
+  // same footing as board.css below.
+  'extensions.css': 0,
+  'chatter.css': 0,
   'composer.css': 0,
   'control.css': 0,
   // New sheets start at zero and stay there: the baseline records debt that

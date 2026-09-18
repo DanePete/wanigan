@@ -28,7 +28,7 @@ export const TABS = [
   { id: 'batches',   label: 'Batches',   group: 'Automation',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
   { id: 'insights',  label: 'Insights',  group: 'Fleet', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
   { id: 'learning',  label: 'Learning',  group: 'Knowledge', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
-  { id: 'plugins',   label: 'Plugins',   group: 'Knowledge', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
+  { id: 'plugins',   label: 'Plugins',   group: 'Knowledge', hint: 'Claude Code’s own plugins and marketplaces, read from this machine', keywords: 'claude code marketplace integrations' },
   { id: 'schedules', label: 'Schedules', group: 'Automation', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
   { id: 'git',       label: 'Changes',       group: 'Projects',  hint: 'History, working tree, branches, stashes and the review gate for one repository', keywords: 'git changes commits diffs stashes review' },
   { id: 'runs',      label: 'Runs',      group: 'Automation',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
@@ -50,6 +50,14 @@ export const TABS = [
   // one. Appended past the digit row for the reason stated above Usage.
   { id: 'board',     label: 'Board',     group: 'Projects',    hint: 'Every ticket across every goal, in columns, to start, retry or park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
   { id: 'mission', label: 'Home', group: 'Home', hint: 'Your companion and a briefing across project spaces', keywords: 'home mission room orb assistant companion chat overview spaces' },
+  // Wanigan's own installable bundles — MCP servers, skills, gates and
+  // instructions somebody declared and somebody else installs. Deliberately a
+  // different word from the Plugins row above, which reads Claude Code's
+  // plugins out of ~/.claude: those are installed by Claude Code's own CLI and
+  // are not ours to enable. One word for both would make the two rows
+  // unanswerable from the sidebar, and the keywords below are why searching
+  // "plugin" still finds this one.
+  { id: 'extensions', label: 'Extensions', group: 'Knowledge', hint: 'Install MCP servers and skills as one bundle, or package your own', keywords: 'extension plugin marketplace shop install mcp figma bundle author publish' },
 ] as const;
 
 export type Tab = (typeof TABS)[number]['id'];
@@ -78,6 +86,7 @@ export const TAB_ICONS = {
   scout: 'compass',
   usage: 'gauge',
   board: 'columns',
+  extensions: 'plug',
 } as const satisfies Record<Tab, string>;
 
 /** The order the sidebar lists destinations in, grouped by the job they serve. */
@@ -116,6 +125,8 @@ export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
   scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
   // B for Board. Free on macOS, and the digit row is full.
   board:     { label: '⌘⇧B', aria: 'Meta+Shift+B Control+Shift+B' },
+  // E for Extensions. X reads as "close" on every other surface in this app.
+  extensions: { label: '⌘⇧E', aria: 'Meta+Shift+E Control+Shift+E' },
 };
 
 /**
@@ -126,7 +137,7 @@ export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
  */
 export const VIEW_SHORTCUT_ORDER: readonly Tab[] = [
   ...TABS.slice(0, DIGIT_ROUTES).map((item) => item.id),
-  'runs', 'settings', 'skills', 'context', 'scout', 'usage', 'board', 'mission',
+  'runs', 'settings', 'skills', 'context', 'scout', 'usage', 'board', 'extensions', 'mission',
 ];
 
 export function labelForTab(id: Tab): string {

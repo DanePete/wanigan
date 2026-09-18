@@ -1,0 +1,345 @@
+/* chatter — two sessions messaging each other, staged as two characters.
+   Tokens come from index.css and motion.css; never a colour or a duration here.
+
+   This is the one surface in the app granted personality on purpose (see the
+   token block in motion.css): the characters breathe and blink while idle, a
+   message visibly crosses the wire, and the listener shows waiting dots while a
+   reply is owed. Every duration is a token, so reduced motion and Settings ›
+   Motion = off take all of it to zero and the words remain. Transform and
+   opacity only, as everywhere else — nothing here lands on the terminal's
+   repaint frames.
+
+   The card sits bottom-left on purpose. The alert stack owns the top-right and
+   is an interruption you must deal with; this is a thing you are being let in
+   on, and it must never cover the place a notification is about to land. */
+
+.chatter {
+  --chatter-wire: 132px;
+  --chatter-face: 42px;
+  position: fixed;
+  left: var(--s-4);
+  bottom: var(--s-4);
+  z-index: 18;
+  width: min(400px, calc(100vw - var(--s-5)));
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: color-mix(in oklab, var(--bg-soft) 86%, transparent);
+  backdrop-filter: blur(16px) saturate(1.25);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  box-shadow: var(--shadow-popover);
+  transform-origin: bottom left;
+  animation: chatter-in var(--mo-view) var(--mo-spring) both;
+}
+.chatter.is-leaving { animation: chatter-out var(--mo-view) var(--mo-ease) both; pointer-events: none; }
+
+/* ── head ─────────────────────────────────────────────────────────────── */
+
+.chatter-head { display: flex; align-items: center; gap: var(--s-2); }
+.chatter-title { font-size: var(--t-small); font-weight: 650; color: var(--text); letter-spacing: -.01em; }
+.chatter-n {
+  min-width: 20px;
+  padding: 0 var(--s-1);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--t-micro);
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* Keyed on the count in the component, so this replays once per arrival. */
+  animation: mo-bump var(--mo-state) var(--mo-spring) 1;
+}
+.chatter-x {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  min-height: 26px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+  line-height: 1;
+  transition: color var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease), transform var(--mo-state) var(--mo-spring);
+}
+.chatter-x:hover { color: var(--text); background: var(--bg-raised); transform: rotate(90deg); }
+.chatter-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── the scene ────────────────────────────────────────────────────────── */
+
+.chatter-stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0 0;
+}
+
+.chatter-actor {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--s-1);
+  width: 96px;
+  /* Idle: one slow breath, out of phase between the two so they read as two
+     beings rather than one animation drawn twice. */
+  animation: chatter-breathe var(--mo-idle) ease-in-out infinite;
+}
+.actor-right { animation-delay: calc(var(--mo-idle) * -.5); }
+
+.chatter-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--chatter-face);
+  height: var(--chatter-face);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 -6px 12px color-mix(in oklab, var(--bg) 40%, transparent);
+  transform-origin: center bottom;
+}
+.actor-left  .chatter-face { background: radial-gradient(circle at 32% 28%, var(--accent-soft), var(--bg-raised) 72%); }
+.actor-right .chatter-face { background: radial-gradient(circle at 68% 28%, var(--good-soft),   var(--bg-raised) 72%); }
+
+/* A ring that leaves the speaker as it speaks. */
+.chatter-face::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  transform: scale(1);
+  pointer-events: none;
+}
+.actor-right .chatter-face::after { border-color: var(--good); }
+
+.chatter-eyes {
+  display: flex;
+  gap: 7px;
+  transform: translateY(-3px);
+}
+.chatter-eye {
+  display: block;
+  width: 6px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  transform-origin: center;
+  animation: chatter-blink var(--mo-blink) ease-in-out infinite;
+}
+.actor-right .chatter-eye { animation-delay: calc(var(--mo-blink) * -.37); }
+
+/* The initial rides the face as a small tag, so the letter and the name both
+   say who this is — colour is never the only difference between the two. */
+.chatter-initial {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chatter-actor-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* Speaking: a squash-and-stretch on the face, a ring leaving it. */
+.is-speaking .chatter-face { animation: chatter-speak var(--mo-react) var(--mo-spring) 1; }
+.is-speaking .chatter-face::after { animation: chatter-ring var(--mo-travel) var(--mo-ease) 1; }
+
+/* Listening: a bob when the packet lands, and a glance toward the speaker
+   that lasts until the exchange moves on. */
+.is-listening .chatter-face { animation: chatter-hear var(--mo-react) var(--mo-spring) calc(var(--mo-travel) * .82) 1; }
+.actor-left.is-listening  .chatter-eyes { animation: chatter-glance-right var(--mo-react) var(--mo-ease) calc(var(--mo-travel) * .5) both; }
+.actor-right.is-listening .chatter-eyes { animation: chatter-glance-left  var(--mo-react) var(--mo-ease) calc(var(--mo-travel) * .5) both; }
+
+/* The wire between them, and the message crossing it. */
+.chatter-wire {
+  position: relative;
+  flex: none;
+  width: var(--chatter-wire);
+  height: var(--chatter-face);
+  margin-top: 0;
+}
+.chatter-wire::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  border-top: 2px dotted var(--line);
+  transform: translateY(-1px);
+}
+.chatter-packet {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.speaks-left  .chatter-packet { left: 0;  --dx: calc(var(--chatter-wire) - 10px); }
+.speaks-right .chatter-packet { right: 0; --dx: calc(10px - var(--chatter-wire)); background: var(--good); box-shadow: 0 0 0 4px var(--good-soft); }
+.chatter-stage .chatter-packet { animation: chatter-fly var(--mo-travel) var(--mo-ease) 1; }
+
+/* Waiting for a reply: the idiom everyone reads as "their turn". It floats at
+   eye level on the wire side of the face, where a thought would, and clear of
+   the name beneath. */
+.chatter-typing {
+  position: absolute;
+  top: calc(var(--chatter-face) * .3);
+  display: flex;
+  gap: 3px;
+  padding: 4px 6px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.actor-left  .chatter-typing { left: calc(50% + 26px); }
+.actor-right .chatter-typing { right: calc(50% + 26px); }
+.chatter-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--text-dim);
+  animation: chatter-dots var(--mo-typing) ease-in-out infinite;
+}
+.chatter-dot:nth-child(2) { animation-delay: calc(var(--mo-typing) * .15); }
+.chatter-dot:nth-child(3) { animation-delay: calc(var(--mo-typing) * .3); }
+
+/* ── the thread ───────────────────────────────────────────────────────── */
+
+.chatter-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.chatter-line { display: flex; }
+.chatter-line.side-left  { justify-content: flex-start; }
+.chatter-line.side-right { justify-content: flex-end; }
+
+.chatter-bubble {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  max-width: 82%;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-sunk);
+  animation: chatter-pop var(--mo-pop) var(--mo-spring) both;
+}
+.side-left  .chatter-bubble { border-bottom-left-radius: var(--r-xs);  transform-origin: bottom left;  background: color-mix(in oklab, var(--accent-soft) 55%, var(--bg-sunk)); }
+.side-right .chatter-bubble { border-bottom-right-radius: var(--r-xs); transform-origin: bottom right; background: color-mix(in oklab, var(--good-soft) 55%, var(--bg-sunk)); }
+
+/* The tail, pointing at whoever said it. */
+.chatter-bubble::before {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line);
+  background: inherit;
+  transform: rotate(45deg);
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+}
+.side-left  .chatter-bubble::before { left: -1px;  border-right: 0; border-radius: 0 0 0 var(--r-xs); clip-path: polygon(0 100%, 100% 100%, 0 0); }
+.side-right .chatter-bubble::before { right: -1px; border-left: 0;  border-radius: 0 0 var(--r-xs) 0; clip-path: polygon(0 100%, 100% 100%, 100% 0); }
+
+.chatter-who { font-size: var(--t-micro); font-weight: 700; color: var(--text-dim); }
+.side-left  .chatter-who { color: var(--accent); }
+.side-right .chatter-who { color: var(--good); }
+.chatter-said { font-size: var(--t-small); color: var(--text); line-height: 1.45; overflow-wrap: anywhere; }
+.chatter-quiet { font-size: var(--t-micro); color: var(--text-faint); font-style: italic; }
+
+.chatter-foot { margin: 0; font-size: var(--t-micro); color: var(--text-faint); line-height: 1.45; }
+.chatter-more { color: var(--text-dim); }
+
+/* ── motion ───────────────────────────────────────────────────────────── */
+
+@keyframes chatter-in {
+  from { opacity: 0; transform: translateY(18px) scale(.94); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes chatter-out {
+  to { opacity: 0; transform: translateY(10px) scale(.97); }
+}
+@keyframes chatter-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+@keyframes chatter-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  96%           { transform: scaleY(.12); }
+}
+@keyframes chatter-speak {
+  0%   { transform: scale(1, 1); }
+  35%  { transform: scale(1.16, .86); }
+  70%  { transform: scale(.94, 1.08); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes chatter-ring {
+  0%   { opacity: .9; transform: scale(1); }
+  100% { opacity: 0;  transform: scale(1.9); }
+}
+@keyframes chatter-hear {
+  0%   { transform: translateY(0) scale(1); }
+  40%  { transform: translateY(-5px) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}
+@keyframes chatter-glance-left  { to { transform: translate(-3px, -3px); } }
+@keyframes chatter-glance-right { to { transform: translate(3px, -3px); } }
+@keyframes chatter-fly {
+  0%   { opacity: 0; transform: translate(0, 0) scale(.5); }
+  14%  { opacity: 1; transform: translate(calc(var(--dx) * .14), -4px) scale(1); }
+  50%  { opacity: 1; transform: translate(calc(var(--dx) * .5), -11px) scale(1.15); }
+  86%  { opacity: 1; transform: translate(calc(var(--dx) * .86), -4px) scale(1); }
+  100% { opacity: 0; transform: translate(var(--dx), 0) scale(.5); }
+}
+@keyframes chatter-dots {
+  0%, 60%, 100% { transform: translateY(0); opacity: .55; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes chatter-pop {
+  from { opacity: 0; transform: scale(.82) translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The looping ones are switched off outright under reduced motion rather than
+   left running at zero length. The tokens already zero the one-shots. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .chatter-actor,
+  :root:not([data-motion='full']) .chatter-eye,
+  :root:not([data-motion='full']) .chatter-dot { animation: none; }
+}
+:root[data-motion='off'] .chatter-actor,
+:root[data-motion='off'] .chatter-eye,
+:root[data-motion='off'] .chatter-dot { animation: none; }

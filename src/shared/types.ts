@@ -2062,6 +2062,17 @@ export type McpServerConfig = {
   args?: string;
   url?: string;
   enabled: boolean;
+  /**
+   * Environment this server is launched with, as JSON, written only by the
+   * extension installer. It records destination names and where each value
+   * comes from — `{"FIGMA_TOKEN":{"source":"credential","id":"acme.figma"}}` —
+   * and never a secret itself: the value is resolved out of the keychain when
+   * the per-session config is written, so nothing here or in the database ever
+   * holds one.
+   */
+  env?: string;
+  /** The extension that created this row, or absent for one a person added. */
+  owner?: string;
 };
 
 /**
@@ -2102,6 +2113,12 @@ export type McpApprovedCommand = {
   projectId: string | null;
   command: string;
   args: string;
+  /**
+   * The declared environment, when there is one. Absent for every server added
+   * by hand, which is what keeps approvals recorded before extensions existed
+   * matching their stored digest exactly.
+   */
+  env?: string;
 };
 
 export type McpServerTrustState =
@@ -2167,6 +2184,125 @@ export type McpServerReview = {
   trustedAt: number | null;
   enabled: boolean;
   classification: McpServerClassification;
+};
+
+/* ── extensions · installable bundles ─────────────────────────────────── */
+
+/**
+ * A Wanigan extension is a bundle of DECLARATIONS across surfaces that already
+ * exist — MCP servers, skills, review gates, instructions — and never a place
+ * to load code. Nothing an extension ships runs inside this process: one that
+ * needs to compute something does it behind a protocol Wanigan already speaks
+ * out of process, which today means an MCP server or a provider pack's v1
+ * capability adapter. That is the whole security model, and it is the reason a
+ * stranger's extension can be installed at all.
+ *
+ * Not "plugin": that word is taken in this app by the Claude Code plugins the
+ * Plugins view reads out of ~/.claude, and two meanings of one word inside one
+ * window is a question nobody can answer from the screen.
+ *
+ * The manifest lives in `shared/extension-manifest.ts`, with the validator
+ * and the consent summary, because the authoring CLI, the installer and the
+ * install dialog must all read one definition — three copies of "what is a
+ * valid extension" is three answers to a question that has to have one.
+ */
+export type ExtensionOrigin =
+  /** Installed from a directory the operator chose. */
+  | 'folder'
+  /** Loaded in place from a working directory, for someone writing one. */
+  | 'development'
+  /** Written out of this Wanigan's own configuration by "Save as extension". */
+  | 'export';
+
+export type ExtensionStatus =
+  | 'enabled'
+  | 'disabled'
+  /** Valid, but its exact manifest bytes have never been approved. */
+  | 'needs-trust'
+  /** On disk and unreadable as an extension; the errors say why, in full. */
+  | 'invalid';
+
+/**
+ * One line of what installing this will do, in the operator's words rather
+ * than the manifest's. Every kind here is something that outlives the click:
+ * a command that will run on their machine, a host that will be reached, a
+ * credential that will be asked for, a file that will be written.
+ */
+export type ExtensionConsentLine = {
+  kind: 'command' | 'host' | 'credential' | 'file' | 'note';
+  text: string;
+};
+
+/**
+ * Something an extension declared, and what became of it.
+ *
+ * `applied` is the honest half. A declaration Wanigan has no path to install
+ * yet is listed with `applied: false` and a note naming what is missing —
+ * never silently dropped, and never counted as installed. An artifact row is
+ * also how uninstall knows what it owns: without attribution, removing a
+ * extension is a guess at which rows were its.
+ */
+export type ExtensionArtifactInfo = {
+  kind: 'mcp-server' | 'skill' | 'gate' | 'instruction';
+  /** What it created or would create: an MCP server name, a skill name. */
+  ref: string;
+  projectId: string | null;
+  detail: string | null;
+  applied: boolean;
+  /** Why it is not applied, or what the operator still has to do. */
+  note: string | null;
+};
+
+export type ExtensionInfo = {
+  id: string;
+  label: string;
+  version: string;
+  description: string | null;
+  publisher: { id: string; name: string; url: string | null } | null;
+  origin: ExtensionOrigin;
+  status: ExtensionStatus;
+  enabled: boolean;
+  /** Empty unless status is 'invalid'; every reason, not the first one. */
+  errors: string[];
+  manifestSha256: string;
+  /** The exact bytes the operator approved, if any. A change revokes it. */
+  trustedSha256: string | null;
+  sourcePath: string | null;
+  installedAt: number;
+  updatedAt: number;
+  artifacts: ExtensionArtifactInfo[];
+  consent: ExtensionConsentLine[];
+};
+
+/** A directory read as an extension, before anything is installed from it. */
+export type ExtensionInspection = {
+  ok: boolean;
+  path: string;
+  id: string | null;
+  label: string | null;
+  version: string | null;
+  description: string | null;
+  publisher: { id: string; name: string; url: string | null } | null;
+  manifestSha256: string | null;
+  errors: string[];
+  warnings: string[];
+  consent: ExtensionConsentLine[];
+  artifacts: ExtensionArtifactInfo[];
+  /** Set when this id is already installed, so the dialog says update, not install. */
+  installedVersion: string | null;
+};
+
+/**
+ * What an uninstall actually did. A extension does not own a row the operator has
+ * since edited: those are kept, counted here and named on screen, because
+ * silently reverting somebody's own change is the one outcome that would make
+ * uninstalling an extension something people stop doing.
+ */
+export type ExtensionRemoval = {
+  pluginId: string;
+  removed: ExtensionArtifactInfo[];
+  kept: ExtensionArtifactInfo[];
+  detail: string;
 };
 
 /* ── P13 · uploaded rows ────────────────────────────────────────────── */

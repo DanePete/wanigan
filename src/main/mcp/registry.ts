@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from '../db';
 import { projectById } from '../store';
 import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './capabilities';
+import { getProviderKey } from '../keys';
 import type {
   McpApprovedCommand, McpServerClassification, McpServerConfig, McpServerReview,
   McpServerStatus, McpServerTrustState,
@@ -33,6 +34,14 @@ type Row = {
   url: string | null;
   enabled: number;
   created_at: number;
+  /**
+   * Environment an extension declared for this server, as JSON. Null for every
+   * server a person added by hand: nothing in the UI sets one, and an
+   * extension is the only thing that can name a credential to resolve.
+   */
+  env: string | null;
+  /** The extension that created this row, or NULL for one a person added. */
+  owner: string | null;
 };
 
 /**
@@ -54,6 +63,8 @@ function toConfig(r: Row): McpServerConfig {
     args: r.args ?? undefined,
     url: r.url ?? undefined,
     enabled: r.enabled === 1,
+    env: r.env ?? undefined,
+    owner: r.owner ?? undefined,
   };
 }
 
@@ -178,12 +189,24 @@ function writeTrust(state: TrustState): void {
  * command is launched against. Approving one line is not approving the others.
  */
 function trustDigest(v: McpApprovedCommand): string {
+  const shape = ['mcp-server-trust/1', v.transport, v.name, v.scope, v.projectId ?? '', v.command, v.args];
+  // Env joins the digest only when there is one, so every approval recorded
+  // before servers could carry an environment still matches byte for byte. An
+  // extra element in this array would change every stored digest at once and
+  // silently un-trust every MCP server on every machine — the upgrade would
+  // read as "Wanigan forgot what I approved", which is the worst possible
+  // thing for a trust surface to do. What it covers when it is present is the
+  // destination names and where each value comes from, never a secret's value:
+  // rotating a token must not re-ask, and re-pointing one at another
+  // credential must.
   return createHash('sha256')
-    .update(JSON.stringify(['mcp-server-trust/1', v.transport, v.name, v.scope, v.projectId ?? '', v.command, v.args]))
+    .update(JSON.stringify(v.env ? [...shape, v.env] : shape))
     .digest('hex');
 }
 
-function approvedShape(row: Pick<Row, 'name' | 'transport' | 'project_id' | 'command' | 'args'>): McpApprovedCommand {
+function approvedShape(
+  row: Pick<Row, 'name' | 'transport' | 'project_id' | 'command' | 'args'> & { env?: string | null },
+): McpApprovedCommand {
   return {
     name: row.name,
     transport: row.transport === 'http' ? 'http' : 'stdio',
@@ -191,6 +214,7 @@ function approvedShape(row: Pick<Row, 'name' | 'transport' | 'project_id' | 'com
     projectId: row.project_id,
     command: row.command ?? '',
     args: row.args ?? '',
+    env: row.env ?? undefined,
   };
 }
 
@@ -446,6 +470,21 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
   const command = cfg.command?.trim() || null;
   const args = cfg.args?.trim() || null;
   const url = cfg.url?.trim() || null;
+  // Both are written only by the extension installer. `env` names destinations
+  // and where each value comes from — never a secret's value, which is resolved
+  // at launch and lives in the keychain — and `owner` is the attribution that
+  // lets an uninstall remove exactly the rows one extension created.
+  // Three states, not two, and the third is the one that matters. `undefined`
+  // means "this caller does not manage an environment" — the Settings form, the
+  // phone and the smoke suites all build a config without the field, and an
+  // edit there must not disturb what an extension declared. An empty string
+  // means "there is no environment", which only the installer says, and it says
+  // it whenever a version declares none. Without that distinction an extension
+  // that DROPPED a variable between versions would keep handing the old
+  // credential to a server that no longer asks for it — the update would look
+  // clean and the secret would still be flowing.
+  const env = cfg.env === undefined ? null : (cfg.env.trim() || '');
+  const owner = cfg.owner?.trim() || null;
 
   if (transport === 'stdio' && !command) {
     throw new Error('A stdio MCP server needs a command to launch (for example "npx"). Add one, or switch the transport to HTTP.');
@@ -495,7 +534,7 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
   // here rather than silently changing what the agent's CLI will spawn.
   const shape: McpApprovedCommand = {
     name, transport, scope: projectId ? 'project' : 'global', projectId,
-    command: command ?? '', args: args ?? '',
+    command: command ?? '', args: args ?? '', env: env ?? undefined,
   };
   if (cfg.enabled && requiresTrust(transport)) {
     const { trust } = trustStateFor(id, shape, readTrust());
@@ -509,17 +548,33 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
   }
 
   db().prepare(`
-    INSERT INTO mcp_servers (id, project_id, name, transport, command, args, url, enabled, created_at)
-    VALUES (@id,@project,@name,@transport,@command,@args,@url,@enabled,@created)
+    INSERT INTO mcp_servers (id, project_id, name, transport, command, args, url, enabled, created_at, env, owner)
+    VALUES (@id,@project,@name,@transport,@command,@args,@url,@enabled,@created,@env,@owner)
     ON CONFLICT(id) DO UPDATE SET
       project_id=excluded.project_id, name=excluded.name, transport=excluded.transport,
-      command=excluded.command, args=excluded.args, url=excluded.url, enabled=excluded.enabled
+      command=excluded.command, args=excluded.args, url=excluded.url, enabled=excluded.enabled,
+      -- COALESCE, not a plain overwrite. Every other caller of this function —
+      -- the Settings form, the phone, the smoke suites — builds an
+      -- McpServerConfig without these two fields, because only the extension
+      -- installer sets them. An unconditional assignment therefore cleared a
+      -- server's attribution the moment a person edited its command in
+      -- Settings, which is the exact row an uninstall most needs to recognise:
+      -- the report that says "kept, because you changed this" would have had
+      -- nothing left to match on, and the row would have been silently removed
+      -- instead. Disowning happens in one place, deliberately, when an
+      -- uninstall decides a row is now the operator's.
+      env=CASE WHEN excluded.env IS NULL THEN mcp_servers.env
+               WHEN excluded.env = '' THEN NULL
+               ELSE excluded.env END,
+      owner=COALESCE(excluded.owner, mcp_servers.owner)
   `).run({
     id, project: projectId, name, transport, command, args, url,
     enabled: cfg.enabled ? 1 : 0, created: Date.now(),
+    env, owner: owner ?? null,
   });
 
-  return { id, projectId, name, transport, command: command ?? undefined, args: args ?? undefined, url: url ?? undefined, enabled: !!cfg.enabled };
+  return { id, projectId, name, transport, command: command ?? undefined, args: args ?? undefined,
+    url: url ?? undefined, enabled: !!cfg.enabled, env: env || undefined, owner: owner ?? undefined };
 }
 
 export function removeServer(id: string) {
@@ -649,7 +704,50 @@ export function expandMcpArgs(template: string, projectPath: string): string[] {
   return splitArgs(template).map(arg => arg.split(PROJECT_PATH_SLOT).join(projectPath));
 }
 
-type StdioEntry = { command: string; args: string[] };
+type StdioEntry = { command: string; args: string[]; env?: Record<string, string> };
+
+/**
+ * Resolve what an extension declared into the environment the server is
+ * actually launched with.
+ *
+ * A credential is read here and nowhere earlier: the database stores the
+ * destination and the credential id, so a backup, a sync or a support dump of
+ * that table carries no secret. The value lands in the per-session config
+ * file, which is written 0600 inside Wanigan's own data directory and deleted
+ * when the session ends — the same file that already carries the bearer token
+ * for Wanigan's own MCP server, so this adds no new class of exposure.
+ *
+ * A credential that is not set yields no variable rather than an empty one.
+ * That is the rule providers.ts states for its own environment: the server
+ * still launches and fails with its own message about a missing token, which a
+ * person can act on, instead of authenticating as nobody against a live API.
+ */
+function resolveServerEnv(raw: string | null | undefined, name: string): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  let declared: unknown;
+  try { declared = JSON.parse(raw); } catch { return undefined; }
+  if (!declared || typeof declared !== 'object' || Array.isArray(declared)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [destination, value] of Object.entries(declared as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const entry = value as { source?: unknown; id?: unknown; value?: unknown };
+    if (entry.source === 'literal' && typeof entry.value === 'string') {
+      out[destination] = entry.value;
+      continue;
+    }
+    if (entry.source !== 'credential' || typeof entry.id !== 'string') continue;
+    const secret = getProviderKey(entry.id);
+    if (!secret) {
+      console.warn(
+        `[wanigan] MCP server "${name}" declares ${destination} from the credential "${entry.id}", which returned ` +
+        'nothing. The server was launched without that variable and will report its own missing-credential error.'
+      );
+      continue;
+    }
+    out[destination] = secret;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> };
 
 /**
@@ -698,7 +796,11 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
         );
         continue;
       }
-      entries[s.name] = { command: fill(s.command), args: expandMcpArgs(s.args ?? '', projectPath) };
+      entries[s.name] = {
+        command: fill(s.command),
+        args: expandMcpArgs(s.args ?? '', projectPath),
+        env: resolveServerEnv(s.env, s.name),
+      };
     }
   }
 

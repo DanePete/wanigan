@@ -1,0 +1,437 @@
+/* The extension store: a catalogue you browse, a card per bundle, and a consent
+   panel between a folder and an install.
+
+   Every value here is a token from index.css or motion.css. No colour, no font
+   size and no duration is spelled out, so a theme swap and Settings > Motion =
+   off both reach this surface like every other one.
+
+   The class-only selectors below never share an element with a base class from
+   index.css: a modifier that sits on `.card` or `.pane` would lose to the base
+   rule on source order, silently. Where this sheet decorates a primitive it is
+   the primitive's own class it reuses (.mono, .label, .sub, .field, .btn), and
+   it redeclares nothing those rules already own. */
+
+/* ── panels: add from folder, save as extension, uninstall receipt ──── */
+
+.ex-panel, .ex-removal {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+}
+
+.ex-lead {
+  max-width: 76ch;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.65;
+}
+
+.ex-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.ex-form {
+  display: grid;
+  gap: var(--s-4);
+  max-width: 62ch;
+}
+
+.ex-fieldset {
+  display: grid;
+  gap: var(--s-2);
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.ex-choices {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.ex-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+  cursor: pointer;
+  transition: border-color var(--mo-state) var(--mo-ease);
+}
+
+.ex-choice:hover { border-color: var(--text-faint); }
+
+.ex-choice-copy {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.ex-choice-copy > strong { font-size: var(--t-body); font-weight: 550; overflow-wrap: anywhere; }
+
+.ex-field {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.ex-field .ex-actions > .field { flex: 1; min-width: 0; }
+
+.ex-saved {
+  display: grid;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── toolbar, search, facets ────────────────────────────────────────── */
+
+.ex-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-4);
+}
+
+.ex-search {
+  display: grid;
+  gap: var(--s-1);
+  flex: 1 1 26ch;
+  min-width: 0;
+}
+
+.ex-search .field { width: 100%; }
+
+.ex-facets {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.ex-facet-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* The row of filters actually in force. It is a row of exits, not decoration:
+   each chip removes the one thing it names, so a list narrowed to nothing can
+   always be widened again without hunting for which control did it. */
+.ex-active {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--bg-sunk);
+}
+
+.ex-drop {
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: var(--s-1) var(--s-3);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+  cursor: pointer;
+  transition: color var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease);
+}
+
+.ex-drop:hover { color: var(--text); border-color: var(--text-faint); }
+
+/* ── the card grid: a store in Browse, a working list in Installed ──── */
+
+.ex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--s-4);
+  align-items: start;
+}
+
+.ex-rows {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.ex-card {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+  min-width: 0;
+}
+
+.ex-card.dense { padding: var(--s-3) var(--s-4); }
+
+.ex-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+}
+
+.ex-identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  min-width: 0;
+}
+
+.ex-title {
+  font-size: var(--t-lead);
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.ex-ver {
+  font-size: var(--t-small);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
+  flex: none;
+}
+
+.ex-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-pill);
+  background: var(--bg-sunk);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+  cursor: pointer;
+}
+
+.ex-sub {
+  max-width: 72ch;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ex-meta, .ex-detail {
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* What the bundle provides, counted off its own artifacts. Each entry is a
+   glyph plus a word plus a number — it reads the same in greyscale, which is
+   the rule the attention queue records and this view inherits. */
+.ex-provides {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  font-size: var(--t-micro);
+}
+
+.ex-blurb {
+  max-width: 76ch;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.6;
+}
+
+.ex-errors {
+  display: grid;
+  gap: var(--s-1);
+  margin: var(--s-2) 0 0;
+  padding-left: var(--s-4);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* ── artifacts: what it declared, and what became of each one ───────── */
+
+/* The unapplied block sits on the face of the card, above the disclosure that
+   holds the full inventory. It is the reason the rest of the list can be
+   believed, so it is never the thing that gets folded away. */
+.ex-held {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--warning);
+  border-radius: var(--r-sm);
+  background: var(--warning-soft);
+}
+
+.ex-artifacts {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ex-artifact {
+  display: grid;
+  grid-template-columns: minmax(0, 9ch) minmax(0, 1fr);
+  gap: var(--s-1) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+}
+
+.ex-artifact.held { border-color: var(--warning); }
+
+.ex-kind {
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ex-artifact-copy {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  min-width: 0;
+}
+
+.ex-ref {
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+/* The note beside an unapplied declaration. Full width of the row, full text,
+   no clamp: a reason that needs a hover to read is a reason nobody reads. */
+.ex-reason {
+  flex-basis: 100%;
+  max-width: 76ch;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.55;
+}
+
+.ex-disclosure {
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--s-3);
+}
+
+.ex-disclosure summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+}
+
+.ex-disclosure > * + * { margin-top: var(--s-3); }
+
+.ex-path {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* ── inspection: the consent panel between a folder and an install ──── */
+
+.ex-inspect {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.ex-gate {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+}
+
+.ex-consent {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.ex-group {
+  display: grid;
+  gap: var(--s-2);
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--accent);
+}
+
+.ex-group-meaning {
+  max-width: 76ch;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.6;
+}
+
+.ex-lines {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ex-line {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunk);
+  color: var(--text);
+  font-size: var(--t-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* Beside the Install button, never in a footer: this is the sentence that says
+   what Wanigan did and did not check, and it has to be where the click is. */
+.ex-safety {
+  max-width: 72ch;
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--warning);
+  color: var(--text);
+  font-size: var(--t-small);
+  line-height: 1.6;
+}
+
+/* ── uninstall receipt ──────────────────────────────────────────────── */
+
+.ex-removal-group {
+  display: grid;
+  gap: var(--s-2);
+}
+
+@media (max-width: 720px) {
+  .ex-grid { grid-template-columns: minmax(0, 1fr); }
+  .ex-card-actions { margin-left: 0; }
+  .ex-artifact { grid-template-columns: minmax(0, 1fr); }
+}

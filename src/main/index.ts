@@ -98,6 +98,7 @@ import * as ctxConfig from './context/config';
 import * as browse from './browse';
 import * as attachments from './attachments';
 import * as mcpRegistry from './mcp/registry';
+import * as extensionStore from './extensions/store';
 import * as mcpServer from './mcp/server';
 import { mcpTrustPrompt } from './mcp/consent';
 import * as refusal from './batch/refusal';
@@ -1973,6 +1974,93 @@ function registerIpc() {
   handle('providerPacks:restore', (packId: string) => {
     providerPackRegistry.restore(packId);
     refreshProviderPacks(); return publicProviderPacks(true);
+  });
+
+  /*
+   * ── extensions ──────────────────────────────────────────────────────
+   *
+   * Wanigan's own installable bundles: MCP servers, skills, gates and
+   * instructions somebody declared. Nothing here loads extension code, because
+   * an extension is data — which is what makes installing a stranger's one
+   * defensible at all.
+   *
+   * Directories reach this module from Wanigan's own folder picker and from
+   * nowhere else, for the reason projects:add states a few lines below: a
+   * channel that installs from a path the renderer names is a channel that
+   * installs from any path on the machine the moment anything can call it. The
+   * picker records what the operator actually chose; an install or an export
+   * against a path that never came back from it is refused by that fact alone,
+   * whatever the path contains.
+   */
+  const chosenExtensionDirs = new Set<string>();
+  const extensionDir = (value: unknown): string => {
+    if (typeof value !== 'string' || !value.trim()) throw new Error('An extension folder is required.');
+    const resolved = path.resolve(value);
+    if (!chosenExtensionDirs.has(resolved)) {
+      throw new Error('Wanigan installs an extension from its own folder picker, not from a path the interface names. Use Add from folder.');
+    }
+    return resolved;
+  };
+  const extensionId = (value: unknown): string => {
+    if (typeof value !== 'string' || !value.trim() || value.length > 200) {
+      throw new Error('An extension id is required.');
+    }
+    return value.trim();
+  };
+  handle('extensions:list', () => extensionStore.listExtensions());
+  handle('extensions:choose', async () => {
+    if (!win) return null;
+    const res = await dialog.showOpenDialog(win, {
+      title: 'Add a Wanigan extension',
+      properties: ['openDirectory'],
+      buttonLabel: 'Read this folder',
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    const chosen = path.resolve(res.filePaths[0]);
+    chosenExtensionDirs.add(chosen);
+    return extensionStore.inspectExtension(chosen);
+  });
+  // Re-reading a folder the operator already chose, so a dialog left open while
+  // its author edits the manifest shows what is on disk now rather than what it
+  // said when it was picked.
+  handle('extensions:inspect', (directory: unknown) =>
+    extensionStore.inspectExtension(extensionDir(directory)));
+  handle('extensions:install', (directory: unknown, sha256: unknown) => {
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) {
+      throw new Error('The digest of the manifest you approved is required.');
+    }
+    return extensionStore.installExtension(extensionDir(directory), sha256);
+  });
+  handle('extensions:setEnabled', (id: unknown, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') throw new Error('An extension is either enabled or disabled.');
+    return extensionStore.setExtensionEnabled(extensionId(id), enabled);
+  });
+  handle('extensions:uninstall', (id: unknown) => extensionStore.uninstallExtension(extensionId(id)));
+  handle('extensions:exportable', () => extensionStore.exportableConfiguration());
+  // Writing your own configuration out as an extension. The destination is
+  // picked here rather than passed in, for the same reason as above — and this
+  // one writes files.
+  handle('extensions:export', async (input: unknown) => {
+    if (!win) return null;
+    if (!input || typeof input !== 'object') throw new Error('An extension to write is required.');
+    const { id, label, mcpServerIds } = input as Record<string, unknown>;
+    if (typeof id !== 'string' || typeof label !== 'string') {
+      throw new Error('An extension needs an id and a label.');
+    }
+    if (!Array.isArray(mcpServerIds) || mcpServerIds.some((value) => typeof value !== 'string')) {
+      throw new Error('Choose which MCP servers to include.');
+    }
+    const res = await dialog.showOpenDialog(win, {
+      title: 'Where should this extension be written?',
+      properties: ['openDirectory', 'createDirectory'],
+      buttonLabel: 'Write extension here',
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    const directory = path.resolve(res.filePaths[0]);
+    chosenExtensionDirs.add(directory);
+    return extensionStore.exportExtension({
+      directory, id: id.trim(), label: label.trim(), mcpServerIds: mcpServerIds as string[],
+    });
   });
 
   handle('projects:list', () => listProjects());

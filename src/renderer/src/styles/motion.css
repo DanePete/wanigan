@@ -25,12 +25,33 @@
   --mo-view: 240ms;    /* a whole view swapping out */
   --mo-ease: cubic-bezier(.2, .7, .3, 1);
   --mo-period: 2400ms; /* one breath — overwritten per element from measured rate */
+
+  /* Character motion, for the one surface allowed personality on purpose: the
+     session-chatter card (styles/chatter.css). The operator asked for agents
+     that visibly talk to each other and granted this surface an exemption from
+     "nothing loops to fill silence" — so it may blink, breathe and show a
+     waiting indicator. The exemption is scoped to that sheet, is not a
+     precedent for operational surfaces, and every one of these still collapses
+     to zero under reduced motion and Settings › Motion = off. */
+  --mo-pop: 320ms;      /* a bubble popping in with overshoot */
+  --mo-travel: 620ms;   /* a message crossing from one character to the other */
+  --mo-react: 260ms;    /* a character squashing to speak, or bobbing to hear */
+  --mo-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --mo-blink: 4600ms;   /* how often a character blinks */
+  --mo-idle: 3400ms;    /* one slow breath of an idle character */
+  --mo-typing: 1100ms;  /* one cycle of the waiting-for-a-reply dots */
 }
 
 /* 'off' means off everywhere, including the view transition. */
 :root[data-motion='off'] {
   --mo-state: 0ms;
   --mo-view: 0ms;
+  --mo-pop: 0ms;
+  --mo-travel: 0ms;
+  --mo-react: 0ms;
+  --mo-blink: 0ms;
+  --mo-idle: 0ms;
+  --mo-typing: 0ms;
 }
 
 /* 'auto' defers to the OS; 'full' is a deliberate override of it. */
@@ -38,6 +59,12 @@
   :root:not([data-motion='full']) {
     --mo-state: 0ms;
     --mo-view: 0ms;
+    --mo-pop: 0ms;
+    --mo-travel: 0ms;
+    --mo-react: 0ms;
+    --mo-blink: 0ms;
+    --mo-idle: 0ms;
+    --mo-typing: 0ms;
   }
 }
 

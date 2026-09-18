@@ -5,6 +5,9 @@ import { glmModels } from './glm';
 import { deepseekModels } from './deepseek';
 import { xaiModels } from './xai';
 import * as codexStatus from './codex-status';
+import { backendModels } from './backend-catalog';
+import { getProviderKey } from './keys';
+import { providerPackRegistry } from './providers';
 
 /**
  * One question, asked in the main process, for every backend: what models can
@@ -169,6 +172,57 @@ export const LIVE_BACKEND_MODELS: Record<string, () => Promise<LaunchModelCatalo
   },
 };
 
+/**
+ * The catalog a provider pack declared for this backend, as the same kind of
+ * reader the built-in backends use.
+ *
+ * Read from the registry on every call rather than cached: enabling a pack,
+ * trusting a new manifest digest or uninstalling one all change the answer, and
+ * a launch dialog that offered a retired pack's models would be offering a
+ * session that cannot start. `backendModels` does its own caching, so this
+ * costs a lookup and not a request.
+ */
+function declaredBackendCatalogue(backendId: string): (() => Promise<LaunchModelCatalogue>) | undefined {
+  let declared: { label: string; catalog: NonNullable<ReturnType<typeof catalogOf>> } | undefined;
+  try {
+    for (const profile of providerPackRegistry.listProfiles({ includeDisabled: false })) {
+      const catalog = catalogOf(profile);
+      if (!catalog || profile.backend.id !== backendId) continue;
+      declared = { label: profile.backend.label, catalog };
+      break;
+    }
+  } catch {
+    // The registry reads manifests off disk. A backend with no live catalogue
+    // falls through to the published list below, which is the same answer this
+    // function gives when no pack declares one.
+    return undefined;
+  }
+  if (!declared) return undefined;
+  const { label, catalog } = declared;
+  return async () => {
+    const read = await backendModels({
+      backendId, backendLabel: label, catalog,
+      // The manifest's declared credential, resolved at read time. A catalog
+      // with no auth reads anonymously; one whose key is not set falls back to
+      // its published list with a note saying so, which is the reader's own
+      // rule rather than a branch here.
+      credential: () => (catalog.auth?.source === 'credential' ? getProviderKey(catalog.auth.id) : null),
+    });
+    return {
+      rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
+      source: read.source,
+      note: read.note,
+    };
+  };
+}
+
+function catalogOf(profile: { backend: { catalog?: unknown } }) {
+  const catalog = profile.backend.catalog;
+  return catalog && typeof catalog === 'object'
+    ? catalog as import('../shared/backend-catalog').BackendCatalogManifest
+    : undefined;
+}
+
 function rowsOf(fields: LaunchFieldChoices): LaunchModelRow[] {
   return fields.choices.map((choice) => ({
     value: choice.value,
@@ -239,7 +293,14 @@ export async function providerModelCatalogue(
   if (!fields.supported) return EMPTY;
 
   const backendId = provider.backendId;
-  const live = backendId ? LIVE_BACKEND_MODELS[backendId] : undefined;
+  // A pack that declares its own catalog is asked through the shared reader,
+  // before the three hand-written fetchers below. That ordering is the point of
+  // the field: the built-in Z.ai, DeepSeek and xAI modules stay exactly as they
+  // are until they are retired, and a pack shipped by somebody else reaches the
+  // same dialog with the same honesty rules rather than waiting for a release
+  // of Wanigan to add a fourth copy of them.
+  const live = (backendId ? declaredBackendCatalogue(backendId) : undefined)
+    ?? (backendId ? LIVE_BACKEND_MODELS[backendId] : undefined);
   let catalogue: LaunchModelCatalogue = EMPTY;
 
   if (live) {

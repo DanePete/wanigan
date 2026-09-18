@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { validateBackendCatalog, type BackendCatalogManifest } from '../shared/backend-catalog';
 
 /**
  * Provider packs are data first. A manifest can describe a normal CLI without
@@ -182,6 +183,19 @@ export type ProviderBackendManifest = {
   label: string;
   description?: string;
   baseUrl?: string;
+  /**
+   * Where this backend's model list comes from, when it can be asked.
+   *
+   * This field is why a new model backend is a manifest and not a source file.
+   * Z.ai, DeepSeek and xAI each arrived as their own module — the same fetch,
+   * the same six-hour cache, the same fallback list, the same key check — plus
+   * an IPC channel, a preload method, a member of a credential union and a
+   * branch in Settings. Declared here, the module is shared and the rest is
+   * derived. Validated by `validateBackendCatalog`, which refuses a non-https
+   * host, an uncompilable filter and a catalog with no fallback, because this
+   * value is read out of an untrusted manifest and used in the main process.
+   */
+  catalog?: BackendCatalogManifest;
 };
 
 export type ProviderProfileManifest = {
@@ -649,11 +663,24 @@ function parseProfile(raw: unknown, where: string, errors: string[]): ProviderPr
     const backendLabel = safeString(own(backendRaw, 'label'), `${where}.backend.label`, errors, { required: true, max: 100 });
     const backendDescription = optionalDescription(own(backendRaw, 'description'), `${where}.backend.description`, errors);
     const baseUrl = validUrl(own(backendRaw, 'baseUrl'), `${where}.backend.baseUrl`, errors);
+    // The catalog is validated by the module that reads it, so a manifest and
+    // the fetcher can never disagree about what a legal catalog is. Its
+    // refusals are reported under this field's path rather than on their own,
+    // because "which part of my manifest is wrong" is the only question an
+    // author is asking when they read this list.
+    const catalogRaw = own(backendRaw, 'catalog');
+    let catalog: BackendCatalogManifest | undefined;
+    if (catalogRaw !== undefined) {
+      const read = validateBackendCatalog(catalogRaw);
+      if (read.ok && read.catalog) catalog = read.catalog;
+      else for (const detail of read.errors) errors.push(`${where}.backend.catalog: ${detail}`);
+    }
     if (backendId && backendLabel) backend = {
       id: backendId,
       label: backendLabel,
       ...(backendDescription ? { description: backendDescription } : {}),
       ...(baseUrl ? { baseUrl } : {}),
+      ...(catalog ? { catalog } : {}),
     };
   }
   const command = parseCommand(own(raw, 'command'), `${where}.command`, errors);

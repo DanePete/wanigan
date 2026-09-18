@@ -71,6 +71,59 @@ as observed fact.
 - Preserve existing working-tree changes. Inspect the diff before editing and
   never reset, checkout, or reformat unrelated work.
 
+## Everything is a module
+
+Wanigan is a kernel that cannot be replaced plus a set of extensions, and the
+defaults are extensions too. This is the architecture rather than an ambition,
+and it decides how work in this repository starts — before the first file is
+opened, not during review.
+
+- **A new feature ships as an extension.** Not a view wired into `App.tsx`, a
+  table in `db.ts` and a handler in `index.ts`: that triple is the symptom this
+  rule exists to stop, and its cost is already measurable here. A provider took
+  nine files to add and GLM still touches thirty-seven; seventeen views reached
+  the sidebar one hand-wired route at a time. If a feature cannot be expressed
+  as an extension, that is a statement about a missing extension point, and
+  building the extension point is the work — not an argument for wiring one
+  more thing directly into the core.
+- **Work on a feature that is not yet an extension converts it first.** The
+  conversion and the change are two commits in that order: the conversion moves
+  code without altering behaviour, so it can be reviewed as a move, and the fix
+  is then a small diff against a module. Fixing in place is exactly how a
+  surface stays unconvertible for another year — every in-place fix makes it
+  larger, which makes the conversion more expensive, which is the reason given
+  for the next in-place fix.
+- **Some extensions cannot be uninstalled, and say why.** A module carrying the
+  trust kernel — session launch and the PTY boundary, the evidence database,
+  consent, digest trust, and the pack and extension installers themselves — is
+  a *required* extension. It is a module like any other: read, tested, versioned
+  and replaceable by us. It cannot be disabled, removed or shadowed by a third
+  party, because a module that can change what "verified" means empties every
+  claim this app makes. Required is a declared property carrying its reason, and
+  never merely the absence of an uninstall button.
+- **The urgent-fix escape, and its price.** A fix that cannot wait — a user is
+  blocked, data is at risk, a security issue is live — may be made in place on
+  an unconverted surface. It is not free and it is not silent: the fix carries a
+  comment at the site naming the escape and what was urgent, and it adds a row
+  to `unconverted-fixes.json`, which is a debt ledger of the same kind as
+  `eslint-suppressions.json` and obeys the same rule — the only edit is
+  downward, and a row is removed by converting the surface, never by deciding it
+  no longer matters. **A surface gets one.** A second in-place fix on a surface
+  already listed is refused: one emergency is an emergency, two is the plan, and
+  the second is where every codebase that has this escape learned it had lost
+  the rule. Reaching for this on work that is merely inconvenient to convert is
+  the misuse it exists to make visible, so say plainly which of the three
+  conditions is met.
+- **Defaults prove the extension point is real.** The built-in providers, the
+  review gate and the attention classifier are what a contributed module is
+  compared against. A capability only a built-in can reach is an extension point
+  that does not exist yet, however it is documented.
+- **An extension point is a promise.** Once published, somebody's module depends
+  on it: keep it across versions or version it deliberately. Prefer few
+  well-chosen points that hold for years over a wide surface that moves. Drupal
+  is the model here, including its limit — contributed modules extend core at
+  defined points and do not arbitrarily override it.
+
 ## Skills
 
 Skills are reusable, task-scoped operating procedures; they are not a dumping

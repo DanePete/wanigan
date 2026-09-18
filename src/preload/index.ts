@@ -40,7 +40,8 @@ import type {
   LearningExperiment, LearningOverview, LearningPhrasingOutcome, LearningPipelineStats,
   LearningSettings, LearningSignal, ModelAssistConsent, ModelAssistConsentPreview, ModelAssistStatus,
   SessionLearningLedger,
-  OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
+  ExtensionInfo, ExtensionInspection, ExtensionRemoval, OptimizerDiagnostic,
+  ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
@@ -114,6 +115,40 @@ const api = {
       call<ProviderPackInfo[]>('providerPacks:revokeAdapterTrust', packId),
     remove: (packId: string) => call<ProviderPackInfo[]>('providerPacks:remove', packId),
     restore: (packId: string) => call<ProviderPackInfo[]>('providerPacks:restore', packId),
+  },
+  /**
+   * Wanigan extensions: the MCP servers, skills, gates and instructions a
+   * bundle declares. Every call is a read or an operator action, and none of
+   * them loads extension code, because an extension is data.
+   *
+   * Distinct from `plugins` below, which reads Claude Code's own plugins out of
+   * ~/.claude and installs them with Claude Code's CLI.
+   */
+  extensions: {
+    list: () => call<ExtensionInfo[]>('extensions:list'),
+    /** Read a directory as an extension without installing anything from it. */
+    inspect: (directory: string) => call<ExtensionInspection>('extensions:inspect', directory),
+    /** Choose a directory, then read it. Null when the picker is dismissed. */
+    choose: () => call<ExtensionInspection | null>('extensions:choose'),
+    /**
+     * Install what is at `directory`, having approved exactly `sha256`. The
+     * digest is passed back rather than re-read, so a manifest that changed
+     * between the dialog and the click is refused instead of installed unseen.
+     */
+    install: (directory: string, sha256: string) =>
+      call<ExtensionInfo[]>('extensions:install', directory, sha256),
+    setEnabled: (extensionId: string, enabled: boolean) =>
+      call<ExtensionInfo[]>('extensions:setEnabled', extensionId, enabled),
+    uninstall: (extensionId: string) => call<ExtensionRemoval>('extensions:uninstall', extensionId),
+    /**
+     * Write this Wanigan's own configuration out as an extension directory.
+     * The destination is chosen in the main process's own folder picker, so
+     * there is no path to pass and a dismissed picker answers null.
+     */
+    export: (input: { id: string; label: string; mcpServerIds: string[] }) =>
+      call<ExtensionInspection | null>('extensions:export', input),
+    /** What "Save as extension" would offer to include, read from live configuration. */
+    exportable: () => call<{ mcpServers: { id: string; name: string; detail: string }[] }>('extensions:exportable'),
   },
   projects: {
     list: () => call<Project[]>('projects:list'),

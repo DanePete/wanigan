@@ -18,6 +18,8 @@ import Batches from './views/Batches';
 import InsightsView from './views/Insights';
 import Learning from './views/Learning';
 import Plugins from './views/Plugins';
+import Extensions from './views/Extensions';
+import SessionChatter from './components/SessionChatter';
 import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
@@ -1284,6 +1286,7 @@ export default function App() {
                      onReloadProjects={loadShell} onOpenLearning={openLearning} />
           )}
           {tab === 'plugins' && <Plugins />}
+          {tab === 'extensions' && <Extensions />}
           {tab === 'schedules' && <Schedules projects={projects} />}
           {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
@@ -1347,6 +1350,11 @@ export default function App() {
           onDismissAll={() => setAlerts([])}
         />
       )}
+      {/* Beside the alert stack rather than inside it: an alert is a thing the
+          operator has to deal with, and two agents coordinating is a thing they
+          are being let in on. It owns the opposite corner and leaves by itself
+          when the exchange goes quiet. */}
+      <SessionChatter />
       {palette && (
         <CommandPalette
           query={paletteQuery}

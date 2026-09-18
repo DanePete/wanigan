@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "acme.figma",
+  "label": "Figma",
+  "version": "1.0.0",
+  "description": "Figma design context for agents, plus a handoff skill.",
+  "publisher": { "id": "acme", "name": "Acme", "url": "https://example.com" },
+  "requires": { "wanigan": ">=0.1.0" },
+  "credentials": [
+    {
+      "id": "acme.figma",
+      "label": "Figma personal access token",
+      "help": "Create one at figma.com → Settings → Personal access tokens."
+    }
+  ],
+  "provides": {
+    "mcpServers": [
+      {
+        "name": "figma",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "figma-mcp"],
+        "scope": "global",
+        "env": { "FIGMA_TOKEN": { "source": "credential", "id": "acme.figma" } }
+      }
+    ],
+    "skills": [{ "name": "figma-handoff", "file": "skills/figma-handoff/SKILL.md" }],
+    "gates": [{ "label": "Design tokens in sync", "commands": ["npm run tokens:check"] }],
+    "instructions": [{ "scope": "project", "title": "Figma conventions", "file": "docs/figma.md" }]
+  }
+}

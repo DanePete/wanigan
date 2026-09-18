@@ -17,6 +17,8 @@
 @import './styles/control.css';
 @import './styles/board.css';
 @import './styles/composer.css';
+@import './styles/extensions.css';
+@import './styles/chatter.css';
 
 /*
  * Named layout shelves. Twelve unaligned widths across seven stylesheets meant

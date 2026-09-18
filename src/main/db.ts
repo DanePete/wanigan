@@ -526,7 +526,57 @@ function migratePhases(d: Database.Database) {
       results_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_review_runs_project ON review_runs(project_id, started_at DESC);
+
+    -- plugins · installable extensions ----------------------------------
+    -- The manifest is stored whole, alongside the digest of the exact bytes it
+    -- was read from. Both are needed and neither substitutes for the other: the
+    -- manifest is what Wanigan acts on when the source directory is gone, and
+    -- the digest is what trust is pinned to, so an edited plugin is a plugin
+    -- that has to be approved again rather than one that quietly changed.
+    CREATE TABLE IF NOT EXISTS plugins (
+      id              TEXT PRIMARY KEY,
+      label           TEXT NOT NULL,
+      version         TEXT NOT NULL,
+      origin          TEXT NOT NULL,
+      source_path     TEXT,
+      manifest_json   TEXT NOT NULL,
+      manifest_sha256 TEXT NOT NULL,
+      trusted_sha256  TEXT,
+      enabled         INTEGER NOT NULL DEFAULT 0,
+      installed_at    INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    -- What a plugin created, so uninstall removes exactly that and nothing
+    -- else. Rows are kept after removal (removed_at) rather than deleted: a
+    -- plugin that is reinstalled should not re-adopt a server the operator has
+    -- since made their own, and the only way to know that is a record of what
+    -- was handed over and when.
+    CREATE TABLE IF NOT EXISTS plugin_artifacts (
+      id          TEXT PRIMARY KEY,
+      plugin_id   TEXT NOT NULL,
+      kind        TEXT NOT NULL,
+      ref         TEXT NOT NULL,
+      project_id  TEXT,
+      detail      TEXT,
+      -- The artifact as the plugin declared it, hashed at install. An uninstall
+      -- compares the live row against this: equal means Wanigan may remove it,
+      -- different means a person edited it and it stays.
+      fingerprint TEXT,
+      created_at  INTEGER NOT NULL,
+      removed_at  INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_plugin_artifacts_plugin ON plugin_artifacts(plugin_id, removed_at);
   `);
+
+  // Which plugin an MCP server came from, or NULL for one a person added
+  // themselves. Additive, and NULL is the honest value for every server that
+  // existed before plugins did — those were all added by hand.
+  addColumn(d, 'mcp_servers', 'owner', 'TEXT');
+  // The environment an extension declared for this server: destination names
+  // and where each value comes from, never a value. Both columns are additive
+  // and NULL on every row that existed before extensions did, which is the
+  // honest reading — those were all added by hand and carry no environment.
+  addColumn(d, 'mcp_servers', 'env', 'TEXT');
 
   // Runs carry batches, headless fan-outs, evals and judge passes. One table,
   // so Insights and budgets never need a special case per surface.

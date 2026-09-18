@@ -993,6 +993,24 @@ function summarise(event: string, input: HookInput): string | null {
     case 'WebFetch':
     case 'WebSearch':
       return clip(str(ti.url) ?? str(ti.query), MAX_SUMMARY);
+    // One agent talking to another. Wanigan already received this the instant
+    // it happened — PreToolUse is registered with matcher '*' — but with no
+    // case here the row fell through to the generic branch below, where
+    // SendMessage carries none of the fields it reads, and the summary came out
+    // null. The event said a message was sent and could not say to whom, which
+    // is the one fact that makes it worth showing.
+    //
+    // `to` and `summary`, never `message`. The body is one model's words to
+    // another, and this row is a fact about the run rather than a copy of the
+    // work — the same line SubagentStop draws when it reads `agent_type` and
+    // leaves `last_assistant_message` alone. `summary` is the sender's own
+    // short label for its transcript, which is what it is for.
+    case 'SendMessage':
+      return pair(clip(str(ti.to), 40), clip(str(ti.summary), MAX_SUMMARY));
+    // Who a session looked around for. Cheap, and it is the half of a
+    // conversation that explains a message arriving out of nowhere.
+    case 'ListAgents':
+      return clip(str(ti.q) ?? str(ti.channel), MAX_SUMMARY);
   }
 
   const p = firstPath(ti);

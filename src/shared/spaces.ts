@@ -6,7 +6,7 @@ export const SPACE_AREAS = [
   { id: 'work', label: 'Projects', icon: 'terminal', tabs: ['sessions', 'board', 'git', 'context'] },
   { id: 'fleet', label: 'Fleet', icon: 'grid', tabs: ['fleet', 'usage', 'insights'] },
   { id: 'review', label: 'Review', icon: 'target', tabs: ['control'] },
-  { id: 'knowledge', label: 'Knowledge', icon: 'brain', tabs: ['learning', 'skills', 'scout', 'plugins'] },
+  { id: 'knowledge', label: 'Knowledge', icon: 'brain', tabs: ['learning', 'skills', 'scout', 'extensions', 'plugins'] },
   { id: 'automation', label: 'Automation', icon: 'clock', tabs: ['runs', 'batches', 'schedules'] },
   { id: 'settings', label: 'Settings', icon: 'sliders', tabs: ['settings'] },
 ] as const satisfies readonly { id: string; label: string; icon: string; tabs: readonly Tab[] }[];

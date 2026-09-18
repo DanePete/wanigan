@@ -4,6 +4,9 @@ import path from 'node:path';
 import { db } from './db';
 import * as batch from './batch';
 import { enqueue, SESSION_NOT_QUEUED } from './queue';
+import {
+  cmdExtensionInit, cmdExtensionPreview, cmdExtensionValidate, EXTENSION_CLI_HELP,
+} from './extension-cli';
 import type { BatchRow, QueueKind } from '../shared/types';
 
 /**
@@ -33,7 +36,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'extension-init', 'extension-validate', 'extension-preview', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -510,6 +513,7 @@ function cmdHelp(): number {
                                repeated success can never resolve
   learn-consolidate            run one consolidation pass now, and report how
                                much of the queue it reached
+${EXTENSION_CLI_HELP}
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -721,6 +725,13 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'learn-phrase': return await cmdLearnPhrase(rest);
       case 'learn-sweep': return await cmdLearnSweep(rest);
       case 'learn-consolidate': return await cmdLearnConsolidate();
+      // Authoring an extension, against the same validator the installer runs.
+      // That is the whole reason these live in this process rather than in a
+      // standalone script: "valid on my machine" and "valid in Wanigan" cannot
+      // become two different answers.
+      case 'extension-init': return cmdExtensionInit(rest, out);
+      case 'extension-validate': return cmdExtensionValidate(rest, out);
+      case 'extension-preview': return cmdExtensionPreview(rest, out);
     }
     return USAGE;
   } catch (e) {

@@ -114,6 +114,7 @@ export const MOBILE_ABSENT: readonly MobileAbsentView[] = [
   { tab: 'skills', reason: 'Writing and editing a skill is work against a repository, so the Skills screen stays on the Mac. Typing one you already have into a live agent is on the Agent screen.' },
   { tab: 'context', reason: 'Instructions, memory and configuration are edited against a working tree, which this device does not have.' },
   { tab: 'plugins', reason: 'Installing or trusting a plugin is a consent decision Wanigan only takes at the Mac.' },
+  { tab: 'extensions', reason: 'Installing an extension means reading a folder the operator chose and approving the exact commands, hosts and credentials it declares. Both halves belong at the Mac: this phone has no folder to pick, and a consent screen answered on a small screen away from the desk is the one place Wanigan will not take that decision.' },
   { tab: 'settings', reason: 'Keys, provider packs and privacy controls stay on the Mac. This phone is paired to Wanigan; it does not configure it.' },
 ];
 

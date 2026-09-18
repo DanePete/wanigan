@@ -1,0 +1,12 @@
+{
+  "$comment": [
+    "Surfaces fixed in place while still unconverted, under the urgent-fix escape in AGENTS.md.",
+    "A debt ledger, not a permit. It obeys the rule every other baseline in this repository obeys:",
+    "the only edit is downward. A row leaves by the surface becoming an extension — never because",
+    "somebody decided the debt had aged out.",
+    "A surface already listed here may not take the escape a second time. One emergency is an",
+    "emergency; two is a plan, and a plan does not need an escape hatch.",
+    "Each row: the surface, the date, what was urgent, and which file carries the comment at the site."
+  ],
+  "surfaces": {}
+}
