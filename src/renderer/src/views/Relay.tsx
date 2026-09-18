@@ -5,7 +5,7 @@ import type {
 } from '@shared/types';
 import { DEFAULT_FILL, DEFAULT_SPACING, rigLayout } from '@shared/relay-rig';
 import { SEDIMENT_CAP } from '@shared/relay';
-import { ConfirmNote, Hint, Note, PageHead, Section, SectionHead, Stat, dur, usd } from '../components/bits';
+import { ConfirmNote, Explainer, Hint, Note, PageHead, Section, SectionHead, Stat, dur, usd } from '../components/bits';
 import { DEFAULT_MIN_CONFIDENCE } from '@shared/relay-route';
 import { AGENT_KINDS, KIND_WORD, grainCounts, phasesOf, returnOn, type Phase } from '../relay/facts';
 import { rigShapes, tagPlacement } from '../relay/rig-svg';
@@ -282,16 +282,6 @@ export default function Relay({ projects, projectId, providers, openSession, ope
     setPreview(await window.wanigan.relay.preview({ intent: intent.trim(), providerId, routes: toRoutes(draft, providerId) }));
   });
 
-  const guessFor = (kind: DocketNodeKind, field: 'model' | 'effort'): string => {
-    const g = preview?.routes[kind];
-    if (!g) return 'profile default';
-    const value = g.route[field];
-    if (!value) return 'profile default';
-    return g.route.source === 'suggested' && g.route.confidence !== null
-      ? `${value} — suggested, ${g.route.confidence.toFixed(2)}`
-      : `${value} — profile default`;
-  };
-
   const create = () => act('create', async () => {
     if (!projectId) throw new Error('Choose a project before starting a relay.');
     const next = await window.wanigan.relay.create({
@@ -450,38 +440,6 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                 </select>
               </label>
             )}
-            {AGENT_KINDS.map((kind) => (
-              <div key={kind} className="row2">
-                <label>
-                  <span className="label">{KIND_WORD[kind]} model</span>
-                  <input className="field" aria-label={`${KIND_WORD[kind]} model override`} value={draft[kind]?.model ?? ''}
-                    onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], model: e.target.value } }))}
-                    placeholder={guessFor(kind, 'model')} disabled={busy !== null} />
-                </label>
-                <label>
-                  <span className="label">{KIND_WORD[kind]} effort</span>
-                  <input className="field" aria-label={`${KIND_WORD[kind]} effort override`} value={draft[kind]?.effort ?? ''}
-                    onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], effort: e.target.value } }))}
-                    placeholder={guessFor(kind, 'effort')} disabled={busy !== null} />
-                </label>
-                {accountOptions !== null && accountOptions.length > 0 && (
-                  <label>
-                    <span className="label">{KIND_WORD[kind]} account</span>
-                    <select className="field" aria-label={`${KIND_WORD[kind]} account override`}
-                      value={draft[kind]?.accountId ?? ''}
-                      onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], accountId: e.target.value } }))}
-                      disabled={busy !== null}>
-                      <option value="">{accountId ? 'Same as the relay' : 'This project’s account'}</option>
-                      {accountId && <option value={INHERIT_NONE}>Not the relay’s — resolve normally</option>}
-                      {accountOptions.map((row) => (
-                        <option key={row.id} value={row.id}>{row.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-              </div>
-            ))}
-            <Hint>A guess is shown as a guess: an override outside the profile's declared set is refused with a reason, never clamped.</Hint>
             <button className={busy === 'preview' ? 'btn rl-guess-asking' : 'btn'} onClick={suggest}
                     disabled={busy !== null || !intent.trim() || !providerId}>
               {busy === 'preview' ? 'Asking…' : 'Suggest routes'}
@@ -547,6 +505,48 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                 </p>
               </div>
             )}
+            <Explainer id="relay-overrides" title="Choose the model for a stage yourself" compact defaultHidden>
+              <p>
+                Leave these empty and each phase runs on this profile’s own default — or on a suggestion, if you asked for
+                one above. Type a model or an effort here and that phase runs on exactly what you typed.
+              </p>
+              <p>
+                Only what this profile declares will be accepted. Anything else is refused with a reason rather than
+                quietly changed to the nearest thing that would have worked.
+              </p>
+            {AGENT_KINDS.map((kind) => (
+              <div key={kind} className="row2">
+                <label>
+                  <span className="label">{KIND_WORD[kind]} model</span>
+                  <input className="field" aria-label={`${KIND_WORD[kind]} model override`} value={draft[kind]?.model ?? ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], model: e.target.value } }))}
+                    placeholder="profile default" disabled={busy !== null} />
+                </label>
+                <label>
+                  <span className="label">{KIND_WORD[kind]} effort</span>
+                  <input className="field" aria-label={`${KIND_WORD[kind]} effort override`} value={draft[kind]?.effort ?? ''}
+                    onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], effort: e.target.value } }))}
+                    placeholder="profile default" disabled={busy !== null} />
+                </label>
+                {accountOptions !== null && accountOptions.length > 0 && (
+                  <label>
+                    <span className="label">{KIND_WORD[kind]} account</span>
+                    <select className="field" aria-label={`${KIND_WORD[kind]} account override`}
+                      value={draft[kind]?.accountId ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], accountId: e.target.value } }))}
+                      disabled={busy !== null}>
+                      <option value="">{accountId ? 'Same as the relay' : 'This project’s account'}</option>
+                      {accountId && <option value={INHERIT_NONE}>Not the relay’s — resolve normally</option>}
+                      {accountOptions.map((row) => (
+                        <option key={row.id} value={row.id}>{row.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            ))}
+            </Explainer>
+
             <button className="btn btn-primary" onClick={create} disabled={busy !== null || !intent.trim() || !providerId || !projectId}>
               {busy === 'create' ? 'Starting…' : 'Start relay'}
             </button>

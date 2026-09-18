@@ -97,6 +97,10 @@ for (const theme of ['dark', 'light']) {
 
   await guess.scrollIntoViewIfNeeded();
   await guess.screenshot({ path: path.join(OUT, `guess-${theme}.png`) });
+  // The whole composer, which is what a person actually meets.
+  await page.locator('.pane').first().evaluate((el) => { el.scrollTop = 0; });
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: path.join(OUT, `composer-${theme}.png`) });
   await close();
 }
 
