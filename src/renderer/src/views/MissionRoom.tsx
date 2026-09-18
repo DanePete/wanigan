@@ -24,7 +24,20 @@ export default function MissionRoom({ story, followedSession, sessions=[], atten
   projectId: string | null; onOpenSession: (id: string) => void; onProject: (id: string) => void;
   onAddProject: () => void; onNewSession: () => void; onSettings: () => void; onUsage: () => void;
 }) {
-  const [companionOpen, setCompanionOpen] = useViewMemory('companion-open', false);
+  // Home opens on the companion, which is what this surface is for: the orb
+  // and a conversation about your recorded workspace. It spent a while opening
+  // on a work summary instead, with the orb shrunk to a badge behind a button —
+  // and the summary largely repeats what Fleet and the project picker already
+  // say, so the page led with its least distinctive half and hid the reason it
+  // exists. "Back to work" still reaches the summary, and the choice is
+  // remembered either way.
+  //
+  // The key is versioned rather than the default simply flipped: useViewMemory
+  // prefers a stored value over its initial one, so every operator who had ever
+  // closed the companion would have kept a `false` that predates this decision
+  // and would never have seen the change. A new key hands everyone the new
+  // default exactly once and then remembers what they choose next.
+  const [companionOpen, setCompanionOpen] = useViewMemory('companion-open-v2', true);
   const [snapshot, setSnapshot] = useState<CompanionSnapshot | null>(null);
   const [turns, setTurns] = useState<CompanionTurn[]>([]);
   const [question, setQuestion] = useState('');
