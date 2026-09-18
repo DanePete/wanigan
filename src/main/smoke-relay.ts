@@ -277,6 +277,39 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
       'a node with no session has no completions rather than another node’s');
     check(/Goal not found/.test(await refused(() => relay.readRelay('doc_missing'))) && /Goal is required/.test(await refused(() => relay.readRelay(''))),
       'reading a goal that does not exist is a sentence, not an empty rail');
+
+    // ── relay-start refuses before it asks ─────────────────────────────
+    // Only the refusals, and deliberately so: the accepting path takes the
+    // single-instance lock, and a suite that reached it would hand a real
+    // start request to whatever Wanigan the developer has open. Every check
+    // here returns before that line.
+    const { cmdRelayStart } = await import('./relay-cli');
+    const started = async (...args: string[]): Promise<string> => {
+      const lines: string[] = [];
+      await cmdRelayStart(args, (line) => lines.push(line));
+      return lines.join('\n');
+    };
+    check(/spends real money/.test(await started(relayId, 'plan')),
+      'relay-start without --spend says what --spend means and starts nothing');
+    check(/no nonsense phase/i.test(await started(relayId, 'nonsense', '--spend')),
+      'a phase this relay does not have is named back with the ones it does', await started(relayId, 'nonsense', '--spend'));
+    check(/own arithmetic|no agent|costs nothing/i.test(await started(relayId, 'estimate', '--spend')),
+      'the estimate phase is refused as free rather than started as paid — checked before status, so it holds whatever the row says', await started(relayId, 'estimate', '--spend'));
+    // Chosen by status rather than by name, and asserted before the call.
+    // Naming a kind and trusting it to be unready is how this check first went
+    // wrong: the implementation had been reopened by the hand-back above, so it
+    // was `ready`, and the call sailed past every refusal into the lock — which
+    // is the one line this whole section exists to stay behind. A suite that
+    // can reach it will, on some machine, ask a developer's open Wanigan to
+    // start a node out of a database it has never seen.
+    const unready = relay.readRelay(relayId).docket.nodes
+      .find((entry) => entry.kind !== 'estimate' && entry.status !== 'ready');
+    check(unready !== undefined,
+      'the relay still holds a phase that is not ready, which the next check needs');
+    if (unready) {
+      check(/not ready/.test(await started(relayId, unready.kind, '--spend')),
+        `a phase that is not ready (${unready.kind}, ${unready.status}) is refused in the terminal, before a window is woken to refuse it`);
+    }
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

@@ -1824,6 +1824,22 @@ export type RelayNodeRead = {
   route: { proofId: string; createdAt: number; providerId: string | null; route: RelayStageRoute } | null;
 };
 
+/**
+ * What `relay-start` hands the running Wanigan through the single-instance
+ * lock, so the PTY is spawned by the process that will still be alive when the
+ * phase finishes.
+ *
+ * It is a request and not an instruction: it names the node and the provider
+ * the CLI read off the row, and the window re-reads both before it starts
+ * anything. Anyone can pass argv to a running app, so nothing here is trusted
+ * further than an id.
+ */
+export type RelayStartRequest = {
+  wanigan: 'relay-start';
+  nodeId: string;
+  providerId: string;
+};
+
 export type RelayRead = {
   docket: DocketDetail;
   /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */

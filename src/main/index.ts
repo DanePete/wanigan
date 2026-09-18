@@ -28,7 +28,7 @@ import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailabl
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
   AwakeState,
-  BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
+  BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode, RelayStartRequest,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
   ProviderManifestInspection, QueueSlots, RelayCreateInput, RunConfig, Session,
@@ -852,8 +852,22 @@ void app.whenReady().then(async () => {
 });
 
 if (attendedUiInvocation && ownsUiInstance) {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, _argv, _cwd, additionalData) => {
     if (!uiInitialized) return;
+    // `relay-start` from a terminal arrives here rather than starting its own
+    // agent, because a PTY dies with the process that spawned it and that
+    // process is a shell command. The payload is argv from outside this app:
+    // it names a node, and every check that guards the button in the Relay
+    // view — the phase is ready, its dependencies are done, the provider is
+    // installed — runs again in startNode against the row, not against this.
+    const ask = additionalData as Partial<RelayStartRequest> | undefined;
+    if (ask && ask.wanigan === 'relay-start' && typeof ask.nodeId === 'string' && typeof ask.providerId === 'string') {
+      const nodeId = ask.nodeId; const providerId = ask.providerId;
+      void control.startNode(nodeId, { providerId }).then(
+        (node) => { console.log(`[wanigan] relay-start ${nodeId} → ${node.status}`); },
+        (error: unknown) => { console.error(`[wanigan] relay-start ${nodeId} refused:`, error); },
+      );
+    }
     if (!win || win.isDestroyed()) createWindow();
     if (!win) return;
     if (win.isMinimized()) win.restore();
