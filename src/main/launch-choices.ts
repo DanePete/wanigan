@@ -1,9 +1,6 @@
 import type { LaunchModelCatalogue, LaunchModelRow, ProviderInfo } from '../shared/types';
 import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fields';
 import { db } from './db';
-import { glmModels } from './glm';
-import { deepseekModels } from './deepseek';
-import { xaiModels } from './xai';
 import * as codexStatus from './codex-status';
 import { backendModels } from './backend-catalog';
 import { getProviderKey } from './keys';
@@ -114,47 +111,25 @@ export const PUBLISHED_BACKEND_MODELS: Record<string, LaunchModelRow[]> = {
 };
 
 /**
- * Backends Wanigan can ask for a live catalogue.
+ * Backends asked through a CLI rather than an HTTP catalogue.
  *
- * `zai`, `deepseek` and `xai` hold a key Wanigan stores, so the catalogue is an
- * HTTP read; `openai` is asked through the installed Codex CLI's own app-server,
- * which is the only authority on what that build accepts.
+ * Only `openai` remains: Codex is asked through the installed CLI's own
+ * app-server, which is the only authority on what that build accepts. Every
+ * keyed backend — Z.ai, DeepSeek, xAI and any pack a stranger installs —
+ * declares `catalog` on its profile instead and is read by
+ * `declaredBackendCatalogue` below, through one shared reader. Three
+ * near-identical modules used to sit here doing that by hand; the manifest
+ * field replaced them, which is what "a new model backend is a manifest and
+ * not a source file" had to mean to be true.
  *
- * Two honesty rules are enforced right here rather than at the call site.
- * First, `glmModels`, `deepseekModels` and `xaiModels` never throw — on a missing key or a
- * failed read they return Wanigan's local list together with a note saying so —
- * so `source` reports `live` only when that note is null. Calling a fallback
- * list "live" is exactly the lie this module exists to stop. Second,
- * `readCodexModels` caches its answer globally rather than per profile, so a
- * second codex-harness profile from a pack sees the installed CLI's catalogue
- * and not its own; that is accurate for the shipped Codex profile and an
- * approximation for a pack that points the harness elsewhere.
+ * The honesty rule the three enforced is now the reader's and is enforced
+ * structurally: `source` is derived from the note rather than assigned, so no
+ * path can report a fallback list as live. `readCodexModels` still caches
+ * globally rather than per profile, so a second codex-harness profile from a
+ * pack sees the installed CLI's catalogue and not its own — accurate for the
+ * shipped Codex profile, an approximation for a pack pointing it elsewhere.
  */
 export const LIVE_BACKEND_MODELS: Record<string, () => Promise<LaunchModelCatalogue>> = {
-  zai: async () => {
-    const read = await glmModels();
-    return {
-      rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
-      source: read.note ? 'published' : 'live',
-      note: read.note,
-    };
-  },
-  deepseek: async () => {
-    const read = await deepseekModels();
-    return {
-      rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
-      source: read.note ? 'published' : 'live',
-      note: read.note,
-    };
-  },
-  xai: async () => {
-    const read = await xaiModels();
-    return {
-      rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
-      source: read.note ? 'published' : 'live',
-      note: read.note,
-    };
-  },
   openai: async () => {
     const read = await codexStatus.readCodexModels();
     return {
@@ -182,7 +157,7 @@ export const LIVE_BACKEND_MODELS: Record<string, () => Promise<LaunchModelCatalo
  * session that cannot start. `backendModels` does its own caching, so this
  * costs a lookup and not a request.
  */
-function declaredBackendCatalogue(backendId: string): (() => Promise<LaunchModelCatalogue>) | undefined {
+export function declaredBackendCatalogue(backendId: string): (() => Promise<LaunchModelCatalogue>) | undefined {
   let declared: { label: string; catalog: NonNullable<ReturnType<typeof catalogOf>> } | undefined;
   try {
     for (const profile of providerPackRegistry.listProfiles({ includeDisabled: false })) {

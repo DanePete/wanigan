@@ -271,15 +271,6 @@ const api = {
     setProvider: (id: string, key: string) =>
       call<{ present: boolean; fingerprint: string | null }>('key:setProvider', id, key),
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
-    glmModels: (force?: boolean) =>
-      call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('glm:models', force),
-    glmVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('glm:verify'),
-    deepseekModels: (force?: boolean) =>
-      call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('deepseek:models', force),
-    deepseekVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('deepseek:verify'),
-    xaiModels: (force?: boolean) =>
-      call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('xai:models', force),
-    xaiVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('xai:verify'),
     clear: () => call<boolean>('key:clear'),
   },
 

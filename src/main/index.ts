@@ -69,10 +69,7 @@ import * as awake from './awake';
 import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
 import * as plugins from './plugins';
-import { glmModels, verifyGlmKey } from './glm';
 import { providerModelCatalogue } from './launch-choices';
-import { deepseekModels, verifyDeepSeekKey } from './deepseek';
-import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
 import { commitChecked, pushChecked } from './guarded-git';
 import { scanFor } from './secret-scan';
@@ -101,6 +98,7 @@ import * as browse from './browse';
 import * as attachments from './attachments';
 import * as mcpRegistry from './mcp/registry';
 import * as extensionStore from './extensions/store';
+import { forgetBackendCatalog, verifyBackendCredential } from './backend-catalog';
 import { installBuiltinExtensions } from './extensions/builtin';
 import * as mcpServer from './mcp/server';
 import { mcpTrustPrompt } from './mcp/consent';
@@ -504,14 +502,48 @@ function trustedSender(sender: WebContents, frame: WebFrameMain | null): boolean
     && trustedRendererUrl(frame.url);
 }
 
-type ManagedProviderCredentialId = 'glm' | 'deepseek' | 'xai';
+/**
+ * Every credential id an installed, enabled provider pack declares — through a
+ * profile's environment or its backend catalog's auth.
+ *
+ * This was the union `'glm' | 'deepseek' | 'xai'`, which is the same hardcoding
+ * the catalog field exists to remove: a pack could declare a credential and
+ * then have no way to store one. It is still not an open door. The renderer may
+ * only name an id some manifest already declares, so this cannot become a
+ * presence oracle for the keychain or the environment, and an unknown id is
+ * refused rather than folded into a file name.
+ */
+function managedCredentialIds(): Set<string> {
+  const owned = new Set<string>();
+  try {
+    for (const profile of providerPackRegistry.listProfiles({ includeDisabled: false })) {
+      for (const spec of Object.values(profile.environment ?? {})) {
+        if (spec && typeof spec === 'object' && spec.source === 'credential') owned.add(spec.id ?? profile.id);
+      }
+      const auth = profile.backend.catalog?.auth;
+      if (auth?.source === 'credential') owned.add(auth.id);
+    }
+  } catch {
+    // The registry reads manifests off disk. A failed read must not widen this
+    // to "any id the renderer likes"; an empty set refuses everything, which is
+    // the safe direction for a credential gate.
+  }
+  return owned;
+}
 
-/** Provider keys are stored under predictable names in the OS keychain. Do
- * not let a renderer choose an arbitrary key identifier and turn this into a
- * secret-presence oracle for the process environment or credential store. */
-function managedProviderCredentialId(value: unknown): ManagedProviderCredentialId {
-  if (value === 'glm' || value === 'deepseek' || value === 'xai') return value;
-  throw new Error('Wanigan manages provider credentials only for GLM, DeepSeek and xAI.');
+function managedProviderCredentialId(value: unknown): string {
+  const id = typeof value === 'string' ? value.trim() : '';
+  if (id && managedCredentialIds().has(id)) return id;
+  throw new Error('Wanigan manages provider credentials only for ids an installed provider pack declares.');
+}
+
+/** The profile whose declared catalog owns a credential id, for verify and cache eviction. */
+function catalogOwnerOf(credentialId: string) {
+  try {
+    return providerPackRegistry.listProfiles({ includeDisabled: false })
+      .find((profile) => profile.backend.catalog?.auth?.source === 'credential'
+        && profile.backend.catalog.auth.id === credentialId) ?? null;
+  } catch { return null; }
 }
 
 /* ── renderer text that becomes a `claude plugin` argv entry ───────────
@@ -2327,30 +2359,32 @@ function registerIpc() {
    */
   handle('key:missingFor', (rawId: unknown) =>
     (typeof rawId === 'string' && rawId.trim() ? missingCredentialIds(rawId.trim()) : []));
+  // Verified against the same catalogue a session will read, through the
+  // declared `catalog` rather than a per-provider module — so a key is proven
+  // against the endpoint it will actually be used on, for every pack alike.
+  // A credential no catalog claims is stored without a network call rather than
+  // refused: a pack may legitimately declare one for its launch environment.
   handle('key:setProvider', async (rawId: string, key: string) => {
     const id = managedProviderCredentialId(rawId);
-    if (id === 'glm') {
-      const verified = await verifyGlmKey(key);
-      if (!verified.ok) throw new Error(verified.detail);
-    }
-    if (id === 'deepseek') {
-      const verified = await verifyDeepSeekKey(key);
-      if (!verified.ok) throw new Error(verified.detail);
-    }
-    if (id === 'xai') {
-      const verified = await verifyXaiKey(key);
+    const owner = catalogOwnerOf(id);
+    if (owner?.backend.catalog) {
+      const verified = await verifyBackendCredential({
+        backendId: owner.backend.id, backendLabel: owner.backend.label, catalog: owner.backend.catalog, key,
+      });
       if (!verified.ok) throw new Error(verified.detail);
     }
     await setProviderKey(id, key);
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
-  handle('key:clearProvider', (rawId: string) => { clearProviderKey(managedProviderCredentialId(rawId)); return true; });
-  handle('glm:models', (force?: boolean) => glmModels(force === true));
-  handle('glm:verify', () => verifyGlmKey());
-  handle('deepseek:models', (force?: boolean) => deepseekModels(force === true));
-  handle('deepseek:verify', () => verifyDeepSeekKey());
-  handle('xai:models', (force?: boolean) => xaiModels(force === true));
-  handle('xai:verify', () => verifyXaiKey());
+  handle('key:clearProvider', (rawId: string) => {
+    const id = managedProviderCredentialId(rawId);
+    clearProviderKey(id);
+    // The catalogue read under the old key is no longer an answer about this
+    // machine; leaving it cached would offer models a removed key cannot fetch.
+    const owner = catalogOwnerOf(id);
+    if (owner) forgetBackendCatalog(owner.backend.id);
+    return true;
+  });
   handle('settings:get', () => ({ spendCapUsd: spendCap() }));
 
   // ── code panel ───────────────────────────────────────────────────────

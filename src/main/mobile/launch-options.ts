@@ -9,8 +9,7 @@ import {
 import type { AgentAccount, ProviderInfo } from '../../shared/types';
 import * as accounts from '../accounts';
 import { readCodexModels } from '../codex-status';
-import { deepseekModels } from '../deepseek';
-import { glmModels } from '../glm';
+import { declaredBackendCatalogue } from '../launch-choices';
 import { providerById, type ProviderDef } from '../providers';
 import { listProjects, projectById } from '../store';
 import { json, registerApiRoute, requestJson } from './dispatch';
@@ -275,8 +274,6 @@ const PUBLISHED_BACKEND_MODELS: Record<string, CatalogModel[]> = {
  * phone was missing entirely.
  */
 const LIVE_BACKEND_CATALOG: Record<string, () => Promise<CatalogModel[]>> = {
-  zai: async () => (await glmModels()).models.map((model) => ({ value: model.id, label: model.label })),
-  deepseek: async () => (await deepseekModels()).models.map((model) => ({ value: model.id, label: model.label })),
   openai: async () => (await readCodexModels()).models.map((model) => ({
     value: model.id, label: model.label, efforts: model.reasoningEfforts, isDefault: model.isDefault,
   })),
@@ -525,6 +522,17 @@ export function resolveMobileLaunchAccount(
  */
 async function backendCatalog(backendId: string | undefined): Promise<CatalogModel[]> {
   if (!backendId) return [];
+  // A pack's declared catalogue first, which is every keyed backend now — and
+  // more of them than this map ever had: the phone's list held Z.ai and
+  // DeepSeek but never xAI, so a Grok profile offered the published list on the
+  // phone and a live one at the desk. One reader for both surfaces ends that.
+  const declared = declaredBackendCatalogue(backendId);
+  if (declared) {
+    try {
+      const read = await declared();
+      if (read.rows.length) return read.rows.map((row) => ({ value: row.value, label: row.label }));
+    } catch { /* the published list below is the honest last resort */ }
+  }
   const live = LIVE_BACKEND_CATALOG[backendId];
   if (live) {
     try {

@@ -211,6 +211,28 @@ function useMediaQuery(query: string): boolean {
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * Read a provider's catalogue and say what came back, for the key panels.
+ *
+ * One function for all of them, because there is now one path: every keyed
+ * backend declares `catalog` on its pack and is read through the shared
+ * reader. This replaced three per-provider `*Verify` IPC calls backed by three
+ * near-identical modules — and it is a better answer than they gave, because it
+ * asks the same catalogue a session will read rather than a second
+ * implementation of it.
+ *
+ * `source === 'live'` is the only success. The reader reports `published` with
+ * a note whenever it served a fallback list, and repeating that note is the
+ * honest reply to "verify": the key is not proven by a list Wanigan already had.
+ */
+async function verifyCatalogue(providerId: string): Promise<{ tone: 'ok' | 'error'; text: string }> {
+  const read = await window.wanigan.providers.modelCatalogue(providerId);
+  if (read.source === 'live') {
+    return { tone: 'ok', text: `${read.rows.length} model${read.rows.length === 1 ? '' : 's'} available (live).` };
+  }
+  return { tone: 'error', text: read.note ?? 'Wanigan could not read this backend’s catalogue.' };
+}
+
 function bytes(n: number): string {
   if (n < 1024) return `${num(n)} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -581,17 +603,17 @@ export default function Settings({
     setGlmBusy(true); setGlmMsg(null);
     try {
       await window.wanigan.key.setProvider('glm', glmKey);
-      const verified = await window.wanigan.key.glmVerify();
+      const verified = await verifyCatalogue('glm');
       setGlmKey(''); await loadGlm(); onKeyChange();
-      setGlmMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      setGlmMsg(verified);
     } catch (e) { setGlmMsg({ tone: 'error', text: msg(e) }); }
     finally { setGlmBusy(false); }
   }
   async function verifyGlm() {
     setGlmBusy(true); setGlmMsg(null);
     try {
-      const verified = await window.wanigan.key.glmVerify();
-      setGlmMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      const verified = await verifyCatalogue('glm');
+      setGlmMsg(verified);
     } catch (e) { setGlmMsg({ tone: 'error', text: msg(e) }); }
     finally { setGlmBusy(false); }
   }
@@ -607,17 +629,17 @@ export default function Settings({
     setDeepseekBusy(true); setDeepseekMsg(null);
     try {
       await window.wanigan.key.setProvider('deepseek', deepseekKey);
-      const verified = await window.wanigan.key.deepseekVerify();
+      const verified = await verifyCatalogue('deepseek');
       setDeepseekKey(''); await loadDeepseek(); onKeyChange();
-      setDeepseekMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      setDeepseekMsg(verified);
     } catch (e) { setDeepseekMsg({ tone: 'error', text: msg(e) }); }
     finally { setDeepseekBusy(false); }
   }
   async function verifyDeepseek() {
     setDeepseekBusy(true); setDeepseekMsg(null);
     try {
-      const verified = await window.wanigan.key.deepseekVerify();
-      setDeepseekMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      const verified = await verifyCatalogue('deepseek');
+      setDeepseekMsg(verified);
     } catch (e) { setDeepseekMsg({ tone: 'error', text: msg(e) }); }
     finally { setDeepseekBusy(false); }
   }
@@ -633,17 +655,17 @@ export default function Settings({
     setXaiBusy(true); setXaiMsg(null);
     try {
       await window.wanigan.key.setProvider('xai', xaiKey);
-      const verified = await window.wanigan.key.xaiVerify();
+      const verified = await verifyCatalogue('xai');
       setXaiKey(''); await loadXai(); onKeyChange();
-      setXaiMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      setXaiMsg(verified);
     } catch (e) { setXaiMsg({ tone: 'error', text: msg(e) }); }
     finally { setXaiBusy(false); }
   }
   async function verifyXai() {
     setXaiBusy(true); setXaiMsg(null);
     try {
-      const verified = await window.wanigan.key.xaiVerify();
-      setXaiMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+      const verified = await verifyCatalogue('xai');
+      setXaiMsg(verified);
     } catch (e) { setXaiMsg({ tone: 'error', text: msg(e) }); }
     finally { setXaiBusy(false); }
   }

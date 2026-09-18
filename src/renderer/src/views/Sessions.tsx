@@ -1619,8 +1619,10 @@ function CodexControlBar({ session }: { session: Session }) {
  * built-in profiles and the table held three keys — `claude`, `glm`, and an
  * empty `codex` entry this bar never reached, since a codex session gets
  * `CodexControlBar` instead. `deepseek` was the id it left out, so a DeepSeek
- * session got no picker here at all while `deepseekModels()` sat shipped in
- * main with nothing on this surface calling it; a pack profile, keyed on
+ * session got no picker here at all while a `deepseekModels()` fetcher sat
+ * shipped in main with nothing on this surface calling it (that module, and
+ * its GLM and xAI twins, have since been replaced by a catalog the pack
+ * declares); a pack profile, keyed on
  * nothing, was handed the same empty list. The short-circuit made `glm` the
  * one id with a live read, and that branch did print the note its fetcher
  * carries — "this is Wanigan's local list, not the service's" — so GLM was
