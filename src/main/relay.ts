@@ -9,12 +9,14 @@ import * as accounts from './accounts';
 import * as otel from './otel';
 import { intersectChoices, launchFieldChoices } from '../shared/launch-fields';
 import { chooseStage, type RouteCandidate, type RouteDefaults, type StageRoute } from '../shared/relay-route';
+import { phasesFor, type StageReading } from '../shared/suggest-questions';
+import { enabled as suggesterEnabled, estimatedUsd, suggestPipeline, suggestRoute } from './modules/suggest';
 import { MIN_HISTORY, forecastPhase, forecastTotals, type ForecastSample } from '../shared/relay-forecast';
 import { HANDBACK_LIMIT } from '../shared/gate-feedback';
-import { DOCKET_NODE_KINDS } from '../shared/types';
+import { DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS } from '../shared/types';
 import type {
-  DocketDetail, DocketNode, DocketNodeKind, RelayCreateInput, RelayForecast, RelayNodeRead, RelayPhaseForecast,
-  RelayRead, WorkDocket,
+  DocketDetail, DocketNode, DocketNodeKind, DocketPlanNode, RelayCreateInput, RelayForecast, RelayNodeRead,
+  RelayPhaseForecast, RelayPipelineRead, RelayPreview, RelayPreviewInput, RelayRead, WorkDocket,
 } from '../shared/types';
 
 /**
@@ -172,7 +174,32 @@ async function profileFor(providerId: string): Promise<Profile> {
   };
 }
 
-type Pick_ = { providerId: string; route: StageRoute; profile: Profile; accountId: string | null; permissionMode: string | null };
+type Pick_ = {
+  providerId: string; route: StageRoute; profile: Profile; accountId: string | null; permissionMode: string | null;
+  /** What the suggester said, kept whole for the proof. Null when it was not asked. */
+  reading: StageReading | null;
+};
+
+/**
+ * The default plan with the stages a suggester narrowed away removed.
+ *
+ * Undefined means the standard plan, which is what `createDocket` does with
+ * nothing — so a relay with no suggester takes exactly the path it always has.
+ * The default plan is a straight chain, and this relinks the survivors as one:
+ * the assertion is here rather than trusted, because a plan that grew a branch
+ * would make the relinking silently wrong.
+ */
+function narrowedPlan(phases: readonly DocketNodeKind[]): DocketPlanNode[] | undefined {
+  if (phases.length >= DEFAULT_DOCKET_PLAN.length) return undefined;
+  DEFAULT_DOCKET_PLAN.forEach((node, index) => {
+    const expected = index === 0 ? [] : [index - 1];
+    if (JSON.stringify(node.dependsOn ?? []) !== JSON.stringify(expected)) {
+      throw new Error('The default docket plan is no longer a straight chain, so a suggester cannot narrow it by relinking.');
+    }
+  });
+  const kept = DEFAULT_DOCKET_PLAN.filter((node) => phases.includes(node.kind));
+  return kept.map((node, index) => ({ ...node, dependsOn: index === 0 ? [] : [index - 1] }));
+}
 
 /**
  * Create a relay: a docket from the default plan, every agent stage routed
@@ -213,15 +240,28 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     profiles.set(id, profile);
     return profile;
   };
+  // Which stages run. Every declared one, unless the pipeline capability is
+  // on, credentialed and confident enough to narrow — and then only the front
+  // of the pipeline, never a stage that checks the work (UNSKIPPABLE, in the
+  // pure module). With no suggester this is DOCKET_NODE_KINDS and the plan is
+  // the default one: the relay exactly as it was before any of this existed.
+  const pipelineReading = await suggestPipeline(intent, DOCKET_NODE_KINDS);
+  const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
+
   const picks = new Map<DocketNodeKind, Pick_>();
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate') continue;
+    if (!phases.includes(kind)) continue;
     const wants = routes[kind];
     const stageProvider = wants?.providerId ?? providerId;
     const profile = await load(stageProvider);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
       ? { model: wants.model, effort: wants.effort } : undefined;
-    const route = chooseStage(kind, profile.candidates, profile.defaults, null, operator ? { operator } : undefined);
+    // An operator's choice outranks a suggestion in the router, so when one is
+    // present the model is not asked: a call whose answer cannot be used is a
+    // call that must not be billed. The proof records who decided either way.
+    const reading = operator ? null : await suggestRoute(kind, intent, profile.candidates);
+    const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
     if (operator && route.source !== 'operator') throw new Error(route.reason);
     // The stage's own account, then the relay's, then null. A stage that names
     // null explicitly opts out of the relay's pin and resolves the ordinary way.
@@ -232,10 +272,14 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     picks.set(kind, {
       providerId: stageProvider, route, profile, accountId,
       permissionMode: wants?.permissionMode ?? relayPermissionMode ?? null,
+      reading,
     });
   }
 
-  const created = control.createDocket({ projectId, title: titleOf(intent), objective: intent, acceptance, risk: 'elevated' });
+  const created = control.createDocket({
+    projectId, title: titleOf(intent), objective: intent, acceptance, risk: 'elevated',
+    plan: narrowedPlan(phases),
+  });
   const at = now();
   db().transaction(() => {
     db().prepare('UPDATE work_dockets SET relay=1, updated_at=? WHERE id=?').run(at, created.id);
@@ -256,10 +300,94 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
           candidates: pick.profile.candidates.map((row) => row.model),
           catalogue: pick.profile.catalogue,
           note: pick.profile.note,
+          // The judgment behind a suggested route, whole, including the half
+          // the router did not act on. A dropped deliberation is evidence that
+          // the model was asked and could not tell, which is a different fact
+          // from not asking.
+          suggestion: pick.reading?.suggestion ?? null,
+          deliberation: pick.reading?.deliberation ?? null,
+          needsContext: pick.reading?.needsContext ?? null,
+          suggesterUsage: pick.reading?.usage ?? null,
         }), at);
+    }
+    // Recorded only when narrowing happened. A docket running every declared
+    // stage has no pipeline proof, and the read says null rather than "full".
+    if (pipelineReading) {
+      db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at)
+        VALUES (?,?,NULL,'pipeline','recorded',?,?,?)`)
+        .run(uid('proof'), created.id,
+          `This relay runs ${phases.join(' → ')} because a suggester proposed “${pipelineReading.pipeline}” with confidence ${pipelineReading.confidence.toFixed(2)}; the stages that check the work cannot be proposed away.`,
+          JSON.stringify({ ...pipelineReading, requested: DOCKET_NODE_KINDS }), at);
     }
   })();
   return readRelay(created.id);
+}
+
+/**
+ * What the suggester would do with this intent, without creating anything.
+ *
+ * The same calls as `createRelay` makes, so the guess an operator sees is the
+ * guess the relay would act on — and then `createRelay` asks again rather than
+ * trusting a copy the renderer hands back, because the proof is the main
+ * process's own observation. Two small calls; the second is the evidence.
+ *
+ * Nothing is thrown for an override the profile does not declare. A preview
+ * is where you find that out, so it reports the router's refusal as the
+ * route's own sentence instead of failing the whole read.
+ */
+export async function previewRelay(raw: unknown): Promise<RelayPreview> {
+  const input = (raw && typeof raw === 'object' ? raw : {}) as Partial<RelayPreviewInput>;
+  const intent = text(input.intent, 'Intent', control.MAX_OBJECTIVE);
+  const providerId = text(input.providerId, 'Provider', ROUTE_VALUE_MAX);
+  const routes = readRoutes(input.routes);
+  const asked = suggesterEnabled().length > 0;
+
+  const pipelineReading = await suggestPipeline(intent, DOCKET_NODE_KINDS);
+  const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
+  const preview: RelayPreview = {
+    asked,
+    phases: [...phases],
+    pipeline: pipelineReading ? { pipeline: pipelineReading.pipeline, confidence: pipelineReading.confidence } : null,
+    routes: {},
+    estimatedUsd: 0,
+  };
+  let tokens = 0;
+
+  const profiles = new Map<string, Profile>();
+  for (const kind of DOCKET_NODE_KINDS) {
+    if (kind === 'estimate' || !phases.includes(kind)) continue;
+    const wants = routes[kind];
+    const stageProvider = wants?.providerId ?? providerId;
+    const profile = profiles.get(stageProvider) ?? await profileFor(stageProvider);
+    profiles.set(stageProvider, profile);
+    const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
+      ? { model: wants.model, effort: wants.effort } : undefined;
+    const reading = operator ? null : await suggestRoute(kind, intent, profile.candidates);
+    if (reading?.usage) tokens += reading.usage.inputTokens;
+    const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
+    preview.routes[kind] = {
+      route: { model: route.model, effort: route.effort, source: route.source, confidence: route.confidence, reason: route.reason },
+      deliberation: reading?.deliberation ? { score: reading.deliberation.score, confidence: reading.deliberation.confidence } : null,
+    };
+  }
+  preview.estimatedUsd = estimatedUsd(tokens);
+  return preview;
+}
+
+/** The pipeline proof, if a suggester narrowed this docket at creation. */
+function pipelineFor(docketId: string): RelayPipelineRead | null {
+  const row = db().prepare(`SELECT summary, detail_json FROM work_proofs
+    WHERE docket_id=? AND kind='pipeline' AND status='recorded' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(docketId) as { summary: string; detail_json: string } | undefined;
+  if (!row) return null;
+  try {
+    const detail = JSON.parse(row.detail_json) as Record<string, unknown>;
+    if (typeof detail.pipeline !== 'string' || !Array.isArray(detail.phases) || typeof detail.confidence !== 'number') return null;
+    const phases = detail.phases.filter((p): p is DocketNodeKind => DOCKET_NODE_KINDS.includes(p as DocketNodeKind));
+    return { pipeline: detail.pipeline, phases, confidence: detail.confidence, reason: row.summary };
+  } catch {
+    return null;
+  }
 }
 
 type NodeColumns = { id: string; session_id: string | null; effort: string | null; handbacks: number };
@@ -344,7 +472,7 @@ export function readRelay(docketId: unknown): RelayRead {
       route: routes.get(node.id) ?? null,
     };
   });
-  return { docket, relay: flag?.relay === 1, nodes, forecast: latestForecast(id), handbackLimit: HANDBACK_LIMIT };
+  return { docket, relay: flag?.relay === 1, nodes, pipeline: pipelineFor(id), forecast: latestForecast(id), handbackLimit: HANDBACK_LIMIT };
 }
 
 type HistoryRow = {

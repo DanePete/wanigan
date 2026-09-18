@@ -25,7 +25,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
-  RelayCreateInput, RelayForecast, RelayRead,
+  RelayCreateInput, RelayForecast, RelayPreview, RelayPreviewInput, RelayRead,
   BackupCheck, BackupRestoreSummary, BackupSummary, AttachmentReclaimPlan, AttachmentReclaimReport,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   BoardCard, CodexAgentsChain, HaltState, InAppAlert, MobileAlertChannels, Interview, InterviewProposal, InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
@@ -746,6 +746,8 @@ const api = {
   // calls create, read, price and list it. Nothing here launches an agent.
   relay: {
     create: (input: RelayCreateInput) => call<RelayRead>('relay:create', input),
+    /** What the suggester would do with this intent. Makes real calls when it is on; nothing is created. */
+    preview: (input: RelayPreviewInput) => call<RelayPreview>('relay:preview', input),
     read: (docketId: string) => call<RelayRead>('relay:read', docketId),
     /** The forecast, recomputed now from this project's history. Local, free, and always an estimate. */
     forecast: (docketId: string) => call<RelayForecast>('relay:forecast', docketId),

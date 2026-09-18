@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentAccount, DocketNode, DocketNodeKind, Project, ProviderInfo, RelayForecast, RelayRead, RelayRouteInput,
-  SessionEvent, WorkDocket,
+  SessionEvent, WorkDocket, RelayPreview,
 } from '@shared/types';
 import { DEFAULT_FILL, DEFAULT_SPACING, rigLayout } from '@shared/relay-rig';
 import { SEDIMENT_CAP } from '@shared/relay';
@@ -97,6 +97,8 @@ export default function Relay({ projects, projectId, providers, openSession, ope
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [intent, setIntent] = useState('');
+  /** What the suggester would do with this intent. Cleared the moment the intent or profile changes, because a stale guess is a wrong one. */
+  const [preview, setPreview] = useState<RelayPreview | null>(null);
   const [providerId, setProviderId] = useState<string>(providers[0]?.id ?? '');
   const [draft, setDraft] = useState<RouteDraft>(() => emptyDraft(providers[0]?.id ?? ''));
   const [accountId, setAccountId] = useState('');
@@ -271,6 +273,24 @@ export default function Relay({ projects, projectId, providers, openSession, ope
     return () => { live = false; };
   }, [providerId]);
 
+  // A press, never a keystroke: when the suggester is on this spends. The
+  // guess it returns fills the placeholders below as a guess — the fields stay
+  // empty, so Start relay sends no operator choice unless you type one, and
+  // the relay records the route as suggested rather than chosen.
+  const suggest = () => act('preview', async () => {
+    setPreview(await window.wanigan.relay.preview({ intent: intent.trim(), providerId, routes: toRoutes(draft, providerId) }));
+  });
+
+  const guessFor = (kind: DocketNodeKind, field: 'model' | 'effort'): string => {
+    const g = preview?.routes[kind];
+    if (!g) return 'profile default';
+    const value = g.route[field];
+    if (!value) return 'profile default';
+    return g.route.source === 'suggested' && g.route.confidence !== null
+      ? `${value} — suggested, ${g.route.confidence.toFixed(2)}`
+      : `${value} — profile default`;
+  };
+
   const create = () => act('create', async () => {
     if (!projectId) throw new Error('Choose a project before starting a relay.');
     const next = await window.wanigan.relay.create({
@@ -278,6 +298,7 @@ export default function Relay({ projects, projectId, providers, openSession, ope
       accountId: accountId || undefined,
     });
     setIntent('');
+    setPreview(null);
     await loadList();
     setSelected(next.docket.id);
   });
@@ -392,7 +413,7 @@ export default function Relay({ projects, projectId, providers, openSession, ope
             <label>
               <span className="label">What should this relay accomplish?</span>
               <textarea className="field" aria-label="What should this relay accomplish" value={intent}
-                onChange={(e) => setIntent(e.target.value)} rows={3}
+                onChange={(e) => { setIntent(e.target.value); setPreview(null); }} rows={3}
                 placeholder="First line becomes the title. Say what done looks like." disabled={busy !== null} />
             </label>
             <label>
@@ -400,7 +421,7 @@ export default function Relay({ projects, projectId, providers, openSession, ope
               <select className="field" aria-label="Profile for this relay" value={providerId}
                 onChange={(e) => {
                   setProviderId(e.target.value);
-                  setDraft(emptyDraft(e.target.value));
+                  setDraft(emptyDraft(e.target.value)); setPreview(null);
                   // The account belonged to the old profile's harness; keeping
                   // it would offer a pin the new one cannot honour.
                   setAccountId('');
@@ -434,13 +455,13 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                   <span className="label">{KIND_WORD[kind]} model</span>
                   <input className="field" aria-label={`${KIND_WORD[kind]} model override`} value={draft[kind]?.model ?? ''}
                     onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], model: e.target.value } }))}
-                    placeholder="profile default" disabled={busy !== null} />
+                    placeholder={guessFor(kind, 'model')} disabled={busy !== null} />
                 </label>
                 <label>
                   <span className="label">{KIND_WORD[kind]} effort</span>
                   <input className="field" aria-label={`${KIND_WORD[kind]} effort override`} value={draft[kind]?.effort ?? ''}
                     onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], effort: e.target.value } }))}
-                    placeholder="profile default" disabled={busy !== null} />
+                    placeholder={guessFor(kind, 'effort')} disabled={busy !== null} />
                 </label>
                 {accountOptions !== null && accountOptions.length > 0 && (
                   <label>
@@ -457,9 +478,28 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                     </select>
                   </label>
                 )}
+                {preview && !preview.phases.includes(kind) && (
+                  <Hint>This stage would not run: the suggester proposed “{preview.pipeline?.pipeline}” with confidence {preview.pipeline?.confidence.toFixed(2)}. The stages that check the work cannot be proposed away.</Hint>
+                )}
+                {preview?.routes[kind] && <Hint>{preview.routes[kind]?.route.reason}</Hint>}
               </div>
             ))}
+            {preview && !preview.asked && (
+              <Note tone="info">No suggester is switched on, so these are the profile defaults rather than guesses. Settings › Connections › Routing suggester turns one on.</Note>
+            )}
+            {preview?.pipeline && (
+              <Note tone="info">
+                Would run {preview.phases.map((p) => KIND_WORD[p]).join(' → ')} — the suggester proposed “{preview.pipeline.pipeline}”
+                with confidence {preview.pipeline.confidence.toFixed(2)}. Nothing is skipped until you start it, and you can still override any stage.
+              </Note>
+            )}
+            {preview?.asked && (
+              <Hint>Previewed for about ${preview.estimatedUsd.toFixed(6)} by Wanigan’s own arithmetic. Starting the relay asks again and records that answer as the evidence.</Hint>
+            )}
             <Hint>A guess is shown as a guess: an override outside the profile's declared set is refused with a reason, never clamped.</Hint>
+            <button className="btn" onClick={suggest} disabled={busy !== null || !intent.trim() || !providerId}>
+              {busy === 'preview' ? 'Asking…' : 'Suggest routes'}
+            </button>
             <button className="btn btn-primary" onClick={create} disabled={busy !== null || !intent.trim() || !providerId || !projectId}>
               {busy === 'create' ? 'Starting…' : 'Start relay'}
             </button>

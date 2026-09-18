@@ -1840,11 +1840,41 @@ export type RelayStartRequest = {
   providerId: string;
 };
 
+/** How a docket came to run the stages it runs: every declared one, or a suggester's narrowing. */
+export type RelayPipelineRead = {
+  pipeline: string;
+  phases: DocketNodeKind[];
+  confidence: number;
+  reason: string;
+};
+
+/** What the suggester would do with this intent, without creating anything. */
+export type RelayPreviewInput = { intent: string; providerId: string; routes?: RelayRouteInput };
+
+export type RelayPreviewRoute = {
+  route: { model: string | null; effort: string | null; source: 'profile-default' | 'suggested' | 'operator'; confidence: number | null; reason: string };
+  /** The deliberation judgment behind the effort, if one was asked. */
+  deliberation: { score: number; confidence: number } | null;
+};
+
+export type RelayPreview = {
+  /** Whether a suggester was consulted at all. False means nothing here is a guess: it is the profile default. */
+  asked: boolean;
+  /** Which stages would run. Every declared one unless a confident pipeline answer narrowed the front. */
+  phases: DocketNodeKind[];
+  pipeline: { pipeline: string; confidence: number } | null;
+  routes: Partial<Record<DocketNodeKind, RelayPreviewRoute>>;
+  /** Wanigan's arithmetic for the calls this preview made. Never a reported cost. */
+  estimatedUsd: number;
+};
+
 export type RelayRead = {
   docket: DocketDetail;
   /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */
   relay: boolean;
   nodes: RelayNodeRead[];
+  /** Recorded when a suggester narrowed the stages at creation; null when every declared stage runs. */
+  pipeline: RelayPipelineRead | null;
   /** The latest recorded estimate, or null until the estimate phase has run. */
   forecast: RelayForecast | null;
   /** The cap on automatic hand-backs, so the counter can be drawn against it. */

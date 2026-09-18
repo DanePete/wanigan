@@ -4,6 +4,8 @@ import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestPip
 import type { RelayPhase } from '../shared/relay';
 import type { RouteCandidate } from '../shared/relay-route';
 import { phasesFor } from '../shared/suggest-questions';
+import { previewRelay } from './relay';
+import { DOCKET_NODE_KINDS } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -92,6 +94,23 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
         `a credential of ${JSON.stringify(bad) ?? 'undefined'} is refused rather than stored`, stored);
     }
     check(calls === 0, 'and none of those refusals reached the network either', calls);
+
+    // The claim the whole design rests on, asserted rather than believed: with
+    // no suggester, the relay's own preview is the profile's defaults and every
+    // declared stage runs. This is the path every install without a TypeSafe
+    // credential takes on every relay it starts.
+    const preview = await previewRelay({ intent: 'add a retry to the uploader', providerId: 'claude' });
+    check(preview.asked === false, 'a preview with no suggester says plainly that nothing was asked', preview.asked);
+    check(preview.pipeline === null, 'and proposes no narrowing', preview.pipeline);
+    check(preview.phases.join(',') === DOCKET_NODE_KINDS.join(','),
+      'so every declared stage would run', preview.phases);
+    check(preview.estimatedUsd === 0, 'and it cost nothing, because nothing was asked', preview.estimatedUsd);
+    const sources = Object.values(preview.routes).map((row) => row.route.source);
+    check(sources.length > 0 && sources.every((source) => source === 'profile-default'),
+      'every stage is the profile default, and none is labelled a suggestion', sources);
+    check(Object.values(preview.routes).every((row) => row.deliberation === null),
+      'and no deliberation was judged', Object.values(preview.routes).map((row) => row.deliberation));
+    check(calls === 0, 'and the whole preview reached the network zero times', calls);
     check(status().hasKey === false && status().fingerprint === null,
       'nothing was stored by any of them', status());
 

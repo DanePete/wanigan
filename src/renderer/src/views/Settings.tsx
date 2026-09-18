@@ -13,7 +13,6 @@ import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTimer } from '@shared/intake';
 import type { LedgerBreakKind, LedgerChainStatus } from '@shared/ledger-chain';
-import { DELIBERATION_LEVELS, DEFAULT_MIN_EFFORT_CONFIDENCE, DEFAULT_MIN_PIPELINE_CONFIDENCE } from '@shared/suggest-questions';
 // bits' Mark takes a tone and draws its colour from tokens. This file's own
 // older Mark below takes a literal colour, and is left as it is.
 import { ConfirmNote, Explainer, Icon, Mark as ToneMark, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
@@ -6116,9 +6115,6 @@ function RoutingSuggester() {
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const [tryText, setTryText] = useState('');
-  const [tryBusy, setTryBusy] = useState(false);
-  const [tried, setTried] = useState<Awaited<ReturnType<typeof window.wanigan.suggest.try>> | null>(null);
 
   async function run(fn: () => Promise<{ tone: 'ok' | 'error'; text: string } | null>) {
     setBusy(true); setResult(null);
@@ -6148,17 +6144,6 @@ function RoutingSuggester() {
     await window.wanigan.suggest.clearKey();
     return { tone: 'ok' as const, text: 'The key is removed. Your switches are kept, and take effect again if you add a key.' };
   });
-
-  async function tryIt() {
-    setTryBusy(true); setTried(null);
-    try {
-      setTried(await window.wanigan.suggest.try(tryText));
-    } catch (e) {
-      setTried({ ok: false, reason: msg(e) });
-    } finally {
-      setTryBusy(false);
-    }
-  }
 
   const toggle = (id: string, on: boolean, current: readonly string[]) => run(async () => {
     const next = on ? [...new Set([...current, id])] : current.filter((entry) => entry !== id);
@@ -6236,71 +6221,14 @@ function RoutingSuggester() {
             </p>
             <p>
               A suggestion is a guess, shown as a guess, and overridable. It can never move a stage to a model or an effort
-              your profile does not declare, and it can never remove the stages that check the work.
+              your profile does not declare, and it can never remove the stages that check the work. You see the guess in
+              Relay, beside the fields it would fill, before you start anything.
             </p>
           </Explainer>
 
-          {/* Seeing a guess before trusting it. The design says a suggestion is
-              shown as a guess and is overridable; this is the same promise one
-              step earlier — you can watch it answer before you switch it on. */}
-          {shown.hasKey && (
-            <>
-              <label className="label" htmlFor="suggest-try">Try a description, and see what it would say</label>
-              <div className="set-field-action">
-                <input id="suggest-try" className="field" type="text" value={tryText}
-                       placeholder="e.g. Rename a variable and update its call sites"
-                       onChange={(e) => setTryText(e.target.value)}
-                       onKeyDown={(e) => { if (e.key === 'Enter' && tryText.trim()) void tryIt(); }} />
-                <button className="btn" onClick={() => void tryIt()} disabled={tryBusy || !tryText.trim()}>
-                  {tryBusy ? 'Asking…' : 'Ask'}
-                </button>
-              </div>
-
-              {tried && !tried.ok && <Note tone="error">{tried.reason}</Note>}
-
-              {tried?.ok && (
-                <Reading what="what the model said">
-                  {tried.pipeline ? (
-                    <p>
-                      <strong>Stages:</strong> {tried.pipeline.phases.join(' → ')} ({tried.pipeline.pipeline}),
-                      confidence {tried.pipeline.confidence.toFixed(2)} —{' '}
-                      {tried.pipeline.confidence >= DEFAULT_MIN_PIPELINE_CONFIDENCE
-                        ? 'at or above the bar, so this would have narrowed the docket.'
-                        : `below the ${DEFAULT_MIN_PIPELINE_CONFIDENCE.toFixed(2)} required, so every declared stage would still run.`}
-                    </p>
-                  ) : <p><strong>Stages:</strong> no usable answer, so every declared stage would run.</p>}
-
-                  {tried.deliberation ? (
-                    <p>
-                      <strong>Deliberation:</strong> {tried.deliberation.score.toFixed(2)} of{' '}
-                      {DELIBERATION_TOP} — “{tried.deliberation.level}” — confidence{' '}
-                      {tried.deliberation.confidence.toFixed(2)}{' '}
-                      {tried.deliberation.confidence >= DEFAULT_MIN_EFFORT_CONFIDENCE
-                        ? 'would have named an effort on the chosen model’s ladder.'
-                        : `is below the ${DEFAULT_MIN_EFFORT_CONFIDENCE.toFixed(2)} required, so the profile’s default effort would stand.`}
-                    </p>
-                  ) : <p><strong>Deliberation:</strong> no usable answer.</p>}
-
-                  {tried.needsContext !== null && (
-                    <p>
-                      <strong>Needs code it cannot see:</strong> {tried.needsContext.toFixed(2)} probability.
-                      This is a noul and carries no confidence, so it colours the reason and gates nothing.
-                    </p>
-                  )}
-
-                  <p className="faint">
-                    {tried.ms}ms · {tried.usage ? `${tried.usage.inputTokens} input tokens` : 'usage not reported'} ·
-                    about ${tried.estimatedUsd.toFixed(6)} by Wanigan’s own arithmetic. Nothing here was acted on.
-                  </p>
-                </Reading>
-              )}
-            </>
-          )}
         </>;
       }}</Frame>
     </Section>
   );
 }
 
-/** The top of the deliberation scale, derived so it cannot drift from the levels. */
-const DELIBERATION_TOP = DELIBERATION_LEVELS.length - 1;

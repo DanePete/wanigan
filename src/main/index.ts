@@ -3194,6 +3194,8 @@ function registerIpc() {
   // this project's own history. Everything arriving here is validated in
   // relay.ts before a row is touched.
   handle('relay:create', (input: RelayCreateInput) => relay.createRelay(input));
+  // Spends when the suggester is on, so it is a press and never a keystroke.
+  handle('relay:preview', (input: unknown) => relay.previewRelay(input));
   handle('relay:read', (docketId: unknown) => relay.readRelay(docketId));
   handle('relay:forecast', (docketId: unknown) => relay.forecast(docketId));
   handle('relay:estimate', (docketId: unknown) => relay.estimate(docketId));
