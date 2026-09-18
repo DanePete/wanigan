@@ -1599,6 +1599,40 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(laterTurnExit.transitionId.startsWith('exit:'),
     'a later turn prevents clean-exit coalescing with an older Stop event');
 
+  /* ── stopping is not failing ───────────────────────────────────────── */
+  // node-pty kills with SIGHUP and reports 128+1, so every session the operator
+  // ended came back as "Failed · Exited with code 129" — in the queue, in the
+  // Mac banner and on the phone. The exit code cannot tell a requested stop
+  // from a crash by the same signal; only the process that sent it knows.
+  const ended = Date.now();
+  const crashed = attention.attentionOf({ ...quiet, status: 'exited', exitCode: 129, endedAt: ended });
+  check(crashed.kind === 'error' && crashed.reason?.rule === 'nonzero-exit',
+    'a session that died by signal with nobody asking is still a failure', crashed.label);
+  const askedToStop = attention.attentionOf({
+    ...quiet, status: 'exited', exitCode: 129, endedAt: ended, stopRequestedAt: ended - 50,
+  });
+  check(askedToStop.kind === 'finished' && askedToStop.label === 'Stopped' && askedToStop.reason?.rule === 'stopped',
+    'the same exit code reads as an ending the operator asked for once Wanigan recorded sending the signal',
+    `${askedToStop.label}: ${askedToStop.detail}`);
+  check(!/fail/i.test(`${askedToStop.label} ${askedToStop.detail ?? ''}`),
+    'and nothing in what it says calls that a failure', askedToStop.detail);
+
+  /* ── dismissal ─────────────────────────────────────────────────────── */
+  // A chip nobody can put away is a chip that outlives the thing it reports:
+  // these sat in the strip for hours, including for sessions already ended.
+  const putAway: Session = { ...quiet, id: 's_smoke_dismiss', status: 'exited', exitCode: 129, endedAt: ended };
+  const unseen = attention.attentionOf(putAway);
+  check(!unseen.dismissedAt, 'a verdict starts undismissed');
+  attention.dismissAttention(putAway.id, unseen.transitionId);
+  check(attention.attentionOf(putAway).dismissedAt !== null,
+    'dismissing one state marks that state as seen');
+  const moved = attention.attentionOf({ ...putAway, endedAt: ended + 1_000 });
+  check(moved.transitionId !== unseen.transitionId && !moved.dismissedAt,
+    'and the dismissal is scoped to that transition, so the next thing the session does comes back');
+  check(attention.restoreAttention() === 1 && !attention.attentionOf(putAway).dismissedAt,
+    'restore brings a dismissed state back rather than leaving it hidden for the life of the app');
+  attention.forgetSession(putAway.id);
+
   const responded: Session = { ...quiet, id: 's_smoke_permission_response', createdAt: Date.now() };
   hooks.recordProviderEvent(responded.id, 'PermissionRequest', 'Waiting for your approval.');
   check(attention.attentionOf(responded).kind === 'permission',

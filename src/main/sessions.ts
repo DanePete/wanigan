@@ -2479,6 +2479,11 @@ export function killSession(sessionId: string): boolean {
   const s = sessions.get(sessionId);
   if (!s) return false;
   if (s.meta.status === 'exited') return false;
+  // Stamped before the signal, not after the exit: the exit handler sees only
+  // 128+SIGHUP, which is indistinguishable from the same signal arriving from
+  // anywhere else. Without this the queue called every session the operator
+  // ended "Failed · Exited with code 129", and sent a banner saying so.
+  s.meta.stopRequestedAt = Date.now();
   try { s.proc.kill(); } catch { /* already gone */ }
   return true;
 }

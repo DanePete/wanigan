@@ -274,6 +274,14 @@ const api = {
   },
   attention: {
     list: () => call<Attention[]>('attention:list'),
+    /**
+     * Hide one state the operator has seen, and bring dismissed ones back.
+     * Both return the recomputed queue rather than a boolean, so the strip
+     * repaints on the click instead of on its next two-second poll.
+     */
+    dismiss: (sessionId: string, transitionId: string) =>
+      call<Attention[]>('attention:dismiss', sessionId, transitionId),
+    restore: (sessionId?: string) => call<Attention[]>('attention:restore', sessionId ?? null),
   },
   // ── phase 4 · transcripts ────────────────────────────────────────────
   transcripts: {

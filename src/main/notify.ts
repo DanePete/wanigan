@@ -901,6 +901,13 @@ export function announceSpendCapTrip(name: string, projected: number, cap: numbe
  */
 export function announceAttention(a: Attention): void {
   if (!ANNOUNCE_KINDS.has(a.kind)) return;
+  // An ending the operator asked for is not news to the operator. They pressed
+  // stop; a banner and a phone push telling them the session stopped is the
+  // app reporting its own obedience, and it used to arrive worded as a failure.
+  if (a.reason?.rule === 'stopped') return;
+  // Likewise a state they have already looked at and put away. The dedupe below
+  // is per transition too, so this only ever suppresses the one they dismissed.
+  if (a.dismissedAt) return;
 
   // A focused Wanigan window means only that the Mac banner would be redundant.
   // It says nothing about whether the human is still physically at the desk,

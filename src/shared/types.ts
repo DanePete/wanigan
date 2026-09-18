@@ -247,6 +247,16 @@ export type Session = {
   createdAt: number;
   endedAt: number | null;
   /**
+   * When a person asked Wanigan to stop this session, if one did.
+   *
+   * A PTY killed by signal exits 128+signal, and node-pty's default is SIGHUP —
+   * so every session the operator ended came back as exit code 129 and was
+   * classified, announced and ranked as a failure. The exit code cannot tell
+   * the two apart: 129 is what a crash by SIGHUP looks like too. Only the
+   * process that sent the signal knows, so it records that it did.
+   */
+  stopRequestedAt?: number | null;
+  /**
    * Owned by the main process. Incremented at most once a second while the
    * session is producing output and is not the one on screen — so it counts
    * SECONDS IN WHICH OUTPUT ARRIVED, not messages and not chunks. Zeroed when
@@ -812,10 +822,21 @@ export type Attention = {
    * evidence leaves it out rather than inventing one.
    */
   reason?: AttentionReason;
+  /**
+   * When the operator dismissed this exact state, if they did.
+   *
+   * Dismissal is scoped to `transitionId`, never to the session: hiding a chip
+   * is saying "I have seen this", not "stop telling me about this session". The
+   * next state the session enters carries a new transition and comes back. The
+   * verdict itself is untouched — the Fleet card and the session tab still say
+   * what the classifier decided; only the attention strip, whose whole job is
+   * to list what still wants a person, honours this.
+   */
+  dismissedAt?: number | null;
 };
 
 export type AttentionRule =
-  | 'permission-request' | 'nonzero-exit' | 'repeated-failure' | 'recent-failure'
+  | 'permission-request' | 'nonzero-exit' | 'stopped' | 'repeated-failure' | 'recent-failure'
   | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working';
 
 export type AttentionReason = {

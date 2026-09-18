@@ -106,6 +106,13 @@ export const ATTENTION_LABEL: Record<AttentionKind, string> = {
  */
 const STALLED_LABEL = 'Stalled';
 
+/**
+ * The word for a session whose exit the operator asked for. Not a sixth kind,
+ * for the same reason `Stalled` is not: the kind says what the queue should do
+ * with it, and this belongs with the other endings nobody has to act on.
+ */
+const STOPPED_LABEL = 'Stopped';
+
 /* ── reading the hook bus ────────────────────────────────────────────── */
 
 type Live = ReturnType<typeof liveState>;
@@ -180,6 +187,49 @@ export function noteOutput(sessionId: string, at: number = Date.now()) {
 export function forgetSession(sessionId: string) {
   lastOutput.delete(sessionId);
   snapshots.delete(sessionId);
+  dismissals.delete(sessionId);
+}
+
+/* ── dismissal ───────────────────────────────────────────────────────── */
+
+/**
+ * States the operator has said they have seen, one per session.
+ *
+ * Keyed by transitionId rather than by session, so a dismissal cannot outlive
+ * the thing it dismissed: the moment the session asks something new, finishes a
+ * new turn or exits, the classifier produces a different transition and the
+ * chip is back. Only one is kept per session because only the newest can still
+ * be true — the queue reports one state per session at a time.
+ *
+ * Held in memory on purpose. Every transition id is built from a hook event id
+ * or an exit stamp belonging to a live process, and Wanigan kills every session
+ * on quit, so there is nothing a restart could still be hiding.
+ */
+const dismissals = new Map<string, { transitionId: string; at: number }>();
+/** Same ceiling as the snapshot cache, for the same long-lived-app reason. */
+const MAX_DISMISSALS = 64;
+
+/**
+ * Record that a person has seen this exact state.
+ *
+ * The transition is not checked against the live one, because it does not need
+ * to be: a dismissal is only ever honoured by the classifier when it still
+ * matches what the session is doing now. A click on a chip that changed under
+ * the cursor stores a transition nothing will match again — inert, rather than
+ * silencing whatever replaced it — since every transition id is an event id or
+ * an exit stamp, and neither is ever reissued.
+ */
+export function dismissAttention(sessionId: string, transitionId: string, at: number = Date.now()): void {
+  if (dismissals.size >= MAX_DISMISSALS) dismissals.clear();
+  dismissals.set(sessionId, { transitionId, at });
+}
+
+/** Bring dismissed states back — one session's, or the whole strip's. */
+export function restoreAttention(sessionId?: string | null): number {
+  if (sessionId) return dismissals.delete(sessionId) ? 1 : 0;
+  const n = dismissals.size;
+  dismissals.clear();
+  return n;
 }
 
 /* ── phrasing ────────────────────────────────────────────────────────── */
@@ -355,6 +405,7 @@ function mk(
   reason: AttentionReason,
   label: string = ATTENTION_LABEL[kind]
 ): Attention {
+  const seen = dismissals.get(session.id);
   return {
     sessionId: session.id,
     kind,
@@ -366,6 +417,10 @@ function mk(
     detail: clip(detail),
     tool: tool?.trim() || null,
     reason,
+    // Only for the state it was dismissed against. The verdict is unchanged
+    // either way — this says a person has seen it, not that it stopped being
+    // true — so every surface but the queue can and does ignore it.
+    dismissedAt: seen && seen.transitionId === transitionId ? seen.at : null,
   };
 }
 
@@ -406,6 +461,14 @@ function classify(session: Session, now: number): Attention {
 
   if (exited && session.exitCode !== null && session.exitCode !== 0) {
     const ended = session.endedAt ?? now;
+    // A session the operator ended is not a session that failed. node-pty's
+    // kill sends SIGHUP and the PTY reports 128+1, which is byte-identical to a
+    // crash by the same signal — so the only evidence that separates them is
+    // the stamp Wanigan writes when it sends the signal itself.
+    if (session.stopRequestedAt) {
+      return mk(session, 'finished', ended, `exit:${ended}:${session.exitCode}`, 'You stopped this session.', null, now,
+        why('stopped', null, `You asked Wanigan to stop this session, and code ${session.exitCode} is the signal it sent.`), STOPPED_LABEL);
+    }
     return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now,
       why('nonzero-exit', null, `The process exited with code ${session.exitCode}.`));
   }

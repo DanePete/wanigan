@@ -36,6 +36,17 @@ const SPEC: Record<AttentionKind, { glyph: string; color: string; soft: string; 
  */
 const NEEDS_YOU: AttentionKind[] = ['permission', 'error', 'finished'];
 
+/**
+ * Whether a verdict is a request for a person.
+ *
+ * Kind alone is not the whole answer. A session the operator stopped themselves
+ * ends as `finished`, and that is the right verdict — but it is not news to the
+ * person who pressed stop, and a chip for it sits in the queue until they close
+ * the tab. The classifier says so in the reason, and this is the one place that
+ * distinction changes anything.
+ */
+const needsYou = (a: Attention) => NEEDS_YOU.includes(a.kind) && a.reason?.rule !== 'stopped';
+
 /** A minute is where a wait stops being a blink and starts being a queue. */
 const WARM_MS = 60_000;
 /** Five minutes: somebody has walked away from a blocked agent. */
@@ -104,6 +115,45 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
     };
   }, [load]);
 
+  /**
+   * Put one state away. The main process owns the record — it is scoped to the
+   * exact transition, so the next thing this session does comes back on its own
+   * — and answers with the recomputed queue, which is applied here rather than
+   * waited for: a chip that survives the click it was given reads as a dead
+   * button. A failed call leaves the chip where it is and says why.
+   */
+  const dismiss = useCallback(async (a: Attention) => {
+    const sequence = ++request.current;
+    setItems((current) => current?.map((value) => (
+      value.sessionId === a.sessionId && value.transitionId === a.transitionId
+        ? { ...value, dismissedAt: Date.now() }
+        : value
+    )) ?? current);
+    try {
+      const list = await window.wanigan.attention.dismiss(a.sessionId, a.transitionId);
+      if (!alive.current || sequence !== request.current) return;
+      setItems(list.filter(item => item.sessionId in sessions));
+      setErr(null);
+    } catch (e) {
+      if (!alive.current) return;
+      setErr(e instanceof Error ? e.message : String(e));
+      void load();
+    }
+  }, [load, sessions]);
+
+  const restore = useCallback(async () => {
+    const sequence = ++request.current;
+    try {
+      const list = await window.wanigan.attention.restore();
+      if (!alive.current || sequence !== request.current) return;
+      setItems(list.filter(item => item.sessionId in sessions));
+      setErr(null);
+    } catch (e) {
+      if (!alive.current) return;
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, [sessions]);
+
   const setFilter = useCallback((next: boolean) => {
     setShowAll(next);
     try { localStorage.setItem(PREF, next ? '1' : '0'); } catch { /* storage can be blocked */ }
@@ -122,8 +172,14 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
     );
   }
 
-  const shown = showAll ? items : items.filter((a) => NEEDS_YOU.includes(a.kind));
-  const hidden = items.length - shown.length;
+  // A dismissed state leaves the strip whichever filter is on: the operator has
+  // said they have seen it, and the filter below is over what is
+  // still unanswered, not an undo. Restore is the undo, and it is offered below
+  // for as long as anything is put away.
+  const open = items.filter((a) => !a.dismissedAt);
+  const put = items.length - open.length;
+  const shown = showAll ? open : open.filter(needsYou);
+  const hidden = open.length - shown.length;
   const liveCount = Object.values(sessions).filter(session => session.status !== 'exited').length;
 
   if (shown.length === 0) {
@@ -136,14 +192,19 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
             {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : `No sessions running. Start one with ${newSessionChord} and it appears here the moment it blocks.`}
           </span>
         ) : !err && (
-          // Zero results: the filter excluded everything, so hand back the way in.
+          // Zero results: something excluded everything, so hand back the way in.
           <>
             <span className="atq-hint">
-              {hidden} {hidden === 1 ? 'session is' : 'sessions are'} working or idle, none blocked.
+              {hidden > 0 && `${hidden} ${hidden === 1 ? 'session is' : 'sessions are'} working, quiet or ended; none blocked.`}
+              {hidden > 0 && put > 0 && ' '}
+              {put > 0 && `${put} ${put === 1 ? 'state is' : 'states are'} dismissed.`}
             </span>
-            <button className="atq-toggle" onClick={() => setFilter(true)}>
-              Show all <span className="atq-n">{items.length}</span>
-            </button>
+            {hidden > 0 && (
+              <button className="atq-toggle" onClick={() => setFilter(true)}>
+                Show all <span className="atq-n">{open.length}</span>
+              </button>
+            )}
+            {put > 0 && <Restore n={put} onRestore={() => void restore()} />}
           </>
         )}
         {err && <Failure msg={err} onRetry={() => void load()} />}
@@ -167,6 +228,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
         <span className="atq-count" aria-live="polite">
           {counts.map((c) => `${c.n} ${c.word}`).join(' · ')}
           {hidden > 0 && <span className="atq-quiet-n"> · {hidden} hidden</span>}
+          {put > 0 && <span className="atq-quiet-n"> · {put} dismissed</span>}
         </span>
       </div>
 
@@ -174,28 +236,39 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
           body never scrolls sideways to accommodate them. */}
       <div className="atq-scroll">
         {shown.map((a) => (
-          <Chip key={a.sessionId} a={a} session={sessions[a.sessionId]} onJump={onJump} />
+          <Chip
+            key={a.sessionId}
+            a={a}
+            session={sessions[a.sessionId]}
+            onJump={onJump}
+            onDismiss={() => void dismiss(a)}
+          />
         ))}
         {err && <Failure msg={err} onRetry={() => void load()} />}
       </div>
+
+      {put > 0 && <Restore n={put} onRestore={() => void restore()} />}
 
       <button
         className="atq-toggle"
         aria-pressed={showAll}
         title={showAll
           ? 'Show only sessions that want something from you'
-          : 'Also show sessions that are working or have gone quiet'}
+          : 'Also show sessions that are working, have gone quiet, or that you ended'}
         onClick={() => setFilter(!showAll)}
       >
-        {showAll ? '− idle & working' : '+ idle & working'}
+        {/* The bucket is everything that is not a request: working, quiet,
+            stalled, and the sessions the operator ended themselves. */}
+        {showAll ? '− idle, working & ended' : '+ idle, working & ended'}
         {!showAll && hidden > 0 && <span className="atq-n">{hidden}</span>}
       </button>
     </div>
   );
 }
 
-function Chip({ a, session, onJump }: {
-  a: Attention; session: Session | undefined; onJump: (sessionId: string) => void;
+function Chip({ a, session, onJump, onDismiss }: {
+  a: Attention; session: Session | undefined;
+  onJump: (sessionId: string) => void; onDismiss: () => void;
 }) {
   const s = SPEC[a.kind] ?? SPEC.working;
   const waited = Math.max(0, Date.now() - a.since);
@@ -208,9 +281,13 @@ function Chip({ a, session, onJump }: {
   const because = a.reason ? ` Because ${a.reason.because.charAt(0).toLowerCase()}${a.reason.because.slice(1)}` : '';
 
   return (
+    // The cell exists so the chip can carry a second control. A button inside a
+    // button is not markup a browser keeps — the inner one is lifted out of the
+    // outer, which is how a "dismiss" ends up outside the chip it belongs to —
+    // so the two are siblings, and the cell is what the strip lays out.
+    <span className="atq-cell" style={{ '--k': s.color, '--k-soft': s.soft } as React.CSSProperties}>
     <button
       className={`atq-chip${tier}`}
-      style={{ '--k': s.color, '--k-soft': s.soft } as React.CSSProperties}
       onClick={() => onJump(a.sessionId)}
       title={`${a.label} · ${project}\n${verb} ${dur(waited)}${detail ? `\n${detail}` : ''}${because ? `\n${because.trim()}` : ''}\nClick to open this session.`}
       aria-label={`${a.label}: ${project}, ${verb} ${dur(waited)}.${detail ? ` ${detail}.` : ''}${because} Open this session.`}
@@ -233,6 +310,32 @@ function Chip({ a, session, onJump }: {
           <span className="atq-detail">{detail}</span>
         )}
       </span>
+    </button>
+      {/* Always drawn, never on hover alone: a control that appears under a
+          pointer is a control a finger cannot find, and this is the answer to a
+          chip for a session that has already ended. It puts away this state
+          only — the next thing the session does brings it back — which is why
+          it is worded as "seen" rather than as a close box. */}
+      <button
+        className="atq-x"
+        onClick={onDismiss}
+        aria-label={`Dismiss ${a.label.toLowerCase()} for ${project}. It returns if this session changes.`}
+      >
+        <span aria-hidden="true">✕</span>
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The undo for dismissal. Present whenever anything is put away, because a
+ * chip that can be hidden with one click and recovered with none is a way to
+ * lose a blocked agent — and the strip's whole promise is that it does not.
+ */
+function Restore({ n, onRestore }: { n: number; onRestore: () => void }) {
+  return (
+    <button className="atq-toggle" onClick={onRestore}>
+      Restore <span className="atq-n">{n}</span>
     </button>
   );
 }

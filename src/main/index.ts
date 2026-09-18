@@ -2298,6 +2298,31 @@ function registerIpc() {
   handle('events:live', (id: string) => hooks.liveState(id));
   handle('events:tools', (id: string) => hooks.toolStats(id));
   handle('attention:list', () => attention.attentionFor(listSessions()));
+  /*
+   * "I have seen this one." Scoped to the exact state the strip was showing, so
+   * dismissing a permission prompt cannot also swallow the error that follows
+   * it. Both answer with the recomputed queue: the strip polls every two
+   * seconds, and a chip that lingers for one of them after being dismissed
+   * reads as a click that did not land.
+   */
+  handle('attention:dismiss', (sessionId: unknown, transitionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) {
+      throw new Error('A session id is required.');
+    }
+    if (typeof transitionId !== 'string' || !transitionId || transitionId.length > 200) {
+      throw new Error('An attention state is required.');
+    }
+    attention.dismissAttention(sessionId, transitionId);
+    return attention.attentionFor(listSessions());
+  });
+  handle('attention:restore', (sessionId?: unknown) => {
+    if (sessionId !== undefined && sessionId !== null
+      && (typeof sessionId !== 'string' || sessionId.length > 200)) {
+      throw new Error('A session id is required.');
+    }
+    attention.restoreAttention(typeof sessionId === 'string' ? sessionId : null);
+    return attention.attentionFor(listSessions());
+  });
 
   // ══ phase 4 · transcripts ═══════════════════════════════════════════
   handle('transcripts:search', (q: string, limit?: number) => transcripts.searchTranscripts(q, limit));

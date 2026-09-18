@@ -31,10 +31,17 @@
 /* --k / --k-soft are set inline per kind from the tokens in index.css, so the
    state colour follows the chip without this sheet naming a single colour. */
 
+/* The chip and its dismiss control, laid out as one item of the scroller. The
+   two are siblings rather than nested because a <button> inside a <button> is
+   re-parented by the browser; --k and --k-soft are set here and inherit down to
+   both, so the state colour still follows the chip. */
+.atq-cell { flex: none; position: relative; display: flex; }
+
 .atq-chip {
   flex: none;
   display: flex; align-items: center; gap: 8px;
-  padding: 4px 10px 5px 7px;
+  /* Right padding clears the dismiss control, which is laid over this corner. */
+  padding: 4px 26px 5px 7px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--k);
   border-radius: 8px;
@@ -52,6 +59,23 @@
   flex: none; width: 13px; text-align: center;
   font-size: 12px; font-weight: 700; color: var(--k);
 }
+
+/* Quiet until wanted: the queue is read by state and wait time, and a row of
+   close boxes competing with those for contrast is a strip that is harder to
+   scan than the one it replaced. It is always drawn, and always the same size,
+   because it is the only way out of a chip for a session that has ended. */
+.atq-x {
+  position: absolute; top: 50%; right: var(--s-1);
+  transform: translateY(-50%);
+  display: grid; place-items: center;
+  width: 18px; height: 18px;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-faint);
+  font-size: var(--t-micro); line-height: 1;
+  transition: color var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease);
+}
+.atq-x:hover { color: var(--text); background: var(--bg-raised); }
+.atq-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .atq-body { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .atq-top { display: flex; align-items: baseline; gap: 10px; }
