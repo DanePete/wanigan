@@ -1,6 +1,6 @@
 import { egressReport } from './egress';
 import { getSetting, setSetting } from './settings';
-import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestPipeline, suggestRoute, SUGGEST_HOST, SUGGEST_PATH } from './modules/suggest';
+import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestRelayPlan, SUGGEST_HOST, SUGGEST_PATH } from './modules/suggest';
 import type { RelayPhase } from '../shared/relay';
 import type { RouteCandidate } from '../shared/relay-route';
 import { phasesFor } from '../shared/suggest-questions';
@@ -73,14 +73,17 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
     check(enabled().length === 0,
       'a capability switched on with no credential stored is not in force', enabled());
 
-    const route = await suggestRoute('implement', 'add a retry to the uploader', CANDIDATES);
-    check(route.suggestion === null && route.deliberation === null && route.usage === null,
-      'asking for a route without a credential yields nothing rather than throwing', route);
-
-    const pipeline = await suggestPipeline('add a retry to the uploader', PHASES);
-    check(pipeline === null, 'and asking which stages to run yields nothing', pipeline);
-    check(phasesFor(PHASES, pipeline).join(',') === PHASES.join(','),
-      'so the docket runs exactly the stages it declared', phasesFor(PHASES, pipeline));
+    // One call for the whole relay, and with no credential it is no call at all.
+    const plan = await suggestRelayPlan('add a retry to the uploader', PHASES, [
+      { phase: 'plan', candidates: CANDIDATES },
+      { phase: 'implement', candidates: CANDIDATES },
+      { phase: 'review', candidates: CANDIDATES },
+    ]);
+    check(Object.keys(plan.stages).length === 0 && plan.usage === null,
+      'asking for a whole relay plan without a credential yields nothing rather than throwing', plan);
+    check(plan.pipeline === null, 'and proposes no narrowing', plan.pipeline);
+    check(phasesFor(PHASES, plan.pipeline).join(',') === PHASES.join(','),
+      'so the docket runs exactly the stages it declared', phasesFor(PHASES, plan.pipeline));
 
     check(calls === 0,
       'and no request was made at all: with both switches on and no key, nothing reaches the network', calls);

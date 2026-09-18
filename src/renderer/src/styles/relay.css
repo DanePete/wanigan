@@ -310,3 +310,163 @@
   animation: none;
   transition: none;
 }
+
+/* ── the guess ───────────────────────────────────────────────────────────
+   What the suggester would do, shown before anything is started. It reads as
+   an answer arriving rather than a form filling itself in: the stages land in
+   order, each carrying the confidence it was judged at, and a stage the
+   pipeline proposed skipping stays visible and struck through rather than
+   vanishing — you cannot weigh a suggestion you were not shown.
+
+   Every duration is a --mo-* token, so the reduced-motion block at the top of
+   motion.css zeroes all of it without this file knowing. Transform and opacity
+   only; nothing here animates layout. */
+
+.rl-guess {
+  margin-block-start: var(--s-3);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--r-lg);
+  background: var(--glass-fill);
+  padding: var(--s-3);
+  animation: rl-guess-in var(--mo-view) var(--mo-ease) both;
+}
+
+@keyframes rl-guess-in {
+  from { opacity: 0; transform: translateY(calc(var(--s-2) * -1)); }
+  to   { opacity: 1; transform: none; }
+}
+
+.rl-guess-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2) var(--s-3);
+  margin-block-end: var(--s-3);
+}
+
+.rl-guess-run {
+  font-size: var(--t-small);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.rl-guess-meta {
+  font-size: var(--t-micro);
+  color: var(--text-faint);
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-guess-list {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rl-guess-row {
+  display: grid;
+  grid-template-columns: minmax(0, 6rem) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding-block: var(--s-1);
+  animation: rl-guess-row-in var(--mo-pop) var(--mo-spring) both;
+}
+
+/* A short stagger so the stages read in the order they would run. Four rows is
+   the whole ladder, so this is enumerated rather than computed from an index
+   the renderer would have to inline. */
+.rl-guess-row:nth-child(1) { animation-delay: calc(var(--mo-state) * 0); }
+.rl-guess-row:nth-child(2) { animation-delay: calc(var(--mo-state) * 0.4); }
+.rl-guess-row:nth-child(3) { animation-delay: calc(var(--mo-state) * 0.8); }
+.rl-guess-row:nth-child(4) { animation-delay: calc(var(--mo-state) * 1.2); }
+.rl-guess-row:nth-child(5) { animation-delay: calc(var(--mo-state) * 1.6); }
+
+@keyframes rl-guess-row-in {
+  from { opacity: 0; transform: translateX(calc(var(--s-2) * -1)); }
+  to   { opacity: 1; transform: none; }
+}
+
+.rl-guess-stage {
+  font-size: var(--t-small);
+  color: var(--text-dim);
+}
+
+.rl-guess-pick {
+  font-size: var(--t-small);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.rl-guess-pick em {
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+/* The bar is the quantity; the number beside it is for reading off exactly.
+   Both are present because a meter alone cannot be compared to a threshold. */
+.rl-guess-row progress {
+  appearance: none;
+  border: 0;
+  inline-size: calc(var(--s-6) * 2);
+  block-size: var(--s-1);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--line-soft);
+}
+
+.rl-guess-row progress::-webkit-progress-bar { background: var(--line-soft); }
+
+.rl-guess-row progress::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: var(--good);
+  transition: inline-size var(--mo-state) var(--mo-ease);
+}
+
+/* Below its gate: shown, and shown as not taken. */
+.rl-guess-row[data-verdict='short'] progress::-webkit-progress-value { background: var(--warn); }
+
+.rl-guess-num {
+  font-size: var(--t-micro);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  min-inline-size: calc(var(--s-5) + var(--s-2));
+  text-align: end;
+}
+
+.rl-guess-row[data-verdict='taken'] .rl-guess-num { color: var(--good); }
+.rl-guess-row[data-verdict='short'] .rl-guess-num { color: var(--warn); }
+
+/* A stage the pipeline proposed skipping. It stays on screen: a suggestion you
+   were not shown is one you cannot refuse. */
+.rl-guess-row[data-dropped='true'] { opacity: 0.55; }
+.rl-guess-row[data-dropped='true'] .rl-guess-stage { text-decoration: line-through; }
+
+.rl-guess-why {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--t-micro);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.rl-guess-foot {
+  margin-block-start: var(--s-3);
+  padding-block-start: var(--s-2);
+  border-block-start: 1px solid var(--line-soft);
+  font-size: var(--t-micro);
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+/* Asking. A slow breath rather than a spinner: the call is ~350ms and a
+   spinner that appears and leaves inside half a second is just a flash. */
+.rl-guess-asking {
+  animation: rl-guess-breathe var(--mo-period) var(--mo-ease) infinite;
+}
+
+@keyframes rl-guess-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}

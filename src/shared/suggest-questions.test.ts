@@ -21,7 +21,10 @@ import {
   DELIBERATION_LEVELS, DEFAULT_MIN_EFFORT_CONFIDENCE, DEFAULT_MIN_PIPELINE_CONFIDENCE,
   PIPELINES, UNSKIPPABLE,
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
-  effortFromScore, phasesFor, readPipeline, readSuggestion, readTry, relayRequest, stageRequest, tryRequest,
+  NO_RELAY_PLAN,
+  effortFromScore, phasesFor, readPipeline, readRelayPlan, readSuggestion,
+  relayPlanRequest, relayRequest, stageRequest,
+  type StageAsk,
 } from './suggest-questions.ts';
 
 /** The same three shapes the router's own fixture uses. */
@@ -83,18 +86,25 @@ test('score levels describe concrete situations rather than degrees, because eac
   }
 });
 
-test('nothing but the stage, the operator’s words and the candidate labels reaches the state', () => {
+test('the state is the stage and the operator’s words; candidates live only in the criteria', () => {
   const request = stageRequest('review', 'tidy the parser', CANDIDATES, ROUTE);
   assert.ok(request);
-  assert.deepEqual(Object.keys(request.state).sort(), ['candidates', 'operator_intent', 'stage', 'stage_meaning']);
+  assert.deepEqual(Object.keys(request.state).sort(), ['operator_intent', 'stage', 'stage_meaning']);
 
-  // A candidate row carries an id and a label and drops everything else it had.
-  const rows = request.state.candidates as Record<string, unknown>[];
-  for (const row of rows) assert.deepEqual(Object.keys(row).sort(), ['id', 'label']);
+  // The candidates are the answer space, not context. Restating them as state
+  // paid for the tokens twice, defeated prefix caching across turns, and put
+  // content unrelated to every other question in front of the model.
+  const serialized = JSON.stringify(request.state);
+  for (const row of CANDIDATES) {
+    assert.ok(!serialized.includes(row.model), `state repeated the candidate ${row.model}`);
+  }
+  const choice = request.questions.model;
+  if (choice.type === 'choice') {
+    assert.deepEqual(Object.keys(choice.criteria).sort(), CANDIDATES.map((row) => row.model).sort());
+  }
 
   // There is no parameter through which a diff, a path or agent output could
   // arrive, so the whole serialized state is searchable for what must not be in it.
-  const serialized = JSON.stringify(request.state);
   for (const leak of ['/Users/', 'diff --git', '.ts:', 'node_modules']) {
     assert.ok(!serialized.includes(leak), `state carried ${leak}`);
   }
@@ -110,8 +120,13 @@ test('operator intent and manifest labels are bounded and flattened before they 
   assert.ok(intent.length <= 2000, `intent ran to ${intent.length}`);
   assert.ok(!/[\n\r]/.test(intent) && !/\p{C}/u.test(intent), 'intent kept control characters');
 
-  const label = (request.state.candidates as { label: string }[])[0].label;
-  assert.ok(label.length <= 80 && !/\p{C}/u.test(label), 'a manifest label was not bounded');
+  // A manifest label is bounded where it is actually sent: the criteria.
+  const choice = request.questions.model;
+  assert.equal(choice.type, 'choice');
+  if (choice.type === 'choice') {
+    const label = String(Object.values(choice.criteria)[0]);
+    assert.ok(label.length <= 80 && !/\p{C}/u.test(label), 'a manifest label was not bounded');
+  }
 });
 
 test('a deliberation score lands on the ladder the chosen model actually declares', () => {
@@ -407,65 +422,95 @@ test('every capability is declared with what switching it off costs', () => {
   }
 });
 
-/* ── trying an intent before trusting it ──────────────────────────────── */
+/* ── one call for a whole relay ───────────────────────────────────────── */
 
-test('a try asks only intent-only questions, so it needs no candidate models at all', () => {
-  const request = tryRequest('rename a variable', ALL_PHASES);
+const ASKS: readonly StageAsk[] = [
+  { phase: 'plan', candidates: CANDIDATES },
+  { phase: 'implement', candidates: CANDIDATES },
+  { phase: 'review', candidates: [CANDIDATES[2]] },
+];
+const BOTH = ['route', 'pipeline'] as const;
+
+test('one request carries the pipeline question and every stage’s three, over one state', () => {
+  const request = relayPlanRequest('add a retry', ALL_PHASES, ASKS, BOTH);
   assert.ok(request);
   assert.deepEqual(Object.keys(request.state), ['operator_intent']);
-  assert.deepEqual(Object.keys(request.questions).sort(), ['deliberation', 'needs_context', 'pipeline']);
+  assert.deepEqual(Object.keys(request.questions).sort(), [
+    'deliberation_implement', 'deliberation_plan', 'deliberation_review',
+    'model_implement', 'model_plan', 'model_review',
+    'needs_context_implement', 'needs_context_plan', 'needs_context_review',
+    'pipeline',
+  ]);
 
-  // The deliberation question is word-for-word the production one: a preview
-  // that asked something else would be demonstrating a different model.
-  const live = stageRequest('implement', 'rename a variable', CANDIDATES, ROUTE);
-  assert.ok(live);
-  assert.deepEqual(request.questions.deliberation, live.questions.deliberation);
-  assert.deepEqual(request.questions.needs_context, live.questions.needs_context);
-});
-
-test('a try drops the pipeline question when the docket admits only one, and refuses an empty intent', () => {
-  const narrow = tryRequest('x', ['implement', 'verify', 'review']);
-  assert.ok(narrow);
-  assert.deepEqual(Object.keys(narrow.questions).sort(), ['deliberation', 'needs_context']);
-  assert.equal(tryRequest('   ', ALL_PHASES), null);
-  assert.equal(tryRequest('', ALL_PHASES), null);
-});
-
-test('a try reports what was said, including answers no threshold would have taken', () => {
-  const unconvinced = readTry({
-    answers: {
-      pipeline: { type: 'choice', choice: 'direct', probabilities: { direct: 0.55, planned: 0.45 }, confidence: 0.55 },
-      deliberation: { type: 'score', score: 1.4, probabilities: { '1': 0.6, '2': 0.4 }, confidence: 0.61 },
-      needs_context: { type: 'noul', noul: 0.3 },
-    },
-    usage: { input_tokens: 120, output_tokens: 0 },
-  }, ALL_PHASES);
-
-  // Both fall below the 0.8 gates and both are still reported: those are the
-  // cases worth seeing when deciding whether 0.8 is the right bar.
-  assert.equal(unconvinced.pipeline?.confidence, 0.55);
-  assert.equal(unconvinced.deliberation?.confidence, 0.61);
-  assert.equal(unconvinced.needsContext, 0.3);
-  assert.deepEqual(unconvinced.usage, { inputTokens: 120, outputTokens: 0 });
-
-  // The score is named by the level it sits nearest, for reading.
-  assert.equal(unconvinced.deliberation?.level, DELIBERATION_LEVELS[1]);
-  assert.equal(readTry({ answers: { deliberation: { score: 3, confidence: 0.9 } } }, ALL_PHASES).deliberation?.level,
-    DELIBERATION_LEVELS[3]);
-});
-
-test('a try never widens a docket, and a malformed body reads as nothing said', () => {
-  // The same narrowing rule as production: an answer naming a pipeline this
-  // docket could not run is discarded rather than previewed as possible.
-  const over = readTry({ answers: { pipeline: { choice: 'full', confidence: 1 } } }, ['plan', 'implement', 'verify', 'review']);
-  assert.equal(over.pipeline, null);
-
-  for (const junk of [null, 'overloaded', 0, [], {}, { answers: {} }, { answers: { deliberation: { score: 'two' } } }]) {
-    const reading = readTry(junk, ALL_PHASES);
-    assert.deepEqual(
-      { p: reading.pipeline, d: reading.deliberation, n: reading.needsContext, u: reading.usage },
-      { p: null, d: null, n: null, u: null },
-      `did not read ${JSON.stringify(junk)} as nothing said`,
-    );
+  // One state serves every question, so no question may lean on it to say
+  // which stage it means — and ids are not sent to the model either.
+  for (const [id, question] of Object.entries(request.questions)) {
+    if (id === 'pipeline') continue;
+    const stage = id.slice(id.lastIndexOf('_') + 1);
+    assert.ok(question.instructions.includes(stage), `${id} does not name its own stage`);
   }
+
+  // Each stage is offered only the models it can actually run on.
+  const review = request.questions.model_review;
+  if (review.type === 'choice') assert.deepEqual(Object.keys(review.criteria), ['sonnet']);
+});
+
+test('each capability contributes only its own questions, and neither means no request', () => {
+  const routeOnly = relayPlanRequest('x', ALL_PHASES, ASKS, ['route']);
+  assert.ok(routeOnly);
+  assert.ok(!('pipeline' in routeOnly.questions), 'route alone asked a pipeline question');
+
+  const pipelineOnly = relayPlanRequest('x', ALL_PHASES, ASKS, ['pipeline']);
+  assert.ok(pipelineOnly);
+  assert.deepEqual(Object.keys(pipelineOnly.questions), ['pipeline']);
+
+  assert.equal(relayPlanRequest('x', ALL_PHASES, ASKS, NO_SUGGESTER), null);
+  assert.equal(relayPlanRequest('x', ALL_PHASES, ASKS, undefined), null);
+  assert.equal(relayPlanRequest('   ', ALL_PHASES, ASKS, BOTH), null);
+  // Nothing to ask about is not a question either.
+  assert.equal(relayPlanRequest('x', ALL_PHASES, [], ['route']), null);
+});
+
+test('a batched answer is read back per stage, gated exactly as a single one is', () => {
+  const reading = readRelayPlan({
+    answers: {
+      pipeline: { type: 'choice', choice: 'direct', probabilities: { direct: 0.9 }, confidence: 0.9 },
+      model_plan: { type: 'choice', choice: 'sonnet', probabilities: { sonnet: 0.95 }, confidence: 0.95 },
+      deliberation_plan: { type: 'score', score: 3, confidence: 0.9 },
+      needs_context_plan: { type: 'noul', noul: 0.4 },
+      // Confident model, unconvinced deliberation: the model survives, the
+      // effort does not, and the router reads that as "nobody named one".
+      model_implement: { type: 'choice', choice: 'gpt-5.1-codex', probabilities: {}, confidence: 0.88 },
+      deliberation_implement: { type: 'score', score: 3, confidence: 0.2 },
+      // A model this stage was never offered is discarded.
+      model_review: { type: 'choice', choice: 'gpt-5.1-codex', confidence: 0.99 },
+    },
+    usage: { input_tokens: 900, output_tokens: 0 },
+  }, ALL_PHASES, ASKS);
+
+  assert.equal(reading.pipeline?.pipeline, 'direct');
+  assert.equal(reading.stages.plan?.suggestion?.model, 'sonnet');
+  assert.equal(reading.stages.plan?.suggestion?.effort, 'high');
+  assert.equal(reading.stages.plan?.needsContext, 0.4);
+
+  assert.equal(reading.stages.implement?.suggestion?.model, 'gpt-5.1-codex');
+  assert.equal(reading.stages.implement?.suggestion?.effort, null);
+  assert.equal(reading.stages.implement?.deliberation?.confidence, 0.2, 'the dropped judgment is still evidence');
+
+  assert.equal(reading.stages.review?.suggestion, null);
+
+  // Usage belongs to the call, not to any one stage of it.
+  assert.deepEqual(reading.usage, { inputTokens: 900, outputTokens: 0 });
+  for (const stage of Object.values(reading.stages)) assert.equal(stage.usage, null);
+});
+
+test('a batched body nobody can parse reads as nothing said, for every stage', () => {
+  for (const junk of [null, 'overloaded', 0, [], {}, { answers: {} }, { answers: null }]) {
+    const reading = readRelayPlan(junk, ALL_PHASES, ASKS);
+    assert.equal(reading.pipeline, null, `pipeline survived ${JSON.stringify(junk)}`);
+    for (const stage of Object.values(reading.stages)) {
+      assert.equal(stage.suggestion, null);
+    }
+  }
+  assert.deepEqual(readRelayPlan(null, ALL_PHASES, ASKS), NO_RELAY_PLAN);
 });

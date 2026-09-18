@@ -6,6 +6,7 @@ import type {
 import { DEFAULT_FILL, DEFAULT_SPACING, rigLayout } from '@shared/relay-rig';
 import { SEDIMENT_CAP } from '@shared/relay';
 import { ConfirmNote, Hint, Note, PageHead, Section, SectionHead, Stat, dur, usd } from '../components/bits';
+import { DEFAULT_MIN_CONFIDENCE } from '@shared/relay-route';
 import { AGENT_KINDS, KIND_WORD, grainCounts, phasesOf, returnOn, type Phase } from '../relay/facts';
 import { rigShapes, tagPlacement } from '../relay/rig-svg';
 import { useFluidTier } from '../relay/useFluidTier';
@@ -478,28 +479,74 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                     </select>
                   </label>
                 )}
-                {preview && !preview.phases.includes(kind) && (
-                  <Hint>This stage would not run: the suggester proposed “{preview.pipeline?.pipeline}” with confidence {preview.pipeline?.confidence.toFixed(2)}. The stages that check the work cannot be proposed away.</Hint>
-                )}
-                {preview?.routes[kind] && <Hint>{preview.routes[kind]?.route.reason}</Hint>}
               </div>
             ))}
-            {preview && !preview.asked && (
-              <Note tone="info">No suggester is switched on, so these are the profile defaults rather than guesses. Settings › Connections › Routing suggester turns one on.</Note>
-            )}
-            {preview?.pipeline && (
-              <Note tone="info">
-                Would run {preview.phases.map((p) => KIND_WORD[p]).join(' → ')} — the suggester proposed “{preview.pipeline.pipeline}”
-                with confidence {preview.pipeline.confidence.toFixed(2)}. Nothing is skipped until you start it, and you can still override any stage.
-              </Note>
-            )}
-            {preview?.asked && (
-              <Hint>Previewed for about ${preview.estimatedUsd.toFixed(6)} by Wanigan’s own arithmetic. Starting the relay asks again and records that answer as the evidence.</Hint>
-            )}
             <Hint>A guess is shown as a guess: an override outside the profile's declared set is refused with a reason, never clamped.</Hint>
-            <button className="btn" onClick={suggest} disabled={busy !== null || !intent.trim() || !providerId}>
+            <button className={busy === 'preview' ? 'btn rl-guess-asking' : 'btn'} onClick={suggest}
+                    disabled={busy !== null || !intent.trim() || !providerId}>
               {busy === 'preview' ? 'Asking…' : 'Suggest routes'}
             </button>
+
+            {preview && !preview.asked && (
+              <Note tone="info">
+                No suggester is switched on, so these are the profile’s own defaults rather than guesses.
+                Settings › Connections › Routing suggester turns one on.
+              </Note>
+            )}
+
+            {preview?.asked && (
+              <div className="rl-guess">
+                <div className="rl-guess-head">
+                  <span className="rl-guess-run">Would run {preview.phases.map((p) => KIND_WORD[p]).join(' → ')}</span>
+                  <span className="rl-guess-meta">
+                    {preview.pipeline ? `${preview.pipeline.pipeline} · ` : ''}${preview.estimatedUsd.toFixed(6)}
+                  </span>
+                </div>
+
+                <ol className="rl-guess-list">
+                  {AGENT_KINDS.map((kind) => {
+                    const row = preview.routes[kind];
+                    const dropped = !preview.phases.includes(kind);
+                    const proposed = row?.suggested ?? null;
+                    const taken = row?.route.source === 'suggested';
+                    const verdict = proposed ? (taken ? 'taken' : 'short') : undefined;
+                    const shown = row?.route.model ?? null;
+                    return (
+                      <li key={kind} className="rl-guess-row" data-verdict={verdict} data-dropped={dropped || undefined}>
+                        <span className="rl-guess-stage">{KIND_WORD[kind]}</span>
+                        <span className="rl-guess-pick">
+                          {dropped ? 'not run' : shown ?? 'profile default'}
+                          {!dropped && row?.route.effort && <em> · {row.route.effort} effort</em>}
+                        </span>
+                        {proposed ? (
+                          <>
+                            <progress value={proposed.confidence} max={1}
+                              aria-label={`${KIND_WORD[kind]} suggestion confidence`} />
+                            <span className="rl-guess-num">{proposed.confidence.toFixed(2)}</span>
+                          </>
+                        ) : <><span /><span className="rl-guess-num">—</span></>}
+                        {/* The router's own sentence, which says who decided and
+                            why — including a proposal it declined. */}
+                        {row && <p className="rl-guess-why">{row.route.reason}</p>}
+                        {dropped && preview.pipeline && (
+                          <p className="rl-guess-why">
+                            Proposed away by “{preview.pipeline.pipeline}” at confidence {preview.pipeline.confidence.toFixed(2)}.
+                            The stages that check the work cannot be proposed away.
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                <p className="rl-guess-foot">
+                  A bar at or above {DEFAULT_MIN_CONFIDENCE.toFixed(2)} was taken; below it the profile’s own default stands and
+                  the number is shown anyway, because an answer that fell short is the one worth looking at.
+                  Nothing here has been started, every stage is still yours to override, and starting the relay asks
+                  again and records that answer as the evidence.
+                </p>
+              </div>
+            )}
             <button className="btn btn-primary" onClick={create} disabled={busy !== null || !intent.trim() || !providerId || !projectId}>
               {busy === 'create' ? 'Starting…' : 'Start relay'}
             </button>

@@ -1853,6 +1853,14 @@ export type RelayPreviewInput = { intent: string; providerId: string; routes?: R
 
 export type RelayPreviewRoute = {
   route: { model: string | null; effort: string | null; source: 'profile-default' | 'suggested' | 'operator'; confidence: number | null; reason: string };
+  /**
+   * What the suggester proposed, whether or not the router took it.
+   *
+   * Separate from `route` on purpose: a proposal that fell short of its gate is
+   * the most informative thing a preview can show, and reporting only what was
+   * taken would demonstrate the threshold instead of the model.
+   */
+  suggested: { model: string | null; effort: string | null; confidence: number } | null;
   /** The deliberation judgment behind the effort, if one was asked. */
   deliberation: { score: number; confidence: number } | null;
 };

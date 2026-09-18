@@ -9,8 +9,8 @@ import * as accounts from './accounts';
 import * as otel from './otel';
 import { intersectChoices, launchFieldChoices } from '../shared/launch-fields';
 import { chooseStage, type RouteCandidate, type RouteDefaults, type StageRoute } from '../shared/relay-route';
-import { phasesFor, type StageReading } from '../shared/suggest-questions';
-import { enabled as suggesterEnabled, estimatedUsd, suggestPipeline, suggestRoute } from './modules/suggest';
+import { phasesFor, type StageAsk, type StageReading } from '../shared/suggest-questions';
+import { enabled as suggesterEnabled, estimatedUsd, suggestRelayPlan } from './modules/suggest';
 import { MIN_HISTORY, forecastPhase, forecastTotals, type ForecastSample } from '../shared/relay-forecast';
 import { HANDBACK_LIMIT } from '../shared/gate-feedback';
 import { DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS } from '../shared/types';
@@ -240,12 +240,32 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     profiles.set(id, profile);
     return profile;
   };
+  // One call for the whole relay. Every stage's answer space has to be known
+  // before any of it can be asked, so the profiles load first — and the
+  // per-stage questions are asked for every stage before the pipeline answer
+  // says which survive. That is speculative fan-out: the questions about a
+  // stage that gets narrowed away ride along on a call already being made and
+  // cost no latency at all.
+  //
+  // A stage the operator chose for is left out of the asking entirely. The
+  // router ranks a typed choice above a suggestion, so a call whose answer
+  // cannot be used is a call that must not be billed.
+  const asks: StageAsk[] = [];
+  for (const kind of DOCKET_NODE_KINDS) {
+    if (kind === 'estimate') continue;
+    const wants = routes[kind];
+    if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
+    const profile = await load(wants?.providerId ?? providerId);
+    asks.push({ phase: kind, candidates: profile.candidates });
+  }
+  const plan = await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks);
+
   // Which stages run. Every declared one, unless the pipeline capability is
   // on, credentialed and confident enough to narrow — and then only the front
   // of the pipeline, never a stage that checks the work (UNSKIPPABLE, in the
   // pure module). With no suggester this is DOCKET_NODE_KINDS and the plan is
   // the default one: the relay exactly as it was before any of this existed.
-  const pipelineReading = await suggestPipeline(intent, DOCKET_NODE_KINDS);
+  const pipelineReading = plan.pipeline;
   const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
 
   const picks = new Map<DocketNodeKind, Pick_>();
@@ -257,10 +277,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     const profile = await load(stageProvider);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
       ? { model: wants.model, effort: wants.effort } : undefined;
-    // An operator's choice outranks a suggestion in the router, so when one is
-    // present the model is not asked: a call whose answer cannot be used is a
-    // call that must not be billed. The proof records who decided either way.
-    const reading = operator ? null : await suggestRoute(kind, intent, profile.candidates);
+    const reading = operator ? null : plan.stages[kind] ?? null;
     const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
     if (operator && route.source !== 'operator') throw new Error(route.reason);
     // The stage's own account, then the relay's, then null. A stage that names
@@ -307,7 +324,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
           suggestion: pick.reading?.suggestion ?? null,
           deliberation: pick.reading?.deliberation ?? null,
           needsContext: pick.reading?.needsContext ?? null,
-          suggesterUsage: pick.reading?.usage ?? null,
+          suggesterUsage: plan.usage,
         }), at);
     }
     // Recorded only when narrowing happened. A docket running every declared
@@ -342,7 +359,24 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
   const routes = readRoutes(input.routes);
   const asked = suggesterEnabled().length > 0;
 
-  const pipelineReading = await suggestPipeline(intent, DOCKET_NODE_KINDS);
+  const profiles = new Map<string, Profile>();
+  const load = async (id: string): Promise<Profile> => {
+    const cached = profiles.get(id);
+    if (cached) return cached;
+    const profile = await profileFor(id);
+    profiles.set(id, profile);
+    return profile;
+  };
+  const asks: StageAsk[] = [];
+  for (const kind of DOCKET_NODE_KINDS) {
+    if (kind === 'estimate') continue;
+    const wants = routes[kind];
+    if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
+    const profile = await load(wants?.providerId ?? providerId);
+    asks.push({ phase: kind, candidates: profile.candidates });
+  }
+  const plan = await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks);
+  const pipelineReading = plan.pipeline;
   const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
   const preview: RelayPreview = {
     asked,
@@ -351,26 +385,24 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
     routes: {},
     estimatedUsd: 0,
   };
-  let tokens = 0;
 
-  const profiles = new Map<string, Profile>();
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate' || !phases.includes(kind)) continue;
     const wants = routes[kind];
-    const stageProvider = wants?.providerId ?? providerId;
-    const profile = profiles.get(stageProvider) ?? await profileFor(stageProvider);
-    profiles.set(stageProvider, profile);
+    const profile = await load(wants?.providerId ?? providerId);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
       ? { model: wants.model, effort: wants.effort } : undefined;
-    const reading = operator ? null : await suggestRoute(kind, intent, profile.candidates);
-    if (reading?.usage) tokens += reading.usage.inputTokens;
+    const reading = operator ? null : plan.stages[kind] ?? null;
     const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
     preview.routes[kind] = {
       route: { model: route.model, effort: route.effort, source: route.source, confidence: route.confidence, reason: route.reason },
+      suggested: reading?.suggestion
+        ? { model: reading.suggestion.model, effort: reading.suggestion.effort, confidence: reading.suggestion.confidence }
+        : null,
       deliberation: reading?.deliberation ? { score: reading.deliberation.score, confidence: reading.deliberation.confidence } : null,
     };
   }
-  preview.estimatedUsd = estimatedUsd(tokens);
+  preview.estimatedUsd = estimatedUsd(plan.usage?.inputTokens ?? 0);
   return preview;
 }
 

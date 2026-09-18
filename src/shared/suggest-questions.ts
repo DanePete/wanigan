@@ -193,9 +193,11 @@ export function stageRequest(
       stage: String(phase),
       stage_meaning: PHASE_MEANING[phase] ?? String(phase),
       operator_intent: bounded(intent, INTENT_MAX),
-      // Labels only. Nothing derived from the repository, the working tree or a
-      // previous stage's output belongs in here.
-      candidates: candidates.map((row) => ({ id: row.model, label: bounded(row.label, LABEL_MAX) })),
+      // The candidates are NOT here. They are the answer space, and they live
+      // in the choice's criteria where that is what they mean. Restating them
+      // as state cost tokens twice, defeated prefix caching across turns, and
+      // put content unrelated to every other question in front of the model —
+      // which the jaggedness page names as a direct accuracy cost.
     },
     questions: {
       // Question ids are not sent to the model, so each one restates its whole
@@ -280,8 +282,8 @@ export type Deliberation = { score: number; confidence: number; distribution: Re
  * operator is shown when they test an intent cannot drift from what the router
  * would actually have acted on.
  */
-function readDeliberation(answers: Record<string, unknown>): Deliberation | null {
-  const raw = isObject(answers.deliberation) ? answers.deliberation : null;
+function readDeliberation(answers: Record<string, unknown>, id = 'deliberation'): Deliberation | null {
+  const raw = isObject(answers[id]) ? answers[id] as Record<string, unknown> : null;
   const confidence = raw ? probability(raw.confidence) : null;
   if (!raw || confidence === null) return null;
   if (typeof raw.score !== 'number' || !Number.isFinite(raw.score)) return null;
@@ -510,89 +512,156 @@ export function phasesFor(
   return reading ? reading.phases : requested;
 }
 
-/* ── trying an intent before trusting it ──────────────────────────────── */
+/* ── one call for a whole relay ───────────────────────────────────────── */
+
+/** One stage's answer space: which models it may run on, and how they are described. */
+export type StageAsk = {
+  phase: RelayPhase;
+  candidates: readonly RouteCandidate[];
+  descriptions?: Readonly<Record<string, string>>;
+};
+
+const stageQuestionIds = (phase: RelayPhase) => ({
+  model: `model_${phase}`,
+  deliberation: `deliberation_${phase}`,
+  needsContext: `needs_context_${phase}`,
+});
 
 /**
- * The questions behind "what would you say about this?".
+ * Every question a whole relay needs, in one request.
  *
- * Every one of them is intent-only, which is why this needs no candidate list:
- * the pipeline choice is about the work, and the deliberation score is
- * model-independent by construction (see `DELIBERATION_LEVELS`). So one call
- * answers all three, and what an operator sees here is the same judgment the
- * router would have received rather than a demonstration of one.
+ * A relay used to cost one call for the pipeline plus one per stage — four
+ * round trips for three stages, each re-sending the same intent. Questions in
+ * a call are evaluated in parallel and independently, so batching is measured
+ * at 12.2x cheaper and 10x faster with no change in the answers
+ * (docs.typesafe.ai/cookbooks/parallel_questions).
  *
- * It is not gated on a capability. The point is to look before switching one
- * on, and a preview that required the thing being previewed would be useless.
- * It does require a credential, and it does spend, so it happens only on a
- * press and the panel says what it cost.
+ * The per-stage questions are *speculative*: they are asked for every stage
+ * before the pipeline answer says which stages survive, and code consumes only
+ * the ones it kept. That is the documented fan-out pattern, and it is free in
+ * latency — a question about a stage that gets narrowed away rides along on a
+ * call that was already being made.
+ *
+ * Because one state serves every question, no question may lean on it to say
+ * which stage it means. Each one names its own stage in its instructions, which
+ * it had to do anyway: question ids are not sent to the model.
  */
-export function tryRequest(intent: string, requested: readonly RelayPhase[]): SystemOneRequest | null {
+export function relayPlanRequest(
+  intent: string,
+  requested: readonly RelayPhase[],
+  stages: readonly StageAsk[],
+  enabled: readonly SuggesterCapability[] | undefined,
+): SystemOneRequest | null {
   const text = bounded(intent, INTENT_MAX);
   if (!text) return null;
-  const options = applicable(requested);
-  const questions: Record<string, SystemOneQuestion> = {
-    deliberation: {
-      type: 'score',
-      instructions: 'How much deliberation does this stage of work require?',
-      criteria: DELIBERATION_LEVELS,
-    },
-    needs_context: {
-      type: 'noul',
-      instructions: 'Does this stage require understanding code that the instruction does not itself contain?',
-    },
-  };
-  // Only when there is a real choice to make, for the same reason relayRequest
-  // declines: a choice with one option is a foregone conclusion with a price.
-  if (options.length >= 2) {
-    const criteria: Record<string, string | null> = {};
-    for (const pipeline of options) criteria[pipeline.id] = pipeline.criterion;
-    questions.pipeline = {
-      type: 'choice',
-      instructions: 'Which of these describes the work this instruction asks for?',
-      criteria,
-    };
+  const questions: Record<string, SystemOneQuestion> = {};
+
+  if (offers(enabled, 'pipeline')) {
+    const options = applicable(requested);
+    if (options.length >= 2) {
+      const criteria: Record<string, string | null> = {};
+      for (const pipeline of options) criteria[pipeline.id] = pipeline.criterion;
+      questions.pipeline = {
+        type: 'choice',
+        instructions: 'Which of these describes the work this instruction asks for?',
+        criteria,
+      };
+    }
   }
+
+  if (offers(enabled, 'route')) {
+    for (const stage of stages) {
+      const meaning = PHASE_MEANING[stage.phase] ?? String(stage.phase);
+      const ids = stageQuestionIds(stage.phase);
+      if (stage.candidates.length > 0) {
+        const criteria: Record<string, string | null> = {};
+        for (const row of stage.candidates) {
+          const described = stage.descriptions?.[row.model];
+          criteria[row.model] = described ? bounded(described, LABEL_MAX * 2) : bounded(row.label, LABEL_MAX);
+        }
+        questions[ids.model] = {
+          type: 'choice',
+          instructions: `Which of these models is the best fit for the ${stage.phase} stage of this work — ${meaning}?`,
+          criteria,
+        };
+      }
+      questions[ids.deliberation] = {
+        type: 'score',
+        instructions: `How much deliberation does the ${stage.phase} stage of this work — ${meaning} — require?`,
+        criteria: DELIBERATION_LEVELS,
+      };
+      questions[ids.needsContext] = {
+        type: 'noul',
+        instructions: `Does the ${stage.phase} stage of this work require understanding code that the instruction does not itself contain?`,
+      };
+    }
+  }
+
+  if (Object.keys(questions).length === 0) return null;
+  // The operator's own words, and nothing else. No repository content, no
+  // candidate list: the candidates are the answer space, not context.
   return { model: 'jev-latest', state: { operator_intent: text }, questions };
 }
 
-export type TryReading = {
-  pipeline: NonNullable<PipelineReading> | null;
-  deliberation: (Deliberation & { level: string }) | null;
-  needsContext: number | null;
+export type RelayPlanReading = {
+  pipeline: PipelineReading;
+  stages: Partial<Record<RelayPhase, StageReading>>;
   usage: { inputTokens: number; outputTokens: number } | null;
 };
 
-/**
- * What the model actually said, ungated.
- *
- * Thresholds are deliberately not applied. An operator testing an intent needs
- * to see the confidence that *would* have been judged, including the ones that
- * fall short — a preview that silently dropped every unconvinced answer would
- * hide exactly the cases the threshold exists to catch, and those are the ones
- * worth looking at before deciding whether 0.8 is the right bar here.
- */
-export function readTry(body: unknown, requested: readonly RelayPhase[]): TryReading {
-  const empty: TryReading = { pipeline: null, deliberation: null, needsContext: null, usage: null };
-  if (!isObject(body)) return empty;
-  const answers = isObject(body.answers) ? body.answers : null;
-  if (!answers) return empty;
+/** The empty reading: what a refusal, a failure and a body nobody could parse all return. */
+export const NO_RELAY_PLAN: RelayPlanReading = { pipeline: null, stages: {}, usage: null };
 
-  const raw = readDeliberation(answers);
-  const top = DELIBERATION_LEVELS.length - 1;
-  const deliberation = raw
-    ? { ...raw, level: DELIBERATION_LEVELS[Math.min(top, Math.max(0, Math.round(raw.score)))] ?? '' }
-    : null;
+/**
+ * One batched answer read back into per-stage suggestions.
+ *
+ * The same gating as the single-stage reader, applied per stage: a model choice
+ * below the bar drops that stage's suggestion, and a deliberation answer below
+ * the bar drops only the effort — which the router reads as "nobody named one"
+ * and answers with the profile's default.
+ */
+export function readRelayPlan(
+  body: unknown,
+  requested: readonly RelayPhase[],
+  stages: readonly StageAsk[],
+  minEffortConfidence: number = DEFAULT_MIN_EFFORT_CONFIDENCE,
+): RelayPlanReading {
+  if (!isObject(body)) return NO_RELAY_PLAN;
+  const answers = isObject(body.answers) ? body.answers : null;
+  if (!answers) return NO_RELAY_PLAN;
 
   const usageRaw = isObject(body.usage) ? body.usage : null;
   const usage = usageRaw && typeof usageRaw.input_tokens === 'number' && typeof usageRaw.output_tokens === 'number'
     ? { inputTokens: usageRaw.input_tokens, outputTokens: usageRaw.output_tokens }
     : null;
 
-  return {
-    // Threshold 0: show what was said, not what would have survived.
-    pipeline: readPipeline(body, requested, 0),
-    deliberation,
-    needsContext: isObject(answers.needs_context) ? probability(answers.needs_context.noul) : null,
-    usage,
-  };
+  const out: Partial<Record<RelayPhase, StageReading>> = {};
+  for (const stage of stages) {
+    const ids = stageQuestionIds(stage.phase);
+    const deliberation = readDeliberation(answers, ids.deliberation);
+    const noul = isObject(answers[ids.needsContext])
+      ? probability((answers[ids.needsContext] as Record<string, unknown>).noul) : null;
+
+    const choiceRaw = isObject(answers[ids.model]) ? answers[ids.model] as Record<string, unknown> : null;
+    const chosen = choiceRaw && typeof choiceRaw.choice === 'string' ? choiceRaw.choice : null;
+    const choiceConfidence = choiceRaw ? probability(choiceRaw.confidence) : null;
+    const row = chosen ? stage.candidates.find((candidate) => candidate.model === chosen) ?? null : null;
+
+    if (!row || choiceConfidence === null) {
+      out[stage.phase] = { suggestion: null, deliberation, needsContext: noul, usage: null };
+      continue;
+    }
+    const effort = deliberation && Number.isFinite(minEffortConfidence) && deliberation.confidence >= minEffortConfidence
+      ? effortFromScore(deliberation.score, row.efforts)
+      : null;
+    out[stage.phase] = {
+      suggestion: { model: row.model, effort, distribution: distribution(choiceRaw?.probabilities), confidence: choiceConfidence },
+      deliberation,
+      needsContext: noul,
+      // Usage belongs to the call, not to any one stage of it.
+      usage: null,
+    };
+  }
+
+  return { pipeline: readPipeline(body, requested, DEFAULT_MIN_PIPELINE_CONFIDENCE), stages: out, usage };
 }

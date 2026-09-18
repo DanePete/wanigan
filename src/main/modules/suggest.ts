@@ -3,12 +3,10 @@ import { refuseIfHalted } from '../halt';
 import { clearProviderKey, getProviderKey, hasProviderKey, providerKeyFingerprint, setProviderKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
 import type { RelayPhase } from '../../shared/relay';
-import type { RouteCandidate } from '../../shared/relay-route';
 import {
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
-  readPipeline, readSuggestion, readTry, relayRequest, stageRequest, tryRequest,
-  type PipelineReading, type StageReading, type SuggesterCapability, type SystemOneRequest,
-  type TryReading,
+  NO_RELAY_PLAN, readRelayPlan, relayPlanRequest,
+  type RelayPlanReading, type StageAsk, type SuggesterCapability, type SystemOneRequest,
 } from '../../shared/suggest-questions';
 
 /**
@@ -199,50 +197,33 @@ async function ask(request: SystemOneRequest, keyOverride?: string): Promise<Ask
   }
 }
 
-/** The empty reading, which is what every refusal and every failure returns. */
-const NO_READING: StageReading = { suggestion: null, deliberation: null, needsContext: null, usage: null };
-
 /**
- * A model and effort opinion for one stage, or nothing.
+ * Every question a relay needs, in one call.
  *
- * Nothing is the honest and common answer: no credential, capability off,
- * halted, timed out, rate limited, or an answer that did not clear its gate.
- * The router turns every one of those into the profile's own default.
- */
-export async function suggestRoute(
-  phase: RelayPhase,
-  intent: string,
-  candidates: readonly RouteCandidate[],
-  descriptions?: Readonly<Record<string, string>>,
-): Promise<StageReading> {
-  const request = stageRequest(phase, intent, candidates, { enabled: enabled(), descriptions });
-  if (!request) return NO_READING;
-  const outcome = await ask(request);
-  if (!outcome.ok) return NO_READING;
-  return readSuggestion(outcome.body, candidates);
-}
-
-/**
- * A proposal for which stages to run, or nothing.
+ * One request for the whole relay rather than one per stage: the pipeline
+ * choice and every stage's model, deliberation and context questions ride
+ * together. They are independent and evaluated in parallel, so this is the
+ * measured 12.2x cheaper and 10x faster shape rather than a cleverness.
  *
- * Nothing means the docket runs exactly the stages it declared, which is what
- * `phasesFor()` returns for a null reading. No answer from here can add a stage
- * or remove one that checks the work; that is fixed in the pure module by
- * `UNSKIPPABLE` and cannot be loosened from this side.
+ * Nothing is the honest and common answer: no credential, both capabilities
+ * off, halted, timed out, rate limited, or an answer that did not clear its
+ * gate. Every one of those returns an empty reading, and the relay then runs
+ * exactly the stages it declared on the profile's own defaults.
  */
-export async function suggestPipeline(
+export async function suggestRelayPlan(
   intent: string,
   requested: readonly RelayPhase[],
-): Promise<PipelineReading> {
-  const request = relayRequest(intent, requested, enabled());
-  if (!request) return null;
+  stages: readonly StageAsk[],
+): Promise<RelayPlanReading> {
+  const request = relayPlanRequest(intent, requested, stages, enabled());
+  if (!request) return NO_RELAY_PLAN;
   const outcome = await ask(request);
-  if (!outcome.ok) return null;
-  return readPipeline(outcome.body, requested);
+  if (!outcome.ok) return NO_RELAY_PLAN;
+  return readRelayPlan(outcome.body, requested, stages);
 }
 
 /**
- * Verify a stored key by making one minimal real call.
+ * Verify a stored key, or prove a candidate one before it is written.
  *
  * Every other provider here is verified against a catalogue endpoint. TypeSafe
  * has none — `/v1/systemone` is the only route — so verification is a real
@@ -263,43 +244,6 @@ export async function verify(keyOverride?: string): Promise<{ ok: boolean; detai
   const tokens = outcome.inputTokens;
   const cost = tokens === null ? 'an unpriced call' : `about $${estimatedUsd(tokens).toFixed(7)} by Wanigan's own arithmetic`;
   return { ok: true, detail: `Answered in ${outcome.ms}ms, ${cost}.` };
-}
-
-export type TryOutcome =
-  | ({ ok: true; ms: number; estimatedUsd: number } & TryReading)
-  | { ok: false; reason: string };
-
-/** Every stage a relay can declare, which is what a preview should consider. */
-const ALL_PHASES: readonly RelayPhase[] = ['plan', 'estimate', 'implement', 'verify', 'review'];
-
-/**
- * What the suggester would say about one description, without acting on it.
- *
- * The honest counterpart to "a suggestion is a guess, shown as a guess": before
- * trusting one, you can see one. It runs the real questions and reports the
- * real confidences **ungated**, including answers that fall below the
- * thresholds — those are precisely the cases worth looking at when deciding
- * whether 0.8 is the right bar, and a preview that hid them would be
- * demonstrating the gate rather than the model.
- *
- * Not gated on a capability, because the point is to look before switching one
- * on. Gated on a credential and on an explicit press, because it spends.
- */
-export async function tryIntent(raw: unknown): Promise<TryOutcome> {
-  const intent = typeof raw === 'string' ? raw.trim() : '';
-  if (!intent) return { ok: false, reason: 'Describe a task first.' };
-  if (!hasProviderKey(PROVIDER)) return { ok: false, reason: 'No TypeSafe credential is stored.' };
-  const request = tryRequest(intent, ALL_PHASES);
-  if (!request) return { ok: false, reason: 'Describe a task first.' };
-  const outcome = await ask(request);
-  if (!outcome.ok) return { ok: false, reason: outcome.reason };
-  const reading = readTry(outcome.body, ALL_PHASES);
-  return {
-    ok: true,
-    ms: outcome.ms,
-    estimatedUsd: estimatedUsd(reading.usage?.inputTokens ?? outcome.inputTokens ?? 0),
-    ...reading,
-  };
 }
 
 /**
@@ -362,7 +306,5 @@ export const suggestModule: WaniganModule = {
     // returns a fingerprint, and there is no channel that returns the key.
     handle('suggest:setKey', (key: unknown) => setKey(key));
     handle('suggest:clearKey', () => clearKey());
-    // Spends, so it is a press and never a render. Untrusted renderer text.
-    handle('suggest:try', (intent: unknown) => tryIntent(intent));
   },
 };
