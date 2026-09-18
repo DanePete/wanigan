@@ -834,6 +834,16 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+/**
+ * Set when the operator chose to come back rather than leave.
+ *
+ * Read at the very end of the drain, not at the click: `app.relaunch()` queues
+ * a new instance to start once this one exits, so it has to be armed after the
+ * PTYs are down and before `app.quit()`. Arming it early would race a new
+ * Wanigan against an old one still holding the database.
+ */
+let quitAndReopen = false;
+
 // An agent left running with no window is an agent burning tokens unseen.
 app.on('before-quit', (event) => {
   if (quitReady) return;
@@ -856,17 +866,28 @@ app.on('before-quit', (event) => {
         ? `${headlessLive} headless agent${headlessLive === 1 ? '' : 's'}`
         : '';
       const summary = [interactive, background].filter(Boolean).join(' and ');
+      // Three answers, because there were two and the missing one is the
+      // answer people actually want. Restarting Wanigan is how an installed
+      // update is picked up, how a wedged renderer is cleared, and what
+      // "close and reopen" means when anyone says it — and with only "quit" on
+      // offer, the operator has to quit, find the app again and launch it,
+      // which is enough friction that an update can sit uninstalled for days.
+      // Reopening costs the agents exactly what quitting costs them: nothing
+      // survives a full quit either way, and the detail below says so once for
+      // both buttons rather than implying a restart is the gentler option.
       const choice = dialog.showMessageBoxSync({
         type: 'warning',
-        buttons: ['Keep Wanigan open', 'Stop agents and quit'],
+        buttons: ['Keep Wanigan open', 'Stop agents and quit', 'Stop agents and reopen'],
         defaultId: 0,
         cancelId: 0,
         title: 'Stop live agents?',
         message: win && demoWindows.has(win.webContents)
           ? 'Live work in your private workspace will be stopped.' : `${summary} will be stopped.`,
-        detail: 'Projects, settings and saved transcripts remain, but a live agent cannot survive a full app quit.',
+        detail: 'Projects, settings and saved transcripts remain, but a live agent cannot survive a full app quit — '
+          + 'reopening starts Wanigan again with none of them running.',
       });
-      if (choice !== 1) return;
+      if (choice === 0) return;
+      if (choice === 2) quitAndReopen = true;
       quitConfirmed = true;
     }
   }
@@ -884,6 +905,14 @@ app.on('before-quit', (event) => {
     // blocker is process-scoped, so leaving without giving it back is the
     // difference between a Mac that sleeps tonight and one that does not.
     try { awake.reconcileAwake(null); } catch { /* nothing may block the quit */ }
+    // Queued here, one line before the exit: the replacement starts only once
+    // this process is gone, so it never races this one for the database or the
+    // loopback ports the services above just released.
+    if (quitAndReopen) {
+      try { app.relaunch(); } catch (error) {
+        console.warn('[wanigan] could not queue a relaunch; quitting without reopening:', error);
+      }
+    }
     app.quit();
   });
 });

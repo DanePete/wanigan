@@ -6677,6 +6677,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES'));
   const mainSrc = sourceOf('src/main/index.ts');
 
+  // The quit dialog offers reopening, and reopening is armed where it is safe.
+  // This sat at two buttons — keep, or quit — and the answer people actually
+  // wanted was the third: restarting is how an installed update is picked up,
+  // and without it an operator has to quit, find the app and launch it again,
+  // which is enough friction to leave an update uninstalled. The relaunch must
+  // be queued at the END of the drain: armed at the click, a new Wanigan would
+  // race the old one for the database and the loopback ports.
+  const quitBlock = mainSrc.slice(mainSrc.indexOf("app.on('before-quit'"));
+  const relaunchAt = quitBlock.indexOf('app.relaunch()');
+  const shutdownAt = quitBlock.indexOf('shutdownAll()');
+  check(quitBlock.includes("'Stop agents and reopen'") && quitBlock.includes("'Stop agents and quit'")
+    && quitBlock.includes("if (choice === 0) return;"),
+  'the quit dialog offers keeping, quitting and reopening, and only the first one cancels');
+  check(relaunchAt > shutdownAt && shutdownAt > 0,
+    'the relaunch is queued after the PTY drain, so a new instance cannot race the old one for the database');
+  check(/reopening starts Wanigan again with none of them running/.test(quitBlock),
+    'and the dialog says reopening costs the agents exactly what quitting costs them, rather than implying it is the gentler button');
+
   // A manifest is untrusted data and the consent dialog is the surface that
   // survives a compromised renderer, so the dialog builds its own summary and
   // bounds every part of it. This pack declares one hundred environment
