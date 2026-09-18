@@ -148,6 +148,14 @@ async function main() {
     assert.throws(() => parseArguments(['--unknown']), /Unknown option/);
     assert.throws(() => parseArguments(['--source', '/tmp/bad\nWanigan.app']), /line break/);
     assert.throws(() => parseArguments(['--quit-timeout', '0']), /between 0 and 300/);
+    // The default has to outlast a person answering a dialog, because the
+    // graceful quit this installer sends is what raises it: with live agents,
+    // Wanigan asks "Stop live agents?" and waits. At 20 seconds the installer
+    // timed out on its own prompt and reported that Wanigan was "still
+    // running", which read as the operator's fault and cost an afternoon.
+    const defaults = parseArguments([], {});
+    assert.ok(defaults.quitTimeoutSeconds >= 60,
+      `the quit timeout must leave time to answer the dialog the installer raises, got ${defaults.quitTimeoutSeconds}s`);
     assert.throws(() => parseArguments(['--trash-dir', '/tmp/not-trash']), /must be a \.Trash directory/);
     assert.deepEqual(
       desktopLaunchEnvironment({ PATH: '/usr/bin', ELECTRON_RUN_AS_NODE: '1', WANIGAN_TEST: 'present' }),

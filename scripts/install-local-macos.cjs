@@ -32,7 +32,16 @@ const APP_FILENAME = `${APP_NAME}.app`;
 const BUNDLE_IDENTIFIER = 'io.deadnorth.wanigan';
 const APPLICATIONS_DIRECTORY = '/Applications';
 const DEFAULT_SOURCE = path.resolve(__dirname, '..', 'release', 'mac-arm64', APP_FILENAME);
-const DEFAULT_QUIT_TIMEOUT_SECONDS = 20;
+// Long enough for a person to answer the dialog this installer itself raises.
+//
+// It was 20 seconds, and the graceful quit below sends the same Quit a ⌘Q does
+// — which, when agents are live, puts up "Stop live agents?" and waits for a
+// human. Twenty seconds is not long enough to notice a dialog, read it and
+// click, so the installer routinely timed out on its own prompt and reported
+// that Wanigan was "still running", as though the operator had failed to close
+// it. Two minutes is a person's pace, and nothing is at risk while waiting: no
+// file is touched until the app is actually gone.
+const DEFAULT_QUIT_TIMEOUT_SECONDS = 120;
 const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 15;
 const POLL_INTERVAL_MS = 250;
 // LaunchServices can report a PID before Electron has finished initializing
@@ -420,7 +429,11 @@ async function gracefullyQuitInstalledWanigan(destination, timeoutSeconds, optio
   const remaining = await waitForProcessState(destination, false, timeoutSeconds, { execute });
   if (remaining.length) {
     throw installError(
-      `Wanigan is still running after ${timeoutSeconds} seconds (PID ${remaining.join(', ')}). No files were changed; close it normally and run the installer again.`,
+      `Wanigan is still running after ${timeoutSeconds} seconds (PID ${remaining.join(', ')}). No files were changed.\n`
+      + 'This installer asked Wanigan to quit, and with live agents Wanigan asks you to confirm first — check for a '
+      + '"Stop live agents?" dialog and answer it, then run the installer again. Choose "Stop agents and quit" rather '
+      + 'than "Stop agents and reopen": reopening brings Wanigan back within a second, which is faster than the copy '
+      + 'takes, so the install would be refused again by the app it just relaunched.',
     );
   }
   return { wasRunning: true, processIds: [] };
