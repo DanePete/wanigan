@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  DocketNode, DocketNodeKind, Project, ProviderInfo, RelayForecast, RelayRead, RelayRouteInput, SessionEvent, WorkDocket,
+  AgentAccount, DocketNode, DocketNodeKind, Project, ProviderInfo, RelayForecast, RelayRead, RelayRouteInput,
+  SessionEvent, WorkDocket,
 } from '@shared/types';
 import { DEFAULT_FILL, DEFAULT_SPACING, rigLayout } from '@shared/relay-rig';
 import { SEDIMENT_CAP } from '@shared/relay';
@@ -51,18 +52,29 @@ const RETURN_INTO = 2;
 
 const PHASE_KINDS: readonly DocketNodeKind[] = ['plan', 'estimate', 'implement', 'verify', 'review'];
 
-type RouteDraft = Record<string, { providerId: string; model: string; effort: string }>;
+/**
+ * '' means "whatever the relay says"; INHERIT_NONE is the operator saying this
+ * one stage resolves its account the ordinary way even though the relay pinned
+ * one. Two different intentions that a single empty string cannot carry.
+ */
+const INHERIT_NONE = '\u0000none';
+
+type RouteDraft = Record<string, { providerId: string; model: string; effort: string; accountId: string }>;
 
 const emptyDraft = (providerId: string): RouteDraft =>
-  Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { providerId, model: '', effort: '' }]));
+  Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { providerId, model: '', effort: '', accountId: '' }]));
 
 function toRoutes(draft: RouteDraft, fallback: string): RelayRouteInput {
   const routes: RelayRouteInput = {};
   for (const kind of AGENT_KINDS) {
     const row = draft[kind];
     if (!row) continue;
-    const entry: { providerId?: string; model?: string; effort?: string } = {};
+    const entry: { providerId?: string; model?: string; effort?: string; accountId?: string | null } = {};
     if (row.providerId && row.providerId !== fallback) entry.providerId = row.providerId;
+    // null is sent deliberately: it is the one way to say "not the relay's
+    // account" without naming a different one.
+    if (row.accountId === INHERIT_NONE) entry.accountId = null;
+    else if (row.accountId) entry.accountId = row.accountId;
     if (row.model.trim()) entry.model = row.model.trim();
     if (row.effort.trim()) entry.effort = row.effort.trim();
     if (Object.keys(entry).length) routes[kind] = entry;
@@ -87,6 +99,8 @@ export default function Relay({ projects, projectId, providers, openSession, ope
   const [intent, setIntent] = useState('');
   const [providerId, setProviderId] = useState<string>(providers[0]?.id ?? '');
   const [draft, setDraft] = useState<RouteDraft>(() => emptyDraft(providers[0]?.id ?? ''));
+  const [accountId, setAccountId] = useState('');
+  const [accountOptions, setAccountOptions] = useState<AgentAccount[] | null>(null);
   const [extras, setExtras] = useState<Record<string, number[]>>({});
   const [clock, setClock] = useState(() => Date.now());
   const [holdDismissed, setHoldDismissed] = useState<string | null>(null);
@@ -243,10 +257,25 @@ export default function Relay({ projects, projectId, providers, openSession, ope
     finally { setBusy(null); }
   }, []);
 
+  // The accounts this profile could actually launch as, from the same call the
+  // New session dialog uses. A profile whose harness has no switchable
+  // configuration directory answers with none, and the picker says so rather
+  // than offering a choice that cannot be honoured.
+  useEffect(() => {
+    if (!providerId) { setAccountOptions([]); return; }
+    let live = true;
+    setAccountOptions(null);
+    void window.wanigan.accounts.listForProvider(providerId)
+      .then((rows) => { if (live) setAccountOptions(rows); })
+      .catch(() => { if (live) setAccountOptions([]); });
+    return () => { live = false; };
+  }, [providerId]);
+
   const create = () => act('create', async () => {
     if (!projectId) throw new Error('Choose a project before starting a relay.');
     const next = await window.wanigan.relay.create({
       projectId, intent: intent.trim(), providerId, routes: toRoutes(draft, providerId),
+      accountId: accountId || undefined,
     });
     setIntent('');
     await loadList();
@@ -369,10 +398,36 @@ export default function Relay({ projects, projectId, providers, openSession, ope
             <label>
               <span className="label">Profile</span>
               <select className="field" aria-label="Profile for this relay" value={providerId}
-                onChange={(e) => { setProviderId(e.target.value); setDraft(emptyDraft(e.target.value)); }} disabled={busy !== null}>
+                onChange={(e) => {
+                  setProviderId(e.target.value);
+                  setDraft(emptyDraft(e.target.value));
+                  // The account belonged to the old profile's harness; keeping
+                  // it would offer a pin the new one cannot honour.
+                  setAccountId('');
+                }} disabled={busy !== null}>
                 {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </label>
+            {/* Which account pays. Five phases start hours apart, so leaving
+                this to whatever the project defaults to by then is how a relay
+                bills an account nobody chose — under a forecast whose whole
+                purpose is knowing the cost first. */}
+            {accountOptions === null ? (
+              <p className="faint">Reading the accounts this profile can use…</p>
+            ) : accountOptions.length === 0 ? (
+              <Hint>This profile’s harness has no configuration directory Wanigan can switch, so every phase runs on the credential it already has.</Hint>
+            ) : (
+              <label>
+                <span className="label">Account</span>
+                <select className="field" aria-label="Account every phase of this relay launches as" value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)} disabled={busy !== null}>
+                  <option value="">This project’s account, then the default</option>
+                  {accountOptions.map((row) => (
+                    <option key={row.id} value={row.id}>{row.label}{row.isDefault ? ' (default)' : ''}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             {AGENT_KINDS.map((kind) => (
               <div key={kind} className="row2">
                 <label>
@@ -387,6 +442,21 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                     onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], effort: e.target.value } }))}
                     placeholder="profile default" disabled={busy !== null} />
                 </label>
+                {accountOptions !== null && accountOptions.length > 0 && (
+                  <label>
+                    <span className="label">{KIND_WORD[kind]} account</span>
+                    <select className="field" aria-label={`${KIND_WORD[kind]} account override`}
+                      value={draft[kind]?.accountId ?? ''}
+                      onChange={(e) => setDraft((d) => ({ ...d, [kind]: { ...d[kind], accountId: e.target.value } }))}
+                      disabled={busy !== null}>
+                      <option value="">{accountId ? 'Same as the relay' : 'This project’s account'}</option>
+                      {accountId && <option value={INHERIT_NONE}>Not the relay’s — resolve normally</option>}
+                      {accountOptions.map((row) => (
+                        <option key={row.id} value={row.id}>{row.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </div>
             ))}
             <Hint>A guess is shown as a guess: an override outside the profile's declared set is refused with a reason, never clamped.</Hint>

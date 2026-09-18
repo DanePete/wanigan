@@ -5,6 +5,7 @@ import { projectById } from './store';
 import { launchFieldsFor, providerById } from './providers';
 import { providerModelCatalogue } from './launch-choices';
 import * as control from './control';
+import * as accounts from './accounts';
 import * as otel from './otel';
 import { intersectChoices, launchFieldChoices } from '../shared/launch-fields';
 import { chooseStage, type RouteCandidate, type RouteDefaults, type StageRoute } from '../shared/relay-route';
@@ -73,7 +74,7 @@ function titleOf(intent: string): string {
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line;
 }
 
-type StageOverride = { providerId?: string; model?: string; effort?: string };
+type StageOverride = { providerId?: string; model?: string; effort?: string; accountId?: string | null; permissionMode?: string };
 
 /**
  * The operator's per-stage overrides, checked field by field. A key that is
@@ -96,9 +97,37 @@ function readRoutes(raw: unknown): Partial<Record<DocketNodeKind, StageOverride>
       providerId: optional(over.providerId, `The ${key} stage's provider`, ROUTE_VALUE_MAX),
       model: optional(over.model, `The ${key} stage's model`, ROUTE_VALUE_MAX),
       effort: optional(over.effort, `The ${key} stage's effort`, ROUTE_VALUE_MAX),
+      // null is a value here, not an absence: it means "this stage resolves its
+      // account the ordinary way" even when the relay pinned one above it.
+      accountId: over.accountId === null ? null : optional(over.accountId, `The ${key} stage's account`, ROUTE_VALUE_MAX),
+      permissionMode: optional(over.permissionMode, `The ${key} stage's permission mode`, ROUTE_VALUE_MAX),
     };
   }
   return out;
+}
+
+/**
+ * The account a stage will launch as, refused here rather than at launch.
+ *
+ * `createSession` would reject a bad id too, but five phases are written in one
+ * transaction and started hours apart: a relay that accepted an account the
+ * harness cannot use would look correct on the rail and fail on the phase that
+ * reached it, after the phases before it had already spent. So the same check
+ * `accounts.resolve` makes is made now, by name, before anything is written.
+ * Null is not "no account" — it is "resolve it the way every other session
+ * does", which is the project's account and then the default.
+ */
+function accountFor(id: string | null | undefined, harness: string, where: string): string | null {
+  if (id === undefined || id === null || id === '') return null;
+  const account = accounts.byId(id);
+  if (!account) throw new Error(`${where} names an account that no longer exists.`);
+  if (account.harness !== harness) {
+    throw new Error(`${where} names an account for ${account.harness}, but that stage runs on ${harness}.`);
+  }
+  if (!accounts.supportsAccounts(harness)) {
+    throw new Error(`${where} names an account, but ${harness} has no configuration directory Wanigan can switch.`);
+  }
+  return account.id;
 }
 
 /** A profile's legal move set for the router, read once per profile per relay. */
@@ -143,7 +172,7 @@ async function profileFor(providerId: string): Promise<Profile> {
   };
 }
 
-type Pick_ = { providerId: string; route: StageRoute; profile: Profile };
+type Pick_ = { providerId: string; route: StageRoute; profile: Profile; accountId: string | null; permissionMode: string | null };
 
 /**
  * Create a relay: a docket from the default plan, every agent stage routed
@@ -165,6 +194,10 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   const intent = text(input.intent, 'Intent', control.MAX_OBJECTIVE);
   const providerId = text(input.providerId, 'Provider', ROUTE_VALUE_MAX);
   const routes = readRoutes(input.routes);
+  // Relay-level defaults. Each stage may name its own, and a stage naming null
+  // steps out of the relay's pin entirely.
+  const relayAccountId = input.accountId === null ? null : optional(input.accountId, 'The account', ROUTE_VALUE_MAX);
+  const relayPermissionMode = optional(input.permissionMode, 'The permission mode', ROUTE_VALUE_MAX);
   const acceptance = Array.isArray(input.acceptance)
     ? input.acceptance.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim())
     : [];
@@ -190,7 +223,16 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
       ? { model: wants.model, effort: wants.effort } : undefined;
     const route = chooseStage(kind, profile.candidates, profile.defaults, null, operator ? { operator } : undefined);
     if (operator && route.source !== 'operator') throw new Error(route.reason);
-    picks.set(kind, { providerId: stageProvider, route, profile });
+    // The stage's own account, then the relay's, then null. A stage that names
+    // null explicitly opts out of the relay's pin and resolves the ordinary way.
+    const info = providerById(stageProvider);
+    const harness = info?.harness ?? '';
+    const wanted = wants && 'accountId' in wants ? wants.accountId : relayAccountId;
+    const accountId = accountFor(wanted, harness, `The ${kind} stage`);
+    picks.set(kind, {
+      providerId: stageProvider, route, profile, accountId,
+      permissionMode: wants?.permissionMode ?? relayPermissionMode ?? null,
+    });
   }
 
   const created = control.createDocket({ projectId, title: titleOf(intent), objective: intent, acceptance, risk: 'elevated' });
@@ -200,12 +242,16 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     for (const node of created.nodes) {
       const pick = picks.get(node.kind);
       if (!pick) continue;
-      db().prepare('UPDATE work_nodes SET provider_id=?, model=?, effort=? WHERE id=?')
-        .run(pick.providerId, pick.route.model, pick.route.effort, node.id);
+      db().prepare('UPDATE work_nodes SET provider_id=?, model=?, effort=?, account_id=?, permission_mode=? WHERE id=?')
+        .run(pick.providerId, pick.route.model, pick.route.effort, pick.accountId, pick.permissionMode, node.id);
       db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at)
         VALUES (?,?,?,'route','recorded',?,?,?)`)
         .run(uid('proof'), created.id, node.id, pick.route.reason, JSON.stringify({
           providerId: pick.providerId,
+          // On the proof as well as the row: a route proof is the record of
+          // what was decided, and "which account pays" is part of that decision.
+          accountId: pick.accountId,
+          permissionMode: pick.permissionMode,
           ...pick.route,
           candidates: pick.profile.candidates.map((row) => row.model),
           catalogue: pick.profile.catalogue,

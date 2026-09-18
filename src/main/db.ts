@@ -1781,6 +1781,16 @@ function migrateControl(d: Database.Database) {
   // spends tokens without end. Existing rows default to 0, which is the truth
   // about them: nothing was handed back before this was counted.
   addColumn(d, 'work_nodes', 'handbacks', 'INTEGER NOT NULL DEFAULT 0');
+  // What a stage launches as, beside the provider/model/effort already here.
+  // A phase is a session, so a phase should be able to pin what a session pins:
+  // a relay that could route the work but not say which account paid for it
+  // billed whichever account the project happened to default to, across five
+  // phases, with the estimate phase promising the operator knew the cost first.
+  // NULL keeps the old behaviour exactly — resolve() falls to the project's
+  // account and startNode to its per-kind default — so every existing row and
+  // every ordinary goal is unchanged.
+  addColumn(d, 'work_nodes', 'account_id', 'TEXT');
+  addColumn(d, 'work_nodes', 'permission_mode', 'TEXT');
   d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
   d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_defer ON work_nodes(defer_until) WHERE defer_until IS NOT NULL');
   // Whether the docket was created as a relay (src/main/relay.ts). A relay

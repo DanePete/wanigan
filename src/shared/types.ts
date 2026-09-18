@@ -1525,6 +1525,16 @@ export type DocketNode = {
   status: DocketNodeStatus;
   providerId: string | null;
   model: string | null;
+  /** The reasoning level this phase is pinned to, or null for the profile's own. */
+  effort: string | null;
+  /**
+   * The account this phase launches as, or null to resolve the way every other
+   * session does: the project's account, then the default. Pinned by a relay so
+   * a staged run cannot bill an account nobody chose.
+   */
+  accountId: string | null;
+  /** The permission mode this phase launches with, or null for its kind's default. */
+  permissionMode: string | null;
   sessionId: string | null;
   worktree: string | null;
   startedAt: number | null;
@@ -1717,7 +1727,15 @@ export type DocketDetail = WorkDocket & {
  * whole relay with the router's own sentence rather than being moved to the
  * nearest legal value (src/shared/relay-route.ts).
  */
-export type RelayRouteInput = Partial<Record<DocketNodeKind, { providerId?: string; model?: string; effort?: string }>>;
+export type RelayRouteInput = Partial<Record<DocketNodeKind, {
+  providerId?: string;
+  model?: string;
+  effort?: string;
+  /** This stage's account, overriding the relay's. A stage is a launch. */
+  accountId?: string | null;
+  /** This stage's permission mode, overriding the relay's and the per-kind default. */
+  permissionMode?: string;
+}>>;
 
 export type RelayCreateInput = {
   projectId: string;
@@ -1728,6 +1746,17 @@ export type RelayCreateInput = {
   routes?: RelayRouteInput;
   /** Acceptance checks; with none, Wanigan writes its two standard ones. */
   acceptance?: string[];
+  /**
+   * The account every stage launches as, unless a stage names another.
+   *
+   * Omitted keeps what a session has always done: the project's account, then
+   * the default. Named here, it is pinned on every phase's row at creation, so
+   * a relay that forecasts its own cost can also say which account pays it —
+   * and so five phases cannot quietly bill an account the operator never chose.
+   */
+  accountId?: string | null;
+  /** The permission mode every stage launches with, unless a stage names another. */
+  permissionMode?: string;
 };
 
 /** The router's decision as `src/shared/relay-route.ts` declares it — one declaration, referenced here. */

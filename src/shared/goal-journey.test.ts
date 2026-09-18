@@ -6,7 +6,7 @@ import type { DocketNode, Attention } from './types';
 
 const node = (id: string, status: DocketNode['status'], over: Partial<DocketNode> = {}): DocketNode => ({
   id, status, docketId: 'goal', kind: 'implement', title: id, instructions: '', dependsOn: [], claimPath: null,
-  providerId: null, model: null, sessionId: null, worktree: null, startedAt: null, endedAt: null, detail: null, deferUntil: null, reopenedAt: null, gateRunningSince: null, gateReturns: 0, queued: false, ...over,
+  providerId: null, model: null, effort: null, accountId: null, permissionMode: null, sessionId: null, worktree: null, startedAt: null, endedAt: null, detail: null, deferUntil: null, reopenedAt: null, gateRunningSince: null, gateReturns: 0, queued: false, ...over,
 });
 
 test('goal navigation round-trips opaque IDs without turning their characters into route fields', () => {

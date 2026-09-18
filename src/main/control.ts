@@ -47,6 +47,9 @@ type NodeRow = {
   claim_path: string | null; dispatch_state: string | null; defer_until: number | null;
   reopened_at: number | null;
   gate_returns: number;
+  effort: string | null;
+  account_id: string | null;
+  permission_mode: string | null;
 };
 
 /** Longest objective a goal takes. Exported so a relay's intent is bounded by the same number, not a second one. */
@@ -274,7 +277,9 @@ function mapNodes(rows: NodeRow[], at: number = Date.now()): DocketNode[] {
       id: row.id, docketId: row.docket_id, kind: NODE_KINDS.includes(row.kind as DocketNodeKind)
         ? row.kind as DocketNodeKind : 'implement',
       title: row.title, instructions: row.instructions, dependsOn, claimPath: row.claim_path, status,
-      providerId: row.provider_id, model: row.model, sessionId: row.session_id,
+      providerId: row.provider_id, model: row.model, effort: row.effort ?? null,
+      accountId: row.account_id ?? null, permissionMode: row.permission_mode ?? null,
+      sessionId: row.session_id,
       worktree: row.worktree, startedAt: row.started_at, endedAt: row.ended_at, detail: row.detail,
       queued: row.dispatch_state === 'queued',
       deferUntil: row.defer_until,
@@ -683,7 +688,7 @@ export function goalPlan(docketId: string): GoalPlan | null {
   return latestGoalPlan(docketId);
 }
 
-export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }): Promise<DocketNode> {
+export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string; accountId?: string | null }): Promise<DocketNode> {
   const node = readyNode(nodeId); const parent = docketRow(node.docketId);
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This goal’s project no longer exists.');
@@ -728,8 +733,19 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
-    session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
-      effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
+    // The caller's choice first, then what the node was pinned with when it was
+    // planned, then the per-kind default. A relay pins account, model, effort
+    // and permission mode on the row at creation precisely so the phase that
+    // runs hours later launches as the operator decided, not as whatever the
+    // project defaults to by then — a pin recorded and then ignored at launch
+    // would be worse than no pin, because the rail would show a decision the
+    // session never honoured.
+    session = await createSession({ providerId, projectId: project.id,
+      model: input.model?.trim() || node.model || undefined,
+      effort: input.effort?.trim() || node.effort || undefined,
+      permissionMode: input.permissionMode?.trim() || node.permissionMode
+        || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
+      accountId: input.accountId ?? node.accountId ?? undefined,
       isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
       inherited ? { useWorktree: inherited } : {});
   } catch (error) {

@@ -89,10 +89,56 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
       && /because you chose/.test(pickedRoute.route.reason),
     'an override the profile declares is taken whole, attributed to the operator, and written to the node', pickedRoute);
 
+
     const ordinary = control.createDocket({ projectId: project.id, title: 'Ordinary goal', objective: 'Not a relay.', acceptance: ['Still gets an estimate phase.'] });
     const listed = relay.listRelays(project.id);
     check(listed.length === 2 && listed[0].id === picked.docket.id && listed[1].id === created.docket.id && !listed.some((docket) => docket.id === ordinary.id),
       'the relay list holds relays only, newest first; an ordinary goal in the same project is not one');
+    // ── which account pays ────────────────────────────────────────────
+    // A relay routes five phases that start hours apart. Before this, it could
+    // say which model did the work and not which account was billed for it, so
+    // every phase silently fell to the project's default — under an estimate
+    // phase whose whole purpose is knowing the cost before spending it.
+    const accountsMod = await import('./accounts');
+    const harnessAccounts = accountsMod.list('claude-code');
+    const mine = harnessAccounts[0] ?? null;
+    if (mine) {
+      const pinned = await relay.createRelay({
+        projectId: project.id, intent: 'Pin the account across the relay', providerId,
+        accountId: mine.id,
+        routes: { review: { accountId: null }, verify: { permissionMode: 'plan' } },
+      });
+      const rowOf = (nodeId: string) => db()
+        .prepare('SELECT account_id, permission_mode FROM work_nodes WHERE id=?')
+        .get(nodeId) as { account_id: string | null; permission_mode: string | null };
+      const implementRow = rowOf(nodeOf(pinned, 'implement').id);
+      const reviewRow = rowOf(nodeOf(pinned, 'review').id);
+      const verifyRow = rowOf(nodeOf(pinned, 'verify').id);
+      const estimateRow = rowOf(nodeOf(pinned, 'estimate').id);
+      check(implementRow.account_id === mine.id && nodeOf(pinned, 'implement').accountId === mine.id,
+        'a relay-level account is pinned on every agent phase’s row and reads back on the node, so the phase that runs hours later bills what was chosen',
+        implementRow);
+      check(reviewRow.account_id === null,
+        'a stage naming null steps out of the relay’s pin and resolves the ordinary way — the project’s account, then the default',
+        reviewRow);
+      check(verifyRow.permission_mode === 'plan' && implementRow.permission_mode === null,
+        'a per-stage permission mode is stored for that stage alone; the rest keep their kind’s default rather than inheriting a silent one',
+        { verifyRow, implementRow });
+      check(estimateRow.account_id === null && estimateRow.permission_mode === null,
+        'the estimate phase takes no account and no permission mode, because it launches no agent at all', estimateRow);
+      const proof = pinned.nodes.find((node) => node.nodeId === nodeOf(pinned, 'implement').id)?.route;
+      check(proof !== null && proof !== undefined,
+        'the decision is on the route proof too, not only the row — a proof is the record of what was decided');
+    } else {
+      say('    (no claude-code account configured here, so the account pin is exercised only by its refusals)');
+    }
+    check(/no longer exists/.test(await refused(() => relay.createRelay({
+      projectId: project.id, intent: 'bad account', providerId, accountId: 'acct_does_not_exist',
+    }))), 'an account that does not exist is refused before any row is written, rather than at the phase that reaches it');
+    check(/no longer exists/.test(await refused(() => relay.createRelay({
+      projectId: project.id, intent: 'bad stage account', providerId,
+      routes: { implement: { accountId: 'acct_does_not_exist' } },
+    }))), 'and the same refusal covers a per-stage account, named by its stage');
     check(!relay.readRelay(ordinary.id).relay && kindsOf(relay.readRelay(ordinary.id)) === 'plan,estimate,implement,verify,review',
       'an ordinary goal reads on the rail too, unflagged, and now carries the estimate phase from the shared default plan');
 
