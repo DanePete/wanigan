@@ -7,6 +7,7 @@ import { enqueue, SESSION_NOT_QUEUED } from './queue';
 import {
   cmdExtensionInit, cmdExtensionPreview, cmdExtensionValidate, EXTENSION_CLI_HELP,
 } from './extension-cli';
+import { cmdRelayCreate, cmdRelayShow, RELAY_CLI_HELP } from './relay-cli';
 import type { BatchRow, QueueKind } from '../shared/types';
 
 /**
@@ -36,7 +37,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'extension-init', 'extension-validate', 'extension-preview', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'extension-init', 'extension-validate', 'extension-preview', 'relay-create', 'relay-show', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -514,6 +515,7 @@ function cmdHelp(): number {
   learn-consolidate            run one consolidation pass now, and report how
                                much of the queue it reached
 ${EXTENSION_CLI_HELP}
+${RELAY_CLI_HELP}
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -732,6 +734,10 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'extension-init': return cmdExtensionInit(rest, out);
       case 'extension-validate': return cmdExtensionValidate(rest, out);
       case 'extension-preview': return cmdExtensionPreview(rest, out);
+      // The half of a relay that spends nothing: planning it, and reading the
+      // forecast. Starting a phase stays in the app, where the consent is.
+      case 'relay-create': return await cmdRelayCreate(rest, out);
+      case 'relay-show': return cmdRelayShow(rest, out);
     }
     return USAGE;
   } catch (e) {
