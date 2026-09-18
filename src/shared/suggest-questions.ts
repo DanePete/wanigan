@@ -271,6 +271,23 @@ function distribution(value: unknown): Record<string, number> {
   return out;
 }
 
+export type Deliberation = { score: number; confidence: number; distribution: Record<string, number> };
+
+/**
+ * The deliberation answer, or nothing.
+ *
+ * One reader for the production path and the try panel both, so what an
+ * operator is shown when they test an intent cannot drift from what the router
+ * would actually have acted on.
+ */
+function readDeliberation(answers: Record<string, unknown>): Deliberation | null {
+  const raw = isObject(answers.deliberation) ? answers.deliberation : null;
+  const confidence = raw ? probability(raw.confidence) : null;
+  if (!raw || confidence === null) return null;
+  if (typeof raw.score !== 'number' || !Number.isFinite(raw.score)) return null;
+  return { score: raw.score, confidence, distribution: distribution(raw.probabilities) };
+}
+
 /**
  * A response body turned into a suggestion, treating every field as untrusted.
  *
@@ -306,11 +323,7 @@ export function readSuggestion(
 
   const noul = isObject(answers.needs_context) ? probability(answers.needs_context.noul) : null;
 
-  const scoreRaw = isObject(answers.deliberation) ? answers.deliberation : null;
-  const scoreConfidence = scoreRaw ? probability(scoreRaw.confidence) : null;
-  const deliberation = scoreRaw && typeof scoreRaw.score === 'number' && Number.isFinite(scoreRaw.score) && scoreConfidence !== null
-    ? { score: scoreRaw.score, confidence: scoreConfidence, distribution: distribution(scoreRaw.probabilities) }
-    : null;
+  const deliberation = readDeliberation(answers);
 
   const choiceRaw = isObject(answers.model) ? answers.model : null;
   const chosen = choiceRaw && typeof choiceRaw.choice === 'string' ? choiceRaw.choice : null;
@@ -495,4 +508,91 @@ export function phasesFor(
   reading: PipelineReading,
 ): readonly RelayPhase[] {
   return reading ? reading.phases : requested;
+}
+
+/* ── trying an intent before trusting it ──────────────────────────────── */
+
+/**
+ * The questions behind "what would you say about this?".
+ *
+ * Every one of them is intent-only, which is why this needs no candidate list:
+ * the pipeline choice is about the work, and the deliberation score is
+ * model-independent by construction (see `DELIBERATION_LEVELS`). So one call
+ * answers all three, and what an operator sees here is the same judgment the
+ * router would have received rather than a demonstration of one.
+ *
+ * It is not gated on a capability. The point is to look before switching one
+ * on, and a preview that required the thing being previewed would be useless.
+ * It does require a credential, and it does spend, so it happens only on a
+ * press and the panel says what it cost.
+ */
+export function tryRequest(intent: string, requested: readonly RelayPhase[]): SystemOneRequest | null {
+  const text = bounded(intent, INTENT_MAX);
+  if (!text) return null;
+  const options = applicable(requested);
+  const questions: Record<string, SystemOneQuestion> = {
+    deliberation: {
+      type: 'score',
+      instructions: 'How much deliberation does this stage of work require?',
+      criteria: DELIBERATION_LEVELS,
+    },
+    needs_context: {
+      type: 'noul',
+      instructions: 'Does this stage require understanding code that the instruction does not itself contain?',
+    },
+  };
+  // Only when there is a real choice to make, for the same reason relayRequest
+  // declines: a choice with one option is a foregone conclusion with a price.
+  if (options.length >= 2) {
+    const criteria: Record<string, string | null> = {};
+    for (const pipeline of options) criteria[pipeline.id] = pipeline.criterion;
+    questions.pipeline = {
+      type: 'choice',
+      instructions: 'Which of these describes the work this instruction asks for?',
+      criteria,
+    };
+  }
+  return { model: 'jev-latest', state: { operator_intent: text }, questions };
+}
+
+export type TryReading = {
+  pipeline: NonNullable<PipelineReading> | null;
+  deliberation: (Deliberation & { level: string }) | null;
+  needsContext: number | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+};
+
+/**
+ * What the model actually said, ungated.
+ *
+ * Thresholds are deliberately not applied. An operator testing an intent needs
+ * to see the confidence that *would* have been judged, including the ones that
+ * fall short — a preview that silently dropped every unconvinced answer would
+ * hide exactly the cases the threshold exists to catch, and those are the ones
+ * worth looking at before deciding whether 0.8 is the right bar here.
+ */
+export function readTry(body: unknown, requested: readonly RelayPhase[]): TryReading {
+  const empty: TryReading = { pipeline: null, deliberation: null, needsContext: null, usage: null };
+  if (!isObject(body)) return empty;
+  const answers = isObject(body.answers) ? body.answers : null;
+  if (!answers) return empty;
+
+  const raw = readDeliberation(answers);
+  const top = DELIBERATION_LEVELS.length - 1;
+  const deliberation = raw
+    ? { ...raw, level: DELIBERATION_LEVELS[Math.min(top, Math.max(0, Math.round(raw.score)))] ?? '' }
+    : null;
+
+  const usageRaw = isObject(body.usage) ? body.usage : null;
+  const usage = usageRaw && typeof usageRaw.input_tokens === 'number' && typeof usageRaw.output_tokens === 'number'
+    ? { inputTokens: usageRaw.input_tokens, outputTokens: usageRaw.output_tokens }
+    : null;
+
+  return {
+    // Threshold 0: show what was said, not what would have survived.
+    pipeline: readPipeline(body, requested, 0),
+    deliberation,
+    needsContext: isObject(answers.needs_context) ? probability(answers.needs_context.noul) : null,
+    usage,
+  };
 }

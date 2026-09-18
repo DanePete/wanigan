@@ -6,8 +6,9 @@ import type { RelayPhase } from '../../shared/relay';
 import type { RouteCandidate } from '../../shared/relay-route';
 import {
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
-  readPipeline, readSuggestion, relayRequest, stageRequest,
+  readPipeline, readSuggestion, readTry, relayRequest, stageRequest, tryRequest,
   type PipelineReading, type StageReading, type SuggesterCapability, type SystemOneRequest,
+  type TryReading,
 } from '../../shared/suggest-questions';
 
 /**
@@ -264,6 +265,43 @@ export async function verify(keyOverride?: string): Promise<{ ok: boolean; detai
   return { ok: true, detail: `Answered in ${outcome.ms}ms, ${cost}.` };
 }
 
+export type TryOutcome =
+  | ({ ok: true; ms: number; estimatedUsd: number } & TryReading)
+  | { ok: false; reason: string };
+
+/** Every stage a relay can declare, which is what a preview should consider. */
+const ALL_PHASES: readonly RelayPhase[] = ['plan', 'estimate', 'implement', 'verify', 'review'];
+
+/**
+ * What the suggester would say about one description, without acting on it.
+ *
+ * The honest counterpart to "a suggestion is a guess, shown as a guess": before
+ * trusting one, you can see one. It runs the real questions and reports the
+ * real confidences **ungated**, including answers that fall below the
+ * thresholds — those are precisely the cases worth looking at when deciding
+ * whether 0.8 is the right bar, and a preview that hid them would be
+ * demonstrating the gate rather than the model.
+ *
+ * Not gated on a capability, because the point is to look before switching one
+ * on. Gated on a credential and on an explicit press, because it spends.
+ */
+export async function tryIntent(raw: unknown): Promise<TryOutcome> {
+  const intent = typeof raw === 'string' ? raw.trim() : '';
+  if (!intent) return { ok: false, reason: 'Describe a task first.' };
+  if (!hasProviderKey(PROVIDER)) return { ok: false, reason: 'No TypeSafe credential is stored.' };
+  const request = tryRequest(intent, ALL_PHASES);
+  if (!request) return { ok: false, reason: 'Describe a task first.' };
+  const outcome = await ask(request);
+  if (!outcome.ok) return { ok: false, reason: outcome.reason };
+  const reading = readTry(outcome.body, ALL_PHASES);
+  return {
+    ok: true,
+    ms: outcome.ms,
+    estimatedUsd: estimatedUsd(reading.usage?.inputTokens ?? outcome.inputTokens ?? 0),
+    ...reading,
+  };
+}
+
 /**
  * Store a credential, but only one that has been proven first.
  *
@@ -324,5 +362,7 @@ export const suggestModule: WaniganModule = {
     // returns a fingerprint, and there is no channel that returns the key.
     handle('suggest:setKey', (key: unknown) => setKey(key));
     handle('suggest:clearKey', () => clearKey());
+    // Spends, so it is a press and never a render. Untrusted renderer text.
+    handle('suggest:try', (intent: unknown) => tryIntent(intent));
   },
 };

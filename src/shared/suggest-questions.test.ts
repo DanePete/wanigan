@@ -21,7 +21,7 @@ import {
   DELIBERATION_LEVELS, DEFAULT_MIN_EFFORT_CONFIDENCE, DEFAULT_MIN_PIPELINE_CONFIDENCE,
   PIPELINES, UNSKIPPABLE,
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
-  effortFromScore, phasesFor, readPipeline, readSuggestion, relayRequest, stageRequest,
+  effortFromScore, phasesFor, readPipeline, readSuggestion, readTry, relayRequest, stageRequest, tryRequest,
 } from './suggest-questions.ts';
 
 /** The same three shapes the router's own fixture uses. */
@@ -404,5 +404,68 @@ test('every capability is declared with what switching it off costs', () => {
     // A switch whose off state is undescribed is a switch nobody can judge.
     assert.ok(capability.withoutIt.length > 20, `${capability.id} does not say what it costs to turn off`);
     assert.ok(capability.withoutIt.trim().endsWith('.'), capability.id);
+  }
+});
+
+/* ── trying an intent before trusting it ──────────────────────────────── */
+
+test('a try asks only intent-only questions, so it needs no candidate models at all', () => {
+  const request = tryRequest('rename a variable', ALL_PHASES);
+  assert.ok(request);
+  assert.deepEqual(Object.keys(request.state), ['operator_intent']);
+  assert.deepEqual(Object.keys(request.questions).sort(), ['deliberation', 'needs_context', 'pipeline']);
+
+  // The deliberation question is word-for-word the production one: a preview
+  // that asked something else would be demonstrating a different model.
+  const live = stageRequest('implement', 'rename a variable', CANDIDATES, ROUTE);
+  assert.ok(live);
+  assert.deepEqual(request.questions.deliberation, live.questions.deliberation);
+  assert.deepEqual(request.questions.needs_context, live.questions.needs_context);
+});
+
+test('a try drops the pipeline question when the docket admits only one, and refuses an empty intent', () => {
+  const narrow = tryRequest('x', ['implement', 'verify', 'review']);
+  assert.ok(narrow);
+  assert.deepEqual(Object.keys(narrow.questions).sort(), ['deliberation', 'needs_context']);
+  assert.equal(tryRequest('   ', ALL_PHASES), null);
+  assert.equal(tryRequest('', ALL_PHASES), null);
+});
+
+test('a try reports what was said, including answers no threshold would have taken', () => {
+  const unconvinced = readTry({
+    answers: {
+      pipeline: { type: 'choice', choice: 'direct', probabilities: { direct: 0.55, planned: 0.45 }, confidence: 0.55 },
+      deliberation: { type: 'score', score: 1.4, probabilities: { '1': 0.6, '2': 0.4 }, confidence: 0.61 },
+      needs_context: { type: 'noul', noul: 0.3 },
+    },
+    usage: { input_tokens: 120, output_tokens: 0 },
+  }, ALL_PHASES);
+
+  // Both fall below the 0.8 gates and both are still reported: those are the
+  // cases worth seeing when deciding whether 0.8 is the right bar.
+  assert.equal(unconvinced.pipeline?.confidence, 0.55);
+  assert.equal(unconvinced.deliberation?.confidence, 0.61);
+  assert.equal(unconvinced.needsContext, 0.3);
+  assert.deepEqual(unconvinced.usage, { inputTokens: 120, outputTokens: 0 });
+
+  // The score is named by the level it sits nearest, for reading.
+  assert.equal(unconvinced.deliberation?.level, DELIBERATION_LEVELS[1]);
+  assert.equal(readTry({ answers: { deliberation: { score: 3, confidence: 0.9 } } }, ALL_PHASES).deliberation?.level,
+    DELIBERATION_LEVELS[3]);
+});
+
+test('a try never widens a docket, and a malformed body reads as nothing said', () => {
+  // The same narrowing rule as production: an answer naming a pipeline this
+  // docket could not run is discarded rather than previewed as possible.
+  const over = readTry({ answers: { pipeline: { choice: 'full', confidence: 1 } } }, ['plan', 'implement', 'verify', 'review']);
+  assert.equal(over.pipeline, null);
+
+  for (const junk of [null, 'overloaded', 0, [], {}, { answers: {} }, { answers: { deliberation: { score: 'two' } } }]) {
+    const reading = readTry(junk, ALL_PHASES);
+    assert.deepEqual(
+      { p: reading.pipeline, d: reading.deliberation, n: reading.needsContext, u: reading.usage },
+      { p: null, d: null, n: null, u: null },
+      `did not read ${JSON.stringify(junk)} as nothing said`,
+    );
   }
 });

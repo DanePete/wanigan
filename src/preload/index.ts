@@ -66,6 +66,17 @@ function listen(channel: string, handler: (...args: any[]) => void): void {
   if (!demoWindow || channel === 'window:visibility' || channel === 'menu:route') ipcRenderer.on(channel, handler);
 }
 
+/** What the suggester would say about one description, with nothing gated away. */
+export type SuggestTryShape =
+  | {
+      ok: true; ms: number; estimatedUsd: number;
+      pipeline: { pipeline: string; phases: string[]; confidence: number; distribution: Record<string, number> } | null;
+      deliberation: { score: number; confidence: number; level: string; distribution: Record<string, number> } | null;
+      needsContext: number | null;
+      usage: { inputTokens: number; outputTokens: number } | null;
+    }
+  | { ok: false; reason: string };
+
 /** What the routing suggester reports about itself. Never the key, only a fingerprint. */
 export type SuggestStatusShape = {
   hasKey: boolean;
@@ -299,6 +310,8 @@ const api = {
     verify: () => call<{ ok: boolean; detail: string }>('suggest:verify'),
     setKey: (key: string) => call<{ ok: boolean; detail: string; fingerprint: string | null }>('suggest:setKey', key),
     clearKey: () => call<boolean>('suggest:clearKey'),
+    /** Makes one real, billed call and reports what the model said, ungated. */
+    try: (intent: string) => call<SuggestTryShape>('suggest:try', intent),
   },
 
   // ── phase 1 · telemetry ──────────────────────────────────────────────
