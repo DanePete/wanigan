@@ -55,13 +55,21 @@ function fixture() {
         const respond = (id, result) => setImmediate(() => child.stdout.emit('data', Buffer.from(JSON.stringify({ id, result }) + '\n')));
         child.stdin = { write: line => {
           const message = JSON.parse(line); messages.push(message);
+          const refuse = (id, text) => setImmediate(() => child.stdout.emit('data', Buffer.from(JSON.stringify({ id, error: { message: text } }) + '\n')));
           if (message.method === 'initialize') respond(message.id, {});
+          else if (message.method === 'initialized') assert.equal(message.id, undefined, 'initialized is a notification');
           else if (message.method === 'account/read') respond(message.id, state.authReply ?? {
             account: { type: 'chatgpt', email: 'same-email@example.invalid', planType: 'pro' },
           });
+          else if (message.method === 'model/list') {
+            const pages = state.modelPages ?? [{ data: [{ id: 'fixture-model', displayName: 'Fixture' }], nextCursor: null }];
+            const index = message.params.cursor ? Number(message.params.cursor) : 0;
+            respond(message.id, pages[Math.min(index, pages.length - 1)]);
+          }
           else if (message.method === 'account/rateLimits/read') {
             state.mutateDuringRead?.();
-            respond(message.id, { rateLimits: { planType: 'pro', primary: {
+            if (state.limitsError) { refuse(message.id, state.limitsError); return; }
+            respond(message.id, state.limitsReply ?? { rateLimits: { planType: 'pro', primary: {
               usedPercent: options.env.CODEX_HOME ? 72 : 11, resetsAt: 1000, windowDurationMins: 300,
             } } });
           } else throw new Error('Unexpected protocol method ' + message.method);
@@ -150,6 +158,103 @@ test('a replaced Codex login invalidates its cache and a change during a read re
     assert.equal(f.launches.length, 2);
     f.state.mutateDuringRead = () => fs.appendFileSync(file, '-changed-during-read');
     await assert.rejects(reader.readCodexStatus(true, account.id), /login changed/);
+  } finally { f.close(); }
+});
+
+test('the Codex reader sends only its read methods on the stable surface, and keeps every reported bucket', async () => {
+  const f = fixture();
+  try {
+    const account = f.account('buckets');
+    f.state.limitsReply = { ordinaryUsageAllowed: false, accountId: 'backend-fixture',
+      rateLimits: { limitId: 'codex', planType: 'pro', primary: { usedPercent: 100, resetsAt: 1 } },
+      rateLimitsByLimitId: { codex: { primary: { usedPercent: 100, resetsAt: 1 } }, codex_other: { limitName: 'reserve', primary: { usedPercent: 3 } } } };
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
+    const status = await reader.readCodexStatus(true, account.id);
+    await reader.readCodexModels(true, account.id);
+    assert.deepEqual(status.buckets.map(row => row.limitId), ['codex', 'codex_other']);
+    assert.equal(status.ordinaryUsageAllowed, false, 'a passed reset never reads as recovered');
+    assert.equal(status.backendAccountId, 'backend-fixture'); assert.equal(status.quotaApplicable, true);
+    assert.deepEqual([...new Set(f.messages.map(message => message.method))].sort(),
+      ['account/rateLimits/read', 'account/read', 'initialize', 'initialized', 'model/list']);
+    const initialize = f.messages.find(message => message.method === 'initialize');
+    assert.equal(initialize.params.capabilities, undefined, 'no experimental surface is negotiated');
+    assert(f.messages.filter(message => message.method === 'account/read').every(message => message.params.refreshToken === false));
+    assert.deepEqual(f.messages.find(message => message.method === 'account/rateLimits/read').params, { excludeResetCreditDetails: true });
+  } finally { f.close(); }
+});
+
+test('an API-key Codex login has no allowance to report: not applicable, never a fault or zero', async () => {
+  const f = fixture();
+  try {
+    const account = f.account('api-key'); f.state.authReply = { account: { type: 'apiKey' }, requiresOpenaiAuth: true };
+    f.state.limitsError = 'chatgpt authentication required';
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
+    const status = await reader.readCodexStatus(true, account.id);
+    assert.equal(status.quotaApplicable, false); assert.equal(status.primary, null); assert.equal(status.authState, 'signed-in');
+    f.state.authReply = undefined;
+    await assert.rejects(reader.readCodexStatus(true, account.id), /did not provide usage status: chatgpt authentication required/);
+  } finally { f.close(); }
+});
+
+test('the model catalog is bound to its account, read to the end, and never presented as access', async () => {
+  const f = fixture();
+  try {
+    const work = f.account('work'); const other = f.account('other');
+    f.state.modelPages = [{ data: [{ id: 'one' }], nextCursor: '1' }, { data: [{ id: 'two' }], nextCursor: null }];
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
+    const first = await reader.readCodexModels(false, work.id);
+    assert.deepEqual(first.models.map(model => model.id), ['one', 'two']);
+    assert.equal(f.launches[0].env.CODEX_HOME, work.configDir, 'the probe uses the launch environment of the picked account');
+    await reader.readCodexModels(false, work.id); assert.equal(f.launches.length, 1);
+    await reader.readCodexModels(false, other.id); assert.equal(f.launches.length, 2, 'two accounts never share a catalog entry');
+    fs.writeFileSync(path.join(work.configDir, 'auth.json'), 'synthetic-credential-never-read');
+    await reader.readCodexModels(false, work.id); assert.equal(f.launches.length, 3, 'a login change invalidates the catalog');
+    f.state.authReply = { account: null };
+    const signedOut = await reader.readCodexModels(true, work.id);
+    assert.equal(signedOut.authState, 'signed-out'); assert.equal(signedOut.models.length, 2);
+    assert.match(signedOut.note, /not models this login can run/);
+    f.state.modelPages = [{ data: [], nextCursor: '0' }];
+    await assert.rejects(reader.readCodexModels(true, work.id), /did not end within 20 pages/);
+  } finally { f.close(); }
+});
+
+test('an account whose credentials live in the OS keyring is never served a cached reading', async () => {
+  const f = fixture();
+  try {
+    const account = f.account('keyring');
+    fs.writeFileSync(path.join(account.configDir, 'config.toml'), 'model = "fixture"\ncli_auth_credentials_store = "keyring"\n');
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
+    const first = await reader.readCodexStatus(false, account.id);
+    await reader.readCodexStatus(false, account.id);
+    assert.equal(first.loginWitnessed, false); assert.equal(f.launches.length, 2);
+    fs.writeFileSync(path.join(account.configDir, 'config.toml'), 'cli_auth_credentials_store = "file"\n');
+    assert.equal((await reader.readCodexStatus(false, account.id)).loginWitnessed, true);
+    await reader.readCodexStatus(false, account.id); assert.equal(f.launches.length, 3);
+  } finally { f.close(); }
+});
+
+test('the Usage row prints every bucket as reported, the backend verdict first, and a passed reset as stale', () => {
+  const f = fixture();
+  try {
+    const account = f.account('row'); const join = f.load('src/main/modules/usage-limits.ts').__test.fromCodexStatus;
+    const window = (usedPercent, resetsAt) => ({ usedPercent, remainingPercent: 100 - usedPercent, resetsAt, windowMinutes: 300 });
+    const status = { fetchedAt: 5000, plan: 'pro', spendControlReached: false, authState: 'signed-in', quotaApplicable: true,
+      primary: window(100, 1000), secondary: null, ordinaryUsageAllowed: false, loginWitnessed: false, buckets: [
+        { limitId: 'codex', limitName: null, normalModelSlug: null, primary: window(100, 1000), secondary: null },
+        { limitId: 'codex_other', limitName: 'gpt-reserve', normalModelSlug: null, primary: window(3, 9000), secondary: null },
+        { limitId: 'codex_model', limitName: null, normalModelSlug: 'gpt-fixture', primary: window(8, 9000), secondary: null },
+      ] };
+    const row = join(account, status, 5000);
+    assert.deepEqual(row.windows.map(w => [w.kind, w.scope, w.usedPercent]),
+      [['5h window', null, 100], ['gpt-reserve · 5h window', null, 3], ['codex_model · 5h window', 'gpt-fixture', 8]]);
+    assert.equal(new Set(row.windows.map(w => `${w.kind}:${w.scope}`)).size, 3, 'rows stay distinguishable');
+    assert.match(row.detail, /^Codex reports that ordinary included usage is not currently allowed/);
+    assert.match(row.detail, /reset time has passed.*does not show the allowance recovered/);
+    assert.match(row.detail, /cannot see a login change from files/);
+    assert.equal(join(account, { ...status, ordinaryUsageAllowed: null, loginWitnessed: true }, 500).detail, null, 'an absent verdict and a future reset say nothing');
+    const apiKey = join(account, { ...status, quotaApplicable: false, primary: null, buckets: [] }, 1);
+    assert.equal(apiKey.state, 'unsupported'); assert.match(apiKey.detail, /API key.*not a reading of zero/);
+    assert.match(join(account, { ...status, authState: 'signed-out', requiresOpenaiAuth: false }, 1).detail, /does not require one/);
   } finally { f.close(); }
 });
 

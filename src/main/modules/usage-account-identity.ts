@@ -32,6 +32,20 @@ export function usageAccountRevision(account: AgentAccount): string {
   ])).digest('hex');
 }
 
+/** Whether a file stat can witness this account's login changing. Codex may
+ * keep credentials in the OS keyring (`cli_auth_credentials_store`), where a
+ * save deletes auth.json and a later login touches no file at all. Only the
+ * ordinary config file is read, never a credential. An administrator can
+ * enforce a store this file does not show, so true means "as configured". */
+export function usageLoginWitnessed(account: AgentAccount): boolean {
+  if (account.harness !== 'codex') return true;
+  try {
+    const config = fs.readFileSync(path.join(account.configDir, 'config.toml'), 'utf8');
+    const mode = /^\s*cli_auth_credentials_store\s*=\s*["']([a-z]+)["']/m.exec(config)?.[1];
+    return mode === undefined || mode === 'file';
+  } catch { return true; }
+}
+
 function savedLogin(account: AgentAccount): string | null {
   if (account.harness !== 'claude-code') return null;
   // Only ordinary Claude account metadata, never .credentials.json, Keychain,

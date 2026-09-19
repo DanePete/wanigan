@@ -2,8 +2,10 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { detectProviders, shellPath } from '../providers';
 import * as accounts from '../accounts';
-import { usageAccountRevision } from './usage-account-identity';
+import { usageAccountRevision, usageLoginWitnessed } from './usage-account-identity';
 import type { AccountIdentity, AgentAccount } from '../../shared/types';
+import { codexAccount, codexModelPage, codexRateLimits, codexWindow } from '../../shared/codex-account';
+import type { CodexLimitBucket, CodexLimitWindow, CodexModel } from '../../shared/codex-account';
 
 /**
  * The Codex app-server is the one supported local surface that can report the
@@ -16,13 +18,7 @@ import type { AccountIdentity, AgentAccount } from '../../shared/types';
  * and exits straight afterwards.  No credentials leave the machine through
  * Wanigan and this module deliberately has no reset/consume operation.
  */
-export type CodexLimitWindow = {
-  usedPercent: number;
-  remainingPercent: number;
-  /** Unix milliseconds, or null when Codex did not provide a reset time. */
-  resetsAt: number | null;
-  windowMinutes: number | null;
-};
+export type { CodexLimitBucket, CodexLimitWindow, CodexModel } from '../../shared/codex-account';
 
 export type CodexStatus = {
   fetchedAt: number;
@@ -32,18 +28,27 @@ export type CodexStatus = {
   spendControlReached: boolean | null;
   identity?: AccountIdentity | null;
   authState?: 'signed-in' | 'signed-out' | 'unknown';
+  /** Every metered limit the backend named, as reported. */
+  buckets?: CodexLimitBucket[];
+  /** The backend's verdict; null is unavailable and is never read as allowed. */
+  ordinaryUsageAllowed?: boolean | null;
+  /** Ordinary account metadata. Stays in main; it is how a login change is
+   * seen when credentials live in the OS keyring. */
+  backendAccountId?: string | null;
+  requiresOpenaiAuth?: boolean | null;
+  /** false for an API-key login, which has no ChatGPT allowance to report.
+   * That is not a fault and not zero usage. */
+  quotaApplicable?: boolean;
+  /** false when this account's credential store means a file stat cannot see
+   * a login change, so the reading was not served from cache. */
+  loginWitnessed?: boolean;
 };
 
-export type CodexModel = {
-  id: string;
-  label: string;
-  description: string | null;
-  reasoningEfforts: string[];
-  defaultReasoningEffort: string | null;
-  isDefault: boolean;
+export type CodexModels = {
+  fetchedAt: number; models: CodexModel[]; note: string | null;
+  /** The catalog this client would offer. Never evidence that a login may run a model. */
+  authState?: 'signed-in' | 'signed-out' | 'unknown';
 };
-
-export type CodexModels = { fetchedAt: number; models: CodexModel[]; note: string | null };
 
 const CACHE_MS = 45_000;
 const MODELS_CACHE_MS = 10 * 60_000;
@@ -51,57 +56,27 @@ const REQUEST_TIMEOUT_MS = 12_000;
 /** Keyed by account id (or '' for "whatever the environment chooses"): two logins are two answers. */
 const cached = new Map<string, { revision: string; value: CodexStatus }>();
 const pending = new Map<string, Promise<CodexStatus>>();
-let modelsCached: CodexModels | null = null;
-let modelsPending: Promise<CodexModels> | null = null;
-
-type RpcMessage = { id?: number; result?: unknown; error?: { message?: unknown }; method?: string };
-type RawWindow = { usedPercent?: unknown; resetsAt?: unknown; windowDurationMins?: unknown };
-type RawLimits = {
-  planType?: unknown; primary?: RawWindow | null; secondary?: RawWindow | null;
-  spendControlReached?: unknown;
-};
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function windowFrom(raw: RawWindow | null | undefined): CodexLimitWindow | null {
-  if (!raw) return null;
-  const used = numberOrNull(raw.usedPercent);
-  if (used === null) return null;
-  const seconds = numberOrNull(raw.resetsAt);
-  return {
-    usedPercent: Math.max(0, Math.min(100, Math.round(used))),
-    remainingPercent: Math.max(0, Math.min(100, 100 - Math.round(used))),
-    resetsAt: seconds === null ? null : seconds * 1000,
-    windowMinutes: numberOrNull(raw.windowDurationMins),
-  };
-}
+/** Keyed by account and login revision: one login's catalog is not another's. */
+const modelsCached = new Map<string, CodexModels>();
+const modelsPending = new Map<string, Promise<CodexModels>>();
+/** The cursor is opaque and one page is the whole list today, so this bound is
+ * only ever reached by a server that never ends its list. */
+const MAX_MODEL_PAGES = 20;
 
 function snapshot(result: unknown): CodexStatus {
-  const r = (result && typeof result === 'object' ? result : {}) as { rateLimits?: RawLimits | null };
-  const limits = r.rateLimits ?? {};
+  const limits = codexRateLimits(result);
   return {
-    fetchedAt: Date.now(),
-    plan: typeof limits.planType === 'string' ? limits.planType : null,
-    primary: windowFrom(limits.primary),
-    secondary: windowFrom(limits.secondary),
-    spendControlReached: typeof limits.spendControlReached === 'boolean' ? limits.spendControlReached : null,
+    fetchedAt: Date.now(), plan: limits.plan, primary: limits.primary, secondary: limits.secondary,
+    spendControlReached: limits.spendControlReached, buckets: limits.buckets,
+    ordinaryUsageAllowed: limits.ordinaryUsageAllowed, backendAccountId: limits.backendAccountId,
   };
 }
 
-function accountIdentity(result: unknown): Pick<CodexStatus, 'identity' | 'authState'> {
-  if (!result || typeof result !== 'object' || !('account' in result)) return { identity: null, authState: 'unknown' };
-  const account: unknown = (result as { account: unknown }).account;
-  if (account === null) return { identity: null, authState: 'signed-out' };
-  if (!account || typeof account !== 'object') return { identity: null, authState: 'unknown' };
-  const raw = account as Record<string, unknown>;
-  const str = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
-  const type = str(raw.type);
-  if (!type) return { identity: null, authState: 'unknown' };
+function accountIdentity(result: unknown): Pick<CodexStatus, 'identity' | 'authState' | 'requiresOpenaiAuth'> & { type: string | null } {
+  const read = codexAccount(result);
   return {
-    authState: 'signed-in',
-    identity: { email: str(raw.email), orgName: null, plan: str(raw.planType), authMethod: type },
+    authState: read.authState, requiresOpenaiAuth: read.requiresOpenaiAuth, type: read.type,
+    identity: read.authState === 'signed-in' ? { email: read.email, orgName: null, plan: read.plan, authMethod: read.type } : null,
   };
 }
 
@@ -187,37 +162,36 @@ async function codexAppServer(purpose: string): Promise<string> {
   return provider.path;
 }
 
-async function request(account: AgentAccount | null): Promise<CodexStatus> {
-  const bin = await codexAppServer('Codex usage status');
-  const PATH = await shellPath();
+type RpcMessage = { id?: number; result?: unknown; error?: { message?: unknown }; method?: string };
+type Call = (method: string, params: unknown) => Promise<unknown>;
+class RpcError extends Error {}
 
-  return new Promise<CodexStatus>((resolve, reject) => {
+/**
+ * One short-lived app-server, bound to the account exactly as a launch is.
+ * The handshake stays on the stable surface: no `experimentalApi`, and the
+ * `initialized` notification the protocol expects after `initialize`.
+ */
+async function session<T>(account: AgentAccount | null, label: string, purpose: string, run: (call: Call) => Promise<T>): Promise<T> {
+  const bin = await codexAppServer(purpose);
+  const PATH = await shellPath();
+  return new Promise<T>((resolve, reject) => {
     const env = probeEnv(PATH);
     // Default means unset, not an empty object spread over ambient CODEX_HOME.
     accounts.applyLaunchEnv(env, account);
     const child = spawn(bin, ['app-server', '--stdio'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-    let settled = false;
-    let buffer = '';
-    let stderr = '';
-    let identity: Pick<CodexStatus, 'identity' | 'authState'> = { identity: null, authState: 'unknown' };
-    const fail = (reason: string) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer); stop(child); reject(new Error(reason));
-    };
-    const done = (value: CodexStatus) => {
-      if (settled) return;
-      settled = true; clearTimeout(timer); stop(child); resolve(value);
-    };
-    const send = (id: number, method: string, params: unknown) => {
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    };
-    const timer = setTimeout(() => fail('Codex status did not respond within 12 seconds.'), REQUEST_TIMEOUT_MS);
+    let settled = false; let buffer = ''; let stderr = ''; let next = 1;
+    const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+    const settle = (finish: () => void) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); finish(); };
+    const fail = (reason: string) => settle(() => reject(new Error(reason)));
+    const timer = setTimeout(() => fail(`${label} did not respond within 12 seconds.`), REQUEST_TIMEOUT_MS);
+    const write = (message: Record<string, unknown>) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+    const call: Call = (method, params) => new Promise((ok, no) => { const id = next++; waiting.set(id, { resolve: ok, reject: no }); write({ id, method, params }); });
 
-    child.on('error', (e) => fail(`Could not start Codex status: ${e.message}`));
+    child.on('error', (e) => fail(`Could not start ${label}: ${e.message}`));
     // Kept only to explain an early exit; a warning from a child that goes on
-    // to answer settles nothing, because `done` has already run by then.
+    // to answer settles nothing, because the read has already settled by then.
     child.stderr.on('data', (chunk: Buffer) => { stderr = takeStderr(stderr, chunk); });
-    child.on('close', (code) => fail(exitReason('Codex status', code, stderr)));
+    child.on('close', (code) => fail(exitReason(label, code, stderr)));
     child.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString('utf8');
       for (;;) {
@@ -226,75 +200,57 @@ async function request(account: AgentAccount | null): Promise<CodexStatus> {
         const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
         let msg: RpcMessage;
         try { msg = JSON.parse(line) as RpcMessage; } catch { continue; }
-        if (msg.id === 1) {
-          if (msg.error) { fail(`Codex status could not initialize: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          send(2, 'account/read', { refreshToken: false });
-        } else if (msg.id === 2) {
-          // Older readers can still report limits when account/read is absent.
-          // No email is invented, and no token refresh or account mutation is requested.
-          if (!msg.error) identity = accountIdentity(msg.result);
-          if (identity.authState === 'signed-out') { done({ ...snapshot({}), ...identity }); return; }
-          send(3, 'account/rateLimits/read', null);
-        } else if (msg.id === 3) {
-          if (msg.error) { fail(`Codex did not provide usage status: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          done({ ...snapshot(msg.result), ...identity });
-        }
+        const pendingCall = typeof msg.id === 'number' ? waiting.get(msg.id) : undefined;
+        if (!pendingCall) continue;
+        waiting.delete(msg.id!);
+        if (msg.error) pendingCall.reject(new RpcError(String(msg.error.message ?? 'unknown error')));
+        else pendingCall.resolve(msg.result);
       }
     });
-    // App-server's versioned protocol begins with initialize.  The declared
-    // capability only permits its documented read notifications; no account
-    // mutation is negotiated or sent.
-    send(1, 'initialize', {
-      clientInfo: { name: 'wanigan', version: '0.1.0' },
-      capabilities: { experimentalApi: true },
-    });
+    // Only reads are ever sent. No account mutation is negotiated or sent.
+    call('initialize', { clientInfo: { name: 'wanigan', version: '0.1.0' } })
+      .catch((e: Error) => { throw new Error(`${label} could not initialize: ${e.message}`); })
+      .then(() => { write({ method: 'initialized' }); return run(call); })
+      .then((value) => settle(() => resolve(value)), (e: Error) => fail(e.message));
   });
 }
 
-async function requestModels(): Promise<CodexModels> {
-  const bin = await codexAppServer('the Codex model catalog');
-  const PATH = await shellPath();
-  return new Promise<CodexModels>((resolve, reject) => {
-    const child = spawn(bin, ['app-server', '--stdio'], { env: probeEnv(PATH), stdio: ['pipe', 'pipe', 'pipe'] });
-    let settled = false; let buffer = ''; let stderr = '';
-    const fail = (reason: string) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); reject(new Error(reason)); };
-    const done = (value: CodexModels) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); resolve(value); };
-    const send = (id: number, method: string, params: unknown) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    const timer = setTimeout(() => fail('Codex model catalog did not respond within 12 seconds.'), REQUEST_TIMEOUT_MS);
-    child.on('error', (e) => fail(`Could not start Codex model catalog: ${e.message}`));
-    child.stderr.on('data', (chunk: Buffer) => { stderr = takeStderr(stderr, chunk); });
-    child.on('close', (code) => fail(exitReason('Codex model catalog', code, stderr)));
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString('utf8');
-      for (;;) {
-        const end = buffer.indexOf('\n'); if (end < 0) break;
-        const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
-        let msg: RpcMessage; try { msg = JSON.parse(line) as RpcMessage; } catch { continue; }
-        if (msg.id === 1) {
-          if (msg.error) { fail(`Codex model catalog could not initialize: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          send(2, 'model/list', { includeHidden: false, limit: 200 });
-        } else if (msg.id === 2) {
-          if (msg.error) { fail(`Codex did not provide its model catalog: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          const raw = (msg.result && typeof msg.result === 'object' ? msg.result : {}) as { data?: unknown[] };
-          const models = (raw.data ?? []).filter((m): m is Record<string, unknown> => !!m && typeof m === 'object').map((m) => ({
-            id: typeof m.id === 'string' ? m.id : '',
-            label: typeof m.displayName === 'string' ? m.displayName : (typeof m.id === 'string' ? m.id : ''),
-            description: typeof m.description === 'string' ? m.description : null,
-            reasoningEfforts: Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts.map((x) => {
-              if (typeof x === 'string') return x;
-              if (x && typeof x === 'object' && typeof (x as { reasoningEffort?: unknown }).reasoningEffort === 'string') {
-                return String((x as { reasoningEffort: string }).reasoningEffort);
-              }
-              return '';
-            }).filter(Boolean) : [],
-            defaultReasoningEffort: typeof m.defaultReasoningEffort === 'string' ? m.defaultReasoningEffort : null,
-            isDefault: m.isDefault === true,
-          })).filter((m) => m.id);
-          done({ fetchedAt: Date.now(), models, note: null });
-        }
-      }
-    });
-    send(1, 'initialize', { clientInfo: { name: 'wanigan', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+function request(account: AgentAccount | null): Promise<CodexStatus> {
+  return session(account, 'Codex status', 'Codex usage status', async (call) => {
+    // Older readers can still report limits when account/read is absent.
+    // No email is invented, and no token refresh or account mutation is requested.
+    const { type, ...identity } = await call('account/read', { refreshToken: false }).then(accountIdentity,
+      () => accountIdentity(undefined));
+    if (identity.authState === 'signed-out') return { ...snapshot({}), ...identity };
+    try {
+      // A poll has no use for reset-credit detail, and never asks for the
+      // reserve fallback: that would record an experiment exposure.
+      return { ...snapshot(await call('account/rateLimits/read', { excludeResetCreditDetails: true })), ...identity, quotaApplicable: true };
+    } catch (e) {
+      // An API-key login has no ChatGPT allowance. The backend says so by
+      // refusing; that is "not applicable", neither a fault nor zero usage.
+      if (type === 'apiKey') return { ...snapshot({}), ...identity, quotaApplicable: false };
+      throw new Error(`Codex did not provide usage status: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+}
+
+function requestModels(account: AgentAccount | null): Promise<CodexModels> {
+  return session(account, 'Codex model catalog', 'the Codex model catalog', async (call) => {
+    const { authState } = await call('account/read', { refreshToken: false }).then(accountIdentity, () => accountIdentity(undefined));
+    const models: CodexModel[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_MODEL_PAGES; page++) {
+      let result: unknown;
+      try { result = await call('model/list', { includeHidden: false, limit: 200, ...(cursor ? { cursor } : {}) }); }
+      catch (e) { throw new Error(`Codex did not provide its model catalog: ${e instanceof Error ? e.message : String(e)}`); }
+      const read = codexModelPage(result);
+      models.push(...read.models);
+      cursor = read.nextCursor;
+      if (!cursor) return { fetchedAt: Date.now(), models, authState, note: authState === 'signed-out'
+        ? 'Codex reports no signed-in account. This is the catalog the CLI would offer, not models this login can run.' : null };
+    }
+    throw new Error(`Codex model catalog did not end within ${MAX_MODEL_PAGES} pages.`);
   });
 }
 
@@ -317,13 +273,17 @@ export async function readCodexStatus(force = false, accountId?: string | null):
   const account = accountFor(accountId);
   const key = account?.id ?? '';
   const revision = account ? usageAccountRevision(account) : process.env.CODEX_HOME ?? '';
+  // With credentials in the OS keyring a login can change under an unchanged
+  // file revision, so such a reading is never reused; the read itself is free.
+  const loginWitnessed = account ? usageLoginWitnessed(account) : true;
   const hit = cached.get(key);
-  if (!force && hit?.revision === revision && Date.now() - hit.value.fetchedAt < CACHE_MS) return hit.value;
+  if (!force && loginWitnessed && hit?.revision === revision && Date.now() - hit.value.fetchedAt < CACHE_MS) return hit.value;
   const pendingKey = `${key}:${revision}`;
   const inFlight = pending.get(pendingKey);
   if (!force && inFlight) return inFlight;
-  const work = request(account).then((value) => {
+  const work = request(account).then((read) => {
     if (account && usageAccountRevision(account) !== revision) throw new Error('The account login changed while limits were being read. Refresh limits to try again.');
+    const value = { ...read, loginWitnessed };
     cached.set(key, { revision, value }); return value;
   });
   pending.set(pendingKey, work);
@@ -331,13 +291,21 @@ export async function readCodexStatus(force = false, accountId?: string | null):
   finally { if (pending.get(pendingKey) === work) pending.delete(pendingKey); }
 }
 
-export async function readCodexModels(force = false): Promise<CodexModels> {
-  if (!force && modelsCached && Date.now() - modelsCached.fetchedAt < MODELS_CACHE_MS) return modelsCached;
-  if (!force && modelsPending) return modelsPending;
-  const work = requestModels().then((value) => { modelsCached = value; return value; });
-  modelsPending = work;
+export async function readCodexModels(force = false, accountId?: string | null): Promise<CodexModels> {
+  const account = accountFor(accountId);
+  const key = `${account?.id ?? ''}:${account ? usageAccountRevision(account) : process.env.CODEX_HOME ?? ''}`;
+  const hit = modelsCached.get(key);
+  if (!force && hit && Date.now() - hit.fetchedAt < MODELS_CACHE_MS) return hit;
+  const inFlight = modelsPending.get(key);
+  if (!force && inFlight) return inFlight;
+  const work = requestModels(account).then((value) => {
+    // A login's superseded revisions are dropped with it, so the map stays one entry per account.
+    for (const old of modelsCached.keys()) if (old.startsWith(`${account?.id ?? ''}:`)) modelsCached.delete(old);
+    modelsCached.set(key, value); return value;
+  });
+  modelsPending.set(key, work);
   try { return await work; }
-  finally { if (modelsPending === work) modelsPending = null; }
+  finally { if (modelsPending.get(key) === work) modelsPending.delete(key); }
 }
 
 /**
@@ -347,4 +315,4 @@ export async function readCodexModels(force = false): Promise<CodexModels> {
  * Claude and unenforced here.  `windowFrom` returning null for a renamed field,
  * rather than a zero-percent window, is the fact worth asserting.
  */
-export const __test = { windowFrom, snapshot, exitReason };
+export const __test = { windowFrom: codexWindow, snapshot, exitReason };
