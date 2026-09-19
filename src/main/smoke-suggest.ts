@@ -119,8 +119,13 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
 
     // There is no way back out. The key crosses the boundary once.
     const shape = Object.keys(status()).sort().join(',');
-    check(shape === 'capabilities,enabled,estimatedUsdPerCall,fingerprint,hasKey,host,stored',
+    check(shape === 'capabilities,enabled,estimatedUsdPerCall,fingerprint,hasKey,host,stored,unreadable',
       'status carries a fingerprint and no channel returns the key itself', shape);
+
+    // No file at all is not the same as a file that will not decrypt, and only
+    // the second is worth telling somebody to paste their key again over.
+    check(status().unreadable === false,
+      'with no credential stored at all, nothing is reported as unreadable', status().unreadable);
 
     // A switch a person turned on is reported as stored even though no
     // credential makes it count. Redrawing it as off would tell them their

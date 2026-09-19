@@ -80,6 +80,26 @@ export function estimatedUsd(inputTokens: number): number {
 const KNOWN = new Set<string>(SUGGESTER_CAPABILITIES.map((capability) => capability.id));
 
 /**
+ * A credential that can actually be used, which is not the same as one on disk.
+ *
+ * `hasProviderKey` answers whether the file exists. `getProviderKey` answers
+ * whether it decrypted. Those come apart: the blob is sealed by the OS keychain
+ * under this application's identity, so a keychain entry that is revoked,
+ * denied or left behind by a migration leaves the file in place and unreadable.
+ *
+ * Observed, not imagined — running this module against a copy of a real profile
+ * reported `hasKey: true` and, one call later, "No TypeSafe credential is
+ * stored". Every gate here asked the first question and every call asked the
+ * second, so the panel showed a key installed while nothing worked. Everything
+ * that decides whether the suggester can run now asks the question that
+ * matters.
+ */
+const credentialed = (): boolean => getProviderKey(PROVIDER) !== null;
+
+/** A file that exists and will not decrypt. A different fact from having no key. */
+const unreadableCredential = (): boolean => hasProviderKey(PROVIDER) && !credentialed();
+
+/**
  * The capabilities actually in force.
  *
  * A stored id this build no longer knows is dropped rather than honoured, and
@@ -89,7 +109,7 @@ const KNOWN = new Set<string>(SUGGESTER_CAPABILITIES.map((capability) => capabil
  * could be forgotten.
  */
 export function enabled(): readonly SuggesterCapability[] {
-  return hasProviderKey(PROVIDER) ? stored() : NO_SUGGESTER;
+  return credentialed() ? stored() : NO_SUGGESTER;
 }
 
 /**
@@ -120,7 +140,15 @@ export function setEnabled(ids: unknown): SuggestStatus {
 }
 
 export type SuggestStatus = {
+  /** A credential that decrypts. A file that will not read is not a key. */
   hasKey: boolean;
+  /**
+   * There is a stored credential and this Mac cannot read it.
+   *
+   * Distinct from having none, and the only one of the two a person can act on
+   * differently: the fix is to paste the key again, not to go and find one.
+   */
+  unreadable: boolean;
   /** Enough of the key to recognise it, never the key. */
   fingerprint: string | null;
   /** In force: switched on *and* credentialed. */
@@ -135,7 +163,8 @@ export type SuggestStatus = {
 
 export function status(): SuggestStatus {
   return {
-    hasKey: hasProviderKey(PROVIDER),
+    hasKey: credentialed(),
+    unreadable: unreadableCredential(),
     fingerprint: providerKeyFingerprint(PROVIDER),
     enabled: enabled(),
     stored: stored(),
@@ -232,7 +261,14 @@ export async function suggestRelayPlan(
  * this repository or this operator.
  */
 export async function verify(keyOverride?: string): Promise<{ ok: boolean; detail: string }> {
-  if (!keyOverride && !hasProviderKey(PROVIDER)) return { ok: false, detail: 'No TypeSafe credential is stored.' };
+  if (!keyOverride && !credentialed()) {
+    return {
+      ok: false,
+      detail: unreadableCredential()
+        ? 'A TypeSafe credential is stored but this Mac cannot read it. Paste the key again to replace it.'
+        : 'No TypeSafe credential is stored.',
+    };
+  }
   const outcome = await ask({
     model: 'jev-latest',
     state: { check: 'a connectivity check with no content' },

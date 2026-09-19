@@ -68,7 +68,10 @@ function listen(channel: string, handler: (...args: any[]) => void): void {
 
 /** What the routing suggester reports about itself. Never the key, only a fingerprint. */
 export type SuggestStatusShape = {
+  /** A credential that decrypts. A file that will not read is not a key. */
   hasKey: boolean;
+  /** A stored credential this Mac cannot read — a different fact from having none. */
+  unreadable: boolean;
   fingerprint: string | null;
   /** In force: switched on and credentialed. */
   enabled: string[];

@@ -6165,6 +6165,13 @@ function RoutingSuggester() {
             </Note>
           )}
 
+          {shown.unreadable && (
+            <Note tone="error">
+              A TypeSafe key is stored and this Mac can no longer read it — most often a Keychain entry that was
+              removed or denied. Nothing is being asked and nothing is being spent. Paste the key again to replace it.
+            </Note>
+          )}
+
           {shown.hasKey ? (
             <div className="set-key-status">
               <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>TypeSafe key installed</span>
