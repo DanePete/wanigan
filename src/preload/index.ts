@@ -644,9 +644,9 @@ const api = {
     history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
     preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
     tick: () => call<number>('schedule:tick'),
-    daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:daemon'),
-    installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:installDaemon'),
-    uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:uninstallDaemon'),
+    daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:daemon'),
+    installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:installDaemon'),
+    uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:uninstallDaemon'),
   },
   // ── AI Improvement Scout ──────────────────────────────────────────
   // Source URLs never cross this bridge. The main process selects from its

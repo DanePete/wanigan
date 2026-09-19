@@ -107,7 +107,7 @@ const namesOf = (projects: Project[], cap = 6): string =>
 type Draft = { name:string; cron:string; kind:Kind; projectId:string; prompt:string; allProjects:boolean; rerunId:string; providerId:string; providerProfileFingerprint:string };
 type Fire = { at:number; status:string; detail:string|null };
 type Preview = { cron:string; fires:number[]; describe:string };
-type Daemon = { supported:boolean; installed:boolean; detail:string };
+type Daemon = { supported:boolean; installed:boolean; detail:string; caveat:string };
 const errorText = (cause:unknown) => cause instanceof Error ? cause.message : String(cause);
 const promptOf = (row:Schedule) => row.payload && typeof row.payload === 'object' && 'prompt' in row.payload && typeof row.payload.prompt === 'string' ? row.payload.prompt : '';
 const newDraft = (projectId:string):Draft => ({name:'',cron:'3 3 * * *',kind:'headless',projectId,prompt:'',allProjects:false,rerunId:'',providerId:'',providerProfileFingerprint:''});
@@ -265,7 +265,7 @@ export default function Schedules({ projects }: { projects:Project[] }) {
     {readError&&<div className="sc-read-error"><Note tone="error">{readError}{list.length>0?' Showing the last readable records. Refresh before making changes.':''}</Note></div>}
     {!editor&&actionError&&<Note tone="error">{actionError}</Note>}
     {notice&&<Note>{notice}</Note>}
-    <div className="sc-availability" role="status"><span>{daemonError?'Background scheduler status unavailable':!daemon?'Checking background scheduling…':daemon.installed?'Background scheduler installed':'Runs while Wanigan is open'}<small>{daemon?.installed?'This Mac must be awake. A closed window does not pause schedules.':'Missed work is checked when Wanigan next opens.'}</small></span><button className="btn btn-sm" type="button" onClick={openSchedulerSettings}>Scheduler settings</button></div>
+    <div className="sc-availability" role="status"><span>{daemonError?'Background scheduler status unavailable':!daemon?'Checking background scheduling…':daemon.installed?'Background scheduler installed':'Runs while Wanigan is open'}<small>{daemon?.installed?(daemon.caveat||'A closed window does not pause schedules.'):'Missed work is checked when Wanigan next opens.'}</small></span><button className="btn btn-sm" type="button" onClick={openSchedulerSettings}>Scheduler settings</button></div>
     <div className="sc-workspace">
       <aside className="sc-agenda" aria-label="Schedule agenda">
         <SectionHead label="Up next" count={list.length} />

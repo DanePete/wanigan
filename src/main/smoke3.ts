@@ -8782,7 +8782,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/capabilitiesFor/.test(providerSrc) && /--help/.test(providerSrc),
     'provider capabilities are probed from the installed CLI rather than inferred only from a static table');
   check(/isDaemonInvocation/.test(mainSrc) && /LaunchAgents/.test(daemonSrc),
-    'the optional macOS scheduler is a windowless app daemon, not a timer that dies with the window');
+    'the optional background scheduler is a windowless app daemon, not a timer that dies with the window');
+  // Two real backends rather than one plus an adapter shaped around it. A
+  // capability only the built-in can reach is an extension point that does not
+  // exist (AGENTS.md), and the platform branch this replaced had no seam at all.
+  check(/launchctl/.test(daemonSrc) && /function backend\(/.test(daemonSrc),
+    'the background scheduler picks a backend rather than branching on the platform');
+  check(/caveat/.test(daemonSrc) && !/This Mac must be awake/.test(sourceOf('src/renderer/src/views/Schedules.tsx')),
+    'what is true while the scheduler is installed comes from the backend that installed it, not from a sentence about macOS hardcoded in the view');
   check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
     'review gates keep command evidence in a durable record, not only in a terminal scrollback');
   const browseSrc = sourceOf('src/main/browse.ts');
