@@ -1,0 +1,8 @@
+{
+  "fixture": true,
+  "before": true,
+  "checks": [],
+  "sizes": [],
+  "errors": [],
+  "failure": "AssertionError [ERR_ASSERTION]: The admin bar must keep its own sidebar opener when navigation is closed\n\n0 !== 1\n"
+}

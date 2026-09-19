@@ -8,7 +8,7 @@ import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retired
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, SpaceDock, SpaceRoutes, WorkspaceNavigation } from './components/SpaceNavigation';
+import { ProjectSpaces, SpaceDock, SpaceRoutes, WorkspaceNavigation, WorkspaceNavigationToggle } from './components/SpaceNavigation';
 import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
@@ -1084,9 +1084,12 @@ export default function App() {
       {/* Session actions and project scope occupy the title bar. Area-local
           routes sit above the content; the dock remains visible below it. */}
       <header className="app-header">
+        <div className="workbench-start">
+          <WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />
           <div className="brand-lockup">
             <span className="brand">Wanigan</span>
           </div>
+        </div>
 
         <div className="workbench-context">
           {projectScopeFor(tab) !== 'workspace'

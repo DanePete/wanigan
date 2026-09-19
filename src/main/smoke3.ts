@@ -8444,13 +8444,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={0}')
     && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
     && useDialogSrc.includes('restoreFocus(opener);'),
-    'dialog teardown returns to its opener, a visible navigation destination, or the dock Tools toggle');
+    'dialog teardown returns to its opener, a visible navigation destination, or the header Sidebar toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
     && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
     && appSrc.indexOf('<SpaceDock ') > appSrc.indexOf('</ErrorBoundary>')
     && appSrc.includes('expanded={sidebarOpen} onMore={toggleSidebar}')
+    && appSrc.includes('<WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />')
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') > appSrc.indexOf('<header className="app-header">')
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') < appSrc.indexOf('<div className="workbench-context">')
     && (workspaceNavSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
-    'the dock navigation opener remains outside the view and compact dialog, with one Tools toggle and no obsolete horizontal-rail focus selector');
+    'the header keeps its Sidebar opener alongside dock Tools, sharing navigation state outside the view and compact dialog');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
     && workspaceNavSrc.includes('<progress className="workbench-batch-progress"')
     && workspaceNavSrc.includes('value={batchWork.done} max={batchWork.total}'),

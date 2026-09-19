@@ -112,6 +112,17 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
   </div>);
 }
 
+/** The header opener stays visible even when the optional sidebar is closed. */
+export function WorkspaceNavigationToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const shortcut = chordLabels(useKeymap().map, 'sidebar');
+  const label = open ? 'Hide sidebar' : 'Show sidebar';
+  return <button className="hdr-toggle" type="button" aria-expanded={open}
+    aria-controls={open ? 'wanigan-sidebar' : undefined} aria-keyshortcuts={shortcut.aria}
+    aria-label={`${label} (${shortcut.spoken})`} onClick={onToggle}>
+    <Icon name="panel" /><span>Sidebar</span>
+  </button>;
+}
+
 /** The dock restores the persistent return path without maintaining another route list. */
 export function SpaceDock({ tab, go, goArea, needs, expanded, onMore, companion }: {
   tab: Tab; go: (tab: Tab) => void; goArea: (area: SpaceAreaId) => void;
@@ -139,7 +150,7 @@ export function SpaceDock({ tab, go, goArea, needs, expanded, onMore, companion 
         <Icon name={area.icon} /><span>{area.label}</span>
         {area.id === 'fleet' && needs > 0 && <span className="space-count" aria-label={`${needs} need you`}>{needs}</span>}
       </button>)}
-      <button className="hdr-toggle" type="button" aria-expanded={expanded} aria-controls={expanded ? 'wanigan-sidebar' : undefined}
+      <button type="button" aria-expanded={expanded} aria-controls={expanded ? 'wanigan-sidebar' : undefined}
         aria-label="All destinations" aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
         onClick={onMore}><Icon name="panel" /><span>Tools</span></button>
     </nav>

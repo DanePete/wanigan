@@ -38,8 +38,8 @@ try {
  await page.waitForTimeout(250);
  assert.equal(await page.locator('#wanigan-sidebar').count(), 0);
  const toggle=page.locator('.hdr-toggle');
- assert.equal((await toggle.innerText()).trim(), before ? '' : 'Tools');
- assert.match(await toggle.getAttribute('aria-label'), before ? /^Show navigation/ : /^All destinations$/);
+ assert.equal((await toggle.innerText()).trim(), before ? '' : 'Sidebar');
+ assert.match(await toggle.getAttribute('aria-label'), before ? /^Show navigation/ : /^Show sidebar/);
  await capture('hidden-desktop');
  await toggle.click(); await page.locator('#wanigan-sidebar').waitFor(); await waitPref('open'); await capture('open-desktop');
  await page.reload(); await page.locator('#wanigan-sidebar').waitFor();
@@ -49,7 +49,7 @@ try {
  assert(await toggle.evaluate(button => document.activeElement===button));
  await page.reload(); await page.locator('.app-header').waitFor();
  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
- check('The persistent dock Tools button restores desktop navigation; hiding returns focus to it, and open/closed choices survive reload.');
+ check('The persistent header Sidebar button restores desktop navigation; hiding returns focus to it, and open/closed choices survive reload.');
 
  await page.evaluate(() => document.activeElement?.blur());
  await page.keyboard.press('Alt+Meta+s'); await page.locator('#wanigan-sidebar').waitFor(); await waitPref('open');
@@ -59,7 +59,7 @@ try {
 
  await page.setViewportSize({ width: 720, height: 1000 }); await page.waitForTimeout(200);
  assert.equal((await toggle.innerText()).trim(), '');
- assert.match(await toggle.getAttribute('aria-label'), before ? /^Show navigation/ : /^All destinations$/);
+ assert.match(await toggle.getAttribute('aria-label'), before ? /^Show navigation/ : /^Show sidebar/);
  const returnButton=await toggle.boundingBox();
  assert(returnButton && returnButton.x>=0 && returnButton.x+returnButton.width<=720 && returnButton.y+returnButton.height<=1000, 'the named navigation return button stays in the compact viewport');
  const header=await page.locator('.app-header').evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth }));

@@ -36,7 +36,7 @@ before this guard and exercises both revision and shared-login endpoints.
 | Finding | Adjustment |
 | --- | --- |
 | The dock reference had been replaced by a sidebar and header view picker. | Restore registry-driven dock destinations, remembered area selection, local route buttons, and rounded workspace frame. Keep the complete destination list behind Tools. |
-| Header and dock both opened the same navigation. | Keep one Tools control in the dock, including keyboard focus return. |
+| Removing the header opener made the closed sidebar hard to find again. | Keep a labeled Sidebar control in the admin bar alongside dock Tools. Both share navigation state; the header provides the stable focus fallback. |
 | Admin bar mixed navigation, session creation, search, attention, and Halt. | Separate project context, session/search actions, and global status controls. Preserve the deliberate Halt confirmation. |
 | Board, Changes, and Context repeated the shared project selector. | Use the shared project switcher; retain repository labels and empty-project actions where needed. |
 | Account labels and narrow stacked quota cards made duplicates hard to inspect. | Compare provider login, plan, quota windows, reset times, and freshness in one account table. Filter local records independently. |

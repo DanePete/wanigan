@@ -96,10 +96,11 @@ workspace switch between the tools in the current group:
 | Automation | Runs, Schedules, Batches |
 | Manage | Settings, Extensions, Plugins, Recovery |
 
-Clicking a dock group returns to the view you last used there. **Tools** opens
-all destinations in the optional sidebar, where a group's chevron expands or
-collapses its tools without leaving your current view. The panel button
-remembers that desktop preference. Narrow windows use a temporary navigation
+Clicking a dock group returns to the view you last used there. **Sidebar** in
+the upper-left admin bar and **Tools** in the dock open all destinations in the
+optional sidebar, where a group's chevron expands or collapses its tools
+without leaving your current view. Showing or hiding the sidebar remembers
+that desktop preference. Narrow windows use a temporary navigation
 drawer. **Settings** sits beside the dock, and Search reaches every tool.
 
 Search accepts words in any order: “review git” finds Changes, and
