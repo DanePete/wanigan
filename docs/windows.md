@@ -90,7 +90,7 @@ These are honest gaps, not bugs to report. Each one says what you get instead.
 |---|---|
 | **Status line relay** | Written, unverified. The relay is a PowerShell script and Windows' own `curl.exe` (System32, since Windows 10 1803). It has never run: every failure path in it prints nothing, so the worst case is the empty status line Windows had before it existed. The Windows CI job parse-checks it. |
 | **Codex hook forwarding** | Not available. The forwarding command needs `/bin/sh` and `/usr/bin/curl`. |
-| **Codex writer locks** | Fails closed. Verifying that a lock file is held needs `lsof`, so Wanigan refuses to open a second writer rather than risk two. Delete the stale `.lock` under your Codex home if you are sure. |
+| **Codex writer locks** | Fails closed. Verifying that a lock file is held needs `lsof`, which Windows has no equivalent of, so Wanigan refuses to open a second writer rather than risk two. The refusal names the lock file to delete if no Codex session is using that conversation. |
 | **Copy-on-write worktree deps** | Falls back to a link. `cp -c` cloning is APFS-only; Windows gets an NTFS junction, which needs no elevation and shares rather than copies. |
 | **Built-in skills list** | Empty, and labelled as Wanigan's gap. Nobody has read the path this platform's Claude Code extracts bundled skills to. |
 | **Code signing** | Unsigned. SmartScreen will warn on first run until the binary earns reputation or an Authenticode certificate is configured. |
