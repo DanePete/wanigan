@@ -107,6 +107,13 @@ async function open({ maintenance = false } = {}) {
   else assert(encryptionChecks > 0, 'Normal startup must exercise the fixture encryption boundary.');
   return { app, page };
 }
+// page.evaluate has no timeout of its own, so an IPC call that never settles
+// would hang the probe instead of failing it with the app's stderr.
+function bounded(promise, label, ms = 45_000) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not settle within ${ms / 1000}s`)), ms); })])
+    .finally(() => clearTimeout(timer));
+}
 async function quit(app) {
   const closed = app.waitForEvent('close', { timeout: 15000 });
   await app.evaluate(({ app }) => { app.quit(); }); await closed;
@@ -122,7 +129,7 @@ try {
   assert(selected); assert.equal(selected.path, project);
   const startup = await page.evaluate(() => window.wanigan.startup.retry());
   assert.equal(startup.phase, 'ready', JSON.stringify(startup));
-  const session = await page.evaluate(input => window.wanigan.sessions.create(input), { providerId, projectId: selected.id });
+  const session = await bounded(page.evaluate(input => window.wanigan.sessions.create(input), { providerId, projectId: selected.id }), 'sessions:create');
   await until(() => page.evaluate(async id => (await window.wanigan.sessions.scrollback(id)).includes('SYNTHETIC-CLI-READY'), session.id), 'synthetic CLI output');
   assert(fs.existsSync(marker));
   const launched = JSON.parse(fs.readFileSync(marker, 'utf8').trim().split('\n')[0]);
