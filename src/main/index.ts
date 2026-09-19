@@ -45,7 +45,6 @@ import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
-import * as statusline from './statusline';
 import { codexUsageSummary } from './codex-usage';
 import * as claudeUsage from './claude-usage';
 import * as hooks from './hooks';
@@ -2476,32 +2475,6 @@ function registerIpc() {
   handle('key:clear', () => { clearKey(); return true; });
 
 
-  // ══ phase 1 · telemetry ═════════════════════════════════════════════
-  /*
-   * Limits somebody's own visit to Usage already established. Never probes:
-   * a surface on a poll must not spend an account probe, which is why this
-   * exists rather than a cheaper-looking usage:snapshot call.
-   */
-  handle('usage:known', () => usage.knownLimits());
-  handle('usage:session', (id: string) => otel.usageFor(id));
-  handle('usage:many', (ids: string[]) => otel.usageForMany(ids));
-  handle('usage:events', (id: string, limit?: number) => otel.apiEvents(id, limit));
-  handle('usage:throughput', (id: string, buckets?: number) => otel.throughput(id, buckets));
-  handle('usage:collector', () => ({ port: otel.collectorPort() }));
-  /*
-   * What sessions' status lines and beta traces reported. Local reads only:
-   * neither starts a CLI process, so both are safe on a poll. A session id is
-   * checked for shape before it reaches a query, since it arrives from the
-   * renderer.
-   */
-  const observedSessionId = (id: unknown): string => {
-    if (typeof id !== 'string' || !id || id.length > 200) throw new Error('A session id is required.');
-    return id;
-  };
-  handle('usage:observed', () => statusline.observedLimits());
-  handle('usage:statusLine', (id: string) => statusline.sessionStatusLine(observedSessionId(id)));
-  handle('usage:traces', (id: string) => otel.sessionTraces(observedSessionId(id)));
-
   // ══ phase 2/3/8 · hook bus, attention, timeline ═════════════════════
   handle('events:session', (id: string, limit?: number) => hooks.sessionEvents(id, limit));
   handle('events:live', (id: string) => hooks.liveState(id));
@@ -3124,8 +3097,6 @@ function registerIpc() {
   });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
-  handle('usage:snapshot', (input?: { days?: number; force?: boolean }) => usage.snapshot(input));
-  handle('usage:burn', (force?: boolean) => usage.burnWindows(force === true));
   handle('accounts:list', (harness: string) => accounts.list(harness));
   handle('accounts:create', (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
     accounts.create(input));
