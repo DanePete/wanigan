@@ -1,20 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { db } from './db';
-import { client, explainApiError, isMock } from './batch/anthropic';
-import { getKey } from './keys';
-import { DEFAULT_MODEL, MODELS, isPricedModel, syncCostOf } from './batch/pricing';
-import { createDocket } from './control';
-import { projectById } from './store';
-import { refuseIfHalted } from './halt';
+import type { WaniganModule } from '../module-registry';
+import { db } from '../db';
+import { client, explainApiError, isMock } from '../batch/anthropic';
+import { getKey } from '../keys';
+import { DEFAULT_MODEL, MODELS, isPricedModel, syncCostOf } from '../batch/pricing';
+import { createDocket } from '../control';
+import { projectById } from '../store';
+import { refuseIfHalted } from '../halt';
 import {
   DOCKET_NODE_KINDS,
   MAX_DOCKET_NODE_DEPENDENCIES,
   MAX_DOCKET_PLAN_NODES,
-} from '../shared/types';
+} from '../../shared/types';
 import type {
   DocketDetail, DocketNodeKind, DocketPlanNode, DocketRisk,
   Interview, InterviewProposal, InterviewTurn,
-} from '../shared/types';
+} from '../../shared/types';
 
 /**
  * The interview: a model that grills you about an idea until it can write down
@@ -530,3 +531,31 @@ export function interviewModels(): { id: string; label: string; costPerQuestion:
     .filter((model) => !model.retired && isPricedModel(model.id))
     .map((model) => ({ id: model.id, label: model.label, costPerQuestion: costPerQuestion(model.id) }));
 }
+
+export const interviewModule = {
+  id: 'interview', label: 'Goal interview',
+  // Disabling removes the guided way to write a goal; goals can still be written by hand.
+  required: null,
+  // The interviews table is created by Control's migrate, which records the
+  // interview that produced a goal.
+  requiresStartedServices: ['start', 'answer', 'conclude'],
+  ipc(handle) {
+    // Every call spends money, so every call is one the operator took: there is
+    // no timer and no background pass here. `start` is the consent, and the
+    // budget it carries is checked before each question rather than after.
+    handle('interview:start', (input: {
+      projectId: string; seed: string; model?: string; budgetUsd?: number; maxQuestions?: number;
+    }) => startInterview(input));
+    // Platform API models only, with what each costs a question. Codex and GLM
+    // are agent harnesses Wanigan launches as CLIs; this path is a direct
+    // Messages API call, and offering a model it cannot reach would fail later
+    // rather than on the screen where the choice is made.
+    handle('interview:models', () => interviewModels());
+    handle('interview:answer', (id: string, answer: string) => answerInterview(id, answer));
+    handle('interview:conclude', (id: string) => concludeInterview(id));
+    handle('interview:commit', (id: string, edits?: Parameters<typeof commitInterview>[1]) => commitInterview(id, edits));
+    handle('interview:abandon', (id: string) => abandonInterview(id));
+    handle('interview:get', (id: string) => interview(id));
+    handle('interview:list', (projectId?: string | null, limit?: number) => listInterviews(projectId, limit));
+  },
+} satisfies WaniganModule;

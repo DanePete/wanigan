@@ -33,7 +33,7 @@ import * as policy from './policy';
 import * as control from './control';
 import * as halt from './halt';
 import * as codexSessions from './codex-sessions';
-import * as interview from './interview';
+import * as interview from './modules/interview';
 import * as pricing from './batch/pricing';
 import * as sessionsModule from './sessions';
 import * as headless from './headless';

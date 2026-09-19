@@ -120,7 +120,6 @@ import * as learning from './learning-service';
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as goalGate from './goal-gate';
-import * as interview from './interview';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents, startModuleMaintenance } from './module-registry';
@@ -1680,7 +1679,6 @@ function registerIpc() {
     'attempts:start',
     'batch:submit', 'batch:dryRun', 'batch:retry',
     'control:start', 'control:retry', 'control:setAutopilot',
-    'interview:start', 'interview:answer', 'interview:conclude',
     'schedule:tick', 'learning:phrase',
   ]);
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
@@ -2900,28 +2898,6 @@ function registerIpc() {
     if (!def || !usesAnthropicAccount(def) || redirectsAnthropicApiFor(def)) return [];
     return accounts.list(def.harness);
   });
-  // ── the interview ────────────────────────────────────────────────────
-  //
-  // Every call spends money, so every call is one the operator took: there is
-  // no timer and no background pass here. `start` is the consent, and the
-  // budget it carries is checked before each question rather than after.
-  handle('interview:start', (input: {
-    projectId: string; seed: string; model?: string; budgetUsd?: number; maxQuestions?: number;
-  }) => interview.startInterview(input));
-  // Platform API models only, with what each costs a question. Codex and GLM
-  // are agent harnesses Wanigan launches as CLIs; this path is a direct
-  // Messages API call, and offering a model it cannot reach would fail later
-  // rather than on the screen where the choice is made.
-  handle('interview:models', () => interview.interviewModels());
-  handle('interview:answer', (id: string, answer: string) => interview.answerInterview(id, answer));
-  handle('interview:conclude', (id: string) => interview.concludeInterview(id));
-  handle('interview:commit', (id: string, edits?: Parameters<typeof interview.commitInterview>[1]) =>
-    interview.commitInterview(id, edits));
-  handle('interview:abandon', (id: string) => interview.abandonInterview(id));
-  handle('interview:get', (id: string) => interview.interview(id));
-  handle('interview:list', (projectId?: string | null, limit?: number) =>
-    interview.listInterviews(projectId, limit));
-
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());
 
