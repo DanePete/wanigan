@@ -1,0 +1,69 @@
+# Recovery evidence: command scope and supported Review reconciliation
+
+2026-09-19, Node `22.23.2`, Darwin. This investigation used local disposable processes and fixture data only. No credentials, provider calls, installed app data, scheduler registration or production sessions were used. Provider spend: **$0**.
+
+## Process evidence has a narrow meaning
+
+The Node child-process contract says `close` follows direct process termination and stdio closure. Detached children on non-Windows systems lead a new process group and session; children can continue after their parent exits. A `ChildProcess` handle therefore supplies direct-child lifecycle evidence, not a complete descendant inventory. [Node child-process documentation](https://nodejs.org/api/child_process.html).
+
+POSIX `kill(pid, 0)` checks the addressed process/group without delivering a signal. A negative PID addresses the matching process group; `ESRCH` says that addressed process/group cannot be found. It does not make a statement about processes that left the group. This is why a persisted PID and a missing process group are insufficient recovery authority. [POSIX kill specification](https://pubs.opengroup.org/onlinepubs/009604499/functions/kill.html).
+
+Windows job objects can account for associated processes, but membership depends on creation and breakaway policy. Wanigan's current `taskkill /T` implementation does not create or retain a restrictive job object. Windows orphan containment is therefore unsupported in the current implementation; this investigation did not run Windows. [Microsoft job objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects), [current process controls](../../src/main/platform.ts).
+
+The bounded Darwin probe actually reproduced the counterexample: a directly spawned Node process created a detached, redirected descendant with an 800ms lifetime, then exited. The parent emitted `close` with exit code zero; checking its original group returned `ESRCH`; the descendant's fixture file continued growing over the next 160ms. All probe processes expired by their own bounded timers. The result was:
+
+```json
+{
+  "platform": "darwin",
+  "node": "v22.23.2",
+  "childClose": true,
+  "parentGroupAbsent": true,
+  "escapedWriterContinued": true
+}
+```
+
+The probe ran from `/private/tmp/wanigan-process-scope-probe.cjs`; its disposable data root was removed after all timers elapsed. Its environment contained only a minimal `PATH` and a temporary `WANIGAN_PROVIDER_PACKS_DIR`. A separate bounded `sysctl -n kern.boottime` read was refused in the execution sandbox. No boot identity was recorded or inferred from it. Even an available boot/birth identity would provide attribution rather than proof about escaped descendants or remote requests. The implementation does not depend on this observation.
+
+## Storage locking also requires participation
+
+SQLite explicitly warns against renaming or unlinking a database while it is open. An old connection and a newly opened pathname can address different files while journal naming/locking still causes interference. Its ordinary Unix locks are advisory. A lock in the current database cannot become an exclusion promise over a different replacement file. [SQLite corruption guide, section 2.5](https://sqlite.org/howtocorrupt.html#_unlinking_or_renaming_a_database_file_while_in_use), [SQLite file locking](https://www.sqlite.org/lockingv3.html).
+
+An external maintenance journal therefore coordinates participating builds only. This is a deduction from those locking semantics, not a claim of OS containment: an incompatible binary that never consults the journal can open the database after a process/handle inventory. A snapshot such as `lsof` can provide a reason to refuse a currently observed foreign handle; absence is not exclusion against the next open. Older/uncooperative concurrent binaries remain outside the proven protocol and must be named as unsupported, rather than treating PID disappearance or a clean snapshot as their acknowledgement.
+
+## Existing owners and finalization
+
+| Owner | Existing durable evidence | Conservative boundary |
+| --- | --- | --- |
+| Shared checkout activity | Exact `id`, canonical `cwd`, `kind`, `operation_id`, random `owner_id`, `created_at` | [checkout-activity.ts](../../src/main/checkout-activity.ts) releases the exact owner through a runtime closure. No persisted PID is release authority. |
+| Review | `review_checkout_owners` stores `cwd`, `run_id`, random `owner_id`, `owner_pid`, `lease_expires_at`, `state`; `review_runs` retains outcome/evidence | [review.ts](../../src/main/review.ts) owns child handles and preparation/finalization. Expiry changes the owner to unresolved; it never proves a command stopped. |
+| Headless | `headless_rows` stores `owner_id`, `owner_pid`, `recovery_unresolved`, status and output/usage evidence | [headless.ts](../../src/main/headless.ts) retains checkout ownership through command closure and cleanup; foreign owners cannot be canceled by treating a PID as a capability. |
+| Queue | `queue` stores `lease_owner`, `lease_expires_at`, `recovery_unresolved`, prior attempt/outcome | [queue.ts](../../src/main/queue.ts) quarantines expiry; late owner success cannot erase it. A queue lease alone does not describe the underlying command or remote submission. |
+| Worktree commands | `worktree_command_runs` stores `owner_id`, `owner_pid`, `recovery_unresolved`, phase/results | [worktree-setup.ts](../../src/main/worktree-setup.ts) separates shell outcome from possible surviving setup/teardown services. |
+
+## Supported prospective Review control
+
+The new Review adapter supports one deliberately narrow case: the owning runtime completes the checkout fingerprint and finalizes a quarantined operation **without having attempted a reviewed command spawn**. It does not reinterpret an orphaned spawned command as stopped. Preparation itself runs Git; an unavailable or timed-out fingerprint does not establish its subprocess cleanup and remains unknown.
+
+Review now checks its durable owner immediately before every command spawn, because asynchronous checkout inspection can outlast a lease or allow a peer to quarantine it before the heartbeat runs. It records `spawnAttempted` before calling `spawn`. If ownership is lost during preparation, it records the failed/interrupted result and retains both ownership records. Once preparation and result finalization complete, with a successful canonical checkout fingerprint, the same runtime can append `review_recovery_evidence` containing the exact run, owner, shared activity identities, observation time, evidence source and finalized run digest. Both its writer and reader require that preparation evidence; an unavailable fingerprint cannot acquire this authority. Migrations never manufacture these receipts for historical rows. [Review runtime](../../src/main/review.ts), [Review schema](../../src/main/modules/review.ts).
+
+The [Review adapter](../../src/main/review-recovery.ts) exposes a release only when that prospective receipt still matches the current owner, finalized run and unique shared claim, and the runtime has left its active operation map. Its revision includes all relevant rows. Recovery's surrounding transaction/receipt validation then permits deletion of those exact owner and checkout claims; the failed run, completion evidence and billing records remain. No retry is enqueued. Changed ownership, an extra claim, a late result or repeated application is refused.
+
+On the implementation revision before integration, `node scripts/test-review-recovery.cjs` passed **13 tests, 0 failures**, including the existing real expired lease/owner-death/surviving-group controls, the new supported release and unavailable-preparation refusal. The new successful test proves that checkpoint restore exclusion actually admits a subsequent claim after release, while the prior failure and independent unresolved liability remain. Targeted ESLint also passed. The root implementation report owns final full-suite verification; these counts do not substitute for it.
+
+`node scripts/test-recovery-inspection.cjs` separately passed **15 tests, 0 failures** through the production Recovery service, registry, owner declarations and actual telemetry accounting with real SQLite/filesystem operations. External storage status/admission is an explicit fixture boundary. It covers one-use tokens, malformed/tampered arguments, mutable return aliases, expiry, newer previews, another global claim, late result, storage-generation replacement, symlink/directory replacement, invalid checkout types, maintenance refusal and direct restore admission before registry initialization. A matrix exercises independent ownership, TypeSafe liability, unmetered Headless/learning results, incomplete telemetry, and batch results still owed or explicitly lost despite an ingestion stamp. Reported zero-dollar controls remain valid. Missing required safety schemas produce an explicit unavailable read rather than an empty authority to restore. A late accounting event, issue or source-ledger change invalidates receipts even when the maximum timestamp is unchanged. The successful service transition appends a resolution while leaving an unresolved remote submission intact and permitting a subsequent checkpoint ownership claim.
+
+The learning-model inspector can retain recorded unmetered and unknown-state exposure. Source inspection found that the existing learning invocation writes its `learning_model_runs` row only after a result or failure, so an owner crash during invocation can leave no reservation row. The inspection projection cannot reconstruct that absent evidence; participant/drain behavior and any prospective reservation change need separate runtime verification. [Learning invocation](../../src/main/learning-model-assist.ts).
+
+## Renderer and native fixture provenance
+
+Before screenshots were captured from the actual renderer built at `5951b99`, using the existing synthetic bridge in an isolated Electron window. They are at [dark](../visuals/relay-recovery-completion-2026-09-19/before/backup-dark.png), [light](../visuals/relay-recovery-completion-2026-09-19/before/backup-light.png) and [verification](../visuals/relay-recovery-completion-2026-09-19/before/verification.json). Both themes rendered without page errors. This proves presentation only; it does not exercise native backup IPC.
+
+The existing [session reliability fixture](../../scripts/test-session-reliability.cjs) uses production session orchestration with explicit PTY/account/timer doubles. [Review](../../scripts/test-review-recovery.cjs), [Queue/Headless](../../scripts/test-queue-recovery.cjs), and [Worktree](../../scripts/test-worktree-recovery.cjs) use real harmless command processes with isolated SQLite/Git. The [terminal replay probe](../../scripts/probe-terminal-replay.mjs) uses actual Electron and xterm but is not a native agent lifecycle trial.
+
+The new [native lifecycle probe](../../scripts/probe-recovery-native.mjs), run with `node scripts/probe-recovery-native.mjs` after `npm run build`, passed **four checks** on macOS: the production main/preload/IPC launched an installed synthetic generic CLI into a real PTY; normal quit stopped that fixture and completed the production drain; reopening retained its completed canonical execution row with no live session or second launch; Recovery showed no remaining claim for the session. The fixture supplies explicit dialog answers for its exact manifest trust, project folder and quit prompt. It creates separate appData, userData, home, provider-pack and checkout directories, passes a minimal credential-free environment and removes its own directories on completion. Credential encryption is an explicit unavailable test double, verified as called on each startup; Chromium receives `--use-mock-keychain`. This is a real native lifecycle with a synthetic CLI, never a provider trial or Keychain conformance test. The generic CLI has no conversation identity, so the persisted execution row is checked directly after close rather than making a false resumability claim.
+
+Fixture development first hit the production refusal of test-only `projects:add` and switched to the normal folder-picker path. Explicitly awaited IPC polling replaced asynchronous browser predicates; generic history verification was corrected to use `session_log`. The passing run exercised the normal trust, admission and lifecycle paths without adding a product test hook. Final full-revision reruns belong to the root implementation report.
+
+Initial native runs had insufficient Keychain isolation: production's encryption-availability call can initialize Electron's OS encryptor even for an empty credential directory, and the user observed a macOS “Keychain Not Found” prompt. Native probing stopped immediately; read-only process inventory confirmed no `wanigan-native-recovery-*` instances remained. No Keychain reset or manual credential operation was attempted. The fixture was then corrected with the unavailable `safeStorage` facade before production imports and the mock-keychain flag used by [Electron's own test fix](https://github.com/electron/electron/pull/53790/files). A single authorized rerun passed all four checks in 3.7 seconds. Electron documents availability as a lazy initializer for its async encryptor, so passing a temporary home alone is not sufficient isolation. [Electron async initialization fix](https://releases.electronjs.org/pr/50419).
+
+Spawned legacy/orphan reconciliation, escaped-descendant containment, remote billing reconciliation and Windows containment remain unsupported. These limits are evidence-backed refusals rather than automatic recovery.

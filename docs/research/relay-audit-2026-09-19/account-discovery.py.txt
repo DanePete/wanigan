@@ -1,0 +1,73 @@
+from pathlib import Path
+import subprocess,sqlite3,selectors,time,json,os,datetime
+ROOT=Path('/Users/dane/Projects/drupal/wanigan')
+OUT=ROOT/'docs/research/relay-audit-2026-09-19'
+def now(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
+db=sqlite3.connect('file:'+str(Path.home()/'Library/Application Support/wanigan/wanigan.db')+'?mode=ro',uri=True)
+accounts=db.execute("SELECT id,label,config_dir,is_default FROM agent_accounts WHERE harness='codex'").fetchall(); db.close()
+records=[]
+for aid,label,config,is_default in accounts:
+ record={'id':aid,'label':label,'isDefault':bool(is_default),'observedAt':now(),'methods':[],'inferenceRequests':0}
+ env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','USER','LOGNAME','TMPDIR','LANG','LC_ALL','SHELL','HTTPS_PROXY','https_proxy','HTTP_PROXY','http_proxy','ALL_PROXY','all_proxy','NO_PROXY','no_proxy','SSL_CERT_FILE','SSL_CERT_DIR']}
+ env['CODEX_HOME']=config
+ p=subprocess.Popen(['/opt/homebrew/bin/codex','app-server','--stdio'],cwd='/private/tmp/wanigan-relay-audit-vxcyorcv',env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+ selector=selectors.DefaultSelector(); selector.register(p.stdout,selectors.EVENT_READ); buf=b''; counter=0
+ def rpc(method,params):
+  global counter,buf
+  counter+=1; ident=counter; record['methods'].append(method)
+  p.stdin.write((json.dumps({'id':ident,'method':method,'params':params})+'\n').encode()); deadline=time.monotonic()+12
+  while time.monotonic()<deadline:
+   if not selector.select(min(0.25,max(0,deadline-time.monotonic()))):
+    if p.poll() is not None: raise RuntimeError('app-server exited '+str(p.returncode))
+    continue
+   chunk=os.read(p.stdout.fileno(),65536)
+   if not chunk: raise RuntimeError('app-server stream closed')
+   buf+=chunk
+   if len(buf)>4000000: raise RuntimeError('response limit exceeded')
+   while b'\n' in buf:
+    line,buf=buf.split(b'\n',1)
+    try: msg=json.loads(line)
+    except Exception: continue
+    if msg.get('id')==ident:
+     if 'error' in msg:
+      err=msg['error']; message=str(err.get('message',''))
+      # Only retain safe error category; native messages may embed account details.
+      category='authentication' if any(x in message.lower() for x in ['auth','login','sign in']) else 'network' if any(x in message.lower() for x in ['network','connect','fetch','http','request']) else 'protocol'
+      return {'errorCode':err.get('code'),'errorCategory':category}
+     return msg.get('result',{})
+  raise RuntimeError('read-only RPC timeout at 12 seconds')
+ try:
+  init=rpc('initialize',{'clientInfo':{'name':'wanigan_audit_readonly','version':'1.0'},'capabilities':{'experimentalApi':True}})
+  record['initialized']='errorCode' not in init
+  p.stdin.write(b'{"method":"initialized","params":{}}\n')
+  auth=rpc('account/read',{'refreshToken':False})
+  a=auth.get('account') or {}
+  record['auth']={k:a.get(k) for k in ['type','planType']}; record['auth']['requiresOpenaiAuth']=auth.get('requiresOpenaiAuth')
+  if 'errorCode' in auth: record['auth']['error']=auth
+  rate=rpc('account/rateLimits/read',None)
+  allowed=['limitId','limitName','planType','primary','secondary','spendControlReached','rateLimitReachedType','credits']
+  clean=lambda v:{k:v.get(k) for k in allowed if k in v} if isinstance(v,dict) else None
+  record['quota']={'legacy':clean(rate.get('rateLimits')),'buckets':{k:clean(v) for k,v in (rate.get('rateLimitsByLimitId') or {}).items()}}
+  if 'errorCode' in rate: record['quota']['error']=rate
+  models=[]; cursor=None
+  for page in range(10):
+   params={'limit':200,'includeHidden':False}
+   if cursor: params['cursor']=cursor
+   cat=rpc('model/list',params)
+   if 'errorCode' in cat: record['modelError']=cat; break
+   models.extend({k:x.get(k) for k in ['id','model','displayName','defaultReasoningEffort','supportedReasoningEfforts','isDefault','inputModalities']} for x in cat.get('data',[]))
+   cursor=cat.get('nextCursor')
+   if not cursor: break
+  record['models']=models; record['catalogueComplete']=cursor is None
+ except Exception as e: record['probeError']=str(e)
+ finally:
+  selector.close(); p.terminate()
+  try: p.wait(timeout=2)
+  except subprocess.TimeoutExpired: p.kill(); p.wait(timeout=2)
+  
+  stderr=p.stderr.read().decode(errors='replace')
+  categories=[x for x in ['Operation not permitted','Permission denied','error','panic','config','address','sandbox'] if x.lower() in stderr.lower()]
+  record['stderrCategories']=categories
+  record['completedAt']=now(); records.append(record)
+  (OUT/'account-discovery.json').write_text(json.dumps({'evidence':'native CLI read-only account/model/quota RPC, no thread or inference','records':records},indent=2)+'\n')
+  print(json.dumps({'id':aid,'label':label,'auth':record.get('auth'),'quota':record.get('quota'),'modelCount':len(record.get('models',[])),'probeError':record.get('probeError'),'stderrCategories':record.get('stderrCategories')}),flush=True)

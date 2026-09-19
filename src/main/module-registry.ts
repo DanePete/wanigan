@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { BrowserWindow } from 'electron';
 import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '../shared/types';
+import type { RecoveryAdapter } from './recovery-contract';
 
 /**
  * The main-process half of "everything is a module" (AGENTS.md).
@@ -45,6 +46,8 @@ export type ModuleIpcContext = {
   onAgentLaunched?: () => void;
   /** Restart the host after Backup has replaced and closed its database. */
   relaunchAfterRestore?: () => void;
+  /** Restart before services start; it does not authorize stopping live work. */
+  restartForRestore?: () => void;
 };
 
 /**
@@ -95,6 +98,8 @@ export type WaniganModule = {
    * may also bootstrap earlier through migrateRequiredModule.
    */
   migrate?: (d: Database.Database) => void;
+  /** Owner-declared inspection and exact evidence-backed reconciliation. */
+  recovery?: RecoveryAdapter;
   /**
    * IPC channels this module owns. Every channel MUST start with `${id}:`; the
    * registry refuses one that does not, because a channel outside a module's
@@ -139,6 +144,7 @@ const registry: WaniganModule[] = [];
  * cannot happen, because the table is created before registerModule returns.
  */
 let migratedOn: Database.Database | null = null;
+let migrationGuard: (operation: () => void) => void = operation => operation();
 
 export function registerModule(module: WaniganModule): void {
   if (!/^[a-z][a-z0-9-]*$/.test(module.id)) {
@@ -153,7 +159,7 @@ export function registerModule(module: WaniganModule): void {
   // name on it rather than at some later query with nobody's.
   if (migratedOn && module.migrate) {
     const d = migratedOn;
-    d.transaction(() => module.migrate!(d))();
+    migrationGuard(() => d.transaction(() => module.migrate!(d))());
   }
 }
 
@@ -182,9 +188,10 @@ export function migrateRequiredModule(module: WaniganModule, d: Database.Databas
 }
 
 /** Called from `db.ts` after the built-in `migrate*` functions, inside their transaction. */
-export function migrateModules(d: Database.Database): void {
+export function migrateModules(d: Database.Database, guard: (operation: () => void) => void = operation => operation()): void {
   for (const module of registry) module.migrate?.(d);
   migratedOn = d;
+  migrationGuard = guard;
 }
 
 /** Called from `index.ts` once, inside `registerIpc()`, with its own `handle`. */

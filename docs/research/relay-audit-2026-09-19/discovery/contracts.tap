@@ -1,0 +1,184 @@
+TAP version 13
+# (node:19911) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/backend-catalog.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the shipped xAI block validates, and the OpenAI-shaped one does too
+ok 1 - the shipped xAI block validates, and the OpenAI-shaped one does too
+  ---
+  duration_ms: 1.964792
+  type: 'test'
+  ...
+# Subtest: a catalog host that is not https is refused, because a read carries the key
+ok 2 - a catalog host that is not https is refused, because a read carries the key
+  ---
+  duration_ms: 0.420958
+  type: 'test'
+  ...
+# Subtest: an environment override is held to the same rule as the manifest
+ok 3 - an environment override is held to the same rule as the manifest
+  ---
+  duration_ms: 0.155792
+  type: 'test'
+  ...
+# Subtest: a pattern from a manifest is bounded before it reaches the regex engine
+ok 4 - a pattern from a manifest is bounded before it reaches the regex engine
+  ---
+  duration_ms: 0.134958
+  type: 'test'
+  ...
+# Subtest: a backend with no fallback list is refused, because it has nothing to offer offline
+ok 5 - a backend with no fallback list is refused, because it has nothing to offer offline
+  ---
+  duration_ms: 0.129833
+  type: 'test'
+  ...
+# Subtest: the bounds a manifest cannot talk its way past
+ok 6 - the bounds a manifest cannot talk its way past
+  ---
+  duration_ms: 0.282667
+  type: 'test'
+  ...
+# Subtest: an empty catalog is an error, never an empty list
+ok 7 - an empty catalog is an error, never an empty list
+  ---
+  duration_ms: 0.301959
+  type: 'test'
+  ...
+# Subtest: a catalog of nothing but image models is not a catalog of no models
+ok 8 - a catalog of nothing but image models is not a catalog of no models
+  ---
+  duration_ms: 0.235875
+  type: 'test'
+  ...
+# Subtest: a name the provider shipped is never dropped in favour of a slug
+ok 9 - a name the provider shipped is never dropped in favour of a slug
+  ---
+  duration_ms: 0.311583
+  type: 'test'
+  ...
+# Subtest: prettifying a label never rewrites the id it came from
+ok 10 - prettifying a label never rewrites the id it came from
+  ---
+  duration_ms: 0.375375
+  type: 'test'
+  ...
+# Subtest: the catalog cannot flood the picker, and cannot smuggle a novel-length id into it
+ok 11 - the catalog cannot flood the picker, and cannot smuggle a novel-length id into it
+  ---
+  duration_ms: 1.099875
+  type: 'test'
+  ...
+# Subtest: a fallback list always arrives with the sentence that says it is one
+ok 12 - a fallback list always arrives with the sentence that says it is one
+  ---
+  duration_ms: 0.230459
+  type: 'test'
+  ...
+# (node:19912) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/model-economics.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+ok 13 - quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+  ---
+  duration_ms: 1.681958
+  type: 'test'
+  ...
+# Subtest: unknown, negative, nondecimal and nonfinite prices never become zero
+ok 14 - unknown, negative, nondecimal and nonfinite prices never become zero
+  ---
+  duration_ms: 1.477958
+  type: 'test'
+  ...
+# Subtest: scientific decimal prices and documented request charges retain exact arithmetic
+ok 15 - scientific decimal prices and documented request charges retain exact arithmetic
+  ---
+  duration_ms: 0.125292
+  type: 'test'
+  ...
+# Subtest: missing cache rates matter only for the workload buckets being estimated
+ok 16 - missing cache rates matter only for the workload buckets being estimated
+  ---
+  duration_ms: 0.087333
+  type: 'test'
+  ...
+# Subtest: time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+ok 17 - time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+  ---
+  duration_ms: 0.218666
+  type: 'test'
+  ...
+# Subtest: model-only discovery cannot claim a usable endpoint
+ok 18 - model-only discovery cannot claim a usable endpoint
+  ---
+  duration_ms: 0.103333
+  type: 'test'
+  ...
+# Subtest: zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+ok 19 - zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+  ---
+  duration_ms: 0.308792
+  type: 'test'
+  ...
+# Subtest: tools, exact effort and exact tool-choice modes are independently required
+ok 20 - tools, exact effort and exact tool-choice modes are independently required
+  ---
+  duration_ms: 0.137708
+  type: 'test'
+  ...
+# Subtest: stale and future-dated snapshots remain visible but are not eligible
+ok 21 - stale and future-dated snapshots remain visible but are not eligible
+  ---
+  duration_ms: 0.334042
+  type: 'test'
+  ...
+# Subtest: allowlists are exact and an empty allowlist admits nothing
+ok 22 - allowlists are exact and an empty allowlist admits nothing
+  ---
+  duration_ms: 0.356333
+  type: 'test'
+  ...
+# Subtest: ranking uses the supplied workload, not a blended token price
+ok 23 - ranking uses the supplied workload, not a blended token price
+  ---
+  duration_ms: 0.47725
+  type: 'test'
+  ...
+# Subtest: model and endpoint response limits report truncation and malformed rows
+ok 24 - model and endpoint response limits report truncation and malformed rows
+  ---
+  duration_ms: 6.988375
+  type: 'test'
+  ...
+# Subtest: renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+ok 25 - renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+  ---
+  duration_ms: 0.346167
+  type: 'test'
+  ...
+# (node:19913) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/openrouter-connection.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: OpenRouter key shape preserves a bounded supplied key without pretending to authenticate it
+ok 26 - OpenRouter key shape preserves a bounded supplied key without pretending to authenticate it
+  ---
+  duration_ms: 0.608583
+  type: 'test'
+  ...
+# Subtest: OpenRouter key validation rejects malformed input without echoing it
+ok 27 - OpenRouter key validation rejects malformed input without echoing it
+  ---
+  duration_ms: 0.286209
+  type: 'test'
+  ...
+1..27
+# tests 27
+# suites 0
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 101.330833

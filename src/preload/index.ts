@@ -1,4 +1,5 @@
 import type { SkillCatalogue } from '../shared/skill-catalogue';
+import type { RecoveryInspection, RecoveryPreview } from '../shared/recovery';
 import type { ModelEconomicsQuote, ModelEconomicsQuoteInput, ModelEconomicsSettings, ModelEconomicsStatus } from '../shared/model-economics';
 import type { OpenRouterConnectionStatus } from '../shared/openrouter-connection';
 import type { RelayDeliveryKind, RelayDeliveryPreview, RelayDeliveryRead } from '../shared/relay-delivery';
@@ -1032,6 +1033,11 @@ const api = {
   // ── backup and restore ───────────────────────────────────────────────
   // The folder is always chosen in a native dialog, so no path crosses this
   // bridge in either direction; null means the dialog was cancelled.
+  recovery: {
+    inspect: () => call<RecoveryInspection>('recovery:inspect'),
+    preview: (key: string) => call<RecoveryPreview>('recovery:preview', key),
+    apply: (token: string) => call<{ id: string; decision: string }>('recovery:apply', token),
+  },
   backup: {
     create: () => call<BackupSummary | null>('backup:create'),
     /** Read-only. Verifies a backup and reports what restoring it would cost. */

@@ -1,0 +1,61 @@
+{
+  "fixture": true,
+  "before": true,
+  "geometry": [
+    {
+      "view": "goals",
+      "width": 960,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 435,
+      "supportHeight": 0,
+      "summaryHeight": 31
+    },
+    {
+      "view": "board",
+      "width": 960,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 508
+    },
+    {
+      "view": "board",
+      "width": 960,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 528
+    },
+    {
+      "view": "goals",
+      "width": 900,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 435,
+      "supportHeight": 0,
+      "summaryHeight": 31
+    },
+    {
+      "view": "board",
+      "width": 900,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 508
+    },
+    {
+      "view": "board",
+      "width": 900,
+      "overflow": "hidden",
+      "paneHeight": 366,
+      "paneScrollHeight": 528
+    }
+  ],
+  "errors": [],
+  "failures": [
+    "Goals 960×560: goals 960×560: content exceeds the available pane but cannot scroll past the dock",
+    "Empty Board 960×560: board 960×560: content exceeds the available pane but cannot scroll past the dock",
+    "Populated Board 960×560: board 960×560: content exceeds the available pane but cannot scroll past the dock",
+    "Goals 900×560: goals 900×560: content exceeds the available pane but cannot scroll past the dock",
+    "Empty Board 900×560: board 900×560: content exceeds the available pane but cannot scroll past the dock",
+    "Populated Board 900×560: board 900×560: content exceeds the available pane but cannot scroll past the dock"
+  ]
+}

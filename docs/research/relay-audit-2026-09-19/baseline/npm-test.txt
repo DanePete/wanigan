@@ -1,0 +1,3935 @@
+
+> wanigan@0.1.0 test
+> npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:dead-code && npm run test:lint && npm run test:package-hooks && npm run test:local-install && npm run smoke
+
+
+> wanigan@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json
+
+
+> wanigan@0.1.0 test:shared
+> node --test src/shared/*.test.ts && node scripts/test-async-credentials.cjs && node scripts/test-control-dispatch.cjs && node scripts/test-session-modules.cjs && node scripts/test-session-reliability.cjs
+
+TAP version 13
+# (node:6846) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/accounts.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a label becomes a directory-safe suffix
+ok 1 - a label becomes a directory-safe suffix
+  ---
+  duration_ms: 0.554459
+  type: 'test'
+  ...
+# Subtest: a label that would put a separator or an accent in a path cannot
+ok 2 - a label that would put a separator or an accent in a path cannot
+  ---
+  duration_ms: 0.222583
+  type: 'test'
+  ...
+# Subtest: a label with nothing usable in it yields no proposal rather than a bare underscore
+ok 3 - a label with nothing usable in it yields no proposal rather than a bare underscore
+  ---
+  duration_ms: 0.077
+  type: 'test'
+  ...
+# Subtest: a new account is a sibling of the existing one, never a child
+ok 4 - a new account is a sibling of the existing one, never a child
+  ---
+  duration_ms: 0.08175
+  type: 'test'
+  ...
+# Subtest: a directory already spoken for is not proposed twice
+ok 5 - a directory already spoken for is not proposed twice
+  ---
+  duration_ms: 0.130416
+  type: 'test'
+  ...
+# Subtest: the sign-in command follows the harness, and is absent when unknown
+ok 6 - the sign-in command follows the harness, and is absent when unknown
+  ---
+  duration_ms: 0.051667
+  type: 'test'
+  ...
+# Subtest: a harness groups under a name, falling back to what runs on it
+ok 7 - a harness groups under a name, falling back to what runs on it
+  ---
+  duration_ms: 0.101
+  type: 'test'
+  ...
+# (node:6847) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/assisted-by.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: one line per distinct agent and model, sorted, from sessions that ran here since the last commit
+ok 8 - one line per distinct agent and model, sorted, from sessions that ran here since the last commit
+  ---
+  duration_ms: 0.987583
+  type: 'test'
+  ...
+# Subtest: sessions elsewhere, before the window, after it, or not started by Wanigan are not counted
+ok 9 - sessions elsewhere, before the window, after it, or not started by Wanigan are not counted
+  ---
+  duration_ms: 0.082208
+  type: 'test'
+  ...
+# Subtest: a branch with no commits counts every recorded session that started before now
+ok 10 - a branch with no commits counts every recorded session that started before now
+  ---
+  duration_ms: 0.069542
+  type: 'test'
+  ...
+# Subtest: an unrecorded model says so rather than guessing, and an older row falls back to its provider id
+ok 11 - an unrecorded model says so rather than guessing, and an older row falls back to its provider id
+  ---
+  duration_ms: 0.128917
+  type: 'test'
+  ...
+# Subtest: nothing in a row can add a line, a parenthesis or a second trailer to the message
+ok 12 - nothing in a row can add a line, a parenthesis or a second trailer to the message
+  ---
+  duration_ms: 0.074792
+  type: 'test'
+  ...
+# Subtest: trailer lists compare by content and order
+ok 13 - trailer lists compare by content and order
+  ---
+  duration_ms: 0.061584
+  type: 'test'
+  ...
+# (node:6848) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/attempts.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a valid request expands into interleaved slots with its ceiling
+ok 14 - a valid request expands into interleaved slots with its ceiling
+  ---
+  duration_ms: 1.273417
+  type: 'test'
+  ...
+# Subtest: the bounds on arms, repeats and attempts are refused with the numbers
+ok 15 - the bounds on arms, repeats and attempts are refused with the numbers
+  ---
+  duration_ms: 0.401917
+  type: 'test'
+  ...
+# Subtest: a missing, zero or non-finite budget is refused and the refusal names the ceiling
+ok 16 - a missing, zero or non-finite budget is refused and the refusal names the ceiling
+  ---
+  duration_ms: 0.1635
+  type: 'test'
+  ...
+# Subtest: the other fields are refused by name
+ok 17 - the other fields are refused by name
+  ---
+  duration_ms: 34.372375
+  type: 'test'
+  ...
+# Subtest: the ceiling in words never promises a limit to an arm whose CLI takes no budget flag
+ok 18 - the ceiling in words never promises a limit to an arm whose CLI takes no budget flag
+  ---
+  duration_ms: 0.190208
+  type: 'test'
+  ...
+# Subtest: pass@k is the unbiased estimator: hand-computed vectors
+ok 19 - pass@k is the unbiased estimator: hand-computed vectors
+  ---
+  duration_ms: 0.095083
+  type: 'test'
+  ...
+# Subtest: pass^k is C(c,k)/C(n,k): hand-computed vectors
+ok 20 - pass^k is C(c,k)/C(n,k): hand-computed vectors
+  ---
+  duration_ms: 0.068708
+  type: 'test'
+  ...
+# Subtest: the estimators at the edges: k ≤ n, c = 0, c = n and k = n
+ok 21 - the estimators at the edges: k ≤ n, c = 0, c = n and k = n
+  ---
+  duration_ms: 0.084708
+  type: 'test'
+  ...
+# Subtest: the population form at 70% and k = 3 is 97.3% and 34.3%, and differs from the estimator at the same rate
+ok 22 - the population form at 70% and k = 3 is 97.3% and 34.3%, and differs from the estimator at the same rate
+  ---
+  duration_ms: 0.3145
+  type: 'test'
+  ...
+# Subtest: cost per solved task divides every reported cost, failures included, by the passes
+ok 23 - cost per solved task divides every reported cost, failures included, by the passes
+  ---
+  duration_ms: 0.430125
+  type: 'test'
+  ...
+# Subtest: cost per solved task is never computed from nothing reported, and never divided by zero passes
+ok 24 - cost per solved task is never computed from nothing reported, and never divided by zero passes
+  ---
+  duration_ms: 0.12625
+  type: 'test'
+  ...
+# Subtest: a headless row maps to an attempt status, and a failure before spawn is not a trial
+ok 25 - a headless row maps to an attempt status, and a failure before spawn is not a trial
+  ---
+  duration_ms: 0.058709
+  type: 'test'
+  ...
+# Subtest: evidence is controlled only when every trial held every control and was gated
+ok 26 - evidence is controlled only when every trial held every control and was gated
+  ---
+  duration_ms: 3.280875
+  type: 'test'
+  ...
+# Subtest: with no finished trial the evidence is not controlled by default
+ok 27 - with no finished trial the evidence is not controlled by default
+  ---
+  duration_ms: 0.07525
+  type: 'test'
+  ...
+# Subtest: a lead is named only past sqrt(n) over equal trial counts
+ok 28 - a lead is named only past sqrt(n) over equal trial counts
+  ---
+  duration_ms: 0.207208
+  type: 'test'
+  ...
+# Subtest: a bench report reads per arm, labels each figure, and carries an arm with no passes as figures rather than blanks
+ok 29 - a bench report reads per arm, labels each figure, and carries an arm with no passes as figures rather than blanks
+  ---
+  duration_ms: 1.627417
+  type: 'test'
+  ...
+# Subtest: open attempts and passes on unchanged trees are said out loud
+ok 30 - open attempts and passes on unchanged trees are said out loud
+  ---
+  duration_ms: 0.11225
+  type: 'test'
+  ...
+# (node:6849) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/automatic-spend.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: automatic spend distinguishes no prior attempt, explicit zero, missing and partial meters
+ok 31 - automatic spend distinguishes no prior attempt, explicit zero, missing and partial meters
+  ---
+  duration_ms: 0.459583
+  type: 'test'
+  ...
+# Subtest: automatic actions require a valid remaining allowance; reached partial subtotal already suffices to stop
+ok 32 - automatic actions require a valid remaining allowance; reached partial subtotal already suffices to stop
+  ---
+  duration_ms: 0.141542
+  type: 'test'
+  ...
+# (node:6850) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/backend-catalog.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the shipped xAI block validates, and the OpenAI-shaped one does too
+ok 33 - the shipped xAI block validates, and the OpenAI-shaped one does too
+  ---
+  duration_ms: 9.815958
+  type: 'test'
+  ...
+# Subtest: a catalog host that is not https is refused, because a read carries the key
+ok 34 - a catalog host that is not https is refused, because a read carries the key
+  ---
+  duration_ms: 0.436208
+  type: 'test'
+  ...
+# Subtest: an environment override is held to the same rule as the manifest
+ok 35 - an environment override is held to the same rule as the manifest
+  ---
+  duration_ms: 0.15825
+  type: 'test'
+  ...
+# Subtest: a pattern from a manifest is bounded before it reaches the regex engine
+ok 36 - a pattern from a manifest is bounded before it reaches the regex engine
+  ---
+  duration_ms: 0.135209
+  type: 'test'
+  ...
+# Subtest: a backend with no fallback list is refused, because it has nothing to offer offline
+ok 37 - a backend with no fallback list is refused, because it has nothing to offer offline
+  ---
+  duration_ms: 0.127709
+  type: 'test'
+  ...
+# Subtest: the bounds a manifest cannot talk its way past
+ok 38 - the bounds a manifest cannot talk its way past
+  ---
+  duration_ms: 0.295625
+  type: 'test'
+  ...
+# Subtest: an empty catalog is an error, never an empty list
+ok 39 - an empty catalog is an error, never an empty list
+  ---
+  duration_ms: 0.309958
+  type: 'test'
+  ...
+# Subtest: a catalog of nothing but image models is not a catalog of no models
+ok 40 - a catalog of nothing but image models is not a catalog of no models
+  ---
+  duration_ms: 0.239459
+  type: 'test'
+  ...
+# Subtest: a name the provider shipped is never dropped in favour of a slug
+ok 41 - a name the provider shipped is never dropped in favour of a slug
+  ---
+  duration_ms: 0.315792
+  type: 'test'
+  ...
+# Subtest: prettifying a label never rewrites the id it came from
+ok 42 - prettifying a label never rewrites the id it came from
+  ---
+  duration_ms: 0.382
+  type: 'test'
+  ...
+# Subtest: the catalog cannot flood the picker, and cannot smuggle a novel-length id into it
+ok 43 - the catalog cannot flood the picker, and cannot smuggle a novel-length id into it
+  ---
+  duration_ms: 9.336375
+  type: 'test'
+  ...
+# Subtest: a fallback list always arrives with the sentence that says it is one
+ok 44 - a fallback list always arrives with the sentence that says it is one
+  ---
+  duration_ms: 0.304459
+  type: 'test'
+  ...
+# (node:6851) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/claude-slug.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a short path becomes every non-alphanumeric character as a dash, case kept
+ok 45 - a short path becomes every non-alphanumeric character as a dash, case kept
+  ---
+  duration_ms: 0.620166
+  type: 'test'
+  ...
+# Subtest: the hash is Java String.hashCode with 32-bit wraparound
+ok 46 - the hash is Java String.hashCode with 32-bit wraparound
+  ---
+  duration_ms: 0.084167
+  type: 'test'
+  ...
+# Subtest: a path past 200 characters keeps its first 200 and gains a base-36 hash of the whole path
+ok 47 - a path past 200 characters keeps its first 200 and gains a base-36 hash of the whole path
+  ---
+  duration_ms: 0.15975
+  type: 'test'
+  ...
+# Subtest: a decomposed accent is slugged as the composed character the CLI stores
+ok 48 - a decomposed accent is slugged as the composed character the CLI stores
+  ---
+  duration_ms: 0.069041
+  type: 'test'
+  ...
+# (node:6852) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/codex-hooks.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the forwarding command is one fixed string that names both variables and no per-session value
+ok 49 - the forwarding command is one fixed string that names both variables and no per-session value
+  ---
+  duration_ms: 0.711666
+  type: 'test'
+  ...
+# Subtest: each key is the session-flags layer, the snake-cased event, and group and handler zero
+ok 50 - each key is the session-flags layer, the snake-cased event, and group and handler zero
+  ---
+  duration_ms: 0.406458
+  type: 'test'
+  ...
+# Subtest: the definition is one --config per event, each a TOML array holding the command as a TOML string
+ok 51 - the definition is one --config per event, each a TOML array holding the command as a TOML string
+  ---
+  duration_ms: 0.114458
+  type: 'test'
+  ...
+# Subtest: trust adds exactly one hooks.state entry keyed and hashed per event, and nothing that skips trust
+ok 52 - trust adds exactly one hooks.state entry keyed and hashed per event, and nothing that skips trust
+  ---
+  duration_ms: 0.263291
+  type: 'test'
+  ...
+# Subtest: a stored hash that is not a sha256 digest is refused before it can be written into TOML
+ok 53 - a stored hash that is not a sha256 digest is refused before it can be written into TOML
+  ---
+  duration_ms: 0.294
+  type: 'test'
+  ...
+# Subtest: the listing picks all six of Wanigan's hooks and reads each hash and trust word
+ok 54 - the listing picks all six of Wanigan's hooks and reads each hash and trust word
+  ---
+  duration_ms: 0.31925
+  type: 'test'
+  ...
+# Subtest: another source's hook is never picked, even on the same event with the same command
+ok 55 - another source's hook is never picked, even on the same event with the same command
+  ---
+  duration_ms: 0.861083
+  type: 'test'
+  ...
+# Subtest: a session-flags hook running some other command is not Wanigan's, so Wanigan's is missing
+ok 56 - a session-flags hook running some other command is not Wanigan's, so Wanigan's is missing
+  ---
+  duration_ms: 0.35925
+  type: 'test'
+  ...
+# Subtest: a missing hook carries Codex's own complaint when the scope reported one
+ok 57 - a missing hook carries Codex's own complaint when the scope reported one
+  ---
+  duration_ms: 1.081208
+  type: 'test'
+  ...
+# Subtest: a hook found under a key other than the derived one is a parse failure, never trusted by that key
+ok 58 - a hook found under a key other than the derived one is a parse failure, never trusted by that key
+  ---
+  duration_ms: 0.481875
+  type: 'test'
+  ...
+# Subtest: a malformed answer is a parse failure with Codex's own words, never an empty listing
+ok 59 - a malformed answer is a parse failure with Codex's own words, never an empty listing
+  ---
+  duration_ms: 0.29075
+  type: 'test'
+  ...
+# Subtest: the same hook listed once per scope with the same answer is one hook
+ok 60 - the same hook listed once per scope with the same answer is one hook
+  ---
+  duration_ms: 0.082917
+  type: 'test'
+  ...
+# Subtest: trust is granted only when the second run, given the first run's hashes, reads all six as trusted
+ok 61 - trust is granted only when the second run, given the first run's hashes, reads all six as trusted
+  ---
+  duration_ms: 0.272375
+  type: 'test'
+  ...
+# Subtest: untrusted, modified, disabled or re-hashed on the second run is trust not granted, and says which
+ok 62 - untrusted, modified, disabled or re-hashed on the second run is trust not granted, and says which
+  ---
+  duration_ms: 1.901375
+  type: 'test'
+  ...
+# Subtest: a run that times out or stops answering ends the probe with that reason, and a timeout never runs the second
+ok 63 - a run that times out or stops answering ends the probe with that reason, and a timeout never runs the second
+  ---
+  duration_ms: 0.179375
+  type: 'test'
+  ...
+# Subtest: a payload keeps the event and what the timeline reads, and never the prompt, a message or a tool response
+ok 64 - a payload keeps the event and what the timeline reads, and never the prompt, a message or a tool response
+  ---
+  duration_ms: 0.182042
+  type: 'test'
+  ...
+# Subtest: an event name is read in any of the spellings Codex uses, and anything that is not a name is Unknown
+ok 65 - an event name is read in any of the spellings Codex uses, and anything that is not a name is Unknown
+  ---
+  duration_ms: 0.057292
+  type: 'test'
+  ...
+# Subtest: the capability line takes exactly its three shapes, and only "observed" names a first event
+ok 66 - the capability line takes exactly its three shapes, and only "observed" names a first event
+  ---
+  duration_ms: 0.115416
+  type: 'test'
+  ...
+# (node:6853) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/codex-prompt.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Codex fallback accepts a current prompt, never a prior prompt behind an update menu
+ok 67 - Codex fallback accepts a current prompt, never a prior prompt behind an update menu
+  ---
+  duration_ms: 0.755084
+  type: 'test'
+  ...
+# Subtest: a prompt split across output chunks is recognized; arbitrary suffixes and quotations are refused
+ok 68 - a prompt split across output chunks is recognized; arbitrary suffixes and quotations are refused
+  ---
+  duration_ms: 0.136209
+  type: 'test'
+  ...
+# (node:6854) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/collisions.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a conflicting merge names its paths
+ok 69 - a conflicting merge names its paths
+  ---
+  duration_ms: 0.935333
+  type: 'test'
+  ...
+# Subtest: a clean merge is clean only with a tree id and exit 0
+ok 70 - a clean merge is clean only with a tree id and exit 0
+  ---
+  duration_ms: 0.095042
+  type: 'test'
+  ...
+# Subtest: exit 1 with nothing on stdout is git failing, never a conflict
+ok 71 - exit 1 with nothing on stdout is git failing, never a conflict
+  ---
+  duration_ms: 0.063292
+  type: 'test'
+  ...
+# Subtest: a timeout or a killed git is unreadable, whatever stdout held
+ok 72 - a timeout or a killed git is unreadable, whatever stdout held
+  ---
+  duration_ms: 0.053209
+  type: 'test'
+  ...
+# Subtest: a conflict exit that names no path is not presented as an actionable conflict
+ok 73 - a conflict exit that names no path is not presented as an actionable conflict
+  ---
+  duration_ms: 0.049042
+  type: 'test'
+  ...
+# Subtest: paths with spaces and newlines survive the NUL list, and repeats collapse
+ok 74 - paths with spaces and newlines survive the NUL list, and repeats collapse
+  ---
+  duration_ms: 0.06475
+  type: 'test'
+  ...
+# Subtest: a sha-256 repository tree id is accepted
+ok 75 - a sha-256 repository tree id is accepted
+  ---
+  duration_ms: 0.049833
+  type: 'test'
+  ...
+# Subtest: merge-tree --write-tree needs git 2.38 or later
+ok 76 - merge-tree --write-tree needs git 2.38 or later
+  ---
+  duration_ms: 0.116375
+  type: 'test'
+  ...
+# Subtest: overlap is its own outcome: both changed a path and git still merged it
+ok 77 - overlap is its own outcome: both changed a path and git still merged it
+  ---
+  duration_ms: 0.366583
+  type: 'test'
+  ...
+# Subtest: shared paths exclude the ones already reported as conflicts
+ok 78 - shared paths exclude the ones already reported as conflicts
+  ---
+  duration_ms: 1.558541
+  type: 'test'
+  ...
+# Subtest: an unreadable merge stays unreadable even when both change lists were read
+ok 79 - an unreadable merge stays unreadable even when both change lists were read
+  ---
+  duration_ms: 0.135584
+  type: 'test'
+  ...
+# Subtest: unknown change lists never manufacture an overlap
+ok 80 - unknown change lists never manufacture an overlap
+  ---
+  duration_ms: 0.042917
+  type: 'test'
+  ...
+# Subtest: peer pairs are every unordered pair exactly once
+ok 81 - peer pairs are every unordered pair exactly once
+  ---
+  duration_ms: 0.060041
+  type: 'test'
+  ...
+# Subtest: conflicts lead, then what could not be read, then overlaps, then clean pairs
+ok 82 - conflicts lead, then what could not be read, then overlaps, then clean pairs
+  ---
+  duration_ms: 0.171125
+  type: 'test'
+  ...
+# (node:6855) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/companion-says.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a reached limit outranks a filling context window
+ok 83 - a reached limit outranks a filling context window
+  ---
+  duration_ms: 0.689459
+  type: 'test'
+  ...
+# Subtest: with no limit pressure the context message is free to speak
+ok 84 - with no limit pressure the context message is free to speak
+  ---
+  duration_ms: 0.130291
+  type: 'test'
+  ...
+# Subtest: an account state that is an apology is never quoted as a percentage
+ok 85 - an account state that is an apology is never quoted as a percentage
+  ---
+  duration_ms: 0.137166
+  type: 'test'
+  ...
+# Subtest: limits older than the freshness window are not repeated as current
+ok 86 - limits older than the freshness window are not repeated as current
+  ---
+  duration_ms: 9.641
+  type: 'test'
+  ...
+# Subtest: the threshold is a floor, and a session with no account says nothing
+ok 87 - the threshold is a floor, and a session with no account says nothing
+  ---
+  duration_ms: 0.170459
+  type: 'test'
+  ...
+# Subtest: it offers another account only when that one has real room
+ok 88 - it offers another account only when that one has real room
+  ---
+  duration_ms: 0.076083
+  type: 'test'
+  ...
+# Subtest: with nowhere roomier to go it reports without proposing
+ok 89 - with nowhere roomier to go it reports without proposing
+  ---
+  duration_ms: 0.103834
+  type: 'test'
+  ...
+# Subtest: a scoped window names its scope
+ok 90 - a scoped window names its scope
+  ---
+  duration_ms: 0.055583
+  type: 'test'
+  ...
+# (node:6856) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/context-handover.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: it never speaks where the orb will not move
+ok 91 - it never speaks where the orb will not move
+  ---
+  duration_ms: 0.572959
+  type: 'test'
+  ...
+# Subtest: an estimated window is silent even at the very top
+ok 92 - an estimated window is silent even at the very top
+  ---
+  duration_ms: 0.058625
+  type: 'test'
+  ...
+# Subtest: it suggests at the threshold and not before
+ok 93 - it suggests at the threshold and not before
+  ---
+  duration_ms: 0.114084
+  type: 'test'
+  ...
+# Subtest: the band is hysteresis, so a streaming turn cannot flicker it
+ok 94 - the band is hysteresis, so a streaming turn cannot flicker it
+  ---
+  duration_ms: 0.085042
+  type: 'test'
+  ...
+# Subtest: the message quotes what was read, rounded down
+ok 95 - the message quotes what was read, rounded down
+  ---
+  duration_ms: 0.066083
+  type: 'test'
+  ...
+# Subtest: an unconfirmed conversation match is said, not hidden
+ok 96 - an unconfirmed conversation match is said, not hidden
+  ---
+  duration_ms: 0.084125
+  type: 'test'
+  ...
+# Subtest: the prompt asks for the work, not for a recap of the talking
+ok 97 - the prompt asks for the work, not for a recap of the talking
+  ---
+  duration_ms: 0.137084
+  type: 'test'
+  ...
+# Subtest: the seed is labelled as a handover rather than passed off as the work
+ok 98 - the seed is labelled as a handover rather than passed off as the work
+  ---
+  duration_ms: 0.122542
+  type: 'test'
+  ...
+# (node:6857) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/cron.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: autumn repeated wall-clock minutes never yield a past fire or run twice
+ok 99 - autumn repeated wall-clock minutes never yield a past fire or run twice
+  ---
+  duration_ms: 7.667334
+  type: 'test'
+  ...
+# Subtest: spring-forward missing times fire at the first real minute after the gap
+ok 100 - spring-forward missing times fire at the first real minute after the gap
+  ---
+  duration_ms: 1.160917
+  type: 'test'
+  ...
+# Subtest: half-hour autumn changes also skip the repeated wall-clock interval
+ok 101 - half-hour autumn changes also skip the repeated wall-clock interval
+  ---
+  duration_ms: 2.053708
+  type: 'test'
+  ...
+# Subtest: ordinary cron steps, calendar limits, and strict minute rounding remain stable
+ok 102 - ordinary cron steps, calendar limits, and strict minute rounding remain stable
+  ---
+  duration_ms: 2.147541
+  type: 'test'
+  ...
+# (node:6858) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/decision-receipts.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a preview reuses only the main-owned decision for unchanged inputs
+ok 103 - a preview reuses only the main-owned decision for unchanged inputs
+  ---
+  duration_ms: 0.984417
+  type: 'test'
+  ...
+# Subtest: expiry and bounded eviction require another deliberate preview
+ok 104 - expiry and bounded eviction require another deliberate preview
+  ---
+  duration_ms: 0.135583
+  type: 'test'
+  ...
+# (node:6859) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/deferred-approvals.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: defer is offered only to a CLI at or past the release it was verified in
+ok 105 - defer is offered only to a CLI at or past the release it was verified in
+  ---
+  duration_ms: 0.5485
+  type: 'test'
+  ...
+# Subtest: a deferred result is read from exactly the fields the CLI writes
+ok 106 - a deferred result is read from exactly the fields the CLI writes
+  ---
+  duration_ms: 0.392834
+  type: 'test'
+  ...
+# Subtest: nothing is held on a shape the CLI did not write
+ok 107 - nothing is held on a shape the CLI did not write
+  ---
+  duration_ms: 0.160417
+  type: 'test'
+  ...
+# Subtest: a held call is summarised as the part a person decides on, and bounded
+ok 108 - a held call is summarised as the part a person decides on, and bounded
+  ---
+  duration_ms: 0.194125
+  type: 'test'
+  ...
+# (node:6860) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/discovery.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a managed host writes a server path, not an identity
+ok 109 - a managed host writes a server path, not an identity
+  ---
+  duration_ms: 0.664583
+  type: 'test'
+  ...
+# Subtest: git repositories rank above the rest, then by newest activity
+ok 110 - git repositories rank above the rest, then by newest activity
+  ---
+  duration_ms: 0.152375
+  type: 'test'
+  ...
+# Subtest: ranking is stable and does not mutate its input
+ok 111 - ranking is stable and does not mutate its input
+  ---
+  duration_ms: 9.517042
+  type: 'test'
+  ...
+# Subtest: only a recent git repository with real history is ticked for you
+ok 112 - only a recent git repository with real history is ticked for you
+  ---
+  duration_ms: 0.29625
+  type: 'test'
+  ...
+# Subtest: the two default-selection thresholds are floors, not guesses
+ok 113 - the two default-selection thresholds are floors, not guesses
+  ---
+  duration_ms: 0.086083
+  type: 'test'
+  ...
+# Subtest: a row explains itself with two observed facts and no score
+ok 114 - a row explains itself with two observed facts and no score
+  ---
+  duration_ms: 0.08425
+  type: 'test'
+  ...
+# Subtest: a clock that runs backwards never produces a negative age
+ok 115 - a clock that runs backwards never produces a negative age
+  ---
+  duration_ms: 0.179125
+  type: 'test'
+  ...
+# (node:6861) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/exec-config.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: settings yield hooks, environment, permissions and helpers — and nothing the repository cannot run
+ok 116 - settings yield hooks, environment, permissions and helpers — and nothing the repository cannot run
+  ---
+  duration_ms: 2.515625
+  type: 'test'
+  ...
+# Subtest: what is shown never carries an environment value or a credential
+ok 117 - what is shown never carries an environment value or a credential
+  ---
+  duration_ms: 0.40625
+  type: 'test'
+  ...
+# Subtest: a change behind a redaction still changes the digest
+ok 118 - a change behind a redaction still changes the digest
+  ---
+  duration_ms: 0.4445
+  type: 'test'
+  ...
+# Subtest: key order and formatting are not changes
+ok 119 - key order and formatting are not changes
+  ---
+  duration_ms: 0.282041
+  type: 'test'
+  ...
+# Subtest: a hook added, one removed and a command edited are told apart
+ok 120 - a hook added, one removed and a command edited are told apart
+  ---
+  duration_ms: 0.216209
+  type: 'test'
+  ...
+# Subtest: .mcp.json servers show what they start, never their environment
+ok 121 - .mcp.json servers show what they start, never their environment
+  ---
+  duration_ms: 0.225917
+  type: 'test'
+  ...
+# Subtest: Codex project config is pinned table by table without a TOML parser
+ok 122 - Codex project config is pinned table by table without a TOML parser
+  ---
+  duration_ms: 1.652083
+  type: 'test'
+  ...
+# Subtest: only git config keys that run programs or redirect traffic are pinned
+ok 123 - only git config keys that run programs or redirect traffic are pinned
+  ---
+  duration_ms: 0.452875
+  type: 'test'
+  ...
+# Subtest: git hooks and .env redirects
+ok 124 - git hooks and .env redirects
+  ---
+  duration_ms: 0.60325
+  type: 'test'
+  ...
+# Subtest: an unreadable file changes the digest, so it cannot stand in for an edit
+ok 125 - an unreadable file changes the digest, so it cannot stand in for an edit
+  ---
+  duration_ms: 0.3265
+  type: 'test'
+  ...
+# Subtest: the summary counts by kind in words
+ok 126 - the summary counts by kind in words
+  ---
+  duration_ms: 0.20875
+  type: 'test'
+  ...
+# (node:6862) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/extension-manifest.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an extension cannot name another extension's credential
+ok 127 - an extension cannot name another extension's credential
+  ---
+  duration_ms: 1.628541
+  type: 'test'
+  ...
+# Subtest: a credential reference must name a credential the manifest asked for
+ok 128 - a credential reference must name a credential the manifest asked for
+  ---
+  duration_ms: 0.1745
+  type: 'test'
+  ...
+# Subtest: an environment destination cannot be a code loader or Wanigan's own namespace
+ok 129 - an environment destination cannot be a code loader or Wanigan's own namespace
+  ---
+  duration_ms: 0.5725
+  type: 'test'
+  ...
+# Subtest: an MCP name the agent could never call is refused, not installed
+ok 130 - an MCP name the agent could never call is refused, not installed
+  ---
+  duration_ms: 0.169334
+  type: 'test'
+  ...
+# Subtest: a transport refuses the other transport's fields rather than ignoring them
+ok 131 - a transport refuses the other transport's fields rather than ignoring them
+  ---
+  duration_ms: 0.152792
+  type: 'test'
+  ...
+# Subtest: an http server reaches an address the operator can be shown honestly
+ok 132 - an http server reaches an address the operator can be shown honestly
+  ---
+  duration_ms: 0.10375
+  type: 'test'
+  ...
+# Subtest: a stdio command is shown, not second-guessed by a launcher denylist
+ok 133 - a stdio command is shown, not second-guessed by a launcher denylist
+  ---
+  duration_ms: 0.350416
+  type: 'test'
+  ...
+# Subtest: a file field cannot leave the directory the operator chose
+ok 134 - a file field cannot leave the directory the operator chose
+  ---
+  duration_ms: 0.308083
+  type: 'test'
+  ...
+# Subtest: a version floor is either checked or said to be unchecked
+ok 135 - a version floor is either checked or said to be unchecked
+  ---
+  duration_ms: 0.40675
+  type: 'test'
+  ...
+# Subtest: every reason is reported, not the first one
+ok 136 - every reason is reported, not the first one
+  ---
+  duration_ms: 0.69925
+  type: 'test'
+  ...
+# Subtest: an extension that declares nothing is refused rather than installed
+ok 137 - an extension that declares nothing is refused rather than installed
+  ---
+  duration_ms: 0.529792
+  type: 'test'
+  ...
+# Subtest: the caps are the ones the stores downstream actually enforce
+ok 138 - the caps are the ones the stores downstream actually enforce
+  ---
+  duration_ms: 1.018958
+  type: 'test'
+  ...
+# Subtest: consent shows each thing that outlives the click, in one order
+ok 139 - consent shows each thing that outlives the click, in one order
+  ---
+  duration_ms: 0.858792
+  type: 'test'
+  ...
+# Subtest: declared artifacts claim nothing about what was installed
+ok 140 - declared artifacts claim nothing about what was installed
+  ---
+  duration_ms: 0.635333
+  type: 'test'
+  ...
+# Subtest: a fingerprint is the server, not the JSON it arrived in
+ok 141 - a fingerprint is the server, not the JSON it arrived in
+  ---
+  duration_ms: 0.495833
+  type: 'test'
+  ...
+# Subtest: a Scout source is a whole extension, and one that Scout can show
+ok 142 - a Scout source is a whole extension, and one that Scout can show
+  ---
+  duration_ms: 0.975583
+  type: 'test'
+  ...
+# Subtest: a Scout source is a public https page and nothing on this machine
+ok 143 - a Scout source is a public https page and nothing on this machine
+  ---
+  duration_ms: 0.194
+  type: 'test'
+  ...
+# Subtest: consent says which host Scout will fetch, and when, and not the path
+ok 144 - consent says which host Scout will fetch, and when, and not the path
+  ---
+  duration_ms: 0.114125
+  type: 'test'
+  ...
+# Subtest: a declared Scout source claims nothing about what was installed
+ok 145 - a declared Scout source claims nothing about what was installed
+  ---
+  duration_ms: 0.082708
+  type: 'test'
+  ...
+# Subtest: a Scout fingerprint is the source, not the JSON it arrived in
+ok 146 - a Scout fingerprint is the source, not the JSON it arrived in
+  ---
+  duration_ms: 0.10625
+  type: 'test'
+  ...
+# Subtest: an owner string round-trips, and nothing else reads as one
+ok 147 - an owner string round-trips, and nothing else reads as one
+  ---
+  duration_ms: 0.109417
+  type: 'test'
+  ...
+# (node:6863) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/gate-feedback.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: terminal-safe text keeps newlines and tabs and loses every escape and control byte
+ok 148 - terminal-safe text keeps newlines and tabs and loses every escape and control byte
+  ---
+  duration_ms: 0.570333
+  type: 'test'
+  ...
+# Subtest: an excerpt keeps error lines with their context and marks the gaps between them
+ok 149 - an excerpt keeps error lines with their context and marks the gaps between them
+  ---
+  duration_ms: 2.645084
+  type: 'test'
+  ...
+# Subtest: output with no error-looking line hands back its end, and says it was cut
+ok 150 - output with no error-looking line hands back its end, and says it was cut
+  ---
+  duration_ms: 0.313
+  type: 'test'
+  ...
+# Subtest: an excerpt never exceeds its line or character limit
+ok 151 - an excerpt never exceeds its line or character limit
+  ---
+  duration_ms: 1.808166
+  type: 'test'
+  ...
+# Subtest: the prompt names the command and exit, says what was kept, counts the hand-back, and forbids loosening tests
+ok 152 - the prompt names the command and exit, says what was kept, counts the hand-back, and forbids loosening tests
+  ---
+  duration_ms: 0.213167
+  type: 'test'
+  ...
+# Subtest: a hand-back is sent only when every condition holds, and each refusal says which one failed
+ok 153 - a hand-back is sent only when every condition holds, and each refusal says which one failed
+  ---
+  duration_ms: 0.549667
+  type: 'test'
+  ...
+# (node:6864) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/goal-journey.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: goal navigation round-trips opaque IDs without turning their characters into route fields
+ok 154 - goal navigation round-trips opaque IDs without turning their characters into route fields
+  ---
+  duration_ms: 0.567917
+  type: 'test'
+  ...
+# Subtest: only the recorded goal outcome produces acceptance, and rejection remains closed
+ok 155 - only the recorded goal outcome produces acceptance, and rejection remains closed
+  ---
+  duration_ms: 0.156625
+  type: 'test'
+  ...
+# Subtest: failed prerequisites outrank a ready review or another running task
+ok 156 - failed prerequisites outrank a ready review or another running task
+  ---
+  duration_ms: 0.118542
+  type: 'test'
+  ...
+# Subtest: a ready human review is a decision; running work follows only its recorded session
+ok 157 - a ready human review is a decision; running work follows only its recorded session
+  ---
+  duration_ms: 0.0785
+  type: 'test'
+  ...
+# Subtest: queued and deferred tasks never read as ready to launch
+ok 158 - queued and deferred tasks never read as ready to launch
+  ---
+  duration_ms: 0.080625
+  type: 'test'
+  ...
+# Subtest: a finished turn still gets its own reaction while another session needs permission
+ok 159 - a finished turn still gets its own reaction while another session needs permission
+  ---
+  duration_ms: 0.503208
+  type: 'test'
+  ...
+# Subtest: initial, unavailable and recovered snapshots do not replay reactions; new failures do
+ok 160 - initial, unavailable and recovered snapshots do not replay reactions; new failures do
+  ---
+  duration_ms: 0.138208
+  type: 'test'
+  ...
+# (node:6865) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/intake.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: https, ssh and scp remotes on github.com and *.ghe.com name their owner and repository
+ok 161 - https, ssh and scp remotes on github.com and *.ghe.com name their owner and repository
+  ---
+  duration_ms: 1.343791
+  type: 'test'
+  ...
+# Subtest: a remote carrying a credential still names the repository, and the credential is not part of what is kept
+ok 162 - a remote carrying a credential still names the repository, and the credential is not part of what is kept
+  ---
+  duration_ms: 0.172292
+  type: 'test'
+  ...
+# Subtest: other hosts, other path shapes and names that could escape an API path are not GitHub repositories
+ok 163 - other hosts, other path shapes and names that could escape an API path are not GitHub repositories
+  ---
+  duration_ms: 1.763958
+  type: 'test'
+  ...
+# Subtest: with several GitHub remotes, the one gh set-default marked wins, then upstream, github and origin in gh’s own order
+ok 164 - with several GitHub remotes, the one gh set-default marked wins, then upstream, github and origin in gh’s own order
+  ---
+  duration_ms: 1.851125
+  type: 'test'
+  ...
+# Subtest: no remote and remotes on other hosts each say why nothing is watched, naming the hosts
+ok 165 - no remote and remotes on other hosts each say why nothing is watched, naming the hosts
+  ---
+  duration_ms: 0.385791
+  type: 'test'
+  ...
+# Subtest: an interval under ten minutes is refused rather than clamped, and so are fractions, strings and more than a day
+ok 166 - an interval under ten minutes is refused rather than clamped, and so are fractions, strings and more than a day
+  ---
+  duration_ms: 0.9655
+  type: 'test'
+  ...
+# Subtest: the first check looks back a day and says so; later checks start where the last success ended
+ok 167 - the first check looks back a day and says so; later checks start where the last success ended
+  ---
+  duration_ms: 0.261041
+  type: 'test'
+  ...
+# Subtest: a window no longer than the timer’s interval is not a gap; a longer one counts only the time beyond it
+ok 168 - a window no longer than the timer’s interval is not a gap; a longer one counts only the time beyond it
+  ---
+  duration_ms: 0.081875
+  type: 'test'
+  ...
+# Subtest: with the timer off only presses watch, so a long window is unwatched from end to end
+ok 169 - with the timer off only presses watch, so a long window is unwatched from end to end
+  ---
+  duration_ms: 0.254625
+  type: 'test'
+  ...
+# Subtest: the gap sentence says how long nothing was watching, why that can happen, and what it costs
+ok 170 - the gap sentence says how long nothing was watching, why that can happen, and what it costs
+  ---
+  duration_ms: 0.411208
+  type: 'test'
+  ...
+# Subtest: spans read in minutes, hours and days, rounded down so a gap is never overstated
+ok 171 - spans read in minutes, hours and days, rounded down so a gap is never overstated
+  ---
+  duration_ms: 0.100375
+  type: 'test'
+  ...
+# Subtest: each read is one argv array of single tokens, and the comment read is pinned to GET
+ok 172 - each read is one argv array of single tokens, and the comment read is pinned to GET
+  ---
+  duration_ms: 1.591417
+  type: 'test'
+  ...
+# Subtest: an issue created inside the window is opened, and each label on an updated issue is its own labelled fact with no invented time
+ok 173 - an issue created inside the window is opened, and each label on an updated issue is its own labelled fact with no invented time
+  ---
+  duration_ms: 2.129375
+  type: 'test'
+  ...
+# Subtest: a comment on an issue inside the window is commented; a pull request’s comment from the same endpoint is not an issue
+ok 174 - a comment on an issue inside the window is commented; a pull request’s comment from the same endpoint is not an issue
+  ---
+  duration_ms: 0.663084
+  type: 'test'
+  ...
+# Subtest: a failed run is keyed by run and attempt, and only when it last changed inside the window
+ok 175 - a failed run is keyed by run and attempt, and only when it last changed inside the window
+  ---
+  duration_ms: 0.401791
+  type: 'test'
+  ...
+# Subtest: every string from GitHub passes through the injected redactor, and escapes, controls and bidi overrides are removed
+ok 176 - every string from GitHub passes through the injected redactor, and escapes, controls and bidi overrides are removed
+  ---
+  duration_ms: 0.198166
+  type: 'test'
+  ...
+# Subtest: a read that is not JSON or not a list fails with the read named, and a malformed row is skipped rather than invented
+ok 177 - a read that is not JSON or not a list fails with the read named, and a malformed row is skipped rather than invented
+  ---
+  duration_ms: 0.114291
+  type: 'test'
+  ...
+# Subtest: a full list says it may have stopped short, and a long title cannot push a summary past what an event holds
+ok 178 - a full list says it may have stopped short, and a long title cannot push a summary past what an event holds
+  ---
+  duration_ms: 3.207875
+  type: 'test'
+  ...
+# (node:6866) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/keymap.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: with nothing rebound, every row publishes and prints exactly what the table says
+ok 179 - with nothing rebound, every row publishes and prints exactly what the table says
+  ---
+  duration_ms: 1.715333
+  type: 'test'
+  ...
+# Subtest: every default chord is one a person could have chosen: parseable, unreserved and conflict-free
+ok 180 - every default chord is one a person could have chosen: parseable, unreserved and conflict-free
+  ---
+  duration_ms: 13.494
+  type: 'test'
+  ...
+# Subtest: every binding in the table carries a decision, and a fixed one says why in words
+ok 181 - every binding in the table carries a decision, and a fixed one says why in words
+  ---
+  duration_ms: 0.305917
+  type: 'test'
+  ...
+# Subtest: a chord is normalised to one spelling, whichever way it was written
+ok 182 - a chord is normalised to one spelling, whichever way it was written
+  ---
+  duration_ms: 0.353791
+  type: 'test'
+  ...
+# Subtest: what is not a chord is refused with a reason, including characters that would reorder a sentence
+ok 183 - what is not a chord is refused with a reason, including characters that would reorder a sentence
+  ---
+  duration_ms: 1.322334
+  type: 'test'
+  ...
+# Subtest: capture reads a keydown as the matcher will, and waits past modifiers held alone
+ok 184 - capture reads a keydown as the matcher will, and waits past modifiers held alone
+  ---
+  duration_ms: 0.772917
+  type: 'test'
+  ...
+# Subtest: a chord matches exactly the presses it names
+ok 185 - a chord matches exactly the presses it names
+  ---
+  duration_ms: 0.537292
+  type: 'test'
+  ...
+# Subtest: a chord prints in the table’s Mac spelling, in words elsewhere, and speaks as the header does
+ok 186 - a chord prints in the table’s Mac spelling, in words elsewhere, and speaks as the header does
+  ---
+  duration_ms: 0.646375
+  type: 'test'
+  ...
+# Subtest: each refusal is named: unknown, fixed, unparseable, reserved, bare key, conflict
+ok 187 - each refusal is named: unknown, fixed, unparseable, reserved, bare key, conflict
+  ---
+  duration_ms: 3.792916
+  type: 'test'
+  ...
+# Subtest: the interrupt keeps skipping the terminal, and no rebinding lets another binding do it
+ok 188 - the interrupt keeps skipping the terminal, and no rebinding lets another binding do it
+  ---
+  duration_ms: 17.662292
+  type: 'test'
+  ...
+# Subtest: a valid rebinding is published both ways, printed once, and retires the old chord
+ok 189 - a valid rebinding is published both ways, printed once, and retires the old chord
+  ---
+  duration_ms: 1.96775
+  type: 'test'
+  ...
+# Subtest: a freed default can be taken, and the chord that was moved becomes free for it
+ok 190 - a freed default can be taken, and the chord that was moved becomes free for it
+  ---
+  duration_ms: 1.847708
+  type: 'test'
+  ...
+# Subtest: reset restores the default, unless another binding has taken it since, which it names
+ok 191 - reset restores the default, unless another binding has taken it since, which it names
+  ---
+  duration_ms: 2.686292
+  type: 'test'
+  ...
+# Subtest: the palette’s close chord follows the palette, and is not a conflict with it
+ok 192 - the palette’s close chord follows the palette, and is not a conflict with it
+  ---
+  duration_ms: 1.39075
+  type: 'test'
+  ...
+# Subtest: the cheat sheet keeps its bare ? when its chord moves
+ok 193 - the cheat sheet keeps its bare ? when its chord moves
+  ---
+  duration_ms: 1.072667
+  type: 'test'
+  ...
+# Subtest: a stored keymap applies only what this build can honour, and says what it left out
+ok 194 - a stored keymap applies only what this build can honour, and says what it left out
+  ---
+  duration_ms: 1.803625
+  type: 'test'
+  ...
+# Subtest: the menu bar prints the effective chord in Electron’s spelling, and nothing it cannot spell
+ok 195 - the menu bar prints the effective chord in Electron’s spelling, and nothing it cannot spell
+  ---
+  duration_ms: 1.645708
+  type: 'test'
+  ...
+# Subtest: the palette cannot collide with anything outside itself; every other scope can
+ok 196 - the palette cannot collide with anything outside itself; every other scope can
+  ---
+  duration_ms: 0.582833
+  type: 'test'
+  ...
+# Subtest: Settings and the sheet read one grouping, in the sheet’s order
+ok 197 - Settings and the sheet read one grouping, in the sheet’s order
+  ---
+  duration_ms: 1.952792
+  type: 'test'
+  ...
+# (node:6867) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/ledger-chain.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: canonical JSON sorts keys, so field order in a row cannot change a hash
+ok 198 - canonical JSON sorts keys, so field order in a row cannot change a hash
+  ---
+  duration_ms: 0.6905
+  type: 'test'
+  ...
+# Subtest: only the recorded fields are hashed: a joined project name or an id cannot move it
+ok 199 - only the recorded fields are hashed: a joined project name or an id cannot move it
+  ---
+  duration_ms: 0.081833
+  type: 'test'
+  ...
+# Subtest: an intact chain verifies every chained row and names its head
+ok 200 - an intact chain verifies every chained row and names its head
+  ---
+  duration_ms: 0.806375
+  type: 'test'
+  ...
+# Subtest: rows from before the chain began are counted apart and never verified
+ok 201 - rows from before the chain began are counted apart and never verified
+  ---
+  duration_ms: 0.194667
+  type: 'test'
+  ...
+# Subtest: an edited row is named at that row, as a content break
+ok 202 - an edited row is named at that row, as a content break
+  ---
+  duration_ms: 0.222041
+  type: 'test'
+  ...
+# Subtest: a deleted row breaks the link of the row after it
+ok 203 - a deleted row breaks the link of the row after it
+  ---
+  duration_ms: 0.096042
+  type: 'test'
+  ...
+# Subtest: a rewritten row with its own hash recomputed still breaks the next link
+ok 204 - a rewritten row with its own hash recomputed still breaks the next link
+  ---
+  duration_ms: 0.180584
+  type: 'test'
+  ...
+# Subtest: a row without a hash after the chain began is a break, not a pre-chain row
+ok 205 - a row without a hash after the chain began is a break, not a pre-chain row
+  ---
+  duration_ms: 0.083208
+  type: 'test'
+  ...
+# Subtest: clearing the hash of the first chained rows does not make them pre-chain
+ok 206 - clearing the hash of the first chained rows does not make them pre-chain
+  ---
+  duration_ms: 1.636375
+  type: 'test'
+  ...
+# Subtest: a seeded walk checks only the rows after a trusted head, and still finds a break among them
+ok 207 - a seeded walk checks only the rows after a trusted head, and still finds a break among them
+  ---
+  duration_ms: 1.218958
+  type: 'test'
+  ...
+# Subtest: the watched row reports the hash and count the chain holds there now
+ok 208 - the watched row reports the hash and count the chain holds there now
+  ---
+  duration_ms: 0.833917
+  type: 'test'
+  ...
+# Subtest: a lone surrogate is stored as U+FFFD, and is hashed that way before it is written
+ok 209 - a lone surrogate is stored as U+FFFD, and is hashed that way before it is written
+  ---
+  duration_ms: 0.119375
+  type: 'test'
+  ...
+# Subtest: signed statements are prefixed by kind, so a head signature cannot pass as an export signature
+ok 210 - signed statements are prefixed by kind, so a head signature cannot pass as an export signature
+  ---
+  duration_ms: 0.103708
+  type: 'test'
+  ...
+# Subtest: a stored head that verifies and still matches the chain is signed, counting newer rows as unsigned
+ok 211 - a stored head that verifies and still matches the chain is signed, counting newer rows as unsigned
+  ---
+  duration_ms: 0.181292
+  type: 'test'
+  ...
+# Subtest: truncation past a signed head, and a recomputed rewrite under it, are both mismatches
+ok 212 - truncation past a signed head, and a recomputed rewrite under it, are both mismatches
+  ---
+  duration_ms: 0.21925
+  type: 'test'
+  ...
+# Subtest: an unreadable key is unchecked, a bad signature is a mismatch, and no head is unsigned
+ok 213 - an unreadable key is unchecked, a bad signature is a mismatch, and no head is unsigned
+  ---
+  duration_ms: 0.132292
+  type: 'test'
+  ...
+# (node:6868) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/model-economics.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+ok 214 - quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+  ---
+  duration_ms: 11.574584
+  type: 'test'
+  ...
+# Subtest: unknown, negative, nondecimal and nonfinite prices never become zero
+ok 215 - unknown, negative, nondecimal and nonfinite prices never become zero
+  ---
+  duration_ms: 9.577791
+  type: 'test'
+  ...
+# Subtest: scientific decimal prices and documented request charges retain exact arithmetic
+ok 216 - scientific decimal prices and documented request charges retain exact arithmetic
+  ---
+  duration_ms: 0.167292
+  type: 'test'
+  ...
+# Subtest: missing cache rates matter only for the workload buckets being estimated
+ok 217 - missing cache rates matter only for the workload buckets being estimated
+  ---
+  duration_ms: 0.096583
+  type: 'test'
+  ...
+# Subtest: time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+ok 218 - time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+  ---
+  duration_ms: 0.230375
+  type: 'test'
+  ...
+# Subtest: model-only discovery cannot claim a usable endpoint
+ok 219 - model-only discovery cannot claim a usable endpoint
+  ---
+  duration_ms: 0.109833
+  type: 'test'
+  ...
+# Subtest: zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+ok 220 - zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+  ---
+  duration_ms: 0.216833
+  type: 'test'
+  ...
+# Subtest: tools, exact effort and exact tool-choice modes are independently required
+ok 221 - tools, exact effort and exact tool-choice modes are independently required
+  ---
+  duration_ms: 0.142375
+  type: 'test'
+  ...
+# Subtest: stale and future-dated snapshots remain visible but are not eligible
+ok 222 - stale and future-dated snapshots remain visible but are not eligible
+  ---
+  duration_ms: 0.34325
+  type: 'test'
+  ...
+# Subtest: allowlists are exact and an empty allowlist admits nothing
+ok 223 - allowlists are exact and an empty allowlist admits nothing
+  ---
+  duration_ms: 0.363958
+  type: 'test'
+  ...
+# Subtest: ranking uses the supplied workload, not a blended token price
+ok 224 - ranking uses the supplied workload, not a blended token price
+  ---
+  duration_ms: 0.170792
+  type: 'test'
+  ...
+# Subtest: model and endpoint response limits report truncation and malformed rows
+ok 225 - model and endpoint response limits report truncation and malformed rows
+  ---
+  duration_ms: 62.780833
+  type: 'test'
+  ...
+# Subtest: renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+ok 226 - renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+  ---
+  duration_ms: 0.36975
+  type: 'test'
+  ...
+# (node:6869) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/openrouter-connection.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: OpenRouter key shape preserves a bounded supplied key without pretending to authenticate it
+ok 227 - OpenRouter key shape preserves a bounded supplied key without pretending to authenticate it
+  ---
+  duration_ms: 0.623375
+  type: 'test'
+  ...
+# Subtest: OpenRouter key validation rejects malformed input without echoing it
+ok 228 - OpenRouter key validation rejects malformed input without echoing it
+  ---
+  duration_ms: 0.289333
+  type: 'test'
+  ...
+# (node:6870) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/palette.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: search finds all words in any order across title, description, and aliases
+ok 229 - search finds all words in any order across title, description, and aliases
+  ---
+  duration_ms: 1.322542
+  type: 'test'
+  ...
+# Subtest: exact and prefix title matches rank before reordered title words and description matches
+ok 230 - exact and prefix title matches rank before reordered title words and description matches
+  ---
+  duration_ms: 0.161333
+  type: 'test'
+  ...
+# Subtest: title ranking normalizes case and whitespace in both the row and query
+ok 231 - title ranking normalizes case and whitespace in both the row and query
+  ---
+  duration_ms: 0.066208
+  type: 'test'
+  ...
+# Subtest: equally relevant entries retain their original order and identity without mutating input
+ok 232 - equally relevant entries retain their original order and identity without mutating input
+  ---
+  duration_ms: 0.147375
+  type: 'test'
+  ...
+# Subtest: archive matches survive local matching and keep the index order after local destinations
+ok 233 - archive matches survive local matching and keep the index order after local destinations
+  ---
+  duration_ms: 0.141708
+  type: 'test'
+  ...
+# Subtest: empty queries omit detailed settings and archive answers while retaining ordinary menu order
+ok 234 - empty queries omit detailed settings and archive answers while retaining ordinary menu order
+  ---
+  duration_ms: 0.073292
+  type: 'test'
+  ...
+# Subtest: a settings item explicitly recalled through Recent can remain visible before search
+ok 235 - a settings item explicitly recalled through Recent can remain visible before search
+  ---
+  duration_ms: 0.112083
+  type: 'test'
+  ...
+# Subtest: group headings follow the strongest matching result and retain ranked members
+ok 236 - group headings follow the strongest matching result and retain ranked members
+  ---
+  duration_ms: 0.110375
+  type: 'test'
+  ...
+# (node:6871) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/platform.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a Windows PATH splits on semicolons, so a drive letter is not a directory
+ok 237 - a Windows PATH splits on semicolons, so a drive letter is not a directory
+  ---
+  duration_ms: 2.600916
+  type: 'test'
+  ...
+# Subtest: PATH round-trips through split and join on every platform
+ok 238 - PATH round-trips through split and join on every platform
+  ---
+  duration_ms: 1.377583
+  type: 'test'
+  ...
+# Subtest: empty PATH entries are dropped rather than becoming the current directory
+ok 239 - empty PATH entries are dropped rather than becoming the current directory
+  ---
+  duration_ms: 0.394666
+  type: 'test'
+  ...
+# Subtest: PATHEXT decides the probe order, and the empty extension comes last
+ok 240 - PATHEXT decides the probe order, and the empty extension comes last
+  ---
+  duration_ms: 0.444459
+  type: 'test'
+  ...
+# Subtest: an .exe is preferred over a .cmd shim, because that is what typing the name would run
+ok 241 - an .exe is preferred over a .cmd shim, because that is what typing the name would run
+  ---
+  duration_ms: 1.385209
+  type: 'test'
+  ...
+# Subtest: the current directory is never a candidate
+ok 242 - the current directory is never a candidate
+  ---
+  duration_ms: 0.305667
+  type: 'test'
+  ...
+# Subtest: a name that already carries an executable extension is not permuted again
+ok 243 - a name that already carries an executable extension is not permuted again
+  ---
+  duration_ms: 0.1645
+  type: 'test'
+  ...
+# Subtest: an absolute or path-bearing bin names one file and is never searched for on PATH
+ok 244 - an absolute or path-bearing bin names one file and is never searched for on PATH
+  ---
+  duration_ms: 0.552
+  type: 'test'
+  ...
+# Subtest: duplicate candidates collapse, case-insensitively on Windows only
+ok 245 - duplicate candidates collapse, case-insensitively on Windows only
+  ---
+  duration_ms: 0.506333
+  type: 'test'
+  ...
+# Subtest: extra search dirs are appended after PATH, in PATH order
+ok 246 - extra search dirs are appended after PATH, in PATH order
+  ---
+  duration_ms: 0.576958
+  type: 'test'
+  ...
+# Subtest: only .cmd and .bat need cmd.exe
+ok 247 - only .cmd and .bat need cmd.exe
+  ---
+  duration_ms: 0.491334
+  type: 'test'
+  ...
+# Subtest: an .exe is started directly, with its argv untouched
+ok 248 - an .exe is started directly, with its argv untouched
+  ---
+  duration_ms: 11.892125
+  type: 'test'
+  ...
+# Subtest: a .cmd shim is wrapped in cmd.exe with AutoRun and delayed expansion off
+ok 249 - a .cmd shim is wrapped in cmd.exe with AutoRun and delayed expansion off
+  ---
+  duration_ms: 0.254708
+  type: 'test'
+  ...
+# Subtest: a goal containing a shell separator crosses cmd.exe as text, not as a command
+ok 250 - a goal containing a shell separator crosses cmd.exe as text, not as a command
+  ---
+  duration_ms: 0.062583
+  type: 'test'
+  ...
+# Subtest: what cmd.exe cannot carry is refused by name rather than mangled
+ok 251 - what cmd.exe cannot carry is refused by name rather than mangled
+  ---
+  duration_ms: 0.113917
+  type: 'test'
+  ...
+# Subtest: the same arguments are refused nowhere else
+ok 252 - the same arguments are refused nowhere else
+  ---
+  duration_ms: 0.052042
+  type: 'test'
+  ...
+# Subtest: the interpreter plan survives node-pty as a string, never as an array
+ok 253 - the interpreter plan survives node-pty as a string, never as an array
+  ---
+  duration_ms: 0.060167
+  type: 'test'
+  ...
+# Subtest: a refused plan has no command line to hand anybody
+ok 254 - a refused plan has no command line to hand anybody
+  ---
+  duration_ms: 0.24675
+  type: 'test'
+  ...
+# Subtest: a trailing backslash does not escape the closing quote
+ok 255 - a trailing backslash does not escape the closing quote
+  ---
+  duration_ms: 0.037334
+  type: 'test'
+  ...
+# Subtest: Windows links a directory with a junction, which needs no elevation
+ok 256 - Windows links a directory with a junction, which needs no elevation
+  ---
+  duration_ms: 6.910916
+  type: 'test'
+  ...
+# Subtest: a bootstrap command keeps its shell, because its shell is the point
+ok 257 - a bootstrap command keeps its shell, because its shell is the point
+  ---
+  duration_ms: 0.848292
+  type: 'test'
+  ...
+# Subtest: the command interpreter is the one the machine names
+ok 258 - the command interpreter is the one the machine names
+  ---
+  duration_ms: 0.071375
+  type: 'test'
+  ...
+# Subtest: asking when a process started is ps here and PowerShell there
+ok 259 - asking when a process started is ps here and PowerShell there
+  ---
+  duration_ms: 0.133041
+  type: 'test'
+  ...
+# Subtest: a pid that is not a plain positive integer never reaches a command line
+ok 260 - a pid that is not a plain positive integer never reaches a command line
+  ---
+  duration_ms: 0.056542
+  type: 'test'
+  ...
+# Subtest: Windows has no login shell to ask for a PATH
+ok 261 - Windows has no login shell to ask for a PATH
+  ---
+  duration_ms: 0.0505
+  type: 'test'
+  ...
+# Subtest: the Windows fallback dirs are where the supported installers actually write
+ok 262 - the Windows fallback dirs are where the supported installers actually write
+  ---
+  duration_ms: 0.095625
+  type: 'test'
+  ...
+# Subtest: an absent APPDATA falls back to its conventional location rather than to undefined
+ok 263 - an absent APPDATA falls back to its conventional location rather than to undefined
+  ---
+  duration_ms: 0.060958
+  type: 'test'
+  ...
+# Subtest: macOS keeps the homebrew prefixes it already relied on
+ok 264 - macOS keeps the homebrew prefixes it already relied on
+  ---
+  duration_ms: 0.037875
+  type: 'test'
+  ...
+# Subtest: an unfamiliar platform is treated as POSIX, never as Windows
+ok 265 - an unfamiliar platform is treated as POSIX, never as Windows
+  ---
+  duration_ms: 0.034792
+  type: 'test'
+  ...
+# (node:6872) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/pr-feedback.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a mixed selection is one message: anchored header, checks with their evidence, threads with their quotes
+ok 266 - a mixed selection is one message: anchored header, checks with their evidence, threads with their quotes
+  ---
+  duration_ms: 52.531958
+  type: 'test'
+  ...
+# Subtest: the header says so when gh named no head, and says nothing about a branch that matches it
+ok 267 - the header says so when gh named no head, and says nothing about a branch that matches it
+  ---
+  duration_ms: 0.164875
+  type: 'test'
+  ...
+# Subtest: a log line holding a fence gets a longer fence, so it cannot close the block early
+ok 268 - a log line holding a fence gets a longer fence, so it cannot close the block early
+  ---
+  duration_ms: 0.168583
+  type: 'test'
+  ...
+# Subtest: past the size bound an excerpt is dropped first, and then whole items are counted, never cut mid-quote
+ok 269 - past the size bound an excerpt is dropped first, and then whole items are counted, never cut mid-quote
+  ---
+  duration_ms: 1.381334
+  type: 'test'
+  ...
+# Subtest: thread locations never give an outdated thread a current line
+ok 270 - thread locations never give an outdated thread a current line
+  ---
+  duration_ms: 0.654416
+  type: 'test'
+  ...
+# Subtest: the sessions a message can go to are the live ones working in this repository, worktrees included
+ok 271 - the sessions a message can go to are the live ones working in this repository, worktrees included
+  ---
+  duration_ms: 1.257917
+  type: 'test'
+  ...
+# (node:6873) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/pr-readiness.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the list names the pull request, its head commit and GitHub’s two mergeability words
+ok 272 - the list names the pull request, its head commit and GitHub’s two mergeability words
+  ---
+  duration_ms: 1.28925
+  type: 'test'
+  ...
+# Subtest: an empty list is "no pull request", and output that is not a list is a failed read
+ok 273 - an empty list is "no pull request", and output that is not a list is a failed read
+  ---
+  duration_ms: 0.12725
+  type: 'test'
+  ...
+# Subtest: an open pull request outranks a newer merged one, and words GitHub did not use are not invented
+ok 274 - an open pull request outranks a newer merged one, and words GitHub did not use are not invented
+  ---
+  duration_ms: 0.188458
+  type: 'test'
+  ...
+# Subtest: checks keep gh’s buckets and state words, failures first, and only Actions links name a run
+ok 275 - checks keep gh’s buckets and state words, failures first, and only Actions links name a run
+  ---
+  duration_ms: 0.574625
+  type: 'test'
+  ...
+# Subtest: a row without a bucket is sorted the way gh sorts it, and Go’s zero time is not a date
+ok 276 - a row without a bucket is sorted the way gh sorts it, and Go’s zero time is not a date
+  ---
+  duration_ms: 0.165833
+  type: 'test'
+  ...
+# Subtest: a check list is bounded and says how many it left out
+ok 277 - a check list is bounded and says how many it left out
+  ---
+  duration_ms: 13.657125
+  type: 'test'
+  ...
+# Subtest: an Actions link yields only digits and a validated repository
+ok 278 - an Actions link yields only digits and a validated repository
+  ---
+  duration_ms: 0.256709
+  type: 'test'
+  ...
+# Subtest: review threads keep their anchors, and an outdated thread gets no current line
+ok 279 - review threads keep their anchors, and an outdated thread gets no current line
+  ---
+  duration_ms: 0.415458
+  type: 'test'
+  ...
+# Subtest: a single-line thread and its whole count read as complete
+ok 280 - a single-line thread and its whole count read as complete
+  ---
+  duration_ms: 0.627583
+  type: 'test'
+  ...
+# Subtest: a capped read says how many threads GitHub holds and that later ones are not listed
+ok 281 - a capped read says how many threads GitHub holds and that later ones are not listed
+  ---
+  duration_ms: 44.6755
+  type: 'test'
+  ...
+# Subtest: a GraphQL error is a failed read that carries GitHub’s own message, never zero threads
+ok 282 - a GraphQL error is a failed read that carries GitHub’s own message, never zero threads
+  ---
+  duration_ms: 0.217667
+  type: 'test'
+  ...
+# Subtest: a thread body is bounded and counts what it cut; a deleted author and a file-level thread read as themselves
+ok 283 - a thread body is bounded and counts what it cut; a deleted author and a file-level thread read as themselves
+  ---
+  duration_ms: 0.153167
+  type: 'test'
+  ...
+# Subtest: every string in a thread passes through the injected redactor
+ok 284 - every string in a thread passes through the injected redactor
+  ---
+  duration_ms: 0.094542
+  type: 'test'
+  ...
+# Subtest: the query asks for every field the parser reads
+ok 285 - the query asks for every field the parser reads
+  ---
+  duration_ms: 4.590542
+  type: 'test'
+  ...
+# Subtest: a failed log excerpt ends at GitHub’s last error marker and says what it left out either side
+ok 286 - a failed log excerpt ends at GitHub’s last error marker and says what it left out either side
+  ---
+  duration_ms: 0.626459
+  type: 'test'
+  ...
+# Subtest: with no error marker the excerpt is the end of the log, and a blank log is no excerpt
+ok 287 - with no error marker the excerpt is the end of the log, and a blank log is no excerpt
+  ---
+  duration_ms: 0.117958
+  type: 'test'
+  ...
+# Subtest: a long log line is bounded, and redaction sees the whole tail so a key block split by the window is still one block
+ok 288 - a long log line is bounded, and redaction sees the whole tail so a key block split by the window is still one block
+  ---
+  duration_ms: 0.214167
+  type: 'test'
+  ...
+# Subtest: control characters, escape sequences and bidirectional overrides are removed from untrusted text
+ok 289 - control characters, escape sequences and bidirectional overrides are removed from untrusted text
+  ---
+  duration_ms: 0.041125
+  type: 'test'
+  ...
+# Subtest: a link survives only as https without a credential in it
+ok 290 - a link survives only as https without a credential in it
+  ---
+  duration_ms: 0.266917
+  type: 'test'
+  ...
+# Subtest: remote hosts come from https, ssh and scp-like URLs; local paths have none
+ok 291 - remote hosts come from https, ssh and scp-like URLs; local paths have none
+  ---
+  duration_ms: 0.367125
+  type: 'test'
+  ...
+# Subtest: mergeability reads conflicts before blocks, and "not computed" apart from "not said"
+ok 292 - mergeability reads conflicts before blocks, and "not computed" apart from "not said"
+  ---
+  duration_ms: 0.137292
+  type: 'test'
+  ...
+# (node:6874) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/preflight.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an agent that did not resolve never reads as satisfied
+ok 293 - an agent that did not resolve never reads as satisfied
+  ---
+  duration_ms: 0.707125
+  type: 'test'
+  ...
+# Subtest: an unreadable login is never a failure
+ok 294 - an unreadable login is never a failure
+  ---
+  duration_ms: 0.143875
+  type: 'test'
+  ...
+# Subtest: readiness depends on resolution alone, never on the login or the version
+ok 295 - readiness depends on resolution alone, never on the login or the version
+  ---
+  duration_ms: 0.234333
+  type: 'test'
+  ...
+# Subtest: a version is reported, never invented
+ok 296 - a version is reported, never invented
+  ---
+  duration_ms: 0.080042
+  type: 'test'
+  ...
+# Subtest: the project and session items count what happened
+ok 297 - the project and session items count what happened
+  ---
+  duration_ms: 0.984375
+  type: 'test'
+  ...
+# Subtest: the session item names whichever precondition is missing, in text
+ok 298 - the session item names whichever precondition is missing, in text
+  ---
+  duration_ms: 0.116291
+  type: 'test'
+  ...
+# Subtest: completion is recomputed from evidence, and an empty list is not complete
+ok 299 - completion is recomputed from evidence, and an empty list is not complete
+  ---
+  duration_ms: 0.083125
+  type: 'test'
+  ...
+# Subtest: a key-backed profile is not an agent you have
+ok 300 - a key-backed profile is not an agent you have
+  ---
+  duration_ms: 0.08625
+  type: 'test'
+  ...
+# Subtest: agents sharing a resolved path collapse to one entry
+ok 301 - agents sharing a resolved path collapse to one entry
+  ---
+  duration_ms: 0.260958
+  type: 'test'
+  ...
+# Subtest: install guidance is inert, https, and needs no Node
+ok 302 - install guidance is inert, https, and needs no Node
+  ---
+  duration_ms: 0.46175
+  type: 'test'
+  ...
+# (node:6875) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/prompt-improve.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: prompt improvement receives only the supplied draft and bounded destination metadata
+ok 303 - prompt improvement receives only the supplied draft and bounded destination metadata
+  ---
+  duration_ms: 1.20975
+  type: 'test'
+  ...
+# Subtest: a suggestion keeps unanswered questions separate and respects the destination capacity
+ok 304 - a suggestion keeps unanswered questions separate and respects the destination capacity
+  ---
+  duration_ms: 0.470667
+  type: 'test'
+  ...
+# Subtest: text destined for a session never acquires terminal escape or editing controls
+ok 305 - text destined for a session never acquires terminal escape or editing controls
+  ---
+  duration_ms: 0.556625
+  type: 'test'
+  ...
+# (node:6876) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/provider-prompt.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: positional initial prompt stays one argument after the option terminator
+ok 306 - positional initial prompt stays one argument after the option terminator
+  ---
+  duration_ms: 0.816541
+  type: 'test'
+  ...
+# Subtest: absent prompt emits no delimiter; malformed or oversized input fails before spawn
+ok 307 - absent prompt emits no delimiter; malformed or oversized input fails before spawn
+  ---
+  duration_ms: 0.145
+  type: 'test'
+  ...
+# (node:6877) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/provider-status.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an unconfirmed fallback cannot claim the selected conversation is nearly full
+ok 308 - an unconfirmed fallback cannot claim the selected conversation is nearly full
+  ---
+  duration_ms: 13.723292
+  type: 'test'
+  ...
+# Subtest: exact context identifies reading time and distinguishes reported from assumed windows
+ok 309 - exact context identifies reading time and distinguishes reported from assumed windows
+  ---
+  duration_ms: 0.211875
+  type: 'test'
+  ...
+# Subtest: old or undated readings stay historical without current pressure, and absent usage invents no percentage
+ok 310 - old or undated readings stay historical without current pressure, and absent usage invents no percentage
+  ---
+  duration_ms: 0.161042
+  type: 'test'
+  ...
+# (node:6878) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/relay-forecast.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: MIN_HISTORY is three, the smallest sample whose median is a middle
+ok 311 - MIN_HISTORY is three, the smallest sample whose median is a middle
+  ---
+  duration_ms: 0.488083
+  type: 'test'
+  ...
+# Subtest: median takes the lower middle of an even count and refuses an empty list
+ok 312 - median takes the lower middle of an even count and refuses an empty list
+  ---
+  duration_ms: 0.135042
+  type: 'test'
+  ...
+# Subtest: fewer than MIN_HISTORY comparable runs at every rung is no number at all
+ok 313 - fewer than MIN_HISTORY comparable runs at every rung is no number at all
+  ---
+  duration_ms: 0.409833
+  type: 'test'
+  ...
+# Subtest: enough runs at the exact route answer at the exact rung with both medians
+ok 314 - enough runs at the exact route answer at the exact rung with both medians
+  ---
+  duration_ms: 0.084375
+  type: 'test'
+  ...
+# Subtest: the ladder falls one rung at a time and says which rung it landed on
+ok 315 - the ladder falls one rung at a time and says which rung it landed on
+  ---
+  duration_ms: 0.773333
+  type: 'test'
+  ...
+# Subtest: a route naming no model skips the model rungs rather than matching every model
+ok 316 - a route naming no model skips the model rungs rather than matching every model
+  ---
+  duration_ms: 0.171834
+  type: 'test'
+  ...
+# Subtest: a null effort on the route matches only runs that recorded no effort at the exact rung
+ok 317 - a null effort on the route matches only runs that recorded no effort at the exact rung
+  ---
+  duration_ms: 0.200709
+  type: 'test'
+  ...
+# Subtest: the cost median comes from the same rung and needs its own MIN_HISTORY of priced runs
+ok 318 - the cost median comes from the same rung and needs its own MIN_HISTORY of priced runs
+  ---
+  duration_ms: 0.065292
+  type: 'test'
+  ...
+# Subtest: a total exists only when every phase has a number, and n is the weakest N
+ok 319 - a total exists only when every phase has a number, and n is the weakest N
+  ---
+  duration_ms: 1.667833
+  type: 'test'
+  ...
+# (node:6879) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/relay-rig.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a rig needs at least one basin, and refuses a fractional or negative count rather than guessing one
+ok 320 - a rig needs at least one basin, and refuses a fractional or negative count rather than guessing one
+  ---
+  duration_ms: 0.711333
+  type: 'test'
+  ...
+# Subtest: layout invariants: drains descend, every pipe connects the basin above it to the one below, and the rig never reaches below the world floor
+ok 321 - layout invariants: drains descend, every pipe connects the basin above it to the one below, and the rig never reaches below the world floor
+  ---
+  duration_ms: 0.238125
+  type: 'test'
+  ...
+# Subtest: floorY has no seam at the drain edge: flat across the gate, then rising continuously into the funnel
+ok 322 - floorY has no seam at the drain edge: flat across the gate, then rising continuously into the funnel
+  ---
+  duration_ms: 0.109209
+  type: 'test'
+  ...
+# Subtest: the seed lattice sits entirely inside basin 0, above the floor and inside the walls
+ok 323 - the seed lattice sits entirely inside basin 0, above the floor and inside the walls
+  ---
+  duration_ms: 8.79175
+  type: 'test'
+  ...
+# Subtest: opening an existing relay seeds only its recorded current basin, including a narrowed three-stage relay
+ok 324 - opening an existing relay seeds only its recorded current basin, including a narrowed three-stage relay
+  ---
+  duration_ms: 9.31275
+  type: 'test'
+  ...
+# Subtest: boundary samples all lie on a real surface, and every gate has samples of its own
+ok 325 - boundary samples all lie on a real surface, and every gate has samples of its own
+  ---
+  duration_ms: 15.802833
+  type: 'test'
+  ...
+# Subtest: fluidTier, exhaustively over every setting × motion × reduced-motion × webgl2 combination
+ok 326 - fluidTier, exhaustively over every setting × motion × reduced-motion × webgl2 combination
+  ---
+  duration_ms: 1.243708
+  type: 'test'
+  ...
+# (node:6880) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/relay-route.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an operator’s own choice outranks a suggestion that cleared every gate
+ok 327 - an operator’s own choice outranks a suggestion that cleared every gate
+  ---
+  duration_ms: 0.946125
+  type: 'test'
+  ...
+# Subtest: an operator naming a model alone keeps the profile’s default effort where that model declares it
+ok 328 - an operator naming a model alone keeps the profile’s default effort where that model declares it
+  ---
+  duration_ms: 0.904833
+  type: 'test'
+  ...
+# Subtest: an operator value the profile does not declare is refused, not clamped, and the reason says which one
+ok 329 - an operator value the profile does not declare is refused, not clamped, and the reason says which one
+  ---
+  duration_ms: 0.136458
+  type: 'test'
+  ...
+# Subtest: a suggestion below the threshold is dropped, and so is one whose confidence is not a probability
+ok 330 - a suggestion below the threshold is dropped, and so is one whose confidence is not a probability
+  ---
+  duration_ms: 0.337041
+  type: 'test'
+  ...
+# Subtest: a suggestion naming a model this profile does not declare is dropped
+ok 331 - a suggestion naming a model this profile does not declare is dropped
+  ---
+  duration_ms: 0.076875
+  type: 'test'
+  ...
+# Subtest: a suggestion naming an effort the model does not declare is dropped whole and never moved to the nearest level
+ok 332 - a suggestion naming an effort the model does not declare is dropped whole and never moved to the nearest level
+  ---
+  duration_ms: 0.08775
+  type: 'test'
+  ...
+# Subtest: a suggestion that clears every gate is taken and carries its own confidence
+ok 333 - a suggestion that clears every gate is taken and carries its own confidence
+  ---
+  duration_ms: 0.126375
+  type: 'test'
+  ...
+# Subtest: a default the profile no longer declares falls back to the first candidate and names the default it lost
+ok 334 - a default the profile no longer declares falls back to the first candidate and names the default it lost
+  ---
+  duration_ms: 0.058291
+  type: 'test'
+  ...
+# Subtest: a profile with no candidates chooses nothing and does not throw
+ok 335 - a profile with no candidates chooses nothing and does not throw
+  ---
+  duration_ms: 0.623792
+  type: 'test'
+  ...
+# Subtest: a model that declares no effort levels never comes back with an effort
+ok 336 - a model that declares no effort levels never comes back with an effort
+  ---
+  duration_ms: 0.331041
+  type: 'test'
+  ...
+# Subtest: every route explains itself in one complete sentence, whatever it was handed
+ok 337 - every route explains itself in one complete sentence, whatever it was handed
+  ---
+  duration_ms: 0.6135
+  type: 'test'
+  ...
+# Subtest: the phase is named in the reason, so a route proof says which stage it belongs to
+ok 338 - the phase is named in the reason, so a route proof says which stage it belongs to
+  ---
+  duration_ms: 0.058042
+  type: 'test'
+  ...
+# (node:6881) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/relay-routing.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Relay keeps the operator routing mode and preference together
+ok 339 - Relay keeps the operator routing mode and preference together
+  ---
+  duration_ms: 1.970709
+  type: 'test'
+  ...
+# Subtest: invalid routing controls are refused instead of silently spending on Auto
+ok 340 - invalid routing controls are refused instead of silently spending on Auto
+  ---
+  duration_ms: 0.498583
+  type: 'test'
+  ...
+# (node:6882) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/relay.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a basin with fewer than three recorded completions holds still rather than breathing at an invented rate
+ok 341 - a basin with fewer than three recorded completions holds still rather than breathing at an invented rate
+  ---
+  duration_ms: 1.8675
+  type: 'test'
+  ...
+# Subtest: a session whose last tool call is long past goes glass-flat, and says it went quiet rather than that it had no samples
+ok 342 - a session whose last tool call is long past goes glass-flat, and says it went quiet rather than that it had no samples
+  ---
+  duration_ms: 0.144791
+  type: 'test'
+  ...
+# Subtest: the period is the median interval, so one four-minute tool call does not slow the whole basin down
+ok 343 - the period is the median interval, so one four-minute tool call does not slow the whole basin down
+  ---
+  duration_ms: 0.144167
+  type: 'test'
+  ...
+# Subtest: a measured period is clamped at both ends, so a hammering agent never strobes and a slow one never looks stopped
+ok 344 - a measured period is clamped at both ends, so a hammering agent never strobes and a slow one never looks stopped
+  ---
+  duration_ms: 0.074083
+  type: 'test'
+  ...
+# Subtest: completions that arrive unsorted or repeated give the same cadence as if they had not
+ok 345 - completions that arrive unsorted or repeated give the same cadence as if they had not
+  ---
+  duration_ms: 0.136791
+  type: 'test'
+  ...
+# Subtest: sediment drops one grain per completed call, stops at the cap, and hands the whole count over past it
+ok 346 - sediment drops one grain per completed call, stops at the cap, and hands the whole count over past it
+  ---
+  duration_ms: 0.080375
+  type: 'test'
+  ...
+# Subtest: a sediment count that arrives missing, fractional or negative yields an empty floor instead of throwing
+ok 347 - a sediment count that arrives missing, fractional or negative yields an empty floor instead of throwing
+  ---
+  duration_ms: 0.132375
+  type: 'test'
+  ...
+# Subtest: a node picks the same silt scatter every time it is asked, so a screenshot of the rail is reproducible
+ok 348 - a node picks the same silt scatter every time it is asked, so a screenshot of the rail is reproducible
+  ---
+  duration_ms: 0.091833
+  type: 'test'
+  ...
+# Subtest: node ids spread across every scatter the stylesheet provides instead of collapsing onto one
+ok 349 - node ids spread across every scatter the stylesheet provides instead of collapsing onto one
+  ---
+  duration_ms: 0.488541
+  type: 'test'
+  ...
+# Subtest: a hostile node id still picks a legal scatter and never throws
+ok 350 - a hostile node id still picks a legal scatter and never throws
+  ---
+  duration_ms: 3.467375
+  type: 'test'
+  ...
+# Subtest: the two counted-out stages get a gauge, and they are the only two
+ok 351 - the two counted-out stages get a gauge, and they are the only two
+  ---
+  duration_ms: 0.219209
+  type: 'test'
+  ...
+# Subtest: the plan, implement and review basins get no gauge even when a caller offers them plausible numbers
+ok 352 - the plan, implement and review basins get no gauge even when a caller offers them plausible numbers
+  ---
+  duration_ms: 0.067208
+  type: 'test'
+  ...
+# Subtest: a gauge with no recorded total is absent rather than empty, because an empty bar still promises an end
+ok 353 - a gauge with no recorded total is absent rather than empty, because an empty bar still promises an end
+  ---
+  duration_ms: 0.046292
+  type: 'test'
+  ...
+# Subtest: a gauge clamps into its own total, so a miscount cannot overfill a basin
+ok 354 - a gauge clamps into its own total, so a miscount cannot overfill a basin
+  ---
+  duration_ms: 0.422041
+  type: 'test'
+  ...
+# Subtest: every function survives an empty, absurd or non-finite reading without throwing
+ok 355 - every function survives an empty, absurd or non-finite reading without throwing
+  ---
+  duration_ms: 17.67875
+  type: 'test'
+  ...
+# (node:6883) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/resumable.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an id the harness minted at launch is not by itself proof of a conversation
+ok 356 - an id the harness minted at launch is not by itself proof of a conversation
+  ---
+  duration_ms: 1.055166
+  type: 'test'
+  ...
+# Subtest: the transcript on disk is what makes a minted id resumable
+ok 357 - the transcript on disk is what makes a minted id resumable
+  ---
+  duration_ms: 0.09425
+  type: 'test'
+  ...
+# Subtest: an archived copy is history, not a resumable conversation
+ok 358 - an archived copy is history, not a resumable conversation
+  ---
+  duration_ms: 0.060875
+  type: 'test'
+  ...
+# Subtest: a harness that reports its identity after the first turn needs no transcript
+ok 359 - a harness that reports its identity after the first turn needs no transcript
+  ---
+  duration_ms: 0.0485
+  type: 'test'
+  ...
+# Subtest: no id is the case the classifier already handled, and keeps handling
+ok 360 - no id is the case the classifier already handled, and keeps handling
+  ---
+  duration_ms: 0.109917
+  type: 'test'
+  ...
+# Subtest: every refusal says which of the three it is, in a sentence a person can act on
+ok 361 - every refusal says which of the three it is, in a sentence a person can act on
+  ---
+  duration_ms: 0.192167
+  type: 'test'
+  ...
+# Subtest: only a harness Wanigan names the conversation for mints its identity at launch
+ok 362 - only a harness Wanigan names the conversation for mints its identity at launch
+  ---
+  duration_ms: 0.103333
+  type: 'test'
+  ...
+# (node:6884) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/resume-history.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: conversations are banded by calendar day of their last activity, newest first
+ok 363 - conversations are banded by calendar day of their last activity, newest first
+  ---
+  duration_ms: 0.860875
+  type: 'test'
+  ...
+# Subtest: a pin floats above every day and a settle sinks below them; empty bands are omitted
+ok 364 - a pin floats above every day and a settle sinks below them; empty bands are omitted
+  ---
+  duration_ms: 0.147292
+  type: 'test'
+  ...
+# Subtest: last activity is the end when one was recorded, the start otherwise
+ok 365 - last activity is the end when one was recorded, the start otherwise
+  ---
+  duration_ms: 0.056208
+  type: 'test'
+  ...
+# Subtest: every typed word must match somewhere in name, project, agent, model, effort or path
+ok 366 - every typed word must match somewhere in name, project, agent, model, effort or path
+  ---
+  duration_ms: 0.416333
+  type: 'test'
+  ...
+# Subtest: hit markers split into runs, and unpaired markers stay as the characters they are
+ok 367 - hit markers split into runs, and unpaired markers stay as the characters they are
+  ---
+  duration_ms: 0.208
+  type: 'test'
+  ...
+# (node:6885) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/review-notes.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: every code row knows its file and both line numbers
+ok 368 - every code row knows its file and both line numbers
+  ---
+  duration_ms: 0.85725
+  type: 'test'
+  ...
+# Subtest: "No newline at end of file" is not a line of code and does not advance the count
+ok 369 - "No newline at end of file" is not a line of code and does not advance the count
+  ---
+  duration_ms: 0.117583
+  type: 'test'
+  ...
+# Subtest: a deleted file keeps its name even though +++ is /dev/null
+ok 370 - a deleted file keeps its name even though +++ is /dev/null
+  ---
+  duration_ms: 0.101
+  type: 'test'
+  ...
+# Subtest: a new file's name loses git's trailing tab
+ok 371 - a new file's name loses git's trailing tab
+  ---
+  duration_ms: 0.0505
+  type: 'test'
+  ...
+# Subtest: the empty string a trailing newline leaves is not a line of code
+ok 372 - the empty string a trailing newline leaves is not a line of code
+  ---
+  duration_ms: 0.147417
+  type: 'test'
+  ...
+# Subtest: a changed line that begins like a file header is still a changed line
+ok 373 - a changed line that begins like a file header is still a changed line
+  ---
+  duration_ms: 0.110292
+  type: 'test'
+  ...
+# Subtest: a hunk header with no count means one line on that side
+ok 374 - a hunk header with no count means one line on that side
+  ---
+  duration_ms: 0.055917
+  type: 'test'
+  ...
+# Subtest: headers and hunk lines are never commentable
+ok 375 - headers and hunk lines are never commentable
+  ---
+  duration_ms: 0.054292
+  type: 'test'
+  ...
+# Subtest: a single-file diff with its headers trimmed takes the fallback name
+ok 376 - a single-file diff with its headers trimmed takes the fallback name
+  ---
+  duration_ms: 0.274125
+  type: 'test'
+  ...
+# Subtest: a note over a replaced line anchors both sides, new side first
+ok 377 - a note over a replaced line anchors both sides, new side first
+  ---
+  duration_ms: 0.411084
+  type: 'test'
+  ...
+# Subtest: a selection made bottom-up is the same note as top-down
+ok 378 - a selection made bottom-up is the same note as top-down
+  ---
+  duration_ms: 0.127625
+  type: 'test'
+  ...
+# Subtest: a removed-only selection says the lines were removed
+ok 379 - a removed-only selection says the lines were removed
+  ---
+  duration_ms: 0.045833
+  type: 'test'
+  ...
+# Subtest: a note refuses to span two files, to hold no code, or to say nothing
+ok 380 - a note refuses to span two files, to hold no code, or to say nothing
+  ---
+  duration_ms: 0.051792
+  type: 'test'
+  ...
+# Subtest: a hunk header selects exactly its own lines
+ok 381 - a hunk header selects exactly its own lines
+  ---
+  duration_ms: 0.040167
+  type: 'test'
+  ...
+# Subtest: a long selection quotes a bounded number of lines and counts the rest
+ok 382 - a long selection quotes a bounded number of lines and counts the rest
+  ---
+  duration_ms: 0.067333
+  type: 'test'
+  ...
+# Subtest: the message names its diff, numbers the notes and quotes each anchor
+ok 383 - the message names its diff, numbers the notes and quotes each anchor
+  ---
+  duration_ms: 0.141833
+  type: 'test'
+  ...
+# (node:6886) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/sandbox-policy.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: off sandboxes nothing, below-trusted spares only trusted projects, always sandboxes everything
+ok 384 - off sandboxes nothing, below-trusted spares only trusted projects, always sandboxes everything
+  ---
+  duration_ms: 0.7365
+  type: 'test'
+  ...
+# Subtest: the block fails closed when the sandbox cannot start and ignores a request to run unsandboxed
+ok 385 - the block fails closed when the sandbox cannot start and ignores a request to run unsandboxed
+  ---
+  duration_ms: 0.093916
+  type: 'test'
+  ...
+# (node:6887) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/schedule-timing.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: ordinary daily, weekday and weekly times round-trip without changing cadence
+ok 386 - ordinary daily, weekday and weekly times round-trip without changing cadence
+  ---
+  duration_ms: 0.703084
+  type: 'test'
+  ...
+# Subtest: complex, noncanonical and invalid expressions stay in the custom editor
+ok 387 - complex, noncanonical and invalid expressions stay in the custom editor
+  ---
+  duration_ms: 0.065916
+  type: 'test'
+  ...
+# Subtest: incomplete or invalid time controls do not produce a runnable cron
+ok 388 - incomplete or invalid time controls do not produce a runnable cron
+  ---
+  duration_ms: 0.073834
+  type: 'test'
+  ...
+# (node:6888) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/scheduled-execution.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: saving unattended work requires an explicit profile identity
+ok 389 - saving unattended work requires an explicit profile identity
+  ---
+  duration_ms: 0.842125
+  type: 'test'
+  ...
+# Subtest: save validation refuses missing, changed and incapable profiles without picking another
+ok 390 - save validation refuses missing, changed and incapable profiles without picking another
+  ---
+  duration_ms: 0.242042
+  type: 'test'
+  ...
+# Subtest: untouched legacy schedules disclose runtime selection; malformed pinned records fail closed
+ok 391 - untouched legacy schedules disclose runtime selection; malformed pinned records fail closed
+  ---
+  duration_ms: 0.110875
+  type: 'test'
+  ...
+# Subtest: readiness and budget describe the selected protocol, never the first provider
+ok 392 - readiness and budget describe the selected protocol, never the first provider
+  ---
+  duration_ms: 0.127875
+  type: 'test'
+  ...
+# (node:6889) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/secret-scan.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: github-token: found at its file and new line, with only its public prefix shown
+ok 393 - github-token: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 2.55775
+  type: 'test'
+  ...
+# Subtest: github-fine-grained-token: found at its file and new line, with only its public prefix shown
+ok 394 - github-fine-grained-token: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.232584
+  type: 'test'
+  ...
+# Subtest: aws-access-key-id: found at its file and new line, with only its public prefix shown
+ok 395 - aws-access-key-id: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.094083
+  type: 'test'
+  ...
+# Subtest: slack-token: found at its file and new line, with only its public prefix shown
+ok 396 - slack-token: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.127875
+  type: 'test'
+  ...
+# Subtest: stripe-live-key: found at its file and new line, with only its public prefix shown
+ok 397 - stripe-live-key: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.125792
+  type: 'test'
+  ...
+# Subtest: google-api-key: found at its file and new line, with only its public prefix shown
+ok 398 - google-api-key: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.114459
+  type: 'test'
+  ...
+# Subtest: anthropic-api-key: found at its file and new line, with only its public prefix shown
+ok 399 - anthropic-api-key: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.106792
+  type: 'test'
+  ...
+# Subtest: openai-api-key: found at its file and new line, with only its public prefix shown
+ok 400 - openai-api-key: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.086292
+  type: 'test'
+  ...
+# Subtest: npm-token: found at its file and new line, with only its public prefix shown
+ok 401 - npm-token: found at its file and new line, with only its public prefix shown
+  ---
+  duration_ms: 0.333917
+  type: 'test'
+  ...
+# Subtest: a private key is reported at its header when key material follows it
+ok 402 - a private key is reported at its header when key material follows it
+  ---
+  duration_ms: 18.0345
+  type: 'test'
+  ...
+# Subtest: a private key quoted into code, header and material on one line, is reported
+ok 403 - a private key quoted into code, header and material on one line, is reported
+  ---
+  duration_ms: 0.832791
+  type: 'test'
+  ...
+# Subtest: a private-key header with no material after it is documentation, not a key
+ok 404 - a private-key header with no material after it is documentation, not a key
+  ---
+  duration_ms: 0.230625
+  type: 'test'
+  ...
+# Subtest: placeholders in a vendor shape are not findings
+ok 405 - placeholders in a vendor shape are not findings
+  ---
+  duration_ms: 0.237083
+  type: 'test'
+  ...
+# Subtest: a high-entropy literal assigned to a secret name is found, in the shapes code writes it
+ok 406 - a high-entropy literal assigned to a secret name is found, in the shapes code writes it
+  ---
+  duration_ms: 0.370667
+  type: 'test'
+  ...
+# Subtest: assignments that name a secret without containing one are not findings
+ok 407 - assignments that name a secret without containing one are not findings
+  ---
+  duration_ms: 0.18075
+  type: 'test'
+  ...
+# Subtest: only added lines are read: the same secret removed, or already there as context, is not reported
+ok 408 - only added lines are read: the same secret removed, or already there as context, is not reported
+  ---
+  duration_ms: 0.061291
+  type: 'test'
+  ...
+# Subtest: the allow marker suppresses a line and counts it, and a marker on a clean line counts nothing
+ok 409 - the allow marker suppresses a line and counts it, and a marker on a clean line counts nothing
+  ---
+  duration_ms: 0.087084
+  type: 'test'
+  ...
+# Subtest: a secret named by a vendor rule and a secret name is reported once, under the vendor rule
+ok 410 - a secret named by a vendor rule and a secret name is reported once, under the vendor rule
+  ---
+  duration_ms: 0.053709
+  type: 'test'
+  ...
+# Subtest: two secrets on one line are two findings, and neither excerpt shows either
+ok 411 - two secrets on one line are two findings, and neither excerpt shows either
+  ---
+  duration_ms: 0.091125
+  type: 'test'
+  ...
+# Subtest: an excerpt masks other key material on the line, and every copy of the secret
+ok 412 - an excerpt masks other key material on the line, and every copy of the secret
+  ---
+  duration_ms: 0.081167
+  type: 'test'
+  ...
+# Subtest: a long line is cut around its finding and says it was cut
+ok 413 - a long line is cut around its finding and says it was cut
+  ---
+  duration_ms: 0.078208
+  type: 'test'
+  ...
+# Subtest: line numbers stay right after an added line that begins like a file header
+ok 414 - line numbers stay right after an added line that begins like a file header
+  ---
+  duration_ms: 0.065167
+  type: 'test'
+  ...
+# Subtest: carriage returns from a CRLF file do not change what is found
+ok 415 - carriage returns from a CRLF file do not change what is found
+  ---
+  duration_ms: 0.051375
+  type: 'test'
+  ...
+# Subtest: the fingerprint function sees the secret, and findings carry only what it returns
+ok 416 - the fingerprint function sees the secret, and findings carry only what it returns
+  ---
+  duration_ms: 0.084458
+  type: 'test'
+  ...
+# Subtest: a deleted file and a binary file add nothing to scan
+ok 417 - a deleted file and a binary file add nothing to scan
+  ---
+  duration_ms: 0.050208
+  type: 'test'
+  ...
+# Subtest: secret names read the same in every casing, and cursors are not credentials
+ok 418 - secret names read the same in every casing, and cursors are not credentials
+  ---
+  duration_ms: 0.063125
+  type: 'test'
+  ...
+# Subtest: entropy is zero for a repeat and grows with distinct characters
+ok 419 - entropy is zero for a repeat and grows with distinct characters
+  ---
+  duration_ms: 0.073167
+  type: 'test'
+  ...
+# Subtest: findings are summarised by rule, most first
+ok 420 - findings are summarised by rule, most first
+  ---
+  duration_ms: 0.073917
+  type: 'test'
+  ...
+# (node:6891) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/session-permissions.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Claude sessions expose the native mode cycle and permission rules
+ok 421 - Claude sessions expose the native mode cycle and permission rules
+  ---
+  duration_ms: 0.867958
+  type: 'test'
+  ...
+# Subtest: Codex opens its own permissions picker and never receives Claude’s mode shortcut
+ok 422 - Codex opens its own permissions picker and never receives Claude’s mode shortcut
+  ---
+  duration_ms: 0.074083
+  type: 'test'
+  ...
+# Subtest: unknown harnesses, exited sessions and arbitrary renderer commands are refused
+ok 423 - unknown harnesses, exited sessions and arbitrary renderer commands are refused
+  ---
+  duration_ms: 0.136667
+  type: 'test'
+  ...
+# Subtest: opening settings cannot answer a pending approval, while Claude’s mode shortcut remains available
+ok 424 - opening settings cannot answer a pending approval, while Claude’s mode shortcut remains available
+  ---
+  duration_ms: 0.0575
+  type: 'test'
+  ...
+# (node:6893) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/session-title.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the agent's own title wins over the opening prompt
+ok 425 - the agent's own title wins over the opening prompt
+  ---
+  duration_ms: 0.90475
+  type: 'test'
+  ...
+# Subtest: the newest title in hand is the one the agent still stands behind
+ok 426 - the newest title in hand is the one the agent still stands behind
+  ---
+  duration_ms: 0.08775
+  type: 'test'
+  ...
+# Subtest: with no title the first real prompt stands in, and says so
+ok 427 - with no title the first real prompt stands in, and says so
+  ---
+  duration_ms: 0.173958
+  type: 'test'
+  ...
+# Subtest: text the CLI injected is never mistaken for what the person typed
+ok 428 - text the CLI injected is never mistaken for what the person typed
+  ---
+  duration_ms: 0.277334
+  type: 'test'
+  ...
+# Subtest: a conversation with nothing to read keeps its null
+ok 429 - a conversation with nothing to read keeps its null
+  ---
+  duration_ms: 0.079709
+  type: 'test'
+  ...
+# Subtest: a truncated or corrupt line is skipped, not treated as the end
+ok 430 - a truncated or corrupt line is skipped, not treated as the end
+  ---
+  duration_ms: 0.068875
+  type: 'test'
+  ...
+# Subtest: a name is one bounded line, never a pasted diff
+ok 431 - a name is one bounded line, never a pasted diff
+  ---
+  duration_ms: 0.146708
+  type: 'test'
+  ...
+# (node:6894) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/settings-doors.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the session-limit breadcrumb names the tab the Dispatcher section is really on
+ok 432 - the session-limit breadcrumb names the tab the Dispatcher section is really on
+  ---
+  duration_ms: 0.853084
+  type: 'test'
+  ...
+# Subtest: the most specific breadcrumb wins, and a message with none has no door
+ok 433 - the most specific breadcrumb wins, and a message with none has no door
+  ---
+  duration_ms: 3.424208
+  type: 'test'
+  ...
+# Subtest: every door is a distinct breadcrumb that starts at Settings
+ok 434 - every door is a distinct breadcrumb that starts at Settings
+  ---
+  duration_ms: 0.181667
+  type: 'test'
+  ...
+# (node:6895) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/skill-catalogue.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: typing is offered only for a fresh supported command in the selected session project
+ok 435 - typing is offered only for a fresh supported command in the selected session project
+  ---
+  duration_ms: 0.64175
+  type: 'test'
+  ...
+# Subtest: Codex file names are readable but never presented as verified commands
+ok 436 - Codex file names are readable but never presented as verified commands
+  ---
+  duration_ms: 0.470458
+  type: 'test'
+  ...
+# Subtest: missing, exited, and manually disabled targets have an explanation instead of a dead action
+ok 437 - missing, exited, and manually disabled targets have an explanation instead of a dead action
+  ---
+  duration_ms: 0.114541
+  type: 'test'
+  ...
+# (node:6896) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/spend-sources.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the main, subagent and auxiliary split adds back to the whole, with unattributed spend kept as its own row
+ok 438 - the main, subagent and auxiliary split adds back to the whole, with unattributed spend kept as its own row
+  ---
+  duration_ms: 2.855166
+  type: 'test'
+  ...
+# Subtest: tokens are split by the CLI’s token types and carried beside the dollars
+ok 439 - tokens are split by the CLI’s token types and carried beside the dollars
+  ---
+  duration_ms: 0.252583
+  type: 'test'
+  ...
+# Subtest: dollars from a backend nobody bills at that price are kept apart from the estimate
+ok 440 - dollars from a backend nobody bills at that price are kept apart from the estimate
+  ---
+  duration_ms: 0.198083
+  type: 'test'
+  ...
+# Subtest: every dimension accounts for every row
+ok 441 - every dimension accounts for every row
+  ---
+  duration_ms: 0.7545
+  type: 'test'
+  ...
+# Subtest: withheld names are said as withheld, and each empty key says which absence it is
+ok 442 - withheld names are said as withheld, and each empty key says which absence it is
+  ---
+  duration_ms: 0.207375
+  type: 'test'
+  ...
+# Subtest: no rows is an empty report, not a zero bill with groups in it
+ok 443 - no rows is an empty report, not a zero bill with groups in it
+  ---
+  duration_ms: 0.163292
+  type: 'test'
+  ...
+# (node:6897) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/status-line.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a full payload keeps the windows, cache, effort, pr, prompt id and version, in milliseconds
+ok 444 - a full payload keeps the windows, cache, effort, pr, prompt id and version, in milliseconds
+  ---
+  duration_ms: 34.089166
+  type: 'test'
+  ...
+# Subtest: nothing path-shaped, named or priced from the payload survives into the reading
+ok 445 - nothing path-shaped, named or priced from the payload survives into the reading
+  ---
+  duration_ms: 0.334083
+  type: 'test'
+  ...
+# Subtest: an absent window stays absent: an API-key payload has no rate_limits and reads no windows at all
+ok 446 - an absent window stays absent: an API-key payload has no rate_limits and reads no windows at all
+  ---
+  duration_ms: 0.194708
+  type: 'test'
+  ...
+# Subtest: a window with a missing or impossible field is dropped whole rather than half-kept
+ok 447 - a window with a missing or impossible field is dropped whole rather than half-kept
+  ---
+  duration_ms: 0.0705
+  type: 'test'
+  ...
+# Subtest: a payload that is not an object is refused; an empty object is a reading with nothing in it
+ok 448 - a payload that is not an object is refused; an empty object is a reading with nothing in it
+  ---
+  duration_ms: 0.121542
+  type: 'test'
+  ...
+# Subtest: hostile strings in bounded fields are dropped, not stored
+ok 449 - hostile strings in bounded fields are dropped, not stored
+  ---
+  duration_ms: 0.146583
+  type: 'test'
+  ...
+# Subtest: two readings that differ only in prompt id fold into one key
+ok 450 - two readings that differ only in prompt id fold into one key
+  ---
+  duration_ms: 0.269584
+  type: 'test'
+  ...
+# Subtest: every cause the CLI documents has the CLI’s own words
+ok 451 - every cause the CLI documents has the CLI’s own words
+  ---
+  duration_ms: 0.052875
+  type: 'test'
+  ...
+# Subtest: the forecast refuses with no reading and with a single reading
+ok 452 - the forecast refuses with no reading and with a single reading
+  ---
+  duration_ms: 0.356416
+  type: 'test'
+  ...
+# Subtest: two readings closer together than the minimum span are not a rate
+ok 453 - two readings closer together than the minimum span are not a rate
+  ---
+  duration_ms: 0.343125
+  type: 'test'
+  ...
+# Subtest: a steady rise over the lookback lands at the straight-line crossing of 100%
+ok 454 - a steady rise over the lookback lands at the straight-line crossing of 100%
+  ---
+  duration_ms: 0.116708
+  type: 'test'
+  ...
+# Subtest: only the last 30 minutes set the rate, and a reading from before a reset is never fitted
+ok 455 - only the last 30 minutes set the rate, and a reading from before a reset is never fitted
+  ---
+  duration_ms: 0.061583
+  type: 'test'
+  ...
+# Subtest: a rate that fills after the reset says the reset comes first
+ok 456 - a rate that fills after the reset says the reset comes first
+  ---
+  duration_ms: 0.042417
+  type: 'test'
+  ...
+# Subtest: a flat or falling window has no crossing
+ok 457 - a flat or falling window has no crossing
+  ---
+  duration_ms: 0.042167
+  type: 'test'
+  ...
+# Subtest: a full window is exhausted, a passed reset is a reset, and an old reading is stale — none of them forecast
+ok 458 - a full window is exhausted, a passed reset is a reset, and an old reading is stale — none of them forecast
+  ---
+  duration_ms: 0.04475
+  type: 'test'
+  ...
+# Subtest: a jump of ten points between consecutive readings is flagged, newest first, and a reset is not a jump
+ok 459 - a jump of ten points between consecutive readings is flagged, newest first, and a reset is not a jump
+  ---
+  duration_ms: 0.081542
+  type: 'test'
+  ...
+# Subtest: an idle session’s lower reading neither drags the figure down nor reads as a jump when the busy one speaks again
+ok 460 - an idle session’s lower reading neither drags the figure down nor reads as a jump when the busy one speaks again
+  ---
+  duration_ms: 1.357833
+  type: 'test'
+  ...
+# Subtest: a window with no reading summarises to nothing, and the envelope never mixes two windows
+ok 461 - a window with no reading summarises to nothing, and the envelope never mixes two windows
+  ---
+  duration_ms: 0.196875
+  type: 'test'
+  ...
+# Subtest: the forecast is drawn through the envelope, so a steady climb with stale readings between still reaches 100%
+ok 462 - the forecast is drawn through the envelope, so a steady climb with stale readings between still reaches 100%
+  ---
+  duration_ms: 0.336292
+  type: 'test'
+  ...
+# Subtest: the forecast sentence refuses in words, marks a crossing as approximate and every reset as observed
+ok 463 - the forecast sentence refuses in words, marks a crossing as approximate and every reset as observed
+  ---
+  duration_ms: 0.261416
+  type: 'test'
+  ...
+# Subtest: a shell word survives spaces and single quotes through /bin/sh -c
+ok 464 - a shell word survives spaces and single quotes through /bin/sh -c
+  ---
+  duration_ms: 0.055667
+  type: 'test'
+  ...
+# Subtest: the injected command quotes every path, carries the bound, and holds no token
+ok 465 - the injected command quotes every path, carries the bound, and holds no token
+  ---
+  duration_ms: 0.10775
+  type: 'test'
+  ...
+# Subtest: the Windows command names an interpreter, because a .ps1 is not a program
+ok 466 - the Windows command names an interpreter, because a .ps1 is not a program
+  ---
+  duration_ms: 0.064083
+  type: 'test'
+  ...
+# Subtest: a status line path that could break cmd.exe quoting is refused, not escaped
+ok 467 - a status line path that could break cmd.exe quoting is refused, not escaped
+  ---
+  duration_ms: 0.177958
+  type: 'test'
+  ...
+# Subtest: the curl config carries the bearer as a header, refuses proxies, and cannot be split into a second directive
+ok 468 - the curl config carries the bearer as a header, refuses proxies, and cannot be split into a second directive
+  ---
+  duration_ms: 0.23325
+  type: 'test'
+  ...
+# (node:6898) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/suggest-questions.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the request asks independent model and model-specific effort questions
+ok 469 - the request asks independent model and model-specific effort questions
+  ---
+  duration_ms: 1.406125
+  type: 'test'
+  ...
+# Subtest: score levels describe concrete situations rather than degrees, because each is read alone
+ok 470 - score levels describe concrete situations rather than degrees, because each is read alone
+  ---
+  duration_ms: 0.249375
+  type: 'test'
+  ...
+# Subtest: the state is the stage and the operator’s words; candidates live only in the criteria
+ok 471 - the state is the stage and the operator’s words; candidates live only in the criteria
+  ---
+  duration_ms: 0.169333
+  type: 'test'
+  ...
+# Subtest: operator intent and manifest labels are bounded and flattened before they cross the wire
+ok 472 - operator intent and manifest labels are bounded and flattened before they cross the wire
+  ---
+  duration_ms: 0.431709
+  type: 'test'
+  ...
+# Subtest: a deliberation score lands on the ladder the chosen model actually declares
+ok 473 - a deliberation score lands on the ladder the chosen model actually declares
+  ---
+  duration_ms: 0.143334
+  type: 'test'
+  ...
+# Subtest: no score on any ladder ever yields a level that profile did not declare
+ok 474 - no score on any ladder ever yields a level that profile did not declare
+  ---
+  duration_ms: 15.880167
+  type: 'test'
+  ...
+# Subtest: a score that is not a position on the ladder names no effort rather than a quiet zero
+ok 475 - a score that is not a position on the ladder names no effort rather than a quiet zero
+  ---
+  duration_ms: 0.107542
+  type: 'test'
+  ...
+# Subtest: a well-formed answer becomes a suggestion the router can act on, with its evidence beside it
+ok 476 - a well-formed answer becomes a suggestion the router can act on, with its evidence beside it
+  ---
+  duration_ms: 0.405333
+  type: 'test'
+  ...
+# Subtest: an uncertain model-specific effort drops only the effort and retains its evidence
+ok 477 - an uncertain model-specific effort drops only the effort and retains its evidence
+  ---
+  duration_ms: 0.753208
+  type: 'test'
+  ...
+# Subtest: the same task can need different efforts on small and large selected models
+ok 478 - the same task can need different efforts on small and large selected models
+  ---
+  duration_ms: 0.422584
+  type: 'test'
+  ...
+# Subtest: missing, unsupported or invalid selected-model efforts never use another model or a difficulty score
+ok 479 - missing, unsupported or invalid selected-model efforts never use another model or a difficulty score
+  ---
+  duration_ms: 0.347709
+  type: 'test'
+  ...
+# Subtest: the routing boundary preserves operator precedence and profile defaults with model-specific effort answers
+ok 480 - the routing boundary preserves operator precedence and profile defaults with model-specific effort answers
+  ---
+  duration_ms: 0.806916
+  type: 'test'
+  ...
+# Subtest: cost, balanced and quality preferences change the objective without changing supported sets or confidence gates
+ok 481 - cost, balanced and quality preferences change the objective without changing supported sets or confidence gates
+  ---
+  duration_ms: 0.360333
+  type: 'test'
+  ...
+# Subtest: model-specific effort instructions bound catalogue text and keep returned Jev identity separate from policy
+ok 482 - model-specific effort instructions bound catalogue text and keep returned Jev identity separate from policy
+  ---
+  duration_ms: 0.170333
+  type: 'test'
+  ...
+# Subtest: a model this profile does not declare yields no suggestion, and the rest is still recorded
+ok 483 - a model this profile does not declare yields no suggestion, and the rest is still recorded
+  ---
+  duration_ms: 0.051667
+  type: 'test'
+  ...
+# Subtest: a confidence that is not a probability yields no suggestion
+ok 484 - a confidence that is not a probability yields no suggestion
+  ---
+  duration_ms: 0.067959
+  type: 'test'
+  ...
+# Subtest: the noul carries no confidence and gates nothing
+ok 485 - the noul carries no confidence and gates nothing
+  ---
+  duration_ms: 0.045792
+  type: 'test'
+  ...
+# Subtest: a malformed body is an ordinary input and never throws
+ok 486 - a malformed body is an ordinary input and never throws
+  ---
+  duration_ms: 0.09175
+  type: 'test'
+  ...
+# Subtest: no pipeline on offer skips the work or either stage that checks it
+ok 487 - no pipeline on offer skips the work or either stage that checks it
+  ---
+  duration_ms: 0.061084
+  type: 'test'
+  ...
+# Subtest: pipeline criteria describe situations and never name their own length
+ok 488 - pipeline criteria describe situations and never name their own length
+  ---
+  duration_ms: 1.025375
+  type: 'test'
+  ...
+# Subtest: the relay question offers only pipelines this docket could actually run
+ok 489 - the relay question offers only pipelines this docket could actually run
+  ---
+  duration_ms: 0.5285
+  type: 'test'
+  ...
+# Subtest: a question with one answer is not asked
+ok 490 - a question with one answer is not asked
+  ---
+  duration_ms: 0.142042
+  type: 'test'
+  ...
+# Subtest: a confident pipeline answer narrows the docket to that pipeline
+ok 491 - a confident pipeline answer narrows the docket to that pipeline
+  ---
+  duration_ms: 0.28125
+  type: 'test'
+  ...
+# Subtest: an unconvinced pipeline answer changes nothing
+ok 492 - an unconvinced pipeline answer changes nothing
+  ---
+  duration_ms: 0.127
+  type: 'test'
+  ...
+# Subtest: a pipeline this docket was never offered is discarded, not honoured
+ok 493 - a pipeline this docket was never offered is discarded, not honoured
+  ---
+  duration_ms: 0.27175
+  type: 'test'
+  ...
+# Subtest: no answer, on any docket, ever adds a stage or removes one that checks the work
+ok 494 - no answer, on any docket, ever adds a stage or removes one that checks the work
+  ---
+  duration_ms: 0.787292
+  type: 'test'
+  ...
+# Subtest: a malformed pipeline body is an ordinary input and never throws
+ok 495 - a malformed pipeline body is an ordinary input and never throws
+  ---
+  duration_ms: 0.153042
+  type: 'test'
+  ...
+# Subtest: a Wanigan with no suggester asks nothing, is billed nothing, and runs every stage it declared
+ok 496 - a Wanigan with no suggester asks nothing, is billed nothing, and runs every stage it declared
+  ---
+  duration_ms: 0.231417
+  type: 'test'
+  ...
+# Subtest: without a pipeline answer a docket runs exactly the stages it declared
+ok 497 - without a pipeline answer a docket runs exactly the stages it declared
+  ---
+  duration_ms: 0.119167
+  type: 'test'
+  ...
+# Subtest: every capability is declared with what switching it off costs
+ok 498 - every capability is declared with what switching it off costs
+  ---
+  duration_ms: 0.069083
+  type: 'test'
+  ...
+# Subtest: one request carries pipeline, model and model-specific effort questions over one state
+ok 499 - one request carries pipeline, model and model-specific effort questions over one state
+  ---
+  duration_ms: 0.193666
+  type: 'test'
+  ...
+# Subtest: each capability contributes only its own questions, and neither means no request
+ok 500 - each capability contributes only its own questions, and neither means no request
+  ---
+  duration_ms: 0.079667
+  type: 'test'
+  ...
+# Subtest: a batched answer is read back per stage, gated exactly as a single one is
+ok 501 - a batched answer is read back per stage, gated exactly as a single one is
+  ---
+  duration_ms: 0.264375
+  type: 'test'
+  ...
+# Subtest: a batched body nobody can parse reads as nothing said, for every stage
+ok 502 - a batched body nobody can parse reads as nothing said, for every stage
+  ---
+  duration_ms: 0.063625
+  type: 'test'
+  ...
+# Subtest: a described model is offered by its description; an undescribed one falls back to its label
+ok 503 - a described model is offered by its description; an undescribed one falls back to its label
+  ---
+  duration_ms: 0.065
+  type: 'test'
+  ...
+# (node:6899) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/terminal-replay.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: snapshot broadcasts appear once, and post-snapshot bytes survive asynchronous parsing
+ok 504 - snapshot broadcasts appear once, and post-snapshot bytes survive asynchronous parsing
+  ---
+  duration_ms: 0.821375
+  type: 'test'
+  ...
+# Subtest: empty and failed snapshots release both live output and local exit notices
+ok 505 - empty and failed snapshots release both live output and local exit notices
+  ---
+  duration_ms: 0.096167
+  type: 'test'
+  ...
+# (node:6900) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/test-oracles.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: test paths are recognised across the common layouts, and code paths exclude them
+ok 506 - test paths are recognised across the common layouts, and code paths exclude them
+  ---
+  duration_ms: 0.785833
+  type: 'test'
+  ...
+# Subtest: a diff splits into each file and only its added lines
+ok 507 - a diff splits into each file and only its added lines
+  ---
+  duration_ms: 0.471417
+  type: 'test'
+  ...
+# Subtest: tests changed with the code, and a test with no assertion, are both flagged
+ok 508 - tests changed with the code, and a test with no assertion, are both flagged
+  ---
+  duration_ms: 0.450833
+  type: 'test'
+  ...
+# Subtest: a test with an assertion, or tests changed on their own, raise no flag
+ok 509 - a test with an assertion, or tests changed on their own, raise no flag
+  ---
+  duration_ms: 0.158292
+  type: 'test'
+  ...
+# (node:6901) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/token-evidence.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: resumed session counts are disjoint deltas and ended attempts do not inherit later conversation growth
+ok 510 - resumed session counts are disjoint deltas and ended attempts do not inherit later conversation growth
+  ---
+  duration_ms: 1.007291
+  type: 'test'
+  ...
+# Subtest: missing baseline, truncated creation and overlapping sessions never claim conversation counters as attempt counts
+ok 511 - missing baseline, truncated creation and overlapping sessions never claim conversation counters as attempt counts
+  ---
+  duration_ms: 0.211166
+  type: 'test'
+  ...
+# Subtest: unknown fields and counter resets are not converted to free usage
+ok 512 - unknown fields and counter resets are not converted to free usage
+  ---
+  duration_ms: 0.118916
+  type: 'test'
+  ...
+# (node:6902) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/trace-spans.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: every content attribute the CLI can set is recognised as content
+ok 513 - every content attribute the CLI can set is recognised as content
+  ---
+  duration_ms: 3.628959
+  type: 'test'
+  ...
+# Subtest: every fact a waterfall reads is kept, including the ones whose names contain a content word
+ok 514 - every fact a waterfall reads is kept, including the ones whose names contain a content word
+  ---
+  duration_ms: 0.239458
+  type: 'test'
+  ...
+# Subtest: sanitising a span keeps facts, drops content, identity and anything too long to be a name
+ok 515 - sanitising a span keeps facts, drops content, identity and anything too long to be a name
+  ---
+  duration_ms: 0.710958
+  type: 'test'
+  ...
+# Subtest: an OTLP/JSON export is read into spans with content, identity, events and status text left behind
+ok 516 - an OTLP/JSON export is read into spans with content, identity, events and status text left behind
+  ---
+  duration_ms: 0.63725
+  type: 'test'
+  ...
+# Subtest: an attribute named like part of an object is kept as an attribute, not written into the object
+ok 517 - an attribute named like part of an object is kept as an attribute, not written into the object
+  ---
+  duration_ms: 0.791833
+  type: 'test'
+  ...
+# Subtest: span ids are hex, lowercase, never all zeros, and a base64 exporter is read rather than dropped
+ok 518 - span ids are hex, lowercase, never all zeros, and a base64 exporter is read rather than dropped
+  ---
+  duration_ms: 0.311166
+  type: 'test'
+  ...
+# Subtest: a whole prompt lays out model, tool, wait and execution with offsets from the interaction
+ok 519 - a whole prompt lays out model, tool, wait and execution with offsets from the interaction
+  ---
+  duration_ms: 12.348
+  type: 'test'
+  ...
+# Subtest: a turn killed mid-flight says what is missing instead of drawing a whole trace
+ok 520 - a turn killed mid-flight says what is missing instead of drawing a whole trace
+  ---
+  duration_ms: 0.126667
+  type: 'test'
+  ...
+# Subtest: a child whose parent is missing inside a recorded interaction is marked on its own row
+ok 521 - a child whose parent is missing inside a recorded interaction is marked on its own row
+  ---
+  duration_ms: 0.380625
+  type: 'test'
+  ...
+# Subtest: errors are marked from the status, the error class or an explicit failure
+ok 522 - errors are marked from the status, the error class or an explicit failure
+  ---
+  duration_ms: 0.897542
+  type: 'test'
+  ...
+# Subtest: interactions are attached to the latest turn that started before them, and never to a turn after
+ok 523 - interactions are attached to the latest turn that started before them, and never to a turn after
+  ---
+  duration_ms: 0.21525
+  type: 'test'
+  ...
+# (node:6903) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/view-module.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the group a destination prints comes from its area, so the two cannot disagree
+ok 524 - the group a destination prints comes from its area, so the two cannot disagree
+  ---
+  duration_ms: 0.81375
+  type: 'test'
+  ...
+# Subtest: a destination missing from the registry has no scope rather than a silent workspace
+ok 525 - a destination missing from the registry has no scope rather than a silent workspace
+  ---
+  duration_ms: 0.106875
+  type: 'test'
+  ...
+# Subtest: the shortcut order is digit holders first, then the rest, with no hand-listed tail
+ok 526 - the shortcut order is digit holders first, then the rest, with no hand-listed tail
+  ---
+  duration_ms: 0.405333
+  type: 'test'
+  ...
+# Subtest: a tenth claimant on the digit row is an error naming every holder
+ok 527 - a tenth claimant on the digit row is an error naming every holder
+  ---
+  duration_ms: 0.802875
+  type: 'test'
+  ...
+# Subtest: two destinations printing the same chord is an error, because one never fires
+ok 528 - two destinations printing the same chord is an error, because one never fires
+  ---
+  duration_ms: 0.275917
+  type: 'test'
+  ...
+# Subtest: a phone disposition is required, and a reason has to be a sentence
+ok 529 - a phone disposition is required, and a reason has to be a sentence
+  ---
+  duration_ms: 0.104416
+  type: 'test'
+  ...
+# Subtest: a hint that restates its label is refused, because it matches only its own name
+ok 530 - a hint that restates its label is refused, because it matches only its own name
+  ---
+  duration_ms: 0.11225
+  type: 'test'
+  ...
+# Subtest: an unknown area is an error rather than an empty group string
+ok 531 - an unknown area is an error rather than an empty group string
+  ---
+  duration_ms: 0.058458
+  type: 'test'
+  ...
+# Subtest: an area with no destinations is an error, because its sidebar row opens nothing
+ok 532 - an area with no destinations is an error, because its sidebar row opens nothing
+  ---
+  duration_ms: 0.254541
+  type: 'test'
+  ...
+# Subtest: an area and its destinations must agree on membership, but not on order
+ok 533 - an area and its destinations must agree on membership, but not on order
+  ---
+  duration_ms: 0.35775
+  type: 'test'
+  ...
+# Subtest: a destination declared twice is caught by id
+ok 534 - a destination declared twice is caught by id
+  ---
+  duration_ms: 0.110625
+  type: 'test'
+  ...
+# Subtest: the icon, shortcut, area and demo tables all derive from the same list
+ok 535 - the icon, shortcut, area and demo tables all derive from the same list
+  ---
+  duration_ms: 0.106875
+  type: 'test'
+  ...
+# Subtest: phone absences come back with their sentences for the Device screen
+ok 536 - phone absences come back with their sentences for the Device screen
+  ---
+  duration_ms: 0.116417
+  type: 'test'
+  ...
+# Subtest: a well-formed registry validates clean
+ok 537 - a well-formed registry validates clean
+  ---
+  duration_ms: 0.044542
+  type: 'test'
+  ...
+# (node:6904) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/view-registry.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the registry passes every rule a hand-registered view could previously break
+ok 538 - the registry passes every rule a hand-registered view could previously break
+  ---
+  duration_ms: 1.279708
+  type: 'test'
+  ...
+# Subtest: every Tab id is declared exactly once
+ok 539 - every Tab id is declared exactly once
+  ---
+  duration_ms: 0.093042
+  type: 'test'
+  ...
+# Subtest: exactly DIGIT_SLOTS views claim a digit-row chord
+ok 540 - exactly DIGIT_SLOTS views claim a digit-row chord
+  ---
+  duration_ms: 0.061042
+  type: 'test'
+  ...
+# Subtest: every view has exactly one phone disposition, and never both
+ok 541 - every view has exactly one phone disposition, and never both
+  ---
+  duration_ms: 0.129958
+  type: 'test'
+  ...
+# Subtest: every VIEW_AREAS tab id is a registered view, and every view is listed by its own area
+ok 542 - every VIEW_AREAS tab id is a registered view, and every view is listed by its own area
+  ---
+  duration_ms: 0.188333
+  type: 'test'
+  ...
+# Subtest: the group each route prints in the palette is its area's label
+ok 543 - the group each route prints in the palette is its area's label
+  ---
+  duration_ms: 0.080292
+  type: 'test'
+  ...
+# Subtest: areaTabs reaches the same destinations per area as VIEW_AREAS, but not in the sidebar order
+ok 544 - areaTabs reaches the same destinations per area as VIEW_AREAS, but not in the sidebar order
+  ---
+  duration_ms: 0.28125
+  type: 'test'
+  ...
+# Subtest: every phone screen narrows exactly the desktop views that name it, in whatever order MOBILE_VIEWS was written
+ok 545 - every phone screen narrows exactly the desktop views that name it, in whatever order MOBILE_VIEWS was written
+  ---
+  duration_ms: 0.149208
+  type: 'test'
+  ...
+# Subtest: VIEW_SHORTCUT_ORDER is the digit row and then every other destination in registry order
+ok 546 - VIEW_SHORTCUT_ORDER is the digit row and then every other destination in registry order
+  ---
+  duration_ms: 0.323458
+  type: 'test'
+  ...
+# (node:6905) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/workspace-navigation.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: area switching returns to the selected destination without resetting the project view
+ok 547 - area switching returns to the selected destination without resetting the project view
+  ---
+  duration_ms: 0.462334
+  type: 'test'
+  ...
+# Subtest: the same area map reaches every route once and preserves established keyboard routes
+ok 548 - the same area map reaches every route once and preserves established keyboard routes
+  ---
+  duration_ms: 0.421167
+  type: 'test'
+  ...
+# Subtest: opening a project never reuses a workspace-wide goal view from Work memory
+ok 549 - opening a project never reuses a workspace-wide goal view from Work memory
+  ---
+  duration_ms: 0.068625
+  type: 'test'
+  ...
+# Subtest: current destination labels and legacy names both resolve in command search
+ok 550 - current destination labels and legacy names both resolve in command search
+  ---
+  duration_ms: 1.168667
+  type: 'test'
+  ...
+# Subtest: session names consistently prefer user-visible identity and omit absent values
+ok 551 - session names consistently prefer user-visible identity and omit absent values
+  ---
+  duration_ms: 0.075333
+  type: 'test'
+  ...
+# (node:6906) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/wanigan-relay-audit-vxcyorcv/repo/src/shared/worktree-bootstrap.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /private/tmp/wanigan-relay-audit-vxcyorcv/repo/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the three dependency choices are the only ones accepted
+ok 552 - the three dependency choices are the only ones accepted
+  ---
+  duration_ms: 0.635375
+  type: 'test'
+  ...
+# Subtest: every port block is ten ports inside 42000–48999, and the range holds exactly 700 of them
+ok 553 - every port block is ten ports inside 42000–48999, and the range holds exactly 700 of them
+  ---
+  duration_ms: 0.224917
+  type: 'test'
+  ...
+# Subtest: a seed always lands on the same block, and each attempt is the next block along, wrapping at the top
+ok 554 - a seed always lands on the same block, and each attempt is the next block along, wrapping at the top
+  ---
+  duration_ms: 0.053916
+  type: 'test'
+  ...
+# Subtest: nonsense seeds and attempts still name a real block rather than NaN
+ok 555 - nonsense seeds and attempts still name a real block rather than NaN
+  ---
+  duration_ms: 0.047792
+  type: 'test'
+  ...
+# Subtest: a seed is read from the head of a hex digest, and anything else seeds zero
+ok 556 - a seed is read from the head of a hex digest, and anything else seeds zero
+  ---
+  duration_ms: 0.116709
+  type: 'test'
+  ...
+# Subtest: the ports read as a range a person would type
+ok 557 - the ports read as a range a person would type
+  ---
+  duration_ms: 0.0505
+  type: 'test'
+  ...
+# Subtest: only blank lines and lines that start with \# are not patterns
+ok 558 - only blank lines and lines that start with \# are not patterns
+  ---
+  duration_ms: 0.142542
+  type: 'test'
+  ...
+# Subtest: a path git listed is joined onto a worktree only when it cannot climb out of it
+ok 559 - a path git listed is joined onto a worktree only when it cannot climb out of it
+  ---
+  duration_ms: 0.080625
+  type: 'test'
+  ...
+# Subtest: command lists are trimmed and blank lines dropped, but never silently shortened
+ok 560 - command lists are trimmed and blank lines dropped, but never silently shortened
+  ---
+  duration_ms: 11.369708
+  type: 'test'
+  ...
+# Subtest: anything but two lists of strings is refused by name
+ok 561 - anything but two lists of strings is refused by name
+  ---
+  duration_ms: 0.36025
+  type: 'test'
+  ...
+# Subtest: a line moved between phases is new, and dropping or reordering adds nothing
+ok 562 - a line moved between phases is new, and dropping or reordering adds nothing
+  ---
+  duration_ms: 0.234166
+  type: 'test'
+  ...
+# Subtest: an output tail keeps the last lines and says when it left some out
+ok 563 - an output tail keeps the last lines and says when it left some out
+  ---
+  duration_ms: 0.148583
+  type: 'test'
+  ...
+# Subtest: a tail bounded by characters starts on a whole line and is marked cut
+ok 564 - a tail bounded by characters starts on a whole line and is marked cut
+  ---
+  duration_ms: 0.048959
+  type: 'test'
+  ...
+# Subtest: a failed run names the command that ended it, and its tail says which command printed what
+ok 565 - a failed run names the command that ended it, and its tail says which command printed what
+  ---
+  duration_ms: 0.159542
+  type: 'test'
+  ...
+# Subtest: a passed run states its facts, and a teardown never claims anything about a launch
+ok 566 - a passed run states its facts, and a teardown never claims anything about a launch
+  ---
+  duration_ms: 0.089333
+  type: 'test'
+  ...
+# Subtest: a command that never exited is not reported as exiting with a code
+ok 567 - a command that never exited is not reported as exiting with a code
+  ---
+  duration_ms: 0.157208
+  type: 'test'
+  ...
+# Subtest: a run Wanigan itself cut short says so instead of blaming its last command
+ok 568 - a run Wanigan itself cut short says so instead of blaming its last command
+  ---
+  duration_ms: 0.096708
+  type: 'test'
+  ...
+# Subtest: a still-running run is not given a duration or a verdict
+ok 569 - a still-running run is not given a duration or a verdict
+  ---
+  duration_ms: 0.053834
+  type: 'test'
+  ...
+# Subtest: an include file that could not be used is never reported as matching nothing
+ok 570 - an include file that could not be used is never reported as matching nothing
+  ---
+  duration_ms: 0.092167
+  type: 'test'
+  ...
+# Subtest: what was copied, left alone and refused is each counted in words
+ok 571 - what was copied, left alone and refused is each counted in words
+  ---
+  duration_ms: 0.070041
+  type: 'test'
+  ...
+# Subtest: a copy that stopped at a limit says which limit and how much it did not look at
+ok 572 - a copy that stopped at a limit says which limit and how much it did not look at
+  ---
+  duration_ms: 0.091958
+  type: 'test'
+  ...
+# Subtest: a branch row lists its ports, folders and copies, and says no setup ran only when none did
+ok 573 - a branch row lists its ports, folders and copies, and says no setup ran only when none did
+  ---
+  duration_ms: 0.675208
+  type: 'test'
+  ...
+# Subtest: the launch dialog names setup and the include file before the press, and says nothing when there is neither
+ok 574 - the launch dialog names setup and the include file before the press, and says nothing when there is neither
+  ---
+  duration_ms: 0.1845
+  type: 'test'
+  ...
+# Subtest: each dependency folder says what it became, and a fallback says why
+ok 575 - each dependency folder says what it became, and a fallback says why
+  ---
+  duration_ms: 0.064708
+  type: 'test'
+  ...
+1..575
+# tests 575
+# suites 0
+# pass 575
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 915.553542
+Async credential regression checks passed (6 scenarios).
+(node:6908) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# Subtest: dispatch persists returned session model, effort, account and permission in the node and recovery receipt
+ok 1 - dispatch persists returned session model, effort, account and permission in the node and recovery receipt
+  ---
+  duration_ms: 169.775625
+  type: 'test'
+  ...
+# Subtest: queued dispatch keeps the stage route and only falls back to compatible autopilot defaults
+ok 2 - queued dispatch keeps the stage route and only falls back to compatible autopilot defaults
+  ---
+  duration_ms: 83.349083
+  type: 'test'
+  ...
+# Subtest: reopening implementation reuses its recorded checkout and retains retry spend linkage
+ok 3 - reopening implementation reuses its recorded checkout and retains retry spend linkage
+  ---
+  duration_ms: 61.217292
+  type: 'test'
+  ...
+# Subtest: planning retains its goal checkout without requesting mutating dependency preparation
+ok 4 - planning retains its goal checkout without requesting mutating dependency preparation
+  ---
+  duration_ms: 51.537625
+  type: 'test'
+  ...
+# Subtest: missing retry checkout refuses before launch; launcher repository rejection preserves the old checkout
+ok 5 - missing retry checkout refuses before launch; launcher repository rejection preserves the old checkout
+  ---
+  duration_ms: 54.872833
+  type: 'test'
+  ...
+# Subtest: queued dispatch rechecks spend and budget after sweep without launching over-cap work
+ok 6 - queued dispatch rechecks spend and budget after sweep without launching over-cap work
+  ---
+  duration_ms: 54.176833
+  type: 'test'
+  ...
+# Subtest: automatic dispatch stops on unknown or partial meters, while no prior sessions and reported zero can run
+ok 7 - automatic dispatch stops on unknown or partial meters, while no prior sessions and reported zero can run
+  ---
+  duration_ms: 52.6225
+  type: 'test'
+  ...
+# Subtest: generic and missing profiles stay manual at arm, sweep and actual stage dequeue; free checks remain eligible
+ok 8 - generic and missing profiles stay manual at arm, sweep and actual stage dequeue; free checks remain eligible
+  ---
+  duration_ms: 55.429417
+  type: 'test'
+  ...
+# Subtest: automatic launch rechecks pause, halt, ownership, route, profile and meters after asynchronous preparation
+ok 9 - automatic launch rechecks pause, halt, ownership, route, profile and meters after asynchronous preparation
+  ---
+  duration_ms: 399.297959
+  type: 'test'
+  ...
+# Subtest: registered deterministic verification runs at a reached cap or unknown spend without a provider launch
+ok 10 - registered deterministic verification runs at a reached cap or unknown spend without a provider launch
+  ---
+  duration_ms: 47.643709
+  type: 'test'
+  ...
+# Subtest: unknown spend while a task is still running does not disarm the later free verification path
+ok 11 - unknown spend while a task is still running does not disarm the later free verification path
+  ---
+  duration_ms: 43.995
+  type: 'test'
+  ...
+# Subtest: failed or removed deterministic runners never fall through to a paid agent or retry forever
+ok 12 - failed or removed deterministic runners never fall through to a paid agent or retry forever
+  ---
+  duration_ms: 49.123375
+  type: 'test'
+  ...
+# Subtest: a deterministic task is atomically claimed before awaiting the runner
+ok 13 - a deterministic task is atomically claimed before awaiting the runner
+  ---
+  duration_ms: 45.2995
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1175.08425
+(node:6909) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Session modules: legacy row/schema preserved; 34 IPC operations and 2 guarded event registrations verified offline.
+(node:6910) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# Subtest: generic-cli: native initial prompt is one literal argv; no delayed paste
+ok 1 - generic-cli: native initial prompt is one literal argv; no delayed paste
+  ---
+  duration_ms: 177.079709
+  type: 'test'
+  ...
+# Subtest: codex: native initial prompt is one literal argv; no delayed paste
+ok 2 - codex: native initial prompt is one literal argv; no delayed paste
+  ---
+  duration_ms: 81.181792
+  type: 'test'
+  ...
+# Subtest: fallback never types into a modal after a ready marker; manual typing cancels pending submission
+ok 3 - fallback never types into a modal after a ready marker; manual typing cancels pending submission
+  ---
+  duration_ms: 122.968917
+  type: 'test'
+  ...
+# Subtest: an exact Codex resume places the prompt after its id; a native picker never mistakes the prompt for an id
+ok 4 - an exact Codex resume places the prompt after its id; a native picker never mistakes the prompt for an id
+  ---
+  duration_ms: 114.225625
+  type: 'test'
+  ...
+# Subtest: a settled fallback prompt submits once, while a modal between paste and Enter receives no Enter
+ok 5 - a settled fallback prompt submits once, while a modal between paste and Enter receives no Enter
+  ---
+  duration_ms: 114.290791
+  type: 'test'
+  ...
+# Subtest: Codex OSC fallback hand-back preserves the stop through its paste and starts one turn only on Enter
+ok 6 - Codex OSC fallback hand-back preserves the stop through its paste and starts one turn only on Enter
+  ---
+  duration_ms: 136.578666
+  type: 'test'
+  ...
+# Subtest: a clean goal checkout survives process exit and checkpoint completion; ordinary clean sessions still clean up
+ok 7 - a clean goal checkout survives process exit and checkpoint completion; ordinary clean sessions still clean up
+  ---
+  duration_ms: 126.299584
+  type: 'test'
+  ...
+# Subtest: an adopted implementation checkout is checked before spawn and refusal launches no agent
+ok 8 - an adopted implementation checkout is checked before spawn and refusal launches no agent
+  ---
+  duration_ms: 50.934875
+  type: 'test'
+  ...
+# Subtest: goal ownership survives subsequent cleanup calls and unreadable ownership is kept conservatively
+ok 9 - goal ownership survives subsequent cleanup calls and unreadable ownership is kept conservatively
+  ---
+  duration_ms: 36.692084
+  type: 'test'
+  ...
+# Subtest: final launch authorization is synchronous after preparation, preserves adopted work, and refuses before PTY spawn
+ok 10 - final launch authorization is synchronous after preparation, preserves adopted work, and refuses before PTY spawn
+  ---
+  duration_ms: 55.027958
+  type: 'test'
+  ...
+# Subtest: clone failure preserves the existing link and parent bytes, records refusal and never falls back to sharing
+ok 11 - clone failure preserves the existing link and parent bytes, records refusal and never falls back to sharing
+  ---
+  duration_ms: 37.667625
+  type: 'test'
+  ...
+# Subtest: unsupported cloning refuses before any copy or shared fallback
+ok 12 - unsupported cloning refuses before any copy or shared fallback
+  ---
+  duration_ms: 31.030292
+  type: 'test'
+  ...
+# Subtest: a real APFS clone replaces a shared source symlink; package-manager deletion cannot touch its parent
+ok 13 - a real APFS clone replaces a shared source symlink; package-manager deletion cannot touch its parent
+  ---
+  duration_ms: 43.844834
+  type: 'test'
+  ...
+# Subtest: an escaping symlink inside a dependency clone is refused before replacing the existing shared link
+ok 14 - an escaping symlink inside a dependency clone is refused before replacing the existing shared link
+  ---
+  duration_ms: 34.375625
+  type: 'test'
+  ...
+# Subtest: fresh real Git worktrees override the shared default, and clone failure stops before setup
+ok 15 - fresh real Git worktrees override the shared default, and clone failure stops before setup
+  ---
+  duration_ms: 824.459459
+  type: 'test'
+  ...
+1..15
+# tests 15
+# suites 0
+# pass 15
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1990.181
+
+> wanigan@0.1.0 test:renderer-style
+> node scripts/check-renderer-style.cjs
+
+renderer style checks passed (864 inline style objects across 74 renderer files; 0 TSX files with <style>; 110 px font sizes in styles/; 0 literal durations outside motion.css; 0 shadowed modifier declarations in the 16 sheets index.css imports; 0 form controls with no accessible name; 141 native title tooltips; 0 hooks called below an early return)
+
+> wanigan@0.1.0 test:dead-code
+> knip --exclude exports,types,nsExports,nsTypes,enumMembers,classMembers,duplicates
+
+
+> wanigan@0.1.0 test:lint
+> eslint .
+
+
+> wanigan@0.1.0 test:package-hooks
+> node scripts/test-package-hooks.cjs
+
+  • invalidated node-pty native rebuild cache to include spawn-helper
+package hook checks passed
+
+> wanigan@0.1.0 test:local-install
+> node scripts/test-local-macos-install.cjs
+
+Launching /Applications/Wanigan.app…
+Launching /Applications/Wanigan.app…
+local macOS installer fixture checks passed
+
+> wanigan@0.1.0 smoke
+> node scripts/smoke.mjs
+
+^D

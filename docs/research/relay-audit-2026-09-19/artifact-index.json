@@ -1,0 +1,300 @@
+{
+  "generatedAt": "2026-09-19T19:10:43.639637+00:00",
+  "files": [
+    {
+      "path": "docs/research/2026-09-19-relay-deep-audit-results.md",
+      "bytes": 20682,
+      "sha256": "d6cab7095daedc886148b7267a4b357eaeaa4e2c9a070ad2a7d8ca6fde8e1c85"
+    },
+    {
+      "path": "docs/research/2026-09-19-relay-audit-execution-cost-routing.md",
+      "bytes": 18408,
+      "sha256": "d7f49179b234ff7997b0847db91368b8e9f43c1dbb203c39675082f6f60b91fd"
+    },
+    {
+      "path": "docs/research/2026-09-19-relay-audit-execution-discovery.md",
+      "bytes": 26353,
+      "sha256": "1c262444652f14d1e1643466f1123330584d282f768ab723906711e83fe28d29"
+    },
+    {
+      "path": "docs/research/2026-09-19-relay-audit-execution-runtime.md",
+      "bytes": 16099,
+      "sha256": "3f250fe765d3c1b932de7c4b079b2cae0c75c8a23981e888214e86edd86685c6"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/account-discovery.json",
+      "bytes": 29202,
+      "sha256": "e13be9f8cb219977dde33cbc5ca8887a00a345b2f60df9effea450eadbebf333"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/account-discovery.py.txt",
+      "bytes": 4947,
+      "sha256": "3e96da579c35efb865441e5dc7578501a4992c82e01d9fa7fc59798885ca0c93"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/auth-and-mcp.json",
+      "bytes": 5455,
+      "sha256": "702a42e756b728d91f789b8985a54cd4295af349ff0a1a63691cef8ee73a1fad"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/auth-and-mcp.py.txt",
+      "bytes": 2390,
+      "sha256": "0d8f847cf07fb95ab1c28f2523e7432a5bb1ebd4b8d65e6e4b15ab62007b3bf3"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/npm-test.txt",
+      "bytes": 166258,
+      "sha256": "b09451944669567e011845ac5b251b8baa5466640ae45b51decd947d92068470"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/relay-renderer-current-labels.txt",
+      "bytes": 1178,
+      "sha256": "30177606207e470f3a145cc13c64f1750b7fab300d63c35efaf66a02695c2244"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/relay-renderer.txt",
+      "bytes": 1237,
+      "sha256": "48c36e98b88d4c9b79b9eb41d003b625054596e3e96a783b4b40e049bb05741a"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/renderer-audit-probe.mjs.txt",
+      "bytes": 24266,
+      "sha256": "3fdd58c7f2b2c2143feca147578f4c86ec848f6994c98ef822b86e81d81a2296"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/renderer-selector-adjustments.json",
+      "bytes": 459,
+      "sha256": "8af03b3860d76f4e9afa415220382c3b4bb531ee736461ce8c365fea6f560cf7"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/smoke-native.txt",
+      "bytes": 314156,
+      "sha256": "00adbfbcdd9fc91535a9fbb68e13e8bae92899fc3b8eda0b11413aeb739a262f"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/baseline/terminal-replay.txt",
+      "bytes": 616,
+      "sha256": "ac3e332e510c7cf28747adf946379c466d77f58e67f41f81cb30e43a1f6697e5"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/connection-inventory.json",
+      "bytes": 4568,
+      "sha256": "d792dbc0eb27c784ea6a587134205be1aa90cfe3e0af9067ea9f36d5d42e4b0b"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/cost-routing/audit-fixtures.cjs.txt",
+      "bytes": 21639,
+      "sha256": "b299796e728a8d93cf58ec61a13ab32eab4e9267a305e5fe00ce9c0e26013296"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/cost-routing/fixtures.txt",
+      "bytes": 10879,
+      "sha256": "f47e4316aea866453f7a1fa2a4889b500685b1387d8b372b59f9062e3ea70db6"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/cost-routing/pure-tests.txt",
+      "bytes": 19156,
+      "sha256": "63a97c1ef7103c7021c6dcdf9692a4c9bd05562755571155b582e3581f301844"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/cost-routing/results.json",
+      "bytes": 15355,
+      "sha256": "39b77f831d52920e43edd6cf615202912f7c14c1eeeab31b859ee932f33e5c00"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/discovery/contracts.tap",
+      "bytes": 7311,
+      "sha256": "bd8d5ff522d3f934d9b20f15cd3ef43a1441225b4e5c28783213d90dc6bb8ea0"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/discovery/fixtures.cjs.txt",
+      "bytes": 13829,
+      "sha256": "9fa0becbaad637575427b068e80ec39aa34cd3f729d345d241b565baf895d2dc"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/discovery/public-openrouter.json",
+      "bytes": 21125,
+      "sha256": "9d2810267651a2287ccfb8c4907e6cf45547bb78c358d4788717ec4dda85f7fb"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/discovery/results.json",
+      "bytes": 14549,
+      "sha256": "fb1336053766ef1016c8f2eb524bcfce28b1fef2d04f5c22a31b89b39136c77a"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/environment.json",
+      "bytes": 1862,
+      "sha256": "e716bae22713bc706a4fe50614d00c061ef4389505ae35b3682919dc2419a1b3"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/installed-provenance.json",
+      "bytes": 928,
+      "sha256": "5cc329b08a83d861caacd846a939392fd2a73c48c69179526f228da97b45c84a"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/create-dark.png",
+      "bytes": 124117,
+      "sha256": "4f8f91462cc5c50708a6751e0107455698f5a3df80af004df8fcea456c7b5001"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/create-light.png",
+      "bytes": 115054,
+      "sha256": "a9530736fc9167bd878e9cbc3ef380b6763116082c1c71a211feeb8c327c4729"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/create-overrides-dark.png",
+      "bytes": 162882,
+      "sha256": "c7d06c66fe13dfe4ed7d20ced445186a90cd8fb9553b3d3b1d7ff442872ec8ef"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/create-overrides-light.png",
+      "bytes": 161679,
+      "sha256": "d8f44f0b2b8da20e0d6f4aa40fd1aec9cb293adbf39c9f83a59dd7ff0dab06bc"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/direct-dark.png",
+      "bytes": 145287,
+      "sha256": "d04f368657af5a6da7542c1d41a49b2db1e4dbbba6679a7568c5e09feb833597"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/direct-light.png",
+      "bytes": 143915,
+      "sha256": "ee612117e7ab76be1032bf48e4f1e8ce9ece65f1718e2768ac9d129fce2d5961"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/empty-dark.png",
+      "bytes": 125401,
+      "sha256": "9f62eaa10d4b2bc38688d438fd431d3130fa6789d4c602927ac21ceca40a8482"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/empty-light.png",
+      "bytes": 124256,
+      "sha256": "edddc3e88de924732744c2cc6b9f50e61ad7f753185107a294a70275ab93bab8"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/narrow-720-dark.png",
+      "bytes": 95540,
+      "sha256": "bc2d97a1a6273dea50d066577d0e2963e7f16854f234b2af9986aa8610ea3e8b"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/narrow-720-light.png",
+      "bytes": 94441,
+      "sha256": "25893cfeb6032690b2ae7c8880a75f17068fa632d58b0dc777b39554f847d165"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/narrow-dark.png",
+      "bytes": 100530,
+      "sha256": "c0c93551259ebe8c0eed53d1b2430cb9b1c9ea41f10d27669e2a4e546d3fe5ab"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/narrow-light.png",
+      "bytes": 99267,
+      "sha256": "c14ea342b8feb2de9202707bd96860c4593dc4e0b4209d3693abc478282147ed"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/reduced-motion-dark.png",
+      "bytes": 161588,
+      "sha256": "44a1ec4de8081b2923b93fe2e539f2849dc7f60b3448841afdce6b7d833c2289"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/reduced-motion-light.png",
+      "bytes": 160317,
+      "sha256": "25ef261ede33499bb3a18c58641325102ad1399cab4dc95e230c808d80462716"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/rejected-dark.png",
+      "bytes": 157922,
+      "sha256": "eb3f73894b2fafdc5cc2faf8a2a9f9174cdae59a6965cd522ef441ea09da7542"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/rejected-light.png",
+      "bytes": 157070,
+      "sha256": "effdd5b29042e38cdf5f4455f812c5bb616031bb8e318301d19ebfe047e16b1a"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/review-dark.png",
+      "bytes": 153408,
+      "sha256": "8377b97ee71472817783b1c37e51c961e96efcb2321a65383bb4c8b7099b6d8e"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/review-light.png",
+      "bytes": 152168,
+      "sha256": "6c8bc7381226e8290f4ad8ba88a1d5c78b1896a8a421c8db897b380756017d2b"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/standard-dark.png",
+      "bytes": 157638,
+      "sha256": "9180bbb6bfff0660c287d02cca0e303165bb83cb4f0b81305210f1176b5abe7f"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/standard-light.png",
+      "bytes": 156050,
+      "sha256": "0b531b446798bef279566f6baedaa08e0a33b044069f534a3a163940198d6b7c"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/verification.json",
+      "bytes": 1433,
+      "sha256": "324ac44c5c744b34abad5603ad2791bd0445411cc9adaa930756737f83232b80"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/verify-details-dark.png",
+      "bytes": 153921,
+      "sha256": "c51e13a0c749658c167d676600b0b03cae4061a57c983badd267a368d92c0d37"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/verify-details-light.png",
+      "bytes": 150694,
+      "sha256": "fa30cbe1725950df23331c358dc9e4a9bc39e32214fcb175517d675293f43343"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/working-dark.png",
+      "bytes": 161764,
+      "sha256": "923cea0ee348b1fe5ac319b160d1463f34fed330909ec6229dfe48679eda596c"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/renderer/working-light.png",
+      "bytes": 160417,
+      "sha256": "c31f8db80691852a2c87001933d2dcb76a626fcc8972579ef8e66bcb8fa9ebb2"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/artifact-verification.json",
+      "bytes": 1748,
+      "sha256": "0b5ba046c804369855ad27d5ef2c55d23bf8a33b172504562277125c9af89bd1"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/collect-evidence.cjs.txt",
+      "bytes": 4533,
+      "sha256": "fb6610ea20de1f830a1c8fe95e54570dbff620315a81563aaa361d1fe2169332"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/concurrency-results.json",
+      "bytes": 1658,
+      "sha256": "3ad6fff318929d30783a879d7a10c9431a7904db40173ed6a3e541eab53035a5"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/core-results.json",
+      "bytes": 16288,
+      "sha256": "652dcb78844dd003b9d464ffbe1e0cabf8175d533af44ceded70b2720f01540f"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/runtime-fixtures.cjs.txt",
+      "bytes": 27469,
+      "sha256": "49a0c27a286fe5f8777b501bbbaaddea5e32b0212e9cb8e534eb716a1d721ba2"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/runtime/verification-results.json",
+      "bytes": 1890,
+      "sha256": "51479b0c4a47059143269af2815fe7f8fb24e1b743aa76f9c0170b7e17686120"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/spending-ledger.json",
+      "bytes": 1985,
+      "sha256": "f2cbe066a29431c1b70b59ac84621f66797285d555e68abdff8626759b423aee"
+    },
+    {
+      "path": "docs/research/relay-audit-2026-09-19/verification.json",
+      "bytes": 529,
+      "sha256": "59994baa750efc0ae06ca10c531e6edc1c41d9d92c5e94f4414a7d52f6f8a9c1"
+    }
+  ]
+}

@@ -96,8 +96,7 @@ try {
   });
   await page.goto(rendererURL);await page.waitForSelector('.mission-room');
   const go=async chord=>{await page.locator('.space-dock button').first().focus();await page.keyboard.press(chord);};
-  await page.getByRole('button',{name:'Projects',exact:true}).click();
-  await page.getByRole('button',{name:'Context',exact:true}).click();
+  await go('Meta+Shift+C');
   await page.getByRole('heading',{name:'Context',exact:true}).waitFor();
   await page.getByRole('button',{name:'Re-scan',exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.ctx .stat-grid'));
@@ -117,7 +116,17 @@ try {
   } else {
     const areas=[['chain','Instructions'],['rules','Rules'],['agents','AGENTS.md'],['memory','Memory'],['config','Settings & hooks'],['budget','Startup budget'],['learning','Learning briefing']];
     const tabs=page.getByRole('tablist',{name:'Context sections'});
-    const picker=page.getByRole('combobox',{name:'Context project'});
+    const selectProject=async id=>{
+      const project=(await page.evaluate(()=>window.wanigan.projects.list())).find(row=>row.id===id);
+      assert(project,'fixture project exists');
+      await page.getByRole('button',{name:/^Switch project space:/}).click();
+      await page.getByRole('combobox',{name:'Search project spaces',exact:true}).fill(project.name);
+      await page.keyboard.press('Enter');
+    };
+    const selectedProject=async()=>{
+      const name=await page.locator('.space-switch-name').innerText();
+      return (await page.evaluate(()=>window.wanigan.projects.list())).find(row=>row.name===name)?.id;
+    };
     const region=page.locator('.ctx-area:visible');
     const reader=page.getByRole('complementary',{name:'Source file reader'});
     const source=path=>region.getByRole('button',{name:'Read '+path,exact:true});
@@ -209,14 +218,14 @@ try {
     record('memory index and topics use the memory reader; reported line cuts stay distinct from byte limits, permission rules are inspectable, and estimates stay labeled');
 
     await page.evaluate(()=>window.__holdScan='/example/storefront');
-    await picker.selectOption('p1');await page.waitForFunction(()=>typeof window.__releaseScan==='function');
+    await selectProject('p1');await page.waitForFunction(()=>typeof window.__releaseScan==='function');
     assert.equal(await page.locator('.ctx-workspace').count(),0);
-    await picker.selectOption('p2');await ready();
+    await selectProject('p2');await ready();
     await page.evaluate(()=>{window.__holdScan=null;window.__releaseScan();});
-    assert.equal(await picker.inputValue(),'p2');
+    assert.equal(await selectedProject(),'p2');
     await select('Instructions');assert.equal(await region.getByRole('button',{name:'Read /example/storefront/CLAUDE.md',exact:true}).count(),0);
     await page.evaluate(()=>window.__scanFailure='/example/storefront');
-    await picker.selectOption('p1');await ready();
+    await selectProject('p1');await ready();
     await page.getByText('Wanigan could not read anything about storefront.',{exact:true}).waitFor();
     assert.equal(await page.locator('.ctx-workspace').count(),0);
     await page.evaluate(()=>window.__scanFailure=null);await scan();
@@ -270,7 +279,7 @@ try {
     await region.getByRole('button',{name:'Type /init into a session',exact:true}).click();
     await region.getByText(/Typed \/init into the running session in storefront/).waitFor();
     assert.deepEqual(await page.evaluate(()=>window.__contextCalls.filter(row=>row[0]==='send')),[['send','s1','/init']]);
-    await picker.selectOption('p2');await ready();
+    await selectProject('p2');await ready();
     await region.getByRole('button',{name:'Type /init into a session',exact:true}).click();
     await region.getByText(/No Claude Code session is running in platform/).waitFor();
     assert.equal((await page.evaluate(()=>window.__contextCalls.filter(row=>row[0]==='send'))).length,1);

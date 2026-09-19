@@ -151,7 +151,7 @@ function coveredByStreams(streams: StreamCoverage[], attrs: SourceAttributes, at
  * retain their model-level comparison until their first new metric preserves
  * that evidence in the source ledger.
  */
-export function markIncompleteCost(d: Database.Database, usage: Map<string, SessionUsage>, metrics: AccountingMetric[]): void {
+export function markIncompleteCost(d: Database.Database, usage: Map<string, Pick<SessionUsage, 'costStatus'>>, metrics: AccountingMetric[]): void {
   const coverage = new Map<string, Map<string, Coverage>>();
   const bucket = (sessionId: string, model: string): Coverage => {
     let models = coverage.get(sessionId);

@@ -1,0 +1,175 @@
+{
+  "at": "2026-09-19T18:59:47.322337+00:00",
+  "accounts": [
+    {
+      "id": "acct_aee67673-39e",
+      "harness": "claude-code",
+      "label": "Personal",
+      "is_default": 1,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    },
+    {
+      "id": "acct_40a6158f-4da",
+      "harness": "claude-code",
+      "label": "Work",
+      "is_default": 0,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    },
+    {
+      "id": "acct_22fefe2f-541",
+      "harness": "codex",
+      "label": "Personal",
+      "is_default": 1,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    },
+    {
+      "id": "acct_f80c68ea-f69",
+      "harness": "codex",
+      "label": "gamedev",
+      "is_default": 0,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    },
+    {
+      "id": "acct_3b56053e-39d",
+      "harness": "codex",
+      "label": "Temporary",
+      "is_default": 0,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    },
+    {
+      "id": "acct_9d5d4e0c-490",
+      "harness": "codex",
+      "label": "temp2",
+      "is_default": 0,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": false
+    },
+    {
+      "id": "acct_93f968d9-d9d",
+      "harness": "claude-code",
+      "label": "max5",
+      "is_default": 0,
+      "configDirectoryPresent": true,
+      "nativeCredentialFilePresent": true
+    }
+  ],
+  "storedCredentialFilesPresent": {
+    "provider-openrouter.bin": false,
+    "apikey.bin": true,
+    "provider-typesafe.bin": true,
+    "provider-glm.bin": false,
+    "provider-deepseek.bin": false,
+    "provider-xai.bin": false
+  },
+  "environmentCredentialPresence": {
+    "WANIGAN_OPENROUTER_KEY": false,
+    "OPENROUTER_API_KEY": false,
+    "ANTHROPIC_API_KEY": false,
+    "OPENAI_API_KEY": false,
+    "WANIGAN_GLM_KEY": false,
+    "WANIGAN_DEEPSEEK_KEY": false,
+    "WANIGAN_XAI_KEY": false
+  },
+  "waniganMcpServerCount": 0,
+  "historicalLimitReadings": [
+    {
+      "account_id": "acct_aee67673-39e",
+      "harness": "claude-code",
+      "kind": "session",
+      "scope": "",
+      "used_percent": 4.0,
+      "resets_at": 1789534800000,
+      "fetched_at": 1789518595010
+    },
+    {
+      "account_id": "acct_aee67673-39e",
+      "harness": "claude-code",
+      "kind": "week",
+      "scope": "",
+      "used_percent": 99.0,
+      "resets_at": 1789956000000,
+      "fetched_at": 1789518595010
+    },
+    {
+      "account_id": "acct_aee67673-39e",
+      "harness": "claude-code",
+      "kind": "week",
+      "scope": "Fable",
+      "used_percent": 82.0,
+      "resets_at": 1789956000000,
+      "fetched_at": 1789518595010
+    },
+    {
+      "account_id": "acct_40a6158f-4da",
+      "harness": "claude-code",
+      "kind": "session",
+      "scope": "",
+      "used_percent": 5.0,
+      "resets_at": 1789523400000,
+      "fetched_at": 1789518590102
+    },
+    {
+      "account_id": "acct_40a6158f-4da",
+      "harness": "claude-code",
+      "kind": "week",
+      "scope": "",
+      "used_percent": 63.0,
+      "resets_at": 1789848000000,
+      "fetched_at": 1789518590102
+    },
+    {
+      "account_id": "acct_40a6158f-4da",
+      "harness": "claude-code",
+      "kind": "week",
+      "scope": "Fable",
+      "used_percent": 100.0,
+      "resets_at": 1789848000000,
+      "fetched_at": 1789518590102
+    },
+    {
+      "account_id": "acct_22fefe2f-541",
+      "harness": "codex",
+      "kind": "week",
+      "scope": "",
+      "used_percent": 100.0,
+      "resets_at": 1789814023000,
+      "fetched_at": 1789518588793
+    },
+    {
+      "account_id": "acct_f80c68ea-f69",
+      "harness": "codex",
+      "kind": "week",
+      "scope": "",
+      "used_percent": 100.0,
+      "resets_at": 1789812748000,
+      "fetched_at": 1789518588617
+    },
+    {
+      "account_id": "acct_3b56053e-39d",
+      "harness": "codex",
+      "kind": "week",
+      "scope": "",
+      "used_percent": 100.0,
+      "resets_at": 1789814023000,
+      "fetched_at": 1789518588907
+    }
+  ],
+  "nativeUiObservation": {
+    "installedApp": "/Applications/Wanigan.app",
+    "openRouterProfileEnabled": true,
+    "openRouterHasKeyNotice": false,
+    "openRouterRemoveStoredKeyControl": false,
+    "openRouterSaveKeyDisabled": true,
+    "openRouterEncryptedStoreUnavailableNotice": false,
+    "claudeCliVersion": "2.1.278",
+    "codexCliVersion": "0.155.1",
+    "openRouterStatusSurface": "Relay > New relay > Compare hosted model prices",
+    "settingsChanged": false,
+    "providerLaunches": 0
+  }
+}

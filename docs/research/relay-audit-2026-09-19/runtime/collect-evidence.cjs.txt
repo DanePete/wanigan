@@ -1,0 +1,50 @@
+// Sanitize audit-only results and verify the observations claimed in the report.
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const lab = process.env.RUNTIME_AUDIT_LAB;
+if (!lab?.startsWith('/private/tmp/')) throw new Error('Set RUNTIME_AUDIT_LAB');
+const output = __dirname;
+const inputs = [['runtime/results.json', 'core-results.json'], ['runtime-extended/results.json', 'concurrency-results.json'], ['runtime-verification/results.json', 'verification-results.json']];
+const all = inputs.map(([file]) => JSON.parse(fs.readFileSync(path.join(lab, file), 'utf8')));
+const rows = Object.fromEntries(all.flatMap(run => run.scenarios).map(row => [row.id, row]));
+assert.equal(rows.R01.preview.files.some(row => row.path === 'unreviewed.txt'), false);
+assert.equal(rows.R01.deletedUnreviewed, true); assert.equal(rows.R01.apply.ok, true);
+assert.equal(rows.R01.restoredPostPreviewBytes, 'created after preview\n');
+assert.equal(rows.R01.headUnchanged && rows.R01.indexUnchanged, true);
+assert.equal(rows.R02.writerAliveAtApply && rows.R02.fileExistsAgain && rows.R02.apply.ok, true);
+assert.equal(rows.R03.apply.ok, false); assert.equal(rows.R03.apply.reverted + rows.R03.apply.deleted, 0);
+assert.equal(rows.R04.outsideUnchanged, true); assert.equal(rows.R05.apply.ok, false);
+assert.equal(rows.R06.capturedBytes, 'agent first edit');
+for (const id of ['R07', 'R08']) { assert.equal(rows[id].writesContinued, true); assert.equal(rows[id].sweepClosed, 1); assert.equal(rows[id].history[0].status, 'failed'); }
+assert.equal(rows.R09.initialCurrent, true); assert.equal(rows.R09.mutatedCurrent, false);
+assert.match(rows.R09.concurrentError, /already running/); assert.equal(rows.R09.immediateReceiptStatus, 'running'); assert.match(rows.R09.truncationNote, /discarded/);
+assert.equal(rows.R10.beforeDeathStarts, 1); assert(rows.R10.waitedRealLeaseMs >= 120000); assert.equal(rows.R10.bothWriting, true);
+assert.equal(rows.R10.afterRecovery.attempts, 1);
+assert.equal(rows.R11.bothOwnersAlive && rows.R11.bothWritersAlive, true); assert.equal(rows.R11.rows[0].status, 'failed'); assert.equal(rows.R11.rows[1].status, 'running');
+assert.equal(rows.R12.sameRecipe && rows.R12.ignoredMutationStillCurrent, true); assert.equal(rows.R12.olderPassAfterNewerFailure, false);
+assert.equal(rows.R12.symlink.canVerify || rows.R12.overLimit.canVerify, false);
+assert.equal(rows.R12.randomAssets.headUnchanged && rows.R12.randomAssets.indexUnchanged, true);
+for (const [id,row] of Object.entries(rows).filter(([id]) => id.startsWith('W-'))) {
+  assert.equal(row.parentUnchanged,true);
+  assert.equal(row.outcome, ['W-private-copy', 'W-hardlink-source'].includes(id) ? 'prepared' : 'refused');
+}
+assert.equal(rows['W-private-copy'].relinkPrivate, true); assert.equal(rows['W-hardlink-source'].targetLinkCount, 1);
+const ids = new Set();
+function walk(value, key='') {
+  if (typeof value==='number' && /pid$/i.test(key)) ids.add(value);
+  else if (Array.isArray(value) && /pids$/i.test(key)) value.forEach(pid => ids.add(pid));
+  else if (value && typeof value==='object') for (const [name,child] of Object.entries(value)) walk(child,name);
+}
+all.forEach(value => walk(value));
+const processes = [...ids].map(pid => { let alive; try { process.kill(pid,0); alive=true; } catch { alive=false; } return {pid,alive}; });
+assert.equal(processes.some(value=>value.alive),false, 'a fixture process still exists');
+function sanitized(text) {
+  return text.replaceAll(lab, '$LAB').replaceAll(path.resolve(__dirname, '../../../..'), '$WORKSPACE').replaceAll(process.execPath,'$NODE22');
+}
+for (const [[,name],data] of inputs.map((entry,n)=>[entry,all[n]])) fs.writeFileSync(path.join(output,name),sanitized(JSON.stringify(data,null,2)+'\n'));
+const receipts = inputs.map(([,name]) => ({ file:name,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(output,name))).digest('hex') }));
+const verification = { verifiedAt:new Date().toISOString(),scenarioRecords:Object.keys(rows).length, assertions:'passed',processes,receipts,notes:['All process ids are audit fixture owners, shells or sentinels.', 'No production app/data/process was used.', 'Graceful-owner evidence is Node SIGTERM, not Electron before-quit.', 'Queue runner is a sentinel adapter, not a production paid harness.'] };
+fs.writeFileSync(path.join(output,'artifact-verification.json'),JSON.stringify(verification,null,2)+'\n');
+console.log(JSON.stringify(verification,null,2));

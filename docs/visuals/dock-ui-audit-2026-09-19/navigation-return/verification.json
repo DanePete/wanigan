@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "before": false,
+  "checks": [
+    "The persistent dock Tools button restores desktop navigation; hiding returns focus to it, and open/closed choices survive reload.",
+    "The existing Option–Command–S shortcut still shows and hides navigation.",
+    "Compact navigation remains a temporary drawer with its return button visible, keyboard focus restored, and no desktop preference writes."
+  ],
+  "errors": []
+}

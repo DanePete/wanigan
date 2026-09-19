@@ -8,7 +8,7 @@ import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retired
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, WorkspaceLocation, WorkspaceNavigation, WorkspaceNavigationToggle } from './components/SpaceNavigation';
+import { ProjectSpaces, SpaceDock, SpaceRoutes, WorkspaceNavigation } from './components/SpaceNavigation';
 import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
@@ -1081,46 +1081,22 @@ export default function App() {
           </button>
         </section>
       )}
-      {/* One row, not two. The title bar and the tab strip were 52px + 48px of
-          permanent chrome above every view; the destinations moved to the side,
-          so the second row is gone and the terminal is 48px taller. The row
-          keeps its left inset for the traffic lights. */}
+      {/* Session actions and project scope occupy the title bar. Area-local
+          routes sit above the content; the dock remains visible below it. */}
       <header className="app-header">
-          <WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />
           <div className="brand-lockup">
             <span className="brand">Wanigan</span>
-            {/* The view on screen, not a tagline. A sidebar row is filled to
-                show where you are, but the row can be hidden and the window can
-                be behind another; the header should still answer "what am I
-                looking at" without a second glance. */}
-            <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
 
         <div className="workbench-context">
-          <WorkspaceLocation tab={tab} go={go} />
           {projectScopeFor(tab) !== 'workspace'
             ? <ProjectSpaces projects={projects} selected={spaceId ?? (projectScopeFor(tab) === 'required' ? projectId ?? null : null)} ready={projectsRead} onAdd={addProject}
+                allSpacesDetail={projectScopeFor(tab) === 'required' ? 'Open Sessions across all projects' : undefined}
                 onSelect={(id) => { setSpaceId(id); if (id) choose(id);
                   else if (projectScopeFor(tab) === 'required') go('sessions'); }} />
             : <span className="workbench-scope">{areaFor(tab).id === 'fleet' || tab === 'control' ? 'Across all projects' : tab === 'settings' ? 'Application settings' : 'Workspace tools'}</span>}
         </div>
           <div className="nav-actions">
-            {!sidebarOpen && mark && <button className={`workbench-header-attention tone-${mark.tone}`} type="button"
-              aria-haspopup="dialog" aria-expanded={needAnchor !== null}
-              aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
-              onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
-              <span aria-hidden="true">{mark.glyph}</span><span>{needs.total} need you</span>
-            </button>}
-            {/* The Learning view owns its scope control now — a nav-level
-                project select that only sometimes rendered was the invisible
-                scope that let two surfaces state contradictory counts. */}
-
-            {/* The emergency stop lives in the header rather than on a page,
-                because the moment you want it you do not want to navigate
-                first. It is a small, quiet control until it is pulled — an
-                always-red button in permanent chrome is one you stop seeing. */}
-            <HaltControl halt={halt} onChange={setHalt} />
-
             {/* Start and continue are one decision — "what am I working on
                 next" — so they sit as one joined control. Resume opens history
                 to read first; it never launches on its own. */}
@@ -1166,11 +1142,24 @@ export default function App() {
                         ? `Search views, projects, live sessions, settings and transcripts (${chordLabels(keymap, 'palette').spoken})`
                         : `${labelForTab(tab)} is the view on screen. Search every view, project and live session (${chordLabels(keymap, 'palette').spoken})`}
                       onClick={() => (palette ? closePalette() : openPalette())}>
+                <Icon name="search" size={14} />
                 {railHasActiveTab
                   ? <span>Search</span>
                   : <span><span aria-hidden="true">✓ </span>{labelForTab(tab)}</span>}
                 <span className="nav-views-shortcut" aria-hidden="true">{chordLabels(keymap, 'palette').glyphs}</span>
               </button>
+            </div>
+
+            {/* Global status stays apart from session creation. The stop
+                remains reachable on every view and still requires two clicks. */}
+            <div className="workbench-status" role="group" aria-label="Workspace status and controls">
+              {mark && <button className={`workbench-header-attention tone-${mark.tone}`} type="button"
+                aria-haspopup="dialog" aria-expanded={needAnchor !== null}
+                aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
+                onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
+                <span aria-hidden="true">{mark.glyph}</span><span>{needs.total} need you</span>
+              </button>}
+              <HaltControl halt={halt} onChange={setHalt} />
             </div>
 
             {/* Two controls and one status, not four. The "+ Headless runs ⌘0"
@@ -1181,18 +1170,10 @@ export default function App() {
                 "Appearance: …" actions so the change stays two keystrokes
                 away — the setting is not hidden, it is no longer the widest
                 thing in the toolbar. */}
-            {activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
+            {tab === 'sessions' && activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
           </div>
       </header>
 
-      {/* Destinations left the horizontal axis. Thirteen text tabs needed a
-          second 48px header row and still overflowed at 960px with Runs and
-          Settings off-screen behind a 5px scrollbar — the rail's own rationale
-          (index.css) failed at the width it was written for. A vertical list
-          holds all fifteen with room for an icon, the marks and the chord, and
-          the window gets those 48px back for the terminal. ⌘1–9, ⌘0, ⌘, and
-          every ⌘⇧ chord are unchanged; the palette is still the complete
-          index. */}
       {/* Above the workspace, not inside it. A halted fleet is a fact about the
           whole app rather than about whichever tab is on screen, so it belongs
           in the same band as the recovery strip and the demo banner — and it
@@ -1204,22 +1185,14 @@ export default function App() {
           it becomes a third column that stretches to the full height of the
           window. */}
       {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
+      <SpaceRoutes tab={tab} go={go} />
       <div className="workspace">
         <WorkspaceNavigation tab={tab} go={go} goArea={goArea} compact={compactNavigation}
           open={sidebarOpen} onClose={closeSidebar} onSearch={() => { closeDrawer(); openPalette(); }} needs={needs.total} running={running}
           runsInFlight={runsInFlight} batchWork={batchWork}
-          attentionAction={mark ? <button className={`workbench-attention tone-${mark.tone}`} type="button"
-            aria-haspopup="dialog" aria-expanded={needAnchor !== null}
-            aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
-            onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
-            <span aria-hidden="true">{mark.glyph}</span> {needs.total} need you
-          </button> : undefined}
           batchAction={!hasKey ? <button className="workbench-key" type="button"
             aria-label="Batch submission needs an API key. Open Settings, Agents, Claude Platform API key."
-            onClick={() => { closeDrawer(); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined}
-          companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
-            expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
-            onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
+            onClick={() => { closeDrawer(); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined} />
 
       {/* The boundary sits here and not around the shell: a view that cannot
           render must not take the header, the rail or ⌘K with it. `view={tab}`
@@ -1241,6 +1214,11 @@ export default function App() {
         </ErrorBoundary>
       </div>
       </div>
+
+      <SpaceDock tab={tab} go={go} goArea={goArea} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
+        companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
+          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
+          onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
 
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}

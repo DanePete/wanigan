@@ -3,6 +3,7 @@ import { detectProviders } from './providers';
 import { allLimits as claudeLimits } from './claude-limits';
 import { readCodexStatus, type CodexLimitWindow, type CodexStatus } from './codex-status';
 import type { AccountLimits, AgentAccount, LimitWindow } from '../shared/types';
+import { withUsageIdentityEvidence } from './usage-account-identity';
 
 /**
  * What is left, for every account on this machine, whatever agent it belongs to.
@@ -63,10 +64,11 @@ function fromCodexStatus(account: AgentAccount, status: CodexStatus): AccountLim
     .filter((w): w is LimitWindow => w !== null);
   const base = {
     accountId: account.id, accountLabel: account.label, harness: account.harness,
-    // Codex's app-server reports limits without naming the login behind them.
-    // A blank identity is the truthful rendering: the card shows the label the
-    // operator gave the account and claims nothing about whose it is.
-    identity: null, plan: status.plan, factors: [],
+    identity: status.identity ?? null, plan: status.plan ?? status.identity?.plan ?? null, factors: [],
+  };
+  if (status.authState === 'signed-out') return {
+    ...base, state: 'signed-out', fetchedAt: status.fetchedAt, windows: [],
+    detail: 'Codex reports no signed-in account. Start a session on this account and run codex login, then refresh limits.',
   };
   if (windows.length === 0) {
     return {
@@ -141,7 +143,10 @@ export async function allAccountLimits(force = false): Promise<AccountLimits[]> 
     claudeLimits(force, claudeAccounts),
     Promise.all(codexAccounts.map((account) => codexLimitsFor(account, force))),
   ]);
-  return [...claudeRows, ...codexRows, ...others.map(unsupported)];
+  return withUsageIdentityEvidence(
+    [...claudeRows, ...codexRows, ...others.map(unsupported)],
+    [...claudeAccounts, ...codexAccounts, ...others],
+  );
 }
 
 export const __test = { windowKind, codexWindow, fromCodexStatus };

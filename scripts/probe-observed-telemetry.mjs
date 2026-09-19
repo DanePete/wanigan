@@ -185,13 +185,16 @@ try {
   /* ── Usage ─────────────────────────────────────────────────────────── */
   await palette('What is left on each account');
   await page.getByRole('heading', { name: 'Usage', exact: true }).waitFor();
-  await page.locator('.u-limit').first().waitFor();
+  await page.locator(before ? '.u-limit' : '.u-comparison').first().waitFor();
   if (before) {
     await page.waitForTimeout(600);
     assert.equal(await page.locator('.u-observed').count(), 0, 'the pre-change build has no observed limits');
     await shoot('usage');
     record('before: Usage shows the /usage probe card and nothing a running session’s status line reported');
   } else {
+    const observations = page.locator('.u-details');
+    assert.equal(await observations.getAttribute('open'), null, 'historical observations start collapsed');
+    await observations.locator('summary').click();
     const personal = page.getByRole('region', { name: 'Observed limits · Personal' });
     await personal.getByText(/reaches 100% ≈/).waitFor();
     const text = squash(await personal.innerText());
@@ -206,14 +209,14 @@ try {
     assert(!/\bundefined\b|\bNaN\b|\[object /.test(text), 'no raw value reaches the screen');
     await readable(personal.locator('.u-ow-line'), 'an observed limits line');
     record('Usage states each observed window with its provenance and age, forecasts the five-hour window from its readings, flags the jump, and refuses to forecast the seven-day window from one reading');
-    const probeCard = page.locator('.u-limit').first();
+    const probeCard = page.locator('.u-comparison');
     const [cardBox, observedBox] = [await probeCard.boundingBox(), await personal.boundingBox()];
-    assert(cardBox && observedBox && observedBox.y >= cardBox.y + cardBox.height - 1, 'the observed block sits under the probe card, not in place of it');
-    record('the observed block sits beside the /usage probe figures, under the card, rather than replacing them');
+    assert(cardBox && observedBox && observedBox.y >= cardBox.y + cardBox.height - 1, 'historical observations sit below the current account comparison');
+    record('historical observations start collapsed and remain separate from current provider checks');
     await personal.scrollIntoViewIfNeeded();
     await shoot('usage-observed');
 
-    await page.getByRole('navigation', { name: 'Usage accounts' }).getByRole('button', { name: /^Work/ }).click();
+    await page.getByRole('button', { name: 'Show local records for Work, Claude Code', exact: true }).click();
     const work = page.getByRole('region', { name: 'Observed limits · Work' });
     await work.getByText(/carried no limit windows/).waitFor();
     assert.match(squash(await work.innerText()), /An API-key login has none, and a subscription reports them only after a session’s first response\. Nothing is estimated in their place\./);

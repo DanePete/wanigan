@@ -8,7 +8,9 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url), { _electron } = require('playwright-core');
 const root = path.resolve(import.meta.dirname, '..'), before = process.argv.includes('--before');
-const out = path.join(root, 'docs/visuals/fleet-ledgers', before ? 'before' : 'after');
+const outArg = process.argv.indexOf('--out');
+const out = outArg >= 0 ? path.resolve(process.argv[outArg + 1])
+  : path.join(root, 'docs/visuals/fleet-ledgers', before ? 'before' : 'after');
 mkdirSync(out, { recursive: true });
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-fleet-ledgers-'));
 writeFileSync(path.join(dir, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
@@ -107,30 +109,31 @@ try {
     await page.waitForFunction(()=>document.querySelectorAll('.fleet-entry').length===3);
     record('21-session fleet stays bounded and retains roster scroll across route changes');
     await go('Usage','Meta+Shift+U');
-    const accounts=page.getByRole('navigation',{name:'Usage accounts'});
+    const accounts=page.getByRole('combobox',{name:'Account for recorded consumption'});
+    const selectAccount = name => page.getByRole('button', {name: `Show local records for ${name}`, exact: true}).click();
     const callsBefore=await page.evaluate(()=>window.__ledgerCalls.filter(c=>c[0]==='snapshot').length);
-    await accounts.getByRole('button',{name:'Work Claude Code',exact:true}).click();
-    assert.match(await page.locator('.u-account-title').innerText(),/Work/);
+    await selectAccount('Work, Claude Code');
+    assert.match(await page.locator('.u-consumption > .u-provenance').innerText(),/Work/);
     assert.match(await page.locator('.u-consumption').innerText(),/54/);
     assert.equal(await page.evaluate(()=>window.__ledgerCalls.filter(c=>c[0]==='snapshot').length),callsBefore);
-    await accounts.getByRole('button',{name:'Personal Codex',exact:true}).click();
+    await selectAccount('Personal, Codex');
     assert.match(await page.locator('.u-consumption').innerText(),/gpt-5-codex/);
     assert.match(await page.locator('.u-capacity').innerText(),/spend control/);
-    assert.equal((await page.locator('.u-consumption > .u-scroll tbody tr').last().locator('td').last().innerText()).trim(),'—');
-    await accounts.getByRole('button',{name:'Personal gemini-cli',exact:true}).click();
+    assert.match((await page.locator('.u-consumption > .u-scroll tbody tr').last().locator('td').last().innerText()).trim(),/^—/);
+    await selectAccount('Personal, gemini-cli');
     assert.match(await page.locator('.u-capacity').innerText(),/no way to ask/);
     assert.match(await page.locator('.u-consumption').innerText(),/No recorded requests/);
-    await accounts.getByRole('button',{name:'All accounts Combined local records',exact:true}).click();
+    await accounts.selectOption('all');
     assert.equal(await page.locator('.u-consumption > .u-scroll tbody tr').count(),3);
     record('account selection uses identity across duplicate labels, never probes again, retains unsupported limits and never invents a zero cost');
-    await accounts.getByRole('button',{name:'Work Claude Code',exact:true}).click();
+    await selectAccount('Work, Claude Code');
     await page.evaluate(()=>window.__holdUsageDays=7);
     await page.getByRole('combobox',{name:'Consumption window'}).selectOption('7');
     await page.waitForFunction(()=>typeof window.__releaseUsage==='function');
     await page.getByRole('combobox',{name:'Consumption window'}).selectOption('30');
-    await page.waitForFunction(()=>document.querySelector('.u-account-title')?.textContent.includes('last 30 days'));
+    await page.waitForFunction(()=>document.querySelector('.u-consumption > .u-provenance')?.textContent.includes('last 30 days'));
     await page.evaluate(()=>window.__releaseUsage());
-    assert.match(await page.locator('.u-account-title').innerText(),/last 30 days/);
+    assert.match(await page.locator('.u-consumption > .u-provenance').innerText(),/last 30 days/);
     await page.evaluate(()=>window.__ledgerFailure=true);
     await page.getByRole('button',{name:'Refresh limits',exact:true}).click();
     await page.getByText('Fixture refresh unavailable',{exact:true}).waitFor();
@@ -180,7 +183,7 @@ try {
       }
       if(name==='Usage') {
         await page.locator('.u-chart').waitFor();
-        assert.match(await page.locator('.u-account-title').innerText(),/Work/);
+        assert.match(await page.locator('.u-consumption > .u-provenance').innerText(),/Work/);
         assert.equal(await page.getByRole('combobox',{name:'Consumption window'}).inputValue(),'30');
       }
       if(name==='Insights') assert.equal(await page.getByRole('combobox',{name:'Reporting window in days'}).inputValue(),'7');

@@ -442,14 +442,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 
 /* ── application shell ─────────────────────────────────────────────────
-   The header is one row and the destinations are down the left side. The two-
-   row header was the right answer to the wrong question: a horizontal strip
-   had to choose between the traffic lights, thirteen destinations, live status
-   and an action, so it was given a second row of its own — and still overflowed
-   at 960px, hiding Runs and Settings behind a 5px scrollbar. A vertical column
-   has no such competition. It holds all fifteen routes with the icon, the marks
-   and the chord beside each, it can be hidden outright when a terminal wants
-   the width, and the window gets the 48px back. */
+   The title bar owns project scope and session actions. The dock holds the
+   registry's areas, the strip above the workspace holds their local views,
+   and Tools opens the optional full destination list. */
 .shell { display: flex; flex-direction: column; height: 100%; min-width: 0; }
 
 .startup-recovery {

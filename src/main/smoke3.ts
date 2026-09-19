@@ -6814,13 +6814,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // which is enough friction to leave an update uninstalled. The relaunch must
   // be queued at the END of the drain: armed at the click, a new Wanigan would
   // race the old one for the database and the loopback ports.
-  const quitBlock = mainSrc.slice(mainSrc.indexOf("app.on('before-quit'"));
-  const relaunchAt = quitBlock.indexOf('app.relaunch()');
+  const quitStart = mainSrc.indexOf("app.on('before-quit'");
+  const quitBlock = mainSrc.slice(quitStart, mainSrc.indexOf('\n});', quitStart) + 5);
+  const relaunchAt = quitBlock.indexOf('app.relaunch(');
   const shutdownAt = quitBlock.indexOf('shutdownAll()');
+  const drainFinallyAt = quitBlock.indexOf(']).finally(() => {', shutdownAt);
+  const finalQuitAt = quitBlock.indexOf('app.quit();', relaunchAt);
   check(quitBlock.includes("'Stop agents and reopen'") && quitBlock.includes("'Stop agents and quit'")
     && quitBlock.includes("if (choice === 0) return;"),
   'the quit dialog offers keeping, quitting and reopening, and only the first one cancels');
-  check(relaunchAt > shutdownAt && shutdownAt > 0,
+  check(shutdownAt > 0 && drainFinallyAt > shutdownAt && relaunchAt > drainFinallyAt && finalQuitAt > relaunchAt,
     'the relaunch is queued after the PTY drain, so a new instance cannot race the old one for the database');
   check(/reopening starts Wanigan again with none of them running/.test(quitBlock),
     'and the dialog says reopening costs the agents exactly what quitting costs them, rather than implying it is the gentler button');
@@ -7715,18 +7718,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !composerCssSrc.includes('.composer-sr {'),
   'the composer announces its skill menu: textbox-legal aria-controls and aria-activedescendant over a list that is always in the DOM, options owned directly by the listbox with focus kept in the textarea, and a live region for the count and the changed meaning of Enter');
 
-  // Two accounts is the whole point of the accounts feature, and an exhausted
-  // window on one of them is exactly when it pays off. The page holds both live
-  // readings; it must compare like with like — same window kind, same model
-  // scope — and say nothing unless one really is at 100% and another really has
-  // room.
-  check(usageViewSrc.includes('const relief = useMemo(')
-    && usageViewSrc.includes("const key = (w: LimitWindow) => `${w.kind}:${w.scope ?? 'all'}`")
-    && usageViewSrc.includes('if (window.usedPercent < 100) continue;')
-    && usageViewSrc.includes('.filter((w) => key(w) === key(window) && w.usedPercent < 100)')
-    && usageViewSrc.includes('if (alternatives.length === 0) continue;')
-    && usageViewSrc.includes('{relief.length > 0 && ('),
-  'an exhausted limit window names the other account that still has room on the same window, and says nothing when there is none');
+  // Configuration entries are not proof of separate provider accounts. The
+  // comparison must keep every reading visible, scope local records by account
+  // ID, and label shared logins only from main-process identity evidence. The
+  // renderer probe exercises equal quotas on distinct accounts and matching
+  // saved logins; this check pins those contracts to the displayed surface.
+  check(usageViewSrc.includes('const limits = snap?.limits ?? [];')
+    && usageViewSrc.includes('const consumption = (snap?.consumption ?? []).filter(matches);')
+    && usageViewSrc.includes('row.accountId === selected.id')
+    && usageViewSrc.includes('limits.identityEvidence?.sharedWith ?? []')
+    && usageViewSrc.includes("account.basis === 'saved-login'")
+    && usageViewSrc.includes('Same saved login as ')
+    && usageViewSrc.includes('selected={selected?.id === limit.accountId}')
+    && !usageViewSrc.includes('const relief = useMemo('),
+  'Usage compares every account, keeps local consumption keyed by account ID, and uses identity evidence rather than quota percentages to label shared logins');
 
   // The Usage page opened on a 14-day window while its picker offered 7, 30 and
   // 90. A <select> whose value matches no <option> renders with nothing
@@ -7993,6 +7998,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // with the project for the same reason: a sentence drafted about one
   // repository's changes must not be waiting in the box over another's tree.
   const gitViewSrc = sourceOf('src/renderer/src/views/Git.tsx');
+  // The shared project switcher supplies selectedProjectId. Reset at the scope
+  // effect rather than in a removed view-local <select> handler, preserving a
+  // draft when this same repository is reopened but clearing it for another.
+  const gitScopeEffect = /useEffect\(\(\) => \{\s*if \(!project\) return;([\s\S]*?)\}, \[project, projectId, rememberedProjectId, rememberProjectId, setProjectId, setSel, setMsg\]\);/.exec(gitViewSrc)?.[1] ?? '';
+  const gitScopeResetsDraft = gitViewSrc.includes('const projectId = selectedProjectId ?? rememberedProjectId;')
+    && gitScopeEffect.includes('const changed = rememberedProjectId !== project.id;')
+    && gitScopeEffect.includes('if (changed) rememberProjectId(project.id);')
+    && gitScopeEffect.includes("if (changed) { setSel(null); setDetail(null); setMsg(''); }");
 
   // The compact heading names the work and its project. The browser labels
   // expose the repository destinations; the command palette still searches
@@ -8009,7 +8022,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(gitViewSrc.length > 500
     && gitViewSrc.includes('await syncSelection(await load())')
     && gitViewSrc.includes('function findFile(status: Status, path: string)')
-    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+    && gitScopeResetsDraft,
   'the Git detail pane is re-resolved against the status each action returns, and a commit message does not follow you into another project');
 
   // Git is a view you leave in order to look at something else: open the
@@ -8032,7 +8045,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // Remembered per return, not per repository: changing the project still
     // clears the draft, because a message about one tree's changes waiting
     // over another's is a worse outcome than losing it.
-    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+    && gitScopeResetsDraft,
   'Git comes back on the repository, pane, commit filter, selected row and half-typed commit message the operator left it on, rather than resetting to the first project with an empty message box');
 
   // A remembered selection with nothing under it is worse than no selection at
@@ -8431,13 +8444,13 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={0}')
     && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
     && useDialogSrc.includes('restoreFocus(opener);'),
-    'dialog teardown returns to its opener, a visible navigation destination, or the header toggle');
+    'dialog teardown returns to its opener, a visible navigation destination, or the dock Tools toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
     && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
-    && appSrc.indexOf('<WorkspaceNavigationToggle ') >= 0
-    && appSrc.indexOf('<WorkspaceNavigationToggle ') < appSrc.indexOf('<WorkspaceNavigation tab=')
+    && appSrc.indexOf('<SpaceDock ') > appSrc.indexOf('</ErrorBoundary>')
+    && appSrc.includes('expanded={sidebarOpen} onMore={toggleSidebar}')
     && (workspaceNavSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
-    'the header navigation opener remains outside the compact dialog and no obsolete horizontal-rail selector is used for focus');
+    'the dock navigation opener remains outside the view and compact dialog, with one Tools toggle and no obsolete horizontal-rail focus selector');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
     && workspaceNavSrc.includes('<progress className="workbench-batch-progress"')
     && workspaceNavSrc.includes('value={batchWork.done} max={batchWork.total}'),
@@ -8829,7 +8842,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the record attach:add checks is written only by the two calls that put a native dialog in front of a person, never by browse.browse(), whose unconfined readdir would hand back exactly what the check refuses',
     (browseSrc.match(/rememberPicked\(/g) ?? []).length);
   check(/saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc)
-    && /registerModuleIpc\(handle, \{ getWindow: \(\) => win, onAgentLaunched: syncAwake \}\)/.test(mainSrc)
+    && /registerModuleIpc\(handle,\s*\{\s*getWindow: \(\) => win,\s*onAgentLaunched: syncAwake[,\s]/.test(mainSrc)
     && moduleRegistrySrc.includes('getWindow: () => BrowserWindow | null')
     && moduleRegistrySrc.includes('context: ModuleIpcContext = { getWindow: () => null }')
     && !/saveRecipe\(projectId, commands\)/.test(reviewModuleSrc)

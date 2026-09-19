@@ -1,5 +1,7 @@
 /* Review: one selected goal, a task journey and evidence beside the decision. */
-.pane.control-view { overflow: hidden; }
+/* Keep the list and detail readers usable when the dock leaves less room than
+   their minimum height; the outer pane must still reach the evidence below. */
+.pane.control-view { overflow-y: auto; }
 .control-view.pane > * { flex-shrink: 0; }
 .control-view .pane-head { margin-bottom: 0; }
 .control-view .control-workbench { flex: 1; min-height: 300px; }
@@ -222,7 +224,6 @@
 .control-note > summary { cursor: pointer; padding: var(--s-1) 0; }
 .control-note > label { margin-top: var(--s-2); }
 .control-node .control-prereqs { gap: var(--s-1); padding: var(--s-2) 0; }
-.control-view > .control-support { flex-shrink: 1; }
 
 @media (max-width: 1180px) {
   .control-overview { grid-template-columns: minmax(0, 1fr); gap: var(--s-2); }

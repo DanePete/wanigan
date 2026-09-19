@@ -1,0 +1,18 @@
+{
+  "mode": "after",
+  "scope": "Synthetic renderer fixtures; no provider calls, sessions, main-process behavior, or persistence validated.",
+  "results": [
+    "The current action fits the first screen, initial navigation makes no mutation, unknown cost stays unpriced, and keyboard stage inspection returns to the current stage.",
+    "A direct relay contains exactly three matching labels and vessels and has an actionable implementation stage.",
+    "A new session establishes its own grain baseline, new recorded activity settles once, and a falling/rising count does not replay old grains.",
+    "An unresolved or failed selection exposes no previous relay actions; late reads cannot replace the newer selected relay, and a failed read can be retried.",
+    "A delayed list from another project cannot replace the current project’s relay selection.",
+    "A recorded rejection has its own final outcome and does not offer a generic reopen action.",
+    "The composer restores its canceled draft and focus, invalidates a routing preview when overrides change, preserves account inheritance, and creates stages without starting a session.",
+    "Captured standard, direct, working, reduced motion, and narrow layouts in both themes.",
+    "Account read failures keep creation disabled until an explicit successful retry.",
+    "Captured the empty Relay composer in both themes.",
+    "Renderer errors: 0"
+  ],
+  "errors": []
+}

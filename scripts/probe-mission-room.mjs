@@ -41,10 +41,12 @@ try{
   assert(!(await page.locator('.session-toolbar').innerText()).includes('platform'));
   await selectSpace('platform');
   await page.waitForTimeout(250);
-  await page.getByRole('navigation',{name:'Projects views'}).getByRole('button',{name:'Changes',exact:true}).click();await page.waitForTimeout(300);
-  assert.equal(await page.getByRole('combobox',{name:'Repository',exact:true}).inputValue(),'p2');
+  await page.getByRole('navigation',{name:'Work shortcuts'}).getByRole('button',{name:'Changes',exact:true}).click();await page.waitForTimeout(300);
+  assert.equal(await page.locator('.space-switch-name').innerText(),'platform');
+  assert.match(await page.locator('.gt-bar').innerText(),/platform/);
   await page.keyboard.press('Meta+Shift+C');await page.waitForTimeout(300);
-  assert.equal(await page.getByRole('combobox',{name:'Context project',exact:true}).inputValue(),'p2');
+  assert.equal(await page.locator('.space-switch-name').innerText(),'platform');
+  await page.getByRole('heading',{name:'Context',exact:true}).waitFor();
   await selectSpace('All spaces');
   for(const [name,chord] of views){
    await page.getByRole('button',{name:'All destinations',exact:true}).focus();await page.keyboard.press(chord);await page.waitForTimeout(420);
@@ -61,7 +63,7 @@ try{
   await page.waitForFunction(()=>document.querySelector('.wanigan-orb')?.dataset.physics==='ready');
  }
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(720,850));
- await page.getByRole('button',{name:'Mission room',exact:true}).click();await page.waitForSelector('.mission-room');await page.waitForTimeout(800);
+ await page.getByRole('navigation',{name:'Workspace dock'}).getByRole('button',{name:'Home',exact:true}).click();await page.waitForSelector('.mission-room');await page.waitForTimeout(800);
  for(const theme of ['dark','light']){
   await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.dataset.motion='off';window.dispatchEvent(new CustomEvent('wanigan:theme-changed',{detail:{preference:theme,resolved:theme}}));},theme);
   await page.waitForTimeout(300);

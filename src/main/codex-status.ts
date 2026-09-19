@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { detectProviders, shellPath } from './providers';
 import * as accounts from './accounts';
+import { usageAccountRevision } from './usage-account-identity';
+import type { AccountIdentity, AgentAccount } from '../shared/types';
 
 /**
  * The Codex app-server is the one supported local surface that can report the
@@ -10,7 +12,7 @@ import * as accounts from './accounts';
  * plan-specific limits make every calculation from them a guess.
  *
  * We start a short-lived, stdio-only app-server for each cached read.  It uses
- * the person's existing Codex login, sends only the two read methods below,
+ * the person's existing Codex login, sends only the read methods below,
  * and exits straight afterwards.  No credentials leave the machine through
  * Wanigan and this module deliberately has no reset/consume operation.
  */
@@ -28,6 +30,8 @@ export type CodexStatus = {
   primary: CodexLimitWindow | null;
   secondary: CodexLimitWindow | null;
   spendControlReached: boolean | null;
+  identity?: AccountIdentity | null;
+  authState?: 'signed-in' | 'signed-out' | 'unknown';
 };
 
 export type CodexModel = {
@@ -45,7 +49,7 @@ const CACHE_MS = 45_000;
 const MODELS_CACHE_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 /** Keyed by account id (or '' for "whatever the environment chooses"): two logins are two answers. */
-const cached = new Map<string, CodexStatus>();
+const cached = new Map<string, { revision: string; value: CodexStatus }>();
 const pending = new Map<string, Promise<CodexStatus>>();
 let modelsCached: CodexModels | null = null;
 let modelsPending: Promise<CodexModels> | null = null;
@@ -83,6 +87,21 @@ function snapshot(result: unknown): CodexStatus {
     primary: windowFrom(limits.primary),
     secondary: windowFrom(limits.secondary),
     spendControlReached: typeof limits.spendControlReached === 'boolean' ? limits.spendControlReached : null,
+  };
+}
+
+function accountIdentity(result: unknown): Pick<CodexStatus, 'identity' | 'authState'> {
+  if (!result || typeof result !== 'object' || !('account' in result)) return { identity: null, authState: 'unknown' };
+  const account: unknown = (result as { account: unknown }).account;
+  if (account === null) return { identity: null, authState: 'signed-out' };
+  if (!account || typeof account !== 'object') return { identity: null, authState: 'unknown' };
+  const raw = account as Record<string, unknown>;
+  const str = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
+  const type = str(raw.type);
+  if (!type) return { identity: null, authState: 'unknown' };
+  return {
+    authState: 'signed-in',
+    identity: { email: str(raw.email), orgName: null, plan: str(raw.planType), authMethod: type },
   };
 }
 
@@ -135,7 +154,7 @@ function exitReason(label: string, code: number | null, stderr: string): string 
  * instead of answering. Proxy and CA settings stay because the read is an
  * HTTPS call and a managed network cannot make it without them.
  */
-function probeEnv(PATH: string, accountEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
+function probeEnv(PATH: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH };
   for (const name of [
     'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'CODEX_HOME',
@@ -146,10 +165,6 @@ function probeEnv(PATH: string, accountEnv: Record<string, string> = {}): NodeJS
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
   }
-  // The account's CODEX_HOME last, the same way a launch applies it: the
-  // status read has to describe the login the picked account actually uses,
-  // and the ambient variable is only right for the account that adopted it.
-  Object.assign(env, accountEnv);
   return env;
 }
 
@@ -172,17 +187,19 @@ async function codexAppServer(purpose: string): Promise<string> {
   return provider.path;
 }
 
-async function request(accountEnv: Record<string, string>): Promise<CodexStatus> {
+async function request(account: AgentAccount | null): Promise<CodexStatus> {
   const bin = await codexAppServer('Codex usage status');
   const PATH = await shellPath();
 
   return new Promise<CodexStatus>((resolve, reject) => {
-    const child = spawn(bin, ['app-server', '--stdio'], {
-      env: probeEnv(PATH, accountEnv), stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const env = probeEnv(PATH);
+    // Default means unset, not an empty object spread over ambient CODEX_HOME.
+    accounts.applyLaunchEnv(env, account);
+    const child = spawn(bin, ['app-server', '--stdio'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false;
     let buffer = '';
     let stderr = '';
+    let identity: Pick<CodexStatus, 'identity' | 'authState'> = { identity: null, authState: 'unknown' };
     const fail = (reason: string) => {
       if (settled) return;
       settled = true; clearTimeout(timer); stop(child); reject(new Error(reason));
@@ -211,10 +228,16 @@ async function request(accountEnv: Record<string, string>): Promise<CodexStatus>
         try { msg = JSON.parse(line) as RpcMessage; } catch { continue; }
         if (msg.id === 1) {
           if (msg.error) { fail(`Codex status could not initialize: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          send(2, 'account/rateLimits/read', null);
+          send(2, 'account/read', { refreshToken: false });
         } else if (msg.id === 2) {
+          // Older readers can still report limits when account/read is absent.
+          // No email is invented, and no token refresh or account mutation is requested.
+          if (!msg.error) identity = accountIdentity(msg.result);
+          if (identity.authState === 'signed-out') { done({ ...snapshot({}), ...identity }); return; }
+          send(3, 'account/rateLimits/read', null);
+        } else if (msg.id === 3) {
           if (msg.error) { fail(`Codex did not provide usage status: ${String(msg.error.message ?? 'unknown error')}`); return; }
-          done(snapshot(msg.result));
+          done({ ...snapshot(msg.result), ...identity });
         }
       }
     });
@@ -281,26 +304,31 @@ async function requestModels(): Promise<CodexModels> {
  * variable and reads exactly what a by-hand `codex` would. An id Wanigan does
  * not know is refused rather than silently read as the default.
  */
-function accountEnvFor(accountId: string | null | undefined): { key: string; env: Record<string, string> } {
+function accountFor(accountId: string | null | undefined): AgentAccount | null {
   if (accountId) {
     const account = accounts.byId(accountId);
     if (!account || account.harness !== 'codex') throw new Error('That Codex account no longer exists in Wanigan.');
-    return { key: account.id, env: accounts.launchEnv(account) };
+    return account;
   }
-  const account = accounts.resolve({ harness: 'codex' }).account;
-  return { key: account?.id ?? '', env: accounts.launchEnv(account) };
+  return accounts.resolve({ harness: 'codex' }).account;
 }
 
 export async function readCodexStatus(force = false, accountId?: string | null): Promise<CodexStatus> {
-  const { key, env } = accountEnvFor(accountId);
+  const account = accountFor(accountId);
+  const key = account?.id ?? '';
+  const revision = account ? usageAccountRevision(account) : process.env.CODEX_HOME ?? '';
   const hit = cached.get(key);
-  if (!force && hit && Date.now() - hit.fetchedAt < CACHE_MS) return hit;
-  const inFlight = pending.get(key);
+  if (!force && hit?.revision === revision && Date.now() - hit.value.fetchedAt < CACHE_MS) return hit.value;
+  const pendingKey = `${key}:${revision}`;
+  const inFlight = pending.get(pendingKey);
   if (!force && inFlight) return inFlight;
-  const work = request(env).then((value) => { cached.set(key, value); return value; });
-  pending.set(key, work);
+  const work = request(account).then((value) => {
+    if (account && usageAccountRevision(account) !== revision) throw new Error('The account login changed while limits were being read. Refresh limits to try again.');
+    cached.set(key, { revision, value }); return value;
+  });
+  pending.set(pendingKey, work);
   try { return await work; }
-  finally { if (pending.get(key) === work) pending.delete(key); }
+  finally { if (pending.get(pendingKey) === work) pending.delete(pendingKey); }
 }
 
 export async function readCodexModels(force = false): Promise<CodexModels> {

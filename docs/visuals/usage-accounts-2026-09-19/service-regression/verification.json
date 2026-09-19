@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "before": false,
+  "checks": [
+    "TypeSafe appears in account navigation; Jev has two requests, 1.2k input tokens and a visibly estimated cost.",
+    "Selecting TypeSafe performs no new snapshot request and invents no provider limit.",
+    "The accessible daily table includes Jev and its 1,200 recorded tokens.",
+    "Mixed metering retains all requests, labels known token counts as a lower bound, and keeps the input estimate explicit.",
+    "A request with no usage counters remains visible, with missing tokens, cache and cost shown as dashes and no invented chart.",
+    "A one-token estimate retains its nonzero value instead of rounding to zero.",
+    "Reported zero counters remain zero in the daily table and chart peak.",
+    "An actual session account named TypeSafe stays separate from the API service in limits, model rows and daily charts."
+  ],
+  "errors": []
+}

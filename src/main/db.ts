@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { openStorageConnection } from './modules/storage-connection';
+import { guardStorageMigration } from './storage-maintenance';
 import { randomBytes } from 'node:crypto';
 import { migrateModules, migrateRequiredModule } from './module-registry';
 import { controlModule } from './modules/control';
@@ -457,7 +458,7 @@ function migratePhases(d: Database.Database) {
   // this same transaction, so a module's tables land or nothing does. Scout's
   // migration used to be a named call above; it is the first thing that
   // registers itself instead of being wired here by hand.
-  migrateModules(d);
+  migrateModules(d, operation => guardStorageMigration(d, operation));
 }
 
 /**

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+import { guardStorageDatabase, registerStorageParticipant } from '../storage-maintenance';
 
 let _db: Database.Database | null = null;
 
@@ -43,33 +44,39 @@ export function openStorageConnection(migrateSchema: (d: Database.Database) => v
   const root = ensurePrivateDir(dataDir());
   ensurePrivateDir(resultsDir());
   const file = path.join(root, 'wanigan.db');
-  let d: Database.Database;
-  try {
-    d = new Database(file);
-    ensurePrivateFile(file);
-  } catch (e) {
-    if ((e as { code?: string }).code === 'ERR_DLOPEN_FAILED') {
-      throw new Error(
-        'better-sqlite3 was built for a different Node/Electron ABI. Run "npm run rebuild".'
-      );
+  // Registration and open admission share the external coordinator lock. A
+  // registered participant cannot be ignored merely because it has no rows.
+  const owner = registerStorageParticipant(root);
+  return owner.initialize(() => {
+    let d: Database.Database;
+    try {
+      d = new Database(file);
+      ensurePrivateFile(file);
+      owner.attach(d);
+    } catch (e) {
+      if ((e as { code?: string }).code === 'ERR_DLOPEN_FAILED') {
+        throw new Error(
+          'better-sqlite3 was built for a different Node/Electron ABI. Run "npm run rebuild".'
+        );
+      }
+      throw e;
     }
-    throw e;
-  }
-  // Wanigan's attended app, launchd scheduler and CLI can open the same file
-  // at the same time. Let a short schema/write lock settle instead of failing
-  // a whole process with SQLITE_BUSY on startup.
-  d.pragma('busy_timeout = 10000');
-  d.pragma('journal_mode = WAL');
-  d.pragma('foreign_keys = ON');
-  migrateSchema(d);
-  // SQLite's journal files carry the same rows as the primary database. The
-  // private userData root is the durable boundary; tightening sidecars too
-  // avoids relying on it if an older install had inherited broad permissions.
-  for (const suffix of ['', '-wal', '-shm']) {
-    const candidate = `${file}${suffix}`;
-    if (fs.existsSync(candidate)) ensurePrivateFile(candidate);
-  }
-  _db = d;
-  return d;
+    // Wanigan's attended app, launchd scheduler and CLI can open the same file
+    // at the same time. Let a short schema/write lock settle instead of failing
+    // a whole process with SQLITE_BUSY on startup.
+    d.pragma('busy_timeout = 10000');
+    d.pragma('journal_mode = WAL');
+    d.pragma('foreign_keys = ON');
+    migrateSchema(d);
+    // SQLite's journal files carry the same rows as the primary database. The
+    // private userData root is the durable boundary; tightening sidecars too
+    // avoids relying on it if an older install had inherited broad permissions.
+    for (const suffix of ['', '-wal', '-shm']) {
+      const candidate = `${file}${suffix}`;
+      if (fs.existsSync(candidate)) ensurePrivateFile(candidate);
+    }
+    _db = guardStorageDatabase(d, owner);
+    return _db;
+  });
 }
 

@@ -315,9 +315,8 @@ export default function Context(props: Parameters<typeof ContextProject>[0]) {
   return <ContextProject key={project ? `${project.id}:${project.path}` : 'no-project'} {...props}/>;
 }
 
-function ContextProject({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning, onPickProject }: {
+function ContextProject({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning }: {
   projectId?: string;
-  onPickProject: (id: string) => void;
   projects: Project[];
   /** False until the shell's project list has come back at least once. An
    *  empty array on its own cannot tell "you have no projects" from "the read
@@ -328,7 +327,6 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
   onOpenLearning: (tab: 'overview' | 'inbox' | 'knowledge' | 'optimize') => void;
 }) {
   const project = useMemo(() => projects.find((p) => p.id === projectId) ?? projects[0] ?? null, [projects, projectId]);
-  const setPinned = (id: string | null) => { if (id) onPickProject(id); };
 
   const [d, setD] = useState<Data | null>(null);
   const read = useRef(0);
@@ -522,7 +520,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
           };
     return (
       <div className="pane wide ctx ctx-view">
-        <Head project={null} projects={projects} onPick={setPinned}
+        <Head project={null}
               onRescan={() => load(true)} busy={busy} />
         <EmptyState posture={!projectsRead?'could-not-read':'nothing-yet'} title={empty.title} cue={empty.body}
           action={<button className="btn" type="button" disabled={checking} onClick={()=>void checkProjects()}>
@@ -536,7 +534,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
   if (!d) {
     return (
       <div className="pane wide ctx ctx-view">
-        <Head project={project} projects={projects} onPick={setPinned}
+        <Head project={project}
               onRescan={() => load(true)} busy={busy} />
         <Reading what="the instruction chain, memory and settings"/>
 
@@ -550,7 +548,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
   if (allFailed) {
     return (
       <div className="pane wide ctx ctx-view" key={project.id}>
-        <Head project={project} projects={projects} onPick={setPinned}
+        <Head project={project}
               onRescan={() => load(true)} busy={busy} />
         <Callout level="critical" title={`Wanigan could not read anything about ${project.name}.`}>
           <p>
@@ -647,7 +645,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
   const knownSources=[...(chain?.files.filter(file=>file.exists).map(file=>file.path)??[]),
     ...(d.memory?.files.map(file=>file.path)??[]),...(d.memory?.index?[d.memory.index.path]:[])];
   return <div className="pane wide ctx ctx-view">
-    <Head project={project} projects={projects} onPick={setPinned} onRescan={()=>load(true)} busy={busy}/>
+    <Head project={project} onRescan={()=>load(true)} busy={busy}/>
     <ContextWorkspace projectId={project.id} panels={panels} scan={d.readAt} knownSources={knownSources}
       hints={{chain:'The Claude Code instruction chain, in the order it is resolved.',
         rules:'Which instructions load at launch, and which wait for matching files.',
@@ -673,13 +671,11 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
   </div>;
 }
 
-function Head({project,projects,onPick,onRescan,busy}: {
-  project:Project|null;projects:Project[];onPick:(id:string)=>void;onRescan:()=>void;busy:boolean;
+function Head({project,onRescan,busy}: {
+  project:Project|null;onRescan:()=>void;busy:boolean;
 }) {
   return <PageHead compact title="Context" lead="Inspect local instructions and knowledge. Loading predictions and estimates cover Claude Code; Codex launch order is unverified here."
-    actions={<>{project&&<select className="field field-inline" aria-label="Context project" value={project.id}
-      onChange={event=>onPick(event.target.value)}>{projects.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select>}
-      {project&&<button className="btn" type="button" disabled={busy} onClick={onRescan}><Icon name="clock"/>{busy?'Re-scanning…':'Re-scan'}</button>}</>}/>;
+    actions={project&&<button className="btn" type="button" disabled={busy} onClick={onRescan}><Icon name="clock"/>{busy?'Re-scanning…':'Re-scan'}</button>}/>;
 }
 
 /* ── 1 · instructions ────────────────────────────────────────────────── */

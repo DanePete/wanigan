@@ -1,5 +1,6 @@
 import { registerModule } from '../module-registry';
 import { storageModule } from './storage';
+import { recoveryModule } from './recovery';
 import { sessionsModule } from './sessions';
 import { queueModule } from './queue';
 import { headlessModule } from './headless';
@@ -27,6 +28,7 @@ import { openRouterConnectionModule } from './openrouter-connection';
  * modules does this build carry" is one file rather than a grep.
  */
 registerModule(storageModule);
+registerModule(recoveryModule);
 registerModule(sessionsModule);
 registerModule(queueModule);
 registerModule(headlessModule);

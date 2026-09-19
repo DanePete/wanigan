@@ -1,3 +1,4 @@
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import { shell } from 'electron';
 import type { InteractiveSessionLoad, LaunchOptions, Session } from '../../shared/types';
 import type { WaniganModule } from '../module-registry';
@@ -42,6 +43,7 @@ export const sessionsModule: WaniganModule = {
     reason: 'Sessions owns agent launch, account selection, the PTY boundary and durable execution identity.',
   },
   migrate: migrateSessions,
+  recovery: { inspect: d => inspectRecoveryOwner(d, 'sessions') },
   requiresStartedServices: ['create', 'recoverExactCodex'],
   ipc(handle, context) {
     handle('sessions:list', () => sessionListEntries());

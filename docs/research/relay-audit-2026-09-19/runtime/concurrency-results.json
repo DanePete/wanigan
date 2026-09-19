@@ -1,0 +1,46 @@
+{
+  "startedAt": "2026-09-19T18:57:50.790Z",
+  "sourceCommit": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "node": "v22.23.2",
+  "platform": "darwin",
+  "sourceHashes": {
+    "src/main/checkpoints.ts": "5c5673be822fe74efda71d809caf95b8dfb49b26ab7e971ebdaea4624f268206",
+    "src/main/review.ts": "ceb582afbcf828c104c248de0d13a6eea115c0e0ee80daece51b5329238b396b",
+    "src/main/queue.ts": "66676dbb134ab5bd79bd85cff8e4f4ad236b235826a1b19d843ed050cc242f38",
+    "src/main/worktrees.ts": "2a55828414f5b547e5e2e570ab2a3f479b672a5e750bb93235648c5717e5a355"
+  },
+  "scenarios": [
+    {
+      "id": "R11",
+      "ownerPids": [
+        88048,
+        88073
+      ],
+      "groupPids": [
+        88069,
+        88095
+      ],
+      "writerPids": [
+        88072,
+        88098
+      ],
+      "bothOwnersAlive": true,
+      "bothWritersAlive": true,
+      "writesContinued": true,
+      "rows": [
+        {
+          "id": "rev_b6cc0149-bc1",
+          "status": "failed",
+          "results_json": "[{\"command\":\"[Wanigan review gate]\",\"exitCode\":null,\"output\":\"Wanigan stopped while this gate was running, so the commands went with it. Whatever had already finished is recorded above; a command still in flight left no output, and nothing after it ran. Run the gate again for a complete result.\",\"durationMs\":0}]"
+        },
+        {
+          "id": "rev_ef0e87ab-51f",
+          "status": "running",
+          "results_json": "[]"
+        }
+      ],
+      "limitation": "two real Node owners import production review.ts against one SQLite database; no Electron instance startup lock exercised"
+    }
+  ],
+  "finishedAt": "2026-09-19T18:57:52.176Z"
+}

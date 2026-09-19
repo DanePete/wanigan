@@ -27,6 +27,8 @@ const env = childEnv({
 
 const electron = electronBinary();
 const args = [REPO, `--user-data-dir=${userData.dir}`];
+// Test profiles must never ask the operator to create/unlock a real Keychain.
+if (process.platform === 'darwin') args.push('--use-mock-keychain');
 
 /**
  * Electron 44 on macOS can defer app.ready indefinitely when a nested test

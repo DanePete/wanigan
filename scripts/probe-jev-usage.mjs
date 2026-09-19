@@ -82,34 +82,42 @@ try {
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('Meta+Shift+U');
   await page.getByRole('heading', { name: 'Usage', exact: true }).waitFor();
-  const accounts = page.getByRole('navigation', { name: 'Usage accounts' });
-  await accounts.getByRole('button', { name: 'All accounts Combined local records', exact: true }).click();
+  const accounts = page.getByRole('combobox', { name: 'Account for recorded consumption' });
+  await accounts.selectOption('all');
   await page.getByRole('button', { name: 'Refresh limits', exact: true }).waitFor();
   if (before) {
-    assert.equal(await accounts.getByRole('button', { name: /TypeSafe/ }).count(), 0);
+    assert.equal(await accounts.locator('option').filter({ hasText: /TypeSafe/ }).count(), 0);
     await page.getByRole('heading', { name: 'No recorded requests in this window', exact: true }).waitFor();
     record('The baseline fixture has no TypeSafe account or Jev consumption record.');
     await capture('usage');
   } else {
-    const typeSafe = accounts.getByRole('button', { name: /TypeSafe/ });
-    await typeSafe.waitFor();
+    const typeSafe = accounts.locator('option[value="label:TypeSafe"]');
+    await typeSafe.waitFor({ state: 'attached' });
     const callsBefore = await page.evaluate(() => window.__jevUsageCalls.length);
-    await typeSafe.click();
+    await accounts.selectOption('label:TypeSafe');
     const table = page.getByRole('table', { name: 'Consumption by model', exact: true });
     await table.waitFor();
     const row = table.locator('tbody tr').filter({ hasText: 'jev-latest' });
+    // Compare the visible values exactly while checking their accessible cost
+    // explanation separately; screen-reader prose is not another table value.
+    const values = () => row.locator('td').evaluateAll(cells => cells.map(cell => {
+      const copy = cell.cloneNode(true);
+      copy.querySelectorAll('.sr-only').forEach(note => note.remove());
+      return copy.textContent.trim();
+    }));
     assert.equal(await row.count(), 1);
-    const cells = await row.locator('td').allTextContents();
+    const cells = await values();
     assert.match(cells[0], /TypeSafe/);
     assert.equal(cells[1], 'jev-latest');
     assert.equal(cells[2], '2');
     assert.equal(cells[3], '1.2k');
     assert.match(cells.at(-1), /~\$/);
     assert.match(cells.at(-1), /estimated/i);
+    assert.match(await row.locator('td').last().innerText(), /not a provider bill/i);
     assert.equal(cells[5], '—', 'service records do not report cache counters');
     assert(!/^\$0\.00$/.test(cells.at(-1).trim()), 'estimated cost must not be presented as a reported zero');
     assert.equal(await page.evaluate(() => window.__jevUsageCalls.length), callsBefore);
-    assert.match(await page.locator('.u-capacity').innerText(), /No limit reading/);
+    assert.equal(await page.locator('.u-comparison tbody tr').filter({ hasText: 'TypeSafe' }).count(), 0);
     await page.getByRole('img', { name: /tokens per day for TypeSafe/i }).waitFor();
     record('TypeSafe appears in account navigation; Jev has two requests, 1.2k input tokens and a visibly estimated cost.');
     record('Selecting TypeSafe performs no new snapshot request and invents no provider limit.');
@@ -122,7 +130,7 @@ try {
     await page.evaluate(() => { window.__jevUsageMode = 'mixed'; });
     await page.getByRole('button', { name: 'Refresh limits', exact: true }).click();
     await page.getByText('1 request did not report complete token counts. Totals show reported tokens; estimates cover reported input only.', { exact: true }).waitFor();
-    const mixed = await row.locator('td').allTextContents();
+    const mixed = await values();
     assert.equal(mixed[2], '3');
     assert.equal(mixed[3], '≥1.2k');
     assert.equal(mixed[4], '—');
@@ -135,7 +143,7 @@ try {
     await page.evaluate(() => { window.__jevUsageMode = 'missing'; });
     await page.getByRole('button', { name: 'Refresh limits', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('table[aria-label="Consumption by model"] tbody tr td:nth-child(3)')?.textContent === '1');
-    const missing = await row.locator('td').allTextContents();
+    const missing = await values();
     assert.equal(missing[2], '1');
     assert.deepEqual(missing.slice(3), ['—', '—', '—', '—']);
     assert.equal(await page.locator('.u-chart').count(), 0);
@@ -145,7 +153,7 @@ try {
     await page.evaluate(() => { window.__jevUsageMode = 'tiny'; });
     await page.getByRole('button', { name: 'Refresh limits', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('table[aria-label="Consumption by model"] tbody tr td:nth-child(4)')?.textContent === '1');
-    assert.equal((await row.locator('td').allTextContents())[6], '~$0.000000042 estimated');
+    assert.equal((await values())[6], '~$0.000000042 estimated');
     record('A one-token estimate retains its nonzero value instead of rounding to zero.');
 
     await page.evaluate(() => { window.__jevUsageMode = 'zero'; });
@@ -157,21 +165,21 @@ try {
 
     await page.evaluate(() => { window.__jevUsageMode = 'collision'; });
     await page.getByRole('button', { name: 'Refresh limits', exact: true }).click();
-    await accounts.getByRole('button', { name: 'TypeSafe Codex', exact: true }).waitFor();
+    await accounts.locator('option[value="account:same-label-account"]').waitFor({ state: 'attached' });
     assert.equal(await table.locator('tbody tr').count(), 1);
     assert.match(await row.innerText(), /jev-latest/);
-    assert.equal(await page.locator('.u-limit').count(), 0);
+    assert.equal(await page.locator('.u-comparison tbody tr.u-selected').count(), 0);
     assert.doesNotMatch(await page.locator('.u-chart').innerText(), /gpt-session-fixture/);
-    await accounts.getByRole('button', { name: 'TypeSafe Codex', exact: true }).click();
+    await accounts.selectOption('account:same-label-account');
     assert.equal(await table.locator('tbody tr').count(), 1);
     assert.match(await table.innerText(), /gpt-session-fixture/);
     assert.doesNotMatch(await table.innerText(), /jev-latest/);
-    assert.equal(await page.locator('.u-limit').count(), 1);
+    assert.equal(await page.locator('.u-comparison tbody tr.u-selected').count(), 1);
     assert.doesNotMatch(await page.locator('.u-chart').innerText(), /jev-latest/);
-    await accounts.getByRole('button', { name: 'TypeSafe API service', exact: true }).click();
+    await accounts.selectOption('label:TypeSafe');
     assert.equal(await table.locator('tbody tr').count(), 1);
     assert.match(await table.innerText(), /jev-latest/);
-    assert.equal(await page.locator('.u-limit').count(), 0);
+    assert.equal(await page.locator('.u-comparison tbody tr.u-selected').count(), 0);
     record('An actual session account named TypeSafe stays separate from the API service in limits, model rows and daily charts.');
   }
   assert.deepEqual(errors, []);

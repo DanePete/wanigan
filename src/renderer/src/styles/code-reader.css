@@ -36,6 +36,8 @@
    alone, marks a selected or already-noted line. */
 .review-diff { display: flex; flex-direction: column; min-width: 0; }
 .review-diff .dl.add, .review-diff .dl.del, .review-diff .dl.ctx { cursor: pointer; }
+.review-diff button.dl { display: block; width: 100%; text-align: left; }
+.review-diff button.dl:focus-visible { outline-offset: -2px; }
 .review-diff .dl.review-sel { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
 .review-diff .dl.review-noted { box-shadow: inset 3px 0 0 var(--warning); }
 .review-hunk { display: flex; align-items: center; gap: var(--s-3); }

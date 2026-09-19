@@ -5,6 +5,7 @@ import type { WaniganModule } from '../module-registry';
 import * as backup from '../backup';
 import * as headless from '../headless';
 import { listSessions } from '../sessions';
+import { storageRuntimeStarted } from './storage-runtime';
 
 /** Where the backup save dialog opens. Documents is only a starting point — the
  *  user picks the folder, and backup.ts refuses one inside the data directory. */
@@ -75,6 +76,21 @@ export const backupModule: WaniganModule = {
         );
       }
 
+      if (storageRuntimeStarted()) {
+        if (!context.restartForRestore) throw new Error('This host must exit and reopen without services before restoring.');
+        const answer = await dialog.showMessageBox(w, {
+          type: 'warning', buttons: ['Cancel', 'Restart for restore'], defaultId: 0, cancelId: 0,
+          title: 'Open Wanigan for storage maintenance',
+          message: 'Restore starts in a fresh process without background services.',
+          detail: 'Stopping timers cannot prove that an earlier request has finished. After restart, return to Settings → Backup and choose the backup. Stop running work separately; unresolved execution and remote charges still block restoration. No database is replaced by this restart.',
+        });
+        if (answer.response === 1) {
+          backup.assertBackupRestartSafe();
+          context.restartForRestore();
+        }
+        return null;
+      }
+
       const picked = await dialog.showOpenDialog(w, {
         title: 'Restore a Wanigan backup',
         properties: ['openDirectory'],
@@ -82,7 +98,8 @@ export const backupModule: WaniganModule = {
       });
       if (picked.canceled || !picked.filePaths[0]) return null;
 
-      const check = backup.inspectBackup(picked.filePaths[0]);
+      const preview = backup.previewBackupRestore(picked.filePaths[0]);
+      const check = preview.inspection;
       if (check.problems.length) {
         throw new Error(
           `This backup did not verify, so nothing was changed:\n- ${check.problems.map((p) => p.detail).join('\n- ')}`
@@ -111,14 +128,14 @@ export const backupModule: WaniganModule = {
           + `${currentEvidence}.${check.wouldDiscardNewer ? ' Everything in between will be dropped.' : ''}\n\n`
           + 'Nothing is deleted: the replaced database and transcripts are moved into a dated folder inside '
           + 'Wanigan’s data directory. The API credential and provider/MCP trust grants are not restored — '
-          + 'those are made on one machine, for one machine. Wanigan must restart immediately afterwards.',
+          + 'those are made on one machine, for one machine. Wanigan must restart immediately afterwards. '
+          + 'The restored record opens for inspection: archived jobs and automatic spending stay held until separately reconciled.',
       });
       if (answer.response !== 1) return null;
 
       const report = backup.restoreBackup(picked.filePaths[0], {
         confirm: true,
-        // The dialog above showed both dates, which is the whole precondition
-        // this flag exists to enforce.
+        previewToken: preview.token,
         overwriteNewer: check.wouldDiscardNewer,
       });
 
@@ -131,7 +148,7 @@ export const backupModule: WaniganModule = {
           buttons: ['Restart Wanigan'],
           defaultId: 0,
           title: 'Backup restored',
-          message: 'Wanigan will restart to open the restored database.',
+          message: 'Wanigan will restart to inspect the restored database.',
           detail: `The database that was in place was moved to ${report.replacedDir} and not deleted.`,
         }).finally(relaunch);
       }, 0);

@@ -80,12 +80,17 @@ try {
   ok('Setup follows observed readiness; discovery searches paths and preserves hidden selections after cancellation');
 
   await go('Meta+9');await page.locator('.gt-review-controls').evaluate(el=>el.open=true);
-  const repository=page.getByRole('combobox',{name:'Repository',exact:true});const commands=page.getByRole('textbox',{name:'Review gate commands'});
-  await repository.selectOption('p1');await page.waitForFunction(()=>document.querySelector('[aria-label="Review gate commands"]').value==='npm test\ngit diff --check');
+  const selectRepository=async id=>{
+   const project=(await page.evaluate(()=>window.wanigan.projects.list())).find(row=>row.id===id);assert(project);
+   await page.getByRole('button',{name:/^Switch project space:/}).click();
+   await page.getByRole('combobox',{name:'Search project spaces',exact:true}).fill(project.name);await page.keyboard.press('Enter');
+  };
+  const commands=page.getByRole('textbox',{name:'Review gate commands'});
+  await selectRepository('p1');await page.waitForFunction(()=>document.querySelector('[aria-label="Review gate commands"]').value==='npm test\ngit diff --check');
   await commands.fill('echo fixture A');await page.evaluate(()=>window.__saveHold=true);await page.getByRole('button',{name:'Save & run checks',exact:true}).click();await page.waitForFunction(()=>!!window.__saveResolve);
-  await repository.selectOption('p2');await page.waitForFunction(()=>document.querySelector('[aria-label="Review gate commands"]').value==='npm run verify:platform');await page.evaluate(()=>window.__saveResolve());await page.waitForTimeout(100);
+  await selectRepository('p2');await page.waitForFunction(()=>document.querySelector('[aria-label="Review gate commands"]').value==='npm run verify:platform');await page.evaluate(()=>window.__saveResolve());await page.waitForTimeout(100);
   assert.equal(await commands.inputValue(),'npm run verify:platform');assert.equal(await page.evaluate(()=>window.__calls.filter(call=>call[0]==='run').length),0);
-  await page.evaluate(()=>{window.__recipeError=true;window.__saveHold=false;});await repository.selectOption('p1');await page.getByText('Fixture recipe unavailable',{exact:true}).waitFor();assert.equal(await commands.isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Save recipe',exact:true}).isDisabled(),true);await capture('review-unavailable');
+  await page.evaluate(()=>{window.__recipeError=true;window.__saveHold=false;});await selectRepository('p1');await page.getByText('Fixture recipe unavailable',{exact:true}).waitFor();assert.equal(await commands.isDisabled(),true);assert.equal(await page.getByRole('button',{name:'Save recipe',exact:true}).isDisabled(),true);await capture('review-unavailable');
   await page.evaluate(()=>window.__recipeError=false);await page.getByRole('button',{name:'Retry recipe read',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('[aria-label="Review gate commands"]').disabled);
   await commands.fill('npm test');await page.evaluate(()=>{window.__saveHold=true;window.__saveResolve=null;});await page.getByRole('button',{name:'Save & run checks',exact:true}).click();await page.waitForFunction(()=>!!window.__saveResolve);await page.evaluate(()=>window.__saveReject(Error('Fixture consent cancelled')));await page.getByText('Fixture consent cancelled',{exact:true}).waitFor();assert.equal(await commands.inputValue(),'npm test');assert.equal(await page.evaluate(()=>window.__calls.filter(call=>call[0]==='run').length),0);
   await page.evaluate(()=>window.__saveHold=false);await page.getByRole('button',{name:'Save & run checks',exact:true}).click();await page.getByText('Checks failed. Read the recorded output below.').waitFor();assert.equal(await page.evaluate(()=>window.__calls.filter(call=>call[0]==='run').length),1);

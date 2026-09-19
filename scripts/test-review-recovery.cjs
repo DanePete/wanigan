@@ -40,7 +40,7 @@ function fixture(directory) {
   const project = { id: 'fixture', name: 'Fixture', path: repo };
   const cache = new Map();
   const environment = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: directory, SHELL: '/bin/sh',
-    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', WANIGAN_PROVIDER_PACKS_DIR: path.join(directory, 'provider-packs') };
   function load(file) {
     const absolute = path.resolve(root, file);
     if (cache.has(absolute)) return cache.get(absolute).exports;
@@ -70,7 +70,8 @@ function fixture(directory) {
     }
   }
   const review = load('src/main/review.ts');
-  return { directory, repo, review, native, environment, activity: load('src/main/checkout-activity.ts'), close() { native.close(); } };
+  return { directory, repo, review, native, database, environment, recovery: load('src/main/review-recovery.ts').reviewRecoveryAdapter,
+    migrate: () => load('src/main/modules/review.ts').reviewModule.migrate(database), activity: load('src/main/checkout-activity.ts'), close() { native.close(); } };
 }
 function owner(f) {
   return cp.spawn(process.execPath, [__filename, 'owner', f.directory], {
@@ -239,6 +240,99 @@ if (process.argv[2] === 'owner') {
       await assert.rejects(f.review.runAt('fixture'), /shutting down/i);
       const release = f.activity.acquireCheckoutActivity(f.repo, 'restore', 'after-clean-shutdown');
       release();
+    } finally { await dispose(f); }
+  });
+  async function prepareNeverSpawned(f) {
+    f.review.saveRecipe('fixture', [waitingCommand(f)]);
+    const pending = f.review.runAt('fixture');
+    const live = f.recovery.inspect(f.database)[0];
+    assert.equal(live.execution, 'owned/live');
+    assert.equal(live.canReconcile, false);
+    f.native.prepare('UPDATE review_checkout_owners SET lease_expires_at=0').run();
+    assert.equal(f.review.sweepInterruptedRuns(), 1);
+    const run = await pending;
+    assert.equal(run.status, 'failed');
+    assert(!fs.existsSync(path.join(f.directory, 'command.pid')));
+    const observation = f.recovery.inspect(f.database)[0];
+    assert.equal(observation.execution, 'confirmed finished');
+    assert.equal(observation.canReconcile, true);
+    return observation;
+  }
+  test('never-spawned owner finalization permits exact reviewed release, preserves failure and independent liability, and allows subsequent restore', async () => {
+    const f = fixture();
+    try {
+      f.native.exec("CREATE TABLE billing_fixture (status TEXT,amount INTEGER); INSERT INTO billing_fixture VALUES ('unresolved',17)");
+      const observation = await prepareNeverSpawned(f);
+      assert.throws(() => f.activity.acquireCheckoutActivity(f.repo, 'restore', 'before-reconcile'), /review/i);
+      const before = f.native.prepare('SELECT * FROM review_runs').get();
+      f.database.transaction(() => f.recovery.reconcile(f.database, observation)).immediate();
+      assert.deepEqual(f.native.prepare('SELECT * FROM review_runs').get(), before);
+      assert.equal(f.native.prepare('SELECT status FROM billing_fixture').get().status, 'unresolved');
+      assert.equal(f.native.prepare('SELECT amount FROM billing_fixture').get().amount, 17);
+      assert.equal(f.native.prepare('SELECT count(*) AS n FROM review_recovery_evidence').get().n, 1);
+      const release = f.activity.acquireCheckoutActivity(f.repo, 'restore', 'after-reconcile'); release();
+      assert.throws(() => f.database.transaction(() => f.recovery.reconcile(f.database, observation)).immediate(), /changed/i);
+    } finally { await dispose(f); }
+  });
+  test('a concurrent checkout claim invalidates the exact never-spawned completion and no claim is released', async () => {
+    const f = fixture();
+    try {
+      const observation = await prepareNeverSpawned(f);
+      const original = f.native.prepare('SELECT * FROM checkout_activity').get();
+      f.native.prepare('INSERT INTO checkout_activity(id,cwd,kind,operation_id,owner_id,created_at) VALUES (?,?,?,?,?,?)')
+        .run('concurrent', original.cwd, original.kind, original.operation_id, 'foreign', Date.now());
+      assert.equal(f.recovery.inspect(f.database)[0].canReconcile, false);
+      assert.throws(() => f.database.transaction(() => f.recovery.reconcile(f.database, observation)).immediate(), /changed/i);
+      assert.equal(f.native.prepare('SELECT count(*) AS n FROM checkout_activity').get().n, 2);
+      assert.equal(f.native.prepare('SELECT count(*) AS n FROM review_checkout_owners').get().n, 1);
+    } finally { await dispose(f); }
+  });
+  test('late result and replaced owner identity invalidate prospective completion without using the recorded PID', async () => {
+    for (const change of ["UPDATE review_runs SET results_json='[{}]'", "UPDATE review_checkout_owners SET owner_id='replacement',owner_pid=" + process.pid]) {
+      const f = fixture();
+      try {
+        const observation = await prepareNeverSpawned(f);
+        f.native.exec(change);
+        const current = f.recovery.inspect(f.database)[0];
+        assert.equal(current.execution, 'unknown');
+        assert.equal(current.canReconcile, false);
+        assert.throws(() => f.database.transaction(() => f.recovery.reconcile(f.database, observation)).immediate(), /changed/i);
+        assert.equal(f.native.prepare('SELECT count(*) AS n FROM checkout_activity').get().n, 1);
+      } finally { await dispose(f); }
+    }
+  });
+  test('legacy ownership, reused PID and completed shell evidence never become no-spawn evidence through repeated migration', async () => {
+    const f = fixture();
+    try {
+      f.native.prepare('INSERT INTO review_runs(id,project_id,started_at,ended_at,status,results_json) VALUES (?,?,?,?,?,?)')
+        .run('legacy-complete', 'fixture', 1, 2, 'failed', '[{"exitCode":0}]');
+      f.native.prepare('INSERT INTO review_checkout_owners(cwd,run_id,owner_id,owner_pid,lease_expires_at,state) VALUES (?,?,?,?,?,?)')
+        .run(f.repo, 'legacy-complete', 'foreign-owner', process.pid, 0, 'unresolved');
+      f.migrate(); f.migrate();
+      const row = f.recovery.inspect(f.database)[0];
+      assert.equal(row.execution, 'unknown');
+      assert.equal(row.canReconcile, false);
+      assert.equal(f.native.prepare('SELECT count(*) AS n FROM review_recovery_evidence').get().n, 0);
+      assert.throws(() => f.database.transaction(() => f.recovery.reconcile(f.database, row)).immediate(), /changed/i);
+      assert.throws(() => f.activity.acquireCheckoutActivity(f.repo, 'restore', 'legacy'), /review/i);
+    } finally { await dispose(f); }
+  });
+  test('unavailable checkout preparation cannot supply never-spawned completion or release its quarantine', async () => {
+    const f = fixture();
+    try {
+      f.review.saveRecipe('fixture', [waitingCommand(f)]);
+      fs.rmSync(path.join(f.repo, '.git'), { recursive: true, force: true });
+      const pending = f.review.runAt('fixture');
+      f.native.prepare('UPDATE review_checkout_owners SET lease_expires_at=0').run();
+      assert.equal(f.review.sweepInterruptedRuns(), 1);
+      const run = await pending;
+      assert.equal(run.status, 'failed');
+      assert(!fs.existsSync(path.join(f.directory, 'command.pid')));
+      const observation = f.recovery.inspect(f.database)[0];
+      assert.equal(observation.execution, 'unknown');
+      assert.equal(observation.canReconcile, false);
+      assert.equal(f.native.prepare('SELECT count(*) AS n FROM review_recovery_evidence').get().n, 0);
+      assert.throws(() => f.activity.acquireCheckoutActivity(f.repo, 'restore', 'unavailable-preparation'), /review/i);
     } finally { await dispose(f); }
   });
 }

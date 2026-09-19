@@ -1,3 +1,4 @@
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import type { WaniganModule } from '../module-registry';
 import { createHash } from 'node:crypto';
 import { refuseIfHalted } from '../halt';
@@ -370,6 +371,7 @@ export const suggestModule: WaniganModule = {
    */
   required: null,
   migrate: migrateSuggestUsage,
+  recovery: { inspect: d => inspectRecoveryOwner(d, 'suggest') },
   usage: { consumption: suggestConsumption, daily: suggestDaily },
   ipc(handle) {
     handle('suggest:status', () => status());

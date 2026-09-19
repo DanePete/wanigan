@@ -1,0 +1,452 @@
+TAP version 13
+# (node:14809) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/automatic-spend.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: automatic spend distinguishes no prior attempt, explicit zero, missing and partial meters
+ok 1 - automatic spend distinguishes no prior attempt, explicit zero, missing and partial meters
+  ---
+  duration_ms: 0.976917
+  type: 'test'
+  ...
+# Subtest: automatic actions require a valid remaining allowance; reached partial subtotal already suffices to stop
+ok 2 - automatic actions require a valid remaining allowance; reached partial subtotal already suffices to stop
+  ---
+  duration_ms: 0.385333
+  type: 'test'
+  ...
+# (node:14810) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/decision-receipts.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a preview reuses only the main-owned decision for unchanged inputs
+ok 3 - a preview reuses only the main-owned decision for unchanged inputs
+  ---
+  duration_ms: 1.953833
+  type: 'test'
+  ...
+# Subtest: expiry and bounded eviction require another deliberate preview
+ok 4 - expiry and bounded eviction require another deliberate preview
+  ---
+  duration_ms: 0.175292
+  type: 'test'
+  ...
+# (node:14811) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/model-economics.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+ok 5 - quotes explicit disjoint cache buckets, preserves decimal precision, and uses endpoint rather than aggregate rates
+  ---
+  duration_ms: 3.472958
+  type: 'test'
+  ...
+# Subtest: unknown, negative, nondecimal and nonfinite prices never become zero
+ok 6 - unknown, negative, nondecimal and nonfinite prices never become zero
+  ---
+  duration_ms: 2.739208
+  type: 'test'
+  ...
+# Subtest: scientific decimal prices and documented request charges retain exact arithmetic
+ok 7 - scientific decimal prices and documented request charges retain exact arithmetic
+  ---
+  duration_ms: 0.14175
+  type: 'test'
+  ...
+# Subtest: missing cache rates matter only for the workload buckets being estimated
+ok 8 - missing cache rates matter only for the workload buckets being estimated
+  ---
+  duration_ms: 0.091041
+  type: 'test'
+  ...
+# Subtest: time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+ok 9 - time overrides and unknown paid dimensions are preserved but excluded from numeric ranking
+  ---
+  duration_ms: 0.22625
+  type: 'test'
+  ...
+# Subtest: model-only discovery cannot claim a usable endpoint
+ok 10 - model-only discovery cannot claim a usable endpoint
+  ---
+  duration_ms: 0.263666
+  type: 'test'
+  ...
+# Subtest: zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+ok 11 - zero or absent capacity and nonhealthy endpoints do not mean unlimited or available
+  ---
+  duration_ms: 0.703583
+  type: 'test'
+  ...
+# Subtest: tools, exact effort and exact tool-choice modes are independently required
+ok 12 - tools, exact effort and exact tool-choice modes are independently required
+  ---
+  duration_ms: 0.220583
+  type: 'test'
+  ...
+# Subtest: stale and future-dated snapshots remain visible but are not eligible
+ok 13 - stale and future-dated snapshots remain visible but are not eligible
+  ---
+  duration_ms: 0.370791
+  type: 'test'
+  ...
+# Subtest: allowlists are exact and an empty allowlist admits nothing
+ok 14 - allowlists are exact and an empty allowlist admits nothing
+  ---
+  duration_ms: 0.380666
+  type: 'test'
+  ...
+# Subtest: ranking uses the supplied workload, not a blended token price
+ok 15 - ranking uses the supplied workload, not a blended token price
+  ---
+  duration_ms: 0.179625
+  type: 'test'
+  ...
+# Subtest: model and endpoint response limits report truncation and malformed rows
+ok 16 - model and endpoint response limits report truncation and malformed rows
+  ---
+  duration_ms: 10.276125
+  type: 'test'
+  ...
+# Subtest: renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+ok 17 - renderer cannot supply arbitrary URLs, excess selections or invalid workloads
+  ---
+  duration_ms: 0.47925
+  type: 'test'
+  ...
+# (node:14812) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/relay-route.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: an operator’s own choice outranks a suggestion that cleared every gate
+ok 18 - an operator’s own choice outranks a suggestion that cleared every gate
+  ---
+  duration_ms: 7.116959
+  type: 'test'
+  ...
+# Subtest: an operator naming a model alone keeps the profile’s default effort where that model declares it
+ok 19 - an operator naming a model alone keeps the profile’s default effort where that model declares it
+  ---
+  duration_ms: 0.130083
+  type: 'test'
+  ...
+# Subtest: an operator value the profile does not declare is refused, not clamped, and the reason says which one
+ok 20 - an operator value the profile does not declare is refused, not clamped, and the reason says which one
+  ---
+  duration_ms: 0.1275
+  type: 'test'
+  ...
+# Subtest: a suggestion below the threshold is dropped, and so is one whose confidence is not a probability
+ok 21 - a suggestion below the threshold is dropped, and so is one whose confidence is not a probability
+  ---
+  duration_ms: 0.334542
+  type: 'test'
+  ...
+# Subtest: a suggestion naming a model this profile does not declare is dropped
+ok 22 - a suggestion naming a model this profile does not declare is dropped
+  ---
+  duration_ms: 0.082083
+  type: 'test'
+  ...
+# Subtest: a suggestion naming an effort the model does not declare is dropped whole and never moved to the nearest level
+ok 23 - a suggestion naming an effort the model does not declare is dropped whole and never moved to the nearest level
+  ---
+  duration_ms: 0.077167
+  type: 'test'
+  ...
+# Subtest: a suggestion that clears every gate is taken and carries its own confidence
+ok 24 - a suggestion that clears every gate is taken and carries its own confidence
+  ---
+  duration_ms: 0.127042
+  type: 'test'
+  ...
+# Subtest: a default the profile no longer declares falls back to the first candidate and names the default it lost
+ok 25 - a default the profile no longer declares falls back to the first candidate and names the default it lost
+  ---
+  duration_ms: 0.073708
+  type: 'test'
+  ...
+# Subtest: a profile with no candidates chooses nothing and does not throw
+ok 26 - a profile with no candidates chooses nothing and does not throw
+  ---
+  duration_ms: 0.6485
+  type: 'test'
+  ...
+# Subtest: a model that declares no effort levels never comes back with an effort
+ok 27 - a model that declares no effort levels never comes back with an effort
+  ---
+  duration_ms: 0.343167
+  type: 'test'
+  ...
+# Subtest: every route explains itself in one complete sentence, whatever it was handed
+ok 28 - every route explains itself in one complete sentence, whatever it was handed
+  ---
+  duration_ms: 0.627666
+  type: 'test'
+  ...
+# Subtest: the phase is named in the reason, so a route proof says which stage it belongs to
+ok 29 - the phase is named in the reason, so a route proof says which stage it belongs to
+  ---
+  duration_ms: 0.061125
+  type: 'test'
+  ...
+# (node:14813) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/relay-routing.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Relay keeps the operator routing mode and preference together
+ok 30 - Relay keeps the operator routing mode and preference together
+  ---
+  duration_ms: 2.923416
+  type: 'test'
+  ...
+# Subtest: invalid routing controls are refused instead of silently spending on Auto
+ok 31 - invalid routing controls are refused instead of silently spending on Auto
+  ---
+  duration_ms: 0.266208
+  type: 'test'
+  ...
+# (node:14814) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/suggest-questions.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the request asks independent model and model-specific effort questions
+ok 32 - the request asks independent model and model-specific effort questions
+  ---
+  duration_ms: 1.530167
+  type: 'test'
+  ...
+# Subtest: score levels describe concrete situations rather than degrees, because each is read alone
+ok 33 - score levels describe concrete situations rather than degrees, because each is read alone
+  ---
+  duration_ms: 0.282375
+  type: 'test'
+  ...
+# Subtest: the state is the stage and the operator’s words; candidates live only in the criteria
+ok 34 - the state is the stage and the operator’s words; candidates live only in the criteria
+  ---
+  duration_ms: 0.212625
+  type: 'test'
+  ...
+# Subtest: operator intent and manifest labels are bounded and flattened before they cross the wire
+ok 35 - operator intent and manifest labels are bounded and flattened before they cross the wire
+  ---
+  duration_ms: 0.433333
+  type: 'test'
+  ...
+# Subtest: a deliberation score lands on the ladder the chosen model actually declares
+ok 36 - a deliberation score lands on the ladder the chosen model actually declares
+  ---
+  duration_ms: 0.142792
+  type: 'test'
+  ...
+# Subtest: no score on any ladder ever yields a level that profile did not declare
+ok 37 - no score on any ladder ever yields a level that profile did not declare
+  ---
+  duration_ms: 0.854
+  type: 'test'
+  ...
+# Subtest: a score that is not a position on the ladder names no effort rather than a quiet zero
+ok 38 - a score that is not a position on the ladder names no effort rather than a quiet zero
+  ---
+  duration_ms: 0.084875
+  type: 'test'
+  ...
+# Subtest: a well-formed answer becomes a suggestion the router can act on, with its evidence beside it
+ok 39 - a well-formed answer becomes a suggestion the router can act on, with its evidence beside it
+  ---
+  duration_ms: 0.380625
+  type: 'test'
+  ...
+# Subtest: an uncertain model-specific effort drops only the effort and retains its evidence
+ok 40 - an uncertain model-specific effort drops only the effort and retains its evidence
+  ---
+  duration_ms: 0.382833
+  type: 'test'
+  ...
+# Subtest: the same task can need different efforts on small and large selected models
+ok 41 - the same task can need different efforts on small and large selected models
+  ---
+  duration_ms: 0.343917
+  type: 'test'
+  ...
+# Subtest: missing, unsupported or invalid selected-model efforts never use another model or a difficulty score
+ok 42 - missing, unsupported or invalid selected-model efforts never use another model or a difficulty score
+  ---
+  duration_ms: 0.265125
+  type: 'test'
+  ...
+# Subtest: the routing boundary preserves operator precedence and profile defaults with model-specific effort answers
+ok 43 - the routing boundary preserves operator precedence and profile defaults with model-specific effort answers
+  ---
+  duration_ms: 0.291708
+  type: 'test'
+  ...
+# Subtest: cost, balanced and quality preferences change the objective without changing supported sets or confidence gates
+ok 44 - cost, balanced and quality preferences change the objective without changing supported sets or confidence gates
+  ---
+  duration_ms: 0.270833
+  type: 'test'
+  ...
+# Subtest: model-specific effort instructions bound catalogue text and keep returned Jev identity separate from policy
+ok 45 - model-specific effort instructions bound catalogue text and keep returned Jev identity separate from policy
+  ---
+  duration_ms: 0.127458
+  type: 'test'
+  ...
+# Subtest: a model this profile does not declare yields no suggestion, and the rest is still recorded
+ok 46 - a model this profile does not declare yields no suggestion, and the rest is still recorded
+  ---
+  duration_ms: 0.0455
+  type: 'test'
+  ...
+# Subtest: a confidence that is not a probability yields no suggestion
+ok 47 - a confidence that is not a probability yields no suggestion
+  ---
+  duration_ms: 0.057667
+  type: 'test'
+  ...
+# Subtest: the noul carries no confidence and gates nothing
+ok 48 - the noul carries no confidence and gates nothing
+  ---
+  duration_ms: 0.08175
+  type: 'test'
+  ...
+# Subtest: a malformed body is an ordinary input and never throws
+ok 49 - a malformed body is an ordinary input and never throws
+  ---
+  duration_ms: 0.101542
+  type: 'test'
+  ...
+# Subtest: no pipeline on offer skips the work or either stage that checks it
+ok 50 - no pipeline on offer skips the work or either stage that checks it
+  ---
+  duration_ms: 0.061667
+  type: 'test'
+  ...
+# Subtest: pipeline criteria describe situations and never name their own length
+ok 51 - pipeline criteria describe situations and never name their own length
+  ---
+  duration_ms: 0.197583
+  type: 'test'
+  ...
+# Subtest: the relay question offers only pipelines this docket could actually run
+ok 52 - the relay question offers only pipelines this docket could actually run
+  ---
+  duration_ms: 0.114292
+  type: 'test'
+  ...
+# Subtest: a question with one answer is not asked
+ok 53 - a question with one answer is not asked
+  ---
+  duration_ms: 0.034917
+  type: 'test'
+  ...
+# Subtest: a confident pipeline answer narrows the docket to that pipeline
+ok 54 - a confident pipeline answer narrows the docket to that pipeline
+  ---
+  duration_ms: 0.143417
+  type: 'test'
+  ...
+# Subtest: an unconvinced pipeline answer changes nothing
+ok 55 - an unconvinced pipeline answer changes nothing
+  ---
+  duration_ms: 0.09975
+  type: 'test'
+  ...
+# Subtest: a pipeline this docket was never offered is discarded, not honoured
+ok 56 - a pipeline this docket was never offered is discarded, not honoured
+  ---
+  duration_ms: 0.09925
+  type: 'test'
+  ...
+# Subtest: no answer, on any docket, ever adds a stage or removes one that checks the work
+ok 57 - no answer, on any docket, ever adds a stage or removes one that checks the work
+  ---
+  duration_ms: 0.310916
+  type: 'test'
+  ...
+# Subtest: a malformed pipeline body is an ordinary input and never throws
+ok 58 - a malformed pipeline body is an ordinary input and never throws
+  ---
+  duration_ms: 0.056084
+  type: 'test'
+  ...
+# Subtest: a Wanigan with no suggester asks nothing, is billed nothing, and runs every stage it declared
+ok 59 - a Wanigan with no suggester asks nothing, is billed nothing, and runs every stage it declared
+  ---
+  duration_ms: 0.057917
+  type: 'test'
+  ...
+# Subtest: without a pipeline answer a docket runs exactly the stages it declared
+ok 60 - without a pipeline answer a docket runs exactly the stages it declared
+  ---
+  duration_ms: 0.062834
+  type: 'test'
+  ...
+# Subtest: every capability is declared with what switching it off costs
+ok 61 - every capability is declared with what switching it off costs
+  ---
+  duration_ms: 0.048125
+  type: 'test'
+  ...
+# Subtest: one request carries pipeline, model and model-specific effort questions over one state
+ok 62 - one request carries pipeline, model and model-specific effort questions over one state
+  ---
+  duration_ms: 0.140542
+  type: 'test'
+  ...
+# Subtest: each capability contributes only its own questions, and neither means no request
+ok 63 - each capability contributes only its own questions, and neither means no request
+  ---
+  duration_ms: 0.065917
+  type: 'test'
+  ...
+# Subtest: a batched answer is read back per stage, gated exactly as a single one is
+ok 64 - a batched answer is read back per stage, gated exactly as a single one is
+  ---
+  duration_ms: 0.237167
+  type: 'test'
+  ...
+# Subtest: a batched body nobody can parse reads as nothing said, for every stage
+ok 65 - a batched body nobody can parse reads as nothing said, for every stage
+  ---
+  duration_ms: 0.055042
+  type: 'test'
+  ...
+# Subtest: a described model is offered by its description; an undescribed one falls back to its label
+ok 66 - a described model is offered by its description; an undescribed one falls back to its label
+  ---
+  duration_ms: 0.04875
+  type: 'test'
+  ...
+# (node:14815) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/dane/Projects/drupal/wanigan/src/shared/token-evidence.test.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/dane/Projects/drupal/wanigan/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: resumed session counts are disjoint deltas and ended attempts do not inherit later conversation growth
+ok 67 - resumed session counts are disjoint deltas and ended attempts do not inherit later conversation growth
+  ---
+  duration_ms: 1.219375
+  type: 'test'
+  ...
+# Subtest: missing baseline, truncated creation and overlapping sessions never claim conversation counters as attempt counts
+ok 68 - missing baseline, truncated creation and overlapping sessions never claim conversation counters as attempt counts
+  ---
+  duration_ms: 0.220083
+  type: 'test'
+  ...
+# Subtest: unknown fields and counter resets are not converted to free usage
+ok 69 - unknown fields and counter resets are not converted to free usage
+  ---
+  duration_ms: 0.121041
+  type: 'test'
+  ...
+1..69
+# tests 69
+# suites 0
+# pass 69
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 149.817209

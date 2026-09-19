@@ -48,9 +48,9 @@ function when(at: number): string {
   return `Back ${new Date(at).toLocaleDateString()}`;
 }
 
-export default function Board({ projects, providers, projectId, selectedProjectId: scope, onPickProject, onOpenGoal, onOpenSession }: {
+export default function Board({ projects, providers, projectId, selectedProjectId: scope, onOpenGoal, onOpenSession }: {
   projects: Project[]; providers: ProviderInfo[]; projectId: string | null;
-  selectedProjectId: string | null; onPickProject: (id: string | null) => void;
+  selectedProjectId: string | null;
   onOpenGoal: (docketId: string) => void; onOpenSession: (sessionId: string) => void;
 }) {
   const [planning, setPlanning] = useViewMemory('planning', false);
@@ -151,9 +151,6 @@ export default function Board({ projects, providers, projectId, selectedProjectI
     <div className="brd-toolbar">
       <label className="brd-search"><Icon name="search" /><input className="field" type="search" aria-label="Search board tasks"
         placeholder="Find a task, goal or project" value={query} onChange={event => setQuery(event.target.value)} /></label>
-      <select className="field brd-scope" aria-label="Filter the board by project" value={scope ?? ''} onChange={event => onPickProject(event.target.value || null)}>
-        <option value="">Every project</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-      </select>
       <button className="btn btn-sm" type="button" onClick={() => void load()}><Icon name="clock" />Refresh</button>
     </div>
     {error && <Note tone="error">The board could not be read: {error}. {cards ? 'Last recorded tasks remain visible. Refresh before changing a task.' : 'Try Refresh to read this project again.'}</Note>}
@@ -168,7 +165,7 @@ export default function Board({ projects, providers, projectId, selectedProjectI
       </div>
       {cards.length === 0 ? <EmptyState posture={scope === null ? 'nothing-yet' : 'nothing-in-scope'}
         title={scope === null ? 'Your next goal starts here.' : 'No tasks in this project.'}
-        cue={scope === null ? 'Plan a goal to turn an idea into tasks you can follow and review.' : 'Choose Every project to see work elsewhere.'}
+        cue={scope === null ? 'Plan a goal to turn an idea into tasks you can follow and review.' : 'Choose All spaces in the project switcher above to see work elsewhere.'}
         action={scope === null && projects.length ? <button className="btn btn-primary" type="button" onClick={() => setPlanning(true)}>Plan a goal</button> : undefined} />
         : shown === 0 ? <EmptyState posture="nothing-in-scope" title="No tasks match this view."
           cue="Try another search or show all task states." action={<button className="btn" type="button" onClick={clearFilters}>Show all tasks</button>} />

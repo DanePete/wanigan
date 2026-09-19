@@ -1,3 +1,4 @@
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import type { QueueSlots } from '../../shared/types';
 import type { WaniganModule } from '../module-registry';
 import * as queue from '../queue';
@@ -12,6 +13,7 @@ export const queueModule: WaniganModule = {
     reason: 'Queue owns durable dispatch claims, capacity limits and admission to unattended work across Wanigan processes.',
   },
   migrate: migrateQueue,
+  recovery: { inspect: d => inspectRecoveryOwner(d, 'queue') },
   ipc(handle) {
     handle('queue:list', (limit?: number) => queue.listQueue(limit));
     handle('queue:counts', () => queue.queueCounts());

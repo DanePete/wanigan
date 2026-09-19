@@ -11,7 +11,7 @@ function fixture() {
   const calls = [];
   const check = { createdAt: 1, latestEvidenceAt: 1, currentLatestEvidenceAt: 2,
     wouldDiscardNewer: true, transcripts: { files: 2 }, problems: [] };
-  const state = { window: { isDestroyed: () => false }, sessions: [], headless: 0,
+  const state = { window: { isDestroyed: () => false }, sessions: [], headless: 0, runtimeStarted: false,
     save: { canceled: false, filePath: '/backup/new' },
     open: { canceled: false, filePaths: ['/backup/existing'] }, response: 1, check };
   const record = name => (...args) => { calls.push([name, ...args]); };
@@ -26,12 +26,15 @@ function fixture() {
       },
     },
     '../backup': {
+      assertBackupRestartSafe: record('restartSafety'),
       createBackup: dir => { record('create')(dir); return { dir }; },
       inspectBackup: dir => { record('inspect')(dir); return state.check; },
+      previewBackupRestore: dir => { record('preview')(dir); return { inspection: state.check, token: 'main-issued-preview' }; },
       restoreBackup: (dir, opts) => { record('restore')(dir, opts); return { replacedDir: '/retained', relaunchRequired: true }; },
     },
     '../headless': { liveHeadlessCount: () => state.headless },
     '../sessions': { listSessions: () => state.sessions },
+    './storage-runtime': { storageRuntimeStarted: () => state.runtimeStarted },
   };
   const source = fs.readFileSync(path.join(root, 'src/main/modules/backup.ts'), 'utf8');
   const compiled = ts.transpileModule(source, {
@@ -49,6 +52,7 @@ function fixture() {
   const handlers = new Map();
   module.ipc((channel, fn) => { assert(!handlers.has(channel)); handlers.set(channel, fn); }, {
     getWindow: () => state.window, relaunchAfterRestore: record('relaunch'),
+    restartForRestore: record('maintenanceRestart'),
   });
   assert.deepEqual([...handlers.keys()], ['backup:create', 'backup:inspect', 'backup:restore']);
   return { state, calls, handlers, pending };
@@ -84,13 +88,22 @@ async function main() {
     assert.equal(f.calls.length, 0, 'live work refuses before dialogs');
   }
   f = fixture();
+  f.state.runtimeStarted = true;
+  assert.equal(await f.handlers.get('backup:restore')(), null);
+  assert.deepEqual(f.calls.map(call => call[0]), ['message', 'restartSafety', 'maintenanceRestart']);
+  assert(f.calls[0][2].detail.includes('No database is replaced'));
+  f = fixture();
+  f.state.runtimeStarted = true; f.state.response = 0;
+  assert.equal(await f.handlers.get('backup:restore')(), null);
+  assert.deepEqual(f.calls.map(call => call[0]), ['message']);
+  f = fixture();
   f.state.open.canceled = true;
   assert.equal(await f.handlers.get('backup:restore')(), null);
   assert.deepEqual(f.calls.map(call => call[0]), ['open']);
   f = fixture();
   f.state.check.problems = [{ detail: 'Manifest mismatch' }];
   await assert.rejects(f.handlers.get('backup:restore')(), /Manifest mismatch/);
-  assert.deepEqual(f.calls.map(call => call[0]), ['open', 'inspect']);
+  assert.deepEqual(f.calls.map(call => call[0]), ['open', 'preview']);
   f = fixture();
   f.state.response = 0;
   assert.equal(await f.handlers.get('backup:restore')(), null);
@@ -99,7 +112,7 @@ async function main() {
   f = fixture();
   const restored = await f.handlers.get('backup:restore')();
   assert.deepEqual(restored, { replacedDir: '/retained', relaunchRequired: true });
-  assert.deepEqual(f.calls.at(-1), ['restore', '/backup/existing', { confirm: true, overwriteNewer: true }]);
+  assert.deepEqual(f.calls.at(-1), ['restore', '/backup/existing', { confirm: true, previewToken: 'main-issued-preview', overwriteNewer: true }]);
   const confirm = f.calls.find(call => call[0] === 'message')[2];
   assert.deepEqual(confirm.buttons, ['Cancel', 'Replace the database']);
   assert.equal(confirm.defaultId, 0);

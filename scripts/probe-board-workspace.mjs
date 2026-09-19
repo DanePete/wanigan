@@ -8,7 +8,9 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url), { _electron } = require('playwright-core');
 const root = path.resolve(import.meta.dirname, '..'), before = process.argv.includes('--before');
-const out = path.join(root, 'docs/visuals/board-workspace', before ? 'before' : 'after');
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory.');
+const out = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : path.join(root, 'docs/visuals/board-workspace', before ? 'before' : 'after');
 mkdirSync(out, {recursive:true});
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-board-'));
 writeFileSync(path.join(dir, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
@@ -75,7 +77,7 @@ try {
   await page.goto(rendererURL);
   await page.waitForSelector('.mission-room');
   await page.waitForFunction(()=>document.querySelector('.wanigan-orb')?.dataset.physics==='ready');
-  const go = async chord => {await page.locator('.space-dock button').first().focus();await page.keyboard.press(chord);};
+  const go = async chord => {await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press(chord);};
   await go('Meta+Shift+B'); await page.getByRole('heading',{name:'Board',exact:true}).waitFor();
   await page.waitForSelector('.brd-card');
   await page.waitForFunction(()=>Number(document.querySelector('.companion-presence .wanigan-orb canvas')?.dataset.frames)>0);
@@ -90,7 +92,14 @@ try {
     const open=async id=>{await tile(id).click();await sheet.waitFor();};
     const close=async()=>{await sheet.getByRole('button',{name:'Close task details',exact:true}).click();await sheet.waitFor({state:'hidden'});};
     const refresh=async()=>{const n=await page.evaluate(()=>window.__boardReads.length);await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForFunction(n=>window.__boardReads.length>n,n);};
-    const scopes=page.getByRole('combobox',{name:'Filter the board by project'});
+    const scopeTrigger=page.getByRole('button',{name:/^Switch project space:/});
+    const scopeNames={'':'All spaces',p1:'storefront',p2:'platform'};
+    const chooseScope=async id=>{
+      await scopeTrigger.click();
+      await page.getByRole('option').filter({hasText:scopeNames[id]}).click();
+      await page.getByRole('dialog',{name:'Switch project space',exact:true}).waitFor({state:'hidden'});
+    };
+    const currentScope=async()=>{const name=await scopeTrigger.getAttribute('aria-label');return Object.keys(scopeNames).find(id=>name.includes(scopeNames[id]));};
     const filters=page.getByRole('group',{name:'Filter tasks by state'});
     const search=page.getByRole('searchbox',{name:'Search board tasks'});
     assert.equal(await page.locator('.brd-col').count(),6);
@@ -126,8 +135,8 @@ try {
     assert.equal(await page.locator('.session-item.active').getAttribute('title'),'codex · platform');
     await sheet.waitFor({state:'hidden'});
     await go('Meta+Shift+B');await page.getByRole('heading',{name:'Board',exact:true}).waitFor();
-    assert.equal(await scopes.inputValue(),'p2');
-    await scopes.selectOption('');await tile('n1').waitFor();
+    assert.equal(await currentScope(),'p2');
+    await chooseScope('');await tile('n1').waitFor();
     assert.deepEqual(await page.evaluate(()=>window.__boardCalls),[]);
     record('task sheets trap focus, restore their opener, follow prerequisites by identity, and open the recorded session without launching anything');
 
@@ -180,20 +189,20 @@ try {
     record('Start routes the selected task and provider exactly once; a refused launch keeps its recorded Ready state and reports the error');
 
     await page.evaluate(()=>window.__holdBoard={scope:'p1'});
-    await scopes.selectOption('p1');
+    await chooseScope('p1');
     await page.waitForFunction(()=>typeof window.__releaseBoard==='function');
     assert.equal(await page.locator('.brd-card').count(),0);
-    await scopes.selectOption('p2');
+    await chooseScope('p2');
     await tile('n3').waitFor();
     await page.evaluate(()=>{window.__holdBoard=null;window.__releaseBoard();});
     assert.equal(await page.locator('.brd-card').count(),3);
     assert.equal(await tile('n1').count(),0);
     await page.evaluate(()=>window.__boardFailure='p1');
-    await scopes.selectOption('p1');
+    await chooseScope('p1');
     await page.getByText(/Try Refresh to read this project again/).waitFor();
     assert.equal(await page.locator('.brd-card').count(),0);
     await page.evaluate(()=>window.__boardFailure=undefined);
-    await scopes.selectOption('');await tile('n1').waitFor();
+    await chooseScope('');await tile('n1').waitFor();
     record('project changes withhold old-scope tasks; late reads cannot replace the current scope and failed switches never relabel old data');
 
     await open('n2');
@@ -202,12 +211,12 @@ try {
     await page.waitForFunction(()=>typeof window.__releaseStart==='function');
     assert.equal(await sheet.getByRole('combobox',{name:'Which agent Start launches on'}).isDisabled(),true);
     await close();
-    await scopes.selectOption('p2');await tile('n3').waitFor();
+    await chooseScope('p2');await tile('n3').waitFor();
     await page.evaluate(()=>{window.__holdStart=false;window.__releaseStart();});
     await page.waitForFunction(()=>window.__boardRows.find(row=>row.node.id==='n2').node.status==='running');
     assert.equal(await page.locator('.brd-card').count(),3);
-    assert.equal(await scopes.inputValue(),'p2');
-    await scopes.selectOption('');await tile('n2').waitFor();
+    assert.equal(await currentScope(),'p2');
+    await chooseScope('');await tile('n2').waitFor();
     record('a pending launch locks its controls and its late completion cannot replace a newly selected project');
 
     await page.evaluate(()=>window.__boardFailure=null);await refresh();

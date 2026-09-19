@@ -1,0 +1,11 @@
+{
+  "kind": "Electron renderer; synthetic fixtures; no real agent or repository operations",
+  "at": "2026-09-19T21:14:53.284Z",
+  "dimensions": {},
+  "checks": [
+    "Leaving Changes and returning within storefront preserves its draft, selected file and refetched diff.",
+    "The shared project switcher clears storefront draft, selection and detail when switching to platform.",
+    "Switching back does not revive a draft for another tree; no repository or session writes."
+  ],
+  "errors": []
+}

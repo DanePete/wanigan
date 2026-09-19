@@ -144,11 +144,16 @@ try {
     } });
   });
   await page.goto(rendererURL); await page.waitForSelector('.mission-room');
-  await page.getByRole('button', { name: 'Projects', exact: true }).click();
-  await page.getByRole('button', { name: 'Changes', exact: true }).click();
-  const repository = page.getByRole('combobox', { name: 'Repository' });
-  await repository.waitFor();
-  await repository.selectOption('p2');
+  if (before) {
+    await page.getByRole('button', { name: 'Projects', exact: true }).click();
+    await page.getByRole('button', { name: 'Changes', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Repository' }).selectOption('p2');
+  } else {
+    await page.keyboard.press('Meta+9');
+    await page.getByRole('button', { name: /^Switch project space:/ }).click();
+    await page.getByRole('combobox', { name: 'Search project spaces', exact: true }).fill('platform');
+    await page.keyboard.press('Enter');
+  }
   await page.locator('.gt-branch').filter({ hasText: 'feature/rail' }).waitFor();
 
   const shoot = async (name) => {

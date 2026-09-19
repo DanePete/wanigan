@@ -1,0 +1,217 @@
+{
+  "scope": "native CLI stored auth/configuration status, not tool handshake or execution",
+  "inferenceCalls": 0,
+  "records": [
+    {
+      "id": "acct_aee67673-39e",
+      "label": "Personal",
+      "harness": "claude-code",
+      "at": "2026-09-19T19:03:27.408655+00:00",
+      "command": [
+        "auth",
+        "status",
+        "--json"
+      ],
+      "exitCode": 0,
+      "status": {
+        "loggedIn": true,
+        "authMethod": "claude.ai",
+        "apiProvider": "firstParty",
+        "subscriptionType": "max"
+      }
+    },
+    {
+      "id": "acct_40a6158f-4da",
+      "label": "Work",
+      "harness": "claude-code",
+      "at": "2026-09-19T19:03:27.571782+00:00",
+      "command": [
+        "auth",
+        "status",
+        "--json"
+      ],
+      "exitCode": 0,
+      "status": {
+        "loggedIn": true,
+        "authMethod": "claude.ai",
+        "apiProvider": "firstParty",
+        "subscriptionType": "max"
+      }
+    },
+    {
+      "id": "acct_22fefe2f-541",
+      "label": "Personal",
+      "harness": "codex",
+      "at": "2026-09-19T19:03:27.728437+00:00",
+      "command": [
+        "mcp",
+        "list",
+        "--json"
+      ],
+      "exitCode": 0,
+      "configuredServers": [
+        {
+          "name": "analytics-mcp",
+          "enabled": true,
+          "authStatus": "unsupported",
+          "transport": "stdio",
+          "host": null,
+          "commandBasename": "analytics-mcp"
+        },
+        {
+          "name": "atlassian",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "mcp.atlassian.com",
+          "commandBasename": null
+        },
+        {
+          "name": "cloudflare",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "mcp.cloudflare.com",
+          "commandBasename": null
+        },
+        {
+          "name": "cloudflare-observability",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "observability.mcp.cloudflare.com",
+          "commandBasename": null
+        },
+        {
+          "name": "computer-use",
+          "enabled": false,
+          "authStatus": "unsupported",
+          "transport": "stdio",
+          "host": null,
+          "commandBasename": "SkyComputerUseClient"
+        },
+        {
+          "name": "cua_repl",
+          "enabled": true,
+          "authStatus": "unsupported",
+          "transport": "stdio",
+          "host": null,
+          "commandBasename": "node"
+        },
+        {
+          "name": "do-droplets",
+          "enabled": true,
+          "authStatus": "bearer_token",
+          "transport": "streamable_http",
+          "host": "droplets.mcp.digitalocean.com",
+          "commandBasename": null
+        },
+        {
+          "name": "figma",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "mcp.figma.com",
+          "commandBasename": null
+        },
+        {
+          "name": "github",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "api.githubcopilot.com",
+          "commandBasename": null
+        },
+        {
+          "name": "gitlab",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "gitlab.com",
+          "commandBasename": null
+        },
+        {
+          "name": "marker-io",
+          "enabled": true,
+          "authStatus": "not_logged_in",
+          "transport": "streamable_http",
+          "host": "connect.marker.io",
+          "commandBasename": null
+        },
+        {
+          "name": "node_repl",
+          "enabled": true,
+          "authStatus": "unsupported",
+          "transport": "stdio",
+          "host": null,
+          "commandBasename": "node_repl"
+        },
+        {
+          "name": "zendesk",
+          "enabled": true,
+          "authStatus": "unsupported",
+          "transport": "stdio",
+          "host": null,
+          "commandBasename": "python"
+        }
+      ]
+    },
+    {
+      "id": "acct_f80c68ea-f69",
+      "label": "gamedev",
+      "harness": "codex",
+      "at": "2026-09-19T19:03:28.726266+00:00",
+      "command": [
+        "mcp",
+        "list",
+        "--json"
+      ],
+      "exitCode": 0,
+      "configuredServers": []
+    },
+    {
+      "id": "acct_3b56053e-39d",
+      "label": "Temporary",
+      "harness": "codex",
+      "at": "2026-09-19T19:03:28.749367+00:00",
+      "command": [
+        "mcp",
+        "list",
+        "--json"
+      ],
+      "exitCode": 0,
+      "configuredServers": []
+    },
+    {
+      "id": "acct_9d5d4e0c-490",
+      "label": "temp2",
+      "harness": "codex",
+      "at": "2026-09-19T19:03:28.770042+00:00",
+      "command": [
+        "mcp",
+        "list",
+        "--json"
+      ],
+      "exitCode": 0,
+      "configuredServers": []
+    },
+    {
+      "id": "acct_93f968d9-d9d",
+      "label": "max5",
+      "harness": "claude-code",
+      "at": "2026-09-19T19:03:28.797522+00:00",
+      "command": [
+        "auth",
+        "status",
+        "--json"
+      ],
+      "exitCode": 0,
+      "status": {
+        "loggedIn": true,
+        "authMethod": "claude.ai",
+        "apiProvider": "firstParty",
+        "subscriptionType": "max"
+      }
+    }
+  ]
+}

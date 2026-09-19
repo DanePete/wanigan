@@ -1,0 +1,12 @@
+{
+  "fixture": true,
+  "before": false,
+  "checks": [
+    "Shared saved login is disclosed while per-account local records remain separate.",
+    "Matching Codex percentages do not label distinct logins as duplicates.",
+    "Date changes use cached limits; a failed refresh preserves the last reading.",
+    "Account comparison stays inside the viewport at 960px and 600px.",
+    "Empty configuration renders without invented values."
+  ],
+  "errors": []
+}

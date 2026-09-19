@@ -1,0 +1,39 @@
+{
+  "fixture": true,
+  "before": true,
+  "geometry": [
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "DIV",
+      "height": 18,
+      "lineHeight": 18
+    }
+  ],
+  "checks": [],
+  "errors": [],
+  "failure": "Tab from the hunk action must reach the first commentable diff line"
+}

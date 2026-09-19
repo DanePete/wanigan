@@ -2,6 +2,7 @@
 // Built renderer only. Isolated profile and explicit fictional fixtures; never
 // launches a provider, writes a real setting, or executes a goal/run/session.
 import { STUB, rendererURL } from './renderer-harness.mjs';
+import { TAB_SHORTCUTS } from '../src/shared/routes.ts';
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,7 +15,9 @@ assert.ok(['before', 'after'].includes(phase), 'pass before or after');
 const root = path.resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
 const { _electron } = require('playwright-core');
-const out = process.env.WANIGAN_FEATURE_CAPTURE_OUTPUT || path.join(root, 'docs/visuals/feature-pages-2026-09-19', phase);
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory.');
+const out = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : process.env.WANIGAN_FEATURE_CAPTURE_OUTPUT || path.join(root, 'docs/visuals/feature-pages-2026-09-19', phase);
 mkdirSync(out, { recursive: true });
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-feature-pages-'));
 writeFileSync(path.join(dir, 'main.cjs'), "const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));");
@@ -163,7 +166,8 @@ try {
     }
   };
   const visit = async route => {
-    await page.getByRole('combobox', { name: 'Switch workspace view', exact: true }).selectOption(route);
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press(TAB_SHORTCUTS[route].aria.split(' ')[0]);
     await page.waitForTimeout(350);
     await clean();
   };

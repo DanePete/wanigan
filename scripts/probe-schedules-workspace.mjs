@@ -101,6 +101,20 @@ try{
   record('History and list failures have explicit recovery; stale records disable mutations. Scheduler ticks and background setup occur only on their named actions.');
   for(const width of [960,720]){await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,1000),width);await page.waitForFunction(width=>innerWidth===width,width);const size=await view.evaluate(el=>({width:innerWidth,client:el.clientWidth,scroll:el.scrollWidth}));dimensions.push(size);assert(size.scroll<=size.client+1);await capture('agenda-'+width);}
   await page.evaluate(()=>{document.documentElement.dataset.motion='off';});assert.equal(await detail.locator('.sc-reading').evaluate(el=>getComputedStyle(el).animationDuration),'0s');
+  for(const width of [960,900]){
+   await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setContentSize(width,560),width);
+   await page.waitForFunction(width=>innerWidth===width&&innerHeight===560,width);
+   await choose('s8');await detail.getByRole('heading',{name:'An unfinished batch schedule',exact:true}).waitFor();
+   await detail.getByRole('button',{name:'Refresh history',exact:true}).click();
+   await view.getByRole('button',{name:'Scheduler settings',exact:true}).click();
+   await view.getByRole('button',{name:'Run anything due now',exact:true}).scrollIntoViewIfNeeded();
+   const compact=await view.evaluate(el=>({width:innerWidth,height:innerHeight,outerScroll:scrollY,client:el.clientWidth,scroll:el.scrollWidth}));
+   assert.equal(compact.outerScroll,0);assert(compact.scroll<=compact.client+1);dimensions.push(compact);
+   await capture('settings-'+width+'-short');await view.locator('.sc-support summary').click();
+   await choose('s1');await detail.getByRole('heading',{name:'Keep checkout honest',exact:true}).waitFor();
+   await capture('agenda-'+width+'-short');
+  }
+  record('Populated schedule selection, history and background controls remain reachable at 960×560 and 900×560.');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000));await page.waitForFunction(()=>innerWidth===1440);
   await page.evaluate(()=>{window.__schedules=[];});await view.getByRole('button',{name:'Refresh schedules',exact:true}).click();await view.getByRole('heading',{name:'Give the work a rhythm.',exact:true}).waitFor();await capture('empty');
   await page.evaluate(()=>window.__scheduleReadFailure=true);await view.getByRole('button',{name:'Refresh schedules',exact:true}).click();await view.getByRole('heading',{name:'Schedule details unavailable',exact:true}).waitFor();assert.equal(await view.getByRole('heading',{name:'Give the work a rhythm.',exact:true}).count(),0);await capture('read-error');

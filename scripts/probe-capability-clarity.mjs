@@ -7,11 +7,14 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { openRenderer } from './renderer-harness.mjs';
+import { TAB_SHORTCUTS } from '../src/shared/routes.ts';
 
 const before = process.argv.includes('--before');
 const root = path.resolve(import.meta.dirname, '..');
 const rendererRoot = path.resolve(process.env.WANIGAN_RENDERER_ROOT ?? path.join(root, 'out/renderer'));
-const out = path.join(root, 'docs/visuals/usability-capability-clarity', before ? 'before' : 'after');
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory.');
+const out = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : path.join(root, 'docs/visuals/usability-capability-clarity', before ? 'before' : 'after');
 mkdirSync(out, { recursive: true });
 const checks = [], errors = [];
 const rendererProvenance = () => {
@@ -90,7 +93,8 @@ try {
     }
   };
   const navigate = async (destination, selector) => {
-    await page.getByRole('combobox', { name: 'Switch workspace view' }).selectOption(destination);
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press(TAB_SHORTCUTS[destination].aria.split(' ')[0]);
     await page.locator(selector).waitFor();
   };
 

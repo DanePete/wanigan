@@ -1,5 +1,6 @@
 // First, before any import that can open the database: see modules/register.ts.
 import './modules/register';
+import { db } from './db';
 import { app, BrowserWindow, ipcMain, dialog, shell, session, clipboard } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
@@ -109,6 +110,8 @@ import * as evals from './batch/evals';
 import * as uploads from './batch/files';
 import { allSettings, flags, slotsSetting } from './settings';
 import { migrateUserData } from './migrate';
+import { assertStorageAdmission, storageStatus } from './storage-maintenance';
+import { markStorageRuntimeStarted, holdStorageRuntimeForInspection, storageMaintenanceStartup, storageInspectionOnly, storageIpcScope } from './modules/storage-runtime';
 import { isDaemonInvocation, daemonStatus, installDaemon, uninstallDaemon } from './daemon';
 import * as codexStatus from './codex-status';
 import * as learning from './learning-service';
@@ -738,6 +741,13 @@ void app.whenReady().then(async () => {
   // has to come first — reaching createWindow() would open a window nobody
   // asked for and never exit, which is what a CLI hanging looks like.
   if (isCliInvocation()) {
+    db();
+    if (storageStatus().mode !== 'active') {
+      console.warn('[wanigan] CLI work is held while storage is under maintenance or restored inspection. Open Backup or Recovery in the attended app.');
+      app.exit(1);
+      return;
+    }
+    markStorageRuntimeStarted();
     await initializeCredentials();
     const code = await runCli(process.argv);
     app.exit(code);
@@ -748,6 +758,12 @@ void app.whenReady().then(async () => {
   // local database, queue and safety limits; it is not a cloud worker and it
   // never starts an attended PTY.
   if (isDaemonInvocation()) {
+    db();
+    if (storageStatus().mode === 'inspection') {
+      console.warn('[wanigan] Scheduler held: restored history is read-only pending supported reconciliation.');
+      return;
+    }
+    markStorageRuntimeStarted();
     await Promise.all([initializeCredentials(), initializeMobileSecrets()]);
     initSessions(() => null);
     await startServices();
@@ -848,6 +864,7 @@ app.on('window-all-closed', () => {
  * Wanigan against an old one still holding the database.
  */
 let quitAndReopen = false;
+let reopenForStorageMaintenance = false;
 
 // An agent left running with no window is an agent burning tokens unseen.
 app.on('before-quit', (event) => {
@@ -914,7 +931,8 @@ app.on('before-quit', (event) => {
     // this process is gone, so it never races this one for the database or the
     // loopback ports the services above just released.
     if (quitAndReopen) {
-      try { app.relaunch(); } catch (error) {
+      try { app.relaunch({ args: [...process.argv.slice(1).filter(arg => arg !== '--storage-maintenance'),
+        ...(reopenForStorageMaintenance ? ['--storage-maintenance'] : [])] }); } catch (error) {
         console.warn('[wanigan] could not queue a relaunch; quitting without reopening:', error);
       }
     }
@@ -929,6 +947,8 @@ app.on('before-quit', (event) => {
  * indistinguishably, like a session doing nothing.
  */
 async function startServices() {
+  assertStorageAdmission({ automatic: true });
+  markStorageRuntimeStarted();
   const f = flags();
 
   // The extensions Wanigan ships with — today the five Scout sources — go in
@@ -1433,6 +1453,18 @@ async function startAttendedServices(): Promise<StartupState> {
   });
   const attempt = (async () => {
     try {
+      stage = 'storage generation';
+      db();
+      if (storageMaintenanceStartup()) {
+        return publishStartupState({ phase: 'recovery', stage,
+          message: 'Wanigan started for storage maintenance without background services or credentials. Open Settings → Backup to restore, or Recovery to inspect blockers. Quit and open Wanigan normally to leave maintenance.' });
+      }
+      if (storageStatus().mode === 'inspection') {
+        holdStorageRuntimeForInspection();
+        return publishStartupState({ phase: 'recovery', stage,
+          message: 'The restored database is open for read-only inspection. Open Recovery to inspect its claims. Archived jobs, approvals and older spending totals cannot authorize new work; post-restore spending reconciliation is not yet supported.' });
+      }
+      markStorageRuntimeStarted();
       // Keychain may wait for macOS or the operator. Only the async Electron
       // APIs run here; the renderer and ordinary status reads stay usable.
       // Do not start work that needs credentials until the cache is populated.
@@ -1678,7 +1710,7 @@ function registerIpc() {
             ? 'Local services are in recovery mode. Retry local services before starting work.'
             : 'Wanigan is still opening encrypted credentials and starting local services. Try again when startup finishes.');
         }
-        const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
+        const data = demo ? demo.read(channel, args) : await storageIpcScope(channel, () => fn(...args as never[]));
         if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
         return { ok: true, data };
       } catch (e) {
@@ -2836,7 +2868,8 @@ function registerIpc() {
   registerModuleIpc(handle, {
     getWindow: () => win,
     onAgentLaunched: syncAwake,
-    relaunchAfterRestore: () => { app.relaunch(); app.exit(0); },
+    relaunchAfterRestore: () => { app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--storage-maintenance') }); app.exit(0); },
+    restartForRestore: () => { reopenForStorageMaintenance = true; quitAndReopen = true; app.quit(); },
   });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
@@ -3320,6 +3353,7 @@ function registerIpc() {
   // Hot-path traffic: fire-and-forget, no round trip.
   registerModuleEvents((channel, fn) => {
     ipcMain.on(channel, (event, ...args) => {
+      if (storageInspectionOnly()) return;
       if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) fn(...args as never[]);
     });
   });

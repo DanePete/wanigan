@@ -1,0 +1,13 @@
+{
+  "verifiedAt": "2026-09-19T19:10:43.639637+00:00",
+  "commit": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "reportLocalLinks": "passed",
+  "reportWhitespace": "passed",
+  "gitDiffCheck": "passed",
+  "trackedSourceUnchanged": true,
+  "ledgerReconciled": true,
+  "fixturePidsAbsentAt": "2026-09-19T19:03:05Z",
+  "paidAuditRequests": 0,
+  "remainingAllowanceUsd": 50,
+  "note": "Baseline gate and fixture executions are documented with separate scope; this receipt does not promote fixtures into full-app/provider evidence."
+}

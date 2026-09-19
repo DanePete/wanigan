@@ -1,0 +1,22 @@
+The current action fits the first screen, initial navigation makes no mutation, unknown cost stays unpriced, and keyboard stage inspection returns to the current stage.
+A direct relay contains exactly three matching labels and vessels and has an actionable implementation stage.
+A new session establishes its own grain baseline, new recorded activity settles once, and a falling/rising count does not replay old grains.
+An unresolved or failed selection exposes no previous relay actions; late reads cannot replace the newer selected relay, and a failed read can be retried.
+A delayed list from another project cannot replace the current project’s relay selection.
+A recorded rejection has its own final outcome and does not offer a generic reopen action.
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+locator.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('button', { name: /Show: Choose the model for a stage yourself/ })[22m
+
+    at /private/tmp/wanigan-relay-audit-vxcyorcv/repo/scripts/probe-relay-workspace.mjs:167:89 {
+  log: [
+    "  - waiting for getByRole('button', { name: /Show: Choose the model for a stage yourself/ })"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v22.23.2

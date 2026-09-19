@@ -1,0 +1,343 @@
+{
+  "before": true,
+  "fictionalFixtures": true,
+  "evidence": [
+    {
+      "action": "section shortcut at 1440px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 0,
+        "selectedTab": "settings-tab-app",
+        "focus": "settings-tab-app"
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 1002,
+        "selectedTab": "settings-tab-app",
+        "focus": "Keyboard"
+      },
+      "changes": []
+    },
+    {
+      "action": "search result at 1440px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 1002,
+        "selectedTab": "settings-tab-app",
+        "focus": ""
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 2459,
+        "selectedTab": "settings-tab-privacy",
+        "focus": "Storage"
+      },
+      "changes": []
+    },
+    {
+      "action": "keyboard tab at 1440px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 2459,
+        "selectedTab": "settings-tab-privacy",
+        "focus": "settings-tab-agents"
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 880,
+          "width": 1440,
+          "height": 80
+        },
+        "title": {
+          "x": 37,
+          "y": 113,
+          "width": 1366,
+          "height": 82
+        },
+        "panel": 1002,
+        "selectedTab": "settings-tab-app",
+        "focus": "settings-tab-app"
+      },
+      "changes": []
+    },
+    {
+      "action": "section shortcut at 960px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 1002,
+        "selectedTab": "settings-tab-app",
+        "focus": "settings-tab-app"
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 1038,
+        "selectedTab": "settings-tab-app",
+        "focus": "Keyboard"
+      },
+      "changes": []
+    },
+    {
+      "action": "search result at 960px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 1038,
+        "selectedTab": "settings-tab-app",
+        "focus": ""
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 2676,
+        "selectedTab": "settings-tab-privacy",
+        "focus": "Storage"
+      },
+      "changes": []
+    },
+    {
+      "action": "keyboard tab at 960px",
+      "initial": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 2676,
+        "selectedTab": "settings-tab-privacy",
+        "focus": "settings-tab-agents"
+      },
+      "final": {
+        "documentX": 0,
+        "documentY": 0,
+        "paneScroll": 0,
+        "header": {
+          "x": 0,
+          "y": 0,
+          "width": 960,
+          "height": 68
+        },
+        "dock": {
+          "x": 0,
+          "y": 720,
+          "width": 960,
+          "height": 80
+        },
+        "title": {
+          "x": 29,
+          "y": 113,
+          "width": 902,
+          "height": 82
+        },
+        "panel": 1038,
+        "selectedTab": "settings-tab-app",
+        "focus": "settings-tab-app"
+      },
+      "changes": []
+    }
+  ],
+  "errors": []
+}

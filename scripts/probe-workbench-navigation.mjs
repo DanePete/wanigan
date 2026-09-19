@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 const root = path.resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
 const { _electron } = require('playwright-core');
-const out = path.join(root, 'docs/visuals/workspace-simplification-2026-09-19/navigation-regression');
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory.');
+const out = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : path.join(root, 'docs/visuals/workspace-simplification-2026-09-19/navigation-regression');
 mkdirSync(out, { recursive: true });
 const baselinePath = path.join(root, 'docs/visuals/ux-audit-2026-09-15/probes/verification.json');
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
@@ -73,8 +75,8 @@ try {
   await page.goto(rendererURL);
   await page.locator('.home-room').waitFor();
   const nav = () => page.getByRole('navigation', { name: 'Workspace navigation', exact: true });
-  const route = () => page.getByRole('combobox', { name: 'Switch workspace view', exact: true })
-    .locator('option:checked').textContent();
+  const route = () => page.locator('.space-routes button[aria-current="page"], .space-dock button[aria-current="page"], .space-settings[aria-current="page"]').first()
+    .evaluate(button => button.getAttribute('aria-label') ?? button.textContent.trim());
   const go = async key => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); };
   const capture = async name => {
     for (const theme of ['dark', 'light']) {
@@ -150,7 +152,7 @@ try {
     assert.equal(await page.locator('.workbench-navigation').isVisible(), width > 980);
     await capture(`sessions-${width}x${height}`);
   }
-  const opener = page.getByRole('button', { name: 'Show navigation (Option Command S)', exact: true });
+  const opener = page.getByRole('button', { name: 'All destinations', exact: true });
   await opener.click();
   const dialog = page.getByRole('dialog', { name: 'Workspace navigation', exact: true });
   await dialog.waitFor();

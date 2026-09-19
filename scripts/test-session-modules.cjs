@@ -52,6 +52,7 @@ function fixture() {
     }).outputText;
     const localRequire = name => {
       if (name in stubs) return stubs[name];
+      if (name === 'node:crypto') return require(name); // Owner recovery hashes bounded SQLite evidence locally.
       if (!name.startsWith('.')) throw new Error(`Unexpected runtime import: ${name}`);
       return load(path.relative(root, path.resolve(path.dirname(file), `${name}.ts`)));
     };

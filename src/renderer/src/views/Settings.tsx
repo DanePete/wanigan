@@ -169,7 +169,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   {
     id: 'backup', label: 'Backup', eyebrow: 'Copy & recovery', title: 'Backup & restore',
     detail: 'Write a verified copy of Wanigan’s database and transcript archive, check a copy you already have, and put one back.',
-    help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restoring replaces the database in place and relaunches Wanigan, so it refuses while any agent is still running.',
+    help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restore requires closed database participants and no unresolved execution or billing claims, then restarts into read-only inspection.',
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
@@ -5960,26 +5960,35 @@ function Backup() {
       </Section>
 
       <Section title="Restore a backup"
-               hint="Replaces the database, transcript archive and included session files, then relaunches Wanigan.">
-        <Callout level="critical" title="Read this before you start: a restore relaunches Wanigan, and it is refused while any agent is live.">
+               hint="Replaces the database, transcript archive and included session files, then restarts into inspection.">
+        <Callout level="critical" title="Restore requires settled execution and billing evidence, then restarts Wanigan.">
           <p>
-            <strong>Every running agent must be stopped first.</strong> A restore swaps the database
-            file out from under this process, and anything still writing to it — a terminal recording
-            events, a headless row banking a cost — would start failing against a file that has moved.
-            Wanigan counts the live interactive and headless agents and refuses, naming the number,
-            rather than starting and hoping.
+            <strong>Stop running work separately before restoring.</strong> Unknown checkout ownership,
+            unfinished commands and unresolved remote charges block a restore. An expired lease or a
+            missing process does not prove completion. Recovery explains each recorded claim.
           </p>
           <p style={{ marginTop: 6 }}>
-            <strong>Wanigan restarts immediately afterwards.</strong> The database connection this
-            window holds is closed to make the swap, so the app cannot keep running against it. A
-            live terminal cannot survive that: saved projects, transcripts and settings are a
-            different thing from a running PTY.
+            <strong>Begin with a maintenance restart.</strong> The restore button first offers to
+            reopen Wanigan without credentials or background services. Return here after restart to
+            choose the backup. Quitting and reopening normally leaves preparation mode; a completed
+            restore keeps its inspection holds.
           </p>
           <p style={{ marginTop: 6 }}>
-            <strong>Nothing is deleted.</strong> The replaced database, transcripts and session files are moved into
-            a dated folder inside Wanigan’s data directory, and the restore names it. Your API
-            credential and your provider-pack and MCP approvals are <em>not</em> restored — those are
-            granted on one machine, for one machine.
+            <strong>Every database participant must close its handle.</strong> Another app, scheduler
+            or CLI process blocks the swap until it acknowledges closure. The final check runs after
+            confirmation; changed work or changed backup files require a fresh preview.
+          </p>
+          <p>
+            <strong>Restored history opens for read-only inspection.</strong> Archived jobs, schedules
+            and automatic actions remain held. Older spending totals cannot authorize paid work.
+            This phase has no action that resets these holds; acknowledging a warning cannot reconcile
+            execution or a bill. Live terminals cannot survive the required restart.
+          </p>
+          <p style={{ marginTop: 6 }}>
+            <strong>Replaced originals are retained.</strong> The current database, transcripts and
+            included session files move into a dated folder named in the result. API credentials and
+            provider-pack and MCP approvals are not restored. An interrupted swap retains its external
+            journal and refuses normal startup until storage recovery is established.
           </p>
         </Callout>
 
@@ -5989,17 +5998,18 @@ function Backup() {
             {busy === 'restore' ? 'Restoring…' : 'Choose a backup to restore'}
           </button>
           <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 440 }}>
-            After you pick a folder, Wanigan verifies it and then asks once more — naming the backup’s
+            In maintenance, picking a folder verifies it and asks once more — naming the backup’s
             date, its transcript count, both evidence clocks and where the replaced files will be
-            moved. Nothing is replaced until you answer that.
+            moved. Approval applies once to that exact preview. A changed database or backup requires
+            another review.
           </span>
         </div>
 
         {restored && (
           <div style={{ marginTop: 12 }}>
-            <Callout level="warning" title="Restored. Wanigan is restarting to open the restored database.">
-              This window is already running against a closed connection, so its other panels will
-              fail until the app comes back.
+            <Callout level="warning" title="Restored. Wanigan is restarting into read-only inspection.">
+              Archived execution and paid admission remain held. Retained originals and the storage
+              journal preserve the replaced generation for inspection.
             </Callout>
             <div className="set-scroll" style={{ marginTop: 9 }}>
               <table className="grid">

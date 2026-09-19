@@ -1,3 +1,4 @@
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import type { WaniganModule } from '../module-registry';
 import * as worktrees from '../worktrees';
 import * as worktreeSetup from '../worktree-setup';
@@ -13,6 +14,7 @@ export const worktreesModule: WaniganModule = {
     reason: 'Worktrees owns checkout containment, dependency preparation, executable setup consent and workspace lifecycle evidence.',
   },
   migrate: migrateWorktrees,
+  recovery: { inspect: d => inspectRecoveryOwner(d, 'worktrees') },
   ipc(handle, context) {
     // Read paths are confined too. Every other handler in this block passes its
     // root through assertManagedRoot; these two took whatever the renderer named

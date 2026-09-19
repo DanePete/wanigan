@@ -1,0 +1,203 @@
+'use strict';
+// Offline audit harness: production TypeScript, replaced process/network/account collaborators.
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const { EventEmitter } = require('node:events');
+const { createHash } = require('node:crypto');
+const assert = require('node:assert/strict');
+const root = path.resolve(process.argv[2] || process.cwd());
+process.env.TZ = 'America/Chicago'; // Pin only this isolated fixture process.
+const ts = require(path.join(root, 'node_modules/typescript'));
+const rows = [];
+const sha = (v) => createHash('sha256').update(v).digest('hex');
+const hashes = {};
+function load(rel, deps = {}, globals = {}) {
+  const source = fs.readFileSync(path.join(root, rel), 'utf8');
+  hashes[rel] = sha(source);
+  const output = ts.transpileModule(source, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true,
+  }}).outputText;
+  const module = { exports: {} };
+  const ctx = vm.createContext({ module, exports: module.exports, console, Buffer,
+    URL, AbortController, setTimeout, clearTimeout, queueMicrotask,
+    process: { env: {} },
+    require: (id) => { if (Object.hasOwn(deps, id)) return deps[id]; throw new Error('Blocked unmocked import: ' + id); },
+    ...globals,
+  });
+  vm.runInContext(output, ctx, { filename: rel });
+  return module.exports;
+}
+const plain = (v) => JSON.parse(JSON.stringify(v));
+function record(id, value) { rows.push({ id, evidence: value }); }
+let clock = Date.UTC(2026, 8, 19, 17, 0);
+class Clock extends Date { static now() { return clock; } }
+function codexHarness(defaultAccountHasNoOverride = false) {
+  const spawned = [], messages = [];
+  const env = { CODEX_HOME: '/fixture/ambient-A' };
+  let quota = { rateLimits: { primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: clock / 1000 + 1 } } };
+  let failQuota = false;
+  const identities = {
+    A: { id: 'A', harness: 'codex', configDir: '/fixture/account-A' },
+    B: { id: 'B', harness: 'codex', configDir: '/fixture/account-B' },
+  };
+  const api = load('src/main/codex-status.ts', {
+    'node:child_process': { spawn: (bin, args, options) => {
+      spawned.push({ bin, args, env: options.env });
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.killed = false;
+      child.kill = () => { child.killed = true; };
+      child.stdin = { write: (line) => {
+        const msg = JSON.parse(line); messages.push({ ...msg, configDir: options.env.CODEX_HOME });
+        let result = {};
+        if (msg.method === 'model/list') result = {
+          data: [{ id: 'model-' + options.env.CODEX_HOME.split('/').at(-1), displayName: 'fixture model',
+            supportedReasoningEfforts: [{ reasoningEffort: 'low' }], inputModalities: ['text'] }],
+          nextCursor: 'fixture-page-2',
+        };
+        if (msg.method === 'account/rateLimits/read') result = quota;
+        queueMicrotask(() => child.stdout.emit('data', Buffer.from(JSON.stringify(
+          failQuota && msg.method === 'account/rateLimits/read'
+            ? { id: msg.id, error: { message: 'fixture read failed' } }
+            : { id: msg.id, result }) + '\n')));
+      }};
+      return child;
+    }},
+    './providers': { detectProviders: async () => [{ harnessId: 'codex', path: '/fixture/codex' }], shellPath: async () => '/fixture/bin' },
+    './accounts': { byId: (id) => identities[id], resolve: () => ({ account: identities.A }), launchEnv: (account) => defaultAccountHasNoOverride && account.id === 'A' ? {} : ({ CODEX_HOME: account.configDir }) },
+  }, { Date: Clock, process: { env } });
+  return { api, spawned, messages, env, identities, setQuota: (v) => { quota = v; }, failQuota: () => { failQuota = true; } };
+}
+async function main() {
+  const inherited = codexHarness(true);
+  inherited.env.CODEX_HOME = '/fixture/nonselected-ambient-account';
+  await inherited.api.readCodexStatus(false, 'A');
+  assert.equal(inherited.spawned[0].env.CODEX_HOME, '/fixture/nonselected-ambient-account');
+  record('D01-codex-default-account-inherited-home', {
+    requestedAccountId: 'A', accountLaunchEnv: {}, actualSpawnEnv: inherited.spawned[0].env,
+    observation: 'Explicit default account uses ambient CODEX_HOME. The session path uses accounts.applyLaunchEnv to clear the ambient override for the same empty launchEnv result.' });
+
+  const model = codexHarness();
+  const first = await model.api.readCodexModels();
+  model.env.CODEX_HOME = '/fixture/ambient-B';
+  const second = await model.api.readCodexModels();
+  assert.equal(second.models[0].id, 'model-ambient-A'); assert.equal(model.spawned.length, 1);
+  const forced = await model.api.readCodexModels(true);
+  assert.equal(forced.models[0].id, 'model-ambient-B');
+  assert.equal(model.messages.filter((m) => m.method === 'model/list').length, 2);
+  assert.equal(model.messages.some((m) => m.params && m.params.cursor), false);
+  record('D01-codex-model-cache-and-pagination', { first, second, forced,
+    modelRequests: model.messages.filter((m) => m.method === 'model/list'),
+    observation: 'Ambient identity changed, cache retained A; force fetched B; non-null nextCursor caused no page-2 request.' });
+
+  const status = codexHarness();
+  const initialA = await status.api.readCodexStatus(false, 'A');
+  status.setQuota({ rateLimits: { primary: { usedPercent: 80, windowDurationMins: 300 } } });
+  const initialB = await status.api.readCodexStatus(false, 'B');
+  assert.equal(initialA.primary.usedPercent, 10); assert.equal(initialB.primary.usedPercent, 80);
+  status.identities.A.configDir = '/fixture/account-A-rotated';
+  const rotatedA = await status.api.readCodexStatus(false, 'A');
+  assert.equal(rotatedA.primary.usedPercent, 10);
+  clock += 2_000;
+  const beyondReset = await status.api.readCodexStatus(false, 'A');
+  assert.equal(beyondReset.primary.usedPercent, 10); assert.ok(beyondReset.primary.resetsAt < clock);
+  status.failQuota();
+  await assert.rejects(status.api.readCodexStatus(true, 'A'), /fixture read failed/);
+  const afterFailedForce = await status.api.readCodexStatus(false, 'A');
+  assert.equal(afterFailedForce.primary.usedPercent, 10);
+  record('D01-D04-codex-quota-identity-reset-failure', { initialA, initialB, rotatedA, beyondReset, afterFailedForce,
+    accountRequests: status.messages.filter((m) => m.method === 'account/rateLimits/read'),
+    observation: 'Distinct account IDs isolate entries; credential-directory change under same ID and reset boundary do not invalidate the 45-second cache; failed force leaves prior cache reusable.' });
+
+  const raw = { rateLimits: { limitId: 'codex', primary: { usedPercent: 99.6, windowDurationMins: 300 } },
+    rateLimitsByLimitId: {
+      codex: { limitId: 'codex', primary: { usedPercent: 99.6, windowDurationMins: 300 } },
+      other: { limitId: 'other', primary: { usedPercent: 2.25, windowDurationMins: 60 } },
+    }};
+  const snap = status.api.__test.snapshot(raw);
+  assert.equal(snap.primary.usedPercent, 100); assert.equal(snap.primary.remainingPercent, 0);
+  assert.equal(Object.hasOwn(snap, 'rateLimitsByLimitId'), false);
+  const noLegacy = status.api.__test.snapshot({ rateLimitsByLimitId: raw.rateLimitsByLimitId });
+  assert.equal(noLegacy.primary, null);
+  const renamed = status.api.__test.windowFrom({ percentUsed: 10 }); assert.equal(renamed, null);
+  record('D03-codex-buckets-fractional', { raw, snap, noLegacy, renamed,
+    observation: 'Second bucket dropped; 99.6% rounded to 100%; map-only response loses both windows; renamed field stays unknown.' });
+
+  let fetches = 0, credentials = 0;
+  const shared = load('src/shared/backend-catalog.ts');
+  const backend = load('src/main/backend-catalog.ts', { '../shared/backend-catalog': shared }, {
+    Date: Clock,
+    fetch: async (_url, options) => { fetches++; return { ok: true,
+      json: async () => ({ data: [{ id: options.headers.authorization === 'Bearer fixture-A' ? 'model-A' : 'model-B' }] }) }; },
+  });
+  const catalog = { url: 'https://example.invalid/models', shape: 'openai-models', auth: { source: 'credential', id: 'fixture' }, fallback: [{ id: 'fallback', label: 'fallback' }] };
+  const input = (token) => ({ backendId: 'fixture-backend', backendLabel: 'fixture', catalog, credential: () => { credentials++; return token; } });
+  const backendA = await backend.backendModels(input('fixture-A'));
+  const backendB = await backend.backendModels(input('fixture-B'));
+  const removed = await backend.backendModels(input(null));
+  assert.equal(backendB.models[0].id, 'model-A'); assert.equal(removed.source, 'live'); assert.equal(fetches, 1); assert.equal(credentials, 1);
+  backend.forgetBackendCatalog('fixture-backend');
+  const missingAfterForget = await backend.backendModels(input(null));
+  assert.equal(missingAfterForget.source, 'published'); assert.equal(missingAfterForget.fetchedAt, null);
+  const backendBRefreshed = await backend.backendModels(input('fixture-B'));
+  assert.equal(backendBRefreshed.models[0].id, 'model-B');
+  record('D01-backend-cache-credential-change', { backendA, backendB, removed, missingAfterForget, backendBRefreshed, fetches, credentials,
+    observation: 'Cache hit bypasses credential reader; explicit forget makes absent credential honest and next B read fresh. UI clear/save paths must be evaluated separately.' });
+
+  const claudeSpawned = [];
+  const staleText = 'Showing last-known usage (50 minutes ago)\nCurrent session: 12.5% used · resets Sep 20 at 9pm (Asia/Tokyo)';
+  const claude = load('src/main/claude-limits.ts', {
+    'node:child_process': { spawn: (_bin, args) => {
+      claudeSpawned.push(args); const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => {};
+      queueMicrotask(() => { child.stdout.emit('data', Buffer.from(args[0] === 'auth' ? JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'fixture' }) : staleText)); child.emit('close', 0); });
+      return child;
+    } },
+    'node:fs': { mkdirSync: () => {}, existsSync: () => true }, 'node:path': path, 'node:os': { tmpdir: () => '/tmp' },
+    './providers': { detectProviders: async () => [{ harnessId: 'claude-code', path: '/fixture/claude' }], shellPath: async () => '/fixture/bin', providerById: () => null },
+    './accounts': { launchEnv: () => ({ CLAUDE_CONFIG_DIR: '/fixture/claude-A' }) },
+  }, { Date: Clock });
+  const usage = claude.parseUsage(staleText, clock);
+  const limits = await claude.limitsFor({ id: 'A', label: 'fixture', harness: 'claude-code', present: true });
+  assert.equal(limits.state, 'ok'); assert.equal(limits.fetchedAt, clock); assert.equal(limits.detail, null);
+  const expectedTokyo = Date.UTC(2026, 8, 20, 12, 0);
+  const actualReset = claude.parseResetAt('Sep 20 at 9pm (Asia/Tokyo)', clock);
+  assert.notEqual(actualReset, expectedTokyo);
+  const unknownFormat = claude.parseUsage('Current session: unknown'); assert.equal(unknownFormat.windows.length, 0);
+  record('D05-claude-provider-age-and-timezone', { staleText, usage, limits, claudeSpawned,
+    expectedTokyo, actualReset, hostTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone, unknownFormat,
+    observation: 'Provider stale note ignored; result is ok with current fetchedAt. Parsed reset uses host timezone while raw text survives. Unknown text does not turn into zero.' });
+
+  let keyPresent = false, keyStored = false;
+  const openShared = load('src/shared/openrouter-connection.ts');
+  const openRouter = load('src/main/modules/openrouter-connection.ts', {
+    '../keys': { getProviderKey: () => keyPresent ? 'fixture-key-not-a-secret' : null,
+      hasProviderKey: () => keyStored, encryptionAvailable: () => true,
+      providerKeyFingerprint: () => keyPresent ? 'fixture-fingerprint' : null },
+    '../providers': { providerPackRegistry: { profileById: () => ({ enabled: true }) } },
+    '../../shared/openrouter-connection': openShared,
+  });
+  const missing = openRouter.status();
+  keyPresent = true; keyStored = true; const present = openRouter.status();
+  keyPresent = false; const unreadable = openRouter.status();
+  assert.equal(missing.hasKey, false); assert.equal(present.verification, 'not-tested');
+  assert.equal(present.metering, 'unpriced'); assert.equal(unreadable.unreadable, true);
+  record('D06-openrouter-local-key-state', { missing, present, unreadable,
+    observation: 'Production status correctly distinguishes missing/unreadable/present fixture keys and never promotes key presence to tested or priced.' });
+
+  const mcp = load('src/main/mcp/registry.ts', {
+    'node:fs': {}, 'node:path': path, 'node:crypto': { createHash, randomUUID: () => 'fixture-uuid' },
+    '../db': { db: () => ({ prepare: (sql) => ({ all: () => sql.includes('FROM session_events')
+      ? [{ tool_name: 'mcp__example__lookup', calls: 2, last_at: clock - 90_000, failures: 1 }]
+      : [{ id: 'fixture-server', name: 'example' }, { id: 'fixture-never-used', name: 'empty' }] }) }) },
+    '../store': {}, './capabilities': {}, '../keys': {},
+  });
+  const mcpStatus = plain(mcp.serverStatuses());
+  assert.equal(mcpStatus[0].failures, 1); assert.equal(mcpStatus[1].toolCalls, 0);
+  assert.equal(Object.hasOwn(mcpStatus[0], 'connected'), false);
+  record('D09-D10-mcp-status-is-evidence-of-use', { mcpStatus,
+    observation: 'Status reports completed call/failure aggregates and last use, without claiming connected/authenticated/ready.' });
+
+  console.log(JSON.stringify({ evidenceLevel: 'production TypeScript with substituted collaborators; no network or actual CLI launch', node: process.version,
+    typescript: ts.version, root, sourceHashes: hashes, checks: rows.length, rows: plain(rows) }, null, 2));
+}
+main().catch((error) => { console.error(error); process.exitCode = 1; });

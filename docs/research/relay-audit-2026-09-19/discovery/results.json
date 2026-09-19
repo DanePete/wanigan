@@ -1,0 +1,448 @@
+{
+  "evidenceLevel": "production TypeScript with substituted collaborators; no network or actual CLI launch",
+  "node": "v22.23.2",
+  "typescript": "5.9.3",
+  "root": "/Users/dane/Projects/drupal/wanigan",
+  "sourceHashes": {
+    "src/main/codex-status.ts": "39144cce0e61a4e12f42f3521e17bd929fb427c2362a391732abf44d9905b92c",
+    "src/shared/backend-catalog.ts": "c610713b9715b2b04259d95e6f6ac1dcc57a674948970d7746d0a73c720127aa",
+    "src/main/backend-catalog.ts": "6fafa7a628377dc24ec00d53e1e08de5a9e01a73091c6d01cafbd6b126f44baa",
+    "src/main/claude-limits.ts": "df4c730bca6cbdc22d483f2cf09066346c00a73ab289fac245b250db3feda81b",
+    "src/shared/openrouter-connection.ts": "1a0b101897f73b038aab5c0b4bebdb5a339f9fbf4b235d924e3e9ae224e7ca13",
+    "src/main/modules/openrouter-connection.ts": "73f8e4289a15c0d220b2ba770a3666d7726328c7c61018ce654c8df8e3a6aa97",
+    "src/main/mcp/registry.ts": "e6f45ebcac59e8cc701418f6389c793911277e316e4894765816596e7ae66d27"
+  },
+  "checks": 8,
+  "rows": [
+    {
+      "id": "D01-codex-default-account-inherited-home",
+      "evidence": {
+        "requestedAccountId": "A",
+        "accountLaunchEnv": {},
+        "actualSpawnEnv": {
+          "PATH": "/fixture/bin",
+          "CODEX_HOME": "/fixture/nonselected-ambient-account"
+        },
+        "observation": "Explicit default account uses ambient CODEX_HOME. The session path uses accounts.applyLaunchEnv to clear the ambient override for the same empty launchEnv result."
+      }
+    },
+    {
+      "id": "D01-codex-model-cache-and-pagination",
+      "evidence": {
+        "first": {
+          "fetchedAt": 1789837200000,
+          "models": [
+            {
+              "id": "model-ambient-A",
+              "label": "fixture model",
+              "description": null,
+              "reasoningEfforts": [
+                "low"
+              ],
+              "defaultReasoningEffort": null,
+              "isDefault": false
+            }
+          ],
+          "note": null
+        },
+        "second": {
+          "fetchedAt": 1789837200000,
+          "models": [
+            {
+              "id": "model-ambient-A",
+              "label": "fixture model",
+              "description": null,
+              "reasoningEfforts": [
+                "low"
+              ],
+              "defaultReasoningEffort": null,
+              "isDefault": false
+            }
+          ],
+          "note": null
+        },
+        "forced": {
+          "fetchedAt": 1789837200000,
+          "models": [
+            {
+              "id": "model-ambient-B",
+              "label": "fixture model",
+              "description": null,
+              "reasoningEfforts": [
+                "low"
+              ],
+              "defaultReasoningEffort": null,
+              "isDefault": false
+            }
+          ],
+          "note": null
+        },
+        "modelRequests": [
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "model/list",
+            "params": {
+              "includeHidden": false,
+              "limit": 200
+            },
+            "configDir": "/fixture/ambient-A"
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "model/list",
+            "params": {
+              "includeHidden": false,
+              "limit": 200
+            },
+            "configDir": "/fixture/ambient-B"
+          }
+        ],
+        "observation": "Ambient identity changed, cache retained A; force fetched B; non-null nextCursor caused no page-2 request."
+      }
+    },
+    {
+      "id": "D01-D04-codex-quota-identity-reset-failure",
+      "evidence": {
+        "initialA": {
+          "fetchedAt": 1789837200000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 10,
+            "remainingPercent": 90,
+            "resetsAt": 1789837201000,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "initialB": {
+          "fetchedAt": 1789837200000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 80,
+            "remainingPercent": 20,
+            "resetsAt": null,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "rotatedA": {
+          "fetchedAt": 1789837200000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 10,
+            "remainingPercent": 90,
+            "resetsAt": 1789837201000,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "beyondReset": {
+          "fetchedAt": 1789837200000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 10,
+            "remainingPercent": 90,
+            "resetsAt": 1789837201000,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "afterFailedForce": {
+          "fetchedAt": 1789837200000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 10,
+            "remainingPercent": 90,
+            "resetsAt": 1789837201000,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "accountRequests": [
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "account/rateLimits/read",
+            "params": null,
+            "configDir": "/fixture/account-A"
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "account/rateLimits/read",
+            "params": null,
+            "configDir": "/fixture/account-B"
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "account/rateLimits/read",
+            "params": null,
+            "configDir": "/fixture/account-A-rotated"
+          }
+        ],
+        "observation": "Distinct account IDs isolate entries; credential-directory change under same ID and reset boundary do not invalidate the 45-second cache; failed force leaves prior cache reusable."
+      }
+    },
+    {
+      "id": "D03-codex-buckets-fractional",
+      "evidence": {
+        "raw": {
+          "rateLimits": {
+            "limitId": "codex",
+            "primary": {
+              "usedPercent": 99.6,
+              "windowDurationMins": 300
+            }
+          },
+          "rateLimitsByLimitId": {
+            "codex": {
+              "limitId": "codex",
+              "primary": {
+                "usedPercent": 99.6,
+                "windowDurationMins": 300
+              }
+            },
+            "other": {
+              "limitId": "other",
+              "primary": {
+                "usedPercent": 2.25,
+                "windowDurationMins": 60
+              }
+            }
+          }
+        },
+        "snap": {
+          "fetchedAt": 1789837202000,
+          "plan": null,
+          "primary": {
+            "usedPercent": 100,
+            "remainingPercent": 0,
+            "resetsAt": null,
+            "windowMinutes": 300
+          },
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "noLegacy": {
+          "fetchedAt": 1789837202000,
+          "plan": null,
+          "primary": null,
+          "secondary": null,
+          "spendControlReached": null
+        },
+        "renamed": null,
+        "observation": "Second bucket dropped; 99.6% rounded to 100%; map-only response loses both windows; renamed field stays unknown."
+      }
+    },
+    {
+      "id": "D01-backend-cache-credential-change",
+      "evidence": {
+        "backendA": {
+          "models": [
+            {
+              "id": "model-A",
+              "label": "Model A",
+              "source": "api"
+            }
+          ],
+          "note": null,
+          "fetchedAt": 1789837202000,
+          "source": "live"
+        },
+        "backendB": {
+          "models": [
+            {
+              "id": "model-A",
+              "label": "Model A",
+              "source": "api"
+            }
+          ],
+          "note": null,
+          "fetchedAt": 1789837202000,
+          "source": "live"
+        },
+        "removed": {
+          "models": [
+            {
+              "id": "model-A",
+              "label": "Model A",
+              "source": "api"
+            }
+          ],
+          "note": null,
+          "fetchedAt": 1789837202000,
+          "source": "live"
+        },
+        "missingAfterForget": {
+          "models": [
+            {
+              "id": "fallback",
+              "label": "fallback",
+              "source": "fallback"
+            }
+          ],
+          "note": "Could not read fixture’s model catalog (no key is set yet), so this is Wanigan’s local fallback list rather than a live read.",
+          "fetchedAt": null,
+          "source": "published"
+        },
+        "backendBRefreshed": {
+          "models": [
+            {
+              "id": "model-B",
+              "label": "Model B",
+              "source": "api"
+            }
+          ],
+          "note": null,
+          "fetchedAt": 1789837202000,
+          "source": "live"
+        },
+        "fetches": 2,
+        "credentials": 3,
+        "observation": "Cache hit bypasses credential reader; explicit forget makes absent credential honest and next B read fresh. UI clear/save paths must be evaluated separately."
+      }
+    },
+    {
+      "id": "D05-claude-provider-age-and-timezone",
+      "evidence": {
+        "staleText": "Showing last-known usage (50 minutes ago)\nCurrent session: 12.5% used · resets Sep 20 at 9pm (Asia/Tokyo)",
+        "usage": {
+          "windows": [
+            {
+              "kind": "session",
+              "scope": null,
+              "usedPercent": 12.5,
+              "resetsAtText": "Sep 20 at 9pm (Asia/Tokyo)",
+              "resetsAt": 1789956000000
+            }
+          ],
+          "factors": [],
+          "plan": null
+        },
+        "limits": {
+          "accountId": "A",
+          "accountLabel": "fixture",
+          "harness": "claude-code",
+          "identity": {
+            "email": null,
+            "orgName": null,
+            "plan": "fixture",
+            "authMethod": "claude.ai"
+          },
+          "state": "ok",
+          "detail": null,
+          "fetchedAt": 1789837202000,
+          "plan": "fixture",
+          "windows": [
+            {
+              "kind": "session",
+              "scope": null,
+              "usedPercent": 12.5,
+              "resetsAtText": "Sep 20 at 9pm (Asia/Tokyo)",
+              "resetsAt": 1789956000000
+            }
+          ],
+          "factors": []
+        },
+        "claudeSpawned": [
+          [
+            "auth",
+            "status",
+            "--json"
+          ],
+          [
+            "-p",
+            "/usage"
+          ]
+        ],
+        "expectedTokyo": 1789905600000,
+        "actualReset": 1789956000000,
+        "hostTimezone": "America/Chicago",
+        "unknownFormat": {
+          "windows": [],
+          "factors": [],
+          "plan": null
+        },
+        "observation": "Provider stale note ignored; result is ok with current fetchedAt. Parsed reset uses host timezone while raw text survives. Unknown text does not turn into zero."
+      }
+    },
+    {
+      "id": "D06-openrouter-local-key-state",
+      "evidence": {
+        "missing": {
+          "profileId": "openrouter",
+          "hasKey": false,
+          "stored": false,
+          "fromEnv": false,
+          "unreadable": false,
+          "encryptionAvailable": true,
+          "fingerprint": null,
+          "profileEnabled": true,
+          "endpoint": "https://openrouter.ai/api/v1/responses",
+          "verification": "not-tested",
+          "metering": "unpriced",
+          "detail": "Manual connection using the installed Codex CLI. Saving a key makes no API request. Model/tool compatibility, upstream provider, token usage and billed cost have not been verified; automatic progress and semantic memory are unavailable. Codex may report unknown model metadata. Its own user and project configuration still applies."
+        },
+        "present": {
+          "profileId": "openrouter",
+          "hasKey": true,
+          "stored": true,
+          "fromEnv": false,
+          "unreadable": false,
+          "encryptionAvailable": true,
+          "fingerprint": "fixture-fingerprint",
+          "profileEnabled": true,
+          "endpoint": "https://openrouter.ai/api/v1/responses",
+          "verification": "not-tested",
+          "metering": "unpriced",
+          "detail": "Manual connection using the installed Codex CLI. Saving a key makes no API request. Model/tool compatibility, upstream provider, token usage and billed cost have not been verified; automatic progress and semantic memory are unavailable. Codex may report unknown model metadata. Its own user and project configuration still applies."
+        },
+        "unreadable": {
+          "profileId": "openrouter",
+          "hasKey": false,
+          "stored": true,
+          "fromEnv": false,
+          "unreadable": true,
+          "encryptionAvailable": true,
+          "fingerprint": null,
+          "profileEnabled": true,
+          "endpoint": "https://openrouter.ai/api/v1/responses",
+          "verification": "not-tested",
+          "metering": "unpriced",
+          "detail": "Manual connection using the installed Codex CLI. Saving a key makes no API request. Model/tool compatibility, upstream provider, token usage and billed cost have not been verified; automatic progress and semantic memory are unavailable. Codex may report unknown model metadata. Its own user and project configuration still applies."
+        },
+        "observation": "Production status correctly distinguishes missing/unreadable/present fixture keys and never promotes key presence to tested or priced."
+      }
+    },
+    {
+      "id": "D09-D10-mcp-status-is-evidence-of-use",
+      "evidence": {
+        "mcpStatus": [
+          {
+            "id": "fixture-server",
+            "name": "example",
+            "lastUsedAt": 1789837112000,
+            "toolCalls": 2,
+            "failures": 1
+          },
+          {
+            "id": "fixture-never-used",
+            "name": "empty",
+            "lastUsedAt": null,
+            "toolCalls": 0,
+            "failures": 0
+          }
+        ],
+        "observation": "Status reports completed call/failure aggregates and last use, without claiming connected/authenticated/ready."
+      }
+    }
+  ]
+}

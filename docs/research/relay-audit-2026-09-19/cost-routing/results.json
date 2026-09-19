@@ -1,0 +1,544 @@
+{
+  "revision": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "node": "v22.23.2",
+  "at": "2026-09-19T19:00:04.842Z",
+  "externalRequests": 0,
+  "cases": [
+    {
+      "id": "OTLP-ZERO",
+      "evidence": "real loopback HTTP and SQLite; production receiver/reader",
+      "result": {
+        "costUsd": 0,
+        "costStatus": "unavailable",
+        "lastAt": null,
+        "requests": 0,
+        "verdict": {
+          "allowed": false,
+          "reason": "unknown-spend",
+          "sentence": "One or more previous sessions have no reported cost, so remaining budget cannot be verified."
+        }
+      },
+      "metricRows": 0
+    },
+    {
+      "id": "OTLP-DUPLICATE",
+      "first": {
+        "costUsd": 0.4,
+        "costStatus": "reported",
+        "lastAt": 1789790000000,
+        "requests": 0,
+        "verdict": {
+          "allowed": true
+        }
+      },
+      "second": {
+        "costUsd": 0.8,
+        "costStatus": "reported",
+        "lastAt": 1789790000000,
+        "requests": 0,
+        "verdict": {
+          "allowed": true
+        }
+      }
+    },
+    {
+      "id": "OTLP-OUT-OF-ORDER",
+      "result": {
+        "costUsd": 0.5,
+        "costStatus": "reported",
+        "lastAt": 1789790002000,
+        "requests": 0,
+        "verdict": {
+          "allowed": true
+        }
+      }
+    },
+    {
+      "id": "OTLP-CUMULATIVE",
+      "result": {
+        "costUsd": 0.7,
+        "costStatus": "reported",
+        "lastAt": 1789790001000,
+        "requests": 0,
+        "verdict": {
+          "allowed": true
+        }
+      },
+      "expectedLatestCumulative": 0.5
+    },
+    {
+      "id": "OTLP-DELAYED",
+      "beforeLateMeter": {
+        "costUsd": 0.2,
+        "costStatus": "reported",
+        "lastAt": 1789790005000,
+        "requests": 1,
+        "verdict": {
+          "allowed": true
+        }
+      },
+      "afterLateMeter": {
+        "costUsd": 2.2,
+        "costStatus": "reported",
+        "lastAt": 1789790005000,
+        "requests": 1,
+        "verdict": {
+          "allowed": false,
+          "reason": "cap",
+          "sentence": "Reported spend of $2.20 reached the $1.00 budget."
+        }
+      }
+    },
+    {
+      "id": "OTLP-DUPLICATE-LOG",
+      "requestsAfterReplay": 2
+    },
+    {
+      "id": "JEV-timeout-after-submission",
+      "fixtureCalls": 1,
+      "rowsAdded": 0,
+      "result": {
+        "ok": false,
+        "detail": "The suggester did not answer within 5s."
+      }
+    },
+    {
+      "id": "JEV-http-500",
+      "fixtureCalls": 2,
+      "rowsAdded": 0,
+      "result": {
+        "ok": false,
+        "detail": "The suggester answered 500."
+      }
+    },
+    {
+      "id": "JEV-http-429",
+      "fixtureCalls": 3,
+      "rowsAdded": 0,
+      "result": {
+        "ok": false,
+        "detail": "The suggester answered 429."
+      }
+    },
+    {
+      "id": "JEV-unreadable-200",
+      "fixtureCalls": 4,
+      "rowsAdded": 1,
+      "result": {
+        "ok": false,
+        "detail": "The suggester answered, but its response could not be read."
+      }
+    },
+    {
+      "id": "JEV-reported-200",
+      "fixtureCalls": 5,
+      "rowsAdded": 1,
+      "result": {
+        "ok": true,
+        "detail": "Answered in 0ms, about $0.0000008 by Wanigan's own arithmetic."
+      }
+    },
+    {
+      "id": "JEV-HALT",
+      "callsAdded": 0
+    },
+    {
+      "id": "JEV-LEDGER",
+      "rows": [
+        {
+          "id": 1,
+          "at": 1789844405066,
+          "model": "jev-latest",
+          "input_tokens": null,
+          "output_tokens": null,
+          "estimated_cost_usd": null
+        },
+        {
+          "id": 2,
+          "at": 1789844405066,
+          "model": "fixture-jev-v1",
+          "input_tokens": 20,
+          "output_tokens": 1,
+          "estimated_cost_usd": 8.400000000000001e-7
+        }
+      ],
+      "consumption": [
+        {
+          "accountId": null,
+          "accountLabel": "TypeSafe",
+          "harness": null,
+          "source": "service",
+          "model": "fixture-jev-v1",
+          "requests": 1,
+          "inTokens": 20,
+          "outTokens": 1,
+          "cacheRead": 0,
+          "costUsd": 0,
+          "costStatus": "unreported",
+          "estimatedCostUsd": 8.400000000000001e-7,
+          "unmeteredRequests": 0
+        },
+        {
+          "accountId": null,
+          "accountLabel": "TypeSafe",
+          "harness": null,
+          "source": "service",
+          "model": "jev-latest",
+          "requests": 1,
+          "inTokens": 0,
+          "outTokens": 0,
+          "cacheRead": 0,
+          "costUsd": 0,
+          "costStatus": "unreported",
+          "unmeteredRequests": 1
+        }
+      ]
+    },
+    {
+      "id": "CONTROL-dequeue-none",
+      "launches": 1,
+      "attempted": 1,
+      "activeClaims": 1,
+      "account": "stage-account",
+      "nodeSession": "session-1",
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-pause",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-halt",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-ownership",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-budget",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-profile",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-account",
+      "launches": 1,
+      "attempted": 1,
+      "activeClaims": 1,
+      "account": "changed-account",
+      "nodeSession": "session-1",
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-partial",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-dequeue-missing",
+      "launches": 0,
+      "attempted": 0,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-none",
+      "launches": 1,
+      "attempted": 1,
+      "activeClaims": 1,
+      "account": "stage-account",
+      "nodeSession": "session-1",
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-pause",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-halt",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-ownership",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-budget",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-profile",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-account",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-partial",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-pre-spawn-missing",
+      "launches": 0,
+      "attempted": 1,
+      "activeClaims": 0,
+      "account": null,
+      "nodeSession": null,
+      "evidence": "production Control/schema and real SQLite; preparation/session/provider/queue doubles"
+    },
+    {
+      "id": "CONTROL-delayed-covered-session",
+      "launches": 1,
+      "note": "No freshness/completeness/reservation field is accepted by the meter contract."
+    },
+    {
+      "id": "CONTROL-independent-goals",
+      "launches": 2,
+      "note": "Goal budgets are independent; no product global audit reservation ledger."
+    },
+    {
+      "id": "ROUTING-MANUAL-default",
+      "callsAdded": 0,
+      "route": {
+        "route": {
+          "model": "small",
+          "effort": "low",
+          "source": "profile-default",
+          "confidence": null,
+          "reason": "The implement stage runs on small at low effort, this profile's own default, because nothing else was chosen for it."
+        },
+        "suggested": null,
+        "deliberation": null
+      },
+      "estimate": 0
+    },
+    {
+      "id": "ROUTING-MANUAL-model-only",
+      "callsAdded": 0,
+      "route": {
+        "route": {
+          "model": "large",
+          "effort": "low",
+          "source": "operator",
+          "confidence": null,
+          "reason": "The implement stage runs on large at low effort because you chose the model large."
+        },
+        "suggested": null,
+        "deliberation": null
+      },
+      "estimate": 0
+    },
+    {
+      "id": "ROUTING-MANUAL-effort-only",
+      "callsAdded": 0,
+      "route": {
+        "route": {
+          "model": "small",
+          "effort": "high",
+          "source": "operator",
+          "confidence": null,
+          "reason": "The implement stage runs on small at high effort because you chose the high effort level."
+        },
+        "suggested": null,
+        "deliberation": null
+      },
+      "estimate": 0
+    },
+    {
+      "id": "ROUTING-MANUAL-both",
+      "callsAdded": 0,
+      "route": {
+        "route": {
+          "model": "large",
+          "effort": "high",
+          "source": "operator",
+          "confidence": null,
+          "reason": "The implement stage runs on large at high effort because you chose large at high effort."
+        },
+        "suggested": null,
+        "deliberation": null
+      },
+      "estimate": 0
+    },
+    {
+      "id": "ROUTING-IN-FLIGHT-profile",
+      "rejected": true,
+      "callsAdded": 1,
+      "usageRows": 1
+    },
+    {
+      "id": "ROUTING-IN-FLIGHT-disabled-profile",
+      "rejected": true,
+      "callsAdded": 1,
+      "usageRows": 2
+    },
+    {
+      "id": "ROUTING-IN-FLIGHT-credential-same-display",
+      "rejected": true,
+      "callsAdded": 1,
+      "usageRows": 3
+    },
+    {
+      "id": "ROUTING-IN-FLIGHT-capabilities",
+      "rejected": true,
+      "callsAdded": 1,
+      "usageRows": 4
+    },
+    {
+      "id": "PRICES-INITIAL",
+      "requests": [
+        {
+          "url": "https://openrouter.ai/api/v1/models",
+          "method": "GET",
+          "redirect": "error",
+          "credentials": "omit",
+          "auth": false
+        },
+        {
+          "url": "https://openrouter.ai/api/v1/models/fixture/model-0/endpoints",
+          "method": "GET",
+          "redirect": "error",
+          "credentials": "omit",
+          "auth": false
+        },
+        {
+          "url": "https://openrouter.ai/api/v1/models/fixture/model-1/endpoints",
+          "method": "GET",
+          "redirect": "error",
+          "credentials": "omit",
+          "auth": false
+        },
+        {
+          "url": "https://openrouter.ai/api/v1/models/fixture/model-2/endpoints",
+          "method": "GET",
+          "redirect": "error",
+          "credentials": "omit",
+          "auth": false
+        },
+        {
+          "url": "https://openrouter.ai/api/v1/models/fixture/model-3/endpoints",
+          "method": "GET",
+          "redirect": "error",
+          "credentials": "omit",
+          "auth": false
+        }
+      ],
+      "catalogueId": "economics_15407f62-6b20-46d4-8df1-248cf58e40ef",
+      "endpointCount": 4
+    },
+    {
+      "id": "PRICES-HTTP-503",
+      "error": "Public catalogue answered HTTP 503.",
+      "keptSnapshot": "economics_15407f62-6b20-46d4-8df1-248cf58e40ef",
+      "refreshing": false
+    },
+    {
+      "id": "PRICES-invalid-json",
+      "error": "Public catalogue returned invalid JSON.",
+      "keptSnapshot": "economics_15407f62-6b20-46d4-8df1-248cf58e40ef",
+      "refreshing": false
+    },
+    {
+      "id": "PRICES-chunked-oversize",
+      "error": "Public catalogue exceeded its response size limit.",
+      "keptSnapshot": "economics_15407f62-6b20-46d4-8df1-248cf58e40ef",
+      "refreshing": false
+    },
+    {
+      "id": "PRICES-COMPETING",
+      "calls": 1,
+      "competingRefreshing": true
+    },
+    {
+      "id": "PRICES-disable",
+      "calls": 2,
+      "endpointErrors": "Endpoint metadata could not be refreshed for fixture/model-1; any prior snapshot remains dated as before. Endpoint metadata could not be refreshed for fixture/model-2; any prior snapshot remains dated as before. Endpoint metadata could not be refreshed for fixture/model-3; any prior snapshot remains dated as before."
+    },
+    {
+      "id": "PRICES-halt",
+      "calls": 2,
+      "endpointErrors": "Endpoint metadata could not be refreshed for fixture/model-1; any prior snapshot remains dated as before. Endpoint metadata could not be refreshed for fixture/model-2; any prior snapshot remains dated as before. Endpoint metadata could not be refreshed for fixture/model-3; any prior snapshot remains dated as before."
+    },
+    {
+      "id": "PRICES-EXPIRED-LEASE",
+      "calls": 1,
+      "refreshing": false
+    },
+    {
+      "id": "PRICES-STALLED-STREAM",
+      "elapsedMs": 12001,
+      "error": "Public catalogue refresh failed or timed out. The previous snapshot was retained.",
+      "refreshing": false
+    }
+  ]
+}

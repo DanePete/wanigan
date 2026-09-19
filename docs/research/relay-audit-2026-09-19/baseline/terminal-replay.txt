@@ -1,0 +1,12 @@
+
+> wanigan@0.1.0 probe:terminal
+> node scripts/probe-terminal-replay.mjs
+
+── replaying scrollback must not reach the agent
+  [32m✓[0m the device queries in a replayed scrollback send nothing to the PTY
+  [32m✓[0m and a keystroke after the prime still does, so the gate is not simply stuck shut
+  [32m✓[0m the prime gate opens once the buffer has actually been parsed, not when write() returned
+  [32m✓[0m post-snapshot broadcasts survive parsing and pre-snapshot broadcasts are not duplicated
+  [32m✓[0m local exit text survives replay
+
+════ terminal replay probe passed ════

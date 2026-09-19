@@ -1,0 +1,9 @@
+{
+  "reason": "Existing optional probe uses pre-change labels; copied probe changes locators only, no product or assertion behavior changed",
+  "replacements": {
+    "Show: Choose the model for a stage yourself": "Show: Choose the model and effort for a stage yourself",
+    "name:'Suggest routes'": "name:'Suggest models'",
+    "name:'Implement model override'": "name:'Implement model'",
+    "name:'Profile for this relay'": "name:'Coding assistant'"
+  }
+}

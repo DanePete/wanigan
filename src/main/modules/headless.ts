@@ -1,3 +1,4 @@
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import type { HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest } from '../../shared/types';
 import type { WaniganModule } from '../module-registry';
 import * as headless from '../headless';
@@ -11,6 +12,7 @@ export const headlessModule: WaniganModule = {
     reason: 'Headless owns unattended agent launches, process shutdown and durable per-repository execution evidence.',
   },
   migrate: migrateHeadless,
+  recovery: { inspect: d => inspectRecoveryOwner(d, 'headless') },
   requiresStartedServices: ['start'],
   ipc(handle, context) {
     handle('headless:start', async (cfg: HeadlessStartRequest) => {

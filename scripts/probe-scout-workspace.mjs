@@ -2,6 +2,7 @@
 // Isolated Electron with synthetic records. No production scans, settings, or Goals.
 // Use --out <directory> to keep a new run separate from historical screenshots.
 import { STUB, rendererURL } from './renderer-harness.mjs';
+import { TAB_SHORTCUTS } from '../src/shared/routes.ts';
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,8 @@ try {
   };}});
  });
  await page.goto(rendererURL);await page.locator('.mission-room').waitFor();
- const navigate=async()=>{await page.getByRole('combobox',{name:'Switch workspace view'}).focus();await page.keyboard.press('Meta+Shift+i');await page.getByRole('heading',{name:'Scout',exact:true}).waitFor();};
+ const go=async destination=>{await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press(TAB_SHORTCUTS[destination].aria.split(' ')[0]);};
+ const navigate=async()=>{await go('scout');await page.getByRole('heading',{name:'Scout',exact:true}).waitFor();};
  await navigate();await page.waitForFunction(()=>document.querySelector('.scout-view')?.textContent.includes('Make session handoffs'));
  const capture=async name=>{await page.evaluate(()=>document.activeElement?.blur());for(const theme of ['dark','light']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);await page.screenshot({path:path.join(out,`${name}-${theme}.png`),scale:'css'});}};
  const waitText=async(selector,text)=>page.waitForFunction(({selector,text})=>document.querySelector(selector)?.textContent.includes(text),{selector,text});
@@ -80,7 +82,7 @@ try {
   await search.fill('desktop');assert.equal(await page.locator('.scout-entry').count(),1);await waitText('.scout-reader h2','desktop');await capture('search');
   await search.fill('unfindable fixture');await waitText('.scout-directory','No matching proposals');await capture('no-match');await page.getByRole('button',{name:'Clear filters',exact:true}).click();
   await page.getByRole('combobox',{name:'Proposal order'}).selectOption('effort');assert.match(await page.locator('.scout-entry').first().innerText(),/desktop runtime/);await page.getByRole('combobox',{name:'Proposal order'}).selectOption('newest');
-  await choose('Clarify protocol capability boundaries');await page.getByRole('combobox',{name:'Switch workspace view'}).selectOption('mission');await navigate();await waitText('.scout-reader h2','Clarify protocol');
+  await choose('Clarify protocol capability boundaries');await go('mission');await page.locator('.home-room').waitFor();await navigate();await waitText('.scout-reader h2','Clarify protocol');
   await page.getByRole('group',{name:'Scout workspace'}).getByRole('button',{name:'Proposals',exact:true}).focus();await page.keyboard.press('ArrowRight');assert.equal(await page.getByRole('group',{name:'Scout workspace'}).getByRole('button',{name:'Sources',exact:true}).getAttribute('aria-pressed'),'true');await area('Proposals');
   record('Search, status/order controls, keyboard workspace navigation and selected reader survive page navigation. Evidence and Goal remain deliberate reader sections.');
 
@@ -113,9 +115,9 @@ try {
   record('Goal creation is serialized, calls only the cited Scout endpoint and retains its receipt after a refresh fails. The handoff opens Review; uncited proposals cannot create Goals.');
 
   await page.evaluate(()=>window.__scoutReadFailure=true);await refresh();await waitText('.scout-feedback','last successful read is still shown');assert.equal(await page.locator('.scout-entry').count(),5);assert(await page.getByRole('button',{name:'Check official sources online',exact:true}).isDisabled());await capture('read-unavailable');
-  await page.getByRole('combobox',{name:'Switch workspace view'}).selectOption('mission');await navigate();await waitText('.scout-view','Scout records could not be read');assert.equal(await page.locator('.scout-entry').count(),0);assert.doesNotMatch(await page.locator('.scout-view').innerText(),/Nothing proposed yet|No sources were returned/);await capture('first-read-unavailable');
+  await go('mission');await page.locator('.home-room').waitFor();await navigate();await waitText('.scout-view','Scout records could not be read');assert.equal(await page.locator('.scout-entry').count(),0);assert.doesNotMatch(await page.locator('.scout-view').innerText(),/Nothing proposed yet|No sources were returned/);await capture('first-read-unavailable');
   await page.evaluate(()=>window.__scoutReadFailure=false);await page.getByRole('button',{name:'Read again',exact:true}).click();await page.locator('.scout-entry').first().waitFor();
-  await page.evaluate(()=>window.__holdRead=true);await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForFunction(()=>!!window.__releaseRead);await page.getByRole('combobox',{name:'Switch workspace view'}).selectOption('mission');await page.evaluate(()=>{window.__holdRead=false;window.__releaseRead();window.__scoutRows[0].title='A freshly observed proposal';});await navigate();await choose('A freshly observed proposal');
+  await page.evaluate(()=>window.__holdRead=true);await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForFunction(()=>!!window.__releaseRead);await go('mission');await page.locator('.home-room').waitFor();await page.evaluate(()=>{window.__holdRead=false;window.__releaseRead();window.__scoutRows[0].title='A freshly observed proposal';});await navigate();await choose('A freshly observed proposal');
   await page.evaluate(()=>window.__scoutActionFailure=true);await reader.getByRole('button',{name:'Mark reviewed'}).count().then(async n=>{if(n)await reader.getByRole('button',{name:'Mark reviewed'}).click();else{await page.getByRole('button',{name:'Check local inventory'}).click();}});await waitText('.scout-feedback','Fixture action refused');await page.evaluate(()=>window.__scoutActionFailure=false);
   record('Failed refreshes retain the last observation and disable mutations; first-read failures never invent empty records. Late unmounted reads are discarded and action failures remain visible.');
 

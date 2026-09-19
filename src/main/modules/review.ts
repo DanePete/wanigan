@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { WaniganModule } from '../module-registry';
+import { reviewRecoveryAdapter } from '../review-recovery';
 
 /** Idempotent ALTER TABLE — SQLite has no "ADD COLUMN IF NOT EXISTS". */
 function addColumn(d: Database.Database, table: string, column: string, decl: string) {
@@ -37,6 +38,16 @@ function migrate(d: Database.Database): void {
       lease_expires_at INTEGER NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('active', 'unresolved'))
     );
+    -- Prospective evidence only: legacy results cannot prove no command started.
+    CREATE TABLE IF NOT EXISTS review_recovery_evidence (
+      run_id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      activity_id TEXT NOT NULL,
+      activity_owner_id TEXT NOT NULL,
+      observed_at INTEGER NOT NULL,
+      source TEXT NOT NULL CHECK (source = 'owner-finalized-never-spawned'),
+      run_revision TEXT NOT NULL
+    );
   `);
   // Existing command results remain historical evidence with no invented identity.
   addColumn(d, 'review_runs', 'session_id', 'TEXT');
@@ -55,6 +66,7 @@ export const reviewModule: WaniganModule = {
     reason: 'Review owns operator-approved verification commands and the checkout evidence used to decide whether work is verified.',
   },
   migrate,
+  recovery: reviewRecoveryAdapter,
   ipc(handle, context) {
     handle('review:recipe', async (projectId: string) => (await import('../review')).recipe(projectId));
     handle('review:saveRecipe', async (projectId: string, commands: string[]) =>

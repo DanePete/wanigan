@@ -12,6 +12,7 @@ import type { ReviewCheckoutSnapshot, ReviewEvidence, ReviewFreshness, ReviewRec
 import { shellCommand } from '../shared/platform';
 import { hostPlatform, killProcessTree } from './platform';
 import { acquireCheckoutActivity } from './checkout-activity';
+import { recordReviewNeverSpawned, reviewRecoveryStarted, reviewRecoveryFinished } from './review-recovery';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -302,7 +303,7 @@ export function assertPassNotSuperseded(runId: string, projectId: string, cwd: s
   }
 }
 
-type ActiveRun = { controller: AbortController; done: Promise<void>; finish: () => void; unresolved: boolean };
+type ActiveRun = { controller: AbortController; done: Promise<void>; finish: () => void; unresolved: boolean; spawnAttempted: boolean };
 const activeRuns = new Map<string, ActiveRun>();
 let stopping = false;
 
@@ -325,6 +326,7 @@ async function runCommand(command: string, cwd: string, run: ActiveRun): Promise
     // gives the child its own console, so windowsHide keeps that window from
     // flashing over whatever the operator is doing; killProcessTree uses
     // taskkill /T rather than a negative pid.
+    run.spawnAttempted = true;
     const child = spawn(shell, shellArgs, {
       cwd,
       env: { ...process.env, NO_COLOR: '1', TERM: 'dumb' },
@@ -449,8 +451,9 @@ export async function runAt(projectId: string, cwd?: string, sessionId?: string)
   } catch (error) { releaseActivity(); throw error; }
   activeRoots.add(activeKey);
   let finish!: () => void;
-  const active: ActiveRun = { controller: new AbortController(), done: new Promise(resolve => { finish = resolve; }), finish: () => finish(), unresolved: false };
+  const active: ActiveRun = { controller: new AbortController(), done: new Promise(resolve => { finish = resolve; }), finish: () => finish(), unresolved: false, spawnAttempted: false };
   activeRuns.set(id, active);
+  reviewRecoveryStarted(id);
   const heartbeat = setInterval(() => {
     try {
       const changed = db().prepare("UPDATE review_checkout_owners SET lease_expires_at=? WHERE run_id=? AND owner_id=? AND state='active'")
@@ -471,6 +474,13 @@ export async function runAt(projectId: string, cwd?: string, sessionId?: string)
       before: await checkoutSnapshot(canonical), after: null };
     db().prepare('UPDATE review_runs SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence), id);
     for (const command of commands) {
+      // Preparation awaits Git/filesystem work. A peer may quarantine this
+      // owner during that wait; a heartbeat is too late to authorize a spawn.
+      const owner = db().prepare('SELECT state,owner_id FROM review_checkout_owners WHERE run_id=?').get(id) as CheckoutOwner | undefined;
+      if (!owner || owner.owner_id !== OWNER_ID || owner.state !== 'active') {
+        active.unresolved = true;
+        active.controller.abort('Review command ownership became unresolved before launch.');
+      }
       if (active.controller.signal.aborted) throw new Error(String(active.controller.signal.reason));
       const result = await runCommand(command, canonical, active); results.push(result);
       // Persist each completed command, even if the process later stops.
@@ -490,18 +500,23 @@ export async function runAt(projectId: string, cwd?: string, sessionId?: string)
   const endedAt = Date.now();
   try {
     db().transaction(() => {
+      // An unavailable fingerprint can be a bounded timeout while its Git
+      // subprocess is still finishing. No reviewed command starting does not
+      // prove that preparation finished; retain uncertainty in that case.
+      if (!active.spawnAttempted && (!evidence.before.fingerprint || evidence.before.unavailableReason !== null)) active.unresolved = true;
       const owner = db().prepare('SELECT state,owner_id FROM review_checkout_owners WHERE run_id=?').get(id) as CheckoutOwner | undefined;
       if (!owner || owner.owner_id !== OWNER_ID || owner.state !== 'active') active.unresolved = true;
       db().prepare("UPDATE review_runs SET ended_at=?, status=?, results_json=?, evidence_json=? WHERE id=? AND status='running'")
         .run(endedAt, active.unresolved ? 'failed' : status, JSON.stringify(results), JSON.stringify(evidence), id);
       if (active.unresolved) db().prepare("UPDATE review_checkout_owners SET state='unresolved' WHERE run_id=? AND owner_id=?").run(id, OWNER_ID);
       else db().prepare("DELETE FROM review_checkout_owners WHERE run_id=? AND owner_id=? AND state='active'").run(id, OWNER_ID);
+      if (active.unresolved && !active.spawnAttempted) recordReviewNeverSpawned(db(), id, OWNER_ID);
     }).immediate();
     if (!active.unresolved) releaseActivity();
     const run = map(db().prepare('SELECT * FROM review_runs WHERE id=?').get(id) as RunRow);
     if (evidence?.after) run.freshness = compareCheckoutEvidence(run, evidence.after, recipe(projectId).commands);
     return run;
-  } finally { activeRuns.delete(id); active.finish(); }
+  } finally { activeRuns.delete(id); reviewRecoveryFinished(id); active.finish(); }
 }
 
 export async function run(projectId: string, sessionId?: string): Promise<ReviewRun> {

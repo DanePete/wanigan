@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-19T20:37:39.554Z",
+  "sourceCommit": "5951b99",
+  "node": "v22.23.2",
+  "provenance": "Actual built renderer with synthetic bridge in isolated Electron; no native backup/IPC exercised.",
+  "dataRoot": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-before-97FbRd",
+  "providerPacksDir": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-before-97FbRd/provider-packs",
+  "checks": [
+    "Backup tab renders in dark and light themes without renderer errors."
+  ],
+  "errors": []
+}

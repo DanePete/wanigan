@@ -10,7 +10,7 @@
   overflow: hidden;
 }
 .pane.sessions-view > * { max-width: none; }
-.sessions-view .session-toolbar { flex: none; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line-soft); }
+.sessions-view .session-toolbar { flex: none; padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line-soft); }
 .sessions-view .session-toolbar .pane-head { align-items: center; }
 .sessions-view .session-toolbar .pane-head > div:first-child { min-width: 0; flex: 1; }
 .sessions-view .session-toolbar h1 { overflow-wrap: anywhere; }
@@ -28,6 +28,13 @@
 .sessions-view .session-controls > summary > span { margin-left: var(--s-3); font-size: var(--t-micro); }
 .sessions-view .session-controls-content { max-height: min(40vh, 380px); overflow: auto; }
 .sessions-view .session-rail .group-title .label { text-transform: none; letter-spacing: 0; font-family: var(--font-ui); }
+.sessions-view .session-rail > .atq { flex: none; flex-direction: column; align-items: stretch; gap: var(--s-2); padding: var(--s-3); }
+.sessions-view .session-rail .atq-lead { flex-wrap: wrap; gap: var(--s-1) var(--s-2); }
+.sessions-view .session-rail .atq-scroll { flex: none; flex-direction: column; max-height: min(28vh, 220px); overflow-x: hidden; overflow-y: auto; }
+.sessions-view .session-rail .atq-cell, .sessions-view .session-rail .atq-chip { width: 100%; min-width: 0; }
+.sessions-view .session-rail .atq-body { display: flex; flex: 1; gap: var(--s-1); }
+.sessions-view .session-rail .atq-detail { max-width: none; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.sessions-view .session-rail .atq-toggle { justify-content: center; white-space: normal; }
 .sessions-view .session-rail .session-item { padding-block: var(--s-3); border-radius: var(--r-md); }
 .sessions-view .session-rail .session-item.active { background: var(--bg-selected); box-shadow: none; }
 .sessions-view .terminal-host .xterm { padding: var(--s-4) var(--s-5); }
@@ -247,11 +254,6 @@
   display: none;
 }
 
-.sessions-view .sessions--compact-picker .tab-new-session {
-  min-height: 42px;
-  margin-left: auto;
-}
-
 .sessions-view .sessions--compact-picker .term-full,
 .sessions-view .sessions--compact-picker .term-split {
   min-width: 0;
@@ -285,8 +287,10 @@
 /* The dock under the terminal: one bar that is the same open or shut, so the
    control that hid it is where it is found again. The bar wraps rather than
    truncating; its height changes the PTY's, so nothing in it animates. */
-.sessions-view .session-dock { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--bg-soft); }
-.sessions-view .session-dock-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-3); padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2); }
+.sessions-view .session-dock { flex: 0 1 auto; display: flex; flex-direction: column; min-height: var(--control-h); max-height: 55%; border-top: 1px solid var(--line); background: var(--bg-soft); }
+.sessions-view .session-dock-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-3); padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2); }
+.sessions-view .session-dock-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.sessions-view .session-dock-body[hidden] { display: none; }
 .sessions-view .session-dock-toggle { flex: none; display: inline-flex; align-items: center; gap: var(--s-1); min-height: var(--control-h-sm); padding-inline: var(--s-2); border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font-family: inherit; font-size: var(--t-small); font-weight: 600; cursor: pointer; }
 .sessions-view .session-dock-toggle:hover { background: var(--bg-sunk); }
 .sessions-view .session-dock-toggle[aria-expanded='false'] .icon { transform: rotate(180deg); }
@@ -300,6 +304,20 @@
 .sessions-view .session-dock-notices { display: flex; flex-direction: column; gap: var(--s-2); padding: 0 var(--s-3) var(--s-2); }
 .sessions-view .session-dock-files { padding: 0 var(--s-3) var(--s-2); }
 .sessions-view .session-dock-chips { display: flex; gap: var(--s-2); overflow-x: auto; }
+
+/* Draft extensions and Send share one action row. The native textarea still
+   resizes; long drafts scroll within the composer instead of erasing the PTY. */
+.sessions-view .composer-workspace .composer-row { position: relative; display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: center; }
+.sessions-view .composer-workspace .composer-field { display: contents; }
+.sessions-view .composer-workspace .composer-area { grid-column: 1 / -1; grid-row: 1; }
+.sessions-view .composer-workspace .prompt-action { grid-column: 1; grid-row: 3; margin: 0; padding: 0 0 var(--s-2) var(--s-2); }
+.sessions-view .composer-workspace .composer-actions { grid-column: 2; grid-row: 3; justify-content: flex-end; }
+.sessions-view .composer-workspace .prompt-action, .sessions-view .composer-workspace .composer-actions { position: sticky; bottom: 0; z-index: 1; background: var(--bg-raised); }
+.sessions-view .composer-workspace .composer-key-hint { margin-left: auto; }
+/* These menus stay inside the bounded scrolling composer, where keyboard
+   focus can reveal them without painting outside its scroll boundary. */
+.sessions-view .composer-workspace .composer-menu { position: static; grid-column: 1 / -1; grid-row: 2; max-height: min(25vh, 180px); }
+.sessions-view .composer-workspace .composer-stash-pop { position: relative; inset: auto; order: -1; flex: none; max-height: min(35vh, 300px); }
 
 /* Both "show more" controls in the Recent list are one rule rather than two
    inline style objects that could drift apart — the active band's control is
@@ -432,7 +450,12 @@
 .session-handoff-note { font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; padding: 0 var(--s-2) var(--s-1); }
 
 /* Keep a useful terminal when a short window also has an unsent draft. */
-@media (max-height: 650px) {
+@media (max-height: 800px) {
+  .sessions-view .atq { padding: var(--s-1) var(--s-3); }
+  .sessions-view .atq-body { display: grid; grid-template-columns: auto auto; gap: var(--s-1) var(--s-3); }
+  .sessions-view .atq-sub { align-self: center; }
+  .sessions-view .atq-detail { grid-column: 1 / -1; }
+  .sessions-view .atq-chip { padding: var(--s-1) var(--s-5) var(--s-1) var(--s-2); }
   .sessions-view .session-toolbar, .sessions-view .sessions--compact-picker .session-toolbar { padding: var(--s-2) var(--s-3); }
   .sessions-view .session-toolbar .pane-head { gap: var(--s-2); }
   .sessions-view .session-toolbar h1 { font-size: var(--t-lead); }
@@ -440,13 +463,30 @@
   .sessions-view .session-toolbar .pane-actions { gap: var(--s-1); }
   .sessions-view .session-toolbar .btn { min-height: var(--control-h-sm); padding-inline: var(--s-2); font-size: var(--t-small); }
   .sessions-view .session-dock .composer { padding: var(--s-2); }
-  .sessions-view .session-dock .composer-area { min-height: 42px; max-height: 75px; padding: var(--s-2); }
+  .sessions-view .session-dock .composer-area { min-height: 42px; max-height: 140px; padding: var(--s-2); }
   .sessions-view .session-dock .composer-identity { padding-bottom: var(--s-1); }
   .sessions-view .session-dock .composer-note { line-height: 1.2; }
 }
 
-/* ── resume: the toolbar button, the rail's history link, the pick-up list ── */
-.sessions-view .session-toolbar .session-resume-button > .icon { color: var(--accent); }
+@media (max-height: 650px) {
+  .sessions-view .session-dock { max-height: 50%; }
+  .sessions-view .session-dock .composer { padding: var(--s-1); }
+  /* Keep the textarea's own scrollport above its actions after a taller draft
+     is resized into a short window. The 234px allowance reserves half of the
+     shell/session bands plus the composer bar, action row, borders and insets.
+     Draft text and the roomy resize persist. */
+  .sessions-view .session-dock .composer-area { max-height: clamp(42px, calc(50dvh - 234px), 140px); }
+  .sessions-view .session-dock .composer-identity { display: none; }
+  .sessions-view .session-toolbar .pane-head > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); }
+  .sessions-view .session-toolbar .pane-head p { margin: 0; }
+  .sessions-view .session-controls > summary { padding-block: var(--s-1); }
+  .sessions-view .terminal-host .xterm { padding-block: var(--s-2); }
+}
+@media (max-width: 720px) {
+  .sessions-view .composer-workspace .composer-key-hint { display: none; }
+}
+
+/* ── resume: the rail's history link and the pick-up list ── */
 .sessions-view .rail-history-link {
   display: inline-flex; align-items: center; gap: var(--s-1); margin-left: auto; padding: 0 var(--s-1);
   border-radius: var(--r-xs); color: var(--text-faint); font-size: var(--t-micro); font-weight: 600;

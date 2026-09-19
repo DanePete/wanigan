@@ -2202,6 +2202,10 @@ export type AccountLimits = {
   harness: string;
   /** null when the agent could not be asked, or reported nobody signed in. */
   identity: AccountIdentity | null;
+  /** Matching saved configuration is evidence of a shared login, not a live authentication check. */
+  identityEvidence?: {
+    sharedWith: { accountId: string; accountLabel: string; basis: 'saved-login' | 'configuration-directory' }[];
+  };
   state: 'ok' | 'signed-out' | 'unreadable' | 'unsupported' | 'stale';
   /** Why, when state is not 'ok'. */
   detail: string | null;

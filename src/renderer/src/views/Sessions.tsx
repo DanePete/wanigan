@@ -702,10 +702,6 @@ export default function Sessions({
 
   return (
     <div className="pane sessions-view">
-      {/* P3 · who is blocked, worst wait first. Above everything, because the
-          answer to "where do I go next" outranks the rail and the terminal. */}
-      <AttentionQueue onJump={select} />
-
       <div ref={sessionsBoxRef}
            className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`}
            style={{ flex: 1, minHeight: 0 }}>
@@ -730,6 +726,9 @@ export default function Sessions({
               ×
             </FocusBtn>
           </div>
+          {/* Waiting agents belong beside the conversations they open. The
+              global attention control remains available with this picker shut. */}
+          <AttentionQueue onJump={select} />
           <div className="session-picker-search">
             <label className="label" htmlFor="session-picker-query">Find a conversation</label>
             <div className="session-picker-search-field">
@@ -1058,13 +1057,8 @@ export default function Sessions({
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
-                {/* Resume sits against New session, as it does in the header:
-                    continuing a thread and starting one are the same decision. */}
-                <FocusBtn className="btn session-resume-button" aria-keyshortcuts={resumeChord.aria}
-                  aria-label={`Resume a saved conversation (${resumeChord.spoken})`}
-                  onClick={() => setHistory({ initial: null })}><Icon name="history" /> Resume</FocusBtn>
-                <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
-                  title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
+                {/* New and Resume live in the shared adminbar. The per-project
+                    + stays in the picker because it selects a specific root. */}
                 <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}
                   title={compactLayout ? 'Read session details at full width (⌘B)' : 'Toggle the side panel (⌘B)'}
                   disabled={!active}
@@ -2476,6 +2470,7 @@ function SessionDock({ session, att, open, onToggle, children }: {
 
       {/* Always mounted, so the toggle's aria-controls resolves while shut. */}
       <div id="session-dock-body" className="session-dock-body" hidden={!open}>
+        {open && children}
         {open && att.phase === 'ready' && (att.items.length === 0 ? (
           // Three lines of teaching, permanently, under the terminal on the view
           // an operator spends the day in — and it is a lesson learned once. The
@@ -2497,7 +2492,6 @@ function SessionDock({ session, att, open, onToggle, children }: {
             ))}
           </div>
         ))}
-        {open && children}
       </div>
     </section>
   );

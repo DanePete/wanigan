@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { detectProviders, providerById, shellPath } from './providers';
 import * as accounts from './accounts';
 import type { AccountIdentity, AccountLimits, AgentAccount, LimitWindow, UsageFactors } from '../shared/types';
+import { usageAccountRevision } from './usage-account-identity';
 
 /**
  * What is left on a Claude account, read live.
@@ -48,7 +49,7 @@ export const STALE_AFTER_MS = 10 * 60_000;
  */
 export const FAILURE_CACHE_MS = 30_000;
 
-type Cached = { at: number; value: AccountLimits };
+type Cached = { at: number; revision: string; value: AccountLimits };
 const cache = new Map<string, Cached>();
 
 /**
@@ -307,7 +308,10 @@ export async function limitsFor(account: AgentAccount, force = false): Promise<A
     return { ...base, state: 'unreadable', detail: 'This account’s configuration directory is missing.' };
   }
   const hit = cache.get(account.id);
-  if (!force && hit && Date.now() - hit.at < STALE_AFTER_MS) return hit.value;
+  const revision = usageAccountRevision(account);
+  if (!force && hit?.revision === revision && Date.now() - hit.at < STALE_AFTER_MS) {
+    return { ...hit.value, accountLabel: account.label };
+  }
 
   // Identity first, and it decides the signed-out case. A directory that is not
   // signed in returns a usage reply with no windows in it — indistinguishable,
@@ -321,8 +325,12 @@ export async function limitsFor(account: AgentAccount, force = false): Promise<A
   // follows its own instruction and runs /login is told they are still signed
   // out for ten more.
   const remember = (value: AccountLimits) => {
+    if (usageAccountRevision(account) !== revision) return {
+      ...base, state: 'unreadable' as const, fetchedAt: Date.now(),
+      detail: 'The account login changed while limits were being read. Refresh limits to try again.',
+    };
     const at = value.state === 'ok' ? Date.now() : Date.now() - (STALE_AFTER_MS - FAILURE_CACHE_MS);
-    cache.set(account.id, { at, value });
+    cache.set(account.id, { at, revision, value });
     return value;
   };
   if (auth.failure) {

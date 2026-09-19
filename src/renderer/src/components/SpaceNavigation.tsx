@@ -7,26 +7,25 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useDialog } from './useDialog';
 import { useViewMemory } from './viewMemory';
 
-/** The current view remains a door to its family when the sidebar is hidden. */
-export function WorkspaceLocation({ tab, go }: { tab: Tab; go: (tab: Tab) => void }) {
+/** Area-local destinations stay visible above the workspace, beside the dock. */
+export function SpaceRoutes({ tab, go }: { tab: Tab; go: (tab: Tab) => void }) {
   const current = areaFor(tab);
-  return <div className="workbench-location">
-    {current.tabs.length > 1 && <><span className="workbench-location-area">{current.label}</span>
-      <span className="workbench-location-divider" aria-hidden="true">/</span></>}
-    <select aria-label="Switch workspace view" value={tab} onChange={(event) => {
-      const destination = SPACE_AREAS.flatMap(area => [...area.tabs]).find(id => id === event.currentTarget.value);
-      if (destination) go(destination);
-    }}>
-      {SPACE_AREAS.map(area => <optgroup key={area.id} label={area.label}>
-        {area.tabs.map(id => <option key={id} value={id}>{labelForTab(id)}</option>)}
-      </optgroup>)}
-    </select>
-  </div>;
+  const keymap = useKeymap().map;
+  if (current.tabs.length === 1) return null;
+  return <nav className="space-routes" aria-label={`${current.label} shortcuts`}>
+    <span className="space-scope">{current.label}</span>
+    {current.tabs.map(id => <button key={id} type="button" data-nav-tab={id}
+      aria-current={tab === id ? 'page' : undefined} aria-keyshortcuts={chordLabels(keymap, `view:${id}`).aria}
+      onClick={() => go(id)}>
+      {labelForTab(id)}
+    </button>)}
+  </nav>;
 }
 
-export function ProjectSpaces({ projects, selected, ready, onSelect, onAdd }: {
+export function ProjectSpaces({ projects, selected, ready, onSelect, onAdd, allSpacesDetail }: {
   projects: Project[]; selected: string | null; ready: boolean;
   onSelect: (id: string | null) => void; onAdd: () => void;
+  allSpacesDetail?: string;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -41,15 +40,16 @@ export function ProjectSpaces({ projects, selected, ready, onSelect, onAdd }: {
       {ready && <span className="space-switch-count" aria-hidden="true">{projects.length}</span>}
       <span className="space-switch-chevron" aria-hidden="true">⌄</span>
     </button>
-    {open && <SpaceSwitcher id={id} projects={projects} selected={selected} ready={ready}
+    {open && <SpaceSwitcher id={id} projects={projects} selected={selected} ready={ready} allSpacesDetail={allSpacesDetail}
       onClose={() => setOpen(false)} onSelect={(value) => { setOpen(false); onSelect(value); }}
       onAdd={() => { setOpen(false); requestAnimationFrame(onAdd); }} />}
   </nav>;
 }
 
-function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd }: {
+function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd, allSpacesDetail }: {
   id: string; projects: Project[]; selected: string | null; ready: boolean;
   onClose: () => void; onSelect: (id: string | null) => void; onAdd: () => void;
+  allSpacesDetail?: string;
 }) {
   const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
   const [query, setQuery] = useState('');
@@ -57,11 +57,11 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
   const options = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return [
-      { key: 'all', id: null, name: 'All spaces', detail: 'The view across your projects' },
+      { key: 'all', id: null, name: 'All spaces', detail: allSpacesDetail ?? 'The view across your projects' },
       ...[...projects].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
         .map((project) => ({ key: `project:${project.id}`, id: project.id, name: project.name, detail: project.path })),
     ].filter((option) => `${option.name} ${option.detail}`.toLocaleLowerCase().includes(needle));
-  }, [projects, query]);
+  }, [projects, query, allSpacesDetail]);
   const activeIndex = Math.max(0, options.findIndex((option) => option.key === activeKey));
   const active = options[activeIndex];
   const optionId = (index: number) => `${id}-option-${index}`;
@@ -112,16 +112,43 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
   </div>);
 }
 
-/** Shared-frame navigation stays available as the operator's return path when its contents are hidden. */
-export function WorkspaceNavigationToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+/** The dock restores the persistent return path without maintaining another route list. */
+export function SpaceDock({ tab, go, goArea, needs, expanded, onMore, companion }: {
+  tab: Tab; go: (tab: Tab) => void; goArea: (area: SpaceAreaId) => void;
+  needs: number; expanded: boolean; onMore: () => void; companion?: ReactNode;
+}) {
+  const current = areaFor(tab);
   const keymap = useKeymap().map;
-  return <button className="hdr-toggle" type="button" onClick={onToggle}
-    aria-expanded={open} aria-controls={open ? "wanigan-sidebar" : undefined}
-    aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
-    aria-label={`${open ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
-    <Icon name="panel" />
-    {!open && <span>Show navigation</span>}
-  </button>;
+  const settings = areaFor('settings');
+  return <footer className="space-foot">
+    {companion ?? <span className="space-foot-note">Local workspace</span>}
+    <nav className="space-dock" aria-label="Workspace dock" onKeyDown={event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
+      const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (at < 0) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (at + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    }}>
+      {SPACE_AREAS.filter(area => area.id !== settings.id).map(area => <button type="button" key={area.id}
+        aria-label={area.label}
+        aria-current={current.id === area.id ? area.tabs.length > 1 ? 'location' : 'page' : undefined}
+        onClick={() => goArea(area.id)}>
+        <Icon name={area.icon} /><span>{area.label}</span>
+        {area.id === 'fleet' && needs > 0 && <span className="space-count" aria-label={`${needs} need you`}>{needs}</span>}
+      </button>)}
+      <button className="hdr-toggle" type="button" aria-expanded={expanded} aria-controls={expanded ? 'wanigan-sidebar' : undefined}
+        aria-label="All destinations" aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
+        onClick={onMore}><Icon name="panel" /><span>Tools</span></button>
+    </nav>
+    <button className="space-settings" type="button" aria-label="Settings"
+      aria-current={tab === 'settings' ? 'page' : undefined}
+      aria-keyshortcuts={chordLabels(keymap, 'view:settings').aria} onClick={() => go('settings')}>
+      <Icon name={settings.icon} />
+    </button>
+  </footer>;
 }
 
 type WorkspaceNavigationProps = {

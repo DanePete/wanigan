@@ -1,0 +1,298 @@
+// Offline audit harness. No product source changes, credentials or provider calls.
+// Run from repository root with Node 22.23.2. Actual OTLP HTTP/SQLite and
+// production modules; provider/account/PTY boundaries are explicit fixtures.
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const { DatabaseSync } = require('node:sqlite');
+const root = process.cwd();
+const ts = require(path.join(root, 'node_modules/typescript'));
+const out = { revision: require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  node: process.version, at: new Date().toISOString(), externalRequests: 0, cases: [] };
+const record = (id, data) => { out.cases.push({ id, ...data }); console.log(JSON.stringify({ id, ...data })); };
+function database() {
+  const native = new DatabaseSync(':memory:');
+  const d = { exec: sql => native.exec(sql), prepare: sql => native.prepare(sql), transaction(fn) {
+    const run = (...args) => { native.exec('BEGIN IMMEDIATE'); try { const r = fn(...args); native.exec('COMMIT'); return r; }
+      catch (e) { native.exec('ROLLBACK'); throw e; } }; run.immediate = run; return run;
+  } };
+  return { native, d };
+}
+function loader(doubles) {
+  const cache = new Map();
+  function load(file) {
+    const absolute = path.resolve(root, file);
+    if (cache.has(absolute)) return cache.get(absolute).exports;
+    const mod = { exports: {} }; cache.set(absolute, mod);
+    const source = fs.readFileSync(absolute, 'utf8');
+    const code = ts.transpileModule(source, { compilerOptions: {
+      module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
+    } }).outputText;
+    function localRequire(name) {
+      if (name.startsWith('node:')) return require(name);
+      const target = name.startsWith('.') ? path.resolve(path.dirname(absolute), name.replace(/\.ts$/, '') + '.ts') : name;
+      if (Object.hasOwn(doubles, target)) return doubles[target];
+      if (name.startsWith('.')) return load(target);
+      throw new Error('Unexpected external dependency: ' + name);
+    }
+    vm.runInThisContext(`(function(require,module,exports){${code}\n})`, { filename: absolute })(localRequire, mod, mod.exports);
+    return mod.exports;
+  }
+  return load;
+}
+const key = name => path.join(root, 'src/main', name + '.ts');
+async function telemetry() {
+  const { native, d } = database();
+  const schema = fs.readFileSync(path.join(root, 'src/main/db.ts'), 'utf8');
+  for (const table of ['session_metrics', 'session_api_events', 'session_spend_sources']) {
+    const statement = schema.match(new RegExp('CREATE TABLE IF NOT EXISTS ' + table + ' \\([\\s\\S]*?\\n    \\);'))?.[0];
+    assert(statement, table); native.exec(statement);
+  }
+  native.exec('CREATE TABLE session_log(id TEXT PRIMARY KEY,provider_id TEXT,backend_id TEXT)');
+  for (const id of ['zero', 'duplicate', 'order', 'cumulative', 'delayed']) {
+    native.prepare('INSERT INTO session_log VALUES (?,?,?)').run(id, 'fixture-profile', 'fixture-backend');
+  }
+  const load = loader({ [key('db')]: { db: () => d }, [key('codex-usage')]: { mergeCodexUsage: () => {} },
+    [key('providers')]: { backendCostBasis: () => 'reconcilable', providerById: () => ({ backendId: 'fixture' }) },
+    [key('spend')]: {}, [key('goal-trace')]: { recordGoalTrace: () => {} }, [key('settings')]: { flags: () => ({}) } });
+  const otel = load('src/main/otel.ts');
+  const { automaticSpendVerdict } = load('src/shared/automatic-spend.ts');
+  const start = 1_789_790_000_000;
+  const attr = (k, v) => ({ key: k, value: { stringValue: v } });
+  const payload = (id, value, at = start, temporality = 1) => ({ resourceMetrics: [{
+    resource: { attributes: [attr('wanigan.session.id', id)] }, scopeMetrics: [{ metrics: [{
+      name: 'claude_code.cost.usage', sum: { aggregationTemporality: temporality, isMonotonic: true,
+        dataPoints: [{ asDouble: value, timeUnixNano: String(BigInt(at) * 1_000_000n),
+          startTimeUnixNano: String(BigInt(at - 1000) * 1_000_000n), attributes: [attr('model', 'fixture-model')] }] },
+    }] }],
+  }] });
+  const port = await otel.startCollector();
+  const send = async (endpoint, body) => {
+    const result = await fetch(`http://127.0.0.1:${port}/v1/${endpoint}`, { method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-wanigan-token': otel.collectorToken() }, body: JSON.stringify(body) });
+    assert.equal(result.status, 200); await result.text();
+  };
+  const usage = id => { const u = otel.usageFor(id); return { costUsd: u.costUsd, costStatus: u.costStatus,
+    lastAt: u.lastAt, requests: u.requests, verdict: automaticSpendVerdict({ budgetUsd: 1, spendUsd: u.costUsd,
+      spendStatus: u.costStatus === 'reported' ? 'reported' : 'unreported' }) }; };
+  try {
+    await send('metrics', payload('zero', 0));
+    assert.equal(usage('zero').costStatus, 'unavailable');
+    record('OTLP-ZERO', { evidence: 'real loopback HTTP and SQLite; production receiver/reader', result: usage('zero'),
+      metricRows: native.prepare("SELECT COUNT(*) n FROM session_metrics WHERE session_id='zero'").get().n });
+    const duplicate = payload('duplicate', 0.4);
+    await send('metrics', duplicate); const first = usage('duplicate');
+    await send('metrics', duplicate); const second = usage('duplicate');
+    assert.equal(first.costUsd, 0.4); assert.equal(second.costUsd, 0.8);
+    record('OTLP-DUPLICATE', { first, second });
+    await send('metrics', payload('order', 0.2, start + 2000));
+    await send('metrics', payload('order', 0.3, start));
+    assert.equal(usage('order').costUsd, 0.5); assert.equal(usage('order').lastAt, start + 2000);
+    record('OTLP-OUT-OF-ORDER', { result: usage('order') });
+    await send('metrics', payload('cumulative', 0.2, start, 2));
+    await send('metrics', payload('cumulative', 0.5, start + 1000, 2));
+    assert.equal(usage('cumulative').costUsd, 0.7);
+    record('OTLP-CUMULATIVE', { result: usage('cumulative'), expectedLatestCumulative: 0.5 });
+    await send('metrics', payload('delayed', 0.2));
+    const request = { resourceLogs: [{ resource: { attributes: [attr('wanigan.session.id', 'delayed')] },
+      scopeLogs: [{ logRecords: [{ body: { stringValue: 'claude_code.api_request' },
+        timeUnixNano: String(BigInt(start + 5000) * 1_000_000n), attributes: [attr('model', 'fixture-model'), attr('cost_usd', '2')] }] }] }] };
+    await send('logs', request); const beforeLateMeter = usage('delayed');
+    assert.equal(beforeLateMeter.verdict.allowed, true);
+    await send('metrics', payload('delayed', 2, start + 5000)); const afterLateMeter = usage('delayed');
+    assert.equal(afterLateMeter.verdict.allowed, false);
+    record('OTLP-DELAYED', { beforeLateMeter, afterLateMeter });
+    await send('logs', request);
+    record('OTLP-DUPLICATE-LOG', { requestsAfterReplay: usage('delayed').requests });
+  } finally { otel.stopCollector(); native.close(); }
+}
+async function suggest() {
+  const { native, d } = database(); const settings = new Map(); let halted = false; let calls = 0;
+  const load = loader({ [key('db')]: { db: () => d }, [key('keys')]: {
+    getProviderKey: () => 'fixture-not-a-credential', hasProviderKey: () => true, providerKeyFingerprint: () => 'fixture',
+  }, [key('settings')]: { getSetting: (k, v) => settings.get(k) ?? v, setSetting: (k, v) => settings.set(k, v) },
+  [key('halt')]: { refuseIfHalted: () => { if (halted) throw new Error('halted'); } } });
+  const usage = load('src/main/suggest-usage.ts'); usage.migrateSuggestUsage(d);
+  const api = load('src/main/modules/suggest.ts'); const originalFetch = globalThis.fetch;
+  const count = () => native.prepare('SELECT COUNT(*) n FROM suggest_usage').get().n;
+  try {
+    for (const fault of ['timeout-after-submission', 'http-500', 'http-429', 'unreadable-200', 'reported-200']) {
+      const before = count();
+      globalThis.fetch = async () => { calls++;
+        if (fault === 'timeout-after-submission') throw new DOMException('fixture accepted request then timed out', 'TimeoutError');
+        if (fault === 'http-500') return new Response('{}', { status: 500 });
+        if (fault === 'http-429') return new Response('{}', { status: 429 });
+        if (fault === 'unreadable-200') return new Response('{');
+        return Response.json({ model: 'fixture-jev-v1', usage: { input_tokens: 20, output_tokens: 1 } });
+      };
+      const result = await api.verify();
+      record('JEV-' + fault, { fixtureCalls: calls, rowsAdded: count() - before, result });
+      assert.equal(count() - before, fault.endsWith('200') ? 1 : 0);
+    }
+    halted = true; const before = calls;
+    await assert.rejects(api.verify(), /halted/); assert.equal(calls, before);
+    record('JEV-HALT', { callsAdded: calls - before });
+    record('JEV-LEDGER', { rows: native.prepare('SELECT * FROM suggest_usage').all(), consumption: usage.suggestConsumption(0) });
+  } finally { globalThis.fetch = originalFetch; native.close(); }
+}
+async function control() {
+  const file = path.join(root, 'scripts/test-control-dispatch.cjs');
+  const source = fs.readFileSync(file, 'utf8').split("test('dispatch persists")[0];
+  const mod = { exports: {} };
+  const localRequire = name => name === 'typescript' ? ts : require(name);
+  vm.runInThisContext(`(function(require,module,exports,__dirname){${source}\nmodule.exports = {fixture};})`, { filename: file })(localRequire, mod, mod.exports, path.dirname(file));
+  for (const phase of ['dequeue', 'pre-spawn']) for (const change of ['none', 'pause', 'halt', 'ownership', 'budget', 'profile', 'account', 'partial', 'missing']) {
+    const f = mod.exports.fixture();
+    try {
+      const id = phase + '-' + change; const node = f.seed(id, { autopilot: 1, claim: 'owned-path' });
+      assert.equal(f.control.sweepAutopilot(), 1);
+      let release; let pending;
+      if (phase === 'pre-spawn') { f.state.prepare = () => new Promise(resolve => { release = resolve; }); pending = f.control.startQueuedNode(node); }
+      if (change === 'pause') f.control.setAutopilot(id, { enabled: false });
+      if (change === 'halt') f.state.halted = true;
+      if (change === 'ownership') f.native.prepare("UPDATE work_nodes SET status='canceled',dispatch_state=NULL WHERE id=?").run(node);
+      if (change === 'budget') f.control.setDocketBudget(id, 0);
+      if (change === 'profile') f.state.profiles.set('stage-profile', undefined);
+      if (change === 'account') f.native.prepare("UPDATE work_nodes SET account_id='changed-account' WHERE id=?").run(node);
+      if (change === 'partial') { f.meter(node, 'reported', 0.1); f.meter(node, 'missing', null); }
+      if (change === 'missing') f.meter(node, 'missing', null);
+      if (phase === 'pre-spawn') { release(); await pending; } else await f.control.startQueuedNode(node);
+      const expected = change === 'none' || (phase === 'dequeue' && change === 'account') ? 1 : 0;
+      assert.equal(f.launches.length, expected, id);
+      const activeClaims = f.native.prepare('SELECT COUNT(*) n FROM work_claims WHERE released_at IS NULL').get().n;
+      if (!expected) assert.equal(activeClaims, 0);
+      record('CONTROL-' + id, { launches: f.launches.length, attempted: f.attempted.length, activeClaims,
+        account: f.launches[0]?.session.accountId ?? null, nodeSession: f.row(node).session_id,
+        evidence: 'production Control/schema and real SQLite; preparation/session/provider/queue doubles' });
+    } finally { f.close(); }
+  }
+  for (const scenario of ['delayed-covered-session', 'independent-goals']) {
+    const f = mod.exports.fixture();
+    try {
+      if (scenario === 'delayed-covered-session') {
+        const node = f.seed(scenario, { autopilot: 1, budget: 1 }); f.meter(node, 'previous-session', 0.2);
+        await f.control.startQueuedNode(node); assert.equal(f.launches.length, 1);
+        record('CONTROL-' + scenario, { launches: f.launches.length, note: 'No freshness/completeness/reservation field is accepted by the meter contract.' });
+      } else {
+        for (let i = 0; i < 2; i++) { const node = f.seed(scenario + i, { autopilot: 1, budget: 50 }); await f.control.startQueuedNode(node); }
+        assert.equal(f.launches.length, 2);
+        record('CONTROL-' + scenario, { launches: f.launches.length, note: 'Goal budgets are independent; no product global audit reservation ledger.' });
+      }
+    } finally { f.close(); }
+  }
+}
+async function preview() {
+  const { native, d } = database(); const settings = new Map();
+  let credential = 'fixture-aaaa-original-zzzz'; let fingerprint = 'fixture-v1'; let enabled = true; let fetches = 0;
+  const profile = () => enabled ? { backendId: 'fixture', harness: 'claude-code', profileFingerprint: fingerprint,
+    supports: { model: true, effort: true }, launchFields: [
+      { id: 'model', kind: 'select', options: ['small', 'large'], defaultValue: 'small' },
+      { id: 'effort', kind: 'select', options: ['low', 'high'], defaultValue: 'low' },
+    ] } : undefined;
+  const load = loader({ [key('db')]: { db: () => d }, [key('keys')]: { getProviderKey: () => credential,
+    hasProviderKey: () => true, providerKeyFingerprint: () => 'aaaa...zzzz' },
+    [key('settings')]: { getSetting: (k, v) => settings.get(k) ?? v, setSetting: (k, v) => settings.set(k, v) },
+    [key('halt')]: { halted: () => false, refuseIfHalted: () => {} },
+    [key('store')]: { projectById: () => ({ id: 'fixture' }) },
+    [key('providers')]: { providerById: profile, launchFieldsFor: p => p.launchFields },
+    [key('launch-choices')]: { providerModelCatalogue: async () => ({ source: 'fixture', note: null,
+      rows: ['small', 'large'].map(value => ({ value, label: value, efforts: ['low', 'high'] })) }) },
+    [key('control')]: { MAX_OBJECTIVE: 10_000, registerCompletionListener: () => {},
+      createDocket: () => { throw new Error('unexpected docket write'); } },
+    [key('accounts')]: {}, [key('otel')]: {}, [key('relay-delivery')]: {},
+    [key('relay-automation')]: { readAutomation: () => null },
+  });
+  load('src/main/suggest-usage.ts').migrateSuggestUsage(d);
+  const caps = load('src/shared/suggest-questions.ts').SUGGESTER_CAPABILITIES.map(cap => cap.id).join(',');
+  settings.set('suggest.enabled', caps);
+  const api = load('src/main/relay.ts'); const originalFetch = globalThis.fetch;
+  const input = { intent: 'Synthetic audit: inspect a fixture.', providerId: 'fixture', routing: { mode: 'manual', preference: 'cost' } };
+  try {
+    globalThis.fetch = async () => { fetches++; return Response.json({ model: 'fixture-jev', usage: { input_tokens: 1, output_tokens: 0 } }); };
+    for (const [name, route] of [['default', undefined], ['model-only', { model: 'large' }],
+      ['effort-only', { effort: 'high' }], ['both', { model: 'large', effort: 'high' }]]) {
+      const before = fetches; const value = await api.previewRelay({ ...input, ...(route ? { routes: { implement: route } } : {}) });
+      assert.equal(fetches, before); assert.equal(value.asked, false);
+      record('ROUTING-MANUAL-' + name, { callsAdded: fetches - before, route: value.routes.implement, estimate: value.estimatedUsd });
+    }
+    for (const mutation of ['profile', 'disabled-profile', 'credential-same-display', 'capabilities']) {
+      settings.set('suggest.enabled', caps); enabled = true; fingerprint = 'fixture-v1'; credential = 'fixture-aaaa-original-zzzz';
+      let release; let entered;
+      const enteredPromise = new Promise(resolve => { entered = resolve; });
+      globalThis.fetch = async () => { fetches++; entered(); return new Promise(resolve => { release = () => resolve(Response.json({ model: 'fixture', usage: { input_tokens: 1, output_tokens: 0 } })); }); };
+      const pending = api.previewRelay({ ...input, routing: { mode: 'auto', preference: 'cost' } });
+      await enteredPromise;
+      if (mutation === 'profile') fingerprint = 'fixture-v2';
+      if (mutation === 'disabled-profile') enabled = false;
+      if (mutation === 'credential-same-display') credential = 'fixture-aaaa-changed-zzzz';
+      if (mutation === 'capabilities') settings.set('suggest.enabled', '');
+      release(); await assert.rejects(pending, /changed/);
+      record('ROUTING-IN-FLIGHT-' + mutation, { rejected: true, callsAdded: 1, usageRows: native.prepare('SELECT COUNT(*) n FROM suggest_usage').get().n });
+    }
+  } finally { globalThis.fetch = originalFetch; native.close(); }
+}
+async function economics() {
+  const { native, d } = database(); const settings = new Map(); let halted = false; let calls = [];
+  const load = loader({ [key('db')]: { db: () => d }, [key('settings')]: {
+    getSetting: (k, v) => settings.get(k) ?? v, setSetting: (k, v) => settings.set(k, v) },
+    [key('halt')]: { halted: () => halted, refuseIfHalted: () => { if (halted) throw new Error('halted'); } },
+  });
+  const api = load('src/main/modules/model-economics.ts'); api.modelEconomicsModule.migrate(d);
+  const originalFetch = globalThis.fetch;
+  const models = Array.from({ length: 4 }, (_, index) => ({ id: 'fixture/model-' + index, name: 'Fixture',
+    context_length: 16000, architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+    supported_parameters: ['tools'], pricing: { prompt: '0.000001', completion: '0.000002' } }));
+  const endpoint = { tag: 'fixture', provider_name: 'Fixture', status: 0, context_length: 16000,
+    max_completion_tokens: 4000, supported_parameters: ['tools'], pricing: { prompt: '0.000001', completion: '0.000002' } };
+  const valid = (url, init) => { calls.push({ url, method: init.method, redirect: init.redirect, credentials: init.credentials,
+    auth: new Headers(init.headers).has('authorization') });
+    return Response.json(url.endsWith('/endpoints') ? { data: { endpoints: [endpoint] } } : { data: models }); };
+  try {
+    globalThis.fetch = async (url, init) => valid(url, init);
+    const initial = await api.refresh({ modelIds: models.map(model => model.id) });
+    assert.equal(initial.endpoints.length, 4); assert(calls.every(call => call.method === 'GET' && !call.auth));
+    record('PRICES-INITIAL', { requests: calls, catalogueId: initial.catalogue.id, endpointCount: initial.endpoints.length });
+    for (const fault of ['HTTP-503', 'invalid-json', 'chunked-oversize']) {
+      const before = api.status().catalogue;
+      globalThis.fetch = async () => fault === 'HTTP-503' ? new Response('{}', { status: 503 })
+        : fault === 'invalid-json' ? new Response('{')
+        : new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(8 * 1024 * 1024 + 1)); controller.close(); } }));
+      const result = await api.refresh();
+      assert.equal(result.catalogue.id, before.id); assert.equal(result.catalogue.fetchedAt, before.fetchedAt); assert(result.lastError);
+      record('PRICES-' + fault, { error: result.lastError, keptSnapshot: result.catalogue.id, refreshing: result.refreshing });
+    }
+    calls = []; let release; let entered;
+    const enteredPromise = new Promise(resolve => { entered = resolve; });
+    globalThis.fetch = async (url, init) => { const value = valid(url, init); entered(); return new Promise(resolve => { release = () => resolve(value); }); };
+    const pending = api.refresh({ modelIds: [] }); await enteredPromise;
+    const competing = await api.refresh({ modelIds: [] }); assert(competing.refreshing); assert.equal(calls.length, 1);
+    release(); await pending; record('PRICES-COMPETING', { calls: calls.length, competingRefreshing: competing.refreshing });
+    for (const change of ['disable', 'halt']) {
+      api.setSettings({ automaticRefresh: true }); halted = false; calls = [];
+      globalThis.fetch = async (url, init) => { const response = valid(url, init);
+        if (url.endsWith('/endpoints')) { if (change === 'disable') api.setSettings({ automaticRefresh: false }); else halted = true; }
+        return response; };
+      const result = await api.refresh({ modelIds: models.map(model => model.id) }, true);
+      assert.equal(calls.length, 2); record('PRICES-' + change, { calls: calls.length, endpointErrors: result.lastError });
+      halted = false;
+    }
+    native.prepare('UPDATE model_economics_state SET lease_token=?,lease_until=? WHERE id=1').run('expired-fixture', 1);
+    calls = []; globalThis.fetch = async (url, init) => valid(url, init);
+    const recovered = await api.refresh({ modelIds: [] }); assert.equal(calls.length, 1); assert.equal(recovered.refreshing, false);
+    record('PRICES-EXPIRED-LEASE', { calls: calls.length, refreshing: recovered.refreshing });
+    const start = Date.now();
+    globalThis.fetch = async (_url, init) => new Response(new ReadableStream({ start(controller) {
+      init.signal.addEventListener('abort', () => controller.error(init.signal.reason), { once: true });
+    } }));
+    const keepAlive = setTimeout(() => {}, 18000);
+    const stalled = await api.refresh({ modelIds: [] }); clearTimeout(keepAlive); const elapsed = Date.now() - start;
+    assert(elapsed >= 11000 && elapsed < 18000); assert(stalled.lastError); assert.equal(stalled.refreshing, false);
+    record('PRICES-STALLED-STREAM', { elapsedMs: elapsed, error: stalled.lastError, refreshing: stalled.refreshing });
+  } finally { globalThis.fetch = originalFetch; native.close(); }
+}
+(async () => {
+  await telemetry(); await suggest(); await control(); await preview(); await economics();
+  const target = path.join(root, 'docs/research/relay-audit-2026-09-19/cost-routing/results.json');
+  fs.writeFileSync(target, JSON.stringify(out, null, 2) + '\n');
+})().catch(error => { console.error(error); process.exitCode = 1; });

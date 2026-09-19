@@ -254,6 +254,15 @@ export const VIEWS = [
     phone: { absent: 'A relay is watched, not driven, and its three decisions — the plan, the forecast and the verdict — are recorded on the Mac where its sessions run. The phone sees each phase as a task under Goals instead.' },
     demo: false, digit: false,
   },
+  {
+    id: 'recovery', label: 'Recovery', icon: 'shield', area: 'settings',
+    hint: 'Inspect blocked execution, checkout ownership and independent billing exposure',
+    keywords: 'recovery quarantine restore database unresolved claim evidence',
+    projectScope: 'workspace',
+    shortcut: { label: '⌘⇧Y', aria: 'Meta+Shift+Y Control+Shift+Y' },
+    phone: { absent: 'Recovery decisions bind local checkout identity and evidence in this Mac’s database. Inspect and apply them at the desktop.' },
+    demo: false, digit: false,
+  },
 ] as const satisfies readonly ViewModule[];
 
 /**
@@ -277,7 +286,7 @@ export const VIEW_AREAS = [
   { id: 'fleet', label: 'Monitor', description: 'Activity, limits and spend', icon: 'grid', tabs: ['fleet', 'usage', 'insights'] },
   { id: 'knowledge', label: 'Knowledge', description: 'Memory, skills and context', icon: 'brain', tabs: ['learning', 'skills', 'context', 'scout'] },
   { id: 'automation', label: 'Automation', description: 'Runs, schedules and batches', icon: 'clock', tabs: ['runs', 'schedules', 'batches'] },
-  { id: 'settings', label: 'Manage', description: 'Settings and integrations', icon: 'sliders', tabs: ['settings', 'extensions', 'plugins'] },
+  { id: 'settings', label: 'Manage', description: 'Settings and integrations', icon: 'sliders', tabs: ['settings', 'recovery', 'extensions', 'plugins'] },
 ] as const satisfies readonly ViewArea[];
 
 /** The route id union, derived rather than typed a second time. */

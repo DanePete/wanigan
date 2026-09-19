@@ -84,7 +84,8 @@ a separately built verified bundle, pass
 
 ## Finding your way
 
-The sidebar groups tools by the job they support:
+The bottom dock groups tools by the job they support. Buttons above the
+workspace switch between the tools in the current group:
 
 | Group | Tools |
 | --- | --- |
@@ -93,13 +94,13 @@ The sidebar groups tools by the job they support:
 | Monitor | Fleet, Usage, Insights |
 | Knowledge | Learning, Skills, Context, Scout |
 | Automation | Runs, Schedules, Batches |
-| Manage | Settings, Extensions, Plugins |
+| Manage | Settings, Extensions, Plugins, Recovery |
 
-Use a group's chevron to expand or collapse its tools without leaving your
-current view. Clicking its name returns to the view you last used there.
-The panel button hides the sidebar and remembers that desktop preference;
-the header's view picker and Search still reach every tool. Narrow windows
-use a temporary navigation drawer without changing the desktop preference.
+Clicking a dock group returns to the view you last used there. **Tools** opens
+all destinations in the optional sidebar, where a group's chevron expands or
+collapses its tools without leaving your current view. The panel button
+remembers that desktop preference. Narrow windows use a temporary navigation
+drawer. **Settings** sits beside the dock, and Search reaches every tool.
 
 Search accepts words in any order: “review git” finds Changes, and
 “backup restore” finds the restore settings. Detailed settings appear when

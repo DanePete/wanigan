@@ -1,5 +1,5 @@
 /* Board: one continuous workspace, compact task tiles and a selected reader. */
-.board-view.pane { flex: 1; min-height: 0; overflow: hidden; }
+.board-view.pane { flex: 1; min-height: 0; overflow-y: auto; }
 .board-view > .pane-head { flex: none; }
 .brd-toolbar { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
 .brd-search { display: flex; align-items: center; gap: var(--s-2); flex: 1; max-width: 440px; min-width: 220px; padding: 0 var(--s-3); border: 1px solid var(--glass-line); background: var(--bg-chrome); border-radius: var(--r-md); box-shadow: var(--shadow-input); }
@@ -7,7 +7,6 @@
 .brd-search .field { background: transparent; box-shadow: none; border: 0; padding: var(--s-3) 0; min-width: 0; }
 .brd-search:focus-within { border-color: var(--accent); }
 .brd-search .field:focus-visible { outline: none; }
-.brd-toolbar .brd-scope { width: auto; min-width: 160px; }
 .brd-filters { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
 .brd-filters .link { font-size: var(--t-small); margin-left: var(--s-2); }
 .board-view > .brd { display: grid; grid-template-columns: repeat(6, minmax(204px, 1fr)); gap: var(--s-3); overflow: auto; padding: var(--s-1) var(--s-1) var(--s-3); flex: 1; min-height: 250px; align-items: stretch; width: 100%; max-width: none; overscroll-behavior: contain; }
