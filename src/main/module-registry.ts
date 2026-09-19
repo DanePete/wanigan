@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { BrowserWindow } from 'electron';
 import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '../shared/types';
 
 /**
@@ -32,6 +33,12 @@ import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '
  * reach `ipcMain` around it.
  */
 export type IpcHandle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
+
+/** Runtime-owned capabilities a module may need without discovering globals. */
+export type ModuleIpcContext = {
+  /** The exact window owned by index.ts at the moment the handler runs. */
+  getWindow: () => BrowserWindow | null;
+};
 
 /**
  * Recurring work, declared rather than wired.
@@ -79,7 +86,7 @@ export type WaniganModule = {
    * registry refuses one that does not, because a channel outside a module's
    * namespace is a channel nobody can attribute.
    */
-  ipc?: (handle: IpcHandle) => void;
+  ipc?: (handle: IpcHandle, context: ModuleIpcContext) => void;
   /** Module-local IPC operations that require the app's services to be ready. */
   requiresStartedServices?: readonly string[];
   schedules?: () => ModuleSchedule[];
@@ -163,7 +170,10 @@ export function migrateModules(d: Database.Database): void {
 }
 
 /** Called from `index.ts` once, inside `registerIpc()`, with its own `handle`. */
-export function registerModuleIpc(handle: IpcHandle): void {
+export function registerModuleIpc(
+  handle: IpcHandle,
+  context: ModuleIpcContext = { getWindow: () => null },
+): void {
   for (const module of registry) {
     const prefix = `${module.id}:`;
     const scoped: IpcHandle = (channel, fn) => {
@@ -172,7 +182,7 @@ export function registerModuleIpc(handle: IpcHandle): void {
       }
       handle(channel, fn);
     };
-    module.ipc?.(scoped);
+    module.ipc?.(scoped, context);
   }
 }
 

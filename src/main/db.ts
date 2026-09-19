@@ -511,24 +511,6 @@ function migratePhases(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_config_pins_project ON config_pins(project_id, created_at DESC);
 
-    -- A review recipe is operator-owned commands plus the immutable evidence
-    -- from each execution. Agents may suggest commands; only this surface runs
-    -- the configured gate and records its result.
-    CREATE TABLE IF NOT EXISTS review_recipes (
-      project_id TEXT PRIMARY KEY,
-      commands_json TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS review_runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      ended_at INTEGER,
-      status TEXT NOT NULL,
-      results_json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_review_runs_project ON review_runs(project_id, started_at DESC);
-
     -- plugins · installable extensions ----------------------------------
     -- The manifest is stored whole, alongside the digest of the exact bytes it
     -- was read from. Both are needed and neither substitutes for the other: the
@@ -584,9 +566,6 @@ function migratePhases(d: Database.Database) {
   // so Insights and budgets never need a special case per surface.
   addColumn(d, 'runs', 'kind', "TEXT NOT NULL DEFAULT 'batch'");
   addColumn(d, 'runs', 'eval_pair_id', 'TEXT');
-  // Existing command results remain historical evidence with no invented identity.
-  addColumn(d, 'review_runs', 'session_id', 'TEXT');
-  addColumn(d, 'review_runs', 'evidence_json', 'TEXT');
   // A session can run in its own worktree; the code panel scopes to it.
   addColumn(d, 'worktrees', 'linked_json', 'TEXT');
   addColumn(d, 'session_log', 'worktree', 'TEXT');

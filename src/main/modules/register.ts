@@ -1,6 +1,7 @@
 import { registerModule } from '../module-registry';
 import { controlModule } from './control';
 import { relayModule } from './relay';
+import { reviewModule } from './review';
 import { scoutModule } from './scout';
 import { suggestModule } from './suggest';
 import { usageModule } from './usage';
@@ -16,6 +17,7 @@ import { promptImproveModule } from './prompt-improve';
  * modules does this build carry" is one file rather than a grep.
  */
 registerModule(controlModule);
+registerModule(reviewModule);
 registerModule(usageModule);
 registerModule(scoutModule);
 registerModule(suggestModule);

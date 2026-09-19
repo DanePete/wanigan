@@ -72,6 +72,7 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject, removeProject } from './store';
+import { registerModuleIpc, type IpcHandle } from './module-registry';
 import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
@@ -5205,6 +5206,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check((await review.saveRecipeWithConsent(null, controlProject.id, ['true'])).commands.join('\n') === 'true',
       're-saving the exact set already stored asks nothing and needs no window, because dropping or reordering commands grants a gate nothing it could not already run and a prompt there would train people to click through the one that matters',
       review.recipe(controlProject.id).commands);
+    const noContextHandlers = new Map<string, (...args: never[]) => unknown>();
+    registerModuleIpc(((channel, handler) => { noContextHandlers.set(channel, handler); }) as IpcHandle);
+    const noContextSave = noContextHandlers.get('review:saveRecipe');
+    let noContextRefusal = '';
+    try {
+      await noContextSave?.(controlProject.id as never, ['true', 'printf no-context'] as never);
+    } catch (error) { noContextRefusal = error instanceof Error ? error.message : String(error); }
+    check(!!noContextSave && noContextRefusal.includes('needs the Wanigan window open')
+      && review.recipe(controlProject.id).commands.join('\n') === 'true',
+      'module IPC registration without a window context stays compatible and fails review consent closed');
     review.saveRecipe(controlProject.id, ['echo changed-during-verification >> README.md']);
     const changedDuringProof = await control.runProof(verifyNode.id);
     check(changedDuringProof.status === 'recorded' && /Current checkout not verified/.test(changedDuringProof.summary),
@@ -6938,6 +6949,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const providerSrc = sourceOf('src/main/providers.ts');
   const daemonSrc = sourceOf('src/main/daemon.ts');
   const reviewSrc = sourceOf('src/main/review.ts');
+  const reviewModuleSrc = sourceOf('src/main/modules/review.ts');
+  const moduleRegistrySrc = sourceOf('src/main/module-registry.ts');
+  const moduleRegisterSrc = sourceOf('src/main/modules/register.ts');
+  const dbSrc = sourceOf('src/main/db.ts');
   const controlSrc = sourceOf('src/main/control.ts');
   const controlModuleSrc = sourceOf('src/main/modules/control.ts');
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
@@ -8801,7 +8816,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the background scheduler picks a backend rather than branching on the platform, and ships launchd and Task Scheduler behind it');
   check(/caveat/.test(daemonSrc) && !/This Mac must be awake/.test(sourceOf('src/renderer/src/views/Schedules.tsx')),
     'what is true while the scheduler is installed comes from the backend that installed it, not from a sentence about macOS hardcoded in the view');
-  check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
+  check(/handle\(\s*'review:run'/.test(reviewModuleSrc) && /review_runs/.test(reviewSrc),
     'review gates keep command evidence in a durable record, not only in a terminal scrollback');
   const browseSrc = sourceOf('src/main/browse.ts');
   const attachmentsSrc = sourceOf('src/main/attachments.ts');
@@ -8811,12 +8826,26 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && attachmentsSrc.includes('if (!isPickedPath(abs)) {'),
     'the record attach:add checks is written only by the two calls that put a native dialog in front of a person, never by browse.browse(), whose unconfined readdir would hand back exactly what the check refuses',
     (browseSrc.match(/rememberPicked\(/g) ?? []).length);
-  check(/review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc)
-    && !/review\.saveRecipe\(projectId, commands\)/.test(mainSrc)
+  check(/saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc)
+    && /registerModuleIpc\(handle, \{ getWindow: \(\) => win \}\)/.test(mainSrc)
+    && moduleRegistrySrc.includes('getWindow: () => BrowserWindow | null')
+    && moduleRegistrySrc.includes('context: ModuleIpcContext = { getWindow: () => null }')
+    && !/saveRecipe\(projectId, commands\)/.test(reviewModuleSrc)
     && reviewSrc.indexOf('dialog.showMessageBox') > 0
     && reviewSrc.indexOf('dialog.showMessageBox') < reviewSrc.indexOf('export async function runAt'),
     'saving a review recipe asks the person and running one does not, because the stored text is written once and run many times from both review:run and a goal’s verify task, so the consent sits where the capability is made rather than on each use of it',
-    /review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc));
+    /saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc));
+  check(reviewModuleSrc.includes('required: {')
+    && reviewModuleSrc.includes('used to decide whether work is verified')
+    && reviewModuleSrc.includes("handle('review:recipe'")
+    && reviewModuleSrc.includes("handle('review:saveRecipe'")
+    && reviewModuleSrc.includes("handle('review:history'")
+    && reviewModuleSrc.includes("handle('review:run'")
+    && reviewModuleSrc.includes("import('../learning-service')")
+    && moduleRegisterSrc.includes('registerModule(reviewModule);')
+    && !dbSrc.includes('CREATE TABLE IF NOT EXISTS review_recipes')
+    && !mainSrc.includes("handle('review:recipe'"),
+    'the required Review module owns its schema and all four IPC channels while preserving consent and the learning observer');
   check(/handle\(\s*'control:create'/.test(controlModuleSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(registrySrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');

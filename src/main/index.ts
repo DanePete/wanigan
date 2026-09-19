@@ -112,7 +112,6 @@ import * as uploads from './batch/files';
 import { allSettings, flags, slotsSetting } from './settings';
 import { migrateUserData } from './migrate';
 import { isDaemonInvocation, daemonStatus, installDaemon, uninstallDaemon } from './daemon';
-import * as review from './review';
 import * as codexStatus from './codex-status';
 import * as backup from './backup';
 import * as learning from './learning-service';
@@ -3075,26 +3074,7 @@ function registerIpc() {
   // ── module-owned channels ──────────────────────────────────────────
   // Each module registers through this same `handle`, inside its own
   // `${id}:` namespace; the registry refuses a channel outside it.
-  registerModuleIpc(handle);
-
-  // ── reproducible review gates ──────────────────────────────────────
-  handle('review:recipe', (projectId: string) => review.recipe(projectId));
-  // A saved recipe is command text runCommand hands to `$SHELL -lc`, written once
-  // and executed many times from two surfaces: this channel, and control.runProof
-  // for a goal's verify task, which runs the same stored text in that task's
-  // worktree when it has one. So the question goes on the save, where the
-  // capability is created, rather than on each run, where it would re-ask about
-  // text already approved. Asked here, where a compromised renderer cannot decline
-  // to render it. Only commands the stored recipe does not already hold are shown.
-  handle('review:saveRecipe', (projectId: string, commands: string[]) =>
-    review.saveRecipeWithConsent(win, projectId, commands));
-  handle('review:history', (projectId: string, limit?: number, sessionId?: string) => review.historyWithFreshness(projectId, limit, sessionId));
-  handle('review:run', async (projectId: string, sessionId?: string) => {
-    const result = await review.run(projectId, sessionId);
-    try { learning.observeReviewResult(result); }
-    catch (error) { console.warn('[wanigan] review learning signal skipped:', error); }
-    return result;
-  });
+  registerModuleIpc(handle, { getWindow: () => win });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
   handle('accounts:list', (harness: string) => accounts.list(harness));
