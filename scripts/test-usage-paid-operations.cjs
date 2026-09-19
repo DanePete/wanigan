@@ -31,6 +31,7 @@ function fixture() {
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE interview_calls(id TEXT PRIMARY KEY,interview_id TEXT,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
     rows: () => native.prepare('SELECT source FROM usage_paid_operations ORDER BY at,rowid').all().map(row => row.source) };
@@ -140,6 +141,16 @@ async function main() {
   assert(isAccounted(companionTurn));
   d.exec("UPDATE companion_turns SET output_tokens=13 WHERE id='turn-1'");
   assert.equal(isAccounted(companionTurn), false, 'a changed companion turn cannot authorize a restore');
+
+  // An interview call is one row per answered request, not the interview's running total.
+  const interviewCall = await receiptFor(answer(200, 'req_interview'));
+  d.exec("INSERT INTO interview_calls VALUES ('call-unmetered','iv',1,'fixture',NULL,NULL,NULL); INSERT INTO interview_calls VALUES ('call-1','iv',1,'fixture',4000,600,0.021)");
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_interview', outcome: 'metered', ownerTable: 'interview_calls', ownerId: 'call-unmetered' }, d), false,
+    'an interview call with no recorded meters accounts for nothing');
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_interview', outcome: 'metered', ownerTable: 'interview_calls', ownerId: 'call-1' }, d), true);
+  assert(isAccounted(interviewCall));
+  d.exec("DELETE FROM interview_calls WHERE id='call-1'");
+  assert.equal(isAccounted(interviewCall), false, 'a deleted interview call cannot authorize a restore');
 
   // A settlement that cannot be written never takes the response from its caller.
   d.exec('DROP TABLE usage_paid_settlements');

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import type Database from 'better-sqlite3';
 import type { WaniganModule } from '../module-registry';
+import { accountForPaidOperation } from './usage-paid-operations';
 import { db } from '../db';
 import { client, explainApiError, isMock } from '../batch/anthropic';
 import { getKey } from '../keys';
@@ -375,6 +377,17 @@ async function step(row: Row, force: 'propose' | null): Promise<Interview> {
 
   const note = spent === null ? UNPRICED_NOTE : null;
 
+  // One row per answered call, written before the total moves. The running
+  // total on the interview cannot say which request it came from; this can, and
+  // a call whose meters reached it accounts for that request's paid receipt.
+  const metered = typeof usage?.input_tokens === 'number' && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0
+    && typeof usage.output_tokens === 'number' && Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0;
+  const callId = randomUUID();
+  const requestId = (response as { _request_id?: string | null })._request_id ?? null;
+  db().prepare('INSERT INTO interview_calls(id,interview_id,at,model,input_tokens,output_tokens,cost_usd) VALUES (?,?,?,?,?,?,?)')
+    .run(callId, row.id, now(), row.model, metered ? usage!.input_tokens : null, metered ? usage!.output_tokens : null, metered ? spent : null);
+  if (metered && requestId) accountForPaidOperation({ requestId, outcome: 'metered', ownerTable: 'interview_calls', ownerId: callId });
+
   const call = message.content.find((part) => part.type === 'tool_use');
   const turns = parseTurns(row.turns_json);
   const at = now();
@@ -532,12 +545,24 @@ export function interviewModels(): { id: string; label: string; costPerQuestion:
     .map((model) => ({ id: model.id, label: model.label, costPerQuestion: costPerQuestion(model.id) }));
 }
 
+/** The per-call ledger. Additive: interviews recorded before it keep only their totals. */
+export function migrateInterviewCalls(d: Database.Database): void {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS interview_calls (
+      id TEXT PRIMARY KEY, interview_id TEXT NOT NULL, at INTEGER NOT NULL, model TEXT NOT NULL,
+      input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_interview_calls_interview ON interview_calls(interview_id, at);
+  `);
+}
+
 export const interviewModule = {
   id: 'interview', label: 'Goal interview',
   // Disabling removes the guided way to write a goal; goals can still be written by hand.
   required: null,
   // The interviews table is created by Control's migrate, which records the
-  // interview that produced a goal.
+  // interview that produced a goal. This module owns only the per-call ledger.
+  migrate: migrateInterviewCalls,
   requiresStartedServices: ['start', 'answer', 'conclude'],
   ipc(handle) {
     // Every call spends money, so every call is one the operator took: there is

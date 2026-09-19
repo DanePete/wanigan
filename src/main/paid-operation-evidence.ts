@@ -38,6 +38,12 @@ export function paidSettlementEvidenceHash(d: Database.Database, row: PaidOperat
             .get(row.owner_id) as Record<string, unknown> | undefined;
           if (!owner || !count(owner.input_tokens) || !count(owner.output_tokens)
               || typeof owner.model !== 'string' || !owner.model || (owner.cost_usd !== null && !amount(owner.cost_usd))) return null;
+        } else if (row.owner_table === 'interview_calls') {
+          // The interview sends no cache_control either; one row is one answered call.
+          owner = d.prepare('SELECT id,interview_id,at,model,input_tokens,output_tokens,cost_usd FROM interview_calls WHERE id=?')
+            .get(row.owner_id) as Record<string, unknown> | undefined;
+          if (!owner || !count(owner.input_tokens) || !count(owner.output_tokens) || typeof owner.interview_id !== 'string' || !owner.interview_id
+              || typeof owner.model !== 'string' || !owner.model || (owner.cost_usd !== null && !amount(owner.cost_usd))) return null;
         } else return null;
       } else return null;
     }

@@ -3672,7 +3672,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-sonnet-5',
         content: [reply], stop_reason: 'tool_use',
         ...(usageReported ? { usage: usageReported } : {}),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }), { status: 200, headers: { 'content-type': 'application/json', 'request-id': `req_smoke_interview_${seen.length}` } });
     }) as typeof fetch;
 
     const ask = (question: string) => ({ type: 'tool_use', id: 't1', name: 'ask_one_question', input: { question, why: 'it changes the plan' } });
@@ -3714,6 +3714,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         'the interview opens with one question and no answer', iv.turns[0]?.question);
       check(iv.spendUsd > 0 && iv.calls === 1,
         'the first question is priced from what the API reported, not estimated', iv.spendUsd);
+      const firstCall = db().prepare('SELECT id,input_tokens,output_tokens,cost_usd FROM interview_calls WHERE interview_id=?').all(iv.id) as { id: string; input_tokens: number; output_tokens: number; cost_usd: number }[];
+      const firstSettlement = db().prepare("SELECT outcome,owner_id FROM usage_paid_settlements WHERE request_id='req_smoke_interview_1'").get() as { outcome: string; owner_id: string | null } | undefined;
+      check(firstCall.length === 1 && firstCall[0].input_tokens === 4_000 && firstCall[0].output_tokens === 600 && firstCall[0].cost_usd === iv.spendUsd,
+        'each answered interview call leaves its own ledger row with the meters the API reported', firstCall);
+      check(firstSettlement?.outcome === 'metered' && firstSettlement.owner_id === firstCall[0]?.id,
+        'a metered interview call accounts for its own paid receipt', firstSettlement);
 
       // Synchronous rates, not batch. The pricing table is batch pricing and
       // says so; charging an interview at it would report half of what it cost.
