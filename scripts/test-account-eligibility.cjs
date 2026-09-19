@@ -92,6 +92,13 @@ async function main() {
   f.state.claude = { identity: { email: 'c@example.invalid', orgName: 'Org' }, failure: null };
   assert.deepEqual(await check(claude, { attended: false }), []);
   assert.equal(f.row(claude.id).ordinary_usage_allowed, null);
+  // A renamed organisation is the same login; a different organisation id is not.
+  f.state.claude = { identity: { email: 'c@example.invalid', orgName: 'Org' }, orgId: 'org-1', failure: null };
+  await check(claude, { attended: true });
+  f.state.claude = { identity: { email: 'c@example.invalid', orgName: 'Org, renamed' }, orgId: 'org-1', failure: null };
+  assert.deepEqual(await check(claude, { attended: false }), []);
+  f.state.claude = { identity: { email: 'c@example.invalid', orgName: 'Org, renamed' }, orgId: 'org-2', failure: null };
+  await assert.rejects(check(claude, { attended: false }), /different login/);
   f.state.claude = { identity: null, failure: null };
   await assert.rejects(check(claude, { attended: false }), /Claude Work reports no signed-in account/);
   f.state.claude = { identity: null, failure: 'The agent answered `auth status --json` with something this reader could not parse.' };

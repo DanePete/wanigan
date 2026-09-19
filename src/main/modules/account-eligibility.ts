@@ -57,7 +57,9 @@ async function read(account: AgentAccount): Promise<EligibilityReading | null> {
       if (auth.failure) return unverified(auth.failure);
       return {
         authState: auth.identity ? 'signed-in' : 'signed-out', requiresLogin: true, ordinaryUsageAllowed: null, failure: null,
-        loginDigest: auth.identity ? digest([auth.identity.email, auth.identity.orgName]) : null,
+        // The organisation's id where the CLI reports one: a renamed
+        // organisation is the same login, and must not refuse a queue.
+        loginDigest: auth.identity ? digest([auth.identity.email, auth.orgId ?? auth.identity.orgName]) : null,
       };
     }
     // No reader for this harness. That is not evidence about its login.

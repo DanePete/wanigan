@@ -216,7 +216,7 @@ function neutralCwd(): string {
  */
 async function runAuthStatus(
   account: AgentAccount,
-): Promise<{ identity: AccountIdentity | null; failure: string | null }> {
+): Promise<{ identity: AccountIdentity | null; failure: string | null; orgId?: string | null }> {
   const { text, failure } = await run(account, ['auth', 'status', '--json']);
   if (failure) return { identity: null, failure };
   // Warnings from the account's own settings file are printed before the JSON,
@@ -236,6 +236,8 @@ async function runAuthStatus(
         email: str(raw.email), orgName: str(raw.orgName),
         plan: str(raw.subscriptionType), authMethod: str(raw.authMethod),
       },
+      // Stays in main. A display name can be edited; this is who it is.
+      orgId: str(raw.orgId),
       failure: null,
     };
   } catch (e) {
@@ -244,7 +246,7 @@ async function runAuthStatus(
 }
 
 /** Who is signed in, and nothing else: no usage probe runs. For the launch gate. */
-export function claudeAuthState(account: AgentAccount): Promise<{ identity: AccountIdentity | null; failure: string | null }> {
+export function claudeAuthState(account: AgentAccount): Promise<{ identity: AccountIdentity | null; failure: string | null; orgId?: string | null }> {
   return runAuthStatus(account);
 }
 
