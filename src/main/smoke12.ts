@@ -1,6 +1,7 @@
 import { db } from './db';
 import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
 import { admittedFetch } from './modules/usage-paid-operations';
+import { directRequestConsumption, directRequestDaily } from './modules/usage-direct-requests';
 import { paidOperationAccountedFor, type PaidOperationEvidence } from './paid-operation-evidence';
 import Anthropic from '@anthropic-ai/sdk';
 import { companionUsage } from './companion-usage';
@@ -84,6 +85,20 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
   db().prepare('UPDATE companion_turns SET output_tokens=output_tokens+1 WHERE id=?').run(answer.id);
   check(!paidOperationAccountedFor(db(),receiptOf(answer.id)!),'a turn whose recorded meters later change no longer accounts for its receipt');
   db().prepare('UPDATE companion_turns SET output_tokens=output_tokens-1 WHERE id=?').run(answer.id);
+  // Usage's own ledger for callers that keep none reaches the Usage screen.
+  const priced=snapshot.defaultModel,t0=Date.now();
+  const direct=db().prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id) VALUES (?,?,?,?,?,?,?)');
+  direct.run('direct-1',t0,'batch:dry-run',priced,1000,200,'req_d1');direct.run('direct-2',t0,'batch:dry-run',priced,500,100,'req_d2');
+  const dryRows=directRequestConsumption(t0-1).filter(row=>row.accountLabel==='Claude Platform · Dry run');
+  check(dryRows.length===1&&dryRows[0].requests===2&&dryRows[0].inTokens===1500&&dryRows[0].outTokens===300
+    &&dryRows[0].costUsd===0&&dryRows[0].costStatus==='unreported'&&(dryRows[0].estimatedCostUsd??0)>0,
+    'dry-run samples are totalled on the Usage screen as an estimate from recorded tokens, never as a reported bill');
+  direct.run('direct-3',t0,'batch:dry-run','unpriced-fixture-model',10,10,'req_d3');
+  const unpricedRow=directRequestConsumption(t0-1).find(row=>row.model==='unpriced-fixture-model');
+  check(!!unpricedRow&&unpricedRow.inTokens===10&&!('estimatedCostUsd' in unpricedRow),'an unpriced sample shows its tokens and no figure');
+  check(directRequestDaily(t0-1).filter(row=>row.accountLabel==='Claude Platform · Dry run').reduce((sum,row)=>sum+row.tokens,0)===1820
+    &&directRequestConsumption(t0+60_000).length===0,'the daily series totals the same tokens, and the cutoff is honoured');
+  db().prepare("DELETE FROM usage_direct_requests WHERE id LIKE 'direct-%'").run();
   check(!sent.includes('PRIVATE-'),'transport receives only bounded operational metadata');
   check(service.history(null).length===0&&service.history(project.id).some(t=>t.id===answer.id),
     'project conversation history stays in its own scope');
