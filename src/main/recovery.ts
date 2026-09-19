@@ -24,7 +24,7 @@ const REQUIRED_EVIDENCE_TABLES = [
   'review_recovery_evidence', 'session_metrics', 'session_api_events',
   'session_telemetry_coverage', 'session_telemetry_issues',
   'session_telemetry_receipts', 'runs', 'batches', 'events', 'learning_model_runs', 'recovery_resolutions',
-  'companion_turns', 'interviews', 'usage_paid_operations',
+  'companion_turns', 'interviews', 'usage_paid_operations', 'usage_paid_settlements',
 ] as const;
 
 function adapters(): Map<string, RecoveryAdapter> {

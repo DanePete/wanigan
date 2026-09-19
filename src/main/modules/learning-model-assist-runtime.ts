@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { db } from '../db';
-import { admitPaidOperation } from './usage-paid-operations';
+import { accountForPaidOperation, admitPaidOperation } from './usage-paid-operations';
 import { getSetting, setSetting } from '../settings';
 import { providerById, refreshProviderPacks, shellPath, type ProviderDef } from '../providers';
 import { headlessEnv, parseCliOutput, resolveBin } from '../headless';
@@ -241,7 +241,8 @@ function recordRun(input: {
   providerId: string; backendId: string | null; clusterKey: string | null;
   status: 'ok' | 'failed' | 'refused'; costUsd: number | null;
   inTokens: number; outTokens: number; durationMs: number; error: string | null;
-}): void {
+}): string | null {
+  const id = randomUUID();
   try {
     db().prepare(`
       INSERT INTO learning_model_runs
@@ -249,7 +250,7 @@ function recordRun(input: {
          in_tokens, out_tokens, duration_ms, error)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
-      randomUUID(), Date.now(), input.providerId, input.backendId, input.clusterKey,
+      id, Date.now(), input.providerId, input.backendId, input.clusterKey,
       input.status, input.costUsd ?? 0, input.costUsd === null ? 0 : 1,
       input.inTokens, input.outTokens, input.durationMs, input.error,
     );
@@ -257,7 +258,9 @@ function recordRun(input: {
     // The ledger failing must not also lose the phrasing, but an unrecorded
     // spend is exactly what the budget gate depends on, so it is loud.
     console.warn('[wanigan] learning model run not recorded:', error);
+    return null;
   }
+  return id;
 }
 
 /* ── routing ──────────────────────────────────────────────────────────── */
@@ -499,15 +502,16 @@ async function invoke(
   }
 
   let stdout: string;
+  let receiptId: string;
   try {
-    stdout = await run(bin, argv, scratch, env);
+    ({ stdout, receiptId } = await run(bin, argv, scratch, env));
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error));
   }
 
   const reported = parseCliOutput(stdout);
   const claim = reported.isError ? null : parseClaimReply(reported.message);
-  recordRun({
+  const runId = recordRun({
     providerId: routing.providerId,
     backendId: routing.backendId,
     clusterKey,
@@ -522,6 +526,11 @@ async function invoke(
     error: reported.isError ? (reported.message ?? 'The harness reported an error.')
       : claim ? null : 'No usable claim in the reply.',
   });
+  // A reported cost is the harness's own estimate, and is accounted for as
+  // one. A run that reported none, or could not be recorded, stays unresolved.
+  if (runId && reported.costUsd !== null) {
+    accountForPaidOperation({ receiptId, outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: runId });
+  }
 
   // The run that proved a harness unmetered is also the last one it gets: turn
   // the switch off here rather than refusing silently on every later pass, so
@@ -623,11 +632,11 @@ export async function probe(providerId: string, budgetUsd: number): Promise<Prob
   };
 }
 
-function run(bin: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+function run(bin: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{ stdout: string; receiptId: string }> {
   return new Promise((resolve, reject) => {
     // Immediately before the spawn: the run row is written only after the
     // child completes, and a failed receipt must mean no child.
-    admitPaidOperation('learning:cli');
+    const receiptId = admitPaidOperation('learning:cli');
     const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let truncated = false;
@@ -663,7 +672,7 @@ function run(bin: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv): 
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(out);
+      resolve({ stdout: out, receiptId });
     });
   });
 }

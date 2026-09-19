@@ -2,6 +2,29 @@
 
 Prepared on `feat/routing-suggester` after the recovery phase closed ([handoff](2026-09-19-relay-recovery-implementation-handoff.md)), then revised the same day against two primary-source research notes: the [Codex account protocol](../../research/2026-09-19-codex-account-protocol-sources.md) (installed `codex-cli 0.155.1`, its offline-generated types, and `openai/codex` at `rust-v0.155.1`) and [paid-request settlement](../../research/2026-09-19-paid-request-settlement-sources.md) (Anthropic's API and billing documentation and `@anthropic-ai/sdk` 0.68.0 source). This document changes no runtime behaviour and ran no provider. The four decisions that were open in the first draft are made below, each with its reason; they are the author's recommendation and the operator can overrule any of them before implementation starts.
 
+## Implementation status — 2026-09-19
+
+Steps 1 to 5 are implemented and committed on `feat/routing-suggester`; step 6 needed no new renderer code. Read this section before the plan below, because two things landed differently than planned and one part is deliberately unfinished.
+
+| Step | Commit | What landed |
+| --- | --- | --- |
+| 1 Convert | `52ea866` | Exact moves of the five readers behind required Usage; each diff against its original is import lines only. |
+| 3 Codex findings | `e54e396` | Account-bound, paginated model catalog that is never presented as access; every bucket kept; `ordinaryUsageAllowed` stated first; passed reset is stale, never recovered; keyring accounts never served from cache; API-key logins are "not applicable"; stable-surface handshake; outgoing method set pinned by test. Parsing moved to `src/shared/codex-account.ts`. |
+| 3 DISC-05 | `98bf2e0` | Backend catalog cache carries a credential revision (a digest, never stored or sent). |
+| 3 DISC-06 | `49c4f25` | Claude resets resolved in the printed zone; no zone means no countdown; "last-known usage" kept verbatim beside the windows. |
+| 2 and 4 Module and gate | `002cc94` | Required `account-eligibility` module; login read before the synchronous stretch of both launch paths, account re-resolved inside it and required to match. |
+| 5 Settlement | this commit | `usage_paid_settlements` sibling table; response facts recorded at the transport; Improve prompt and the learning CLI account for their own receipts; Recovery treats only accounted-for receipts as resolved. |
+
+**Narrowed from decision 2.** The plan said unattended work refuses when the login cannot be verified at all. It does not. A CLI too old to answer `auth status --json` or `account/read` is indistinguishable from a failed read, and refusing on it would stop every queue on a guess, while a false allow only lets the CLI fail as it does today. Unattended work is refused on evidence only: signed out, `ordinaryUsageAllowed` false, or a different login than the one a person last confirmed. An unverifiable login is said and recorded. Attended launches are never refused, because starting a session is how a signed-out account signs in; the person is told in the session's account note.
+
+**"The reading the decision was made on" became "the login a person last confirmed".** Only an attended launch by an identified, signed-in login moves the confirmation. A swapped login therefore stays refused for unattended work until somebody has launched on it and seen the note, rather than passing on the second attempt. The stored value is a digest of what the provider reported, never an email. A plan change is not a different person and is left out of it.
+
+**Unfinished on purpose: four owner links.** A receipt is accounted for when the provider answered with an error and its request id (`not-charged-provider-stated`), when an owning ledger recorded the meters (`metered`), or when a CLI reported a cost (`reported-estimate`). The owner link exists for Improve prompt and the learning CLI, which are already modules. It does **not** exist for Companion, legacy interviews, batch submission or the dry-run sample request: those live in unconverted `src/main` files, and AGENTS.md requires converting each before changing it. Until then their successful requests are recorded as answered with no recorded meters and still refuse a restore, exactly as before this phase. That is a smaller gap than before, since every provider error response now settles on its own, but it is not closed, and the dry-run sample still has no ledger at all.
+
+**Latency added to every launch.** An attended Codex launch now waits on the status read (reused for 45 seconds when the login is file-witnessed) and an attended Claude launch on `claude auth status --json`. Neither was measured against a live CLI in this phase.
+
+**Not exercised live.** No reader was run against a real account during implementation; every behaviour above is proven with protocol doubles, real SQLite and real harmless processes. The Codex shapes come from the installed binary's offline type generator. The pagination loop has only ever seen fixture pages, because one page is the whole list today.
+
 ## Outcome
 
 Before Wanigan starts work on an account — attended, queued, scheduled or relayed — it can say which login would run it, whether that login is signed in now, what allowance the provider reported and when, and it says "unknown" wherever it cannot. A reading taken under one login never authorises a launch under another, and the check is made again at the moment of dispatch and spawn, not only at preview.

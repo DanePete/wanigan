@@ -7,6 +7,7 @@ import { getKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
 import { refuseIfHalted, registerHaltStopper } from '../halt';
 import { inspectRecoveryOwner } from '../recovery-inspection';
+import { accountForPaidOperation } from './usage-paid-operations';
 import {
   migratePromptImproveUsage, promptImproveConsumption, promptImproveDaily, recordPromptImproveMeters,
 } from '../prompt-improve-usage';
@@ -49,6 +50,8 @@ export type PromptImproveCompletion = {
   cacheRead?: number | null;
   cacheCreation?: number | null;
   stopReason?: string | null;
+  /** The provider's id for this request, which is how its pre-submission receipt is found. */
+  requestId?: string | null;
 };
 
 type Dependencies = {
@@ -133,6 +136,11 @@ export function createPromptImproveService(deps: Dependencies) {
           // Attached to the actual response, not the cancellation race: a late
           // bill belongs to this original row and cannot revive its suggestion.
           const meters = recordPromptImproveMeters(d, input.requestId, at, result);
+          // This row is the ledger for that request. Tokens are the meter; the
+          // estimate is arithmetic over them, so its absence does not unmeter it.
+          if (meters.inputTokens !== null && meters.outputTokens !== null) {
+            accountForPaidOperation({ requestId: result.requestId, outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: input.requestId }, d);
+          }
           return { result, meters };
         });
         const { result, meters } = await abortable(pending, signal);
@@ -191,6 +199,7 @@ export async function completePromptImprovement(input: PromptImproveRequest, sig
     model: response.model, input: response.usage?.input_tokens ?? null, output: response.usage?.output_tokens ?? null,
     cacheRead: response.usage?.cache_read_input_tokens ?? 0, cacheCreation: response.usage?.cache_creation_input_tokens ?? 0,
     stopReason: response.stop_reason,
+    requestId: (response as { _request_id?: string | null })._request_id ?? null,
   };
 }
 

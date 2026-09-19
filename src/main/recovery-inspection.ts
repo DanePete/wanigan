@@ -78,15 +78,25 @@ function inspectUsageLiability(d: Database.Database): RecoveryObservation[] {
   }));
 }
 
-/** Required Usage's prospective receipts. There is no settlement contract, so
- * every one is unresolved whether or not its request later returned. */
+/** Required Usage's prospective receipts. One is resolved only when its
+ * settlement row says the provider stated no charge, or an owning ledger
+ * recorded its meters. An answer nobody recorded, and no answer, stay open. */
 function inspectPaidOperations(d: Database.Database): RecoveryObservation[] {
   if (!hasTable(d, 'usage_paid_operations')) return [];
-  return (d.prepare('SELECT id,source,at FROM usage_paid_operations ORDER BY id').all() as { id: string; source: string; at: number }[]).map(row => ({
+  const rows = d.prepare(`SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id
+    FROM usage_paid_operations o LEFT JOIN usage_paid_settlements s ON s.receipt_id=o.id
+    WHERE s.outcome IS NULL OR s.outcome NOT IN ('not-charged-provider-stated','metered','reported-estimate')
+    ORDER BY o.id`).all() as { id: string; source: string; at: number; outcome: string | null; http_status: number | null; request_id: string | null }[];
+  return rows.map(row => ({
     key: `usage:usage_paid_operations:${row.id}`, module: 'usage', operationId: row.id, cwd: null,
     execution: 'unsupported', checkout: 'not claimed', billing: 'unresolved',
-    source: `Paid request admitted before submission (${row.source})`, observedAt: row.at,
-    reason: 'This request was recorded before it was sent and has no settlement contract. A returned response or an exited process does not establish what it cost, so it stays unresolved.',
+    source: row.outcome
+      ? `Paid request answered (${row.source}, HTTP ${row.http_status ?? 'unknown'}) with no recorded meters`
+      : `Paid request admitted before submission (${row.source}) with no recorded response`,
+    observedAt: row.at,
+    reason: row.outcome
+      ? 'The provider answered, but no owning ledger recorded what this request metered, so what it cost is not known here.'
+      : 'This request was recorded before it was sent and no response was recorded. The provider states that a request the client abandons is still charged, so it stays unresolved and does not age out.',
     revision: evidenceHash(row), canReconcile: false,
   }));
 }

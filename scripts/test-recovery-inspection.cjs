@@ -229,6 +229,7 @@ test('each independent owner or remote liability refuses direct restore without 
     ['Improve prompt failed before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','failed')")],
     ['Improve prompt answered on an unpriced model', f => f.native.exec("INSERT INTO prompt_improve_usage VALUES ('improve',1,'fixture','fixture','answered',4,2,0,NULL)")],
     ['paid request admitted before submission', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)")],
+    ['paid request answered with no recorded meters', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements VALUES ('paid',2,'responded',200,'req',NULL,NULL)")],
     ['remote batch', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'in_progress',NULL)")],
     ['ended batch without ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',NULL)")],
     ['ended batch with partial ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',-1)")],
@@ -288,6 +289,9 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       INSERT INTO learning_model_runs VALUES ('learning',1,'ok',1,0);
       INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);
       INSERT INTO prompt_improve_usage VALUES ('answered',1,'fixture','fixture','answered',4,2,0,0.001);
+      INSERT INTO usage_paid_operations VALUES ('stated','anthropic:messages',1),('metered','anthropic:messages',1),('estimated','learning:cli',1);
+      INSERT INTO usage_paid_settlements VALUES ('stated',2,'not-charged-provider-stated',429,'req_a',NULL,NULL),
+        ('metered',2,'metered',200,'req_b','prompt_improve_usage','answered'),('estimated',2,'reported-estimate',NULL,NULL,'learning_model_runs','learning');
       INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);`);
     f.native.prepare('INSERT INTO headless_rows(run_id,project_id,project_name,project_path,status,started_at,ended_at,cost_reported,cost_usd) VALUES (?,?,?,?,?,?,?,?,?)')
       .run('headless', 'fixture', 'Fixture', f.checkout, 'done', 1, 2, 1, 0);
@@ -300,7 +304,7 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
 });
 
 test('missing required schema is explicitly unavailable and cannot authorize preview or direct restore', () => {
-  for (const table of ['checkout_activity', 'review_recovery_evidence', 'session_telemetry_issues', 'session_telemetry_coverage', 'runs', 'batches', 'events', 'learning_model_runs', 'usage_paid_operations']) {
+  for (const table of ['checkout_activity', 'review_recovery_evidence', 'session_telemetry_issues', 'session_telemetry_coverage', 'runs', 'batches', 'events', 'learning_model_runs', 'usage_paid_operations', 'usage_paid_settlements']) {
     const f = fixture({ register: false });
     try {
       f.finalized(); f.native.exec(`DROP TABLE ${table}`);
