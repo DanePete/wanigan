@@ -2,6 +2,7 @@ import type { WaniganModule } from '../module-registry';
 import * as usage from '../usage';
 import * as otel from '../otel';
 import * as statusline from '../statusline';
+import { migrateUsage } from './usage-storage';
 
 /** Usage owns the existing telemetry and consumption channels. The evidence
  * collector and database remain the source of truth; these reads cannot be
@@ -10,6 +11,7 @@ export const usageModule: WaniganModule = {
   id: 'usage',
   label: 'Usage',
   required: { reason: 'Exposes recorded session evidence and provider usage readings across the app.' },
+  migrate: migrateUsage,
   ipc(handle) {
     // ══ phase 1 · telemetry ═════════════════════════════════════════════
     /*
