@@ -212,6 +212,7 @@ async function headlessProcesses(mode) {
   const cli = path.join(directory, 'fixture-cli');
   fs.writeFileSync(cli, `#!${process.execPath}\nconst fs=require('node:fs'),cp=require('node:child_process');
 const directory=${JSON.stringify(directory)};
+fs.writeFileSync(directory+'/launched','1');
 if (${JSON.stringify(mode)}==='orphan') {
  const child=cp.spawn(process.execPath,[${JSON.stringify(__filename)},'writer',directory],{stdio:'ignore'});
  child.unref();fs.writeFileSync(directory+'/descendant.pid',String(child.pid));
@@ -236,10 +237,27 @@ else console.log(JSON.stringify({type:'result',total_cost_usd:0,usage:{input_tok
     .run(JSON.stringify(config));
   f.native.prepare(`INSERT INTO headless_rows(run_id,project_id,project_name,project_path,status)
     VALUES('current','p','Fixture',?,'pending')`).run(directory);
+  // Nobody is present for a fan-out row. The gate's own rule is tested in
+  // test-account-eligibility.cjs; here it is the production headless path that
+  // must stop on its refusal without starting the child or trying elsewhere.
+  if (mode === 'refused') f.stubs['src/main/modules/account-eligibility.ts'] = { checkAccountEligibility: async (_account, options) => {
+    assert.deepEqual(options, { attended: false });
+    throw new Error('Work reports no signed-in account. Unattended work was not started, and no other account was tried.');
+  } };
   const headless = f.load('src/main/headless.ts');
   let running;
   try {
     running = headless.runOneRepo('current', 'p');
+    if (mode === 'refused') {
+      await running;
+      const [row] = headless.headlessRows('current');
+      assert.equal(row.status, 'errored'); assert.match(row.error, /no signed-in account.*no other account was tried/);
+      assert.equal(fs.existsSync(path.join(directory, 'launched')), false, 'the refused child was never started');
+      const activity = f.load('src/main/checkout-activity.ts');
+      assert.doesNotThrow(() => activity.assertCheckoutAvailable(directory, 'restore'), 'a launch that never started holds no checkout');
+      console.log('PASS: a login refused for unattended work fails its headless row without starting the child or holding the checkout');
+      return;
+    }
     if (mode === 'hold') {
       await until(() => fs.existsSync(path.join(directory, 'writes')));
       await assert.rejects(headless.runOneRepo('current', 'p'), /already running/);
@@ -341,6 +359,7 @@ async function main() {
   await queueRecovery(false);
   await headlessRecovery();
   if (process.platform !== 'win32') {
+    await headlessProcesses('refused');
     await headlessProcesses('complete');
     await headlessProcesses('hold');
     await headlessProcesses('orphan');

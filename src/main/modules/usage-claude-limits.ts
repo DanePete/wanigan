@@ -243,6 +243,11 @@ async function runAuthStatus(
   }
 }
 
+/** Who is signed in, and nothing else: no usage probe runs. For the launch gate. */
+export function claudeAuthState(account: AgentAccount): Promise<{ identity: AccountIdentity | null; failure: string | null }> {
+  return runAuthStatus(account);
+}
+
 async function runProbe(account: AgentAccount): Promise<ProbeResult> {
   return await run(account, ['-p', '/usage']);
 }

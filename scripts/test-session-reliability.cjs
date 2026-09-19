@@ -58,8 +58,18 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
       refreshProviderPacks: noop, runsClaudeCli: () => false, missingCredentialIds: () => [], providerProbeEnvironment: () => ({}) },
     './store': { projectById: () => project, listProjects: () => [project] },
     './halt': { refuseIfHalted: noop },
+    // The launch gate reads a login, so it is an explicit double like every
+    // other process boundary here; its own rule is tested in test-account-eligibility.cjs.
+    './modules/account-eligibility': { checkAccountEligibility: async (account, options) => {
+      state.eligibilityChecks = [...(state.eligibilityChecks ?? []), { account, ...options }];
+      if (state.eligibilityRefusal) throw new Error(state.eligibilityRefusal);
+      return [];
+    } },
     './accounts': { appliesTo: () => false, resolve: () => {
-      if (state.accountFailure) throw new Error('The chosen account no longer exists.');
+      // A launch resolves its account twice: once before anything exists, to
+      // check the login, and again in the synchronous stretch before the spawn.
+      state.resolves = (state.resolves ?? 0) + 1;
+      if (state.accountFailure && state.resolves >= (state.accountFailureFromResolve ?? 1)) throw new Error('The chosen account no longer exists.');
       return { account: null };
     }, applyLaunchEnv: noop,
       get: () => null, byId: () => null, supportsAccounts: () => false },
@@ -493,11 +503,36 @@ test('fresh real Git worktrees override the shared default, and clone failure st
 test('a rejected account after preparation cancels its checkpoint and releases the checkout without spawning', async () => {
   const f = fixture();
   try {
-    f.state.accountFailure = true;
+    // Removed while the launch was preparing: present for the login check,
+    // gone by the synchronous stretch, where there is now something to undo.
+    f.state.accountFailure = true; f.state.accountFailureFromResolve = 2;
     await assert.rejects(f.load('src/main/sessions.ts').createSession({ providerId: 'fixture', projectId: 'project', accountId: 'removed' }), /account no longer exists/);
     assert.equal(f.launches.length, 0);
     assert.equal(f.state.checkpointCancelled, true);
     assert.equal(f.checks.filter(value => value === 'released').length, 1);
+  } finally { f.close(); }
+});
+
+test('an account already gone, or a login refused for unattended work, stops the launch before anything exists to undo', async () => {
+  for (const arrange of [state => { state.accountFailure = true; }, state => { state.eligibilityRefusal = 'Work reports no signed-in account. Unattended work was not started, and no other account was tried.'; }]) {
+    const f = fixture();
+    try {
+      arrange(f.state);
+      await assert.rejects(f.load('src/main/sessions.ts').createSession({ providerId: 'fixture', projectId: 'project' }, { unattended: true }), /no longer exists|no other account was tried/);
+      assert.equal(f.launches.length, 0);
+      assert.equal(f.state.checkpointCancelled, undefined, 'no checkpoint was ever opened');
+      assert.equal(f.checks.filter(value => value === 'released').length, 0, 'no checkout was ever claimed');
+    } finally { f.close(); }
+  }
+});
+
+test('every launch consults the login gate once, as attended unless a main-owned caller says otherwise', async () => {
+  const f = fixture();
+  try {
+    const sessions = f.load('src/main/sessions.ts');
+    await sessions.createSession({ providerId: 'fixture', projectId: 'project' });
+    await sessions.createSession({ providerId: 'fixture', projectId: 'project' }, { unattended: true });
+    assert.deepEqual(f.state.eligibilityChecks.map(check => check.attended), [true, false]);
   } finally { f.close(); }
 });
 

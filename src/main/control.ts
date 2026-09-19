@@ -759,7 +759,9 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
       accountId: input.accountId ?? node.accountId ?? undefined,
       isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
       { ...(inherited ? { useWorktree: inherited } : {}), retainWorktree: true,
-        requirePrivateDependencies: node.kind === 'implement', beforeSpawn });
+        requirePrivateDependencies: node.kind === 'implement', beforeSpawn,
+        // Only a main-owned automatic caller holds this capability; IPC never does.
+        unattended: Boolean(beforeSpawn) });
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);
     throw error;

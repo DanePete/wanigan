@@ -16,6 +16,7 @@ import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } fr
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceHeld, announceRunEnded } from './notify';
 import { refuseIfHalted } from './halt';
+import { checkAccountEligibility } from './modules/account-eligibility';
 import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
@@ -1307,8 +1308,26 @@ async function runRow(runId: string, projectId: string, onClaimed: (claim: Owned
     } catch { /* learned context is an optimization, never a launch dependency */ }
   }
 
-  // Briefing freshness checks touch the filesystem asynchronously. A cancel can
-  // land while they run, so do not let a paid child slip out after cancellation.
+  // Asked here because it awaits a read, and everything from the last trust
+  // refresh to the spawn below is synchronous on purpose. Nobody is present for
+  // a fan-out row, so evidence against the login stops it rather than spending
+  // an allowance no person confirmed. No other account is tried.
+  let eligibleAccountId: string | null;
+  try {
+    const candidate = accounts.resolve({
+      harness: def.harness, projectId,
+      appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(def.env?.() ?? {})),
+    }).account;
+    await checkAccountEligibility(candidate, { attended: false });
+    eligibleAccountId = candidate?.id ?? null;
+  } catch (error) {
+    releaseHooks();
+    failRow(runId, projectId, error instanceof Error ? error.message : String(error), startedAt);
+    return;
+  }
+
+  // Briefing freshness checks and the login read yield. A cancel can land while
+  // they run, so do not let a paid child slip out after cancellation.
   if (headlessStopping || canceledRuns.has(runId)) {
     releaseHooks();
     markCanceled(runId, projectId);
@@ -1340,6 +1359,9 @@ async function runRow(runId: string, projectId: string, onClaimed: (claim: Owned
       harness: def.harness, projectId,
       appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
     }).account;
+    if ((account?.id ?? null) !== eligibleAccountId) {
+      throw new Error('the account this repository launches as changed while it was being prepared, so its login was not the one checked');
+    }
     env = headlessEnv(launchPath, providerEnvValues, account, worktreeEnv);
     args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule, resume ? { cliSessionId: resume.cliSessionId } : null);
   } catch (error) {

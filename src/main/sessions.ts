@@ -14,6 +14,7 @@ import {
 import { projectById } from './store';
 import { db } from './db';
 import { refuseIfHalted } from './halt';
+import { checkAccountEligibility } from './modules/account-eligibility';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -403,6 +404,8 @@ type CreateSessionInternal = {
   requirePrivateDependencies?: boolean;
   /** Main-owned authorization is rechecked after asynchronous preparation. */
   beforeSpawn?: () => void;
+  /** Nobody is present to read a warning, so evidence against the login refuses the launch. */
+  unattended?: boolean;
   /**
    * An existing worktree this session must run in, instead of cutting a fresh
    * one. Main-process callers only, and only Control uses it: a verification
@@ -1145,6 +1148,17 @@ async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessio
   const pinnedAccount = savedResume
     ? resumeAccountFor(savedResume.sessionId, def.harness, opts.accountId ?? null)
     : null;
+  // The login is asked about here for the same reason: it awaits a read, and
+  // nothing from the last trust check to the spawn may. A person launching is
+  // told what the provider reported and decides; a main-owned automatic caller
+  // has nobody to ask and is refused on evidence. The account is resolved again
+  // in the synchronous stretch below and must be this one.
+  const checkedAccount = accounts.resolve({
+    harness: def.harness, projectId: project.id,
+    explicitAccountId: pinnedAccount?.accountId ?? opts.accountId ?? null,
+    appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(def.env?.() ?? {})),
+  }).account;
+  const eligibilityNotes = await checkAccountEligibility(checkedAccount, { attended: !internal.unattended });
   let conversationId = exactRecovery?.conversationId ?? savedResume?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
   if (exactRecovery) {
@@ -1624,7 +1638,11 @@ async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessio
   // session as an account it never authenticated with.
   meta.accountId = account?.id ?? null;
   meta.accountLabel = account?.label ?? null;
-  meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  const sameAccountAsChecked = (account?.id ?? null) === (checkedAccount?.id ?? null);
+  meta.accountNote = [
+    account && pinnedAccount?.note ? pinnedAccount.note : null,
+    ...(sameAccountAsChecked ? eligibilityNotes : ['The account changed while this session was being prepared, so its login was not checked before launch.']),
+  ].filter(Boolean).join(' ') || null;
   meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
   if (codexHooks) meta.codexHooks = codexHooks.delivery;
@@ -1659,6 +1677,9 @@ async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessio
 
   try {
     if (!checkoutStillOwned()) throw new Error('The session checkout changed while launch was preparing. Refresh and launch again.');
+    if (internal.unattended && !sameAccountAsChecked) {
+      throw new Error('The account this task launches as changed while it was being prepared, so its login was not the one checked. Unattended work was not started.');
+    }
     internal.beforeSpawn?.();
   } catch (error) {
     if (resumeKey) resumingConversations.delete(resumeKey);
