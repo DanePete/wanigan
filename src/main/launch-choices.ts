@@ -2,7 +2,7 @@ import type { LaunchModelCatalogue, LaunchModelRow, ProviderInfo } from '../shar
 import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fields';
 import { db } from './db';
 import * as codexStatus from './codex-status';
-import { backendModels } from './backend-catalog';
+import { backendModels, credentialRevisionOf } from './backend-catalog';
 import { getProviderKey } from './keys';
 import { effectiveProviderBackendId, providerPackRegistry } from './providers';
 
@@ -182,6 +182,8 @@ export function declaredBackendCatalogue(backendId: string): (() => Promise<Laun
       // its published list with a note saying so, which is the reader's own
       // rule rather than a branch here.
       credential: () => (catalog.auth?.source === 'credential' ? getProviderKey(catalog.auth.id) : null),
+      // An in-memory read, so a cache hit still opens no keychain.
+      credentialRevision: () => credentialRevisionOf(catalog.auth?.source === 'credential' ? getProviderKey(catalog.auth.id) : null),
     });
     return {
       rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),

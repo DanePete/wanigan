@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { catalogUrl, fallbackNote, modelsFromCatalogBody } from '../../shared/backend-catalog';
 import type { BackendCatalogManifest, BackendCatalogModel } from '../../shared/backend-catalog';
 
@@ -43,7 +44,15 @@ export type BackendCatalogRead = {
   source: 'live' | 'published';
 };
 
-type Entry = { at: number; models: BackendCatalogModel[]; note: string | null };
+type Entry = { at: number; models: BackendCatalogModel[]; note: string | null; revision: string };
+
+/** Which credential a catalog was read under, as a digest that is never
+ * stored or sent. A catalog is evidence about one key; a different key, or no
+ * key, must not inherit it as `live`. Anonymous catalogs share one revision. */
+export function credentialRevisionOf(key: string | null | undefined): string {
+  const token = key?.trim();
+  return token ? createHash('sha256').update(token).digest('hex') : 'none';
+}
 
 const cache = new Map<string, Entry>();
 
@@ -119,11 +128,22 @@ export async function backendModels(input: {
   backendLabel: string;
   catalog: BackendCatalogManifest;
   credential: () => string | null;
+  /**
+   * The current credential's revision, from a source that does not open the
+   * keychain. Save and clear already forget the entry; this covers the change
+   * nobody announced — another identity, an environment variable, a second
+   * process. Omitted, an entry is reusable only by a read that also omits it.
+   */
+  credentialRevision?: () => string;
   force?: boolean;
 }): Promise<BackendCatalogRead> {
   const { backendId, backendLabel, catalog } = input;
+  let revision = 'unstated';
+  if (catalog.auth?.source === 'credential' && input.credentialRevision) {
+    try { revision = input.credentialRevision(); } catch { revision = credentialRevisionOf(null); }
+  }
   const cached = cache.get(backendId);
-  if (!input.force && cached && Date.now() - cached.at < TTL_MS) return readOf(cached);
+  if (!input.force && cached && cached.revision === revision && Date.now() - cached.at < TTL_MS) return readOf(cached);
 
   let token: string | null = null;
   if (catalog.auth?.source === 'credential') {
@@ -140,7 +160,7 @@ export async function backendModels(input: {
       // key an operator saves next from the launch dialog for six hours, with
       // the "no key is set yet" entry still answering for a key that is set.
       return readOf({
-        at: Date.now(),
+        at: Date.now(), revision,
         models: fallbackModels(catalog),
         note: fallbackNote(backendLabel, 'no key is set yet'),
       });
@@ -148,10 +168,10 @@ export async function backendModels(input: {
   }
 
   try {
-    return readOf(remember(backendId, { at: Date.now(), models: await read(catalog, token), note: null }));
+    return readOf(remember(backendId, { at: Date.now(), revision, models: await read(catalog, token), note: null }));
   } catch (error) {
     return readOf(remember(backendId, {
-      at: Date.now(),
+      at: Date.now(), revision,
       models: fallbackModels(catalog),
       note: fallbackNote(backendLabel, errText(error)),
     }));
@@ -177,7 +197,7 @@ export async function verifyBackendCredential(input: {
   if (!token) return { ok: false, detail: `No ${backendLabel} API key is set.`, models: [] };
   try {
     const models = await read(catalog, token);
-    remember(backendId, { at: Date.now(), models, note: null });
+    remember(backendId, { at: Date.now(), revision: credentialRevisionOf(token), models, note: null });
     return {
       ok: true,
       detail: `${models.length} ${backendLabel} model${models.length === 1 ? '' : 's'} available.`,
