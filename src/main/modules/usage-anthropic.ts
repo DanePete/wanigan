@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getKey, getWorkspaceId } from '../keys';
+import { admittedFetch } from './usage-paid-operations';
 
 export function isMock(): boolean {
   return process.env.WANIGAN_MOCK === '1';
@@ -20,6 +21,9 @@ export function client(): Anthropic {
   _client = new Anthropic({
     apiKey: key || 'mock',
     maxRetries: 4,
+    // Admission and the prospective receipt happen at each real send, after
+    // whatever the caller awaited, and again for every SDK retry.
+    fetch: admittedFetch(),
     // Identity-linked keys require this on every request; plain keys ignore it.
     ...(workspaceId ? { defaultHeaders: { 'anthropic-workspace-id': workspaceId } } : {}),
   });

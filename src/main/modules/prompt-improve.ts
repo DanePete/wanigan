@@ -6,6 +6,7 @@ import { MODELS } from '../batch/pricing';
 import { getKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
 import { refuseIfHalted, registerHaltStopper } from '../halt';
+import { inspectRecoveryOwner } from '../recovery-inspection';
 import {
   migratePromptImproveUsage, promptImproveConsumption, promptImproveDaily, recordPromptImproveMeters,
 } from '../prompt-improve-usage';
@@ -204,6 +205,7 @@ export const promptImproveModule = {
   // Disabling removes optional suggestions; writing and sending drafts still work.
   required: null,
   migrate: migratePromptImproveUsage,
+  recovery: { inspect: (d: Database.Database) => inspectRecoveryOwner(d, 'prompt-improve') },
   requiresStartedServices: ['improve'],
   egress: () => promptImproveEgress(promptImprove.status()),
   usage: { consumption: promptImproveConsumption, daily: promptImproveDaily },

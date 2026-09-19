@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { db } from '../db';
+import { admitPaidOperation } from './usage-paid-operations';
 import { getSetting, setSetting } from '../settings';
 import { providerById, refreshProviderPacks, shellPath, type ProviderDef } from '../providers';
 import { headlessEnv, parseCliOutput, resolveBin } from '../headless';
@@ -624,6 +625,9 @@ export async function probe(providerId: string, budgetUsd: number): Promise<Prob
 
 function run(bin: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Immediately before the spawn: the run row is written only after the
+    // child completes, and a failed receipt must mean no child.
+    admitPaidOperation('learning:cli');
     const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let truncated = false;

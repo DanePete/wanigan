@@ -4,7 +4,7 @@ import type { RecoveryObservation } from '../shared/recovery';
 import { markIncompleteCost, type AccountingMetric } from './telemetry-accounting';
 import type { SessionUsage } from '../shared/types';
 
-type Owner = 'sessions' | 'queue' | 'headless' | 'worktrees' | 'suggest' | 'usage';
+type Owner = 'sessions' | 'queue' | 'headless' | 'worktrees' | 'suggest' | 'prompt-improve' | 'usage';
 type Read = { table: string; sql: string; source: string; billing?: boolean };
 /** Read projections only. Each adapter is declared by the module owning these tables. */
 const READS: Record<Owner, Read[]> = {
@@ -19,6 +19,12 @@ const READS: Record<Owner, Read[]> = {
   ],
   worktrees: [{ table: 'worktree_command_runs', sql: "SELECT id,id AS operation_id,worktree AS cwd,status,owner_id,owner_pid,recovery_unresolved,started_at AS at,ended_at FROM worktree_command_runs WHERE status='running' OR recovery_unresolved=1", source: 'worktree command owner' }],
   suggest: [{ table: 'suggest_usage', sql: "SELECT CAST(id AS TEXT) AS id,COALESCE(request_id,CAST(id AS TEXT)) AS operation_id,at,attempt_status,finished_at FROM suggest_usage WHERE attempt_status IN ('pending','unresolved') OR (attempt_status='legacy' AND input_tokens IS NULL)", source: 'TypeSafe request liability', billing: true }],
+  // The pending row precedes the SDK call, and a stopped, timed-out or failed
+  // request keeps whatever meters it had. An estimate is this app's arithmetic,
+  // so its presence is disclosure; its absence is the unresolved exposure here.
+  'prompt-improve': [{ table: 'prompt_improve_usage', sql: `SELECT request_id AS id,request_id AS operation_id,at,status,
+    input_tokens,output_tokens,cache_read_tokens,estimated_cost_usd FROM prompt_improve_usage WHERE status='pending'
+    OR input_tokens IS NULL OR output_tokens IS NULL OR estimated_cost_usd IS NULL`, source: 'Improve prompt request without complete meters', billing: true }],
   usage: [],
 };
 
@@ -31,7 +37,7 @@ export function hasTable(d: Database.Database, table: string): boolean {
 }
 
 export function inspectRecoveryOwner(d: Database.Database, owner: Owner): RecoveryObservation[] {
-  if (owner === 'usage') return inspectUsageLiability(d);
+  if (owner === 'usage') return [...inspectUsageLiability(d), ...inspectPaidOperations(d)];
   return READS[owner].flatMap(read => {
     if (!hasTable(d, read.table)) return [];
     const rows = d.prepare(read.sql).all() as Record<string, unknown>[];
@@ -69,6 +75,19 @@ function inspectUsageLiability(d: Database.Database): RecoveryObservation[] {
     source: 'Recorded telemetry coverage', observedAt: row.at,
     reason: 'Observed activity has incomplete cost coverage. Restoring cannot erase this financial uncertainty.',
     revision: usageRevision(d, row, metrics.filter(metric => metric.session_id === row.session_id)), canReconcile: false,
+  }));
+}
+
+/** Required Usage's prospective receipts. There is no settlement contract, so
+ * every one is unresolved whether or not its request later returned. */
+function inspectPaidOperations(d: Database.Database): RecoveryObservation[] {
+  if (!hasTable(d, 'usage_paid_operations')) return [];
+  return (d.prepare('SELECT id,source,at FROM usage_paid_operations ORDER BY id').all() as { id: string; source: string; at: number }[]).map(row => ({
+    key: `usage:usage_paid_operations:${row.id}`, module: 'usage', operationId: row.id, cwd: null,
+    execution: 'unsupported', checkout: 'not claimed', billing: 'unresolved',
+    source: `Paid request admitted before submission (${row.source})`, observedAt: row.at,
+    reason: 'This request was recorded before it was sent and has no settlement contract. A returned response or an exited process does not establish what it cost, so it stays unresolved.',
+    revision: evidenceHash(row), canReconcile: false,
   }));
 }
 

@@ -24,6 +24,9 @@ async function main() {
     await assert.rejects(maintenance.storageIpcScope(channel, () => entered++), /Only Backup, Recovery/);
   }
   assert.equal(entered, 0);
+  assert.match(maintenance.storageIpcRefusal('sessions:create'), /storage maintenance/);
+  assert.equal(maintenance.storageIpcRefusal('backup:inspect'), null);
+  assert.equal(active.storageIpcRefusal('sessions:create'), null);
   assert.equal(await maintenance.storageIpcScope('recovery:inspect', () => 'local evidence'), 'local evidence');
   let finish;
   const pending = maintenance.storageIpcScope('backup:create', () => new Promise(resolve => { finish = resolve; }));
@@ -37,6 +40,15 @@ async function main() {
   await assert.rejects(restored.storageIpcScope('learning:probe', () => entered++), /restarting does not reconcile/);
   assert.equal(await restored.storageIpcScope('recovery:inspect', () => 'retained history'), 'retained history');
   assert.equal(entered, 0);
-  console.log('Storage runtime: fresh startup, monotonic live-service refusal, offline allowlist, asynchronous drain, failed-call drain and restored inspection gates passed.');
+  // The side-effect boundary is separate from IPC: a direct service call in a
+  // maintenance or inspection host is refused, while Recovery's own unflagged
+  // preview/apply admission and an ordinary host are not.
+  for (const host of [maintenance, restored]) {
+    assert.throws(() => host.assertStorageRuntimeSideEffects({ paid: true }), /Paid work is held/);
+    assert.throws(() => host.assertStorageRuntimeSideEffects({ automatic: true }), /Automatic work is held/);
+    host.assertStorageRuntimeSideEffects({});
+  }
+  active.assertStorageRuntimeSideEffects({ paid: true, automatic: true });
+  console.log('Storage runtime: fresh startup, monotonic live-service refusal, offline allowlist, direct side-effect refusal, asynchronous drain, failed-call drain and restored inspection gates passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

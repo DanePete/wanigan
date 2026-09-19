@@ -15,21 +15,22 @@ const TTL = 5 * 60_000;
 
 /** Recovery is called only after the canonical database migration boundary.
  * Missing safety tables are unreadable evidence, never an empty claim set.
- * Optional Suggest may genuinely never have been installed; if present, its
- * own reader validates every required column rather than assuming defaults. */
+ * Optional Suggest and Improve prompt may genuinely never have been installed;
+ * if present, each reader names every required column rather than assuming
+ * defaults, so a partial table is unavailable evidence too. */
 const REQUIRED_EVIDENCE_TABLES = [
   'projects', 'session_log', 'checkout_activity', 'queue', 'headless_rows',
   'worktree_command_runs', 'review_runs', 'review_checkout_owners',
   'review_recovery_evidence', 'session_metrics', 'session_api_events',
   'session_telemetry_coverage', 'session_telemetry_issues',
   'session_telemetry_receipts', 'runs', 'batches', 'events', 'learning_model_runs', 'recovery_resolutions',
-  'companion_turns', 'interviews',
+  'companion_turns', 'interviews', 'usage_paid_operations',
 ] as const;
 
 function adapters(): Map<string, RecoveryAdapter> {
   // Direct service callers have the same required owners, even before the
   // host's module registration pass. Optional contributed adapters add to it.
-  const owners = ['sessions', 'queue', 'headless', 'worktrees', 'suggest', 'usage'] as const;
+  const owners = ['sessions', 'queue', 'headless', 'worktrees', 'suggest', 'prompt-improve', 'usage'] as const;
   const all = new Map<string, RecoveryAdapter>(owners.map(owner => [owner, { inspect: d => inspectRecoveryOwner(d, owner) }]));
   all.set('review', { ...reviewRecoveryAdapter, inspect: d => hasTable(d, 'review_runs') ? reviewRecoveryAdapter.inspect(d) : [] });
   for (const module of modules()) if (module.recovery) all.set(module.id, module.recovery);

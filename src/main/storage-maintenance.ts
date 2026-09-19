@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { app } from 'electron';
 import { execFileSync } from 'node:child_process';
+import { assertStorageRuntimeSideEffects } from './modules/storage-runtime';
 
 /** Required Storage owns this interlock. It is deliberately outside wanigan.db
  * and the backup manifest. It contains coordination, never usage or execution
@@ -224,6 +225,7 @@ function currentStorageRevision(state: State): string {
 }
 
 export function assertStorageAdmission(input: { automatic?: boolean; paid?: boolean } = {}): void {
+  assertStorageRuntimeSideEffects(input);
   const state = coordinator().state();
   if (state.mode === 'maintenance') throw new Error('Storage maintenance is active. No new work may start; inspect the restore journal.');
   if (state.mode === 'inspection' && (input.automatic || input.paid)) {

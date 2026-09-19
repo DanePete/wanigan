@@ -111,7 +111,7 @@ import * as uploads from './batch/files';
 import { allSettings, flags, slotsSetting } from './settings';
 import { migrateUserData } from './migrate';
 import { assertStorageAdmission, storageStatus } from './storage-maintenance';
-import { markStorageRuntimeStarted, holdStorageRuntimeForInspection, storageMaintenanceStartup, storageInspectionOnly, storageIpcScope } from './modules/storage-runtime';
+import { markStorageRuntimeStarted, holdStorageRuntimeForInspection, storageMaintenanceStartup, storageInspectionOnly, storageIpcRefusal, storageIpcScope } from './modules/storage-runtime';
 import { isDaemonInvocation, daemonStatus, installDaemon, uninstallDaemon } from './daemon';
 import * as codexStatus from './codex-status';
 import * as learning from './learning-service';
@@ -1705,6 +1705,10 @@ function registerIpc() {
         // Only the read is shared; a write from a demo window still falls to
         // the demo reader below and is refused.
         if (channel === 'keymap:get') return { ok: true, data: keymapState() };
+        // Required Storage answers first: its hold is the reason services are
+        // not started here, and its wording is the one that is true.
+        const held = demo ? null : storageIpcRefusal(channel);
+        if (held) throw new Error(held);
         if (!demo && !attendedServicesStarted && (needsStartedServices.has(channel) || moduleNeedsStartedServices(channel))) {
           throw new Error(startupState.phase === 'recovery'
             ? 'Local services are in recovery mode. Retry local services before starting work.'

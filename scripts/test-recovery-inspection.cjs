@@ -33,7 +33,7 @@ function fixture({ register = true } = {}) {
   let generation = 'fixture-generation-1', held = false, operation = null, now = Date.now();
   class FixtureDate extends Date { static now() { return now; } }
   const cache = new Map();
-  const actual = new Set(['recovery', 'recovery-inspection', 'review-recovery', 'module-registry', 'checkout-activity', 'suggest-usage', 'telemetry-accounting']);
+  const actual = new Set(['recovery', 'recovery-inspection', 'review-recovery', 'module-registry', 'checkout-activity', 'suggest-usage', 'prompt-improve-usage', 'telemetry-accounting']);
   function load(file) {
     const absolute = path.resolve(root, file);
     if (cache.has(absolute)) return cache.get(absolute).exports;
@@ -66,6 +66,9 @@ function fixture({ register = true } = {}) {
     module.migrate?.(database);
     if (register) registry.registerModule(module);
   }
+  // Improve prompt's module constructs a provider client on import, so only its
+  // actual schema is loaded; the adapter it declares is the shared owner read.
+  load('src/main/prompt-improve-usage.ts').migratePromptImproveUsage(database);
   native.prepare('INSERT INTO projects(id,path) VALUES (?,?)').run('fixture', checkout);
   const recovery = load('src/main/recovery.ts');
   const activity = load('src/main/checkout-activity.ts');
@@ -221,6 +224,11 @@ test('each independent owner or remote liability refuses direct restore without 
     ['TypeSafe pending', f => f.native.exec("INSERT INTO suggest_usage(at,model,attempt_status) VALUES (1,'fixture','pending')")],
     ['TypeSafe unresolved', f => f.native.exec("INSERT INTO suggest_usage(at,model,attempt_status) VALUES (1,'fixture','unresolved')")],
     ['TypeSafe legacy unmetered', f => f.native.exec("INSERT INTO suggest_usage(at,model) VALUES (1,'fixture')")],
+    ['Improve prompt pending', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','pending')")],
+    ['Improve prompt stopped before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','cancelled')")],
+    ['Improve prompt failed before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','failed')")],
+    ['Improve prompt answered on an unpriced model', f => f.native.exec("INSERT INTO prompt_improve_usage VALUES ('improve',1,'fixture','fixture','answered',4,2,0,NULL)")],
+    ['paid request admitted before submission', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)")],
     ['remote batch', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'in_progress',NULL)")],
     ['ended batch without ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',NULL)")],
     ['ended batch with partial ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',-1)")],
@@ -278,7 +286,9 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       INSERT INTO runs VALUES ('run',1,'batch','completed',1);
       INSERT INTO batches VALUES ('batch','run',1,'ended',2);
       INSERT INTO learning_model_runs VALUES ('learning',1,'ok',1,0);
-      INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);`);
+      INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);
+      INSERT INTO prompt_improve_usage VALUES ('answered',1,'fixture','fixture','answered',4,2,0,0.001);
+      INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);`);
     f.native.prepare('INSERT INTO headless_rows(run_id,project_id,project_name,project_path,status,started_at,ended_at,cost_reported,cost_usd) VALUES (?,?,?,?,?,?,?,?,?)')
       .run('headless', 'fixture', 'Fixture', f.checkout, 'done', 1, 2, 1, 0);
     assert.deepEqual(f.recovery.inspectRecovery().observations, []);
@@ -290,7 +300,7 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
 });
 
 test('missing required schema is explicitly unavailable and cannot authorize preview or direct restore', () => {
-  for (const table of ['checkout_activity', 'review_recovery_evidence', 'session_telemetry_issues', 'session_telemetry_coverage', 'runs', 'batches', 'events', 'learning_model_runs']) {
+  for (const table of ['checkout_activity', 'review_recovery_evidence', 'session_telemetry_issues', 'session_telemetry_coverage', 'runs', 'batches', 'events', 'learning_model_runs', 'usage_paid_operations']) {
     const f = fixture({ register: false });
     try {
       f.finalized(); f.native.exec(`DROP TABLE ${table}`);
@@ -301,6 +311,17 @@ test('missing required schema is explicitly unavailable and cannot authorize pre
       assert.throws(() => f.recovery.assertRestoreSafe(f.database), /schema is incomplete/);
     } finally { f.close(); }
   }
+});
+
+test('a partial Improve prompt table is unavailable evidence, while a never-installed one is not a claim', () => {
+  const f = fixture({ register: false });
+  try {
+    f.native.exec('DROP TABLE prompt_improve_usage');
+    assert.doesNotThrow(() => f.recovery.assertRestoreSafe(f.database));
+    f.native.exec('CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER NOT NULL,status TEXT NOT NULL)');
+    assert.match(f.recovery.inspectRecovery().unavailable, /could not be read/);
+    assert.throws(() => f.recovery.assertRestoreSafe(f.database), /no such column/);
+  } finally { f.close(); }
 });
 
 test('an unfinished restore exposes its retained paths even when business evidence cannot be read', () => {

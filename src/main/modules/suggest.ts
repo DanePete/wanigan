@@ -1,4 +1,5 @@
 import { inspectRecoveryOwner } from '../recovery-inspection';
+import { assertStorageAdmission } from '../storage-maintenance';
 import type { WaniganModule } from '../module-registry';
 import { createHash } from 'node:crypto';
 import { refuseIfHalted } from '../halt';
@@ -215,6 +216,9 @@ async function ask(request: SystemOneRequest, keyOverride?: string): Promise<Ask
   // A local serialization failure proves nothing was submitted. Do it before
   // reserving unknown exposure, so it cannot create a fictitious liability.
   const requestBody = JSON.stringify(request);
+  // The pending row below is TypeSafe's own receipt. Nothing is awaited between
+  // here and the send, and a held host must refuse before reserving exposure.
+  assertStorageAdmission({ paid: true });
   const started = Date.now();
   const requestId = beginSuggestAttempt({
     at: started, requestedModel: request.model, source: ENDPOINT,

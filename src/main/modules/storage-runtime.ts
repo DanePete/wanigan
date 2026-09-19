@@ -18,6 +18,17 @@ export function storageRuntimeStarted(): boolean { return servicesStarted; }
 export function holdStorageRuntimeForInspection(): void { inspectionHeld = true; }
 export function storageInspectionOnly(): boolean { return storageMaintenanceStartup() || inspectionHeld; }
 
+/** The persisted mode stays `active` in a maintenance startup until a restore
+ * really begins, so the side-effect boundary has to ask this host as well. IPC
+ * allowlisting covers the normal UI; a direct service call never crosses it.
+ * Recovery's own preview and apply pass no flag and remain available. */
+export function assertStorageRuntimeSideEffects(input: { automatic?: boolean; paid?: boolean }): void {
+  if (!storageInspectionOnly() || !(input.automatic || input.paid)) return;
+  throw new Error(input.paid
+    ? 'This Wanigan process is open only for storage maintenance or inspection. Paid work is held; quit and reopen normally to leave a maintenance startup.'
+    : 'This Wanigan process is open only for storage maintenance or inspection. Automatic work is held.');
+}
+
 export function assertStorageRuntimeRestoreReady(): void {
   if (servicesStarted) throw new Error('Restore requires a fresh maintenance startup. Restart for restore from Settings → Backup; stopping timers cannot prove that earlier asynchronous work drained.');
   const pending = [...calls.values()].filter(channel => channel !== 'backup:restore');
@@ -35,12 +46,19 @@ const maintenanceChannels = new Set([
   'companion:snapshot',
 ]);
 
+/** The refusal a held host gives a channel, or null. The host asks this before
+ * its started-services guard: a maintenance startup never starts services by
+ * design, and "retry local services" is advice that cannot work there. */
+export function storageIpcRefusal(channel: string): string | null {
+  if (!storageInspectionOnly() || maintenanceChannels.has(channel)) return null;
+  return inspectionHeld
+    ? 'The restored database is open for inspection. Execution and spending remain held; restarting does not reconcile historical evidence.'
+    : 'Wanigan is open for storage maintenance. Only Backup, Recovery and local inspection are available; quit and reopen normally to leave this mode.';
+}
+
 export async function storageIpcScope<T>(channel: string, operation: () => T | Promise<T>): Promise<T> {
-  if (storageInspectionOnly() && !maintenanceChannels.has(channel)) {
-    throw new Error(inspectionHeld
-      ? 'The restored database is open for inspection. Execution and spending remain held; restarting does not reconcile historical evidence.'
-      : 'Wanigan is open for storage maintenance. Only Backup, Recovery and local inspection are available; quit and reopen normally to leave this mode.');
-  }
+  const refusal = storageIpcRefusal(channel);
+  if (refusal) throw new Error(refusal);
   const token = Symbol(channel);
   calls.set(token, channel);
   try { return await operation(); }
