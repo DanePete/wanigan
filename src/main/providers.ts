@@ -52,6 +52,8 @@ export type ProviderDef = {
     extra: string[],
     values?: Record<string, string | boolean | null | undefined>
   ) => string[];
+  /** Declared argv prompt delivery, used instead of delayed PTY typing. */
+  initialPromptArgs?: (prompt: string) => string[];
   /** Which of the shared options this CLI actually accepts. */
   supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
   /**
@@ -353,6 +355,7 @@ function fromRuntime(
     declaredCapabilities: runtime.capabilities,
     args: (extra, opts) => runtime.args(extra, opts),
     launchArgs: runtime.args,
+    initialPromptArgs: runtime.initialPromptArgs,
     supports: runtime.supports,
     resumeArgs: runtime.resumeArgs,
     versionArgs: runtime.versionArgs,
@@ -487,6 +490,7 @@ function synchronizeProviderDefinitions(refreshPacks = false): ProviderPackSnaps
       launchFields: profile.launchFields ?? [],
       declaredCapabilities: profile.capabilities ?? {},
       launchArgs: runtime.args,
+      initialPromptArgs: runtime.initialPromptArgs,
     };
   });
   PROVIDERS.splice(0, PROVIDERS.length, ...definitions);

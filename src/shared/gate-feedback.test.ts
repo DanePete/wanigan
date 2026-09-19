@@ -73,12 +73,11 @@ test('the prompt names the command and exit, says what was kept, counts the hand
 
 test('a hand-back is sent only when every condition holds, and each refusal says which one failed', () => {
   const base: Parameters<typeof handBackVerdict>[0] = {
-    enabled: true, halted: false, returnsSoFar: 0, budgetUsd: 20, spendUsd: 3,
+    enabled: true, halted: false, returnsSoFar: 0, budgetUsd: 20, spendUsd: 3, spendStatus: 'reported',
     sessionStatus: 'running', attention: { kind: 'finished', transitionId: 'event:41' }, stopEventId: 41,
   };
   assert.deepEqual(handBackVerdict(base), { send: true, attempt: 1 });
   assert.deepEqual(handBackVerdict({ ...base, returnsSoFar: 1 }), { send: true, attempt: 2 });
-  assert.deepEqual(handBackVerdict({ ...base, budgetUsd: null }), { send: true, attempt: 1 });
   const reason = (overrides: Partial<typeof base>) => {
     const verdict = handBackVerdict({ ...base, ...overrides });
     return verdict.send ? 'sent' : verdict.reason;
@@ -86,6 +85,10 @@ test('a hand-back is sent only when every condition holds, and each refusal says
   assert.equal(reason({ enabled: false }), 'off');
   assert.equal(reason({ halted: true }), 'halted');
   assert.equal(reason({ returnsSoFar: HANDBACK_LIMIT }), 'limit');
+  assert.equal(reason({ budgetUsd: null }), 'no-budget');
+  assert.equal(reason({ spendUsd: 0, spendStatus: 'unreported' }), 'unknown-spend');
+  assert.equal(reason({ spendUsd: 3, spendStatus: 'partial' }), 'unknown-spend');
+  assert.deepEqual(handBackVerdict({ ...base, spendUsd: 0, spendStatus: 'reported' }), { send: true, attempt: 1 });
   assert.equal(reason({ spendUsd: 20 }), 'cap');
   assert.equal(reason({ sessionStatus: 'exited' }), 'session-gone');
   assert.equal(reason({ attention: null }), 'moved-on');

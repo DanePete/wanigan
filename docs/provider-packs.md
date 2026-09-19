@@ -68,6 +68,7 @@ is no partial load.
 | `backend` | yes | `{ id, label, description?, baseUrl? }` |
 | `command` | yes | see below |
 | `launchFields` | no | ≤ 100, ids unique |
+| `initialPromptArgv` | no | ≤ 20 argv entries, with `{prompt}`; see below |
 | `resume` | no | `{ conversationArgs, continueArgs }` |
 | `environment` | no | ≤ 100 destinations |
 | `capabilities` | no | ≤ 200 declarations |
@@ -144,6 +145,23 @@ split into a second argument or become a command. `argv` on a boolean field, or
 ```json
 { "id": "model", "label": "Model", "kind": "text", "argv": ["--model", "{value}"] }
 ```
+
+## `initialPromptArgv`
+
+An optional template for a CLI that accepts the first prompt in its argument
+list, such as `["--", "{prompt}"]` for Codex. It is appended after launch fields
+and extra arguments. At least one entry must contain `{prompt}`; other
+placeholders are refused. Each entry remains one argument, including multiline
+prompt text, and no shell evaluates it. Use the CLI's option terminator when
+the prompt is positional so text beginning with `--` remains text.
+
+An empty prompt emits no arguments. Prompts above 32,768 characters or containing
+a NUL byte fail before spawn. A declared template replaces timed PTY submission,
+so the first prompt is sent once. Omission preserves the existing terminal path.
+Named Codex resume requires a separate observed resume-prompt grammar before the
+session host uses this transport. The exact template is included in manifest
+inspection and trust consent; declaring it does not establish hooks, telemetry,
+tool use, billing or resume compatibility.
 
 ## `resume`
 

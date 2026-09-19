@@ -151,6 +151,7 @@ export type ProviderManifestInspection = {
     backendId: string;
     bin: string;
     baseArgs: string[];
+    initialPromptArgv: string[];
     versionArgs: string[];
     helpArgs: string[];
     launchFields: Array<{
@@ -1749,6 +1750,10 @@ export type RelayRouteInput = Partial<Record<DocketNodeKind, {
 
 export type RelayCreateInput = {
   projectId: string;
+  /** Opaque main-owned preview; changed/expired receipts refuse without a new suggestion call. */
+  previewReceipt?: string;
+  /** Explicit allowance for automatic progress; omitted leaves all starts manual. */
+  automation?: { budgetUsd: number };
   /** Explicit routing mode and Auto preference; omitted keeps Auto / Lower cost. */
   routing?: import('./relay-routing.ts').RelayRoutingSettings;
   /** New relays include deliberate commit/deploy stages unless explicitly disabled. */
@@ -1865,6 +1870,7 @@ export type RelayPipelineRead = {
 /** What the suggester would do with this intent, without creating anything. */
 export type RelayPreviewInput = {
   intent: string; providerId: string; routes?: RelayRouteInput;
+  automaticProgress?: boolean;
   routing?: import('./relay-routing.ts').RelayRoutingSettings;
 };
 
@@ -1883,6 +1889,8 @@ export type RelayPreviewRoute = {
 };
 
 export type RelayPreview = {
+  receipt: string;
+  expiresAt: number;
   routing: import('./relay-routing.ts').RelayRoutingSettings;
   /** Whether a suggestion was requested. Manual uses only overrides and profile defaults. */
   asked: boolean;
@@ -1895,6 +1903,7 @@ export type RelayPreview = {
 };
 
 export type RelayRead = {
+  automaticProgress: boolean;
   docket: DocketDetail;
   /** Null for goals created before routing preferences were recorded. */
   routing: import('./relay-routing.ts').RelayRoutingSettings | null;

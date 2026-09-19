@@ -6,6 +6,7 @@ import { DEFAULT_RELAY_ROUTING, RELAY_ROUTING_PREFERENCES, type RelayRoutingSett
 import { Explainer, Hint, Note, Section, SectionHead } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
 import { AGENT_KINDS, KIND_WORD } from './facts';
+import ModelEconomics from './ModelEconomics';
 
 const INHERIT_NONE = '\u0000none';
 
@@ -38,6 +39,8 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
 }) {
   const [intent, setIntent] = useState('');
   const [delivery, setDelivery] = useState(true);
+  const [automatic, setAutomatic] = useState(false);
+  const [budget, setBudget] = useState('');
   const [routing, setRouting] = useViewMemory<RelayRoutingSettings>('composer-routing', { ...DEFAULT_RELAY_ROUTING });
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
   const [draft, setDraft] = useState<RouteDraft>(() => emptyDraft(providers[0]?.id ?? ''));
@@ -83,12 +86,13 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   };
   const suggest = () => act('preview', async () => {
     setPreview(await window.wanigan.relay.preview({ intent: intent.trim(), providerId,
-      routing, routes: toRoutes(draft, providerId) }));
+      routing, routes: toRoutes(draft, providerId), automaticProgress: automatic }));
   });
   const create = () => act('create', async () => {
     if (!projectId) throw new Error('Choose a project before creating a relay.');
     const next = await window.wanigan.relay.create({ projectId, intent: intent.trim(), providerId,
-      routing, routes: toRoutes(draft, providerId), accountId: accountId || undefined, delivery });
+      routing, routes: toRoutes(draft, providerId), accountId: accountId || undefined, delivery,
+      previewReceipt: preview?.receipt, automation: automatic ? { budgetUsd: Number(budget) } : undefined });
     setIntent(''); setPreview(null); onCreated(next);
   });
   const stageFields = <>
@@ -133,7 +137,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   return <div className="rl-composer" hidden={!active}>
     {error && <Note tone="error" onDismiss={() => setError(null)}>{error}</Note>}
     {providers.length === 0 && <Note tone="warn">Connect a coding assistant in Settings before creating a relay.</Note>}
-          <Section title="Create a relay" hint="Describe the outcome, choose who will work on it, then create the stages. You start the first stage separately.">
+          <Section title="Create a relay" hint="Describe the outcome, choose how it runs, and keep the checks that prove it worked.">
             {/* A relay belongs to a project and this view has no picker of its
                 own — the one in the header is app-wide. Without this the only
                 signal was "No project" in the eyebrow and a Start button that
@@ -215,7 +219,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
               : RELAY_ROUTING_PREFERENCES.find(option => option.value === routing.preference)?.description}</Hint>
             <Hint>Reasoning effort controls how much thinking a model does. More thinking can take longer and cost more.</Hint>
             <Hint>Required tests and human review stay the same for every model choice.</Hint>
-            {!manual && <Hint>When enabled, JEV model suggestions choose models and effort within this coding assistant. Suggesting models and creating a relay can each incur a cost. You can override any stage.</Hint>}
+            {!manual && <Hint>When enabled, JEV suggests models and effort within this coding assistant. An unchanged preview is reused when you create the relay, so you do not pay for the same suggestion twice.</Hint>}
             <button className={busy === 'preview' ? 'btn rl-guess-asking' : 'btn'} onClick={() => void suggest()}
                     disabled={busy !== null || !intent.trim() || !providerId}>
               {busy === 'preview' ? (manual ? 'Previewing…' : 'Asking…') : manual ? 'Preview my choices' : 'Suggest models'}
@@ -286,10 +290,10 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                 <p className="rl-guess-foot">
                   {preview.asked ? <>
                     Suggestions need at least {DEFAULT_MIN_CONFIDENCE.toFixed(2)} confidence. Below that, the coding assistant default choice is kept.
-                    Creating the relay asks again and records the result. You can override any agent stage below.
+                    Creating the relay records this preview. It expires after 15 minutes or when your choices change. Confidence is not a measured chance of success.
                   </> : manual
                     ? 'These are the coding assistant defaults and your stage overrides. Creating the relay records these choices without a suggestion call.'
-                    : 'These are the coding assistant defaults and your stage overrides. Choose for me checks model suggestions again when you create the relay.'}
+                    : 'These are the coding assistant defaults and your stage overrides. Creating the relay reuses this preview.'}
                 </p>
               </div>
             )}
@@ -299,6 +303,20 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
             </> : <Explainer id="relay-overrides" title="Choose the model and effort for a stage yourself" defaultHidden>
               {stageFields}
             </Explainer>}
+            <div className="rl-automation-options">
+            <SectionHead label="How work progresses" />
+            <label><input type="checkbox" checked={automatic} disabled={busy !== null}
+              onChange={event => { setAutomatic(event.target.checked); setPreview(null); }} /> Advance automatically until final review</label>
+            {automatic ? <>
+              <label><span className="label">Agent spending limit (USD)</span>
+                <input className="field" type="number" min="0.01" max="100000" step="0.01" value={budget}
+                  placeholder="Choose a limit" disabled={busy !== null} onChange={event => setBudget(event.target.value)} />
+              </label>
+              <Hint>Starts ready stages, advances an accepted plan and verified work, and runs verification without a model. Failed checks may go back to the agent within the retry limit. Plan permission prompts and final review still need you.</Hint>
+              <Hint>Stops new agent turns at the limit or when earlier cost is unreported. A running turn may exceed the limit; this is not a provider billing cap. Model suggestions are accounted for separately.</Hint>
+            </> : <Hint>You start and advance each stage. Required checks still apply.</Hint>}
+            </div>
+            <ModelEconomics />
 
             <div className="rl-delivery-choice">
               <label><input type="checkbox" checked={delivery} disabled={busy !== null} onChange={event => setDelivery(event.target.checked)} /> Include git commit and deploy stages</label>
@@ -306,11 +324,11 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                 ? 'After review, explicitly commit the approved work and run your project’s deployment command. Configure the command in Deploy details after creating the relay. Neither action runs automatically.'
                 : 'This relay will finish at the review decision.'}</Hint>
             </div>
-            <div className="rl-start-actions"><button className="btn btn-primary" onClick={() => void create()} disabled={busy !== null || !intent.trim() || !providerId || !projectId || accountOptions === null}>
-              {busy === 'create' ? 'Creating…' : 'Create relay'}
+            <div className="rl-start-actions"><button className="btn btn-primary" onClick={() => void create()} disabled={busy !== null || !intent.trim() || !providerId || !projectId || accountOptions === null || (automatic && (!Number.isFinite(Number(budget)) || Number(budget) <= 0 || Number(budget) > 100000))}>
+              {busy === 'create' ? 'Creating…' : automatic ? 'Create and start relay' : 'Create relay'}
             </button>
             {onCancel && <button className="btn" disabled={busy !== null} onClick={onCancel}>Back to relay</button>}
-            <span className="faint">Creating records the stages without launching a session.</span>
+            <span className="faint">{automatic ? 'Starts work with the allowance above. You make the final review decision.' : 'Creating records the stages without launching a session.'}</span>
             </div>
           </Section>
 

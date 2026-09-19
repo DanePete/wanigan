@@ -117,6 +117,29 @@ export async function runVerifiedDoneSmoke(check: Check, say: Say): Promise<void
     control.setGoalGate(goal.id, { onStop: true, returnFailures: true });
     edit();
     let event = stop(); transition = `event:${event.id}`;
+    const uncapped = await goalGate.runStopGate(event, deps);
+    check(uncapped.ran && uncapped.handBack?.sent === false && /Set a budget/.test(uncapped.handBack.sentence)
+      && writes.length === 0 && nodeOf().gateReturns === 0,
+    'opted-in automatic hand-back cannot launch another agent turn without a budget', show(uncapped));
+    control.setDocketBudget(goal.id, 20);
+    edit(); event = stop(); transition = `event:${event.id}`;
+    const unmetered = await goalGate.runStopGate(event, deps);
+    check(unmetered.ran && unmetered.handBack?.sent === false && /no reported cost/.test(unmetered.handBack.sentence)
+      && writes.length === 0 && control.stopGateTarget(session)?.spendStatus === 'unreported',
+    'zero numeric spend with no dollar meter refuses the automatic failure prompt', show(unmetered));
+    for (const id of [session, `${session}_plan`]) db().prepare(`INSERT INTO session_log
+      (id,provider_id,backend_id,harness_id,project_path,project_name,started_at)
+      VALUES (?,'claude','anthropic','claude-code',?,'Verified done fixture',?)`).run(id, repo, Date.now());
+    db().prepare(`INSERT INTO session_metrics (session_id,metric,attrs,value,last_at)
+      VALUES (?,'claude_code.cost.usage','',0,?)`).run(session, Date.now());
+    edit(); event = stop(); transition = `event:${event.id}`;
+    const partial = await goalGate.runStopGate(event, deps);
+    check(partial.ran && partial.handBack?.sent === false && /no reported cost/.test(partial.handBack.sentence)
+      && writes.length === 0 && control.stopGateTarget(session)?.spendStatus === 'partial',
+    'an explicitly metered zero does not hide an unmetered earlier task', show(partial));
+    db().prepare(`INSERT INTO session_metrics (session_id,metric,attrs,value,last_at)
+      VALUES (?,'claude_code.cost.usage','',0,?)`).run(`${session}_plan`, Date.now());
+    edit(); event = stop(); transition = `event:${event.id}`;
     const handed = await goalGate.runStopGate(event, deps);
     const paste = writes[0] ?? '';
     check(handed.ran && handed.handBack?.sent === true && handed.handBack.attempt === 1 && writes.length === 2 && writes[1] === '\r',
@@ -134,9 +157,9 @@ export async function runVerifiedDoneSmoke(check: Check, say: Say): Promise<void
     control.setDocketBudget(goal.id, 5);
     edit(); event = stop(); transition = `event:${event.id}`;
     const capped = await goalGate.runStopGate(event, deps);
-    check(capped.ran && capped.handBack?.sent === false && /reached its cap/.test(capped.handBack.sentence) && writes.length === 2,
+    check(capped.ran && capped.handBack?.sent === false && /reached.*budget/.test(capped.handBack.sentence) && writes.length === 2,
       'no hand-back is sent once the goal\'s reported spend reaches its cap', show(capped.ran ? capped.handBack : capped));
-    control.setDocketBudget(goal.id, null);
+    control.setDocketBudget(goal.id, 20);
 
     edit(); event = stop(); transition = 'event:1';
     const movedOn = await goalGate.runStopGate(event, deps);
@@ -151,6 +174,47 @@ export async function runVerifiedDoneSmoke(check: Check, say: Say): Promise<void
     const limited = await goalGate.runStopGate(event, deps);
     check(limited.ran && limited.handBack?.sent === false && /already had 2 failures handed back/.test(limited.handBack.sentence) && writes.length === 4,
       'past the limit a failure waits for the operator, and nothing more is typed', show(limited.ran ? limited.handBack : limited));
+
+    /* ── a pasted failure is not permission to submit later ──────────── */
+    for (const change of ['permission', 'new-stop', 'session-exit', 'opt-out', 'cap', 'unmetered', 'gate-off'] as const) {
+      db().prepare('UPDATE work_nodes SET gate_returns=0 WHERE id=?').run(implement.id);
+      edit(); event = stop(); transition = `event:${event.id}`;
+      let delayed = false;
+      const before = writes.length;
+      const raced = await goalGate.runStopGate(event, {
+        ...deps,
+        session: (id) => delayed && change === 'session-exit' ? null : deps.session(id),
+        attention: () => ({ kind: delayed && change === 'permission' ? 'permission' : 'finished', transitionId: transition }),
+        wait: async () => {
+          delayed = true;
+          if (change === 'new-stop') transition = 'event:newer';
+          if (change === 'opt-out') control.setGoalGate(goal.id, { onStop: true, returnFailures: false });
+          if (change === 'cap') control.setDocketBudget(goal.id, 5);
+          if (change === 'unmetered') db().prepare('DELETE FROM session_metrics WHERE session_id=?').run(session);
+          if (change === 'gate-off') control.setGoalGate(goal.id, { onStop: false, returnFailures: false });
+        },
+      });
+      check(raced.ran && raced.handBack?.sent === false && raced.handBack.attempt === 1
+        && /pasted but not submitted/.test(raced.handBack.sentence) && nodeOf().gateReturns === 1
+        && writes.length === before + 1 && writes[before]?.startsWith('\x1b[200~'),
+      `a ${change} change during the paste delay withholds Enter and keeps the counted attempt`, show(raced));
+      control.setGoalGate(goal.id, { onStop: true, returnFailures: true });
+      control.setDocketBudget(goal.id, 20);
+      db().prepare(`INSERT OR REPLACE INTO session_metrics (session_id,metric,attrs,value,last_at)
+        VALUES (?, 'claude_code.cost.usage', '', 9.5, ?)`).run(session, Date.now());
+    }
+    db().prepare('UPDATE work_nodes SET gate_returns=0 WHERE id=?').run(implement.id);
+    edit(); event = stop(); transition = `event:${event.id}`;
+    const beforeRefusedEnter = writes.length;
+    const tracesBeforeRefusedEnter = control.traces(goal.id, 200).filter((trace) => trace.kind === 'gate_hand_back').length;
+    const enterRefused = await goalGate.runStopGate(event, {
+      ...deps, write: (id, data) => data === '\r' ? false : deps.write(id, data),
+    });
+    check(enterRefused.ran && enterRefused.handBack?.sent === false && enterRefused.handBack.attempt === 1
+      && /refused Enter/.test(enterRefused.handBack.sentence) && nodeOf().gateReturns === 1
+      && writes.length === beforeRefusedEnter + 1
+      && control.traces(goal.id, 200).filter((trace) => trace.kind === 'gate_hand_back').length === tracesBeforeRefusedEnter,
+    'a refused Enter is recorded as unsubmitted and never writes a successful hand-back trace', show(enterRefused));
 
     /* ── refusals and the operator's own run ─────────────────────────── */
     db().prepare('UPDATE work_nodes SET worktree=? WHERE id=?').run(path.join(repo, 'gone-worktree'), implement.id);
@@ -211,7 +275,10 @@ export async function runVerifiedDoneSmoke(check: Check, say: Say): Promise<void
   } catch (error) {
     check(false, 'the verified-done checks ran without throwing', String(error));
   } finally {
-    try { db().prepare('DELETE FROM session_metrics WHERE session_id=?').run(session); } catch { /* fixture row */ }
+    for (const id of [session, `${session}_plan`]) {
+      try { db().prepare('DELETE FROM session_metrics WHERE session_id=?').run(id); } catch { /* fixture row */ }
+      try { db().prepare('DELETE FROM session_log WHERE id=?').run(id); } catch { /* fixture row */ }
+    }
     try { fs.rmSync(repo, { recursive: true, force: true }); } catch { /* temp */ }
   }
 }

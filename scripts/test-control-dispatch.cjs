@@ -35,17 +35,21 @@ function fixture() {
   };
   const launches = [], attempted = [], killed = [], enqueued = [];
   const meters = new Map();
-  const state = { returned: {}, launchError: null, halted: false };
+  const state = { returned: {}, launchError: null, halted: false, prepare: null, profiles: new Map() };
   const unavailable = { costStatus: 'unavailable', costUsd: 0, models: [] };
   const doubles = {
     './db': { db: () => database },
     './halt': { halted: () => state.halted },
+    './providers': { providerById: id => state.profiles.has(id) ? state.profiles.get(id)
+      : { id, harness: 'claude-code', profileFingerprint: `fingerprint-${id}` } },
     './git': { headSync: () => 'fixture-base' },
     './store': { projectById: id => ({ id, name: 'Dispatch fixture', path: directory }), listProjects: () => [] },
     './sessions': {
       async createSession(options, internal) {
         attempted.push({ options, internal });
         if (state.launchError) throw state.launchError;
+        if (state.prepare) await state.prepare();
+        internal.beforeSpawn?.();
         const id = `session-${launches.length + 1}`;
         const worktree = internal.useWorktree ?? path.join(directory, id);
         fs.mkdirSync(worktree, { recursive: true });
@@ -129,6 +133,8 @@ test('dispatch persists returned session model, effort, account and permission i
   await f.control.startNode(node, { providerId: 'stage-profile', effort: 'high', accountId: 'override-account', permissionMode: 'plan' });
   const launch = f.launches[0];
   assert.equal(launch.options.model, 'stage-model');
+  assert.equal(launch.internal.retainWorktree, true);
+  assert.equal(launch.internal.requirePrivateDependencies, true);
   const saved = f.row(node);
   assert.equal(saved.provider_id, launch.session.providerId);
   assert.equal(saved.model, 'stage-model');
@@ -176,7 +182,16 @@ test('reopening implementation reuses its recorded checkout and retains retry sp
   assert.equal(f.launches[0].options.isolate, false);
   assert.equal(fs.readFileSync(path.join(prior, 'prior-work.txt'), 'utf8'), 'keep this change');
   assert.equal(f.row(node).worktree, prior);
+  assert.equal(f.launches[0].internal.retainWorktree, true);
+  assert.equal(f.launches[0].internal.requirePrivateDependencies, true, 'a retry must also keep dependencies private');
   assert.equal(f.native.prepare('SELECT COUNT(*) AS n FROM work_node_sessions WHERE node_id=?').get(node).n, 2);
+}));
+
+test('planning retains its goal checkout without requesting mutating dependency preparation', () => withFixture(async f => {
+  const node = f.seed('planner', { kind: 'plan' });
+  await f.control.startNode(node, { providerId: 'stage-profile' });
+  assert.equal(f.launches[0].internal.retainWorktree, true);
+  assert.equal(f.launches[0].internal.requirePrivateDependencies, false);
 }));
 
 test('missing retry checkout refuses before launch; launcher repository rejection preserves the old checkout', () => withFixture(async f => {
@@ -234,4 +249,141 @@ test('automatic dispatch stops on unknown or partial meters, while no prior sess
   f.meter(zero, 'zero-dollar-meter', 0);
   await f.control.startQueuedNode(zero);
   assert.equal(f.launches.length, 2);
+}));
+
+test('generic and missing profiles stay manual at arm, sweep and actual stage dequeue; free checks remain eligible', () => withFixture(async f => {
+  f.state.profiles.set('generic', { id: 'generic', harness: 'generic-cli', profileFingerprint: 'generic-v1' });
+  f.state.profiles.set('missing', undefined);
+  for (const provider of ['generic', 'missing']) {
+    const node = f.seed(`arm-${provider}`, { provider });
+    assert.throws(() => f.control.setAutopilot(`arm-${provider}`, { enabled: true, providerId: 'global-profile' }), /manual stages/);
+    assert.equal(f.goal(`arm-${provider}`).autopilot, 0);
+    f.native.prepare('UPDATE work_dockets SET autopilot=1 WHERE id=?').run(`arm-${provider}`);
+    assert.equal(f.control.sweepAutopilot(), 0);
+    assert.equal(f.goal(`arm-${provider}`).autopilot, 0);
+    f.native.prepare('UPDATE work_dockets SET autopilot=1 WHERE id=?').run(`arm-${provider}`);
+    await f.control.startQueuedNode(node);
+    assert.equal(f.launches.length, 0);
+    assert.equal(f.goal(`arm-${provider}`).autopilot, 0);
+  }
+  const pinned = f.seed('changed-stage', { autopilot: 1 });
+  assert.equal(f.control.sweepAutopilot(), 1);
+  f.native.prepare("UPDATE work_nodes SET provider_id='generic' WHERE id=?").run(pinned);
+  await f.control.startQueuedNode(pinned);
+  assert.equal(f.launches.length, 0);
+  const manual = f.seed('manual-generic', { provider: 'generic' });
+  await f.control.startNode(manual, { providerId: 'generic' });
+  assert.equal(f.launches.length, 1, 'explicit manual dispatch is unchanged');
+  const free = f.seed('free-generic', { kind: 'verify', provider: 'generic' });
+  f.control.registerAutomaticNodeRunner({ id: 'free', matches: ({ node }) => node.kind === 'verify',
+    async run(nodeId) { f.native.prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(nodeId); },
+  });
+  f.control.setAutopilot('free-generic', { enabled: true, providerId: 'generic' });
+  await f.control.startQueuedNode(free, 'free');
+  assert.equal(f.row(free).status, 'completed');
+  assert.equal(f.launches.length, 1, 'the generic provider is not called by deterministic work');
+}));
+
+test('automatic launch rechecks pause, halt, ownership, route, profile and meters after asynchronous preparation', async () => {
+  for (const change of ['pause', 'halt', 'ownership', 'route', 'profile', 'generic', 'cap', 'unmetered']) {
+    await withFixture(async f => {
+      const node = f.seed(`prepared-${change}`, { autopilot: 1, claim: 'owned-path' });
+      assert.equal(f.control.sweepAutopilot(), 1);
+      let release;
+      f.state.prepare = () => new Promise(resolve => { release = resolve; });
+      const pending = f.control.startQueuedNode(node);
+      assert.equal(f.attempted.length, 1);
+      assert.equal(f.launches.length, 0);
+      if (change === 'pause') f.control.setAutopilot(`prepared-${change}`, { enabled: false });
+      if (change === 'halt') f.state.halted = true;
+      if (change === 'ownership') f.native.prepare("UPDATE work_nodes SET status='canceled',dispatch_state=NULL WHERE id=?").run(node);
+      if (change === 'route') f.native.prepare("UPDATE work_nodes SET effort='high' WHERE id=?").run(node);
+      if (change === 'profile') f.state.profiles.set('stage-profile', { id: 'stage-profile', harness: 'claude-code', profileFingerprint: 'changed' });
+      if (change === 'generic') f.state.profiles.set('stage-profile', { id: 'stage-profile', harness: 'generic-cli', profileFingerprint: 'fingerprint-stage-profile' });
+      if (change === 'cap') f.meter(node, 'new-spend', 10);
+      if (change === 'unmetered') f.meter(node, 'unmetered-session', null);
+      release();
+      await pending;
+      assert.equal(f.launches.length, 0, `${change} must refuse before the process boundary`);
+      assert.equal(f.row(node).dispatch_state, null);
+      assert.equal(f.row(node).session_id, null);
+      assert.equal(f.native.prepare('SELECT COUNT(*) AS n FROM work_claims WHERE released_at IS NULL').get().n, 0);
+    });
+  }
+});
+
+test('registered deterministic verification runs at a reached cap or unknown spend without a provider launch', () => withFixture(async f => {
+  const runs = [];
+  f.control.registerAutomaticNodeRunner({ id: 'fixture-verification',
+    matches: ({ node }) => node.kind === 'verify',
+    async run(nodeId) { runs.push(nodeId); f.native.prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(nodeId); },
+  });
+  for (const [id, cost] of [['at-cap', 10], ['unmetered', null]]) {
+    const node = f.seed(id, { autopilot: 1, kind: 'verify' });
+    f.meter(node, `${id}-attempt`, cost);
+    f.native.prepare('UPDATE work_dockets SET autopilot_provider=NULL WHERE id=?').run(id);
+    assert.equal(f.control.sweepAutopilot(), 1);
+    const queued = f.enqueued.at(-1).payload;
+    assert.equal(queued.automaticRunnerId, 'fixture-verification');
+    await f.control.startQueuedNode(node, queued.automaticRunnerId);
+    assert.equal(f.row(node).status, 'completed');
+  }
+  assert.equal(runs.length, 2);
+  assert.equal(f.launches.length, 0);
+}));
+
+test('unknown spend while a task is still running does not disarm the later free verification path', () => withFixture(async f => {
+  const node = f.seed('running-unmetered', { autopilot: 1, status: 'running', session: 'active-session' });
+  f.meter(node, 'active-session', null);
+  f.control.registerAutomaticNodeRunner({ id: 'fixture-verification', matches: ({ node }) => node.kind === 'verify',
+    async run(nodeId) { f.native.prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(nodeId); },
+  });
+  const verify = 'verify-after-unmetered';
+  f.native.prepare(`INSERT INTO work_nodes (id,docket_id,kind,title,instructions,depends_json)
+    VALUES (?,'running-unmetered','verify','Check','Run checks',?)`).run(verify, JSON.stringify([node]));
+  assert.equal(f.control.sweepAutopilot(), 0);
+  assert.equal(f.goal('running-unmetered').autopilot, 1);
+  f.native.prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(node);
+  assert.equal(f.control.sweepAutopilot(), 1);
+  await f.control.startQueuedNode(verify, f.enqueued.at(-1).payload.automaticRunnerId);
+  assert.equal(f.row(verify).status, 'completed');
+  assert.equal(f.launches.length, 0);
+}));
+
+test('failed or removed deterministic runners never fall through to a paid agent or retry forever', () => withFixture(async f => {
+  const remove = f.control.registerAutomaticNodeRunner({ id: 'fixture-verification', matches: ({ node }) => node.kind === 'verify',
+    async run() { throw new Error('Review gate failed'); },
+  });
+  const failed = f.seed('failed-free', { autopilot: 1, kind: 'verify' });
+  await f.control.startQueuedNode(failed, 'fixture-verification');
+  assert.equal(f.row(failed).status, 'failed');
+  assert.equal(f.goal('failed-free').autopilot, 0);
+  assert.match(f.row(failed).detail, /Review gate failed/);
+  assert.equal(f.control.sweepAutopilot(), 0);
+  const removed = f.seed('removed-free', { autopilot: 1, kind: 'verify' });
+  assert.equal(f.control.sweepAutopilot(), 1);
+  remove();
+  await f.control.startQueuedNode(removed, 'fixture-verification');
+  assert.equal(f.launches.length, 0);
+  assert.equal(f.goal('removed-free').autopilot, 0);
+}));
+
+test('a deterministic task is atomically claimed before awaiting the runner', () => withFixture(async f => {
+  let finish;
+  let calls = 0;
+  f.control.registerAutomaticNodeRunner({ id: 'fixture-verification', matches: ({ node }) => node.kind === 'verify',
+    async run(nodeId) {
+      calls++;
+      await new Promise(resolve => { finish = resolve; });
+      f.native.prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(nodeId);
+    },
+  });
+  const node = f.seed('concurrent-free', { autopilot: 1, kind: 'verify' });
+  const first = f.control.startQueuedNode(node, 'fixture-verification');
+  await f.control.startQueuedNode(node, 'fixture-verification');
+  assert.equal(calls, 1);
+  finish();
+  await first;
+  assert.equal(f.row(node).status, 'completed');
+  assert.equal(f.launches.length, 0);
 }));

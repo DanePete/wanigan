@@ -1,4 +1,5 @@
 import type { AttentionKind, SessionStatus } from './types.ts';
+import { automaticSpendVerdict, type AutomaticSpendInput, type AutomaticSpendRefusal } from './automatic-spend.ts';
 
 /**
  * What of a failed review gate goes back to the agent that caused it, and when
@@ -125,7 +126,7 @@ export function pasteFrames(text: string): [string, string] {
   return [`\x1b[200~${terminalSafe(text)}\x1b[201~`, '\r'];
 }
 
-export type HandBackRefusal = 'off' | 'halted' | 'limit' | 'cap' | 'session-gone' | 'moved-on';
+export type HandBackRefusal = 'off' | 'halted' | 'limit' | AutomaticSpendRefusal | 'session-gone' | 'moved-on';
 export type HandBackVerdict =
   | { send: true; attempt: number }
   | { send: false; reason: HandBackRefusal; sentence: string };
@@ -140,12 +141,10 @@ export type HandBackVerdict =
  * exactly the state the triggering Stop left it in, which is what the
  * attention transition id names.
  */
-export function handBackVerdict(input: {
+export function handBackVerdict(input: AutomaticSpendInput & {
   enabled: boolean;
   halted: boolean;
   returnsSoFar: number;
-  budgetUsd: number | null;
-  spendUsd: number;
   sessionStatus: SessionStatus | null;
   attention: { kind: AttentionKind; transitionId: string } | null;
   stopEventId: number;
@@ -156,9 +155,8 @@ export function handBackVerdict(input: {
   if (input.returnsSoFar >= HANDBACK_LIMIT) {
     return no('limit', `This task has already had ${HANDBACK_LIMIT} failures handed back since it started, so this one waits for you.`);
   }
-  if (input.budgetUsd !== null && input.spendUsd >= input.budgetUsd) {
-    return no('cap', 'This goal’s reported spend has reached its cap, so Wanigan did not start another agent turn.');
-  }
+  const spend = automaticSpendVerdict(input);
+  if (!spend.allowed) return no(spend.reason, spend.sentence);
   if (input.sessionStatus !== 'running') return no('session-gone', 'The session is no longer running, so there was nobody to hand the failure to.');
   if (!input.attention || input.attention.kind !== 'finished' || input.attention.transitionId !== `event:${input.stopEventId}`) {
     return no('moved-on', 'The session moved on after it stopped, so the failure was not typed over whatever it is doing now.');

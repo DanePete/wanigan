@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { recordOutcomeReview } from './control-outcomes';
 import { db } from './db';
+import type { FrozenTokenEvidence } from '../shared/token-evidence';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type ReviewRow = { accepted: number; tests_passed: number; cost_usd: number | null; attempts_json: string };
 type Attempt = { sessionId: string; providerId: string | null; model: string | null; effort: string | null;
-  backendId: string | null; harnessId: string | null; profileFingerprint: string | null; costUsd: number | null };
+  backendId: string | null; harnessId: string | null; profileFingerprint: string | null; costUsd: number | null;
+  inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null;
+  cacheWriteTokens: number | null; reasoningTokens: number | null; tokenEvidence: FrozenTokenEvidence };
 
 /** Review writer with actual SQLite/telemetry fixtures; no agent process or billed inference. */
 export function runControlOutcomesSmoke(check: Check, say: (text: string) => void): void {
@@ -57,6 +60,11 @@ export function runControlOutcomesSmoke(check: Check, say: (text: string) => voi
 
     const retry = node('retry');
     const firstSession = attempt(retry, 'attempt_first', 'profile-first', 'small', 'low', 7);
+    const tokenMetric = d.prepare(`INSERT INTO session_metrics (session_id,metric,attrs,value,last_at)
+      VALUES (?,'claude_code.token.usage',?,?,?)`);
+    tokenMetric.run(firstSession, '{"type":"input"}', 100, at);
+    tokenMetric.run(firstSession, '{"type":"cacheRead"}', 900, at);
+    tokenMetric.run(firstSession, '{"type":"cacheCreation"}', 0, at);
     const rejected = review(retry, 'request_changes', false, false)!;
     const firstAttempts = JSON.parse(rejected.attempts_json) as Attempt[];
     check(rejected.accepted === 0 && rejected.tests_passed === 0 && rejected.cost_usd === 7
@@ -66,6 +74,10 @@ export function runControlOutcomesSmoke(check: Check, say: (text: string) => voi
       && firstAttempts[0].effort === 'low' && firstAttempts[0].backendId === 'anthropic'
       && firstAttempts[0].harnessId === 'claude-code' && firstAttempts[0].profileFingerprint === 'frozen:profile-first',
     'outcome identity comes from the launched session snapshot, not the task’s current route pin', firstAttempts[0]);
+    check(firstAttempts[0].inputTokens === 100 && firstAttempts[0].cacheReadTokens === 900
+      && firstAttempts[0].cacheWriteTokens === 0 && firstAttempts[0].outputTokens === null
+      && firstAttempts[0].reasoningTokens === null && firstAttempts[0].tokenEvidence.scope === 'session',
+    'frozen evidence preserves cached input and explicit zero while unreported buckets stay null', firstAttempts[0]);
 
     attempt(retry, 'attempt_second', 'profile-second', 'large', 'high', 2);
     const approved = review(retry, 'approve', true, true)!;
@@ -95,6 +107,10 @@ export function runControlOutcomesSmoke(check: Check, say: (text: string) => voi
     const costs = (JSON.parse(missingCost.attempts_json) as Attempt[]).map(value => value.costUsd);
     check(missingCost.cost_usd === null && costs[0] === 7 && costs[1] === null,
       'one unmetered attempt makes total cost unknown while preserving the known subtotal per attempt', missingCost);
+    const absentTokens = (JSON.parse(missingCost.attempts_json) as Attempt[])[1];
+    check(absentTokens.inputTokens === null && absentTokens.cacheReadTokens === null
+      && absentTokens.tokenEvidence.scope === 'unavailable',
+    'a session with no token meter freezes unknown usage rather than default display zeros', absentTokens);
     const unknown = d.prepare('SELECT cost_reported FROM work_model_outcomes WHERE node_id=?')
       .get(incomplete.id) as { cost_reported: number };
     check(unknown.cost_reported === 0, 'the compatibility projection does not turn a partial subtotal into complete spend');

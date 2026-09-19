@@ -8,6 +8,7 @@ import { halted } from './halt';
 import { headSync } from './git';
 import { listProjects, projectById } from './store';
 import { createSession, killSession, listSessions } from './sessions';
+import { providerById } from './providers';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
@@ -15,6 +16,7 @@ import { latestGoalPlan } from './goal-plans';
 import { enqueue } from './queue';
 import { forgetTreeSnapshot, snapshotTree } from './tree-snapshot';
 import { failureExcerpt } from '../shared/gate-feedback';
+import { automaticSpendVerdict } from '../shared/automatic-spend';
 import { conversationProof } from '../shared/resumable';
 import { conversationEvidenceFor } from './transcripts';
 import type {
@@ -691,7 +693,7 @@ export function goalPlan(docketId: string): GoalPlan | null {
   return latestGoalPlan(docketId);
 }
 
-export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string; accountId?: string | null }): Promise<DocketNode> {
+export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string; accountId?: string | null }, beforeSpawn?: () => void): Promise<DocketNode> {
   const node = readyNode(nodeId); const parent = docketRow(node.docketId);
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This goal’s project no longer exists.');
@@ -756,7 +758,8 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
         || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
       accountId: input.accountId ?? node.accountId ?? undefined,
       isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
-      inherited ? { useWorktree: inherited } : {});
+      { ...(inherited ? { useWorktree: inherited } : {}), retainWorktree: true,
+        requirePrivateDependencies: node.kind === 'implement', beforeSpawn });
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);
     throw error;
@@ -1144,7 +1147,8 @@ function changesRequestedFor(docketId: string, limit = 3): { note: string; decid
   return out;
 }
 
-export async function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }): Promise<DocketNode> {
+export async function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' },
+  beforeCommit?: () => void): Promise<DocketNode> {
   const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const nodes = rawNodes(parent.id);
   const current = mapNodes(nodes).find((value) => value.id === nodeId)!;
   if (!['running', 'ready'].includes(current.status)) throw new Error(`Only a ready or running task can be completed; this task is ${current.status}.`);
@@ -1216,6 +1220,9 @@ export async function completeNode(nodeId: string, input: { detail?: string; dec
         if (proof.passed) review.assertPassNotSuperseded(proof.runId, parent.project_id, proof.cwd);
       }
     }
+    // A main-owned automatic caller can revalidate its live evidence after
+    // filesystem checks yielded. IPC callers never receive this capability.
+    beforeCommit?.();
     const failed = decision !== 'approve';
     db().prepare('UPDATE work_nodes SET status=?,ended_at=?,detail=? WHERE id=?')
       .run(failed ? 'failed' : 'completed', now(), detail, nodeId);
@@ -1596,6 +1603,29 @@ function upstreamWork(docketId: string, reviewId: string): NodeRow[] {
 
 /* ── autopilot ───────────────────────────────────────────────────────── */
 
+export type AutomaticNodeRunner = {
+  id: string;
+  /** Main-owned deterministic work only: this path cannot authorize provider spend. */
+  matches(context: { node: DocketNode; docket: { id: string; relay: boolean } }): boolean;
+  run(nodeId: string): Promise<unknown>;
+};
+const automaticNodeRunners = new Map<string, AutomaticNodeRunner>();
+
+/** A module can supply deterministic verification without launching an agent. */
+export function registerAutomaticNodeRunner(runner: AutomaticNodeRunner): () => void {
+  const id = safeText(runner.id, 'Automatic runner', 120);
+  automaticNodeRunners.set(id, runner);
+  return () => { if (automaticNodeRunners.get(id) === runner) automaticNodeRunners.delete(id); };
+}
+
+function automaticNodeRunner(node: DocketNode, parent: DocketRow): AutomaticNodeRunner | null {
+  const matches = [...automaticNodeRunners.values()].filter(runner => runner.matches({
+    node, docket: { id: parent.id, relay: parent.relay === 1 },
+  }));
+  if (matches.length > 1) throw new Error('More than one automatic runner claims this task. Resolve the module conflict before continuing.');
+  return matches[0] ?? null;
+}
+
 function clearDispatch(nodeId: string): void {
   db().prepare("UPDATE work_nodes SET dispatch_state=NULL WHERE id=? AND dispatch_state='queued'").run(nodeId);
 }
@@ -1656,15 +1686,15 @@ function haltAutopilot(docketId: string, reason: string): void {
  * rule. No previous sessions means no spend yet; a launched session with no
  * reported dollars is unknown, even if its numeric counter happens to be 0. */
 function autopilotBudgetRefusal(row: DocketRow): string | null {
-  if (row.budget_usd === null) return 'the goal no longer has a budget.';
-  const spend = autopilotSpend(row.id);
-  if (spend.spendUsd >= row.budget_usd) {
-    return `reported spend of $${spend.spendUsd.toFixed(2)} reached the $${row.budget_usd.toFixed(2)} budget.`;
-  }
-  if (spend.spendStatus === 'partial' || spend.spendStatus === 'unreported') {
-    return 'one or more previous sessions have no reported cost, so remaining budget cannot be verified.';
-  }
-  return null;
+  const verdict = automaticSpendVerdict({ budgetUsd: row.budget_usd, ...autopilotSpend(row.id) });
+  return verdict.allowed ? null : verdict.sentence;
+}
+
+function automaticProviderRefusal(providerId: string | null): string | null {
+  const profile = providerId ? providerById(providerId) : undefined;
+  return !profile || profile.harness === 'generic-cli'
+    ? 'This coding connection has not verified the session evidence needed for unattended dispatch. Use manual stages until that integration is verified.'
+    : null;
 }
 
 /**
@@ -1690,6 +1720,12 @@ export function setAutopilot(docketId: string, input: { enabled: boolean; provid
     throw new Error('Set a budget on this goal before enabling autopilot. Unattended dispatch spends against a real provider with nobody watching, and Wanigan will not start an uncapped run.');
   }
   const providerId = safeText(input.providerId, 'Provider', 120);
+  for (const node of mapNodes(rawNodes(docketId))) {
+    if (['completed', 'canceled'].includes(node.status) || ['review', 'estimate'].includes(node.kind)
+      || automaticNodeRunner(node, row)) continue;
+    const refusal = automaticProviderRefusal(node.providerId ?? providerId);
+    if (refusal) throw new Error(refusal);
+  }
   const model = input.model?.trim() || null;
   db().prepare('UPDATE work_dockets SET autopilot=1,autopilot_provider=?,autopilot_model=?,updated_at=? WHERE id=?')
     .run(providerId, model, now(), docketId);
@@ -1774,7 +1810,7 @@ export function setGoalGate(docketId: string, input: { onStop?: unknown; returnF
 
 export type StopGateTarget = {
   nodeId: string; docketId: string; returnFailures: boolean; gateReturns: number;
-  budgetUsd: number | null; spendUsd: number;
+  budgetUsd: number | null; spendUsd: number; spendStatus: DocketAutopilot['spendStatus'];
 };
 
 /**
@@ -1795,7 +1831,7 @@ export function stopGateTarget(sessionId: string): StopGateTarget | null {
   const row = rows[0];
   return {
     nodeId: row.node_id, docketId: row.docket_id, returnFailures: row.return_failures === 1, gateReturns: row.gate_returns ?? 0,
-    budgetUsd: row.budget_usd, spendUsd: row.budget_usd === null ? 0 : autopilotSpend(row.docket_id).spendUsd,
+    budgetUsd: row.budget_usd, ...autopilotSpend(row.docket_id),
   };
 }
 
@@ -1845,24 +1881,27 @@ export function sweepAutopilot(): number {
     .all() as DocketRow[];
   let queued = 0;
   for (const row of dockets) {
-    if (!row.autopilot_provider) {
-      haltAutopilot(row.id, 'no provider is recorded for unattended dispatch.');
-      continue;
-    }
-    const budgetRefusal = autopilotBudgetRefusal(row);
-    if (budgetRefusal) {
-      haltAutopilot(row.id, budgetRefusal);
-      continue;
-    }
-    for (const node of mapNodes(rawNodes(row.id))) {
-      if (node.status !== 'ready' || node.kind === 'review' || node.kind === 'estimate') continue;
+    const eligible = mapNodes(rawNodes(row.id)).filter(node => node.status === 'ready' && node.kind !== 'review' && node.kind !== 'estimate');
+    let candidates: { node: DocketNode; runner: AutomaticNodeRunner | null }[];
+    try { candidates = eligible.map(node => ({ node, runner: automaticNodeRunner(node, row) })); }
+    catch (error) { haltAutopilot(row.id, String(error)); continue; }
+    const deterministic = candidates.some(candidate => candidate.runner !== null);
+    const paidReady = candidates.some(candidate => candidate.runner === null);
+    const paidRefusal = !paidReady ? null : autopilotBudgetRefusal(row)
+      ?? candidates.filter(candidate => !candidate.runner)
+        .map(candidate => automaticProviderRefusal(candidate.node.providerId ?? row.autopilot_provider)).find(Boolean) ?? null;
+    // A budget cannot forbid a free check of work already produced. Finish
+    // eligible deterministic work before disarming the remaining paid path.
+    if (paidRefusal && !deterministic) { haltAutopilot(row.id, paidRefusal); continue; }
+    for (const { node, runner } of candidates) {
+      if (!runner && paidRefusal) continue;
       // The marker is claimed in the same statement that tests it, so two
       // ticks — or two processes on this database — cannot both enqueue it.
       const claimed = db().transaction(() => {
         const changed = db().prepare(`UPDATE work_nodes SET dispatch_state='queued'
           WHERE id=? AND dispatch_state IS NULL AND status='pending' AND session_id IS NULL`).run(node.id);
         if (changed.changes !== 1) return false;
-        enqueue('node', `${row.title} · ${node.title}`, { nodeId: node.id });
+        enqueue('node', `${row.title} · ${node.title}`, { nodeId: node.id, ...(runner ? { automaticRunnerId: runner.id } : {}) });
         return true;
       }).immediate();
       if (claimed) queued++;
@@ -1881,13 +1920,51 @@ export function sweepAutopilot(): number {
  * is no longer eligible, and five refusals are not more informative than one.
  * The task's own row in Control remains the record of what actually happened.
  */
-export async function startQueuedNode(nodeId: string): Promise<void> {
+export async function startQueuedNode(nodeId: string, automaticRunnerId?: string): Promise<void> {
   const node = nodeRow(nodeId);
   const parent = docketRow(node.docket_id);
   const mapped = mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId);
-  if (halted() || parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review' || mapped.kind === 'estimate') {
+  if (halted() || parent.autopilot !== 1 || !mapped || mapped.status !== 'ready' || mapped.kind === 'review' || mapped.kind === 'estimate') {
     clearDispatch(nodeId);
     return;
+  }
+  let runner: AutomaticNodeRunner | null;
+  try {
+    runner = automaticNodeRunner(mapped, parent);
+    if (automaticRunnerId !== undefined && runner?.id !== automaticRunnerId) {
+      throw new Error('The deterministic runner queued for this task is no longer available. No agent was launched.');
+    }
+  } catch (error) {
+    haltAutopilot(parent.id, String(error)); clearDispatch(nodeId); return;
+  }
+  if (runner) {
+    const claimed = db().transaction(() => {
+      const freshParent = docketRow(parent.id);
+      const fresh = mapNodes(rawNodes(parent.id)).find(value => value.id === nodeId);
+      if (halted() || freshParent.autopilot !== 1 || !fresh || fresh.status !== 'ready'
+        || automaticNodeRunner(fresh, freshParent) !== runner) return false;
+      return db().prepare(`UPDATE work_nodes SET status='running',started_at=?,ended_at=NULL,dispatch_state=NULL,detail=NULL
+        WHERE id=? AND status='pending' AND session_id IS NULL`).run(now(), nodeId).changes === 1;
+    }).immediate();
+    if (!claimed) return;
+    setTaskStatus(nodeId, 'working'); setDocketPhase(parent.id);
+    try {
+      await runner.run(nodeId);
+      if (nodeRow(nodeId).status !== 'completed') throw new Error('The deterministic runner did not complete this task with verified evidence.');
+    } catch (error) {
+      const detail = `Automatic ${runner.id} stopped: ${String(error)}`.slice(0, MAX_NOTE);
+      db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,dispatch_state=NULL,detail=?
+        WHERE id=? AND status='running' AND session_id IS NULL`).run(now(), detail, nodeId);
+      releaseClaims(nodeId);
+      setTaskStatus(nodeId, 'failed');
+      haltAutopilot(parent.id, detail);
+    } finally { setDocketPhase(parent.id); }
+    return;
+  }
+  const providerId = node.provider_id ?? parent.autopilot_provider;
+  const providerRefusal = automaticProviderRefusal(providerId);
+  if (providerRefusal || !providerId) {
+    haltAutopilot(parent.id, providerRefusal ?? 'No provider is recorded for unattended dispatch.'); clearDispatch(nodeId); return;
   }
   // A queued row can wait while another session spends the remaining cap or
   // loses its meter. Re-read at dispatch, not just when the sweep enqueued it.
@@ -1897,16 +1974,43 @@ export async function startQueuedNode(nodeId: string): Promise<void> {
     clearDispatch(nodeId);
     return;
   }
+  let launchRefusal: string | null = null;
   try {
     // Stage pins survive unattended execution. A docket-wide model is only a
     // fallback for its own provider, never a model name sent to another one.
-    const providerId = node.provider_id ?? parent.autopilot_provider;
     const model = node.model ?? (providerId === parent.autopilot_provider ? parent.autopilot_model : null);
-    await startNode(nodeId, { providerId, model: model ?? undefined });
+    const profileFingerprint = providerById(providerId)?.profileFingerprint;
+    await startNode(nodeId, { providerId, model: model ?? undefined }, () => {
+      const refuse = (reason: string): never => { launchRefusal = reason; throw new Error(reason); };
+      if (halted()) refuse('Wanigan was halted while preparing this automatic launch.');
+      const currentParent = docketRow(parent.id);
+      const current = nodeRow(nodeId);
+      const ready = mapNodes(rawNodes(parent.id)).find(value => value.id === nodeId);
+      if (currentParent.autopilot !== 1 || ['accepted', 'rejected'].includes(currentParent.status)) {
+        refuse('Autopilot was stopped while preparing this launch.');
+      }
+      if (!ready || ready.status !== 'ready' || current.session_id !== null
+        || current.dispatch_state !== node.dispatch_state || current.docket_id !== node.docket_id
+        || automaticNodeRunner(ready, currentParent)) refuse('This task no longer owns the automatic launch being prepared.');
+      const bindings = ['provider_id', 'model', 'effort', 'account_id', 'permission_mode', 'worktree',
+        'kind', 'depends_json', 'claim_path', 'instructions'] as const;
+      const currentProvider = current.provider_id ?? currentParent.autopilot_provider;
+      const currentModel = current.model ?? (currentProvider === currentParent.autopilot_provider ? currentParent.autopilot_model : null);
+      if (bindings.some(key => current[key] !== node[key]) || currentProvider !== providerId || currentModel !== model
+        || providerById(providerId)?.profileFingerprint !== profileFingerprint) {
+        refuse('The task’s route or launch settings changed while preparing this launch.');
+      }
+      const refusal = automaticProviderRefusal(providerId) ?? autopilotBudgetRefusal(currentParent);
+      if (refusal) refuse(refusal);
+    });
   } catch (error) {
     // A real launch failure — no provider, a taken claim, a dead worktree —
     // releases the marker so a later sweep can try again once it is fixed.
     clearDispatch(nodeId);
+    if (launchRefusal) {
+      if (docketRow(parent.id).autopilot === 1) haltAutopilot(parent.id, launchRefusal);
+      return;
+    }
     throw error;
   }
 }

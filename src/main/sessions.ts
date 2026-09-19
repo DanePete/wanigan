@@ -1,4 +1,5 @@
 import { permissionInputFor } from '../shared/session-permissions';
+import { codexPromptOutput, type CodexPromptState } from '../shared/codex-prompt';
 import { commandLine, spawnPlan } from '../shared/platform';
 import { hostPlatform } from './platform';
 import { attentionOf } from './attention';
@@ -31,7 +32,10 @@ import { archiveSession } from './transcripts';
 import {
   archiveInterruptedTranscripts, deriveSessionTitle, reconcileAbandonedSessions, setLiveSessions,
 } from './session-history';
-import { createWorktree, removeWorktree, repoRootFor, worktreeLaunchEnv, worktreeStatus } from './worktrees';
+import {
+  cleanupSessionWorktree, createWorktree, ensurePrivateWorktreeDependencies, removeWorktree,
+  repoRootFor, retainWorktreeForReview, worktreeLaunchEnv, worktreeStatus,
+} from './worktrees';
 import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
 import { trustFor, waniganCredentialDirs } from './policy';
 import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
@@ -323,6 +327,8 @@ type Live = {
   pendingTimer: ReturnType<typeof setTimeout> | null;
   /** Most recent PTY output; used to avoid typing an initial Codex prompt into a redraw. */
   lastDataAt: number;
+  codexPrompt: CodexPromptState;
+  initialPromptPending: boolean;
   /** Last moment this session's output was reported to the attention queue. */
   notedAt: number;
   /** Incomplete OSC 9 control sequence split across PTY chunks. */
@@ -388,6 +394,12 @@ type ExactCodexRecovery = {
 
 type CreateSessionInternal = {
   exactCodexRecovery?: ExactCodexRecovery;
+  /** Goal work remains available for review/retry until explicit cleanup. */
+  retainWorktree?: boolean;
+  /** Mutating goal work cannot share writable dependencies with its parent. */
+  requirePrivateDependencies?: boolean;
+  /** Main-owned authorization is rechecked after asynchronous preparation. */
+  beforeSpawn?: () => void;
   /**
    * An existing worktree this session must run in, instead of cutting a fresh
    * one. Main-process callers only, and only Control uses it: a verification
@@ -488,33 +500,37 @@ function captureCodexIdentityAfterPrompt(live: Live, cwd: string): void {
 }
 
 /**
- * Codex redraws its welcome screen while its MCP servers are booting. Sending
- * text and Enter as one early PTY write can leave the text in the composer and
- * lose the submit key. Wait for its visible prompt to settle, then type and
- * submit in separate writes. Manual typing already crosses this boundary.
+ * Native prompt argv handles new Codex sessions and exact resumes. A legacy
+ * profile or native picker still needs this conservative fallback: only the
+ * latest readable prompt may authorize typing, and an intervening modal must
+ * never receive Enter. Manual input cancels the pending automatic submission.
  */
 function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void {
   const deadline = Date.now() + 20_000;
   let sawPromptAt = 0;
   const trySubmit = () => {
-    if (live.meta.status === 'exited') return;
+    if (live.meta.status === 'exited' || !live.initialPromptPending) return;
     const now = Date.now();
-    if (live.buffer.includes('Ask Codex to do anything')) {
+    if (live.codexPrompt.ready) {
       if (!sawPromptAt) sawPromptAt = now;
       if (now - sawPromptAt >= 750 && now - live.lastDataAt >= 400) {
         try {
           live.proc.write(prompt);
           setTimeout(() => {
-            if (live.meta.status === 'exited') return;
+            if (live.meta.status === 'exited' || !live.initialPromptPending) return;
+            // A modal/redraw arriving after the paste cannot receive an Enter
+            // intended for the composer. Leave the typed task for the person.
+            if (!live.codexPrompt.ready) return;
             try {
               live.proc.write('\r');
+              live.initialPromptPending = false;
               captureCodexIdentityAfterPrompt(live, cwd);
             } catch { /* exited between the paired writes */ }
           }, 150);
         } catch { /* exited already */ }
         return;
       }
-    }
+    } else sawPromptAt = 0;
     if (now < deadline) {
       setTimeout(trySubmit, 150);
       return;
@@ -529,6 +545,7 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
     // that would carry it out.
     queueSessionData(live, notice);
     flushSessionData(live);
+    live.initialPromptPending = false;
   };
   setTimeout(trySubmit, 150);
 }
@@ -1179,7 +1196,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   }
   if (!worktree && (opts.isolate || resumeTree.needsFreshIsolation)) {
     try {
-      const wt = await createWorktree(project.path, project.name, id0);
+      const wt = await createWorktree(project.path, project.name, id0, {
+        requirePrivateDependencies: internal.requirePrivateDependencies === true,
+      });
       worktree = wt.path;
       createdWorktree = true;
     } catch (e) {
@@ -1189,6 +1208,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       );
     }
   }
+  if (internal.requirePrivateDependencies) {
+    if (!worktree) throw new Error('Mutating Relay work requires an isolated checkout with private dependencies.');
+    if (!createdWorktree) await ensurePrivateWorktreeDependencies(worktree);
+  }
+  if (internal.retainWorktree && worktree) retainWorktreeForReview(worktree);
   const cwd = worktree ?? project.path;
   // Setup ran with the worktree's port block; the agent it was set up for gets
   // the same one, so its dev server stays off the next worktree's ports. A
@@ -1399,6 +1423,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // the values the operator selected; only a durable Codex conversation owns
   // its own resume-time settings.
   const resumeCodex = isResuming && def.harness === 'codex';
+  // A picker without an exact id treats a positional prompt as its session
+  // selector. New launches and exact `resume <id> <prompt>` have unambiguous
+  // grammars. Generic profiles use only their explicitly declared template.
+  const promptViaArgs = Boolean(def.initialPromptArgs) && (!resumeCodex || Boolean(conversationId));
   let args: string[];
   try {
     args = [
@@ -1409,6 +1437,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         effort: resumeCodex ? undefined : def.supports.effort ? opts.effort || undefined : undefined,
         permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
       }),
+      ...(promptViaArgs ? def.initialPromptArgs!(opts.initialPrompt?.trim() ?? '') : []),
     ];
   } catch (error) {
     await rollbackLaunch();
@@ -1579,6 +1608,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // already-quoted command line needs.
   const ptyArgs = plan.kind === 'interpreter' ? commandLine(plan) : plan.args;
 
+  try { internal.beforeSpawn?.(); } catch (error) {
+    if (resumeKey) resumingConversations.delete(resumeKey);
+    await rollbackLaunch();
+    throw error;
+  }
   let proc: IPty;
   try {
     proc = pty.spawn(plan.file, ptyArgs, {
@@ -1718,6 +1752,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     pending: '',
     pendingTimer: null,
     lastDataAt: Date.now(),
+    codexPrompt: { ready: false, partial: '' },
+    initialPromptPending: !promptViaArgs && Boolean(opts.initialPrompt?.trim()),
     notedAt: 0,
     providerControl: '',
     providerAwaitingApproval: false,
@@ -1765,6 +1801,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   proc.onData((data) => {
     live.buffer += data;
     live.lastDataAt = Date.now();
+    live.codexPrompt = codexPromptOutput(live.codexPrompt, data);
     if (live.buffer.length > SCROLLBACK_BYTES) {
       live.buffer = live.buffer.slice(-SCROLLBACK_BYTES);
     }
@@ -1915,15 +1952,17 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       try { exitObserver?.(live.meta); } catch { /* notification policy cannot fail PTY cleanup */ }
     }
 
-    // An isolated worktree with no changes is disk cost and nothing else. The
+    // Goal checkouts remain available even when clean: the next review or
+    // retry still needs their path. The operator removes them explicitly.
+    // An ordinary isolated worktree with no changes can be removed. The
     // session-end checkpoint is captured first — removal must never race the
     // snapshot that makes this session's last state recoverable.
-    if (worktree) {
+    if (worktree && !internal.retainWorktree) {
       // finalizeSessionCheckpoints swallows its own failures today, but its
       // type does not promise to, and .finally() re-raises whatever it is
       // chained onto.
       void checkpointsSettled.catch(() => {}).finally(() => {
-        void removeWorktree(worktree, false).catch(() => {
+        void cleanupSessionWorktree(worktree).catch(() => {
           /* dirty worktrees are kept on purpose — the human reviews and merges */
         });
       });
@@ -1933,13 +1972,15 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     broadcast('session:list', sessionListEntries());
   });
 
-  if (opts.initialPrompt?.trim()) {
+  if (opts.initialPrompt?.trim() && !promptViaArgs) {
     const prompt = opts.initialPrompt.trim();
     if (def.harness === 'codex') {
       submitInitialCodexPrompt(live, cwd, prompt);
     } else {
       // Non-Codex TUIs do not redraw their composer during startup.
       setTimeout(() => {
+        if (!live.initialPromptPending || live.meta.status === 'exited') return;
+        live.initialPromptPending = false;
         try { proc.write(prompt + '\r'); } catch { /* exited already */ }
       }, 1500);
     }
@@ -1962,26 +2003,34 @@ export function scrollback(sessionId: string): string {
   return s.buffer;
 }
 
-export function writeSession(sessionId: string, data: string): boolean {
+export function writeSession(sessionId: string, data: string, internal: { bracketedPaste?: boolean } = {}): boolean {
   if (!acceptsPtyInput(sessionId, data)) return false;
   const s = sessions.get(sessionId);
   if (!s || s.meta.status === 'exited') return false;
+  // User input wins over a pending automatic first prompt.
+  s.initialPromptPending = false;
   s.proc.write(data);
+  // Main-owned automatic hand-back sends a complete bracketed paste and then
+  // a separately guarded Enter. Its interior newlines are content, so they
+  // must not invent a submitted turn before that Enter is authorized. Renderer
+  // input keeps the ordinary two-argument path and cannot set this option.
+  const submitted = !(internal.bracketedPaste && data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~'))
+    && /[\r\n]/.test(data);
   // A submitted line carries whatever was already typed, so any attachment
   // named in that prompt has now gone to the agent. Staged-but-unnamed files
   // are untouched: pressing Enter on an unrelated message does not send them.
-  if (/[\r\n]/.test(data)) {
+  if (submitted) {
     try { markSessionAttachmentsSent(sessionId); }
     catch { /* the keystroke matters more than the bookkeeping */ }
   }
-  if (s.meta.harnessId === 'codex' && /[\r\n]/.test(data)) {
+  if (s.meta.harnessId === 'codex' && submitted) {
     captureCodexIdentityAfterPrompt(s, s.meta.worktree ?? s.meta.projectPath);
   }
   // Codex's lifecycle channel announces the blocking/finished state but not the
   // operator's subsequent keystroke. Enter records only that the operator
   // responded; it must not invent a successful PostToolUse before the provider
   // has actually run anything. No typed content is retained.
-  if (s.meta.harnessId === 'codex' && /[\r\n]/.test(data)) {
+  if (s.meta.harnessId === 'codex' && submitted) {
     if (s.providerAwaitingApproval) {
       s.providerAwaitingApproval = false;
       recordProviderEvent(sessionId, 'PermissionResponse');

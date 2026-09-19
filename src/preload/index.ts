@@ -1,4 +1,6 @@
 import type { SkillCatalogue } from '../shared/skill-catalogue';
+import type { ModelEconomicsQuote, ModelEconomicsQuoteInput, ModelEconomicsSettings, ModelEconomicsStatus } from '../shared/model-economics';
+import type { OpenRouterConnectionStatus } from '../shared/openrouter-connection';
 import type { RelayDeliveryKind, RelayDeliveryPreview, RelayDeliveryRead } from '../shared/relay-delivery';
 import type { PermissionControlAction } from '../shared/session-permissions';
 import type { DemoPromptId, DemoState } from '../shared/demo';
@@ -744,7 +746,19 @@ const api = {
   // agent stage routed first. Its stages start through `control.start`; these
   // calls create, read, price and list it. Delivery acts only after its own
   // preview and explicit commit/deploy request; it never launches an agent.
+  openRouterConnection: {
+    status: () => call<OpenRouterConnectionStatus>('openrouter-connection:status'),
+    setKey: (key: string) => call<OpenRouterConnectionStatus>('openrouter-connection:setKey', key),
+    clearKey: () => call<OpenRouterConnectionStatus>('openrouter-connection:clearKey'),
+  },
+  modelEconomics: {
+    status: () => call<ModelEconomicsStatus>('model-economics:status'),
+    setSettings: (input: ModelEconomicsSettings) => call<ModelEconomicsStatus>('model-economics:setSettings', input),
+    refresh: (input?: { modelIds?: string[] }) => call<ModelEconomicsStatus>('model-economics:refresh', input),
+    quote: (input: ModelEconomicsQuoteInput) => call<ModelEconomicsQuote[]>('model-economics:quote', input),
+  },
   relay: {
+    setAutomation: (docketId: string, input: { budgetUsd: number } | null) => call<RelayRead>('relay:setAutomation', docketId, input),
     create: (input: RelayCreateInput) => call<RelayRead>('relay:create', input),
     /** What the suggester would do with this intent. Makes real calls when it is on; nothing is created. */
     preview: (input: RelayPreviewInput) => call<RelayPreview>('relay:preview', input),

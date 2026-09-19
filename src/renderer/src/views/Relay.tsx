@@ -5,6 +5,7 @@ import { AGENT_KINDS, KIND_WORD, phasesOf, type DocketPhase } from '../relay/fac
 import RelayComposer from '../relay/RelayComposer';
 import RelayRig from '../relay/RelayRig';
 import { RelayDeliveryAction, RelayDeliveryDetails } from '../relay/RelayDelivery';
+import RelayAutomation from '../relay/RelayAutomation';
 import '../styles/relay.css';
 
 type Props = {
@@ -169,6 +170,15 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
       {actionError && <Note tone="error" onDismiss={() => setActionError(null)}>{actionError}</Note>}
       {!read && !readError && <Note>Reading relay stages…</Note>}
       {read && <>
+        {!['accepted', 'rejected'].includes(read.docket.status) && <RelayAutomation key={read.docket.id} read={read} busy={busy !== null || !!readError}
+          save={input => act('automation', () => window.wanigan.relay.setAutomation(read.docket.id, input))} />}
+        {read.automaticProgress && <Note tone={read.docket.autopilot.enabled ? 'info' : 'warn'}>
+          {read.docket.autopilot.enabled
+            ? `Automatic progress is on · agent spending limit $${read.docket.budgetUsd?.toFixed(2) ?? 'unknown'}. Final review waits for you.`
+            : read.docket.autopilot.haltedReason ? `Automatic progress stopped: ${read.docket.autopilot.haltedReason}` : 'Automatic progress is paused. You can continue stages manually.'}
+          {read.docket.autopilot.enabled && <button className="btn btn-sm" disabled={busy !== null || !!readError}
+            onClick={() => void act('pause-automation', () => window.wanigan.relay.setAutomation(read.docket.id, null))}>Pause automatic progress</button>}
+        </Note>}
         <header className="rl-summary">
           <div><h2>{read.docket.title}</h2><p className="dim">{read.docket.objective}</p></div>
           <div className="rl-summary-state"><Pill status={current?.state.word ?? 'pending'}

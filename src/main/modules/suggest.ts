@@ -1,4 +1,5 @@
 import type { WaniganModule } from '../module-registry';
+import { createHash } from 'node:crypto';
 import { refuseIfHalted } from '../halt';
 import { clearProviderKey, getProviderKey, hasProviderKey, providerKeyFingerprint, setProviderKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
@@ -113,6 +114,12 @@ const unreadableCredential = (): boolean => hasProviderKey(PROVIDER) && !credent
  */
 export function enabled(): readonly SuggesterCapability[] {
   return credentialed() ? stored() : NO_SUGGESTER;
+}
+
+/** Main-only receipt binding; the shortened display fingerprint is not an identity. */
+export function decisionContext(): string {
+  const key = getProviderKey(PROVIDER);
+  return createHash('sha256').update(JSON.stringify({ endpoint: ENDPOINT, enabled: enabled(), key })).digest('hex');
 }
 
 /**

@@ -121,7 +121,7 @@ import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
-import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents } from './module-registry';
+import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents, startModuleMaintenance } from './module-registry';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -356,6 +356,7 @@ function storedDemoMode(): boolean {
 }
 /** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
+let stopModuleMaintenance: (() => void) | null = null;
 let autopilotTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -1172,12 +1173,15 @@ async function startServices() {
     if (typeof nodeId !== 'string' || !nodeId) {
       throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the goal.');
     }
-    await control.startQueuedNode(nodeId);
+    const automaticRunnerId = (payload as { automaticRunnerId?: unknown }).automaticRunnerId;
+    if (automaticRunnerId !== undefined && typeof automaticRunnerId !== 'string') throw new Error('Invalid automatic task runner.');
+    await control.startQueuedNode(nodeId, automaticRunnerId);
   });
   // Registered before the dispatcher starts, so no tick can claim paid work in
   // the moment before the budget is asked. The rules are in budget-gate.ts.
   queue.registerGate(budgetHold);
   queue.startDispatcher(queueChanged);
+  if (!smokeMode) stopModuleMaintenance = startModuleMaintenance();
   // The sweep only writes queue rows; the dispatcher above still decides when
   // one may start. It runs on its own slower interval because a goal becomes
   // eligible through work finishing, not through the queue moving.
@@ -1582,6 +1586,7 @@ function stopServices() {
   intake.setIntakeChangedNotifier(null);
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
+  stopModuleMaintenance?.(); stopModuleMaintenance = null;
   if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
@@ -1875,6 +1880,7 @@ function registerIpc() {
         baseArgs: [...(profile.command.baseArgs ?? [])],
         versionArgs: [...(profile.command.versionArgs ?? ['--version'])],
         helpArgs: [...(profile.command.helpArgs ?? ['--help'])],
+        initialPromptArgv: [...(profile.initialPromptArgv ?? [])],
         launchFields: (profile.launchFields ?? []).map((field) => ({
           id: field.id,
           label: field.label,

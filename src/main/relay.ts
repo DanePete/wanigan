@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { db } from './db';
 import { HaltedError, halted } from './halt';
 import { projectById } from './store';
@@ -8,11 +8,13 @@ import * as control from './control';
 import * as accounts from './accounts';
 import * as otel from './otel';
 import { enableDelivery, readDelivery } from './relay-delivery';
+import { assertAutomaticProfile, readAutomation, setAutomation } from './relay-automation';
 import { intersectChoices, launchFieldChoices } from '../shared/launch-fields';
 import { chooseStage, type RouteCandidate, type RouteDefaults, type StageRoute } from '../shared/relay-route';
-import { NO_RELAY_PLAN, phasesFor, relayPlanRequest, SUGGEST_QUESTION_POLICY, type StageAsk, type StageReading } from '../shared/suggest-questions';
+import { NO_RELAY_PLAN, phasesFor, relayPlanRequest, SUGGEST_QUESTION_POLICY, type RelayPlanReading, type StageAsk, type StageReading } from '../shared/suggest-questions';
 import { readRelayRouting, type RelayRoutingSettings } from '../shared/relay-routing';
-import { enabled as suggesterEnabled, estimatedUsd, suggestRelayPlan } from './modules/suggest';
+import { decisionContext, enabled as suggesterEnabled, estimatedUsd, suggestRelayPlan } from './modules/suggest';
+import { DecisionReceipts } from '../shared/decision-receipts';
 import { MIN_HISTORY, forecastPhase, forecastTotals, type ForecastSample } from '../shared/relay-forecast';
 import { HANDBACK_LIMIT } from '../shared/gate-feedback';
 import { DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS } from '../shared/types';
@@ -184,6 +186,9 @@ async function profileFor(providerId: string): Promise<Profile> {
     return { model: row.value, label: row.label, efforts: declared.length ? declared : null };
   };
   const candidates: RouteCandidate[] = catalogue.rows.map(asCandidate);
+  if (info.launchFields.find(field => field.id === 'model')?.required && candidates.length === 0) {
+    throw new Error('This connection needs an exact model ID and has no verified Relay model list. Use it manually in New session until its Relay integration is verified.');
+  }
   // Evidence rows are evidence. If a catalogue is nothing but observed ids there
   // is no offer to narrow to, so the whole list stands rather than none of it.
   const offered = catalogue.rows.filter((row) => !row.observed);
@@ -209,6 +214,17 @@ type Pick_ = {
   /** What the suggester said, kept whole for the proof. Null when it was not asked. */
   reading: StageReading | null;
 };
+
+const decisionReceipts = new DecisionReceipts<RelayPlanReading>();
+function decisionBinding(intent: string, providerId: string, routes: ReturnType<typeof readRoutes>,
+  routing: RelayRoutingSettings, profiles: Map<string, Profile>, automaticProgress = false): string {
+  return createHash('sha256').update(JSON.stringify({ intent, providerId, routing, automaticProgress,
+    routes: DOCKET_NODE_KINDS.map(kind => [kind, routes[kind] ?? null]),
+    profiles: [...profiles.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    currentProfiles: [...profiles.keys()].sort().map(id => [id, providerById(id)?.profileFingerprint ?? null]),
+    policy: SUGGEST_QUESTION_POLICY, suggestion: decisionContext(),
+  })).digest('hex');
+}
 
 /**
  * The default plan with the stages a suggester narrowed away removed.
@@ -249,9 +265,12 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   if (input.delivery !== undefined && typeof input.delivery !== 'boolean') throw new Error('Relay delivery must be enabled or disabled explicitly.');
   const projectId = text(input.projectId, 'Project', 200);
   if (!projectById(projectId)) throw new Error('Choose a registered project before starting a relay.');
+  const automation = readAutomation(input.automation, projectId);
+  if (automation && halted()) throw new Error('Wanigan is halted. Resume it before enabling automatic progress.');
   const intent = text(input.intent, 'Intent', control.MAX_OBJECTIVE);
   const providerId = text(input.providerId, 'Provider', ROUTE_VALUE_MAX);
   const routes = readRoutes(input.routes);
+  if (automation && routes.verify) throw new Error('Automatic verification runs the project checks without a model. Remove the verification model override or choose manual progress.');
   const routing = readRelayRouting(input.routing);
   // Relay-level defaults. Each stage may name its own, and a stage naming null
   // steps out of the relay's pin entirely.
@@ -285,8 +304,10 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   const asks: StageAsk[] = [];
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate') continue;
+    if (automation && kind === 'verify') continue;
     const wants = routes[kind];
     const profile = await load(wants?.providerId ?? providerId);
+    if (automation && (kind === 'plan' || kind === 'implement')) assertAutomaticProfile(profile.providerId);
     // Reject invalid launches before paying for a suggestion that cannot run.
     accountFor(wants?.accountId !== undefined ? wants.accountId : relayAccountId,
       providerById(profile.providerId)?.harness ?? '', `The ${kind} stage`);
@@ -297,8 +318,12 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     }
     asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
   }
-  const plan = routing.mode === 'manual' ? NO_RELAY_PLAN
-    : await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks, routing.preference);
+  const receipt = input.previewReceipt;
+  const binding = decisionBinding(intent, providerId, routes, routing, profiles, !!automation);
+  const plan = receipt !== undefined
+    ? decisionReceipts.read(receipt, binding, now())
+    : routing.mode === 'manual' ? NO_RELAY_PLAN
+      : await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks, routing.preference);
 
   // Which stages run. Every declared one, unless the pipeline capability is
   // on, credentialed and confident enough to narrow — and then only the front
@@ -311,6 +336,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   const picks = new Map<DocketNodeKind, Pick_>();
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate') continue;
+    if (automation && kind === 'verify') continue;
     if (!phases.includes(kind)) continue;
     const wants = routes[kind];
     const stageProvider = wants?.providerId ?? providerId;
@@ -333,6 +359,19 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     });
   }
 
+  if (binding !== decisionBinding(intent, providerId, routes, routing, profiles, !!automation)) {
+    throw new Error('Routing settings changed while choosing models. Preview the choices again.');
+  }
+  if (automation) {
+    readAutomation(automation, projectId);
+    if (halted()) throw new Error('Wanigan was halted while routing. No relay was started.');
+  }
+  // The work above yields while profiles load. Revalidate and consume in one
+  // synchronous turn so concurrent create requests cannot reuse one receipt.
+  if (receipt !== undefined) {
+    decisionReceipts.read(receipt, decisionBinding(intent, providerId, routes, routing, profiles, !!automation), now());
+    decisionReceipts.remove(receipt);
+  }
   const created = control.createDocket({
     projectId, title: titleOf(intent), objective: intent, acceptance, risk: 'elevated',
     plan: narrowedPlan(phases),
@@ -343,7 +382,8 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at)
       VALUES (?,?,NULL,'route','recorded',?,?,?)`)
       .run(uid('proof'), created.id, `Routing: ${routing.mode}; preference: ${routing.preference}.`,
-        JSON.stringify({ routing, questionPolicy: SUGGEST_QUESTION_POLICY, suggesterUsage: plan.usage }), at);
+        JSON.stringify({ routing, questionPolicy: SUGGEST_QUESTION_POLICY, suggesterUsage: plan.usage,
+          previewReceipt: receipt ?? null }), at);
     for (const node of created.nodes) {
       const pick = picks.get(node.kind);
       if (!pick) continue;
@@ -386,16 +426,16 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
     }
   })();
   if (input.delivery !== false) enableDelivery(created.id);
+  if (automation) setAutomation(created.id, automation);
   return readRelay(created.id);
 }
 
 /**
  * What the suggester would do with this intent, without creating anything.
  *
- * The same calls as `createRelay` makes, so the guess an operator sees is the
- * guess the relay would act on — and then `createRelay` asks again rather than
- * trusting a copy the renderer hands back, because the proof is the main
- * process's own observation. Two small calls; the second is the evidence.
+ * The decision stays in a bounded main-owned receipt, bound to the validated
+ * input and current profile offers. Creation reuses it without paying again.
+ * The renderer can refer to the receipt but cannot supply its decision.
  *
  * Nothing is thrown for an override the profile does not declare. A preview
  * is where you find that out, so it reports the router's refusal as the
@@ -403,9 +443,12 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
  */
 export async function previewRelay(raw: unknown): Promise<RelayPreview> {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Partial<RelayPreviewInput>;
+  if (input.automaticProgress !== undefined && typeof input.automaticProgress !== 'boolean') throw new Error('Automatic progress must be enabled or disabled explicitly.');
+  const automatic = input.automaticProgress === true;
   const intent = text(input.intent, 'Intent', control.MAX_OBJECTIVE);
   const providerId = text(input.providerId, 'Provider', ROUTE_VALUE_MAX);
   const routes = readRoutes(input.routes);
+  if (automatic && routes.verify) throw new Error('Automatic verification uses project checks. Remove its model override.');
   const routing = readRelayRouting(input.routing);
 
   const profiles = new Map<string, Profile>();
@@ -419,18 +462,26 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
   const asks: StageAsk[] = [];
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate') continue;
+    if (automatic && kind === 'verify') continue;
     const wants = routes[kind];
-    if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
     const profile = await load(wants?.providerId ?? providerId);
+    if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
     asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
   }
   const asked = routing.mode === 'auto' && !halted()
     && relayPlanRequest(intent, DOCKET_NODE_KINDS, asks, suggesterEnabled(), routing.preference) !== null;
+  const binding = decisionBinding(intent, providerId, routes, routing, profiles, automatic);
   const plan = routing.mode === 'manual' ? NO_RELAY_PLAN
     : await suggestRelayPlan(intent, DOCKET_NODE_KINDS, asks, routing.preference);
+  if (binding !== decisionBinding(intent, providerId, routes, routing, profiles, automatic)) {
+    throw new Error('Routing settings changed while choosing models. Preview the choices again.');
+  }
   const pipelineReading = plan.pipeline;
   const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
+  const receipt = randomUUID();
   const preview: RelayPreview = {
+    receipt,
+    expiresAt: decisionReceipts.put(receipt, binding, plan, now()),
     routing,
     asked,
     phases: [...phases],
@@ -441,6 +492,7 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
 
   for (const kind of DOCKET_NODE_KINDS) {
     if (kind === 'estimate' || !phases.includes(kind)) continue;
+    if (automatic && kind === 'verify') continue;
     const wants = routes[kind];
     const profile = await load(wants?.providerId ?? providerId);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
@@ -548,7 +600,8 @@ function latestForecast(docketId: string): RelayForecast | null {
 export function readRelay(docketId: unknown): RelayRead {
   const id = text(docketId, 'Goal', 200);
   const docket = control.docket(id);
-  const flag = db().prepare('SELECT relay FROM work_dockets WHERE id=?').get(id) as { relay: number } | undefined;
+  const flag = db().prepare('SELECT relay,relay_automatic_progress FROM work_dockets WHERE id=?').get(id) as
+    { relay: number; relay_automatic_progress: number } | undefined;
   const columns = nodeColumns(id);
   const routes = routesFor(id);
   const recent = db().prepare(`SELECT at FROM session_events WHERE session_id=? AND event IN ${COMPLETION_EVENTS} ORDER BY at DESC LIMIT ?`);
@@ -570,6 +623,7 @@ export function readRelay(docketId: unknown): RelayRead {
     };
   });
   return { docket, routing: routingFor(id), relay: flag?.relay === 1, nodes, pipeline: pipelineFor(id), forecast: latestForecast(id), handbackLimit: HANDBACK_LIMIT,
+    automaticProgress: flag?.relay_automatic_progress === 1,
     delivery: flag?.relay === 1 ? readDelivery(id) : null };
 }
 

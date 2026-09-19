@@ -6,6 +6,7 @@ import * as accounts from './accounts';
 import { dataDir, db } from './db';
 import { usageFor, usageForMany } from './otel';
 import { forecastPhase } from '../shared/relay-forecast';
+import { codexTokenEvidenceForSessions } from './codex-usage';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 
@@ -14,9 +15,9 @@ export function runRelayCostSmoke(check: Check, say: (text: string) => void): vo
   say('── relay cost evidence · an absent meter is unknown, an explicit zero is reported');
   const root = fs.mkdtempSync(path.join(dataDir(), 'relay-cost-'));
   const prefix = `cost_${randomUUID()}`;
-  const ids = ['missing', 'tokens', 'events', 'zero', 'paid', 'unknown', 'codex-empty', 'codex-rollout']
+  const ids = ['missing', 'tokens', 'events', 'zero', 'paid', 'unknown', 'codex-empty', 'codex-rollout', 'codex-resume']
     .map(name => `${prefix}_${name}`);
-  const [missing, tokens, events, zero, paid, unknown, codexEmpty, codexRollout] = ids;
+  const [missing, tokens, events, zero, paid, unknown, codexEmpty, codexRollout, codexResume] = ids;
   const threadId = randomUUID();
   const at = Date.now();
   const d = db();
@@ -26,10 +27,10 @@ export function runRelayCostSmoke(check: Check, say: (text: string) => void): vo
       (id,provider_id,backend_id,harness_id,conversation_id,project_path,project_name,started_at)
       VALUES (?,?,?,?,?,?,?,?)`);
     for (const id of ids) {
-      const codex = id === codexEmpty || id === codexRollout;
+      const codex = id === codexEmpty || id === codexRollout || id === codexResume;
       session.run(id, codex ? 'codex' : 'claude',
         id === unknown ? 'removed-pack:unknown-backend' : codex ? 'openai' : 'anthropic',
-        codex ? 'codex' : 'claude-code', id === codexRollout ? threadId : null,
+        codex ? 'codex' : 'claude-code', id === codexRollout || id === codexResume ? threadId : null,
         root, 'Cost evidence fixture', at);
     }
     const metric = d.prepare('INSERT INTO session_metrics (session_id,metric,attrs,value,last_at) VALUES (?,?,?,?,?)');
@@ -87,6 +88,27 @@ export function runRelayCostSmoke(check: Check, say: (text: string) => void): vo
     check(reconciled.inTokens === 60 && reconciled.cacheRead === 40 && reconciled.outTokens === 12
       && reconciled.lastAt === at && reconciled.costStatus === 'unavailable',
     'Codex rollout reconciliation keeps exact uncached/cached/output counters without invented dollars', reconciled);
+
+    const start = at - 1000;
+    const point = (offset: number, input: number, cache: number, output: number) => JSON.stringify({
+      timestamp: new Date(start + offset).toISOString(), payload: { type: 'token_count', info: {
+        total_token_usage: { input_tokens: input, cached_input_tokens: cache, output_tokens: output },
+      } },
+    });
+    fs.writeFileSync(rolloutPath, [JSON.stringify({ type: 'session_meta', timestamp: new Date(start + 100).toISOString(),
+      payload: { id: threadId } }), point(200, 100, 60, 10), point(400, 300, 180, 30), point(600, 350, 210, 50)].join('\n'));
+    d.prepare('UPDATE session_log SET started_at=?,ended_at=? WHERE id=?').run(start + 50, start + 250, codexRollout);
+    d.prepare('UPDATE session_log SET started_at=?,ended_at=? WHERE id=?').run(start + 300, start + 450, codexResume);
+    const scoped = codexTokenEvidenceForSessions([codexRollout, codexResume], at);
+    check(scoped[codexRollout].counts.inputTokens === 40 && scoped[codexRollout].counts.cacheReadTokens === 60
+      && scoped[codexResume].counts.inputTokens === 80 && scoped[codexResume].counts.cacheReadTokens === 120
+      && scoped[codexResume].counts.outputTokens === 20 && scoped[codexResume].counts.cacheWriteTokens === null,
+    'real session intervals and bounded rollout reads attribute resume deltas without repeating prior or later tokens', scoped);
+    d.prepare('UPDATE session_log SET ended_at=NULL WHERE id=?').run(codexRollout);
+    const overlap = codexTokenEvidenceForSessions([codexResume], at)[codexResume];
+    check(overlap.scope === 'conversation-only' && overlap.counts.inputTokens === null
+      && overlap.conversationTotals?.inputTokens === 120,
+    'an overlapping recorded session makes thread counters conversation-only instead of claiming per-attempt usage', overlap);
   } finally {
     for (const id of ids) {
       d.prepare('DELETE FROM session_api_events WHERE session_id=?').run(id);

@@ -93,7 +93,7 @@ export async function runAuditControlSmoke(check: Check, say: (text: string) => 
     });
     const queued = create('Canceled queued task'); const task = queued.nodes[0];
     control.claimPath(task.id, 'claimed-before-launch');
-    control.setAutopilot(queued.id, { enabled: true, providerId: 'audit-must-not-launch' });
+    control.setAutopilot(queued.id, { enabled: true, providerId: 'claude' });
     control.sweepAutopilot();
     const nodeItems = () => (db().prepare("SELECT id,state,payload_json FROM queue WHERE kind='node'")
       .all() as { id: string; state: string; payload_json: string }[])
@@ -106,7 +106,7 @@ export async function runAuditControlSmoke(check: Check, say: (text: string) => 
       && control.docket(queued.id).claims.every(claim => claim.releasedAt !== null),
     'queue cancellation closes its pending task, releases claims and leaves an explicit reopen action');
     control.setAutopilot(queued.id, { enabled: false });
-    control.setAutopilot(queued.id, { enabled: true, providerId: 'audit-must-not-launch' });
+    control.setAutopilot(queued.id, { enabled: true, providerId: 'claude' });
     control.sweepAutopilot();
     check(!nodeItems().some(row => row.state === 'waiting'), 'rearming cannot silently recreate work the operator canceled');
     control.retryNode(task.id); control.sweepAutopilot();

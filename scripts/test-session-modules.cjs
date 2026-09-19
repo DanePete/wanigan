@@ -123,6 +123,31 @@ async function main() {
     events: on => on('sessions:spoof', () => {}) });
   assert.throws(() => registry.registerModuleEvents(() => {}), /outside its namespace/);
   native.close();
+  // Module upkeep has its own lifecycle; a slow refresh must not overlap or
+  // keep firing after shutdown. The scheduler boundary is the only double.
+  const upkeep = fixture().load('src/main/module-registry.ts');
+  let runs = 0; let finish;
+  upkeep.registerModule({ id: 'catalog-test', label: 'Catalogue', required: null,
+    maintenance: () => [{ id: 'refresh-test', intervalMs: 1000, run: () => {
+      runs++; return new Promise(resolve => { finish = resolve; });
+    } }] });
+  const timers = []; const cleared = [];
+  const originalSet = global.setInterval; const originalClear = global.clearInterval;
+  try {
+    global.setInterval = run => { const timer = { run, unref() {} }; timers.push(timer); return timer; };
+    global.clearInterval = timer => cleared.push(timer);
+    const stop = upkeep.startModuleMaintenance();
+    assert.equal(runs, 1);
+    timers[0].run(); assert.equal(runs, 1, 'unfinished maintenance cannot overlap');
+    finish(); await Promise.resolve();
+    timers[0].run(); assert.equal(runs, 2);
+    stop(); finish(); await Promise.resolve();
+    timers[0].run(); assert.equal(runs, 2, 'shutdown refuses subsequent ticks');
+    assert.deepEqual(cleared, timers);
+    upkeep.registerModule({ id: 'duplicate-job', label: 'Bad module', required: null,
+      maintenance: () => [{ id: 'refresh-test', intervalMs: 1000, run: async () => {} }] });
+    assert.throws(() => upkeep.startModuleMaintenance(), /duplicate/);
+  } finally { global.setInterval = originalSet; global.clearInterval = originalClear; }
   console.log('Session modules: legacy row/schema preserved; 34 IPC operations and 2 guarded event registrations verified offline.');
 }
 

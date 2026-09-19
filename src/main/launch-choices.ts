@@ -4,7 +4,7 @@ import { db } from './db';
 import * as codexStatus from './codex-status';
 import { backendModels } from './backend-catalog';
 import { getProviderKey } from './keys';
-import { providerPackRegistry } from './providers';
+import { effectiveProviderBackendId, providerPackRegistry } from './providers';
 
 /**
  * One question, asked in the main process, for every backend: what models can
@@ -162,7 +162,7 @@ export function declaredBackendCatalogue(backendId: string): (() => Promise<Laun
   try {
     for (const profile of providerPackRegistry.listProfiles({ includeDisabled: false })) {
       const catalog = catalogOf(profile);
-      if (!catalog || profile.backend.id !== backendId) continue;
+      if (!catalog || effectiveProviderBackendId(profile) !== backendId) continue;
       declared = { label: profile.backend.label, catalog };
       break;
     }

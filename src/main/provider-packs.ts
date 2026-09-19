@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateBackendCatalog, type BackendCatalogManifest } from '../shared/backend-catalog';
+import { compileInitialPromptArgv } from '../shared/provider-prompt';
+import { OPENROUTER_PROVIDER_PACK } from './modules/openrouter-connection/profile';
 
 /**
  * Provider packs are data first. A manifest can describe a normal CLI without
@@ -206,6 +208,8 @@ export type ProviderProfileManifest = {
   backend: ProviderBackendManifest;
   command: ProviderCommandManifest;
   launchFields?: ProviderLaunchFieldSchema[];
+  /** Explicit first-prompt transport; absent preserves the existing PTY path. */
+  initialPromptArgv?: string[];
   resume?: ProviderResumeManifest;
   environment?: Record<string, ProviderEnvironmentValue>;
   capabilities?: ProviderCapabilityDeclaration;
@@ -304,6 +308,7 @@ export type ProviderRuntimeDefinition = {
     extra: string[],
     values?: Record<string, string | boolean | null | undefined>
   ) => string[];
+  initialPromptArgs?: (prompt: string) => string[];
   resumeArgs: (conversationId: string | null) => string[];
   versionArgs: string[];
   helpArgs: string[];
@@ -700,6 +705,11 @@ function parseProfile(raw: unknown, where: string, errors: string[]): ProviderPr
     }
   }
   const resume = parseResume(own(raw, 'resume'), `${where}.resume`, errors);
+  const initialPromptArgv = stringArray(own(raw, 'initialPromptArgv'), `${where}.initialPromptArgv`, errors, 20);
+  if (initialPromptArgv && (!initialPromptArgv.some(entry => entry.includes('{prompt}'))
+    || initialPromptArgv.some(entry => /\{(?!prompt\})[^}]*\}/.test(entry)))) {
+    errors.push(`${where}.initialPromptArgv must contain {prompt} and no other placeholders.`);
+  }
   const environment = parseEnvironment(own(raw, 'environment'), `${where}.environment`, errors);
   const capabilities = parseCapabilities(own(raw, 'capabilities'), `${where}.capabilities`, errors);
   const headlessRaw = own(raw, 'headless');
@@ -726,6 +736,7 @@ function parseProfile(raw: unknown, where: string, errors: string[]): ProviderPr
     command,
     ...(description ? { description } : {}),
     ...(launchFields ? { launchFields } : {}),
+    ...(initialPromptArgv ? { initialPromptArgv } : {}),
     ...(resume ? { resume } : {}),
     ...(environment ? { environment } : {}),
     ...(capabilities ? { capabilities } : {}),
@@ -951,6 +962,7 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
         },
       ],
       resume: { conversationArgs: ['resume', '{conversationId}'], continueArgs: ['resume'] },
+      initialPromptArgv: ['--', '{prompt}'],
       capabilities: CODEX_CAPABILITIES,
       headless: 'codex-json',
     }],
@@ -1105,6 +1117,7 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       headless: 'claude-json',
     }],
   },
+  OPENROUTER_PROVIDER_PACK,
 ];
 
 export function defaultProviderPacksRoot(userDataDir?: string): string {
@@ -1184,7 +1197,7 @@ function fieldArgs(field: ProviderLaunchFieldSchema, value: string | boolean | n
     const allowed = new Set((field.choices ?? []).map((choice) => choice.value));
     if (!allowed.has(value)) throw new Error(`${field.label} has an unsupported value.`);
   }
-  return (field.argv ?? []).map((entry) => entry.replaceAll('{value}', value));
+  return (field.argv ?? []).map((entry) => entry.replaceAll('{value}', () => value));
 }
 
 /** Compile a serializable profile into main-process-only spawn behavior. */
@@ -1218,6 +1231,9 @@ export function compileProviderProfile(
       ...fields.flatMap((field) => fieldArgs(field, values[field.id])),
       ...extra,
     ],
+    ...(profile.initialPromptArgv ? {
+      initialPromptArgs: (prompt: string) => compileInitialPromptArgv(profile.initialPromptArgv!, prompt),
+    } : {}),
     resumeArgs: (conversationId) => {
       if (!profile.resume) return [];
       const template = conversationId ? profile.resume.conversationArgs : profile.resume.continueArgs;

@@ -9,6 +9,8 @@ import { scoutModule } from './scout';
 import { suggestModule } from './suggest';
 import { usageModule } from './usage';
 import { promptImproveModule } from './prompt-improve';
+import { modelEconomicsModule } from './model-economics';
+import { openRouterConnectionModule } from './openrouter-connection';
 
 /**
  * Every module Wanigan ships, registered in one place.
@@ -29,3 +31,5 @@ registerModule(scoutModule);
 registerModule(suggestModule);
 registerModule(relayModule);
 registerModule(promptImproveModule);
+registerModule(modelEconomicsModule);
+registerModule(openRouterConnectionModule);

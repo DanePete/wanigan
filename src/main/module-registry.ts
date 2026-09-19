@@ -207,6 +207,34 @@ export function moduleSchedules(): ModuleSchedule[] {
   return registry.flatMap((module) => module.schedules?.() ?? []);
 }
 
+/** Free upkeep is module-owned and never occupies or replaces a paid queue lane. */
+export function startModuleMaintenance(): () => void {
+  const jobs = registry.flatMap(module => module.maintenance?.() ?? []);
+  const ids = new Set<string>();
+  for (const job of jobs) {
+    if (!job.id || ids.has(job.id) || !Number.isSafeInteger(job.intervalMs) || job.intervalMs < 1_000) {
+      throw new Error(`Invalid or duplicate module maintenance job: ${job.id}`);
+    }
+    ids.add(job.id);
+  }
+  let active = true;
+  const timers = jobs.map(job => {
+    let running = false;
+    const run = async () => {
+      if (!active || running) return;
+      running = true;
+      try { await job.run(); }
+      catch (error) { console.warn(`[wanigan] ${job.id} maintenance failed:`, error); }
+      finally { running = false; }
+    };
+    const timer = setInterval(() => { void run(); }, job.intervalMs);
+    timer.unref?.();
+    void run();
+    return timer;
+  });
+  return () => { active = false; for (const timer of timers) clearInterval(timer); };
+}
+
 /** Register hot-path traffic through the host's guarded event wrapper. */
 export function registerModuleEvents(on: IpcOn): void {
   for (const module of registry) {

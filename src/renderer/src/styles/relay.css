@@ -27,6 +27,22 @@
   --rl-unit: calc(var(--s-6) * 2.6);
 }
 
+.rl-automation-options, .rl-connection-options { display: grid; gap: var(--s-3); margin-block: var(--s-5); }
+.rl-automation-options > .sec-head, .rl-connection-options > .sec-head { margin: 0; }
+.rl-automation-options .label, .rl-connection-options .label { margin-block-end: var(--s-1); }
+#explainer-relay-model-prices > .explainer-body { display: grid; gap: var(--s-3); max-width: none; min-inline-size: 0; }
+#explainer-relay-model-prices > .explainer-body > .btn { justify-self: start; }
+#explainer-relay-model-prices .row2 { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; }
+#explainer-relay-model-prices .row2 > * { min-inline-size: 0; }
+#explainer-relay-model-prices .row2 > .btn { justify-self: start; }
+.rl-price-results { overflow: auto; max-block-size: calc(var(--s-6) * 12); }
+.rl-price-results table { inline-size: 100%; border-collapse: collapse; table-layout: fixed; }
+.rl-price-results th, .rl-price-results td { text-align: start; vertical-align: top; padding: var(--s-3); border-bottom: 1px solid var(--line); }
+.rl-price-results th:first-child { inline-size: 36%; }
+.rl-price-results th:nth-child(2) { inline-size: 20%; }
+.rl-price-results td { overflow-wrap: anywhere; }
+.rl-price-results caption { text-align: start; padding-block: var(--s-3); }
+
 /* ── the rig ─────────────────────────────────────────────────────────── */
 
 .rl-rig {

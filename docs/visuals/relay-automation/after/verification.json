@@ -1,0 +1,207 @@
+{
+  "kind": "real isolated Electron IPC and public metadata; no model inference",
+  "initialEmpty": true,
+  "keyRequired": true,
+  "verification": "not-tested",
+  "metering": "unpriced",
+  "sourceUrl": "https://openrouter.ai/api/v1/models",
+  "fetchedAt": 1789842355569,
+  "contentHash": "2867346e0c460f9065f807b9cfd85ed6e59d00fdd8c7e1ebc55337d35dbb65d0",
+  "models": 429,
+  "lastError": null,
+  "selected": [
+    "deepseek/deepseek-v4.1-flash",
+    "qwen/qwen3-coder-30b-a3b-instruct"
+  ],
+  "endpointModels": 2,
+  "quotes": [
+    {
+      "modelId": "qwen/qwen3-coder-30b-a3b-instruct",
+      "endpointTag": "novita/fp8",
+      "eligible": true,
+      "estimateUsd": 0.00485,
+      "reasons": []
+    },
+    {
+      "modelId": "qwen/qwen3-coder-30b-a3b-instruct",
+      "endpointTag": "siliconflow/fp8",
+      "eligible": true,
+      "estimateUsd": 0.0049,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "deepinfra/fp8",
+      "eligible": true,
+      "estimateUsd": 0.0091,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "relace/fp4",
+      "eligible": true,
+      "estimateUsd": 0.0091,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "morph",
+      "eligible": true,
+      "estimateUsd": 0.00945,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "sail-research/fp4",
+      "eligible": true,
+      "estimateUsd": 0.013,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "wafer",
+      "eligible": true,
+      "estimateUsd": 0.013,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "fireworks",
+      "eligible": true,
+      "estimateUsd": 0.0143,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "streamlake/fp8",
+      "eligible": true,
+      "estimateUsd": 0.01974,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "gmicloud/fp8",
+      "eligible": true,
+      "estimateUsd": 0.01995,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "novita/fp8",
+      "eligible": true,
+      "estimateUsd": 0.01995,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "atlas-cloud/fp8",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "baseten/fp8",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "digitalocean",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "makora",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "modal",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "parasail/fp8",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "together",
+      "eligible": true,
+      "estimateUsd": 0.021,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "phala",
+      "eligible": true,
+      "estimateUsd": 0.02415,
+      "reasons": []
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "venice/fp8",
+      "eligible": true,
+      "estimateUsd": 0.02625,
+      "reasons": []
+    },
+    {
+      "modelId": "qwen/qwen3-coder-30b-a3b-instruct",
+      "endpointTag": "amazon-bedrock",
+      "eligible": false,
+      "estimateUsd": 0.0105,
+      "reasons": [
+        "Context capacity is unknown or insufficient.",
+        "Output capacity is unknown or insufficient."
+      ]
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "siliconflow/fp8",
+      "eligible": false,
+      "estimateUsd": 0.021,
+      "reasons": [
+        "Tool use is not declared by the endpoint."
+      ]
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "alibaba",
+      "eligible": false,
+      "estimateUsd": null,
+      "reasons": [
+        "Conditional or additional pricing requires an unsupported calculation."
+      ]
+    },
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "endpointTag": "deepseek",
+      "eligible": false,
+      "estimateUsd": null,
+      "reasons": [
+        "Conditional or additional pricing requires an unsupported calculation."
+      ]
+    },
+    {
+      "modelId": "qwen/qwen3-coder-30b-a3b-instruct",
+      "endpointTag": "alibaba",
+      "eligible": false,
+      "estimateUsd": null,
+      "reasons": [
+        "Conditional or additional pricing requires an unsupported calculation."
+      ]
+    }
+  ],
+  "autoRefreshPersisted": true,
+  "pageErrors": []
+}

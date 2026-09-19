@@ -4,6 +4,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { db } from './db';
 import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
+import { unknownTokenCounts, type FrozenTokenEvidence, type TokenCounts } from '../shared/token-evidence';
 import { mergeCodexUsage } from './codex-usage';
 import { backendCostBasis, providerById } from './providers';
 import { sessionEffortRollup, type EffortRollupRow } from './spend';
@@ -779,6 +780,37 @@ function attrOf(json: string, key: string): string {
  */
 function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Freeze only explicitly metered token buckets; SessionUsage's display defaults are not evidence. */
+export function tokenEvidenceForMany(ids: string[]): Record<string, FrozenTokenEvidence> {
+  const out: Record<string, FrozenTokenEvidence> = {};
+  const byKey = new Map<string, FrozenTokenEvidence>();
+  for (const id of ids) {
+    const evidence: FrozenTokenEvidence = { source: 'unavailable', scope: 'unavailable', counts: unknownTokenCounts(),
+      observedAt: null, conversationId: null, conversationTotals: null, baselineAt: null };
+    out[id] = evidence; byKey.set(attrSafe(id), evidence);
+  }
+  const keys = [...byKey.keys()];
+  const fields: Record<string, keyof TokenCounts> = {
+    input: 'inputTokens', output: 'outputTokens', cacheread: 'cacheReadTokens',
+    cachecreation: 'cacheWriteTokens', cachewrite: 'cacheWriteTokens',
+  };
+  for (let offset = 0; offset < keys.length; offset += 500) {
+    const chunk = keys.slice(offset, offset + 500);
+    const rows = db().prepare(`SELECT session_id,metric,attrs,value,last_at FROM session_metrics
+      WHERE session_id IN (${chunk.map(() => '?').join(',')}) AND metric='claude_code.token.usage'`)
+      .all(...chunk) as MetricRow[];
+    for (const row of rows) {
+      const evidence = byKey.get(row.session_id);
+      const field = fields[norm(attrOf(row.attrs, 'type'))];
+      if (!evidence || !field || !Number.isFinite(row.value) || row.value < 0) continue;
+      evidence.counts[field] = (evidence.counts[field] ?? 0) + row.value;
+      evidence.source = 'otel'; evidence.scope = 'session';
+      evidence.observedAt = Math.max(evidence.observedAt ?? 0, row.last_at);
+    }
+  }
+  return out;
 }
 
 /**

@@ -95,7 +95,7 @@ export type StopGateOutcome =
 export type HandBackDeps = {
   session: (sessionId: string) => Session | null;
   attention: (session: Session) => Pick<Attention, 'kind' | 'transitionId'>;
-  write: (sessionId: string, data: string) => boolean;
+  write: (sessionId: string, data: string, internal?: { bracketedPaste?: boolean }) => boolean;
   wait: (ms: number) => Promise<void>;
 };
 
@@ -153,7 +153,7 @@ async function handBackFailure(
   const attention = session ? deps.attention(session) : null;
   const verdict = handBackVerdict({
     enabled: target.returnFailures, halted: halted(), returnsSoFar: target.gateReturns,
-    budgetUsd: target.budgetUsd, spendUsd: target.spendUsd,
+    budgetUsd: target.budgetUsd, spendUsd: target.spendUsd, spendStatus: target.spendStatus,
     sessionStatus: session?.status ?? null,
     attention: attention ? { kind: attention.kind, transitionId: attention.transitionId } : null,
     stopEventId: event.id,
@@ -167,11 +167,44 @@ async function handBackFailure(
   }
   const excerpt = failureExcerpt(failing.output);
   const [paste, enter] = pasteFrames(handBackPrompt({ command: failing.command, exitCode: failing.exitCode, excerpt, attempt: verdict.attempt }));
-  if (!deps.write(event.sessionId, paste)) {
+  if (!deps.write(event.sessionId, paste, { bracketedPaste: true })) {
     return { sent: false, attempt: verdict.attempt, sentence: 'The session stopped accepting input before the failure could be typed, so nothing was sent. It still counts toward this task’s limit.' };
   }
   await deps.wait(SUBMIT_DELAY_MS);
-  deps.write(event.sessionId, enter);
+  // The paste does not authorize a later Enter: a permission question, pause,
+  // budget change or replacement session can arrive during the submit delay.
+  // Keep the reserved count even when submission is refused; never clear input
+  // in a terminal that may now belong to a different interaction.
+  const unsent = (reason: string): NonNullable<GateProofDetail['handBack']> => ({
+    sent: false, attempt: verdict.attempt,
+    sentence: `The failure text was pasted but not submitted because ${reason}. It may remain in the terminal input. This hand-back still counts toward the task’s limit.`,
+  });
+  const current = control.stopGateTarget(event.sessionId);
+  if (!current || current.nodeId !== target.nodeId || current.docketId !== target.docketId
+    || current.gateReturns !== verdict.attempt) {
+    return unsent('the task, goal gate or hand-back reservation changed before Enter');
+  }
+  const currentSession = deps.session(event.sessionId);
+  const currentAttention = currentSession ? deps.attention(currentSession) : null;
+  const submit = handBackVerdict({
+    enabled: current.returnFailures, halted: halted(),
+    // This is the already-counted reservation, not another hand-back request.
+    returnsSoFar: verdict.attempt - 1,
+    budgetUsd: current.budgetUsd, spendUsd: current.spendUsd, spendStatus: current.spendStatus,
+    sessionStatus: currentSession?.status ?? null,
+    attention: currentAttention,
+    stopEventId: event.id,
+  });
+  if (!submit.send) {
+    const reason = {
+      off: 'hand-back was turned off', halted: 'Wanigan was halted',
+      limit: 'the hand-back limit was reached', 'no-budget': 'the goal no longer has an automatic spending budget',
+      cap: 'reported spend reached the budget', 'unknown-spend': 'a session has no reported cost',
+      'session-gone': 'the session is no longer running', 'moved-on': 'the session moved on from the triggering stop',
+    }[submit.reason];
+    return unsent(reason);
+  }
+  if (!deps.write(event.sessionId, enter)) return unsent('the session refused Enter');
   const lines = `${excerpt.shownLines} line${excerpt.shownLines === 1 ? '' : 's'}`;
   recordGoalTrace({
     sessionId: event.sessionId, source: 'gate', kind: 'gate_hand_back', status: 'recorded', toolName: null,

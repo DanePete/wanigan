@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { db } from './db';
 import { codexRolloutPaths } from './codex-sessions';
 import type { SessionUsage } from '../shared/types';
+import { codexTokenHistory, codexSessionTokenEvidence, type CodexTokenHistory, type FrozenTokenEvidence } from '../shared/token-evidence';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TAIL_BYTES = 4 * 1024 * 1024;
@@ -81,6 +82,48 @@ function readSnapshot(file: string): Snapshot | null {
 }
 
 type SessionRow = { id: string; conversation_id: string | null };
+
+/** Frozen review evidence uses interval deltas, not the live view's thread counters. */
+export function codexTokenEvidenceForSessions(ids: string[], asOf: number): Record<string, FrozenTokenEvidence> {
+  const result: Record<string, FrozenTokenEvidence> = {};
+  if (!ids.length) return result;
+  type Interval = { id: string; conversation_id: string; started_at: number; ended_at: number | null };
+  const rows = db().prepare(`SELECT id,lower(conversation_id) AS conversation_id,started_at,ended_at FROM session_log
+    WHERE id IN (${ids.map(() => '?').join(',')}) AND (harness_id='codex' OR provider_id='codex')`)
+    .all(...ids) as Interval[];
+  const conversations = [...new Set(rows.map(row => row.conversation_id).filter(id => typeof id === 'string' && UUID.test(id)))];
+  if (!conversations.length) return result;
+  const siblings = db().prepare(`SELECT id,lower(conversation_id) AS conversation_id,started_at,ended_at FROM session_log
+    WHERE lower(conversation_id) IN (${conversations.map(() => '?').join(',')})`)
+    .all(...conversations) as Interval[];
+  const paths = codexRolloutPaths(conversations);
+  const histories = new Map<string, CodexTokenHistory>();
+  for (const id of conversations) {
+    const file = paths.get(id);
+    if (!file) continue;
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(file, 'r');
+      const size = fs.fstatSync(fd).size;
+      const start = Math.max(0, size - TAIL_BYTES);
+      const bytes = Buffer.alloc(size - start);
+      const read = fs.readSync(fd, bytes, 0, bytes.length, start);
+      histories.set(id, codexTokenHistory(bytes.subarray(0, read).toString('utf8'), start === 0, id));
+    } catch { /* absent, incomplete or inaccessible rollout is unknown evidence */ }
+    finally { if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ } }
+  }
+  for (const row of rows) {
+    const history = histories.get(row.conversation_id);
+    if (!history) continue;
+    const through = Math.min(row.ended_at ?? asOf, asOf);
+    const overlaps = siblings.some(other => other.id !== row.id && other.conversation_id === row.conversation_id
+      && other.started_at < through && Math.min(other.ended_at ?? asOf, asOf) > row.started_at);
+    result[row.id] = codexSessionTokenEvidence(history, {
+      conversationId: row.conversation_id, startedAt: row.started_at, endedAt: row.ended_at, asOf, overlaps,
+    });
+  }
+  return result;
+}
 
 /** Merge exact Codex transcript counters into the live session view. */
 export function mergeCodexUsage(usage: Record<string, SessionUsage>): void {

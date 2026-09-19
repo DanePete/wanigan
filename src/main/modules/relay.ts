@@ -3,6 +3,7 @@ import type { RelayCreateInput } from '../../shared/types';
 import type { WaniganModule } from '../module-registry';
 import * as relay from '../relay';
 import * as delivery from '../relay-delivery';
+import { advanceAutomaticRelays, setAutomation } from '../relay-automation';
 
 /**
  * Relay owns the staged workflow's marker and IPC namespace. The implementation
@@ -21,6 +22,9 @@ function migrate(d: Database.Database) {
   if (!columns.some((column) => column.name === 'relay')) {
     d.exec('ALTER TABLE work_dockets ADD COLUMN relay INTEGER NOT NULL DEFAULT 0');
   }
+  if (!columns.some(column => column.name === 'relay_automatic_progress')) {
+    d.exec('ALTER TABLE work_dockets ADD COLUMN relay_automatic_progress INTEGER NOT NULL DEFAULT 0');
+  }
   delivery.migrateDelivery(d);
 }
 
@@ -29,13 +33,15 @@ export const relayModule: WaniganModule = {
   label: 'Relay',
   required: null,
   migrate,
+  maintenance: () => [{ id: 'relay-progress', intervalMs: 3_000, run: advanceAutomaticRelays }],
   ipc(handle) {
-    // None of these starts an agent. `relay:create` writes a docket and its
-    // route proofs; the plan session is started through `control:start`, which
+    // Creating with an explicit allowance can arm automatic progress. Session
+    // launches still run through Control and its guarded dispatcher, which
     // is already held until services are up. `relay:estimate` is a query over
     // this project's own history. Everything arriving here is validated in
     // relay.ts before a row is touched.
     handle('relay:create', (input: RelayCreateInput) => relay.createRelay(input));
+    handle('relay:setAutomation', (id: unknown, raw: unknown) => { setAutomation(id, raw); return relay.readRelay(id); });
     // Spends when the suggester is on, so it is a press and never a keystroke.
     handle('relay:preview', (input: unknown) => relay.previewRelay(input));
     handle('relay:read', (docketId: unknown) => relay.readRelay(docketId));

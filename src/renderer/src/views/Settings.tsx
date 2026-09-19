@@ -1209,6 +1209,8 @@ function manifestConsentText(inspected: ProviderManifestInspection): string {
           return `${field.label} (${field.id}/${field.kind}) ${templates || '(no argv)'}`;
         }).join('; ')}`
       : '';
+    const initialPrompt = command.initialPromptArgv.length
+      ? `\n  initial prompt argv: [${command.initialPromptArgv.join(', ')}]` : '';
     const resume = command.resume
       ? `\n  resume argv: conversation=[${command.resume.conversationArgs.join(', ')}]; continue=[${command.resume.continueArgs.join(', ')}]`
       : '\n  resume argv: (none)';
@@ -1232,7 +1234,7 @@ function manifestConsentText(inspected: ProviderManifestInspection): string {
       ? command.backendId
       : `${command.backendId} (declared ${command.declaredBackendId}; isolated by pack)`;
     return `${command.profileLabel} (${command.harness}/${command.headless} → ${backend})`
-      + `\n  launch: ${launch}${probes}${fields}${resume}${fallbacks}${extensions}${env}`;
+      + `\n  launch: ${launch}${probes}${fields}${initialPrompt}${resume}${fallbacks}${extensions}${env}`;
   }).join('\n\n');
 
   const adapter = inspected.adapter
@@ -6238,4 +6240,3 @@ function RoutingSuggester() {
     </Section>
   );
 }
-

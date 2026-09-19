@@ -487,6 +487,75 @@ async function runRelayRoutingSmoke(projectId: string, check: Check, say: Say): 
     check(objectives.size === 3 && usageRows() === 3,
       'all three Auto preferences reach Jev and each relay is metered once');
 
+    const previewInput = { intent: 'Use the reviewed route once.', providerId, routes,
+      routing: { mode: 'auto', preference: 'cost' } as const };
+    const previewCalls = requests.length;
+    const preview = await relay.previewRelay(previewInput);
+    check(preview.asked && !!preview.receipt && preview.expiresAt > Date.now() && requests.length === previewCalls + 1,
+      'an Auto preview makes one metered offline Jev request and returns a bounded main-owned receipt');
+    const afterPreviewCalls = requests.length;
+    const beforeReceiptRows = rows();
+    const changed = await refused(() => relay.createRelay({ ...previewInput, intent: 'A changed intent.',
+      projectId, previewReceipt: preview.receipt, delivery: false }));
+    check(/changed/.test(changed) && requests.length === afterPreviewCalls && rows() === beforeReceiptRows,
+      'a receipt bound to another prompt refuses without another Jev request or a docket write', changed);
+    const keyBeforeMismatch = process.env.WANIGAN_TYPESAFE_KEY;
+    process.env.WANIGAN_TYPESAFE_KEY = 'offline-relay-routing-other-fixture';
+    let credentialMismatch = '';
+    try {
+      credentialMismatch = await refused(() => relay.createRelay({ ...previewInput, projectId,
+        previewReceipt: preview.receipt, delivery: false }));
+    } finally { process.env.WANIGAN_TYPESAFE_KEY = keyBeforeMismatch; }
+    check(/changed/.test(credentialMismatch) && requests.length === afterPreviewCalls && rows() === beforeReceiptRows,
+      'a changed routing credential invalidates its preview without silently paying for another decision', credentialMismatch);
+    if (preview.routes.implement) preview.routes.implement.route.model = 'renderer-supplied-model';
+    const reused = await relay.createRelay({ ...previewInput, projectId, previewReceipt: preview.receipt, delivery: false });
+    createdIds.push(reused.docket.id);
+    check(requests.length === afterPreviewCalls && nodeOf(reused, 'implement').model === 'sonnet'
+      && proofDetail(reused.docket.id, null)?.suggesterUsage?.inputTokens === 2400,
+    'creation reuses the main-owned decision and metering; a changed renderer preview cannot replace its route');
+    const reusedAgain = await refused(() => relay.createRelay({ ...previewInput, projectId,
+      previewReceipt: preview.receipt, delivery: false }));
+    check(/already used/.test(reusedAgain) && requests.length === afterPreviewCalls && rows() === beforeReceiptRows + 1,
+      'a consumed preview refuses a second create without another model call', reusedAgain);
+
+    const concurrentPreview = await relay.previewRelay(previewInput);
+    const concurrentCalls = requests.length; const concurrentRows = rows();
+    const concurrent = await Promise.allSettled([0, 1].map(() => relay.createRelay({ ...previewInput,
+      projectId, previewReceipt: concurrentPreview.receipt, delivery: false })));
+    const winners = concurrent.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+    createdIds.push(...winners.map(result => result.docket.id));
+    check(winners.length === 1 && concurrent.filter(result => result.status === 'rejected').length === 1
+      && rows() === concurrentRows + 1 && requests.length === concurrentCalls,
+    'simultaneous creates atomically consume one preview: one docket wins and no extra Jev call occurs', concurrent.map(result => result.status));
+
+    const expiredPreview = await relay.previewRelay(previewInput);
+    const expiryCalls = requests.length; const expiryRows = rows();
+    const realNow = Date.now;
+    let expired = '';
+    try {
+      Date.now = () => expiredPreview.expiresAt;
+      expired = await refused(() => relay.createRelay({ ...previewInput, projectId,
+        previewReceipt: expiredPreview.receipt, delivery: false }));
+    } finally { Date.now = realNow; }
+    check(/expired/.test(expired) && requests.length === expiryCalls && rows() === expiryRows,
+      'an expired receipt refuses at the real create boundary without automatically purchasing a replacement', expired);
+
+    const { halted, pullHalt, clearHalt } = await import('./halt');
+    const review = await import('./review');
+    if (!halted()) {
+      const recipeBefore = review.recipe(projectId).commands;
+      review.saveRecipe(projectId, ['true']);
+      try {
+        await pullHalt({ reason: 'Offline automatic creation refusal fixture' });
+        const haltCalls = requests.length; const haltRows = rows();
+        const haltedCreate = await refused(() => relay.createRelay({ ...previewInput, projectId,
+          automation: { budgetUsd: 5 }, delivery: false }));
+        check(/halted/.test(haltedCreate) && requests.length === haltCalls && rows() === haltRows,
+          'automatic create while halted refuses before Jev inference or a partial docket write', haltedCreate);
+      } finally { clearHalt(); review.saveRecipe(projectId, recipeBefore); }
+    }
+
     // Existing relays lack this new docket-level proof. Removing it from the
     // fixture recreates that record shape without inventing a historical choice.
     db().prepare("DELETE FROM work_proofs WHERE docket_id=? AND node_id IS NULL AND kind='route'").run(manual.docket.id);

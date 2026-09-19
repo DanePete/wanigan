@@ -1,0 +1,698 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Unauthenticated public metadata GETs only; no inference, credentials or account usage fetched. Counts are catalog declarations, not conformance or quality tests.",
+  "catalog": {
+    "retrievedAt": "2026-09-19T17:24:44.952953+00:00",
+    "sourceUrl": "https://openrouter.ai/api/v1/models",
+    "sha256ResponseBytes": "1539c7956b77176f795733f0118217c3c1265a20e321c0a3faf0ffc586d8955a",
+    "counts": {
+      "totalRows": 447,
+      "textOutput": 447,
+      "tools": 378,
+      "toolsAndReasoningEffortParameter": 173,
+      "reasoningObject": 315,
+      "explicitEffortList": 176,
+      "toolsAndExplicitEffortList": 170
+    }
+  },
+  "selectedRetrievedAt": "2026-09-19T17:19:53.521937+00:00",
+  "selectedModels": [
+    {
+      "modelSourceUrl": "https://openrouter.ai/api/v1/models",
+      "endpointsSourceUrl": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+      "model": {
+        "id": "deepseek/deepseek-v4.1-flash",
+        "canonical_slug": "deepseek/deepseek-v4.1-flash-20260910",
+        "name": "DeepSeek: DeepSeek V4.1 Flash",
+        "created": 1789021285,
+        "context_length": 1048576,
+        "architecture": {
+          "modality": "text+image->text",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "DeepSeek",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.00000015",
+          "completion": "0.0000006",
+          "input_cache_read": "0.000000003",
+          "overrides": [
+            {
+              "utc_days": [
+                "saturday",
+                "sunday"
+              ],
+              "prompt": "0.00000015",
+              "completion": "0.0000006",
+              "input_cache_read": "0.000000003"
+            },
+            {
+              "utc_days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+              ],
+              "utc_start": 0,
+              "utc_end": 100,
+              "prompt": "0.00000015",
+              "completion": "0.0000006",
+              "input_cache_read": "0.000000003"
+            },
+            {
+              "utc_days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+              ],
+              "utc_start": 100,
+              "utc_end": 400,
+              "prompt": "0.0000003",
+              "completion": "0.0000012",
+              "input_cache_read": "0.000000006"
+            },
+            {
+              "utc_days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+              ],
+              "utc_start": 400,
+              "utc_end": 600,
+              "prompt": "0.00000015",
+              "completion": "0.0000006",
+              "input_cache_read": "0.000000003"
+            },
+            {
+              "utc_days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+              ],
+              "utc_start": 600,
+              "utc_end": 1000,
+              "prompt": "0.0000003",
+              "completion": "0.0000012",
+              "input_cache_read": "0.000000006"
+            },
+            {
+              "utc_days": [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday"
+              ],
+              "utc_start": 1000,
+              "utc_end": 0,
+              "prompt": "0.00000015",
+              "completion": "0.0000006",
+              "input_cache_read": "0.000000003"
+            }
+          ]
+        },
+        "top_provider": {
+          "context_length": 1048576,
+          "max_completion_tokens": 384000,
+          "is_moderated": false
+        },
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "logprobs",
+          "max_tokens",
+          "min_p",
+          "presence_penalty",
+          "reasoning",
+          "reasoning_effort",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ],
+        "reasoning": {
+          "mandatory": false,
+          "default_enabled": true,
+          "supported_efforts": [
+            "max",
+            "high",
+            "low"
+          ],
+          "default_effort": "high"
+        }
+      },
+      "endpoints": [
+        {
+          "name": "DeepSeek | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "DeepSeek",
+          "tag": "deepseek",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 384000,
+          "quantization": "unknown",
+          "status": 0,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003",
+            "discount": 0,
+            "overrides": [
+              {
+                "utc_days": [
+                  "saturday",
+                  "sunday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 0,
+                "utc_end": 100,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 100,
+                "utc_end": 400,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.0000003",
+                "completion": "0.0000012",
+                "input_cache_read": "0.000000006"
+              },
+              {
+                "utc_start": 400,
+                "utc_end": 600,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 600,
+                "utc_end": 1000,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.0000003",
+                "completion": "0.0000012",
+                "input_cache_read": "0.000000006"
+              },
+              {
+                "utc_start": 1000,
+                "utc_end": 0,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              }
+            ]
+          },
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "logprobs",
+            "top_logprobs",
+            "tools",
+            "tool_choice",
+            "response_format",
+            "reasoning_effort"
+          ],
+          "supports_tool_choice": {
+            "none": true,
+            "auto": true,
+            "required": false,
+            "function": false
+          },
+          "supports_implicit_caching": true,
+          "latency_last_30m": null,
+          "throughput_last_30m": null,
+          "uptime_last_30m": 99.99978041089513
+        }
+      ],
+      "endpointCountAtRetrieval": 22
+    },
+    {
+      "modelSourceUrl": "https://openrouter.ai/api/v1/models",
+      "endpointsSourceUrl": "https://openrouter.ai/api/v1/models/z-ai/glm-5.3-flash/endpoints",
+      "model": {
+        "id": "z-ai/glm-5.3-flash",
+        "canonical_slug": "z-ai/glm-5.3-flash-20260826",
+        "name": "Z.ai: GLM 5.3 Flash",
+        "created": 1787752741,
+        "context_length": 1310720,
+        "architecture": {
+          "modality": "text+image+video->text",
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "Other",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.00000009",
+          "completion": "0.0000003",
+          "input_cache_read": "0.000000018"
+        },
+        "top_provider": {
+          "context_length": 1048576,
+          "max_completion_tokens": 131072,
+          "is_moderated": false
+        },
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "logprobs",
+          "max_tokens",
+          "min_p",
+          "presence_penalty",
+          "reasoning",
+          "reasoning_effort",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ],
+        "reasoning": {
+          "mandatory": true,
+          "default_enabled": true,
+          "supported_efforts": [
+            "max",
+            "high",
+            "low"
+          ],
+          "default_effort": "max"
+        }
+      },
+      "endpoints": [
+        {
+          "name": "DeepInfra | z-ai/glm-5.3-flash-20260826",
+          "provider_name": "DeepInfra",
+          "tag": "deepinfra/fp4",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 131072,
+          "quantization": "fp4",
+          "status": 0,
+          "pricing": {
+            "prompt": "0.000000075",
+            "completion": "0.00000025",
+            "input_cache_read": "0.000000015",
+            "discount": 0.5
+          },
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "top_k",
+            "seed",
+            "min_p",
+            "logit_bias",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "response_format",
+            "reasoning_effort"
+          ],
+          "supports_tool_choice": {
+            "none": true,
+            "auto": true,
+            "required": true,
+            "function": true
+          },
+          "supports_implicit_caching": false,
+          "latency_last_30m": null,
+          "throughput_last_30m": null,
+          "uptime_last_30m": 98.51039260969976
+        }
+      ],
+      "endpointCountAtRetrieval": 29
+    },
+    {
+      "modelSourceUrl": "https://openrouter.ai/api/v1/models",
+      "endpointsSourceUrl": "https://openrouter.ai/api/v1/models/moonshotai/kimi-k2.6/endpoints",
+      "model": {
+        "id": "moonshotai/kimi-k2.6",
+        "canonical_slug": "moonshotai/kimi-k2.6-20260420",
+        "name": "MoonshotAI: Kimi K2.6",
+        "created": 1776699402,
+        "context_length": 262144,
+        "architecture": {
+          "modality": "text+image->text",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "Other",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.00000095",
+          "completion": "0.000004",
+          "input_cache_read": "0.00000016"
+        },
+        "top_provider": {
+          "context_length": 262144,
+          "max_completion_tokens": 235929,
+          "is_moderated": false
+        },
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "logprobs",
+          "max_tokens",
+          "min_p",
+          "parallel_tool_calls",
+          "presence_penalty",
+          "reasoning",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ],
+        "reasoning": {
+          "mandatory": false,
+          "default_enabled": true
+        }
+      },
+      "endpoints": [
+        {
+          "name": "Baidu | moonshotai/kimi-k2.6-20260420",
+          "provider_name": "Baidu",
+          "tag": "baidu/fp4",
+          "context_length": 262144,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 235929,
+          "quantization": "fp4",
+          "status": 0,
+          "pricing": {
+            "prompt": "0.0000003743",
+            "completion": "0.000001576",
+            "input_cache_read": "0.00000006304",
+            "discount": 0.606
+          },
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "frequency_penalty",
+            "presence_penalty",
+            "stop",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice"
+          ],
+          "supports_tool_choice": {
+            "none": true,
+            "auto": true,
+            "required": false,
+            "function": false
+          },
+          "supports_implicit_caching": false,
+          "latency_last_30m": null,
+          "throughput_last_30m": null,
+          "uptime_last_30m": 99.96119518820333
+        }
+      ],
+      "endpointCountAtRetrieval": 21
+    },
+    {
+      "modelSourceUrl": "https://openrouter.ai/api/v1/models",
+      "endpointsSourceUrl": "https://openrouter.ai/api/v1/models/minimax/minimax-m2.5/endpoints",
+      "model": {
+        "id": "minimax/minimax-m2.5",
+        "canonical_slug": "minimax/minimax-m2.5-20260211",
+        "name": "MiniMax: MiniMax M2.5",
+        "created": 1770908502,
+        "context_length": 204800,
+        "architecture": {
+          "modality": "text->text",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "Other",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.00000027",
+          "completion": "0.00000108",
+          "input_cache_read": "0.000000027"
+        },
+        "top_provider": {
+          "context_length": 200000,
+          "max_completion_tokens": 128000,
+          "is_moderated": false
+        },
+        "supported_parameters": [
+          "frequency_penalty",
+          "include_reasoning",
+          "logit_bias",
+          "logprobs",
+          "max_tokens",
+          "min_p",
+          "presence_penalty",
+          "reasoning",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ],
+        "reasoning": {
+          "mandatory": true
+        }
+      },
+      "endpoints": [
+        {
+          "name": "Venice | minimax/minimax-m2.5-20260211",
+          "provider_name": "Venice",
+          "tag": "venice",
+          "context_length": 198000,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 32768,
+          "quantization": "unknown",
+          "status": 0,
+          "pricing": {
+            "prompt": "0.00000027",
+            "completion": "0.00000095",
+            "input_cache_read": "0.00000003",
+            "discount": 0
+          },
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "tools",
+            "tool_choice"
+          ],
+          "supports_tool_choice": {
+            "none": true,
+            "auto": true,
+            "required": true,
+            "function": true
+          },
+          "supports_implicit_caching": false,
+          "latency_last_30m": null,
+          "throughput_last_30m": null,
+          "uptime_last_30m": null
+        }
+      ],
+      "endpointCountAtRetrieval": 8
+    },
+    {
+      "modelSourceUrl": "https://openrouter.ai/api/v1/models",
+      "endpointsSourceUrl": "https://openrouter.ai/api/v1/models/qwen/qwen3-coder-30b-a3b-instruct/endpoints",
+      "model": {
+        "id": "qwen/qwen3-coder-30b-a3b-instruct",
+        "canonical_slug": "qwen/qwen3-coder-30b-a3b-instruct",
+        "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+        "created": 1753972379,
+        "context_length": 262144,
+        "architecture": {
+          "modality": "text->text",
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ],
+          "tokenizer": "Qwen3",
+          "instruct_type": null
+        },
+        "pricing": {
+          "prompt": "0.00000007",
+          "completion": "0.00000028"
+        },
+        "top_provider": {
+          "context_length": 262144,
+          "max_completion_tokens": 235929,
+          "is_moderated": false
+        },
+        "supported_parameters": [
+          "frequency_penalty",
+          "logprobs",
+          "max_tokens",
+          "presence_penalty",
+          "repetition_penalty",
+          "response_format",
+          "seed",
+          "stop",
+          "structured_outputs",
+          "temperature",
+          "tool_choice",
+          "tools",
+          "top_k",
+          "top_logprobs",
+          "top_p"
+        ]
+      },
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-coder-30b-a3b-instruct",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 160000,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 32768,
+          "quantization": "fp8",
+          "status": 0,
+          "pricing": {
+            "prompt": "0.00000007",
+            "completion": "0.00000027",
+            "discount": 0
+          },
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice",
+            "response_format"
+          ],
+          "supports_tool_choice": {
+            "none": true,
+            "auto": true,
+            "required": true,
+            "function": true
+          },
+          "supports_implicit_caching": false,
+          "latency_last_30m": null,
+          "throughput_last_30m": null,
+          "uptime_last_30m": 99.75903614457832
+        }
+      ],
+      "endpointCountAtRetrieval": 4
+    }
+  ]
+}
