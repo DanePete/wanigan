@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {
   asPlatform,
   commandLine,
+  directoryLinkType,
   executableCandidates,
   executableExtensions,
   extraSearchDirs,
@@ -240,6 +241,15 @@ test('a trailing backslash does not escape the closing quote', () => {
   // escaped quote, swallowing the argument boundary and merging two arguments.
   assert.equal(quoteForCmd('C:\\repo\\'), '"C:\\repo\\\\"');
   assert.equal(quoteForCmd('C:\\repo'), '"C:\\repo"');
+});
+
+test('Windows links a directory with a junction, which needs no elevation', () => {
+  // fs.symlink(..., 'dir') on Windows needs an Administrator token or
+  // Developer Mode and fails EPERM on an ordinary account -- which is every
+  // account that would be placing node_modules into a fresh worktree.
+  assert.equal(directoryLinkType('win32'), 'junction');
+  assert.equal(directoryLinkType('darwin'), 'dir');
+  assert.equal(directoryLinkType('linux'), 'dir');
 });
 
 /* ── the environment around it ────────────────────────────────────────── */

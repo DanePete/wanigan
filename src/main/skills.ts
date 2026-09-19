@@ -72,8 +72,29 @@ export type SkillInfo = {
 
 const HOME = os.homedir();
 /** Where the CLI extracts bundled skills, per version. Incomplete by design. */
-const BUNDLED_ROOT = `/private/tmp/claude-${process.getuid?.() ?? 501}/bundled-skills`;
+/**
+ * Where the CLI extracts bundled skills, or null when this platform's answer is
+ * not known.
+ *
+ * `/private/tmp/claude-<uid>` is Claude Code's own choice on macOS, not
+ * `os.tmpdir()` — which on macOS is a per-session `/var/folders/...` path — so
+ * it cannot be derived, only stated. On Linux the same layout sits under /tmp.
+ *
+ * Windows returns null rather than a guess. A wrong path here is not a blank
+ * space: `scanBundledSeen` would read nothing from it and the Skills view would
+ * print "no built-in skills" under a POSIX path no Windows machine has, which
+ * is a claim about the operator's install rather than about Wanigan's
+ * knowledge. Saying nothing is the honest state until somebody reads the path
+ * off a real Windows install.
+ */
+function bundledRoot(): string | null {
+  if (process.platform === 'win32') return null;
+  const uid = process.getuid?.() ?? 501;
+  const tmp = process.platform === 'darwin' ? '/private/tmp' : '/tmp';
+  return path.join(tmp, `claude-${uid}`, 'bundled-skills');
+}
 const BUNDLED_NOTE = 'Claude Code extracts a bundled skill only once it has been used, so this shows the ones seen so far — not every built-in.';
+const BUNDLED_UNKNOWN_NOTE = 'Wanigan does not know where this platform’s Claude Code extracts bundled skills, so none are listed. That is Wanigan’s gap, not a statement that you have none.';
 const AGENTS_NOTE = 'Read by the Codex harness. Wanigan lists what is on disk and did not consult Codex’s loader, so a row here is not proof that a Codex session loads it.';
 
 /* ── roots, per harness ──────────────────────────────────────────────── */
@@ -110,7 +131,10 @@ export function skillRootsFor(
     const read: SkillRootSpec[] = [{ source: 'user', path: personal, note: null }];
     if (root) read.push({ source: 'project', path: path.join(root, '.claude', 'skills'), note: null });
     read.push({ source: 'plugin', path: path.join(base, 'plugins'), note: null });
-    read.push({ source: 'builtin', path: BUNDLED_ROOT, note: BUNDLED_NOTE });
+    const bundled = bundledRoot();
+    read.push(bundled
+      ? { source: 'builtin', path: bundled, note: BUNDLED_NOTE }
+      : { source: 'builtin', path: '—', note: BUNDLED_UNKNOWN_NOTE });
     return { harness, read, write: { personal, project: root ? path.join(root, '.claude', 'skills') : null } };
   }
   if (harness === 'codex') {
@@ -402,15 +426,17 @@ function scanPlugins(pluginRoot: string): Scanned[] {
 
 /** Built-ins the CLI has extracted so far. Never a complete list — see above. */
 function scanBundledSeen(): Scanned[] {
+  const root = bundledRoot();
+  if (!root) return [];
   let versions: string[];
-  try { versions = fs.readdirSync(BUNDLED_ROOT); } catch { return []; }
+  try { versions = fs.readdirSync(root); } catch { return []; }
   const newest = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   const seen = new Map<string, Scanned>();
   for (const v of newest) {
     let hashes: string[];
-    try { hashes = fs.readdirSync(path.join(BUNDLED_ROOT, v)); } catch { continue; }
+    try { hashes = fs.readdirSync(path.join(root, v)); } catch { continue; }
     for (const h of hashes) {
-      for (const s of scanSkillDir(path.join(BUNDLED_ROOT, v, h), 'builtin', 'frontmatter')) {
+      for (const s of scanSkillDir(path.join(root, v, h), 'builtin', 'frontmatter')) {
         if (!seen.has(s.skill.name)) seen.set(s.skill.name, s);
       }
     }
@@ -701,7 +727,13 @@ export function skillSendDecision(session: Session | null | undefined, invoke: s
 /** Every directory a skill is allowed to be read from, for every harness and every registered project. */
 function skillRoots(): string[] {
   const roots = new Set<string>();
-  const add = (r: SkillRoots) => { for (const spec of r.read) roots.add(spec.path); };
+  // A spec can name no directory at all when the platform's location is
+  // unknown (bundledRoot), and the renderer prints that as an em-dash. This
+  // list is a containment check rather than a display, so only a real absolute
+  // path belongs in it.
+  const add = (r: SkillRoots) => {
+    for (const spec of r.read) if (path.isAbsolute(spec.path)) roots.add(spec.path);
+  };
   add(skillRootsFor('claude-code', { homeDir: HOME }));
   add(skillRootsFor('codex', { homeDir: HOME }));
   try {

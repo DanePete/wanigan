@@ -16,6 +16,8 @@ import {
   type DepOutcome, type DepsMode, type IncludeLimits, type IncludeOutcome, type PortBlock, type WorktreeBootstrap,
   type WorktreeCommandEnv, type WorktreeCommandRun, type WorktreeRunSummary, type WorktreeSetupConfig,
 } from '../shared/worktree-bootstrap';
+import { directoryLinkType } from '../shared/platform';
+import { hostPlatform } from './platform';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -488,7 +490,7 @@ async function placeDependencies(repoRoot: string, worktree: string, mode: DepsM
       }
     }
     try {
-      fs.symlinkSync(src, dst, 'dir');
+      fs.symlinkSync(src, dst, directoryLinkType(hostPlatform()));
       linked.push({ path: rel, kind: 'dir', bytes: null });
       const unexcluded = await excludeLink(repoRoot, rel);
       record('linked', [fallback, unexcluded && `git will list the link as untracked because ${unexcluded}`].filter(Boolean).join('; ') || null);

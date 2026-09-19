@@ -286,6 +286,23 @@ export function commandLine(plan: SpawnPlan): string {
 }
 
 /**
+ * The kind of directory link this platform can make without elevated rights.
+ *
+ * `fs.symlink(..., 'dir')` on Windows needs either an Administrator token or
+ * Developer Mode, and fails EPERM on an ordinary account. A *junction* is the
+ * NTFS reparse point that needs neither, and for pointing one directory at
+ * another — which is all Wanigan does with it, placing a gitignored dependency
+ * folder into a fresh worktree — it behaves the same.
+ *
+ * The one thing a junction cannot do is point at a relative path, so callers
+ * must pass an absolute target. That is not a new constraint here: the
+ * dependency placement already joins against an absolute repository root.
+ */
+export function directoryLinkType(platform: Platform): 'dir' | 'junction' {
+  return platform === 'win32' ? 'junction' : 'dir';
+}
+
+/**
  * The command that asks a login shell what it thinks `PATH` is, or null.
  *
  * A GUI app inherits the session PATH, not the shell's, so a CLI installed by
