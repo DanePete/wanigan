@@ -3953,7 +3953,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // which is the third time in this codebase a finished lane had no entrance.
     const wiring = sourceOf('src/main/index.ts');
     const registered = [...wiring.matchAll(/registerHaltStopper\(\{[\s\S]{0,40}?name: '([a-z ]+)'/g)].map((m) => m[1]);
-    check(JSON.stringify(registered) === JSON.stringify(['companion', 'schedules', 'queue', 'autopilots', 'batch polling', 'learning', 'sessions']),
+    // Companion registers its own stopper from its module record; it launches
+    // nothing, so its place relative to the dispatchers carries no meaning.
+    check(JSON.stringify(registered) === JSON.stringify(['schedules', 'queue', 'autopilots', 'batch polling', 'learning', 'sessions'])
+      && /registerHaltStopper\(\{ name: 'companion'/.test(sourceOf('src/main/modules/companion.ts')),
       'every subsystem is registered with the halt, in the order that matters — dispatchers before the sessions they would otherwise relaunch',
       registered);
     check(halt.haltStopperNames().length >= 4,

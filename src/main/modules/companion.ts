@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { db } from './db';
-import { listProjects } from './store';
-import { listSessions } from './sessions';
-import { attentionFor } from './attention';
-import { getKey } from './keys';
-import { client } from './batch/anthropic';
-import { DEFAULT_MODEL, MODELS, syncCostOf } from './batch/pricing';
-import { refuseIfHalted } from './halt';
-import { snapshot as readUsage } from './usage';
+import type Database from 'better-sqlite3';
+import type { WaniganModule } from '../module-registry';
+import { db } from '../db';
+import { listProjects } from '../store';
+import { listSessions } from '../sessions';
+import { attentionFor } from '../attention';
+import { getKey } from '../keys';
+import { client } from '../batch/anthropic';
+import { DEFAULT_MODEL, MODELS, syncCostOf } from '../batch/pricing';
+import { refuseIfHalted, registerHaltStopper } from '../halt';
+import { snapshot as readUsage } from '../usage';
 import { companionUsage } from './companion-usage';
-import type { Attention, Project, Session, UsageSnapshot } from '../shared/types';
-import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../shared/companion';
+import type { Attention, Project, Session, UsageSnapshot } from '../../shared/types';
+import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../../shared/companion';
 
 const MAX_QUESTION = 4_000;
 const MAX_CONTEXT = 32_000;
@@ -233,3 +235,31 @@ export const companion = createCompanionService({
   usage: () => readUsage({ days: 14 }),
   complete: completeCompanion,
 });
+
+/** The turns ledger, as db.ts created it before Companion was a module. */
+export function migrateCompanion(d: Database.Database): void {
+  d.exec(`
+      CREATE TABLE IF NOT EXISTS companion_turns (
+        id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, question TEXT NOT NULL,
+        answer TEXT, sources_json TEXT NOT NULL DEFAULT '[]', model TEXT NOT NULL,
+        at INTEGER NOT NULL, status TEXT NOT NULL, error TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL
+      );
+      CREATE INDEX IF NOT EXISTS idx_companion_scope ON companion_turns(scope_key, at DESC);
+    `);
+}
+
+export const companionModule = {
+  id: 'companion', label: 'Companion',
+  // Disabling removes the conversational overview; every view it summarises still works.
+  required: null,
+  migrate: migrateCompanion,
+  requiresStartedServices: ['ask'],
+  ipc(handle) {
+    registerHaltStopper({ name: 'companion', stop: () => ({ name: 'companion', stopped: companion.cancel() ? 1 : 0, note: 'pending answer stopped; provider billing may still apply' }) });
+    handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
+    handle('companion:history', (projectId: unknown) => companion.history(projectId));
+    handle('companion:ask', (input: unknown) => companion.ask(input));
+    handle('companion:cancel', () => companion.cancel());
+  },
+} satisfies WaniganModule;

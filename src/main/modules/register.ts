@@ -16,6 +16,7 @@ import { usageModule } from './usage';
 import { accountEligibilityModule } from './account-eligibility';
 import { learningModelAssistModule } from './learning-model-assist';
 import { promptImproveModule } from './prompt-improve';
+import { companionModule } from './companion';
 import { modelEconomicsModule } from './model-economics';
 import { openRouterConnectionModule } from './openrouter-connection';
 
@@ -45,5 +46,6 @@ registerModule(scoutModule);
 registerModule(suggestModule);
 registerModule(relayModule);
 registerModule(promptImproveModule);
+registerModule(companionModule);
 registerModule(modelEconomicsModule);
 registerModule(openRouterConnectionModule);

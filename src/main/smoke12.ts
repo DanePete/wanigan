@@ -1,7 +1,7 @@
 import { db } from './db';
-import { companionFacts, completeCompanion, createCompanionService } from './companion';
+import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
 import Anthropic from '@anthropic-ai/sdk';
-import { companionUsage } from './companion-usage';
+import { companionUsage } from './modules/companion-usage';
 import { companionPresence } from '../shared/companion-presence';
 import type { Attention, Project, Session, UsageSnapshot } from '../shared/types';
 

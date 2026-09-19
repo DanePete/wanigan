@@ -1,4 +1,4 @@
-import type { UsageSnapshot } from '../shared/types';
+import type { UsageSnapshot } from '../../shared/types';
 
 const numberOrNull = (value: number | null): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
