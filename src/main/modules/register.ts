@@ -1,4 +1,5 @@
 import { registerModule } from '../module-registry';
+import { relayModule } from './relay';
 import { scoutModule } from './scout';
 import { suggestModule } from './suggest';
 
@@ -13,3 +14,4 @@ import { suggestModule } from './suggest';
  */
 registerModule(scoutModule);
 registerModule(suggestModule);
+registerModule(relayModule);

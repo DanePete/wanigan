@@ -1793,13 +1793,6 @@ function migrateControl(d: Database.Database) {
   addColumn(d, 'work_nodes', 'permission_mode', 'TEXT');
   d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
   d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_defer ON work_nodes(defer_until) WHERE defer_until IS NOT NULL');
-  // Whether the docket was created as a relay (src/main/relay.ts). A relay
-  // hands a failed review back to its implementer on its own, up to a cap; an
-  // ordinary goal must not start doing that because it happens to share the
-  // table, so the flag is what the hand-back reads before it touches anything.
-  // Existing rows default to 0, which is true of every goal written before
-  // relays existed.
-  addColumn(d, 'work_dockets', 'relay', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {
