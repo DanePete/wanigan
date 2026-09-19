@@ -6129,6 +6129,55 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const receipt = control.resumeReceipts(docket.id).find((row) => row.nodeId === planNode.id);
     check(receipt?.state === 'exact' && receipt.conversationId === receiptConversation,
       'a Goal recovery receipt refreshes the exact durable conversation before offering resume', receipt);
+
+    // Codex above reports its thread id only after its first prompt, so a null
+    // id was the whole signal. Wanigan chooses the Claude CLI's id itself and
+    // passes it as --session-id, so the id is never null and the signal could
+    // not fire: a session that exited before taking a turn was offered as an
+    // exact resume, and `claude --resume` answered "No conversation found with
+    // session ID" and exited 1. The id below is the one that did it.
+    const mintedGoal = control.createDocket({ projectId: controlProject.id, title: 'Minted but never turned',
+      objective: 'A conversation id recorded for a session that took no turn.',
+      acceptance: ['The receipt refuses to call it exact.'] });
+    const mintedNode = mintedGoal.nodes.find((node) => node.kind === 'plan')!;
+    const mintedSession = `s_minted_${Date.now().toString(36)}`;
+    const mintedConversation = 'fb80c14b-3698-4846-807c-4f43ffe7de60';
+    db().prepare(`INSERT INTO session_log
+      (id,conversation_id,provider_id,harness_id,project_id,project_path,project_name,worktree,started_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(mintedSession, mintedConversation, 'claude', 'claude-code', controlProject.id, controlRepo,
+        'control', controlRepo, Date.now());
+    db().prepare('UPDATE work_nodes SET session_id=? WHERE id=?').run(mintedSession, mintedNode.id);
+    db().prepare(`INSERT INTO work_resume_receipts
+      (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(mintedNode.id, mintedGoal.id, mintedSession, mintedConversation, 'claude', 'opus',
+        mintedGoal.baseCommit, controlRepo, Date.now(), Date.now());
+    const mintedReceipt = control.resumeReceipts(mintedGoal.id).find((row) => row.nodeId === mintedNode.id);
+    check(mintedReceipt?.state === 'identity_pending'
+      && mintedReceipt.conversationId === mintedConversation
+      && /never created the conversation/.test(mintedReceipt.detail),
+      'a Claude conversation id Wanigan minted at launch is not an exact resume until a transcript proves the conversation exists: the receipt keeps the id it recorded, reports identity_pending like the Codex row that has none yet, and says the session ended before it took a turn rather than offering a resume that answers "No conversation found"',
+      mintedReceipt);
+
+    const mintedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-resume-'));
+    const prevMintedDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mintedHome;
+    try {
+      const mintedSlug = path.resolve(controlRepo).replace(/[^a-zA-Z0-9]/g, '-');
+      fs.mkdirSync(path.join(mintedHome, 'projects', mintedSlug), { recursive: true });
+      fs.writeFileSync(path.join(mintedHome, 'projects', mintedSlug, `${mintedConversation}.jsonl`),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'the turn that created it' },
+          timestamp: new Date().toISOString() }) + '\n');
+      const turned = control.resumeReceipts(mintedGoal.id).find((row) => row.nodeId === mintedNode.id);
+      check(turned?.state === 'exact',
+        'the same receipt becomes exact once the harness has written the transcript the CLI would reopen — the proof is the file, not the id, and it is looked up by exact name rather than by taking the newest file in the directory',
+        turned);
+    } finally {
+      if (prevMintedDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevMintedDir;
+      fs.rmSync(mintedHome, { recursive: true, force: true });
+    }
     recordGoalTrace({ sessionId: receiptSession, source: 'hook', kind: 'PostToolUse', status: 'recorded', toolName: 'Read',
       summary: 'README.md', durationMs: 12, costUsd: 0, inTokens: 0, outTokens: 0 });
     check(listGoalTrace(docket.id).some((trace) => trace.sessionId === receiptSession && trace.toolName === 'Read'),

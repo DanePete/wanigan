@@ -14,6 +14,8 @@ import { latestGoalPlan } from './goal-plans';
 import { enqueue } from './queue';
 import { forgetTreeSnapshot, snapshotTree } from './tree-snapshot';
 import { failureExcerpt } from '../shared/gate-feedback';
+import { conversationProof } from '../shared/resumable';
+import { conversationEvidenceFor } from './transcripts';
 import type {
   BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
@@ -855,11 +857,22 @@ export function resumeReceipts(docketId: string): GoalResumeReceipt[] {
         .run(conversationId, now(), row.node_id);
     }
     const missingWorktree = !!row.worktree && !pathExists(row.worktree);
+    // A saved id is a claim about the future until something proves the
+    // conversation exists: Wanigan chooses the Claude CLI's id at launch, so
+    // `!conversationId` alone could only ever catch the harnesses that report
+    // one. src/shared/resumable.ts decides, and sessions:create refuses on the
+    // same predicate — an offer nobody can act on and a launch that cannot
+    // start are the same defect seen from two surfaces.
+    const evidence = conversationEvidenceFor(row.session_id);
+    const proof = evidence ? conversationProof(evidence) : null;
+    const unprovable = proof && !proof.resumable ? proof : null;
     const state: GoalResumeReceipt['state'] = live.has(row.session_id) ? 'writer_active'
-      : !conversationId ? 'identity_pending' : missingWorktree ? 'worktree_missing' : 'exact';
+      : unprovable || !conversationId ? 'identity_pending'
+        : missingWorktree ? 'worktree_missing' : 'exact';
     const detail = state === 'exact' ? 'Exact conversation identity is saved; no Wanigan writer is active.'
       : state === 'writer_active' ? 'This exact conversation already has an active Wanigan writer.'
-        : state === 'identity_pending' ? 'The provider has not yet reported a durable conversation identity.'
+        : state === 'identity_pending'
+          ? unprovable?.detail ?? 'The provider has not yet reported a durable conversation identity.'
           : 'The isolated worktree recorded for this task is no longer present.';
     return { nodeId: row.node_id, docketId: row.docket_id, sessionId: row.session_id, conversationId,
       providerId: row.provider_id, model: row.model, baseCommit: row.base_commit, worktree: row.worktree,

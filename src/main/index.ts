@@ -49,6 +49,7 @@ import * as hooks from './hooks';
 import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
+import { conversationProof } from '../shared/resumable';
 import * as worktrees from './worktrees';
 import * as worktreeSetup from './worktree-setup';
 import { forecastCollisions } from './collisions';
@@ -205,6 +206,38 @@ let quitConfirmed = false;
 let quitDraining = false;
 let quitReady = false;
 let stopHookEventListener: (() => void) | null = null;
+
+/**
+ * Refuse a resume whose conversation does not exist, before anything is spent
+ * on it.
+ *
+ * Wanigan chooses the Claude CLI's conversation id at launch and passes it as
+ * `--session-id`, so the id is recorded before the CLI has created anything
+ * under it. A session that exits without taking a turn leaves the id naming
+ * nothing, and `claude --resume` answers "No conversation found with session
+ * ID" and exits 1. Wanigan kept offering that resume: on 2026-09-18 one id was
+ * tried three times, and because the original isolated worktree had been
+ * removed at session end, each attempt built a fresh worktree, failed in a
+ * second, and wrote another session row chained to the last.
+ *
+ * So the check belongs here, at the boundary where the renderer's payload
+ * becomes a launch: before a worktree is created, before a row is written, and
+ * on the one path both the desktop's Recent and the phone's resume reach.
+ * `control.ts` reads the same predicate when it classifies a receipt, because
+ * an offer nobody can act on and a launch that cannot start are one defect.
+ *
+ * It refuses only what it can disprove. A conversation id this Mac has no row
+ * for is left to createSession, which says that in its own words, and anything
+ * the evidence cannot rule out stays resumable.
+ */
+function assertConversationExists(resumeFrom: { sessionId: string; conversationId: string | null } | null): void {
+  if (!resumeFrom?.sessionId) return;
+  const evidence = transcripts.conversationEvidenceFor(resumeFrom.sessionId);
+  if (!evidence) return;
+  const proof = conversationProof(evidence);
+  if (proof.resumable) return;
+  throw new Error(proof.detail);
+}
 
 /** Every session that has not exited — what reconcileWorktrees calls an owner. */
 function liveSessionIds(): ReadonlySet<string> {
@@ -1364,6 +1397,7 @@ function configureMobileSources(): void {
     resume: async (sessionId) => {
       const past = pastSessions(200).find((row) => row.id === sessionId);
       if (!past) throw new Error('That conversation is not in this Mac’s recent list.');
+      assertConversationExists({ sessionId: past.id, conversationId: past.conversationId });
       if (!past.projectId) throw new Error('The project this conversation ran in has been removed from Wanigan.');
       if (!past.live) throw new Error('The project directory this conversation ran in is no longer on disk.');
       const session = await createSession({
@@ -2221,6 +2255,7 @@ function registerIpc() {
     limit: queue.slots().session,
   }));
   handle('sessions:create', async (opts: LaunchOptions) => {
+    assertConversationExists(opts?.resumeFrom ?? null);
     const created = await createSession(opts);
     // The first live agent is what takes the power-save blocker. Doing it here
     // rather than waiting for the poller means the Mac is already held before
