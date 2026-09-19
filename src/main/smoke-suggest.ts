@@ -1,6 +1,6 @@
 import { egressReport } from './egress';
 import { getSetting, setSetting } from './settings';
-import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestRelayPlan, verify, SUGGEST_HOST, SUGGEST_PATH, SUGGEST_RATES } from './modules/suggest';
+import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestModule, suggestRelayPlan, verify, SUGGEST_HOST, SUGGEST_PATH, SUGGEST_RATES } from './modules/suggest';
 import { db } from './db';
 import { consumption, daily } from './usage';
 import type { RelayPhase } from '../shared/relay';
@@ -151,9 +151,100 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
 
     await runSuggestRoutingSmoke(check, say);
     await runSuggestUsageSmoke(check, say);
+    await runSuggestLiabilitySmoke(check, say);
   } finally {
     globalThis.fetch = realFetch;
     setSetting('suggest.enabled', before);
+  }
+}
+
+/** An ambiguous submitted request remains visible and cannot silently be retried. */
+async function runSuggestLiabilitySmoke(check: Check, say: Say): Promise<void> {
+  say('── suggester liability · admission records exposure before the transport boundary');
+  const start = (db().prepare('SELECT COALESCE(MAX(id),0) AS id FROM suggest_usage').get() as { id: number }).id;
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    for (const fault of ['timeout', 'http-500', 'http-429', 'unreadable'] as const) {
+      db().exec('SAVEPOINT suggest_liability_fixture');
+      const beforeCalls = calls;
+      globalThis.fetch = (async () => {
+        calls += 1;
+        const pending = consumption(7).find((row) => row.model === 'jev-latest');
+        check(pending?.requests === 1 && pending.unmeteredRequests === 1 && pending.estimatedCostUsd === undefined,
+          `${fault}: the attempt is visible as unknown usage before submission completes`, pending);
+        if (fault === 'timeout') throw new DOMException('offline transport accepted the request then timed out', 'TimeoutError');
+        if (fault === 'unreadable') return new Response('{', { status: 200 });
+        return new Response('{}', { status: fault === 'http-500' ? 500 : 429 });
+      }) as typeof realFetch;
+      const failed = await verify('offline-liability-key');
+      const unknown = consumption(7).find((row) => row.model === 'jev-latest');
+      check(!failed.ok && unknown?.requests === 1 && unknown.unmeteredRequests === 1
+        && unknown.costStatus === 'unreported' && unknown.estimatedCostUsd === undefined,
+      `${fault}: submitted exposure remains one unknown request instead of disappearing`, unknown);
+      const retry = await verify('offline-liability-key');
+      check(!retry.ok && /unresolved/i.test(retry.detail) && calls === beforeCalls + 1,
+        `${fault}: unresolved prior liability refuses a repeat before another submission`, retry);
+      suggestModule.migrate?.(db());
+      const changedKey = await verify('different-offline-liability-key');
+      check(!changedKey.ok && /unresolved/i.test(changedKey.detail) && calls === beforeCalls + 1,
+        `${fault}: rerunning startup migration or replacing the key does not clear liability`, changedKey);
+      db().prepare('UPDATE suggest_usage SET at=? WHERE id>?').run(Date.now() - 100 * 86_400_000, start);
+      const oldLiability = await verify('offline-liability-key');
+      check(!oldLiability.ok && calls === beforeCalls + 1,
+        `${fault}: exposure outside the displayed Usage date window still blocks another submission`);
+      db().exec('ROLLBACK TO suggest_liability_fixture; RELEASE suggest_liability_fixture');
+    }
+
+    db().exec('SAVEPOINT suggest_legacy_fixture');
+    db().prepare('INSERT INTO suggest_usage(at,model) VALUES (?,?)').run(Date.now(), 'jev-legacy-unmetered');
+    suggestModule.migrate?.(db());
+    const beforeLegacyRetry = calls;
+    const legacyRetry = await verify('offline-liability-key');
+    check(!legacyRetry.ok && /unresolved/i.test(legacyRetry.detail) && calls === beforeLegacyRetry,
+      'an unmetered call recorded before the attempt migration still blocks unknown exposure', legacyRetry);
+    db().exec('ROLLBACK TO suggest_legacy_fixture; RELEASE suggest_legacy_fixture');
+
+    let release: ((response: Response) => void) | undefined;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }) as typeof realFetch;
+    const first = verify('offline-inflight-key');
+    const beforeConcurrent = calls;
+    const concurrent = await verify('offline-inflight-key');
+    check(!concurrent.ok && /unresolved/i.test(concurrent.detail) && calls === beforeConcurrent,
+      'an in-flight attempt refuses a second submission while its response is pending', concurrent);
+    release!(new Response(JSON.stringify({ model: 'jev-liability-smoke', usage: { input_tokens: 20, output_tokens: 0 } })));
+    check((await first).ok, 'the original in-flight request can still finish after a competing call is refused');
+    const completed = consumption(7).find((row) => row.model === 'jev-liability-smoke');
+    check(completed?.requests === 1 && completed.inTokens === 20 && completed.unmeteredRequests === 0
+      && Math.abs((completed.estimatedCostUsd ?? -1) - 0.00000084) < 1e-12,
+    'completion replaces the pending attempt with its meters without adding a second request', completed);
+
+    const beforeFailedWrite = calls;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ usage: { input_tokens: 20, output_tokens: 0 } }));
+    }) as typeof realFetch;
+    db().exec(`CREATE TEMP TRIGGER suggest_completion_smoke_fail BEFORE UPDATE ON suggest_usage
+      BEGIN SELECT RAISE(ABORT, 'offline completion failure'); END`);
+    try {
+      let failure: unknown = null;
+      try { await verify('offline-completion-key'); } catch (error) { failure = error; }
+      check(failure instanceof Error && failure.message.includes('offline completion failure'),
+        'a post-response ledger failure is surfaced without losing the reserved attempt');
+    } finally {
+      db().exec('DROP TRIGGER suggest_completion_smoke_fail');
+    }
+    const pendingAfterWriteFailure = consumption(7).find((row) => row.model === 'jev-latest');
+    const failedWriteRetry = await verify('offline-completion-key');
+    check(pendingAfterWriteFailure?.requests === 1 && pendingAfterWriteFailure.unmeteredRequests === 1
+      && !failedWriteRetry.ok && /unresolved/i.test(failedWriteRetry.detail) && calls === beforeFailedWrite + 1,
+    'a failed completion write retains unknown exposure and prevents a repeat submission', pendingAfterWriteFailure);
+  } finally {
+    globalThis.fetch = realFetch;
+    db().prepare('DELETE FROM suggest_usage WHERE id > ?').run(start);
   }
 }
 
@@ -301,6 +392,7 @@ async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
       'changing the current rate leaves the recorded estimate unchanged');
     SUGGEST_RATES.inputPerMTok = originalRate;
 
+    db().exec('SAVEPOINT suggest_partial_fixture');
     reply = { usage: { input_tokens: 20 } };
     await verify('offline-fixture-key');
     reply = { answers: {} };
@@ -309,21 +401,26 @@ async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
     check(partial?.requests === 2 && partial.inTokens === 20 && partial.unmeteredRequests === 2
       && Math.abs((partial.estimatedCostUsd ?? -1) - estimatedUsd(20)) < 1e-12,
     'missing meters retain the requested model, known tokens and a count of unmetered calls', partial);
+    // Isolated fault scenarios use savepoints for fixture cleanup. Production
+    // has no timeout or reset that can erase unresolved billing liability.
+    db().exec('ROLLBACK TO suggest_partial_fixture; RELEASE suggest_partial_fixture');
 
     for (const usage of [
       { input_tokens: -1, output_tokens: '0' },
       { input_tokens: 1.5, output_tokens: -1 },
       { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: null },
     ]) {
+      db().exec('SAVEPOINT suggest_invalid_fixture');
       reply = { model: 'jev-invalid-smoke', usage };
       await verify('offline-fixture-key');
+      const invalid = consumption(7).find((row) => row.model === 'jev-invalid-smoke');
+      check(invalid?.requests === 1 && invalid.inTokens === 0 && invalid.outTokens === 0
+        && invalid.unmeteredRequests === 1 && invalid.estimatedCostUsd === undefined,
+      'invalid token counts stay unknown instead of becoming spend or negative usage', invalid);
+      check(!daily(7).some((row) => row.model === 'jev-invalid-smoke'),
+        'a daily group with no observed meters is absent rather than a measured zero');
+      db().exec('ROLLBACK TO suggest_invalid_fixture; RELEASE suggest_invalid_fixture');
     }
-    const invalid = consumption(7).find((row) => row.model === 'jev-invalid-smoke');
-    check(invalid?.requests === 3 && invalid.inTokens === 0 && invalid.outTokens === 0
-      && invalid.unmeteredRequests === 3 && invalid.estimatedCostUsd === undefined,
-    'invalid token counts stay unknown instead of becoming spend or negative usage', invalid);
-    check(!daily(7).some((row) => row.model === 'jev-invalid-smoke'),
-      'a daily group with no observed meters is absent rather than a measured zero');
 
     reply = { model: 'jev-zero-smoke', usage: { input_tokens: 0, output_tokens: 0 } };
     await verify('offline-fixture-key');
@@ -332,20 +429,30 @@ async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
       'reported zero meters remain distinct from missing meters', zero);
 
     rawBody = '';
+    db().exec('SAVEPOINT suggest_unreadable_fixture');
     const beforeEmpty = recorded();
     const unreadable = await verify('offline-fixture-key');
     check(!unreadable.ok && unreadable.detail.includes('response could not be read') && recorded() === beforeEmpty + 1,
       'an unreadable successful response records one unmetered call without verifying the key');
+    db().exec('ROLLBACK TO suggest_unreadable_fixture; RELEASE suggest_unreadable_fixture');
     rawBody = null;
     const beforeRefusal = recorded();
     responseStatus = 429;
-    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal,
-      'an HTTP refusal adds no phantom successful request');
+    db().exec('SAVEPOINT suggest_http_fixture');
+    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal + 1,
+      'an HTTP refusal preserves one attempt whose billing is unresolved');
+    db().exec('ROLLBACK TO suggest_http_fixture; RELEASE suggest_http_fixture');
+    db().exec('SAVEPOINT suggest_transport_fixture');
     globalThis.fetch = (async () => { throw new Error('offline fixture failure'); }) as typeof realFetch;
-    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal,
-      'a transport failure adds no phantom successful request');
+    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal + 1,
+      'a transport failure preserves one attempt whose billing is unresolved');
+    db().exec('ROLLBACK TO suggest_transport_fixture; RELEASE suggest_transport_fixture');
 
-    globalThis.fetch = (async () => new Response(JSON.stringify(reply), { status: 200 })) as typeof realFetch;
+    const beforeLedgerFailure = calls;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(reply), { status: 200 });
+    }) as typeof realFetch;
     db().exec(`CREATE TEMP TRIGGER suggest_usage_smoke_fail BEFORE INSERT ON suggest_usage
       BEGIN SELECT RAISE(ABORT, 'offline usage ledger failure'); END`);
     try {
@@ -353,6 +460,8 @@ async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
       try { await verify('offline-fixture-key'); } catch (error) { failure = error; }
       check(failure instanceof Error && failure.message.includes('offline usage ledger failure'),
         'a local recording failure is surfaced instead of misreported as an unreachable service');
+      check(calls === beforeLedgerFailure,
+        'failure to reserve the attempt prevents submission at the external boundary');
     } finally {
       db().exec('DROP TRIGGER suggest_usage_smoke_fail');
     }
@@ -362,9 +471,9 @@ async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
     check(!consumption(7).some((row) => row.model === 'jev-smoke') && !daily(7).some((row) => row.model === 'jev-smoke'),
       'Jev obeys the same selected date window as session usage');
     const columns = db().prepare('PRAGMA table_info(suggest_usage)').all() as { name: string }[];
-    check(columns.map((row) => row.name).sort().join(',') === 'at,estimated_cost_usd,id,input_tokens,model,output_tokens'
+    check(columns.map((row) => row.name).sort().join(',') === 'actual_cost_usd,at,attempt_status,credential_digest,estimated_cost_usd,failure_kind,finished_at,http_status,id,input_tokens,model,output_tokens,request_id,source'
       && status().hasKey === false,
-    'the ledger keeps only model and metering metadata, and no fixture credential was stored');
+    'the ledger keeps only attempt identity and metering metadata, and no fixture credential was stored');
   } finally {
     globalThis.fetch = realFetch;
     SUGGEST_RATES.inputPerMTok = originalRate;

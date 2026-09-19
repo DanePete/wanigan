@@ -150,10 +150,10 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       resource: { attributes: [{ key: 'wanigan.session.id', value: { stringValue: SID } }] },
       scopeMetrics: [{
         metrics: [
-          { name: 'claude_code.cost.usage', sum: { dataPoints: [
+          { name: 'claude_code.cost.usage', sum: { aggregationTemporality: 1, dataPoints: [
             { asDouble: 0.25, timeUnixNano: nowNs, attributes: [{ key: 'model', value: { stringValue: 'claude-opus-5' } }] },
           ] } },
-          { name: 'claude_code.token.usage', sum: { dataPoints: [
+          { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [
             { asInt: '1200', timeUnixNano: nowNs, attributes: [{ key: 'type', value: { stringValue: 'input' } }] },
             { asInt: '340', timeUnixNano: nowNs, attributes: [{ key: 'type', value: { stringValue: 'output' } }] },
           ] } },
@@ -185,6 +185,9 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
 
   // Deltas must add, not replace — a counter that overwrites under-reports
   // every session that exports more than once.
+  for (const metric of metricPayload.resourceMetrics[0].scopeMetrics[0].metrics) {
+    for (const point of metric.sum.dataPoints) point.timeUnixNano = String(BigInt(nowNs) + 1_000_000_000n);
+  }
   await post(JSON.stringify(metricPayload));
   check(Math.abs(otel.usageFor(SID).costUsd - (usage.costUsd + 0.25)) < 1e-6,
     'a second export accumulates rather than replaces', otel.usageFor(SID).costUsd);

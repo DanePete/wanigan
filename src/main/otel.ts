@@ -11,6 +11,7 @@ import { sessionEffortRollup, type EffortRollupRow } from './spend';
 import { recordGoalTrace } from './goal-trace';
 import { flags } from './settings';
 import { buildInteractions, spansFromOtlp, TRACE_TURN_CAP, type SessionTraces, type StoredSpan } from '../shared/trace-spans';
+import { acceptTelemetry, coverageAttributes, markIncompleteCost, noteAccountingIssue, recordCostCoverage, telemetryFingerprint, telemetryNanos, type AccountingMetric } from './telemetry-accounting';
 import { spendReport, type SpendSourceReport, type SpendSourceRow } from '../shared/spend-sources';
 
 /**
@@ -475,7 +476,8 @@ function attrsKey(attrs: Record<string, string>, keys: string[]): string {
   return Object.keys(picked).length ? JSON.stringify(picked) : '';
 }
 
-type MetricDelta = { sessionId: string; metric: string; attrs: string; value: number; at: number };
+type MetricDelta = { sessionId: string; metric: string; attrs: string; value: number; at: number;
+  nanos: string | null; fingerprint: string; coverageAttrs: string; issue: string | null; spend?: SpendDelta };
 
 /**
  * One cost or token datapoint by where inside the session it was spent.
@@ -505,54 +507,63 @@ function keyPart(attrs: Record<string, string>, key: string): string {
   return (attrs[key] ?? '').trim().slice(0, 128);
 }
 
-function parseMetrics(payload: unknown): { metrics: MetricDelta[]; spend: SpendDelta[] } {
+function parseMetrics(payload: unknown): MetricDelta[] {
   const out: MetricDelta[] = [];
-  const spend: SpendDelta[] = [];
-  if (!isRecord(payload)) return { metrics: out, spend };
-
+  if (!isRecord(payload)) return out;
   for (const rm of asArray(payload.resourceMetrics)) {
     if (!isRecord(rm)) continue;
     const sessionId = sessionIdOf(rm.resource);
-
     for (const sm of asArray(rm.scopeMetrics)) {
       if (!isRecord(sm)) continue;
-
       for (const m of asArray(sm.metrics)) {
         if (!isRecord(m)) continue;
         const name = typeof m.name === 'string' ? m.name : '';
         const keys = TRACKED_METRICS[name];
         if (!keys) continue;
-
-        // Sums only. Every metric Wanigan tracks is a delta counter; a gauge
-        // reports a level, and adding a level into the running total on each
-        // 10s export would multiply it by the number of exports.
-        if (!isRecord(m.sum)) continue;
-
-        for (const dp of asArray(m.sum.dataPoints)) {
+        const sum = isRecord(m.sum) ? m.sum : {};
+        // Wanigan requests DELTA. Cumulative/unspecified exports cannot be
+        // added or silently discarded while an older subtotal stays usable.
+        const delta = sum.aggregationTemporality === 1;
+        const points = asArray(sum.dataPoints);
+        for (const raw of points) {
+          const dp = isRecord(raw) ? raw : {};
           const value = numberOf(dp);
-          if (value === null || value === 0) continue;
-          const attrs = attrsToObject(isRecord(dp) ? dp.attributes : null);
-          const at = (isRecord(dp) ? millisOf(dp.timeUnixNano) : null) ?? Date.now();
-          out.push({ sessionId, metric: name, attrs: attrsKey(attrs, keys), value, at });
+          const attrs = attrsToObject(dp.attributes);
+          const nanos = telemetryNanos(dp.timeUnixNano);
+          const start = telemetryNanos(dp.startTimeUnixNano);
+          const unknownStart = dp.startTimeUnixNano === undefined || dp.startTimeUnixNano === 0
+            || (typeof dp.startTimeUnixNano === 'string' && /^0{1,20}$/.test(dp.startTimeUnixNano));
+          const at = millisOf(dp.timeUnixNano) ?? Date.now();
+          const issue = !delta ? 'unsupported-temporality'
+            : !nanos || (!unknownStart && !start) || (start !== null && start > nanos) ? 'invalid-timestamp'
+            : value === null || value < 0 || (typeof dp.flags === 'number' && (dp.flags & 1) !== 0)
+              ? 'invalid-value' : null;
+          // Stream + exact interval identifies the point. Value is deliberately
+          // separate: a changed retry is conflicting evidence, not more spend.
+          const fingerprint = telemetryFingerprint({ signal: 'metric', resource: rm.resource, scope: sm.scope,
+            name, unit: m.unit ?? '', attributes: dp.attributes, start, end: nanos });
+          const row: MetricDelta = { sessionId, metric: name, attrs: attrsKey(attrs, keys),
+            value: value ?? 0, at, nanos, fingerprint, coverageAttrs: coverageAttributes(attrs), issue };
           const kind = SPEND_METRICS[name];
-          if (kind) {
-            spend.push({
+          if (kind && !issue) {
+            row.spend = {
               sessionId, day: dayKey(new Date(at)), metric: kind, tokenType: kind === 'tokens' ? keyPart(attrs, 'type') : '',
               querySource: keyPart(attrs, 'query_source'), agent: keyPart(attrs, 'agent.name'),
               skill: keyPart(attrs, 'skill.name'), plugin: keyPart(attrs, 'plugin.name'),
               mcpServer: keyPart(attrs, 'mcp_server.name'), effort: keyPart(attrs, 'effort'),
-              speed: keyPart(attrs, 'speed'), model: keyPart(attrs, 'model'), value, at,
-            });
+              speed: keyPart(attrs, 'speed'), model: keyPart(attrs, 'model'), value: value ?? 0, at,
+            };
           }
+          out.push(row);
         }
       }
     }
   }
-  return { metrics: out, spend };
+  return out;
 }
 
 type EventDelta = {
-  sessionId: string; at: number; kind: ApiEvent['kind']; model: string | null;
+  sessionId: string; at: number; nanos: string | null; fingerprint: string; coverageAttrs: string; kind: ApiEvent['kind']; model: string | null;
   costUsd: number; durationMs: number | null; inTokens: number; outTokens: number;
   cacheRead: number; cacheWrite: number; effort: string | null; detail: string | null;
 };
@@ -633,10 +644,16 @@ function parseLogs(payload: unknown): EventDelta[] {
         const kind = logKindOf(name);
         if (!kind) { noteUnmappedEvent(name); continue; }
 
-        const at = millisOf(rec.timeUnixNano) ?? millisOf(rec.observedTimeUnixNano) ?? Date.now();
+        const nanos = telemetryNanos(rec.timeUnixNano) ?? telemetryNanos(rec.observedTimeUnixNano);
+        const at = nanos ? Number(BigInt(nanos) / 1_000_000n) : Date.now();
+        const fingerprint = telemetryFingerprint({ signal: 'log', resource: rl.resource, scope: sl.scope,
+          record: { ...rec, timeUnixNano: nanos, observedTimeUnixNano: undefined } });
         out.push({
           sessionId,
           at,
+          nanos,
+          fingerprint,
+          coverageAttrs: coverageAttributes(a),
           kind,
           model: a.model ?? null,
           // Older builds report whole micro-dollars instead of a float.
@@ -683,15 +700,20 @@ function detailFor(kind: ApiEvent['kind'], a: Record<string, string>): string | 
  * session's total and its attribution agreeing — the exporter is answered 200
  * either way and will not send the datapoints again.
  */
-function recordMetrics({ metrics, spend }: { metrics: MetricDelta[]; spend: SpendDelta[] }): void {
+function recordMetrics(metrics: MetricDelta[]): void {
   if (!metrics.length) return;
   const d = db();
   const up = d.prepare(`
-    INSERT INTO session_metrics (session_id, metric, attrs, value, last_at)
-    VALUES (?,?,?,?,?)
+    INSERT INTO session_metrics (session_id, metric, attrs, value, last_at, last_at_ns)
+    VALUES (?,?,?,?,?,?)
     ON CONFLICT(session_id, metric, attrs) DO UPDATE SET
       value   = value + excluded.value,
-      last_at = MAX(session_metrics.last_at, excluded.last_at)
+      last_at = CASE WHEN excluded.metric='claude_code.token.usage' AND excluded.value=0 AND session_metrics.value>0
+        THEN session_metrics.last_at ELSE MAX(session_metrics.last_at, excluded.last_at) END,
+      last_at_ns = CASE WHEN excluded.metric='claude_code.token.usage' AND excluded.value=0 AND session_metrics.value>0
+        THEN session_metrics.last_at_ns WHEN excluded.last_at > session_metrics.last_at OR
+        (excluded.last_at = session_metrics.last_at AND excluded.last_at_ns > COALESCE(session_metrics.last_at_ns,''))
+        THEN excluded.last_at_ns ELSE session_metrics.last_at_ns END
   `);
   const bySource = d.prepare(`
     INSERT INTO session_spend_sources (session_id, day, metric, token_type, query_source, agent_name, skill_name,
@@ -703,9 +725,16 @@ function recordMetrics({ metrics, spend }: { metrics: MetricDelta[]; spend: Spen
       last_at = MAX(session_spend_sources.last_at, excluded.last_at)
   `);
   d.transaction(() => {
-    for (const r of metrics) up.run(r.sessionId, r.metric, r.attrs, r.value, r.at);
-    for (const s of spend) {
-      bySource.run(s.sessionId, s.day, s.metric, s.tokenType, s.querySource, s.agent, s.skill, s.plugin, s.mcpServer,
+    for (const r of metrics) {
+      if (r.issue) {
+        if (SPEND_METRICS[r.metric]) noteAccountingIssue(d, r.sessionId, r.issue, r.at);
+        continue;
+      }
+      if (!acceptTelemetry(d, r.sessionId, r.fingerprint, r.value, Date.now())) continue;
+      const s = r.spend;
+      if (s && r.nanos) recordCostCoverage(d, r.sessionId, r.metric, r.coverageAttrs, r.nanos, r.value);
+      up.run(r.sessionId, r.metric, r.attrs, r.value, r.at, r.nanos);
+      if (s) bySource.run(s.sessionId, s.day, s.metric, s.tokenType, s.querySource, s.agent, s.skill, s.plugin, s.mcpServer,
         s.effort, s.speed, s.model, s.value, s.at);
     }
   })();
@@ -737,13 +766,16 @@ function recordEvents(events: EventDelta[]): void {
   const ins = d.prepare(`
     INSERT INTO session_api_events
       (session_id, at, kind, model, cost_usd, duration_ms, in_tokens, out_tokens,
-       cache_read, cache_write, effort, detail)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+       cache_read, cache_write, effort, detail, at_ns, coverage_attrs)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   d.transaction((rows: EventDelta[]) => {
     for (const e of rows) {
+      if (!e.nanos) noteAccountingIssue(d, e.sessionId, 'invalid-log-timestamp', e.at);
+      if (e.costUsd < 0) noteAccountingIssue(d, e.sessionId, 'invalid-log-cost', e.at);
+      if (!acceptTelemetry(d, e.sessionId, e.fingerprint, e.costUsd, Date.now())) continue;
       ins.run(e.sessionId, e.at, e.kind, e.model, e.costUsd, e.durationMs,
-              e.inTokens, e.outTokens, e.cacheRead, e.cacheWrite, e.effort, e.detail);
+              e.inTokens, e.outTokens, e.cacheRead, e.cacheWrite, e.effort, e.detail, e.nanos, e.coverageAttrs);
       recordGoalTrace({ sessionId: e.sessionId, source: 'telemetry', kind: `api_${e.kind}`,
         status: e.kind === 'error' ? 'failed' : 'recorded', toolName: null, summary: e.detail,
         durationMs: e.durationMs, costUsd: e.costUsd, inTokens: e.inTokens, outTokens: e.outTokens, createdAt: e.at });
@@ -891,8 +923,8 @@ export function usageForMany(ids: string[]): Record<string, SessionUsage> {
   const keys = [...byKey.keys()];
 
   const metrics = d.prepare(
-    `SELECT session_id, metric, attrs, value, last_at FROM session_metrics WHERE session_id IN (${marks})`
-  ).all(...keys) as MetricRow[];
+    `SELECT session_id, metric, attrs, value, last_at, last_at_ns FROM session_metrics WHERE session_id IN (${marks})`
+  ).all(...keys) as AccountingMetric[];
 
   for (const r of metrics) {
     const u = byKey.get(r.session_id);
@@ -962,6 +994,7 @@ export function usageForMany(ids: string[]): Record<string, SessionUsage> {
   // Codex does not emit Wanigan's OTLP stream, but its local rollout contains
   // authoritative cumulative token counters.  Keep the two sources merged at
   // the boundary so Fleet, phone Fleet, and the session panel agree.
+  markIncompleteCost(d, byKey, metrics);
   mergeCodexUsage(out);
   // Last, so it has the final word on every session however its counters got
   // here: one builder of SessionUsage means one place that can label the cost.

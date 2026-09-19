@@ -50,7 +50,37 @@ function migrateTelemetry(d: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_api_events_kind
       ON session_api_events(kind, at DESC, effort, cost_usd);
 
+    -- Durable receipts are committed with their aggregate writes. A collector
+    -- restart must not make a retried export billable twice. Keep only hashes,
+    -- numeric evidence and bounded rejection reasons, never raw OTLP payloads.
+    CREATE TABLE IF NOT EXISTS session_telemetry_receipts (
+      fingerprint TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      value REAL NOT NULL,
+      received_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_telemetry_receipts_session ON session_telemetry_receipts(session_id);
+    CREATE TABLE IF NOT EXISTS session_telemetry_coverage (
+      session_id TEXT NOT NULL,
+      stream_key TEXT NOT NULL,
+      attrs_json TEXT NOT NULL,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      cost_at_ns TEXT,
+      activity_at_ns TEXT,
+      PRIMARY KEY(session_id,stream_key)
+    );
+    CREATE TABLE IF NOT EXISTS session_telemetry_issues (
+      session_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      last_at INTEGER NOT NULL,
+      PRIMARY KEY(session_id,reason)
+    );
+
   `);
+  for (const [table, column] of [['session_metrics', 'last_at_ns'], ['session_api_events', 'at_ns'], ['session_api_events', 'coverage_attrs']]) {
+    const columns = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!columns.some(c => c.name === column)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+  }
 }
 
 /**

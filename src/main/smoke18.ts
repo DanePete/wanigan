@@ -385,14 +385,14 @@ export async function runObservedTelemetrySmoke(check: Check, say: Say): Promise
       resourceMetrics: [{
         resource: { attributes: [kv('wanigan.session.id', { stringValue: SSID })] },
         scopeMetrics: [{ metrics: [
-          { name: 'claude_code.cost.usage', sum: { dataPoints: [
+          { name: 'claude_code.cost.usage', sum: { aggregationTemporality: 1, dataPoints: [
             point(1.5, { model: 'claude-opus-5', query_source: 'main', effort: 'high' }),
             point(0.75, { model: 'claude-opus-5', query_source: 'subagent', 'agent.name': 'custom' }),
             point(0.25, { model: 'claude-opus-5', query_source: 'main', 'skill.name': 'third-party', 'plugin.name': 'third-party' }),
             point(0.1, { model: 'claude-haiku-4', query_source: 'auxiliary', speed: 'fast' }),
             point(0.4, { model: 'claude-opus-5', query_source: 'main', 'mcp_server.name': 'custom' }),
           ] } },
-          { name: 'claude_code.token.usage', sum: { dataPoints: [
+          { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [
             tokens(1200, { type: 'input', model: 'claude-opus-5', query_source: 'main' }),
             tokens(300, { type: 'output', model: 'claude-opus-5', query_source: 'subagent', 'agent.name': 'custom' }),
           ] } },

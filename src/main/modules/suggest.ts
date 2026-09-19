@@ -4,7 +4,7 @@ import { refuseIfHalted } from '../halt';
 import { clearProviderKey, getProviderKey, hasProviderKey, providerKeyFingerprint, setProviderKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
 import { db } from '../db';
-import { migrateSuggestUsage, recordSuggestUsage, suggestConsumption, suggestDaily } from '../suggest-usage';
+import { beginSuggestAttempt, markSuggestUnresolved, migrateSuggestUsage, recordSuggestUsage, suggestConsumption, suggestDaily } from '../suggest-usage';
 import type { RelayPhase } from '../../shared/relay';
 import type { RelayRoutingPreference } from '../../shared/relay-routing';
 import {
@@ -198,9 +198,10 @@ export type AskOutcome =
  * are documented as adjusting dynamically without notice, which is an argument
  * for failing quietly rather than for trying harder.
  *
- * Ordinary transport failures return no suggestion. A halted Wanigan and a
- * failed local usage write throw: the former is the fleet-wide latch, and the
- * latter must not pretend a billed call never reached the service.
+ * Every submitted attempt is durable before the transport begins. Ambiguous
+ * failures block further TypeSafe requests until reconciled; a timeout cannot
+ * prove the service did no billable work. A halted Wanigan and a failed local
+ * usage write throw rather than allowing an unrecorded request.
  */
 async function ask(request: SystemOneRequest, keyOverride?: string): Promise<AskOutcome> {
   refuseIfHalted('ask for a routing suggestion');
@@ -210,37 +211,53 @@ async function ask(request: SystemOneRequest, keyOverride?: string): Promise<Ask
   // Complete local schema initialization before making a call that may cost
   // money. A migration failure must not first be discovered while recording it.
   db();
+  // A local serialization failure proves nothing was submitted. Do it before
+  // reserving unknown exposure, so it cannot create a fictitious liability.
+  const requestBody = JSON.stringify(request);
   const started = Date.now();
+  const requestId = beginSuggestAttempt({
+    at: started, requestedModel: request.model, source: ENDPOINT,
+    credentialDigest: createHash('sha256').update(key).digest('hex'),
+  });
+  if (!requestId) return {
+    ok: false,
+    reason: 'A prior TypeSafe request has unresolved billing liability. Further requests are blocked until its usage is reconciled.',
+  };
   let response: Response;
   try {
     response = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
+      body: requestBody,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
+    markSuggestUnresolved(requestId, error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'transport');
     const reason = error instanceof Error && error.name === 'TimeoutError'
       ? `The suggester did not answer within ${TIMEOUT_MS / 1000}s.`
-      : 'The suggester could not be reached.';
+      : 'The suggester request did not complete.';
     return { ok: false, reason };
   }
   const ms = Date.now() - started;
   if (!response.ok) {
+    markSuggestUnresolved(requestId, 'http', response.status);
     // The status, not the body. An error body from a service in early access
     // is text nobody has validated, and it would be shown beside a route.
     return { ok: false, reason: `The suggester answered ${response.status}.` };
   }
-  // The service answered successfully even when its body cannot be read.
-  // Preserve that call as unmetered; each preview, relay and key check reaches
-  // this one ledger write, regardless of how many questions it contained.
+  // Preserve the same attempt even when a successful response cannot be read.
+  // Each preview, relay and key check owns one row regardless of its questions.
   let body: unknown = null;
   let readable = true;
   try { body = await response.json(); } catch { readable = false; }
+  if (!readable) {
+    markSuggestUnresolved(requestId, 'unreadable', response.status);
+    return { ok: false, reason: 'The suggester answered, but its response could not be read.' };
+  }
   const { inputTokens } = recordSuggestUsage({
-    at: started, requestedModel: request.model, body, inputPerMTok: SUGGEST_RATES.inputPerMTok,
+    requestId, requestedModel: request.model, body, inputPerMTok: SUGGEST_RATES.inputPerMTok,
+    httpStatus: response.status,
   });
-  if (!readable) return { ok: false, reason: 'The suggester answered, but its response could not be read.' };
   return { ok: true, body, ms, inputTokens };
 }
 
@@ -298,7 +315,8 @@ export async function verify(keyOverride?: string): Promise<{ ok: boolean; detai
   if (!outcome.ok) return { ok: false, detail: outcome.reason };
   const tokens = outcome.inputTokens;
   const cost = tokens === null ? 'an unpriced call' : `about $${estimatedUsd(tokens).toFixed(7)} by Wanigan's own arithmetic`;
-  return { ok: true, detail: `Answered in ${outcome.ms}ms, ${cost}.` };
+  const liability = tokens === null ? ' Further TypeSafe requests are blocked until this call’s usage is reconciled.' : '';
+  return { ok: true, detail: `Answered in ${outcome.ms}ms, ${cost}.${liability}` };
 }
 
 /**

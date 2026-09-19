@@ -271,6 +271,8 @@ export async function runSmoke(): Promise<void> {
     await runRelayAutomationSmoke(check, say);
     const { runRelayCostSmoke } = await import('./smoke-relay-cost');
     runRelayCostSmoke(check, say);
+    const { runOtelAccountingSmoke } = await import('./smoke-otel-accounting');
+    await runOtelAccountingSmoke(check, say);
     const { runControlOutcomesSmoke } = await import('./smoke-control-outcomes');
     runControlOutcomesSmoke(check, say);
     const { runRelayDeliverySmoke } = await import('./smoke-relay-delivery');
