@@ -141,7 +141,7 @@ fictional demo workspace — the one in these screenshots.
 
 | Command | What it does |
 |---|---|
-| `npm run app` | Launch through `scripts/launch.sh` (use this from a VS Code terminal) |
+| `npm run app` | Launch through `scripts/launch.mjs` (use this from a VS Code terminal) |
 | `npm run dev` | Hot reload — but it skips the launcher, see [the caveat](docs/guide.md#running-it) |
 | `npm test` | All eight gates: types, shared tests, style, dead code, lint, packaging, smoke. No network, no spend |
 | `npm run cli -- help` | The command-line interface over the same database |

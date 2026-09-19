@@ -25,13 +25,13 @@ project list, one database and one dispatcher for that reason.
 ```bash
 nvm use          # Node 22.23.2 (see .nvmrc) — not optional, see below
 npm install      # rebuilds node-pty and better-sqlite3 for Electron's ABI
-npm run app      # through scripts/launch.sh
+npm run app      # through scripts/launch.mjs
 npm run dev      # hot reload — but read the warning under this block first
 npm test         # typecheck, style gate, two packaging suites, smoke: no network, no spend
 npm run cli      # the same database from a terminal
 ```
 
-**`npm run dev` does not go through `scripts/launch.sh`.** It is
+**`npm run dev` does not go through `scripts/launch.mjs`.** It is
 `electron-vite dev` directly, so it never unsets `ELECTRON_RUN_AS_NODE` — which
 is exactly the variable that makes an Electron app die at startup with
 `Cannot read properties of undefined (reading 'whenReady')`. Run it from a VS
@@ -660,8 +660,9 @@ never a fallback from the run key.
 
 **Node 16 will not build this.** `npm run build` under an old Node dies with
 `crypto$2.getRandomValues is not a function`, which reads like a Vite bug and is
-not. `scripts/launch.sh` and `scripts/smoke.sh` prepend the `.nvmrc` version to
-PATH; a bare `npm run build` does not.
+not. `scripts/launch.mjs`, `scripts/cli.mjs` and `scripts/smoke.mjs` refuse to
+run under a Node older than `.nvmrc` and say which version they got; a bare
+`npm run build` does not check.
 
 **Agent CLIs are not on your PATH.** Claude Code and Codex ship *inside* their
 editor extensions under versioned directories:
