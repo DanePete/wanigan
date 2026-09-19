@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { AccountLimits, AgentAccount } from '../shared/types';
+import type { AccountLimits, AgentAccount } from '../../shared/types';
 
 /** The actual state-file convention follows accounts.launchEnv: default Claude
  * reads its sibling file; an explicit CLAUDE_CONFIG_DIR reads inside it. */

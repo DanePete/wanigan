@@ -8294,7 +8294,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // codex-status.ts already read Codex's windows per account; nothing joined
   // them, so a Codex login simply did not appear on the page whose whole
   // subject is what is left.
-  const limitsSrc = sourceOf('src/main/limits.ts');
+  const limitsSrc = sourceOf('src/main/modules/usage-limits.ts');
   const usageSrc = sourceOf('src/main/usage.ts');
   check(usageSrc.includes("import { allAccountLimits } from './limits'")
     && !usageSrc.includes("from './claude-limits'")

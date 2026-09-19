@@ -39,8 +39,8 @@ function fixture() {
     }).outputText;
     const credentialPath = name => typeof name === 'string' && /(?:auth|\.credentials)\.json$/.test(name);
     function localRequire(name) {
-      if (name === './db') return { db: () => database };
-      if (name === './providers') return { detectProviders: async () => [
+      if (name === './db' || name === '../db') return { db: () => database };
+      if (name === './providers' || name === '../providers') return { detectProviders: async () => [
         { path: '/fixture/bin/codex', harnessId: 'codex' }, { path: '/fixture/bin/claude', harnessId: 'claude-code' },
       ], shellPath: async () => '/fixture/bin' };
       if (name === 'node:os') return { ...os, homedir: () => directory, tmpdir: () => directory };
@@ -102,7 +102,7 @@ test('the saved default Codex account clears inherited CODEX_HOME and reports it
   try {
     const personal = f.account('personal', 'codex', path.join(f.directory, '.codex'));
     const work = f.account('work'); f.env.CODEX_HOME = work.configDir;
-    const reader = f.load('src/main/codex-status.ts');
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
     const a = await reader.readCodexStatus(true, personal.id);
     const b = await reader.readCodexStatus(true, work.id);
     assert.deepEqual([a.primary.usedPercent, b.primary.usedPercent], [11, 72]);
@@ -120,7 +120,7 @@ test('a signed-out Codex reply is explicit and makes no quota request', async ()
   const f = fixture();
   try {
     const account = f.account('signed-out'); f.state.authReply = { account: null };
-    const status = await f.load('src/main/codex-status.ts').readCodexStatus(true, account.id);
+    const status = await f.load('src/main/modules/usage-codex-status.ts').readCodexStatus(true, account.id);
     assert.equal(status.authState, 'signed-out'); assert.equal(status.primary, null);
     assert(!f.messages.some(message => message.method === 'account/rateLimits/read'));
   } finally { f.close(); }
@@ -131,7 +131,7 @@ test('an unrecognized identity reply keeps quota readable without inventing a lo
     const f = fixture();
     try {
       const account = f.account('unknown'); f.state.authReply = authReply;
-      const status = await f.load('src/main/codex-status.ts').readCodexStatus(true, account.id);
+      const status = await f.load('src/main/modules/usage-codex-status.ts').readCodexStatus(true, account.id);
       assert.equal(status.authState, 'unknown'); assert.equal(status.identity, null);
       assert.equal(status.primary.usedPercent, 72);
     } finally { f.close(); }
@@ -143,7 +143,7 @@ test('a replaced Codex login invalidates its cache and a change during a read re
   try {
     const account = f.account('changed'); const file = path.join(account.configDir, 'auth.json');
     fs.writeFileSync(file, 'synthetic-credential-never-read');
-    const reader = f.load('src/main/codex-status.ts');
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
     await reader.readCodexStatus(false, account.id);
     fs.writeFileSync(file, 'different-synthetic-credential-never-read');
     await reader.readCodexStatus(false, account.id);
@@ -161,7 +161,7 @@ test('saved-login matches need both stable subject and organization, never equal
     const d = f.account('d', 'claude-code'); const codex = f.account('codex');
     f.saved(a, 'subject', 'org'); f.saved(b, 'subject', 'org');
     f.saved(c, 'subject', 'other-org'); f.saved(d, 'other-subject', 'org');
-    const result = f.load('src/main/usage-account-identity.ts').withUsageIdentityEvidence(f.rows.map(f.limits), f.rows);
+    const result = f.load('src/main/modules/usage-account-identity.ts').withUsageIdentityEvidence(f.rows.map(f.limits), f.rows);
     assert.deepEqual(result[0].identityEvidence.sharedWith, [{ accountId: b.id, accountLabel: b.label, basis: 'saved-login' }]);
     for (const index of [2, 3, 4]) assert.deepEqual(result[index].identityEvidence.sharedWith, []);
     assert(!JSON.stringify(result).includes('subject'), 'stable identity keys never reach renderer');
@@ -174,7 +174,7 @@ test('canonical directory aliases are labelled as shared configuration, and abse
   try {
     const a = f.account('a'); const b = { ...a, id: 'b', label: 'b', configDir: path.join(f.directory, 'alias') };
     fs.symlinkSync(a.configDir, b.configDir); f.rows.push(b);
-    const result = f.load('src/main/usage-account-identity.ts').withUsageIdentityEvidence(f.rows.map(f.limits), f.rows);
+    const result = f.load('src/main/modules/usage-account-identity.ts').withUsageIdentityEvidence(f.rows.map(f.limits), f.rows);
     assert.equal(result[0].identityEvidence.sharedWith[0].basis, 'configuration-directory');
   } finally { f.close(); }
 });
@@ -200,7 +200,7 @@ test('non-regular Claude metadata cannot block a Usage read', { skip: process.pl
       process.stdout.write(JSON.stringify({ revision, sharedWith: rows[0].identityEvidence.sharedWith }));
     `;
     const result = spawnSync(process.execPath, ['-e', child,
-      path.join(root, 'src/main/usage-account-identity.ts'), JSON.stringify({ account, limits: f.limits(account) })],
+      path.join(root, 'src/main/modules/usage-account-identity.ts'), JSON.stringify({ account, limits: f.limits(account) })],
     { cwd: root, encoding: 'utf8', timeout: 5_000 });
     assert.equal(result.error, undefined, 'reading non-regular metadata must finish without waiting for a writer');
     assert.equal(result.status, 0, result.stderr);
@@ -214,7 +214,7 @@ test('Claude cached limits follow saved login changes, while routine state edits
   const f = fixture();
   try {
     const account = f.account('claude', 'claude-code'); const file = f.saved(account, 'first', 'org');
-    const reader = f.load('src/main/claude-limits.ts');
+    const reader = f.load('src/main/modules/usage-claude-limits.ts');
     assert.equal((await reader.limitsFor(account)).state, 'ok');
     const raw = JSON.parse(fs.readFileSync(file, 'utf8')); raw.startupCount = 2;
     fs.writeFileSync(file, JSON.stringify(raw));
