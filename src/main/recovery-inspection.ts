@@ -37,6 +37,10 @@ export function hasTable(d: Database.Database, table: string): boolean {
   return Boolean(d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table));
 }
 
+function hasColumn(d: Database.Database, table: string, column: string): boolean {
+  return (d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(row => row.name === column);
+}
+
 export function inspectRecoveryOwner(d: Database.Database, owner: Owner): RecoveryObservation[] {
   if (owner === 'usage') return [...inspectUsageLiability(d), ...inspectPaidOperations(d)];
   return READS[owner].flatMap(read => {
@@ -134,10 +138,20 @@ export function inspectLegacyRemoteLiability(d: Database.Database): RecoveryObse
       FROM learning_model_runs WHERE status NOT IN ('ok','failed','refused')
       OR (status IN ('ok','failed') AND COALESCE(cost_reported,0)!=1)`, source: 'learning-model request with unresolved metering' },
     { table: 'companion_turns', sql: 'SELECT id,id AS operation_id,at,status,input_tokens,output_tokens,cost_usd FROM companion_turns WHERE cost_usd IS NULL', source: 'companion turn without accounted cost' },
-    // Interview totals do not preserve a reservation or a result for every
-    // attempted call. A later successful answer can replace an earlier error.
-    // Even a committed/abandoned interview cannot prove that history settled.
-    { table: 'interviews', sql: 'SELECT id,id AS operation_id,updated_at AS at,status,calls,spend_usd FROM interviews', source: 'legacy interview without a complete per-request liability ledger' },
+    // Interview totals do not preserve a result for every attempted call, and a
+    // later successful answer can replace an earlier error. Since interviews
+    // began writing one per-request record for each metered call, an interview
+    // whose calls all have one is covered by those records and their receipts.
+    // One with a call that has none, which is every interview from before
+    // then, still cannot prove that history settled. A count nobody recorded
+    // is unknown, not zero. An interview that failed before its first counted
+    // call left no evidence at all if it predates the first paid receipt;
+    // since then that failure is a receipt of its own.
+    { table: 'interviews', sql: `SELECT i.id,i.id AS operation_id,i.updated_at AS at,i.status,i.calls,i.spend_usd FROM interviews i
+      WHERE i.calls IS NULL OR i.calls > ${hasTable(d, 'usage_direct_requests') && hasColumn(d, 'usage_direct_requests', 'subject_id')
+        ? "(SELECT COUNT(*) FROM usage_direct_requests r WHERE r.source='interview' AND r.subject_id=i.id)" : '0'}
+      OR (i.calls=0 AND i.status='failed' AND i.updated_at < COALESCE((SELECT MIN(at) FROM usage_paid_operations), 9223372036854775807))`,
+      source: 'legacy interview without a complete per-request liability ledger' },
   ];
   return reads.flatMap(read => {
     if (!hasTable(d, read.table)) return [];

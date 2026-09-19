@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { WaniganModule } from '../module-registry';
+import { recordDirectRequestMeters } from './usage-paid-operations';
 import { db } from '../db';
 import { client, explainApiError, isMock } from '../batch/anthropic';
 import { getKey } from '../keys';
@@ -372,6 +373,12 @@ async function step(row: Row, force: 'propose' | null): Promise<Interview> {
   const spent = usage && typeof usage.input_tokens === 'number' && typeof usage.output_tokens === 'number'
     ? syncCostOf(row.model, { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens })
     : null;
+
+  // The interview row keeps running totals, and a later answer overwrites an
+  // earlier one, so this is the only per-request record an interview has. It is
+  // written whatever the model did with the turn: the request was metered.
+  recordDirectRequestMeters({ source: 'interview', subjectId: row.id, model: (response as { model?: unknown }).model,
+    inputTokens: usage?.input_tokens, outputTokens: usage?.output_tokens, requestId: (response as { _request_id?: string | null })._request_id });
 
   const note = spent === null ? UNPRICED_NOTE : null;
 

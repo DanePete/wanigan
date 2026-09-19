@@ -131,7 +131,7 @@ export function accountForPaidOperation(input: {
  * source label, the model and the token counts the provider reported: no
  * prompt, reply, row content or price. A price is arithmetic a reader can redo.
  */
-export type DirectRequestSource = 'batch:dry-run';
+export type DirectRequestSource = 'batch:dry-run' | 'interview';
 
 export function migrateUsageDirectRequests(d: Database.Database): void {
   d.exec(`CREATE TABLE IF NOT EXISTS usage_direct_requests (
@@ -143,6 +143,11 @@ export function migrateUsageDirectRequests(d: Database.Database): void {
     output_tokens INTEGER NOT NULL,
     request_id TEXT
   )`);
+  // What the request was for, as the owner's own opaque id: an interview's id,
+  // so its calls can be counted against their records. Never content.
+  const columns = d.prepare('PRAGMA table_info(usage_direct_requests)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'subject_id')) d.exec('ALTER TABLE usage_direct_requests ADD COLUMN subject_id TEXT');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_usage_direct_requests_subject ON usage_direct_requests(source, subject_id)');
 }
 
 /** Records the meters, then lets them account for the request's receipt. A
@@ -150,6 +155,7 @@ export function migrateUsageDirectRequests(d: Database.Database): void {
  * Never throws: the caller already has its answer. */
 export function recordDirectRequestMeters(input: {
   source: DirectRequestSource; model: unknown; inputTokens: unknown; outputTokens: unknown; requestId: string | null | undefined;
+  subjectId?: string | null;
 }, d?: Database.Database): boolean {
   try {
     const tokens = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -158,8 +164,9 @@ export function recordDirectRequestMeters(input: {
     const database = d ?? db();
     const id = randomUUID();
     const requestId = input.requestId && PAID_REQUEST_ID.test(input.requestId) ? input.requestId : null;
-    database.prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id) VALUES (?,?,?,?,?,?,?)')
-      .run(id, Date.now(), input.source, model, input.inputTokens, input.outputTokens, requestId);
+    const subjectId = input.subjectId && PAID_REQUEST_ID.test(input.subjectId) ? input.subjectId : null;
+    database.prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id,subject_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, Date.now(), input.source, model, input.inputTokens, input.outputTokens, requestId, subjectId);
     return accountForPaidOperation({ requestId, outcome: 'metered', ownerTable: 'usage_direct_requests', ownerId: id }, database);
   } catch (error) {
     console.warn('[wanigan] direct request meters not recorded; its receipt stays unresolved:', error instanceof Error ? error.message : error);

@@ -354,6 +354,28 @@ test('a partial Improve prompt table is unavailable evidence, while a never-inst
   } finally { f.close(); }
 });
 
+test('an interview is covered only when every counted call has its own per-request record', () => {
+  const blocked = f => f.recovery.inspectRecovery().observations.filter(row => row.module === 'legacy-interviews').map(row => row.operationId);
+  const f = fixture({ register: false });
+  try {
+    const record = (id, subject, source = 'interview') => f.native.prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id,subject_id) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, 5, source, 'fixture', 4, 2, null, subject);
+    f.native.exec(`INSERT INTO interviews VALUES ('covered',9,'committed',2,0.05),('partly',9,'asking',2,0.05),
+      ('older',9,'committed',1,0.02),('uncounted',9,'committed',NULL,NULL),('untouched',9,'abandoned',0,0)`);
+    record('r1', 'covered'); record('r2', 'covered'); record('r3', 'partly'); record('r4', 'older', 'batch:dry-run');
+    assert.deepEqual(blocked(f), ['older', 'partly', 'uncounted'], 'another source\'s record, a missing record and an unrecorded count all leave the interview open');
+    record('r5', 'partly'); assert.deepEqual(blocked(f), ['older', 'uncounted']);
+
+    // A first call that failed left nothing behind before receipts existed; since then it is a receipt.
+    f.native.exec("INSERT INTO interviews VALUES ('failed-before',3,'failed',0,0),('failed-since',30,'failed',0,0)");
+    assert.deepEqual(blocked(f), ['failed-before', 'failed-since', 'older', 'uncounted'], 'with no receipt ever recorded, every such failure predates them');
+    f.native.exec("INSERT INTO usage_paid_operations VALUES ('first-receipt','anthropic:messages',10)");
+    assert.deepEqual(blocked(f), ['failed-before', 'older', 'uncounted']);
+    f.native.exec('DROP INDEX idx_usage_direct_requests_subject; ALTER TABLE usage_direct_requests DROP COLUMN subject_id');
+    assert(blocked(f).includes('covered'), 'a ledger that cannot name its subject covers no interview');
+  } finally { f.close(); }
+});
+
 test('an unfinished restore exposes its retained paths even when business evidence cannot be read', () => {
   const f = fixture();
   try {

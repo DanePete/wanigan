@@ -3672,7 +3672,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-sonnet-5',
         content: [reply], stop_reason: 'tool_use',
         ...(usageReported ? { usage: usageReported } : {}),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }), { status: 200, headers: { 'content-type': 'application/json', 'request-id': `req_smoke_interview_${seen.length}` } });
     }) as typeof fetch;
 
     const ask = (question: string) => ({ type: 'tool_use', id: 't1', name: 'ask_one_question', input: { question, why: 'it changes the plan' } });
@@ -3714,6 +3714,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         'the interview opens with one question and no answer', iv.turns[0]?.question);
       check(iv.spendUsd > 0 && iv.calls === 1,
         'the first question is priced from what the API reported, not estimated', iv.spendUsd);
+      // The interview row keeps only totals, so this is its one per-request
+      // record — written through the shipped transport, not a test seam.
+      const ivRecords = () => db().prepare(`SELECT r.model,r.input_tokens,r.output_tokens,r.request_id,s.outcome
+        FROM usage_direct_requests r LEFT JOIN usage_paid_settlements s ON s.owner_table='usage_direct_requests' AND s.owner_id=r.id
+        WHERE r.source='interview' AND r.subject_id=?`).all(iv.id) as { model: string; input_tokens: number; output_tokens: number; request_id: string | null; outcome: string | null }[];
+      check(ivRecords().length === iv.calls && ivRecords()[0].input_tokens === 4_000 && ivRecords()[0].output_tokens === 600
+        && ivRecords()[0].model === 'claude-sonnet-5' && /^req_smoke_interview_\d+$/.test(ivRecords()[0].request_id ?? '') && ivRecords()[0].outcome === 'metered',
+      'each metered interview request leaves one per-request record naming its interview, with the tokens the API reported, and that record accounts for its receipt', ivRecords());
 
       // Synchronous rates, not batch. The pricing table is batch pricing and
       // says so; charging an interview at it would report half of what it cost.
@@ -3842,6 +3850,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       check(unpriced.spendUsd === 0 && /lower than the real one/.test(unpriced.detail ?? ''),
         'a call the API priced nothing for is reported as unpriced rather than counted as free',
         unpriced.detail);
+      // It counted a call and has no record for it, which is exactly the
+      // interview Recovery must keep open: calls exceed per-request records.
+      const unpricedRecords = (db().prepare("SELECT COUNT(*) AS n FROM usage_direct_requests WHERE source='interview' AND subject_id=?")
+        .get(unpriced.id) as { n: number }).n;
+      check(unpriced.calls === 1 && unpricedRecords === 0,
+        'a reply with no reported usage writes no per-request record, so its interview stays uncovered', { calls: unpriced.calls, unpricedRecords });
 
       // And it keeps saying so. The warning is cumulative — it says "at least
       // one call" — but it was written to `detail` on every step, so the next
