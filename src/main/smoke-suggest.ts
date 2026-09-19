@@ -1,6 +1,8 @@
 import { egressReport } from './egress';
 import { getSetting, setSetting } from './settings';
-import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestRelayPlan, SUGGEST_HOST, SUGGEST_PATH } from './modules/suggest';
+import { clearKey, enabled, estimatedUsd, setEnabled, setKey, status, suggestRelayPlan, verify, SUGGEST_HOST, SUGGEST_PATH, SUGGEST_RATES } from './modules/suggest';
+import { db } from './db';
+import { consumption, daily } from './usage';
 import type { RelayPhase } from '../shared/relay';
 import type { RouteCandidate } from '../shared/relay-route';
 import { phasesFor } from '../shared/suggest-questions';
@@ -146,8 +148,117 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
       'a million input tokens prices at the published $0.042, by Wanigan\u2019s own arithmetic', estimatedUsd(1_000_000));
     check(estimatedUsd(-1) === 0 && estimatedUsd(Number.NaN) === 0,
       'and a usage figure that is not a count prices at nothing rather than NaN', estimatedUsd(Number.NaN));
+
+    await runSuggestUsageSmoke(check, say);
   } finally {
     globalThis.fetch = realFetch;
     setSetting('suggest.enabled', before);
+  }
+}
+
+/** Exercise the real request and Usage read with an offline response, without storing a key. */
+async function runSuggestUsageSmoke(check: Check, say: Say): Promise<void> {
+  say('── suggester usage · one call, observed meters, separately labelled arithmetic');
+  const start = (db().prepare('SELECT COALESCE(MAX(id),0) AS id FROM suggest_usage').get() as { id: number }).id;
+  const realFetch = globalThis.fetch;
+  const originalRate = SUGGEST_RATES.inputPerMTok;
+  let reply: unknown = { model: 'jev-smoke', usage: { input_tokens: 1200, output_tokens: 0 } };
+  let responseStatus = 200;
+  let rawBody: string | null = null;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(rawBody ?? JSON.stringify(reply), {
+      status: responseStatus, headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof realFetch;
+  const recorded = () => (db().prepare('SELECT COUNT(*) AS n FROM suggest_usage WHERE id > ?').get(start) as { n: number }).n;
+  try {
+    check((await verify('offline-fixture-key')).ok,
+      'a successful fixture reaches the real ask path without saving a credential');
+    const shown = consumption(7).find((row) => row.model === 'jev-smoke');
+    check(calls === 1 && recorded() === 1 && shown?.requests === 1 && shown.inTokens === 1200 && shown.outTokens === 0,
+      'Usage includes exactly one Jev request and its reported tokens', shown);
+    check(shown?.accountLabel === 'TypeSafe' && shown.source === 'service' && shown.harness === null,
+      'Jev is attributed to the TypeSafe API service, without inventing a session account', shown);
+    check(shown?.costUsd === 0 && shown.costStatus === 'unreported' && shown.unmeteredRequests === 0
+      && Math.abs((shown.estimatedCostUsd ?? -1) - 0.0000504) < 1e-12,
+    'local price arithmetic is stored separately from reported spend', shown);
+    check(daily(7).some((row) => row.model === 'jev-smoke' && row.tokens === 1200 && row.costUsd === 0 && row.source === 'service'),
+      'the same recorded Jev tokens reach the daily Usage chart', daily(7));
+
+    SUGGEST_RATES.inputPerMTok = originalRate * 2;
+    check(consumption(7).find((row) => row.model === 'jev-smoke')?.estimatedCostUsd === shown?.estimatedCostUsd,
+      'changing the current rate leaves the recorded estimate unchanged');
+    SUGGEST_RATES.inputPerMTok = originalRate;
+
+    reply = { usage: { input_tokens: 20 } };
+    await verify('offline-fixture-key');
+    reply = { answers: {} };
+    await verify('offline-fixture-key');
+    const partial = consumption(7).find((row) => row.model === 'jev-latest');
+    check(partial?.requests === 2 && partial.inTokens === 20 && partial.unmeteredRequests === 2
+      && Math.abs((partial.estimatedCostUsd ?? -1) - estimatedUsd(20)) < 1e-12,
+    'missing meters retain the requested model, known tokens and a count of unmetered calls', partial);
+
+    for (const usage of [
+      { input_tokens: -1, output_tokens: '0' },
+      { input_tokens: 1.5, output_tokens: -1 },
+      { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: null },
+    ]) {
+      reply = { model: 'jev-invalid-smoke', usage };
+      await verify('offline-fixture-key');
+    }
+    const invalid = consumption(7).find((row) => row.model === 'jev-invalid-smoke');
+    check(invalid?.requests === 3 && invalid.inTokens === 0 && invalid.outTokens === 0
+      && invalid.unmeteredRequests === 3 && invalid.estimatedCostUsd === undefined,
+    'invalid token counts stay unknown instead of becoming spend or negative usage', invalid);
+    check(!daily(7).some((row) => row.model === 'jev-invalid-smoke'),
+      'a daily group with no observed meters is absent rather than a measured zero');
+
+    reply = { model: 'jev-zero-smoke', usage: { input_tokens: 0, output_tokens: 0 } };
+    await verify('offline-fixture-key');
+    const zero = consumption(7).find((row) => row.model === 'jev-zero-smoke');
+    check(zero?.inTokens === 0 && zero.unmeteredRequests === 0 && zero.estimatedCostUsd === 0,
+      'reported zero meters remain distinct from missing meters', zero);
+
+    rawBody = '';
+    const beforeEmpty = recorded();
+    const unreadable = await verify('offline-fixture-key');
+    check(!unreadable.ok && unreadable.detail.includes('response could not be read') && recorded() === beforeEmpty + 1,
+      'an unreadable successful response records one unmetered call without verifying the key');
+    rawBody = null;
+    const beforeRefusal = recorded();
+    responseStatus = 429;
+    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal,
+      'an HTTP refusal adds no phantom successful request');
+    globalThis.fetch = (async () => { throw new Error('offline fixture failure'); }) as typeof realFetch;
+    check(!(await verify('offline-fixture-key')).ok && recorded() === beforeRefusal,
+      'a transport failure adds no phantom successful request');
+
+    globalThis.fetch = (async () => new Response(JSON.stringify(reply), { status: 200 })) as typeof realFetch;
+    db().exec(`CREATE TEMP TRIGGER suggest_usage_smoke_fail BEFORE INSERT ON suggest_usage
+      BEGIN SELECT RAISE(ABORT, 'offline usage ledger failure'); END`);
+    try {
+      let failure: unknown = null;
+      try { await verify('offline-fixture-key'); } catch (error) { failure = error; }
+      check(failure instanceof Error && failure.message.includes('offline usage ledger failure'),
+        'a local recording failure is surfaced instead of misreported as an unreachable service');
+    } finally {
+      db().exec('DROP TRIGGER suggest_usage_smoke_fail');
+    }
+
+    db().prepare('UPDATE suggest_usage SET at=? WHERE id>? AND model=?')
+      .run(Date.now() - 100 * 86_400_000, start, 'jev-smoke');
+    check(!consumption(7).some((row) => row.model === 'jev-smoke') && !daily(7).some((row) => row.model === 'jev-smoke'),
+      'Jev obeys the same selected date window as session usage');
+    const columns = db().prepare('PRAGMA table_info(suggest_usage)').all() as { name: string }[];
+    check(columns.map((row) => row.name).sort().join(',') === 'at,estimated_cost_usd,id,input_tokens,model,output_tokens'
+      && status().hasKey === false,
+    'the ledger keeps only model and metering metadata, and no fixture credential was stored');
+  } finally {
+    globalThis.fetch = realFetch;
+    SUGGEST_RATES.inputPerMTok = originalRate;
+    db().prepare('DELETE FROM suggest_usage WHERE id > ?').run(start);
   }
 }

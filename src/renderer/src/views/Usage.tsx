@@ -182,7 +182,7 @@ function DailyChart({ points, account }: {
 }) {
   const accountLabel = account.label;
   // Matched on the account's id where it has one: the label is not an identity.
-  const mine = points.filter((p) => (account.id ? p.accountId === account.id : p.accountLabel === account.label));
+  const mine = points.filter((p) => (account.id ? p.accountId === account.id : p.accountId === null && p.accountLabel === account.label));
   const days = [...new Set(mine.map((p) => p.day))].sort();
   const models = [...new Set(mine.map((p) => p.model))].sort();
   const byDay = new Map<string, Map<string, number>>();
@@ -192,7 +192,7 @@ function DailyChart({ points, account }: {
     bucket.set(point.model, (bucket.get(point.model) ?? 0) + point.tokens);
   }
   const totals = days.map((day) => [...(byDay.get(day)?.values() ?? [])].reduce((a, b) => a + b, 0));
-  const peak = Math.max(1, ...totals);
+  const peak = Math.max(0, ...totals);
 
   if (!days.length) {
     return <p className="faint u-empty">No recorded requests for {accountLabel} in this window.</p>;
@@ -206,18 +206,18 @@ function DailyChart({ points, account }: {
           the picture is; the table below says what it is drawn from. */}
       <div className="u-bars" role="img"
            aria-label={`Tokens per day for ${accountLabel}, ${span}, stacked by model. `
-             + `Peak ${compact(peak)} tokens in a day. The day-by-day figures are in the table below.`}>
+             + `Peak ${compact(peak)} reported tokens in a day. The day-by-day figures are in the table below.`}>
         {days.map((day, dayIndex) => {
           const bucket = byDay.get(day) ?? new Map();
           const total = totals[dayIndex];
           return (
-            <div key={day} className="u-col" title={`${day} · ${fmt.format(total)} tokens`}>
+            <div key={day} className="u-col" title={`${day} · ${fmt.format(total)} reported tokens`}>
               {models.map((model, modelIndex) => {
                 const value = bucket.get(model) ?? 0;
                 if (!value) return null;
                 return (
                   <div key={model} className={SERIES[modelIndex % SERIES.length]}
-                       style={{ height: `${(value / peak) * 100}%` }} />
+                       style={{ height: `${(value / Math.max(1, peak)) * 100}%` }} />
                 );
               })}
             </div>
@@ -226,7 +226,7 @@ function DailyChart({ points, account }: {
       </div>
       <div className="u-axis">
         <span className="faint mono">{days[0]}</span>
-        <span className="faint mono">peak {compact(peak)} tokens/day</span>
+        <span className="faint mono">peak {compact(peak)} reported tokens/day</span>
         <span className="faint mono">{days[days.length - 1]}</span>
       </div>
       {/* .legend and its two children are already in index.css and are what
@@ -246,7 +246,7 @@ function DailyChart({ points, account }: {
         <div className="u-scroll">
           <table className="viz-table">
             <caption className="u-cap">
-              Tokens by model, per day, for {accountLabel}. A dash is a day with nothing recorded for that model.
+              Reported tokens by model, per day, for {accountLabel}. A dash is a day with no token reading for that model.
             </caption>
             <thead>
               <tr>
@@ -260,8 +260,8 @@ function DailyChart({ points, account }: {
                 <tr key={day}>
                   <td className="mono">{day}</td>
                   {models.map((model) => {
-                    const value = byDay.get(day)?.get(model) ?? 0;
-                    return <td key={model} className="n">{value ? fmt.format(value) : '—'}</td>;
+                    const value = byDay.get(day)?.get(model);
+                    return <td key={model} className="n">{value === undefined ? '—' : fmt.format(value)}</td>;
                   })}
                   <td className="n">{fmt.format(totals[dayIndex])}</td>
                 </tr>
@@ -272,6 +272,18 @@ function DailyChart({ points, account }: {
       </details>
     </div>
   );
+}
+
+function consumptionTokens(value: number, row: ModelConsumption): string {
+  if (!row.unmeteredRequests) return compact(value);
+  return value > 0 ? `≥${compact(value)}` : '—';
+}
+
+function consumptionCost(row: ModelConsumption): string {
+  if (row.costStatus !== 'unreported') return `${row.costStatus === 'partial' ? '≥' : ''}$${row.costUsd.toFixed(2)}`;
+  if (row.estimatedCostUsd === undefined) return '—';
+  const estimate = row.estimatedCostUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 9 });
+  return `~$${estimate} estimated`;
 }
 
 function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
@@ -290,21 +302,22 @@ function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={`${row.accountId ?? 'none'}:${row.model}`} style={{ borderTop: '1px solid var(--line-soft)' }}>
+            <tr key={`${row.accountId ?? `label:${row.accountLabel}`}:${row.model}`} style={{ borderTop: '1px solid var(--line-soft)' }}>
               <td style={{ padding: '6px 10px' }}>
                 {row.accountLabel}
                 {row.harness && <span className="faint u-row-harness">{harnessLabel(row.harness)}</span>}
               </td>
               <td className="mono" style={{ padding: '6px 10px' }}>{row.model}</td>
               <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt.format(row.requests)}</td>
-              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{compact(row.inTokens)}</td>
-              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{compact(row.outTokens)}</td>
-              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{compact(row.cacheRead)}</td>
+              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{consumptionTokens(row.inTokens, row)}</td>
+              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{consumptionTokens(row.outTokens, row)}</td>
+              <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.source === 'service' ? '—' : compact(row.cacheRead)}</td>
               <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
                   title={row.costStatus === 'reported' ? 'Every request carried a provider cost.'
                     : row.costStatus === 'partial' ? 'Some requests carried no provider cost, so this total is a floor.'
+                    : row.estimatedCostUsd !== undefined ? 'Estimated from reported input tokens at the rate saved for each call. This is not a provider bill.'
                       : 'This provider reported no cost, so there is no figure to show.'}>
-                {row.costStatus === 'unreported' ? '—' : `${row.costStatus === 'partial' ? '≥' : ''}$${row.costUsd.toFixed(2)}`}
+                {consumptionCost(row)}
               </td>
             </tr>
           ))}
@@ -404,13 +417,13 @@ export default function Usage() {
    * above distinguished the same pair by harness pill.
    */
   const accountSeries = useMemo(() => {
-    const seen = new Map<string, { id: string | null; label: string; harness: string | null }>();
+    const seen = new Map<string, { id: string | null; label: string; harness: string | null; source?: ModelConsumption['source'] }>();
     for (const l of snap?.limits ?? []) {
       seen.set(l.accountId ?? `label:${l.accountLabel}`, { id: l.accountId, label: l.accountLabel, harness: l.harness });
     }
     for (const c of snap?.consumption ?? []) {
       const key = c.accountId ?? `label:${c.accountLabel}`;
-      if (!seen.has(key)) seen.set(key, { id: c.accountId, label: c.accountLabel, harness: c.harness });
+      if (!seen.has(key)) seen.set(key, { id: c.accountId, label: c.accountLabel, harness: c.harness, source: c.source });
     }
     return [...seen.values()];
   }, [snap]);
@@ -418,12 +431,13 @@ export default function Usage() {
   const selected = accountKey === 'all' ? null
     : accountSeries.find((a) => keyOf(a) === accountKey) ?? accountSeries[0] ?? null;
   const matches = (row: { accountId: string | null; accountLabel: string }) => !selected
-    || (selected.id ? row.accountId === selected.id : row.accountLabel === selected.label);
+    || (selected.id ? row.accountId === selected.id : row.accountId === null && row.accountLabel === selected.label);
   const limits = (snap?.limits ?? []).filter(matches);
   const consumption = (snap?.consumption ?? []).filter(matches);
   const series = selected ? [selected] : accountSeries;
   const requests = consumption.reduce((n, r) => n + r.requests, 0);
   const tokens = consumption.reduce((n, r) => n + r.inTokens + r.outTokens, 0);
+  const unmetered = consumption.reduce((n, r) => n + (r.unmeteredRequests ?? 0), 0);
 
   return (
     <div className="pane wide usage-view">
@@ -473,7 +487,7 @@ export default function Usage() {
 
       <div className="u-workspace">
         <nav className="u-accounts" aria-label="Usage accounts">
-          <SectionHead label="Accounts" count={accountSeries.length} />
+          <SectionHead label="Accounts & services" count={accountSeries.length} />
           <button className="u-account" aria-current={accountKey === 'all' ? 'true' : undefined}
                   onClick={() => setAccountKey('all')}>
             <strong>All accounts</strong><span>Combined local records</span>
@@ -482,14 +496,14 @@ export default function Usage() {
             <button className="u-account" key={keyOf(a)}
                     aria-current={selected && keyOf(selected) === keyOf(a) ? 'true' : undefined}
                     onClick={() => setAccountKey(keyOf(a))}>
-              <strong>{a.label}</strong><span>{a.harness ? harnessLabel(a.harness) : 'Unknown harness'}</span>
+              <strong>{a.label}</strong><span>{a.harness ? harnessLabel(a.harness) : a.source === 'service' ? 'API service' : 'Unknown harness'}</span>
             </button>
           ))}
         </nav>
         <div className="u-account-content">
           <div className="u-account-title">
             <div><h2>{selected?.label ?? 'All accounts'}</h2>
-              <p className="dim">{selected?.harness ? harnessLabel(selected.harness) : 'Across configured accounts'} · all projects</p>
+              <p className="dim">{selected?.harness ? harnessLabel(selected.harness) : selected?.source === 'service' ? 'API service' : 'Across configured accounts'} · all projects</p>
             </div>
             <span className="faint">Consumption · last {snap?.days ?? days} days</span>
           </div>
@@ -514,11 +528,11 @@ export default function Usage() {
               {!selected && (observed?.accounts ?? [])
                 .filter((a) => a.readings > 0 && !limits.some((l) => l.accountId === a.accountId))
                 .map((a) => <ObservedLimits key={`observed:${a.accountId ?? 'none'}`} label={a.accountLabel} account={a} report={observed} error={null} />)}
-              {snap && limits.length === 0 && <p className="faint">{selected ? 'No limit reading for this account.' : 'No accounts are configured yet.'}</p>}
+              {snap && limits.length === 0 && <p className="faint">{selected?.source === 'service' ? 'No limit reading for this service.' : selected ? 'No limit reading for this account.' : 'No accounts are configured yet.'}</p>}
             </section>
             <section className="u-consumption" aria-label="Recorded consumption">
               <SectionHead label="What ran" />
-              <p className="u-provenance">Wanigan’s local session records. Costs appear only when reported.</p>
+              <p className="u-provenance">Wanigan’s recorded session and service calls. Estimates are labeled separately from reported costs.</p>
               {snap === null && err ? (
                 <EmptyState posture="could-not-read" title="Could not read what you spent" cue={err} />
               ) : snap === null ? (
@@ -530,10 +544,11 @@ export default function Usage() {
                 <>
                   <div className="u-totals">
                     <Stat label="Requests" value={fmt.format(requests)} sub="recorded in Wanigan" />
-                    <Stat label="Tokens" value={compact(tokens)} sub="input + output" />
+                    <Stat label="Tokens" value={unmetered ? tokens > 0 ? `≥${compact(tokens)}` : '—' : compact(tokens)} sub="reported input + output" />
                   </div>
+                  {unmetered > 0 && <Note>{fmt.format(unmetered)} {unmetered === 1 ? 'request did' : 'requests did'} not report complete token counts. Totals show reported tokens; estimates cover reported input only.</Note>}
                   {series.filter((a) => (snap?.daily ?? []).some((point) => (
-                    a.id ? point.accountId === a.id : point.accountLabel === a.label)))
+                    a.id ? point.accountId === a.id : point.accountId === null && point.accountLabel === a.label)))
                     .map((a) => (
                       <div className="u-daily" key={keyOf(a)}>
                         <h3>{selected ? 'Daily activity' : `${a.label}${a.harness ? ` · ${harnessLabel(a.harness)}` : ''}`}</h3>

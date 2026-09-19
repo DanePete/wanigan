@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { QueueKind } from '../shared/types';
+import type { ConsumptionPoint, ModelConsumption, QueueKind } from '../shared/types';
 
 /**
  * The main-process half of "everything is a module" (AGENTS.md).
@@ -80,6 +80,13 @@ export type WaniganModule = {
    */
   ipc?: (handle: IpcHandle) => void;
   schedules?: () => ModuleSchedule[];
+  /** Local recorded consumption outside agent sessions. Reads must never call
+   * a provider or infer a quota. `since` is the Usage ledger's clamped cutoff;
+   * the module owns its records and preserves estimates apart from billed cost. */
+  usage?: {
+    consumption: (since: number) => ModelConsumption[];
+    daily: (since: number) => ConsumptionPoint[];
+  };
 };
 
 const registry: WaniganModule[] = [];

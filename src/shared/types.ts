@@ -2196,6 +2196,8 @@ export type AccountLimits = {
 export type ModelConsumption = {
   accountId: string | null;
   accountLabel: string;
+  /** API services have no CLI harness or session account. Older rows are sessions. */
+  source?: 'session' | 'service';
   /** The agent this account signs into; two accounts can share a label. */
   harness: string | null;
   model: string;
@@ -2206,6 +2208,10 @@ export type ModelConsumption = {
   costUsd: number;
   /** 'reported' only when every row carried a provider cost. */
   costStatus: 'reported' | 'partial' | 'unreported';
+  /** Arithmetic saved when the call ran, never included in reported costUsd. */
+  estimatedCostUsd?: number;
+  /** Requests missing valid input or output meters; token totals cover known counts only. */
+  unmeteredRequests?: number;
 };
 
 export type ConsumptionPoint = {
@@ -2221,6 +2227,7 @@ export type ConsumptionPoint = {
    */
   accountId: string | null;
   accountLabel: string;
+  source?: 'session' | 'service';
   harness: string | null;
   model: string;
   tokens: number;

@@ -2,6 +2,8 @@ import type { WaniganModule } from '../module-registry';
 import { refuseIfHalted } from '../halt';
 import { clearProviderKey, getProviderKey, hasProviderKey, providerKeyFingerprint, setProviderKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
+import { db } from '../db';
+import { migrateSuggestUsage, recordSuggestUsage, suggestConsumption, suggestDaily } from '../suggest-usage';
 import type { RelayPhase } from '../../shared/relay';
 import {
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
@@ -188,42 +190,50 @@ export type AskOutcome =
  * are documented as adjusting dynamically without notice, which is an argument
  * for failing quietly rather than for trying harder.
  *
- * It never throws for an ordinary failure. A halted Wanigan is the one
- * exception, because `refuseIfHalted` is the fleet-wide latch and a module that
- * swallowed it would be a module that kept making network calls after the
- * operator pulled the handle.
+ * Ordinary transport failures return no suggestion. A halted Wanigan and a
+ * failed local usage write throw: the former is the fleet-wide latch, and the
+ * latter must not pretend a billed call never reached the service.
  */
 async function ask(request: SystemOneRequest, keyOverride?: string): Promise<AskOutcome> {
   refuseIfHalted('ask for a routing suggestion');
   const key = keyOverride ?? getProviderKey(PROVIDER);
   if (!key) return { ok: false, reason: 'No TypeSafe credential is stored.' };
 
+  // Complete local schema initialization before making a call that may cost
+  // money. A migration failure must not first be discovered while recording it.
+  db();
   const started = Date.now();
+  let response: Response;
   try {
-    const response = await fetch(ENDPOINT, {
+    response = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    const ms = Date.now() - started;
-    if (!response.ok) {
-      // The status, not the body. An error body from a service in early access
-      // is text nobody has validated, and it would be shown beside a route.
-      return { ok: false, reason: `The suggester answered ${response.status}.` };
-    }
-    const body: unknown = await response.json();
-    const usage = (body as { usage?: { input_tokens?: unknown } } | null)?.usage;
-    const inputTokens = typeof usage?.input_tokens === 'number' && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
-      : null;
-    return { ok: true, body, ms, inputTokens };
   } catch (error) {
     const reason = error instanceof Error && error.name === 'TimeoutError'
       ? `The suggester did not answer within ${TIMEOUT_MS / 1000}s.`
       : 'The suggester could not be reached.';
     return { ok: false, reason };
   }
+  const ms = Date.now() - started;
+  if (!response.ok) {
+    // The status, not the body. An error body from a service in early access
+    // is text nobody has validated, and it would be shown beside a route.
+    return { ok: false, reason: `The suggester answered ${response.status}.` };
+  }
+  // The service answered successfully even when its body cannot be read.
+  // Preserve that call as unmetered; each preview, relay and key check reaches
+  // this one ledger write, regardless of how many questions it contained.
+  let body: unknown = null;
+  let readable = true;
+  try { body = await response.json(); } catch { readable = false; }
+  const { inputTokens } = recordSuggestUsage({
+    at: started, requestedModel: request.model, body, inputPerMTok: SUGGEST_RATES.inputPerMTok,
+  });
+  if (!readable) return { ok: false, reason: 'The suggester answered, but its response could not be read.' };
+  return { ok: true, body, ms, inputTokens };
 }
 
 /**
@@ -332,6 +342,8 @@ export const suggestModule: WaniganModule = {
    * is the behaviour of every build before this module existed.
    */
   required: null,
+  migrate: migrateSuggestUsage,
+  usage: { consumption: suggestConsumption, daily: suggestDaily },
   ipc(handle) {
     handle('suggest:status', () => status());
     handle('suggest:setEnabled', (ids: unknown) => setEnabled(ids));
