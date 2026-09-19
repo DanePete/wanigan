@@ -248,16 +248,41 @@ export function spawnPlan(file: string, args: readonly string[], platform: Platf
     }
   }
   // `/d` skips the AutoRun commands in the registry, which would otherwise run
-  // before the CLI does and inside this session's environment. `/s` pins quote
-  // handling to the documented "strip the first and last" rule, so the quoting
-  // above is the only thing that has to be right. `/v:off` makes `!` literal
-  // whatever the machine's DelayedExpansion default is.
+  // before the CLI does and inside this session's environment. `/v:off` makes
+  // `!` literal whatever the machine's DelayedExpansion default is. `/s` pins
+  // quote handling to one documented rule instead of the five-condition
+  // heuristic cmd.exe otherwise applies.
+  //
+  // That rule is why the whole command carries a second pair of quotes: with
+  // `/s`, cmd.exe strips the first character if it is a quote and removes the
+  // last quote character, then runs what is left. Without the outer pair,
+  //     "C:\npm\claude.cmd" "--print" "goal"
+  // becomes
+  //     C:\npm\claude.cmd" "--print" "goal
+  // and the CLI is never started. Node's own `shell: true` wraps it the same
+  // way for the same reason.
+  const line = [quoteForCmd(file), ...args.map(quoteForCmd)].join(' ');
   return {
     kind: 'interpreter',
     file: 'cmd.exe',
-    args: ['/d', '/s', '/v:off', '/c', [quoteForCmd(file), ...args.map(quoteForCmd)].join(' ')],
+    args: ['/d', '/s', '/v:off', '/c', `"${line}"`],
     via: 'cmd.exe',
   };
+}
+
+/**
+ * A `SpawnPlan` as one command-line string, for node-pty on Windows.
+ *
+ * node-pty takes `args` as either an array or a string, and the two are not
+ * equivalent. The array path runs `argsToCommandLine`, which escapes every `"`
+ * as `\"` — correct for an ordinary program, and fatal here, because it would
+ * rewrite the cmd.exe quoting above into something cmd.exe reads as one
+ * argument full of backslashes. The string path is appended verbatim, which is
+ * what a command line we have already quoted ourselves needs.
+ */
+export function commandLine(plan: SpawnPlan): string {
+  if (plan.kind === 'refused') throw new Error(plan.reason);
+  return plan.args.join(' ');
 }
 
 /**

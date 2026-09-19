@@ -46,7 +46,8 @@
     "lint:fix": "eslint . --fix",
     "lint:prune": "eslint . --prune-suppressions",
     "lint:debt": "node scripts/lint-debt.cjs",
-    "test:lint": "eslint ."
+    "test:lint": "eslint .",
+    "dist:win": "electron-vite build && electron-builder --win --x64"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   asPlatform,
+  commandLine,
   executableCandidates,
   executableExtensions,
   extraSearchDirs,
@@ -172,7 +173,10 @@ test('a .cmd shim is wrapped in cmd.exe with AutoRun and delayed expansion off',
   assert.equal(plan.kind === 'interpreter' && plan.file, 'cmd.exe');
   assert.deepEqual(plan.kind === 'interpreter' && plan.args, [
     '/d', '/s', '/v:off', '/c',
-    '"C:\\npm\\claude.cmd" "--print" "fix the build"',
+    // The outer pair is not redundant. `/s` strips the first character when it
+    // is a quote and removes the last quote character; without it the CLI path
+    // would lose its own closing quote and never start.
+    '""C:\\npm\\claude.cmd" "--print" "fix the build""',
   ]);
 });
 
@@ -183,7 +187,7 @@ test('a goal containing a shell separator crosses cmd.exe as text, not as a comm
   assert.equal(plan.kind, 'interpreter');
   assert.equal(
     plan.kind === 'interpreter' ? plan.args[4] : '',
-    '"C:\\npm\\claude.cmd" "--print" "build & deploy (fast) | tee log"',
+    '""C:\\npm\\claude.cmd" "--print" "build & deploy (fast) | tee log""',
   );
   // No caret escaping: inside quotes cmd.exe passes these through literally,
   // and a caret here would arrive as part of the prompt.
@@ -210,6 +214,25 @@ test('the same arguments are refused nowhere else', () => {
     const plan = spawnPlan(file, ['--print', 'say "hi" about %PATH%'], platform);
     assert.equal(plan.kind, 'direct', `${file} should not route through a shell`);
   }
+});
+
+test('the interpreter plan survives node-pty as a string, never as an array', () => {
+  // node-pty's array path escapes every `"` as `\"`, which would rewrite the
+  // quoting above into one argument full of backslashes. Its string path is
+  // appended verbatim, so this is the form that has to be correct.
+  const plan = spawnPlan('C:\\npm\\claude.cmd', ['--print', 'ship it'], 'win32');
+  assert.equal(commandLine(plan), '/d /s /v:off /c ""C:\\npm\\claude.cmd" "--print" "ship it""');
+
+  // Stripping the first character and the last quote, as cmd /s does, must
+  // leave exactly the line we meant to run.
+  const after = commandLine(plan).slice('/d /s /v:off /c '.length);
+  const stripped = after.slice(1, after.lastIndexOf('"'));
+  assert.equal(stripped, '"C:\\npm\\claude.cmd" "--print" "ship it"');
+});
+
+test('a refused plan has no command line to hand anybody', () => {
+  const plan = spawnPlan('C:\\npm\\claude.cmd', ['--print', 'echo %PATH%'], 'win32');
+  assert.throws(() => commandLine(plan), /%VARIABLE%/);
 });
 
 test('a trailing backslash does not escape the closing quote', () => {

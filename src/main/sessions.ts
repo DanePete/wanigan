@@ -1,4 +1,6 @@
 import { permissionInputFor } from '../shared/session-permissions';
+import { commandLine, spawnPlan } from '../shared/platform';
+import { hostPlatform } from './platform';
 import { attentionOf } from './attention';
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
@@ -1513,9 +1515,37 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.goalCapsule = capsuleDelivery;
   if (codexHooks) meta.codexHooks = codexHooks.delivery;
 
+  // On Windows the CLI that resolved is usually an npm `.cmd` shim rather than
+  // a program, and a shim is not something CreateProcess — which is what
+  // node-pty's ConPTY path ultimately calls — will start. It refuses with
+  // ENOENT naming a file that plainly exists on disk, so the shim runs only as
+  // an argument to cmd.exe. spawnPlan builds that command line and refuses
+  // outright the arguments cmd.exe would act on rather than pass through; off
+  // Windows it is the identity and `args` reaches the PTY unchanged.
+  //
+  // Synchronous on purpose. The digest and trust revalidation above holds only
+  // while nothing awaits before the spawn, and this must not become the await
+  // that opens that window. The refusal below does await, and may: it throws.
+  const plan = spawnPlan(resolvedBin, args, hostPlatform());
+  if (plan.kind === 'refused') {
+    if (resumeKey) resumingConversations.delete(resumeKey);
+    await rollbackLaunch();
+    // Not wrapped in "is it installed and on your PATH?" like the catch below.
+    // It is installed, it is on PATH, and saying otherwise would send somebody
+    // to reinstall a CLI that is working.
+    throw new Error(plan.reason);
+  }
+
+  // node-pty takes args as an array or a string, and on Windows the two are not
+  // equivalent: the array path runs argsToCommandLine, which escapes every `"`
+  // as `\"` and would rewrite the cmd.exe quoting into a single argument full
+  // of backslashes. The string path is appended verbatim, which is what an
+  // already-quoted command line needs.
+  const ptyArgs = plan.kind === 'interpreter' ? commandLine(plan) : plan.args;
+
   let proc: IPty;
   try {
-    proc = pty.spawn(resolvedBin, args, {
+    proc = pty.spawn(plan.file, ptyArgs, {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,
