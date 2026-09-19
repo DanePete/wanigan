@@ -9,7 +9,7 @@ platform is worse than one that says where the edges are.
 
 | | |
 |---|---|
-| Windows | 10 or 11, x64. Windows-on-ARM is not built; see [Packaging](#packaging) |
+| Windows | 10 or 11, x64. Windows-on-ARM is not built: node-gyp would have to produce arm64 builds of both native addons, and an untested arm64 artifact installs cleanly and then cannot open the database |
 | Node | `22.23.2`, the version in [`.nvmrc`](../.nvmrc). [nvm-windows](https://github.com/coreybutler/nvm-windows) or [fnm](https://github.com/Schniz/fnm) both work |
 | Build tools | Visual Studio Build Tools with the **Desktop development with C++** workload, and Python 3 |
 | An agent CLI | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex), installed natively and already signed in |
@@ -88,7 +88,7 @@ These are honest gaps, not bugs to report. Each one says what you get instead.
 
 | Feature | On Windows |
 |---|---|
-| **Status line relay** | Not available. The relay is a POSIX shell script; Wanigan says so on screen rather than failing per launch. |
+| **Status line relay** | Written, unverified. The relay is a PowerShell script and Windows' own `curl.exe` (System32, since Windows 10 1803). It has never run: every failure path in it prints nothing, so the worst case is the empty status line Windows had before it existed. The Windows CI job parse-checks it. |
 | **Codex hook forwarding** | Not available. The forwarding command needs `/bin/sh` and `/usr/bin/curl`. |
 | **Codex writer locks** | Fails closed. Verifying that a lock file is held needs `lsof`, so Wanigan refuses to open a second writer rather than risk two. Delete the stale `.lock` under your Codex home if you are sure. |
 | **Copy-on-write worktree deps** | Falls back to a link. `cp -c` cloning is APFS-only; Windows gets an NTFS junction, which needs no elevation and shares rather than copies. |

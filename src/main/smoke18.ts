@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as hooks from './hooks';
 import * as otel from './otel';
 import * as statusline from './statusline';
@@ -109,7 +109,34 @@ export async function runObservedTelemetrySmoke(check: Check, say: Say): Promise
     const now = Date.now();
 
     if (statusline.relayUnsupported()) {
-      check(false, 'this machine can run the status line relay (POSIX sh and curl)', statusline.relayUnsupported());
+      check(false, 'this machine can run the status line relay', statusline.relayUnsupported());
+      return;
+    }
+
+    // The end-to-end relay exercise below is built from POSIX fixtures — a
+    // `#!/bin/sh` status line of the operator's own, and one that hangs. On
+    // Windows the relay is a .ps1 and those fixtures are not runnable, so this
+    // asserts the thing that machine can uniquely answer instead: whether the
+    // script Wanigan emits actually parses. That question has no answer on a
+    // Mac, which has no PowerShell, and it is the one this port could not check
+    // when the script was written.
+    if (process.platform === 'win32') {
+      const relay = path.join(tmp, 'relay.ps1');
+      fs.writeFileSync(relay, statusline.RELAY_SCRIPT_PS1);
+      const checker = path.join(tmp, 'parse-check.ps1');
+      fs.writeFileSync(checker, [
+        'param([string]$Target)',
+        '$errors = $null',
+        '[void][System.Management.Automation.Language.Parser]::ParseFile($Target, [ref]$null, [ref]$errors)',
+        'if ($errors -and $errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 1 }',
+        'exit 0',
+      ].join('\n'));
+      const parsed = spawnSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', checker, relay,
+      ], { encoding: 'utf8', timeout: 30_000, windowsHide: true });
+      check(parsed.status === 0,
+        'the PowerShell status line relay Wanigan writes is a script PowerShell can parse',
+        `${parsed.stdout ?? ''}${parsed.stderr ?? ''}`.trim() || `exit ${String(parsed.status)}`);
       return;
     }
 

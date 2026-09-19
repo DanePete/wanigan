@@ -5,6 +5,7 @@ import { db } from './db';
 import { flags } from './settings';
 import { configDirForSession, listAll } from './accounts';
 import { statusLineSource } from './context/config';
+import { firstExecutable, hostPlatform } from './platform';
 import {
   CHAIN_BOUND_SECONDS, curlConfig, LIMIT_WINDOW_KINDS, parseStatusLine, readingKey, statusLineCommand, summarizeWindow,
   type LimitSample, type LimitWindowKind, type ObservedAccount, type ObservedLimitsReport, type ObservedWindow, type PromptCacheReading,
@@ -44,13 +45,19 @@ import {
  * prints nothing; the next render tries again.
  */
 
-const RELAY_NAME = 'relay.sh';
+const RELAY_NAME = process.platform === 'win32' ? 'relay.ps1' : 'relay.sh';
 
 /**
  * Absolute candidates only. The relay runs with whatever PATH the CLI has, and
  * a `curl` found on a PATH an agent can prepend to would be handed the bearer.
+ *
+ * Windows has shipped curl.exe in System32 since Windows 10 1803, so the relay
+ * is not blocked on one being installed — %SystemRoot% rather than a literal
+ * C:\\Windows because a machine may not have it there.
  */
-const CURL_CANDIDATES = ['/usr/bin/curl', '/bin/curl', '/opt/homebrew/bin/curl', '/usr/local/bin/curl'];
+const CURL_CANDIDATES = process.platform === 'win32'
+  ? [path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'curl.exe')]
+  : ['/usr/bin/curl', '/bin/curl', '/opt/homebrew/bin/curl', '/usr/local/bin/curl'];
 
 /**
  * How often a live session's chain is re-read. A person who edits their
@@ -133,6 +140,84 @@ kill -TERM "$watch" 2>/dev/null
 exit "$status"
 `;
 
+/**
+ * The same relay for Windows, in PowerShell because there is no /bin/sh.
+ *
+ * It keeps the POSIX script's contract exactly: read the render's stdin once,
+ * POST it with the curl config that carries the bearer, and only then look for
+ * a chained command — the order is what makes a render deterministic. A chained
+ * command gets the same stdin, a bound, and its stdout, stderr and exit status
+ * passed through; a bound that expires exits 124 as the shell one does.
+ *
+ * Every failure path prints nothing and exits 0. That is deliberate and it is
+ * the difference between this being worth shipping unverified and not: the CLI
+ * renders whatever this writes to stdout, so a relay that cannot run leaves the
+ * status line empty — which is exactly what Windows had before it existed —
+ * while one that reported its own errors would put them in front of the
+ * operator several times a second.
+ */
+export const RELAY_SCRIPT_PS1 = `param(
+  [Parameter(Mandatory = $true)][string]$Curl,
+  [Parameter(Mandatory = $true)][string]$Conf,
+  [Parameter(Mandatory = $true)][string]$Chain,
+  [Parameter(Mandatory = $true)][int]$Bound
+)
+# Wanigan's status line relay. Written by Wanigan into its own user-data
+# directory and named in the --settings file it injects; never copied into a
+# repository or a Claude config directory. src/main/statusline.ts explains it.
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$work = $null
+try {
+  $stdin = [Console]::In.ReadToEnd()
+  $work = Join-Path (Split-Path -Parent $PSCommandPath) ('run.' + [Guid]::NewGuid().ToString('N').Substring(0, 12))
+  [void](New-Item -ItemType Directory -Path $work -Force)
+  $inFile = Join-Path $work 'in'
+  [IO.File]::WriteAllText($inFile, $stdin, (New-Object Text.UTF8Encoding $false))
+
+  # -q first, so no .curlrc can add a proxy or a second destination for the
+  # bearer. The config file carries the header and the timeouts.
+  & $Curl -q -K $Conf --data-binary ('@' + $inFile) -o NUL 2>$null | Out-Null
+
+  if (-not (Test-Path -LiteralPath $Chain)) { exit 0 }
+  $own = [IO.File]::ReadAllText($Chain)
+  if ([string]::IsNullOrWhiteSpace($own)) { exit 0 }
+
+  $outFile = Join-Path $work 'out'
+  $errFile = Join-Path $work 'err'
+  $start = @{
+    FilePath = $env:ComSpec
+    ArgumentList = @('/d', '/s', '/c', $own)
+    RedirectStandardInput = $inFile
+    RedirectStandardOutput = $outFile
+    RedirectStandardError = $errFile
+    NoNewWindow = $true
+    PassThru = $true
+  }
+  $child = Start-Process @start
+  if (-not $child.WaitForExit($Bound * 1000)) {
+    # taskkill /T because the chained command is a shell and the thing that is
+    # actually hanging is underneath it.
+    & taskkill /pid $child.Id /T /F 2>$null | Out-Null
+    exit 124
+  }
+  if (Test-Path -LiteralPath $outFile) { [Console]::Out.Write([IO.File]::ReadAllText($outFile)) }
+  if (Test-Path -LiteralPath $errFile) { [Console]::Error.Write([IO.File]::ReadAllText($errFile)) }
+  exit $child.ExitCode
+} catch {
+  exit 0
+} finally {
+  if ($work -and (Test-Path -LiteralPath $work)) {
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+`;
+
+/** The relay this host runs. */
+function relayScript(): string {
+  return hostPlatform() === 'win32' ? RELAY_SCRIPT_PS1 : RELAY_SCRIPT;
+}
+
 type Relay = {
   projectPath: string;
   config: string;
@@ -166,18 +251,11 @@ export function relayDir(): string {
 }
 
 function curlPath(): string | null {
-  for (const candidate of CURL_CANDIDATES) {
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch { /* try the next */ }
-  }
-  return null;
+  return firstExecutable(CURL_CANDIDATES);
 }
 
 /** Why this machine cannot run the relay, or null. Said on screen rather than failing quietly per launch. */
 export function relayUnsupported(): string | null {
-  if (process.platform === 'win32') return 'The status line relay is a POSIX shell script, and this is Windows.';
   if (!curlPath()) return `No curl was found at ${CURL_CANDIDATES.join(', ')}, and the relay will not look one up on the agent's PATH.`;
   return null;
 }
@@ -218,7 +296,7 @@ export function statusLineEntry(
     const relay = path.join(dir, RELAY_NAME);
     let current: string | null = null;
     try { current = fs.readFileSync(relay, 'utf8'); } catch { /* first launch */ }
-    if (current !== RELAY_SCRIPT) writePrivate(relay, RELAY_SCRIPT, 0o700);
+    if (current !== relayScript()) writePrivate(relay, relayScript(), 0o700);
     else fs.chmodSync(relay, 0o700);
 
     const base = path.join(dir, safeName(sessionId));
@@ -228,7 +306,12 @@ export function statusLineEntry(
     // A chain left by an earlier launch under this id is another launch's answer.
     fs.rmSync(chain, { force: true });
     remember(relays, sessionId, { projectPath, config, chain, chained: null, resolvedAt: 0 });
-    return { type: 'command', command: statusLineCommand({ relay, curl, config, chain, boundSeconds: CHAIN_BOUND_SECONDS }) };
+    return {
+      type: 'command',
+      command: statusLineCommand({
+        relay, curl, config, chain, boundSeconds: CHAIN_BOUND_SECONDS, platform: hostPlatform(),
+      }),
+    };
   } catch (error) {
     console.warn('[wanigan] status line relay not injected; this session will report no limit readings:', error);
     return null;

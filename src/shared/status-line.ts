@@ -447,15 +447,46 @@ export function shellQuote(word: string): string {
 export const CHAIN_BOUND_SECONDS = 5;
 
 /**
+ * One `cmd.exe` word.
+ *
+ * The Windows counterpart of shellQuote, and double quotes rather than single
+ * because cmd.exe has no single-quote concept at all — `'C:\\Program Files\\x'`
+ * is four arguments beginning with an apostrophe. Every value here is a path
+ * Wanigan built under its own user-data directory or the curl it resolved, so
+ * none can contain a quote; one that somehow did is refused rather than
+ * escaped, because cmd.exe's two parsing passes cannot be escaped across.
+ */
+export function cmdQuote(word: string): string {
+  if (word.includes('"')) throw new Error('A status line path cannot contain a double quote.');
+  return `"${word}"`;
+}
+
+/**
  * The `statusLine.command` Wanigan injects. Every path is quoted, and nothing in
  * it is a secret: the bearer lives in the curl config file, and this string is
  * what every process listing on the machine can read once the CLI runs it.
+ *
+ * The CLI runs this string through its own shell, so the quoting has to match
+ * that shell rather than this process. On Windows the relay is a .ps1 and
+ * needs an interpreter named in front of it: -File rather than -Command so the
+ * arguments after it are arguments and not more script, -NoProfile so a user
+ * profile cannot print into a status line, and -ExecutionPolicy Bypass because
+ * the default policy refuses an unsigned .ps1 even one the app just wrote into
+ * its own directory.
  */
 export function statusLineCommand(input: {
   relay: string; curl: string; config: string; chain: string; boundSeconds?: number;
+  platform?: 'darwin' | 'win32' | 'linux';
 }): string {
   const bound = Math.max(1, Math.min(60, Math.round(input.boundSeconds ?? CHAIN_BOUND_SECONDS)));
-  return [input.relay, input.curl, input.config, input.chain].map(shellQuote).join(' ') + ` ${bound}`;
+  const paths = [input.relay, input.curl, input.config, input.chain];
+  if (input.platform === 'win32') {
+    return [
+      'powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+      ...paths.map(cmdQuote),
+    ].join(' ') + ` ${bound}`;
+  }
+  return paths.map(shellQuote).join(' ') + ` ${bound}`;
 }
 
 /**
