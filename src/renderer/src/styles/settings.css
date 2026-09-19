@@ -477,3 +477,7 @@ a.set-mini, a.btn { text-decoration: none; }
   .set-keys-row { grid-template-columns: minmax(0, 1fr) auto; }
   .set-keys-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* A callout that runs to several paragraphs spaces them here, so one written
+   without an inline margin cannot run into the paragraph above it. */
+.settings-callout-body p + p { margin-top: var(--s-2); }

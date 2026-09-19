@@ -319,7 +319,7 @@ function Callout({ level = 'warning', title, children }: {
       <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700, lineHeight: 1.4 }}>{m.glyph}</span>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: m.fg, fontWeight: 650, fontSize: 'var(--t-small)', lineHeight: 1.45 }}>{title}</div>
-        {children ? <div className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
+        {children ? <div className="dim settings-callout-body" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
       </div>
     </div>
   );
@@ -5967,13 +5967,13 @@ function Backup() {
             unfinished commands and unresolved remote charges block a restore. An expired lease or a
             missing process does not prove completion. Recovery explains each recorded claim.
           </p>
-          <p style={{ marginTop: 6 }}>
+          <p>
             <strong>Begin with a maintenance restart.</strong> The restore button first offers to
             reopen Wanigan without credentials or background services. Return here after restart to
             choose the backup. Quitting and reopening normally leaves preparation mode; a completed
             restore keeps its inspection holds.
           </p>
-          <p style={{ marginTop: 6 }}>
+          <p>
             <strong>Every database participant must close its handle.</strong> Another app, scheduler
             or CLI process blocks the swap until it acknowledges closure. The final check runs after
             confirmation; changed work or changed backup files require a fresh preview.
@@ -5984,7 +5984,7 @@ function Backup() {
             This phase has no action that resets these holds; acknowledging a warning cannot reconcile
             execution or a bill. Live terminals cannot survive the required restart.
           </p>
-          <p style={{ marginTop: 6 }}>
+          <p>
             <strong>Replaced originals are retained.</strong> The current database, transcripts and
             included session files move into a dated folder named in the result. API credentials and
             provider-pack and MCP approvals are not restored. An interrupted swap retains its external

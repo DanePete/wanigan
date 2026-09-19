@@ -73,7 +73,9 @@ try {
   await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Meta+,');
   await page.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
   await page.locator('#settings-tab-backup').click(); await shots('backup');
-  await page.getByRole('heading', { name: 'Restore a backup', exact: true }).scrollIntoViewIfNeeded();
+  // A heading already peeking in at the pane's edge makes scrollIntoViewIfNeeded
+  // a no-op, and the capture then shows the overview twice.
+  await page.getByRole('heading', { name: 'Restore a backup', exact: true }).evaluate(element => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
   await shots('backup-restore');
   if (!before) {
   await page.keyboard.press('Meta+Shift+Y');
