@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { RecoveryObservation } from '../shared/recovery';
 import { markIncompleteCost, type AccountingMetric } from './telemetry-accounting';
 import type { SessionUsage } from '../shared/types';
+import { paidOperationAccountedFor, type PaidOperationEvidence } from './paid-operation-evidence';
 
 type Owner = 'sessions' | 'queue' | 'headless' | 'worktrees' | 'suggest' | 'prompt-improve' | 'usage';
 type Read = { table: string; sql: string; source: string; billing?: boolean };
@@ -83,19 +84,18 @@ function inspectUsageLiability(d: Database.Database): RecoveryObservation[] {
  * recorded its meters. An answer nobody recorded, and no answer, stay open. */
 function inspectPaidOperations(d: Database.Database): RecoveryObservation[] {
   if (!hasTable(d, 'usage_paid_operations')) return [];
-  const rows = d.prepare(`SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id
+  const rows = d.prepare(`SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash
     FROM usage_paid_operations o LEFT JOIN usage_paid_settlements s ON s.receipt_id=o.id
-    WHERE s.outcome IS NULL OR s.outcome NOT IN ('not-charged-provider-stated','metered','reported-estimate')
-    ORDER BY o.id`).all() as { id: string; source: string; at: number; outcome: string | null; http_status: number | null; request_id: string | null }[];
-  return rows.map(row => ({
+    ORDER BY o.id`).all() as PaidOperationEvidence[];
+  return rows.filter(row => !paidOperationAccountedFor(d, row)).map(row => ({
     key: `usage:usage_paid_operations:${row.id}`, module: 'usage', operationId: row.id, cwd: null,
     execution: 'unsupported', checkout: 'not claimed', billing: 'unresolved',
     source: row.outcome
-      ? `Paid request answered (${row.source}, HTTP ${row.http_status ?? 'unknown'}) with no recorded meters`
+      ? `Paid request accounting is incomplete (${row.source})`
       : `Paid request admitted before submission (${row.source}) with no recorded response`,
     observedAt: row.at,
     reason: row.outcome
-      ? 'The provider answered, but no owning ledger recorded what this request metered, so what it cost is not known here.'
+      ? 'The response or linked accounting evidence is incomplete, ambiguous or changed. An outcome label alone cannot settle this request.'
       : 'This request was recorded before it was sent and no response was recorded. The provider states that a request the client abandons is still charged, so it stays unresolved and does not age out.',
     revision: evidenceHash(row), canReconcile: false,
   }));

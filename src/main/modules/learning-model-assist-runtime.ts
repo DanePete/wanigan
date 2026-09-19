@@ -668,10 +668,14 @@ function run(bin: string, argv: string[], cwd: string, env: NodeJS.ProcessEnv): 
       clearTimeout(timer);
       reject(error);
     });
-    child.on('close', () => {
+    child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (truncated || signal || code !== 0) {
+        reject(new Error('The model process did not produce a complete successful exit. Its paid receipt remains unresolved.'));
+        return;
+      }
       resolve({ stdout: out, receiptId });
     });
   });

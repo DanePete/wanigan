@@ -1,9 +1,9 @@
 {
-  "at": "2026-09-19T22:00:32.916Z",
+  "at": "2026-09-19T22:57:13.037Z",
   "node": "v22.23.2",
   "provenance": "Actual renderer with synthetic bridge; native recovery and restore tested separately.",
-  "dataRoot": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-ui-fikVui",
-  "providerPacksDir": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-ui-fikVui/provider-packs",
+  "dataRoot": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-ui-JvMsyk",
+  "providerPacksDir": "/var/folders/bd/1_x2yqfn371f_twb7w493zjh0000gn/T/wanigan-recovery-ui-JvMsyk/provider-packs",
   "checks": [
     "Only the supported claim offers release; exact token is forwarded; a failed apply consumes the displayed preview.",
     "Successful release preserves displayed unknown execution and unresolved billing, and records the decision.",

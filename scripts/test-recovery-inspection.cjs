@@ -33,7 +33,7 @@ function fixture({ register = true } = {}) {
   let generation = 'fixture-generation-1', held = false, operation = null, now = Date.now();
   class FixtureDate extends Date { static now() { return now; } }
   const cache = new Map();
-  const actual = new Set(['recovery', 'recovery-inspection', 'review-recovery', 'module-registry', 'checkout-activity', 'suggest-usage', 'prompt-improve-usage', 'telemetry-accounting']);
+  const actual = new Set(['recovery', 'recovery-inspection', 'paid-operation-evidence', 'review-recovery', 'module-registry', 'checkout-activity', 'suggest-usage', 'prompt-improve-usage', 'telemetry-accounting']);
   function load(file) {
     const absolute = path.resolve(root, file);
     if (cache.has(absolute)) return cache.get(absolute).exports;
@@ -85,7 +85,7 @@ function fixture({ register = true } = {}) {
     load('src/main/review-recovery.ts').recordReviewNeverSpawned(database, 'review-fixture', 'owner-fixture');
     return 'review:review-fixture';
   }
-  return { directory, checkout, native, database, recovery, registry, activity, finalized,
+  return { directory, checkout, native, database, recovery, registry, activity, finalized, paid: load('src/main/modules/usage-paid-operations.ts'),
     generation(value) { generation = value; }, hold() { held = true; }, operation(value) { operation = value; }, advance(delta) { now += delta; },
     close() { native.close(); fs.rmSync(directory, { recursive: true, force: true }); } };
 }
@@ -229,7 +229,8 @@ test('each independent owner or remote liability refuses direct restore without 
     ['Improve prompt failed before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','failed')")],
     ['Improve prompt answered on an unpriced model', f => f.native.exec("INSERT INTO prompt_improve_usage VALUES ('improve',1,'fixture','fixture','answered',4,2,0,NULL)")],
     ['paid request admitted before submission', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)")],
-    ['paid request answered with no recorded meters', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements VALUES ('paid',2,'responded',200,'req',NULL,NULL)")],
+    ['paid request answered with no recorded meters', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('paid',2,'responded',200,'req')")],
+    ['terminal label without evidence', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('paid',2,'metered',200,'req')")],
     ['remote batch', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'in_progress',NULL)")],
     ['ended batch without ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',NULL)")],
     ['ended batch with partial ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',-1)")],
@@ -290,9 +291,11 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);
       INSERT INTO prompt_improve_usage VALUES ('answered',1,'fixture','fixture','answered',4,2,0,0.001);
       INSERT INTO usage_paid_operations VALUES ('stated','anthropic:messages',1),('metered','anthropic:messages',1),('estimated','learning:cli',1);
-      INSERT INTO usage_paid_settlements VALUES ('stated',2,'not-charged-provider-stated',429,'req_a',NULL,NULL),
-        ('metered',2,'metered',200,'req_b','prompt_improve_usage','answered'),('estimated',2,'reported-estimate',NULL,NULL,'learning_model_runs','learning');
       INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);`);
+    f.paid.recordPaidResponse('stated', 429, 'req_a', f.database, true);
+    f.paid.recordPaidResponse('metered', 200, 'req_b', f.database, true);
+    assert(f.paid.accountForPaidOperation({ requestId: 'req_b', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'answered' }, f.database));
+    assert(f.paid.accountForPaidOperation({ receiptId: 'estimated', outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'learning' }, f.database));
     f.native.prepare('INSERT INTO headless_rows(run_id,project_id,project_name,project_path,status,started_at,ended_at,cost_reported,cost_usd) VALUES (?,?,?,?,?,?,?,?,?)')
       .run('headless', 'fixture', 'Fixture', f.checkout, 'done', 1, 2, 1, 0);
     assert.deepEqual(f.recovery.inspectRecovery().observations, []);
@@ -301,6 +304,29 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
     assert.throws(() => f.recovery.assertRestoreSafe(f.database), /TypeSafe/);
     assert.equal(f.recovery.inspectRecovery().observations[0].billing, 'unresolved');
   } finally { f.close(); }
+});
+
+test('accounted requests become blockers again when their linked evidence changes, disappears or becomes ambiguous', () => {
+  for (const mutate of [
+    f => f.native.exec("DELETE FROM prompt_improve_usage WHERE request_id='owner'"),
+    f => f.native.exec("UPDATE prompt_improve_usage SET input_tokens=99 WHERE request_id='owner'"),
+    f => f.native.exec("UPDATE usage_paid_settlements SET owner_id='other' WHERE receipt_id='paid'"),
+    f => { f.native.exec("INSERT INTO usage_paid_operations VALUES ('duplicate','anthropic:messages',1)");
+      f.paid.recordPaidResponse('duplicate', 200, 'req_owned', f.database, true); },
+  ]) {
+    const f = fixture();
+    try {
+      f.native.exec("INSERT INTO prompt_improve_usage VALUES ('owner',1,'fixture','fixture','answered',4,2,0,0.001); INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)");
+      f.paid.recordPaidResponse('paid', 200, 'req_owned', f.database, true);
+      assert(f.paid.accountForPaidOperation({ requestId: 'req_owned', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'owner' }, f.database));
+      assert.doesNotThrow(() => f.recovery.assertRestoreSafe(f.database));
+      const preview = f.recovery.previewRecovery(f.finalized());
+      mutate(f);
+      assert.throws(() => f.recovery.applyRecovery(preview.token), /changed/);
+      assert.throws(() => f.recovery.assertRestoreSafe(f.database), /Restore refused/);
+      assert(f.recovery.inspectRecovery().observations.some(row => row.key === 'usage:usage_paid_operations:paid' && row.billing === 'unresolved'));
+    } finally { f.close(); }
+  }
 });
 
 test('missing required schema is explicitly unavailable and cannot authorize preview or direct restore', () => {

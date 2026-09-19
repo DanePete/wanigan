@@ -7,6 +7,10 @@ const vm = require('node:vm');
 const { DatabaseSync } = require('node:sqlite');
 const ts = require('typescript');
 const file = path.join(__dirname, '../src/main/modules/usage-paid-operations.ts');
+const evidence = { exports: {} };
+const evidenceCode = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/main/paid-operation-evidence.ts'), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+vm.runInThisContext(`(function(require,module,exports){${evidenceCode}\n})`)(require, evidence, evidence.exports);
 
 function fixture() {
   const native = new DatabaseSync(':memory:');
@@ -15,6 +19,7 @@ function fixture() {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInThisContext(`(function(require,module,exports){${code}\n})`, { filename: file })(name => {
     if (name === 'node:crypto') return require(name);
+    if (name === '../paid-operation-evidence') return evidence.exports;
     if (name === '../db') return { db: () => native };
     if (name === '../storage-maintenance') return { assertStorageAdmission: input => {
       assert.deepEqual(input, { paid: true });
@@ -23,6 +28,9 @@ function fixture() {
     throw new Error(`Unexpected import: ${name}`);
   }, module, module.exports);
   module.exports.migrateUsagePaidOperations(native); module.exports.migrateUsagePaidSettlements(native);
+  module.exports.migrateUsagePaidSettlements(native);
+  native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
+    CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
     rows: () => native.prepare('SELECT source FROM usage_paid_operations ORDER BY at,rowid').all().map(row => row.source) };
 }
@@ -92,20 +100,45 @@ async function main() {
   assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_refused', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'x' }, d), false,
     'an error response is not re-labelled as metered');
   assert.equal(s.paid.accountForPaidOperation({ requestId: "req'; DROP", outcome: 'metered', ownerTable: 't', ownerId: 'x' }, d), false);
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_answered', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'missing' }, d), false,
+    'a label without its recorded owner evidence cannot account for a receipt');
+  d.exec("INSERT INTO prompt_improve_usage VALUES ('improve-1',1,'fixture',4,2,0,0.001)");
   assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_answered', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'improve-1' }, d), true);
   assert.deepEqual({ ...settlement(answered) }, { outcome: 'metered', http_status: 200, request_id: 'req_answered', owner_table: 'prompt_improve_usage', owner_id: 'improve-1' });
   assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_answered', outcome: 'metered', ownerTable: 'other', ownerId: 'again' }, d), false, 'accounted for once');
 
   const cliReceipt = s.paid.admitPaidOperation('learning:cli');
+  d.exec("INSERT INTO learning_model_runs VALUES ('run',1,'ok',1,0.002)");
   assert.equal(s.paid.accountForPaidOperation({ receiptId: 'not-a-receipt', outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), false);
   assert.equal(s.paid.accountForPaidOperation({ receiptId: cliReceipt, outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), true);
   assert.equal(settlement(cliReceipt).outcome, 'reported-estimate');
   assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 5, 'no receipt was ever updated or removed');
+  const isAccounted = id => evidence.exports.paidOperationAccountedFor(d, d.prepare(`SELECT o.id,o.source,o.at,
+    s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash FROM usage_paid_operations o
+    JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE o.id=?`).get(id));
+  assert(isAccounted(answered)); assert(isAccounted(cliReceipt)); assert(isAccounted(refusedByProvider));
+  d.exec("UPDATE prompt_improve_usage SET input_tokens=99 WHERE request_id='improve-1'");
+  assert.equal(isAccounted(answered), false, 'changed owner evidence cannot authorize a restore');
+  d.exec("DELETE FROM learning_model_runs WHERE id='run'");
+  assert.equal(isAccounted(cliReceipt), false, 'deleted ledger cannot authorize a restore');
+  const ambiguous = await receiptFor(answer(200, 'req_answered'));
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_answered', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'improve-1' }, d), false,
+    'one response id cannot account for two attempts');
+  assert.equal(isAccounted(ambiguous), false);
+  await s.paid.admittedFetch(answer(429, 'req_proxy'))('https://proxy.example/v1/messages', { method: 'POST' });
+  assert.equal(d.prepare("SELECT outcome FROM usage_paid_settlements WHERE request_id='req_proxy'").get().outcome, 'responded',
+    'an intermediary error is not a provider no-charge statement');
 
   // A settlement that cannot be written never takes the response from its caller.
   d.exec('DROP TABLE usage_paid_settlements');
   const quiet = console.warn; console.warn = () => {};
   try { assert.equal((await s.paid.admittedFetch(answer(200, 'req_late'))('https://api.anthropic.com/v1/messages', { method: 'POST' })).status, 200); }
+  finally { console.warn = quiet; }
+  const response = new Response('{}', { status: 200 });
+  const observerFailure = f.paid.admittedFetch(async () => response, () => 'fixture', () => { throw new Error('ledger unavailable'); });
+  console.warn = () => {};
+  try { assert.equal(await observerFailure('https://api.anthropic.com/v1/messages', { method: 'POST' }), response,
+    'bookkeeping failure must not look like a transport failure and provoke an SDK retry'); }
   finally { console.warn = quiet; }
   console.log('Usage paid operations: receipt-before-send, retry re-admission, late maintenance hold, failed-receipt refusal, bounded record and non-billable passthrough and the three accounting outcomes passed.');
 }

@@ -1,5 +1,7 @@
 # Recovery implementation handoff — completed 2026-09-19
 
+Subsequent paid-request accounting landed in `cc64311`. Its recovery safety follow-up now validates the linked evidence, preserves incomplete CLI/transport outcomes and has fresh full verification. See the [paid-evidence report](../../research/2026-09-19-relay-recovery-paid-evidence.md); it supersedes the permanent-receipt limitation recorded at this earlier checkpoint. Unknown liability and post-restore spending still remain held.
+
 > **Status: closed. Everything below this block is the historical checkpoint and is no longer current.**
 >
 > - The behaviour WIP described here as uncommitted was committed by a concurrent session in `703c46c`, mixed with unrelated dock, Usage and audit work, and pushed. It was not rewritten. The partial-staging guidance below therefore no longer applies.

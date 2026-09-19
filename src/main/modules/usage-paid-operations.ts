@@ -2,17 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { db } from '../db';
 import { assertStorageAdmission } from '../storage-maintenance';
+import { PAID_REQUEST_ID, paidSettlementEvidenceHash, type PaidOperationEvidence } from '../paid-operation-evidence';
 
 /** Transports with no owner ledger of their own that precedes the send. The
  * label is the whole record: no prompt, body, URL, credential or argv. */
 export type PaidOperationSource = 'anthropic:messages' | 'anthropic:batches' | 'learning:cli';
 
-/** A prospective receipt, written before the request can exist. Nothing here
- * settles it: a finished fetch or an exited child says the call returned, not
- * what it cost, and the ledgers that do record cost belong to other modules
- * and cover only some callers. So a receipt stays unresolved, and any recorded
- * paid operation refuses a later restore. That is the stated price of having
- * no settlement contract yet, not an oversight to clear on completion. */
+/** A prospective receipt, written before the request can exist. Only a
+ * separately bound accounting outcome can remove its recovery blocker. */
 export function migrateUsagePaidOperations(d: Database.Database): void {
   d.exec(`CREATE TABLE IF NOT EXISTS usage_paid_operations (
     id TEXT PRIMARY KEY,
@@ -72,19 +69,27 @@ export function migrateUsagePaidSettlements(d: Database.Database): void {
     owner_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_usage_paid_settlements_request ON usage_paid_settlements(request_id);`);
+  const columns = d.prepare('PRAGMA table_info(usage_paid_settlements)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'evidence_hash')) d.exec('ALTER TABLE usage_paid_settlements ADD COLUMN evidence_hash TEXT');
 }
 
-const REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const settlementSelect = `SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash
+  FROM usage_paid_operations o LEFT JOIN usage_paid_settlements s ON s.receipt_id=o.id`;
 
 /** The response's facts, written once when it arrives. Never throws into the
  * caller: a settlement that cannot be written leaves the receipt unresolved,
  * which is the conservative answer, and the response is still theirs. */
-export function recordPaidResponse(receiptId: string, status: number, requestId: string | null, d: Database.Database = db()): void {
-  const id = requestId && REQUEST_ID.test(requestId) ? requestId : null;
-  const outcome: PaidSettlementOutcome = status >= 400 && id ? 'not-charged-provider-stated' : 'responded';
+export function recordPaidResponse(receiptId: string, status: number, requestId: string | null, d?: Database.Database, directProvider = false): void {
   try {
-    d.prepare('INSERT OR IGNORE INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES (?,?,?,?,?)')
-      .run(receiptId, Date.now(), outcome, status, id);
+    const database = d ?? db();
+    const id = requestId && PAID_REQUEST_ID.test(requestId) ? requestId : null;
+    const outcome: PaidSettlementOutcome = directProvider && Number.isInteger(status) && status >= 400 && status <= 599 && id
+      ? 'not-charged-provider-stated' : 'responded';
+    const receipt = database.prepare('SELECT id,source,at FROM usage_paid_operations WHERE id=?').get(receiptId) as Pick<PaidOperationEvidence, 'id' | 'source' | 'at'> | undefined;
+    if (!receipt) return;
+    const evidence = { ...receipt, outcome, http_status: status, request_id: id, owner_table: null, owner_id: null, evidence_hash: null };
+    database.prepare('INSERT OR IGNORE INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id,evidence_hash) VALUES (?,?,?,?,?,?)')
+      .run(receiptId, Date.now(), outcome, status, id, paidSettlementEvidenceHash(database, evidence));
   } catch (error) {
     console.warn('[wanigan] paid response not recorded; its receipt stays unresolved:', error instanceof Error ? error.message : error);
   }
@@ -96,19 +101,21 @@ export function recordPaidResponse(receiptId: string, status: number, requestId:
 export function accountForPaidOperation(input: {
   requestId?: string | null; receiptId?: string | null;
   outcome: 'metered' | 'reported-estimate'; ownerTable: string; ownerId: string;
-}, d: Database.Database = db()): boolean {
+}, d?: Database.Database): boolean {
   try {
-    if (input.receiptId) {
-      return d.prepare(`INSERT OR IGNORE INTO usage_paid_settlements(receipt_id,at,outcome,owner_table,owner_id)
-        SELECT id,?,?,?,? FROM usage_paid_operations WHERE id=?`)
-        .run(Date.now(), input.outcome, input.ownerTable, input.ownerId, input.receiptId).changes > 0;
-    }
-    if (!input.requestId || !REQUEST_ID.test(input.requestId)) return false;
-    // Only an answered, successful request: an error response was already
-    // accounted for by the provider's statement and is not re-labelled.
-    return d.prepare(`UPDATE usage_paid_settlements SET outcome=?, owner_table=?, owner_id=?
-      WHERE request_id=? AND outcome='responded' AND http_status BETWEEN 200 AND 299`)
-      .run(input.outcome, input.ownerTable, input.ownerId, input.requestId).changes > 0;
+    const database = d ?? db();
+    if (!input.receiptId && (!input.requestId || !PAID_REQUEST_ID.test(input.requestId))) return false;
+    const rows = database.prepare(`${settlementSelect} WHERE ${input.receiptId ? 'o.id' : 's.request_id'}=?`)
+      .all(input.receiptId ?? input.requestId) as PaidOperationEvidence[];
+    if (rows.length !== 1) return false;
+    const row = rows[0];
+    if (input.receiptId ? row.outcome !== null : row.outcome !== 'responded') return false;
+    const evidenceHash = paidSettlementEvidenceHash(database, { ...row, outcome: input.outcome, owner_table: input.ownerTable, owner_id: input.ownerId });
+    if (!evidenceHash) return false;
+    if (input.receiptId) return database.prepare(`INSERT OR IGNORE INTO usage_paid_settlements(receipt_id,at,outcome,owner_table,owner_id,evidence_hash)
+      VALUES (?,?,?,?,?,?)`).run(row.id, Date.now(), input.outcome, input.ownerTable, input.ownerId, evidenceHash).changes === 1;
+    return database.prepare(`UPDATE usage_paid_settlements SET outcome=?,owner_table=?,owner_id=?,evidence_hash=?
+      WHERE receipt_id=? AND outcome='responded'`).run(input.outcome, input.ownerTable, input.ownerId, evidenceHash, row.id).changes === 1;
   } catch (error) {
     console.warn('[wanigan] paid operation not accounted for; its receipt stays unresolved:', error instanceof Error ? error.message : error);
     return false;
@@ -119,7 +126,8 @@ type Fetch = typeof globalThis.fetch;
 export function admittedFetch(
   send: Fetch = globalThis.fetch,
   admit: (source: PaidOperationSource) => string = admitPaidOperation,
-  responded: (receiptId: string, status: number, requestId: string | null) => void = recordPaidResponse,
+  responded: (receiptId: string, status: number, requestId: string | null, directProvider: boolean) => void
+    = (receipt, status, request, direct) => recordPaidResponse(receipt, status, request, undefined, direct),
 ): Fetch {
   return async (input, init) => {
     const request = typeof input === 'string' || input instanceof URL ? null : input;
@@ -129,7 +137,11 @@ export function admittedFetch(
     // A rejection here is a transport failure or timeout: no response, no
     // request id, nothing to record, and the receipt stays unresolved.
     const response = await send(input, init);
-    responded(receiptId, response.status, response.headers?.get('request-id') ?? null);
+    try {
+      const direct = new URL(request ? request.url : String(input)).origin === 'https://api.anthropic.com'
+        && !response.redirected && (!response.url || new URL(response.url).origin === 'https://api.anthropic.com');
+      responded(receiptId, response.status, response.headers?.get('request-id') ?? null, direct);
+    } catch { console.warn('[wanigan] paid response evidence unavailable; receipt remains unresolved.'); }
     return response;
   };
 }
