@@ -204,7 +204,7 @@ export async function runVerifiedDoneSmoke(check: Check, say: Say): Promise<void
     const index = appSource('src/main/index.ts');
     const preload = appSource('src/preload/index.ts');
     const view = appSource('src/renderer/src/views/Control.tsx');
-    check(index.includes('goalGate.initGoalGate(') && index.includes("handle('control:setGate'")
+    check(index.includes('goalGate.initGoalGate(') && appSource('src/main/modules/control.ts').includes("handle('control:setGate'")
       && preload.includes("call<DocketDetail>('control:setGate'") && view.includes('window.wanigan.control.setGate(goal') === false
       && view.includes('window.wanigan.control.setGate(docket.id'),
     'the stop listener starts with the app and the Control view can reach the setting, so the gate is reachable and not only callable');

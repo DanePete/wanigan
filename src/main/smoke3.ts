@@ -6061,7 +6061,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     db().prepare("UPDATE work_nodes SET status='failed',session_id='sess_p8_quiet' WHERE id=?").run(spentNode.id);
     control.retryNode(spentNode.id);
     const spendMixed = control.docket(spent.id).autopilot;
-    check(spendMixed.spendStatus === 'reported' && Math.abs(spendMixed.spendUsd - 4.2) < 1e-6,
+    check(spendMixed.spendStatus === 'partial' && Math.abs(spendMixed.spendUsd - 4.2) < 1e-6,
       'a second recorded session that named no cost is still counted as a member of the set the status is decided over, so spendUsd and spendStatus can never be computed from different populations',
       spendMixed);
 
@@ -7404,10 +7404,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Unreported and zero were the same stored value, so the router totalled
   // unmetered work as free and ranked it cheapest.
   check(controlMainSrc.includes('cost_reported')
-    && controlMainSrc.includes('reported ? usage!.costUsd : 0')
+    && controlMainSrc.includes('recordOutcomeReview(candidate, proof.id,')
     && controlMainSrc.includes('reported_samples')
     && !/ORDER BY accepted DESC,tests_passed DESC,samples DESC/.test(controlMainSrc),
-  'the outcome router records whether a cost was reported beside the figure, totals only the reported rows, and ranks by acceptance rate rather than by whichever profile happened to run most');
+  'Control records review observations and totals only reported outcome costs, ordered by acceptance rate');
 
   // The handler answered true unconditionally, so Fleet said a session "was
   // ended" for one that had already exited and could never render its own

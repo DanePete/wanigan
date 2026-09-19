@@ -1,0 +1,64 @@
+{
+  "bridge": "real Electron IPC; isolated app data; no agent sessions started",
+  "suggester": "disabled before interaction",
+  "checks": [
+    "initial routing is Auto / Lower cost",
+    "auto-cost: changing routing clears the previous preview",
+    "auto-cost: disabled/manual preview displays the defaults without a billed call",
+    "auto-cost: switching mode clears a rendered preview",
+    "auto-cost: UI create persists the selected mode and preference through real IPC",
+    "auto-cost: creation does not start an agent session",
+    "auto-balanced: changing routing clears the previous preview",
+    "auto-balanced: disabled/manual preview displays the defaults without a billed call",
+    "auto-balanced: switching mode clears a rendered preview",
+    "auto-balanced: UI create persists the selected mode and preference through real IPC",
+    "auto-balanced: creation does not start an agent session",
+    "auto-quality: changing routing clears the previous preview",
+    "auto-quality: disabled/manual preview displays the defaults without a billed call",
+    "auto-quality: switching mode clears a rendered preview",
+    "auto-quality: UI create persists the selected mode and preference through real IPC",
+    "auto-quality: creation does not start an agent session",
+    "manual: changing routing clears the previous preview",
+    "Manual exposes model override fields directly",
+    "Manual suppresses paid suggestion copy",
+    "manual: disabled/manual preview displays the defaults without a billed call",
+    "Manual preview shows the exact model and effort override",
+    "manual: switching mode clears a rendered preview",
+    "manual: UI create persists the selected mode and preference through real IPC",
+    "manual: creation does not start an agent session",
+    "Manual override survives real create/read IPC",
+    "routing choice survives creating another relay",
+    "Manual routing choice survives leaving Relay and returning",
+    "Auto preference survives Manual routing and a view swap"
+  ],
+  "created": [
+    {
+      "name": "auto-cost",
+      "routing": {
+        "mode": "auto",
+        "preference": "cost"
+      }
+    },
+    {
+      "name": "auto-balanced",
+      "routing": {
+        "mode": "auto",
+        "preference": "balanced"
+      }
+    },
+    {
+      "name": "auto-quality",
+      "routing": {
+        "mode": "auto",
+        "preference": "quality"
+      }
+    },
+    {
+      "name": "manual",
+      "routing": {
+        "mode": "manual",
+        "preference": "quality"
+      }
+    }
+  ]
+}

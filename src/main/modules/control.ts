@@ -195,6 +195,21 @@ function migrate(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_work_node_sessions_docket ON work_node_sessions(docket_id);
   `);
 
+  // Review observations preserve failed attempts; legacy outcomes remain a projection.
+  d.exec(`CREATE TABLE IF NOT EXISTS work_outcome_reviews (
+    id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL REFERENCES work_proofs(id) ON DELETE CASCADE,
+    docket_id TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+    node_id TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+    accepted INTEGER NOT NULL,
+    tests_passed INTEGER NOT NULL,
+    cost_usd REAL,
+    attempts_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(decision_id,node_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_work_outcome_reviews_node ON work_outcome_reviews(node_id,created_at);`);
+
   // P31 · a docket is a graph, not a fixed four-step chain.
   //
   // `depends_json` always described an arbitrary DAG; nothing ever wrote one.

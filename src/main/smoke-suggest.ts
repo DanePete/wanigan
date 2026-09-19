@@ -5,7 +5,7 @@ import { db } from './db';
 import { consumption, daily } from './usage';
 import type { RelayPhase } from '../shared/relay';
 import type { RouteCandidate } from '../shared/relay-route';
-import { phasesFor } from '../shared/suggest-questions';
+import { phasesFor, SUGGEST_QUESTION_POLICY, type StageAsk, type SystemOneRequest } from '../shared/suggest-questions';
 import { previewRelay } from './relay';
 import { DOCKET_NODE_KINDS } from '../shared/types';
 
@@ -149,10 +149,119 @@ export async function runSuggestSmoke(check: Check, say: Say): Promise<void> {
     check(estimatedUsd(-1) === 0 && estimatedUsd(Number.NaN) === 0,
       'and a usage figure that is not a count prices at nothing rather than NaN', estimatedUsd(Number.NaN));
 
+    await runSuggestRoutingSmoke(check, say);
     await runSuggestUsageSmoke(check, say);
   } finally {
     globalThis.fetch = realFetch;
     setSetting('suggest.enabled', before);
+  }
+}
+
+/** The production batched request, with an in-memory credential and an offline transport. */
+async function runSuggestRoutingSmoke(check: Check, say: Say): Promise<void> {
+  say('── suggester routing · one request with independent model-specific effort choices');
+  const start = (db().prepare('SELECT COALESCE(MAX(id),0) AS id FROM suggest_usage').get() as { id: number }).id;
+  const beforeEnabled = getSetting('suggest.enabled', '');
+  const beforeKey = process.env.WANIGAN_TYPESAFE_KEY;
+  const realFetch = globalThis.fetch;
+  const requests: SystemOneRequest[] = [];
+  const stages: readonly StageAsk[] = [
+    { phase: 'plan', candidates: CANDIDATES },
+    { phase: 'implement', candidates: CANDIDATES },
+    { phase: 'review', candidates: CANDIDATES },
+  ];
+  let weakModel = false;
+  globalThis.fetch = (async (input, init) => {
+    check(String(input) === `https://${SUGGEST_HOST}${SUGGEST_PATH}` && init?.method === 'POST',
+      'the batched route uses the declared System One POST endpoint');
+    const request = JSON.parse(String(init?.body)) as SystemOneRequest;
+    requests.push(request);
+    return new Response(JSON.stringify({
+      model: 'jev-routing-smoke',
+      answers: {
+        pipeline: { choice: 'full', confidence: 0.95 },
+        model_plan: { choice: 'sonnet', confidence: 0.95 },
+        effort_0_plan: { choice: 'xhigh', confidence: 0.99 },
+        effort_1_plan: { choice: 'low', confidence: 0.94, probabilities: { low: 0.94, high: 0.06 } },
+        deliberation_plan: { score: 3, confidence: 0.99 },
+        model_implement: { choice: 'gpt-5.1-codex', confidence: weakModel ? 0.1 : 0.95 },
+        effort_0_implement: { choice: 'xhigh', confidence: 0.97 },
+        effort_1_implement: { choice: 'high', confidence: 0.99 },
+        model_review: { choice: 'sonnet', confidence: 0.95 },
+        effort_0_review: { choice: 'xhigh', confidence: 0.99 },
+        effort_1_review: { choice: 'high', confidence: 0.79 },
+        deliberation_review: { score: 3, confidence: 0.99 },
+      },
+      usage: { input_tokens: 1600, output_tokens: 0 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof realFetch;
+  try {
+    // Install only after fetch is intercepted: this fixture can never contact
+    // the service, and it never saves a credential to the OS keychain.
+    process.env.WANIGAN_TYPESAFE_KEY = 'offline-routing-fixture';
+    setEnabled(['route', 'pipeline']);
+    const objectives = new Set<string>();
+    const effortObjectives = new Set<string>();
+    for (const preference of [undefined, 'balanced', 'quality'] as const) {
+      const beforeCalls = requests.length;
+      const plan = await suggestRelayPlan('add a retry to the uploader', PHASES, stages, preference);
+      check(requests.length === beforeCalls + 1,
+        `a ${preference ?? 'default cost'} relay asks for all models and efforts in exactly one request`, requests.length - beforeCalls);
+      const request = requests[requests.length - 1];
+      check(request.model === 'jev-latest'
+        && Object.keys(request.state).join(',') === 'operator_intent'
+        && request.state.operator_intent === 'add a retry to the uploader',
+      'the real transport carries only the bounded operator intent as state', request.state);
+      check(request.questions.pipeline?.type === 'choice' && Object.keys(request.questions).length === 16,
+        'one request holds the pipeline and each stage’s model, two effort choices and task evidence', Object.keys(request.questions));
+      for (const stage of stages) {
+        const modelQuestion = request.questions[`model_${stage.phase}`];
+        check(modelQuestion?.type === 'choice'
+          && Object.keys(modelQuestion.criteria).join(',') === CANDIDATES.map((candidate) => candidate.model).join(','),
+        `the ${stage.phase} model question offers only the declared candidate models`);
+        for (const [index, candidate] of CANDIDATES.entries()) {
+          const effortQuestion = request.questions[`effort_${index}_${stage.phase}`];
+          check(effortQuestion?.type === 'choice'
+            && Object.keys(effortQuestion.criteria).join(',') === candidate.efforts?.join(',')
+            && effortQuestion.instructions.includes(candidate.model)
+            && effortQuestion.instructions.includes(stage.phase),
+          `the ${stage.phase} effort question is conditioned on ${candidate.model} and offers its supported set`);
+        }
+      }
+      objectives.add(request.questions.model_implement.instructions);
+      effortObjectives.add(request.questions.effort_0_implement.instructions);
+      check(plan.stages.plan?.suggestion?.model === 'sonnet' && plan.stages.plan.suggestion.effort === 'low'
+        && plan.stages.implement?.suggestion?.model === 'gpt-5.1-codex' && plan.stages.implement.suggestion.effort === 'xhigh',
+      'the selected models retain their own effort answers, independent of another candidate and the deliberation score', plan.stages);
+      check(plan.stages.review?.suggestion?.model === 'sonnet' && plan.stages.review.suggestion.effort === null
+        && plan.stages.review.effort?.confidence === 0.79,
+      'an uncertain effort is kept as evidence and leaves the legal profile default to the router', plan.stages.review);
+      check(plan.stages.plan?.questionPolicy === SUGGEST_QUESTION_POLICY && plan.stages.plan.jevModel === 'jev-routing-smoke'
+        && plan.stages.plan.effort?.model === 'sonnet' && plan.stages.plan.effort.choice === 'low'
+        && plan.usage?.inputTokens === 1600 && Object.values(plan.stages).every((stage) => stage.usage === null),
+      'readings keep the question policy, returned Jev model and selected effort evidence, with metering once per call');
+    }
+    check(objectives.size === 3 && effortObjectives.size === 3,
+      'default cost, balanced and quality reach both the model and effort instructions');
+    const recorded = db().prepare('SELECT COUNT(*) AS n, SUM(input_tokens) AS tokens FROM suggest_usage WHERE id > ?')
+      .get(start) as { n: number; tokens: number };
+    check(recorded.n === 3 && recorded.tokens === 4800,
+      'three relay requests produce three metered rows, without multiplying usage by questions or stages', recorded);
+
+    weakModel = true;
+    const weak = await suggestRelayPlan('add a retry to the uploader', PHASES, stages, 'quality');
+    check(weak.stages.implement?.suggestion?.confidence === 0.1 && requests.length === 4,
+      'quality preference preserves model confidence for the unchanged router gate and makes no follow-up request');
+    setEnabled([]);
+    const disabled = await suggestRelayPlan('add a retry to the uploader', PHASES, stages, 'quality');
+    check(Object.keys(disabled.stages).length === 0 && requests.length === 4,
+      'a quality preference cannot bypass the disabled suggester capability');
+  } finally {
+    if (beforeKey === undefined) delete process.env.WANIGAN_TYPESAFE_KEY;
+    else process.env.WANIGAN_TYPESAFE_KEY = beforeKey;
+    setSetting('suggest.enabled', beforeEnabled);
+    globalThis.fetch = realFetch;
+    db().prepare('DELETE FROM suggest_usage WHERE id > ?').run(start);
   }
 }
 

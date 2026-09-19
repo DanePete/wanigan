@@ -757,7 +757,9 @@ type MetricRow = { session_id: string; metric: string; attrs: string; value: num
 function blankUsage(sessionId: string): SessionUsage {
   // Spreading EMPTY_USAGE alone would alias its `models` array into every row
   // it produces, so one caller sorting in place would rewrite the constant.
-  return { sessionId, ...EMPTY_USAGE, models: [] };
+  // Cost becomes reported only when a dollar meter exists, including a meter
+  // explicitly reporting zero. Tokens or request activity alone cannot price it.
+  return { sessionId, ...EMPTY_USAGE, costStatus: 'unavailable', models: [] };
 }
 
 /** Reads one attribute back out of a stored attrs key. */
@@ -866,6 +868,7 @@ export function usageForMany(ids: string[]): Record<string, SessionUsage> {
     switch (r.metric) {
       case 'claude_code.cost.usage':
         u.costUsd += r.value;
+        u.costStatus = 'reported';
         break;
       case 'claude_code.token.usage':
         switch (norm(attrOf(r.attrs, 'type'))) {

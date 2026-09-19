@@ -6,25 +6,23 @@
  * documented as not treating its state as hostile, so what may enter the state
  * is a security boundary rather than a tidiness preference.
  *
- * What comes back: arithmetic that cannot leave a profile's declared effort
- * ladder, and a reader that treats every field of an early-access API's
- * response as untrusted. The test that matters most is the property one — over
- * every score the model can return, on every ladder shape a profile can
- * declare, the answer is always a level that profile actually named.
+ * What comes back: separate model and model-specific effort choices, and a
+ * reader that treats the response as untrusted. Only the chosen model's valid,
+ * confident effort answer may route; task-demand evidence cannot substitute.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EFFORT_LEVELS } from './types.ts';
 import type { RelayPhase } from './relay.ts';
-import type { RouteCandidate } from './relay-route.ts';
+import { chooseStage, type RouteCandidate } from './relay-route.ts';
 import {
   DELIBERATION_LEVELS, DEFAULT_MIN_EFFORT_CONFIDENCE, DEFAULT_MIN_PIPELINE_CONFIDENCE,
   PIPELINES, UNSKIPPABLE,
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
-  NO_RELAY_PLAN,
+  NO_RELAY_PLAN, SUGGEST_QUESTION_POLICY,
   effortFromScore, phasesFor, readPipeline, readRelayPlan, readSuggestion,
   relayPlanRequest, relayRequest, stageRequest,
-  type StageAsk,
+  type StageAsk, type SystemOneQuestion,
 } from './suggest-questions.ts';
 
 /** The same three shapes the router's own fixture uses. */
@@ -45,6 +43,7 @@ const body = (over: Record<string, unknown> = {}) => ({
   model: 'jev-latest',
   answers: {
     model: { type: 'choice', choice: 'sonnet', probabilities: { sonnet: 0.9, opus: 0.1 }, confidence: 0.91 },
+    effort_2: { type: 'choice', choice: 'high', probabilities: { high: 0.9, low: 0.1 }, confidence: 0.9 },
     deliberation: { type: 'score', score: 3, probabilities: { '3': 0.95, '2': 0.05 }, confidence: 0.93 },
     needs_context: { type: 'noul', noul: 0.77 },
     ...over,
@@ -52,11 +51,11 @@ const body = (over: Record<string, unknown> = {}) => ({
   usage: { input_tokens: 312, output_tokens: 0 },
 });
 
-test('the request asks three independent questions and restates each one’s whole meaning', () => {
+test('the request asks independent model and model-specific effort questions', () => {
   const request = stageRequest('implement', 'add a retry to the uploader', CANDIDATES, ROUTE);
   assert.ok(request);
   assert.equal(request.model, 'jev-latest');
-  assert.deepEqual(Object.keys(request.questions).sort(), ['deliberation', 'model', 'needs_context']);
+  assert.deepEqual(Object.keys(request.questions).sort(), ['deliberation', 'effort_0', 'effort_2', 'model', 'needs_context']);
   assert.equal(request.questions.model.type, 'choice');
   assert.equal(request.questions.deliberation.type, 'score');
   assert.equal(request.questions.needs_context.type, 'noul');
@@ -72,6 +71,13 @@ test('the request asks three independent questions and restates each one’s who
   assert.equal(choice.type, 'choice');
   if (choice.type === 'choice') {
     assert.deepEqual(Object.keys(choice.criteria).sort(), ['gpt-5.1-codex', 'opus', 'sonnet']);
+  }
+  for (const index of [0, 2]) {
+    const effort: SystemOneQuestion = request.questions[`effort_${index}`];
+    assert.equal(effort.type, 'choice');
+    if (effort.type === 'choice') assert.deepEqual(Object.keys(effort.criteria), CANDIDATES[index].efforts);
+    assert.ok(effort.instructions.includes(CANDIDATES[index].model));
+    assert.match(effort.instructions, /implement/);
   }
 });
 
@@ -179,12 +185,15 @@ test('a well-formed answer becomes a suggestion the router can act on, with its 
     confidence: 0.91,
   });
   assert.deepEqual(reading.deliberation, { score: 3, confidence: 0.93, distribution: { '3': 0.95, '2': 0.05 } });
+  assert.deepEqual(reading.effort, { model: 'sonnet', choice: 'high', confidence: 0.9, distribution: { high: 0.9, low: 0.1 } });
+  assert.equal(reading.questionPolicy, SUGGEST_QUESTION_POLICY);
+  assert.equal(reading.jevModel, 'jev-latest');
   assert.equal(reading.needsContext, 0.77);
   assert.deepEqual(reading.usage, { inputTokens: 312, outputTokens: 0 });
 });
 
-test('a vague read on how hard the work is drops the effort and keeps the model', () => {
-  const shy = body({ deliberation: { type: 'score', score: 3, probabilities: {}, confidence: 0.4 } });
+test('an uncertain model-specific effort drops only the effort and retains its evidence', () => {
+  const shy = body({ effort_2: { type: 'choice', choice: 'high', probabilities: {}, confidence: 0.4 } });
   const reading = readSuggestion(shy, CANDIDATES);
 
   // The half that was confident survives; the half that was not names nothing,
@@ -194,8 +203,8 @@ test('a vague read on how hard the work is drops the effort and keeps the model'
   assert.equal(reading.suggestion?.confidence, 0.91);
 
   // And the judgment that was dropped is still evidence that it was asked.
-  assert.equal(reading.deliberation?.confidence, 0.4);
-  assert.equal(reading.deliberation?.score, 3);
+  assert.equal(reading.effort?.confidence, 0.4);
+  assert.equal(reading.effort?.choice, 'high');
 
   // The caller may set the bar where its own calibration puts it.
   const lowered = readSuggestion(shy, CANDIDATES, 0.3);
@@ -204,6 +213,100 @@ test('a vague read on how hard the work is drops the effort and keeps the model'
   // An unusable threshold fails closed rather than admitting everything.
   assert.equal(readSuggestion(shy, CANDIDATES, Number.NaN).suggestion?.effort, null);
   assert.equal(DEFAULT_MIN_EFFORT_CONFIDENCE, 0.8);
+});
+
+test('the same task can need different efforts on small and large selected models', () => {
+  const candidates: readonly RouteCandidate[] = [
+    { model: 'small', label: 'Small model', efforts: ['low', 'medium', 'high'] },
+    { model: 'large', label: 'Large model', efforts: ['low', 'medium', 'high'] },
+  ];
+  const answers = {
+    deliberation: { score: 3, confidence: 1 },
+    effort_0: { choice: 'high', confidence: 0.95 },
+    effort_1: { choice: 'low', confidence: 0.95 },
+  };
+  for (const [model, effort] of [['small', 'high'], ['large', 'low']]) {
+    const reading = readSuggestion({ answers: { ...answers, model: { choice: model, confidence: 0.95 } } }, candidates);
+    assert.equal(reading.suggestion?.effort, effort);
+    assert.equal(reading.effort?.model, model);
+  }
+});
+
+test('missing, unsupported or invalid selected-model efforts never use another model or a difficulty score', () => {
+  for (const effort of [
+    undefined, null, { choice: 'xhigh', confidence: 1 }, { choice: 'high', confidence: 1.1 },
+    { choice: 'high', confidence: -0.1 }, { choice: 'high', confidence: Number.NaN },
+    { choice: 'high', confidence: 'certain' }, { choice: 3, confidence: 1 },
+  ]) {
+    const reading = readSuggestion(body({
+      effort_2: effort,
+      effort_0: { choice: 'xhigh', confidence: 1 },
+    }), CANDIDATES);
+    assert.equal(reading.suggestion?.model, 'sonnet');
+    assert.equal(reading.suggestion?.effort, null);
+    assert.equal(reading.effort, null);
+    assert.equal(reading.deliberation?.score, 3);
+  }
+  const independent = readSuggestion(body({ deliberation: { score: 0, confidence: 0.1 } }), CANDIDATES);
+  assert.equal(independent.suggestion?.effort, 'high', 'task-demand evidence is independent of model-specific effort');
+  const noLadder = readSuggestion(body({ model: { choice: 'opus', confidence: 1 }, effort_1: { choice: 'high', confidence: 1 } }), CANDIDATES);
+  assert.equal(noLadder.suggestion?.effort, null);
+});
+
+test('the routing boundary preserves operator precedence and profile defaults with model-specific effort answers', () => {
+  const defaults = { model: 'gpt-5.1-codex', effort: 'low' };
+  const confident = readSuggestion(body(), CANDIDATES).suggestion;
+  const operator = chooseStage('implement', CANDIDATES, defaults, confident, {
+    operator: { model: 'gpt-5.1-codex', effort: 'medium' },
+  });
+  assert.equal(operator.source, 'operator');
+  assert.equal(operator.model, 'gpt-5.1-codex');
+  assert.equal(operator.effort, 'medium');
+
+  const uncertainEffort = readSuggestion(body({ effort_2: { choice: 'high', confidence: 0.79 } }), CANDIDATES);
+  const defaultEffort = chooseStage('implement', CANDIDATES, defaults, uncertainEffort.suggestion);
+  assert.equal(defaultEffort.model, 'sonnet');
+  assert.equal(defaultEffort.effort, 'low');
+  assert.equal(defaultEffort.source, 'suggested');
+
+  const uncertainModel = readSuggestion(body({ model: { choice: 'sonnet', confidence: 0.79 } }), CANDIDATES);
+  const defaultModel = chooseStage('implement', CANDIDATES, defaults, uncertainModel.suggestion);
+  assert.equal(defaultModel.model, defaults.model);
+  assert.equal(defaultModel.effort, defaults.effort);
+  assert.equal(defaultModel.source, 'profile-default');
+});
+
+test('cost, balanced and quality preferences change the objective without changing supported sets or confidence gates', () => {
+  const modelInstructions = new Set<string>();
+  const effortInstructions = new Set<string>();
+  for (const preference of ['cost', 'balanced', 'quality'] as const) {
+    const request = stageRequest('review', 'check the parser', CANDIDATES, { ...ROUTE, preference });
+    const batched = relayPlanRequest('check the parser', ['review'], [{ phase: 'review', candidates: CANDIDATES }], ['route'], preference);
+    assert.ok(request && batched);
+    modelInstructions.add(request.questions.model.instructions);
+    effortInstructions.add(request.questions.effort_2.instructions);
+    assert.equal(request.questions.model.instructions, batched.questions.model_review.instructions);
+    assert.equal(request.questions.effort_2.instructions, batched.questions.effort_2_review.instructions);
+    const effort = request.questions.effort_2;
+    if (effort.type === 'choice') assert.deepEqual(Object.keys(effort.criteria), ['low', 'high']);
+  }
+  assert.equal(modelInstructions.size, 3);
+  assert.equal(effortInstructions.size, 3);
+  assert.deepEqual(stageRequest('review', 'check the parser', CANDIDATES, ROUTE),
+    stageRequest('review', 'check the parser', CANDIDATES, { ...ROUTE, preference: 'cost' }));
+});
+
+test('model-specific effort instructions bound catalogue text and keep returned Jev identity separate from policy', () => {
+  const request = stageRequest('implement', 'update the parser', CANDIDATES, {
+    ...ROUTE, descriptions: { sonnet: `Compact\nmodel ${'x'.repeat(2000)}` },
+  });
+  assert.ok(request);
+  assert.ok(!request.questions.effort_2.instructions.includes('x'.repeat(200)));
+  assert.doesNotMatch(request.questions.effort_2.instructions, /\p{C}/u);
+  const reading = readSuggestion({ ...body(), model: 'jev-1.13' }, CANDIDATES);
+  assert.equal(reading.jevModel, 'jev-1.13');
+  assert.equal(reading.questionPolicy, 'model-effort-v1');
+  assert.equal(readSuggestion({ answers: body().answers }, CANDIDATES).jevModel, null);
 });
 
 test('a model this profile does not declare yields no suggestion, and the rest is still recorded', () => {
@@ -252,7 +355,7 @@ test('a malformed body is an ordinary input and never throws', () => {
     CANDIDATES,
   );
   assert.deepEqual(partial.suggestion?.distribution, { sonnet: 0.9 });
-  assert.equal(partial.suggestion?.effort, null, 'no deliberation answer means no effort');
+  assert.equal(partial.suggestion?.effort, null, 'no model-specific effort answer means no effort');
 });
 
 /* ── which stages run at all ──────────────────────────────────────────── */
@@ -429,12 +532,13 @@ const ASKS: readonly StageAsk[] = [
 ];
 const BOTH = ['route', 'pipeline'] as const;
 
-test('one request carries the pipeline question and every stage’s three, over one state', () => {
+test('one request carries pipeline, model and model-specific effort questions over one state', () => {
   const request = relayPlanRequest('add a retry', ALL_PHASES, ASKS, BOTH);
   assert.ok(request);
   assert.deepEqual(Object.keys(request.state), ['operator_intent']);
   assert.deepEqual(Object.keys(request.questions).sort(), [
     'deliberation_implement', 'deliberation_plan', 'deliberation_review',
+    'effort_0_implement', 'effort_0_plan', 'effort_0_review', 'effort_2_implement', 'effort_2_plan',
     'model_implement', 'model_plan', 'model_review',
     'needs_context_implement', 'needs_context_plan', 'needs_context_review',
     'pipeline',
@@ -474,11 +578,13 @@ test('a batched answer is read back per stage, gated exactly as a single one is'
     answers: {
       pipeline: { type: 'choice', choice: 'direct', probabilities: { direct: 0.9 }, confidence: 0.9 },
       model_plan: { type: 'choice', choice: 'sonnet', probabilities: { sonnet: 0.95 }, confidence: 0.95 },
+      effort_2_plan: { type: 'choice', choice: 'high', confidence: 0.9 },
       deliberation_plan: { type: 'score', score: 3, confidence: 0.9 },
       needs_context_plan: { type: 'noul', noul: 0.4 },
-      // Confident model, unconvinced deliberation: the model survives, the
+      // Confident model, unconvinced effort: the model survives, the
       // effort does not, and the router reads that as "nobody named one".
       model_implement: { type: 'choice', choice: 'gpt-5.1-codex', probabilities: {}, confidence: 0.88 },
+      effort_0_implement: { type: 'choice', choice: 'xhigh', confidence: 0.2 },
       deliberation_implement: { type: 'score', score: 3, confidence: 0.2 },
       // A model this stage was never offered is discarded.
       model_review: { type: 'choice', choice: 'gpt-5.1-codex', confidence: 0.99 },

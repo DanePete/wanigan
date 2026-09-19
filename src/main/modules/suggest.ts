@@ -5,6 +5,7 @@ import { getSetting, setSetting } from '../settings';
 import { db } from '../db';
 import { migrateSuggestUsage, recordSuggestUsage, suggestConsumption, suggestDaily } from '../suggest-usage';
 import type { RelayPhase } from '../../shared/relay';
+import type { RelayRoutingPreference } from '../../shared/relay-routing';
 import {
   NO_SUGGESTER, SUGGESTER_CAPABILITIES,
   NO_RELAY_PLAN, readRelayPlan, relayPlanRequest,
@@ -240,9 +241,9 @@ async function ask(request: SystemOneRequest, keyOverride?: string): Promise<Ask
  * Every question a relay needs, in one call.
  *
  * One request for the whole relay rather than one per stage: the pipeline
- * choice and every stage's model, deliberation and context questions ride
- * together. They are independent and evaluated in parallel, so this is the
- * measured 12.2x cheaper and 10x faster shape rather than a cleverness.
+ * choice and every stage's model, model-specific effort and task evidence ride
+ * together. Questions are independent; only the selected model's effort answer
+ * is consumed. More questions add metered input, without another round trip.
  *
  * Nothing is the honest and common answer: no credential, both capabilities
  * off, halted, timed out, rate limited, or an answer that did not clear its
@@ -253,8 +254,9 @@ export async function suggestRelayPlan(
   intent: string,
   requested: readonly RelayPhase[],
   stages: readonly StageAsk[],
+  preference: RelayRoutingPreference = 'cost',
 ): Promise<RelayPlanReading> {
-  const request = relayPlanRequest(intent, requested, stages, enabled());
+  const request = relayPlanRequest(intent, requested, stages, enabled(), preference);
   if (!request) return NO_RELAY_PLAN;
   const outcome = await ask(request);
   if (!outcome.ok) return NO_RELAY_PLAN;

@@ -24,7 +24,7 @@
     "dist:mac": "electron-vite build && { electron-builder --mac; c=$?; npm run rebuild; exit $c; }",
     "install:mac:arm64": "node scripts/install-local-macos.cjs",
     "dist:mac:arm64:install": "npm run dist:mac:arm64 && npm run install:mac:arm64",
-    "test:shared": "node --test src/shared/*.test.ts && node scripts/test-async-credentials.cjs",
+    "test:shared": "node --test src/shared/*.test.ts && node scripts/test-async-credentials.cjs && node scripts/test-control-dispatch.cjs",
     "test:renderer-style": "node scripts/check-renderer-style.cjs",
     "test:dead-code": "knip --exclude exports,types,nsExports,nsTypes,enumMembers,classMembers,duplicates",
     "shots": "node scripts/shots.mjs",

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { DocketNode, RelayRead } from '../shared/types';
+import { SUGGEST_QUESTION_POLICY, type SystemOneRequest } from '../shared/suggest-questions';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -58,15 +59,18 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
     const implementRead = created.nodes.find((node) => node.nodeId === implementNode.id)!;
     check(created.nodes.filter((node) => node.route !== null).length === 4
       && created.nodes.find((node) => node.nodeId === estimateNode.id)?.route === null
-      && created.docket.proofs.filter((proof) => proof.kind === 'route').length === 4
+      && created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId !== null).length === 4
       && estimateNode.providerId === null && estimateNode.model === null,
     'every agent phase gets exactly one route proof and the estimate phase, which runs no agent, gets neither a route nor a provider');
     check(implementRead.route?.route.source === 'profile-default' && implementRead.route.providerId === providerId
       && implementNode.providerId === providerId && implementNode.model === implementRead.route.route.model && implementNode.model !== null
       && /profile-default|first model this profile declares|own default/.test(implementRead.route.route.reason),
     'with no suggester wired, a stage runs on the profile default and the node row carries the same provider and model the route proof does', implementRead.route);
-    check(created.docket.proofs.filter((proof) => proof.kind === 'route').every((proof) => proof.summary.startsWith('The ') && proof.summary.includes(' stage runs on ')),
+    check(created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId !== null).every((proof) => proof.summary.startsWith('The ') && proof.summary.includes(' stage runs on ')),
       'a route proof’s summary is the router’s own reason sentence');
+    check(created.routing?.mode === 'auto' && created.routing.preference === 'cost'
+      && created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId === null).length === 1,
+    'an omitted routing setting records Auto and Lower cost once, separately from the four stage decisions', created.routing);
 
     const bad = await refused(() => relay.createRelay({ projectId: project.id, intent: 'x', providerId, routes: { implement: { model: 'no-such-model' } } }));
     check(/does not declare/.test(bad) && /refused rather than changed/.test(bad) && relay.listRelays(project.id).length === 1,
@@ -310,7 +314,194 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
       check(/not ready/.test(await started(relayId, unready.kind, '--spend')),
         `a phase that is not ready (${unready.kind}, ${unready.status}) is refused in the terminal, before a window is woken to refuse it`);
     }
+    await runRelayRoutingSmoke(project.id, check, say);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+/** Real preview/create/read paths with Jev credentialed, using an offline transport. */
+async function runRelayRoutingSmoke(projectId: string, check: Check, say: Say): Promise<void> {
+  say('── relay routing · Manual is unbilled, Auto preferences and evidence survive the read');
+  const relay = await import('./relay');
+  const { db, dataDir } = await import('./db');
+  const accounts = await import('./accounts');
+  const { getSetting, setSetting } = await import('./settings');
+  const suggest = await import('./modules/suggest');
+  const beforeEnabled = getSetting('suggest.enabled', '');
+  const beforeKey = process.env.WANIGAN_TYPESAFE_KEY;
+  const realFetch = globalThis.fetch;
+  const usageStart = (db().prepare('SELECT COALESCE(MAX(id),0) AS id FROM suggest_usage').get() as { id: number }).id;
+  const createdIds: string[] = [];
+  const accountDir = path.join(dataDir(), `smoke-relay-account-${randomUUID()}`);
+  let accountId: string | null = null;
+  const requests: SystemOneRequest[] = [];
+  const intent = 'Add a retry to the uploader.';
+  const providerId = 'claude';
+  const routes = { implement: { model: 'sonnet', effort: 'high' } };
+  const refused = async (run: () => unknown | Promise<unknown>): Promise<string> => {
+    try { await run(); return ''; } catch (error) { return error instanceof Error ? error.message : String(error); }
+  };
+  const nodeOf = (read: RelayRead, kind: string) => read.docket.nodes.find((node) => node.kind === kind)!;
+  const rows = () => (db().prepare('SELECT COUNT(*) AS n FROM work_dockets').get() as { n: number }).n;
+  const usageRows = () => (db().prepare('SELECT COUNT(*) AS n FROM suggest_usage WHERE id > ?').get(usageStart) as { n: number }).n;
+  type StoredProof = {
+    accountId?: string | null;
+    routing?: unknown;
+    questionPolicy?: string;
+    suggesterUsage?: { inputTokens?: number; outputTokens?: number } | null;
+    jevModel?: string | null;
+    effortReading?: { model?: string; choice?: string; confidence?: number } | null;
+  };
+  const proofDetail = (docketId: string, nodeId: string | null): StoredProof | null => {
+    const row = db().prepare("SELECT detail_json FROM work_proofs WHERE docket_id=? AND node_id IS ? AND kind='route' ORDER BY rowid DESC LIMIT 1")
+      .get(docketId, nodeId) as { detail_json: string } | undefined;
+    return row ? JSON.parse(row.detail_json) as StoredProof : null;
+  };
+  globalThis.fetch = (async (input, init) => {
+    check(String(input) === `https://${suggest.SUGGEST_HOST}${suggest.SUGGEST_PATH}`,
+      'the fixture sees only Jev; the Claude profile resolves its catalogue locally');
+    const request = JSON.parse(String(init?.body)) as SystemOneRequest;
+    requests.push(request);
+    const answers: Record<string, unknown> = { pipeline: { choice: 'direct', confidence: 0.99 } };
+    for (const [id, question] of Object.entries(request.questions)) {
+      if (id.startsWith('model_')) answers[id] = { choice: 'sonnet', confidence: 0.95 };
+      if (id.startsWith('effort_') && question.type === 'choice') {
+        answers[id] = { choice: 'low', confidence: 0.95, probabilities: { low: 0.95 } };
+      }
+      if (id.startsWith('deliberation_')) answers[id] = { score: 3, confidence: 0.99 };
+    }
+    return new Response(JSON.stringify({
+      model: 'jev-relay-routing-smoke', answers,
+      usage: { input_tokens: 2400, output_tokens: 0 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof realFetch;
+  try {
+    // Install only after interception. No real credential is read or written,
+    // and every attempted request is served locally throughout this fixture.
+    process.env.WANIGAN_TYPESAFE_KEY = 'offline-relay-routing-fixture';
+    suggest.setEnabled(['route', 'pipeline']);
+    check(suggest.enabled().length === 2, 'the fixture enables both Jev capabilities before testing the Manual boundary');
+
+    const manualRouting = { mode: 'manual', preference: 'quality' } as const;
+    const manualPreview = await relay.previewRelay({ intent, providerId, routes, routing: manualRouting });
+    check(!manualPreview.asked && manualPreview.estimatedUsd === 0 && manualPreview.pipeline === null
+      && manualPreview.phases.join(',') === 'plan,estimate,implement,verify,review'
+      && manualPreview.routes.implement?.route.source === 'operator'
+      && manualPreview.routes.implement.route.model === 'sonnet' && manualPreview.routes.implement.route.effort === 'high',
+    'Manual preview preserves every stage and the explicit model/effort, with no inference charge', manualPreview);
+    const manual = await relay.createRelay({ projectId, intent, providerId, routes, routing: manualRouting, delivery: false });
+    createdIds.push(manual.docket.id);
+    const manualImplement = nodeOf(manual, 'implement');
+    check(requests.length === 0 && usageRows() === 0
+      && manual.docket.nodes.map((node) => node.kind).join(',') === 'plan,estimate,implement,verify,review'
+      && manual.routing?.mode === 'manual' && manual.routing.preference === 'quality'
+      && manualImplement.model === 'sonnet'
+      && manual.nodes.find((node) => node.nodeId === manualImplement.id)?.effort === 'high'
+      && manual.nodes.find((node) => node.nodeId === manualImplement.id)?.route?.route.source === 'operator',
+    'credentialed Manual creation makes zero Jev calls, retains estimate/verification/review, and stores the operator choice', manual.routing);
+    check(manual.nodes.filter((node) => node.route).every((node) => node.route?.route.source === (node.nodeId === manualImplement.id ? 'operator' : 'profile-default'))
+      && proofDetail(manual.docket.id, null)?.suggesterUsage === null,
+    'Manual unpinned stages use profile defaults and record no invented Jev usage');
+
+    // Use a real account row and an empty owned directory, so account
+    // inheritance is exercised even when no personal harness account exists.
+    const account = accounts.create({ harness: 'claude-code', label: 'Relay account inheritance fixture', configDir: accountDir });
+    accountId = account.id;
+    const inherited = await relay.createRelay({
+      projectId, intent: 'Keep the chosen account across manual stage overrides.', providerId,
+      routing: manualRouting, accountId: account.id, delivery: false,
+      routes: {
+        plan: { model: 'sonnet' },
+        implement: { effort: 'high' },
+        verify: { permissionMode: 'plan' },
+        review: { accountId: null },
+      },
+    });
+    createdIds.push(inherited.docket.id);
+    for (const [phase, override] of [['plan', 'model-only'], ['implement', 'effort-only'], ['verify', 'permission-only']]) {
+      const node = nodeOf(inherited, phase);
+      check(node.accountId === account.id && proofDetail(inherited.docket.id, node.id)?.accountId === account.id,
+        `a Manual ${override} override inherits the relay-wide account in both its node and route proof`,
+        { phase, accountId: node.accountId });
+    }
+    const optedOut = nodeOf(inherited, 'review');
+    check(optedOut.accountId === null && proofDetail(inherited.docket.id, optedOut.id)?.accountId === null,
+      'an explicit null stage account still opts out of the relay-wide account');
+    check(nodeOf(inherited, 'plan').model === 'sonnet'
+      && inherited.nodes.find((node) => node.nodeId === nodeOf(inherited, 'implement').id)?.effort === 'high'
+      && nodeOf(inherited, 'verify').permissionMode === 'plan'
+      && nodeOf(inherited, 'estimate').accountId === null
+      && requests.length === 0 && usageRows() === 0 && fs.readdirSync(accountDir).length === 0,
+    'account inheritance preserves each launch override, keeps the estimate unassigned, and starts no agent or credential flow');
+
+    const beforeRefusals = rows();
+    for (const routing of [null, [], {}, { mode: 'automatic', preference: 'cost' },
+      { mode: 'auto', preference: 'cheapest' }, { mode: 'auto', preference: 'cost', confidence: 0 }]) {
+      const input = { intent, providerId, routing };
+      const previewError = await refused(() => relay.previewRelay(input));
+      const createError = await refused(() => relay.createRelay({ ...input, projectId, routing: routing as never, delivery: false }));
+      check(previewError.length > 0 && createError.length > 0 && requests.length === 0 && usageRows() === 0 && rows() === beforeRefusals,
+        'malformed routing is rejected before preview inference, creation inference or a docket write', { previewError, createError });
+    }
+    const badOverride = await refused(() => relay.createRelay({
+      projectId, intent, providerId, routing: { mode: 'auto', preference: 'quality' },
+      routes: { implement: { model: 'sonnet', effort: 'not-declared' } }, delivery: false,
+    }));
+    check(/does not declare/.test(badOverride) && requests.length === 0 && rows() === beforeRefusals,
+      'an invalid explicit override is refused before a credentialed Auto request can spend', badOverride);
+
+    const objectives = new Set<string>();
+    for (const preference of ['cost', 'balanced', 'quality'] as const) {
+      const beforeCalls = requests.length;
+      const automatic = await relay.createRelay({ projectId, intent, providerId, routes, routing: { mode: 'auto', preference }, accountId: account.id, delivery: false });
+      createdIds.push(automatic.docket.id);
+      const reread = relay.readRelay(automatic.docket.id);
+      const request = requests[requests.length - 1];
+      check(requests.length === beforeCalls + 1 && !('model_implement' in request.questions),
+        `Auto ${preference} makes one batched request and does not ask Jev to replace an explicit model/effort`);
+      objectives.add(request.questions.model_review.instructions);
+      check(reread.routing?.mode === 'auto' && reread.routing.preference === preference
+        && reread.docket.nodes.map((node) => node.kind).join(',') === 'estimate,implement,verify,review'
+        && reread.pipeline?.pipeline === 'direct',
+      `Auto ${preference} survives storage while pipeline narrowing retains the estimate, verification and review`, reread.routing);
+      const implementation = reread.nodes.find((node) => node.nodeId === nodeOf(reread, 'implement').id);
+      check(implementation?.route?.route.source === 'operator' && implementation.route.route.model === 'sonnet' && implementation.effort === 'high',
+        'an explicit stage model/effort still outranks Auto preferences and the returned suggestion');
+      check(nodeOf(reread, 'implement').accountId === account.id
+        && proofDetail(reread.docket.id, nodeOf(reread, 'implement').id)?.accountId === account.id,
+      'Auto also inherits the relay-wide account through an explicit model/effort override');
+      const policy = proofDetail(reread.docket.id, null);
+      check(JSON.stringify(policy?.routing) === JSON.stringify({ mode: 'auto', preference })
+        && policy?.questionPolicy === SUGGEST_QUESTION_POLICY
+        && policy.suggesterUsage?.inputTokens === 2400 && policy.suggesterUsage.outputTokens === 0,
+      'one docket-level proof records the chosen policy and call metering');
+      const reviewId = nodeOf(reread, 'review').id;
+      const review = reread.nodes.find((node) => node.nodeId === reviewId);
+      const reviewProof = proofDetail(reread.docket.id, reviewId);
+      check(review?.route?.route.source === 'suggested' && review.route.route.model === 'sonnet' && review.effort === 'low'
+        && reviewProof?.questionPolicy === SUGGEST_QUESTION_POLICY && reviewProof.jevModel === 'jev-relay-routing-smoke'
+        && reviewProof.effortReading?.model === 'sonnet' && reviewProof.effortReading.choice === 'low',
+      'the accepted model-specific effort and returned Jev identity survive on the stage proof');
+    }
+    check(objectives.size === 3 && usageRows() === 3,
+      'all three Auto preferences reach Jev and each relay is metered once');
+
+    // Existing relays lack this new docket-level proof. Removing it from the
+    // fixture recreates that record shape without inventing a historical choice.
+    db().prepare("DELETE FROM work_proofs WHERE docket_id=? AND node_id IS NULL AND kind='route'").run(manual.docket.id);
+    const legacy = relay.readRelay(manual.docket.id);
+    check(legacy.routing === null && legacy.relay
+      && legacy.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId !== null).length === 4,
+    'a legacy relay with no recorded routing policy reads null and keeps its original stage decisions');
+  } finally {
+    if (beforeKey === undefined) delete process.env.WANIGAN_TYPESAFE_KEY;
+    else process.env.WANIGAN_TYPESAFE_KEY = beforeKey;
+    setSetting('suggest.enabled', beforeEnabled);
+    globalThis.fetch = realFetch;
+    for (const id of createdIds) db().prepare('DELETE FROM work_dockets WHERE id=?').run(id);
+    if (accountId !== null) accounts.remove(accountId);
+    fs.rmSync(accountDir, { recursive: true, force: true });
+    db().prepare('DELETE FROM suggest_usage WHERE id > ?').run(usageStart);
   }
 }

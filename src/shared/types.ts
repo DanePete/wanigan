@@ -1749,6 +1749,8 @@ export type RelayRouteInput = Partial<Record<DocketNodeKind, {
 
 export type RelayCreateInput = {
   projectId: string;
+  /** Explicit routing mode and Auto preference; omitted keeps Auto / Lower cost. */
+  routing?: import('./relay-routing.ts').RelayRoutingSettings;
   /** New relays include deliberate commit/deploy stages unless explicitly disabled. */
   delivery?: boolean;
   /** The outcome in the operator's words. Becomes the docket's objective. */
@@ -1861,7 +1863,10 @@ export type RelayPipelineRead = {
 };
 
 /** What the suggester would do with this intent, without creating anything. */
-export type RelayPreviewInput = { intent: string; providerId: string; routes?: RelayRouteInput };
+export type RelayPreviewInput = {
+  intent: string; providerId: string; routes?: RelayRouteInput;
+  routing?: import('./relay-routing.ts').RelayRoutingSettings;
+};
 
 export type RelayPreviewRoute = {
   route: { model: string | null; effort: string | null; source: 'profile-default' | 'suggested' | 'operator'; confidence: number | null; reason: string };
@@ -1873,23 +1878,26 @@ export type RelayPreviewRoute = {
    * taken would demonstrate the threshold instead of the model.
    */
   suggested: { model: string | null; effort: string | null; confidence: number } | null;
-  /** The deliberation judgment behind the effort, if one was asked. */
+  /** Task-demand evidence, if asked. Model-specific effort is chosen separately. */
   deliberation: { score: number; confidence: number } | null;
 };
 
 export type RelayPreview = {
-  /** Whether a suggester was consulted at all. False means nothing here is a guess: it is the profile default. */
+  routing: import('./relay-routing.ts').RelayRoutingSettings;
+  /** Whether a suggestion was requested. Manual uses only overrides and profile defaults. */
   asked: boolean;
   /** Which stages would run. Every declared one unless a confident pipeline answer narrowed the front. */
   phases: DocketNodeKind[];
   pipeline: { pipeline: string; confidence: number } | null;
   routes: Partial<Record<DocketNodeKind, RelayPreviewRoute>>;
   /** Wanigan's arithmetic for the calls this preview made. Never a reported cost. */
-  estimatedUsd: number;
+  estimatedUsd: number | null;
 };
 
 export type RelayRead = {
   docket: DocketDetail;
+  /** Null for goals created before routing preferences were recorded. */
+  routing: import('./relay-routing.ts').RelayRoutingSettings | null;
   /** Relay-owned delivery stages; null for older relays until explicitly added. */
   delivery: import('./relay-delivery.ts').RelayDeliveryRead | null;
   /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */

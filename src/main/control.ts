@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { SessionGoal } from '../shared/goal-journey';
 import { db } from './db';
+import { recordOutcomeReview } from './control-outcomes';
 import { halted } from './halt';
 import { headSync } from './git';
 import { listProjects, projectById } from './store';
@@ -704,8 +705,15 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const providerId = safeText(input.providerId, 'Provider', 120);
   // Refuse before taking a claim or launching an agent. A shared verifier
   // cannot be handed one arbitrary branch and told it contains the whole goal.
-  const inheritedTree = (node.kind === 'verify' || node.kind === 'review')
+  // A correction continues in the checkout that already holds its work.
+  // createSession validates the adopted tree against this project's Git
+  // repository; neither a missing nor an unrelated tree may become a fresh
+  // checkout that silently discards the previous attempt's change.
+  const inheritedTree = (node.kind === 'verify' || node.kind === 'review' || (node.kind === 'implement' && node.worktree))
     ? verificationTree(nodeRow(nodeId)) : { kind: 'none' as const };
+  if (node.kind === 'implement' && inheritedTree.kind === 'gone') {
+    throw new Error(`The checkout recorded for this task no longer exists (${inheritedTree.path}). Restore it before continuing this task.`);
+  }
   assertVerificationTree(inheritedTree);
   // Take the declared claim before anything is spawned. A conflict found after
   // the PTY is up has already cost tokens and left an agent editing a
@@ -729,9 +737,8 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   // Built after this node's own claim is taken, so its sibling list is what the
   // agent will actually be running beside.
   const capsule = goalCapsuleFor(nodeId);
-  // A verification or review task runs in the tree it is verifying. Cutting it
-  // a fresh worktree from the base branch handed the agent a checkout without
-  // the implementation in it and then asked it to check the implementation.
+  // Verification and review share their implementation's tree. A reopened
+  // implementer adopts its own recorded tree through the same guarded launch.
   const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
@@ -758,9 +765,13 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   // provider probe, PTY spawn). Two starts can both pass that check, and an
   // unconditional write would leave the loser's agent running, spending
   // tokens, attached to nothing. Claiming the row atomically decides it.
-  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL,dispatch_state=NULL,gate_returns=0
+  // The launcher reports the fields it actually used. In particular, an
+  // unsupported effort or an inapplicable account must not survive as a pin
+  // claiming the session ran under a setting that it did not use.
+  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,effort=?,account_id=?,permission_mode=?,session_id=?,worktree=?,started_at=?,detail=NULL,dispatch_state=NULL,gate_returns=0
     WHERE id=? AND session_id IS NULL AND status!='running'`)
-    .run(providerId, input.model?.trim() || null, session.id, session.worktree ?? null, now(), nodeId);
+    .run(session.providerId, session.model ?? null, session.effort ?? null, session.accountId ?? null,
+      session.permissionMode ?? null, session.id, session.worktree ?? null, now(), nodeId);
   if (claimed.changes === 0) {
     try { killSession(session.id); } catch { /* the duplicate is already gone */ }
     if (takenClaim) releaseClaim(takenClaim.id);
@@ -777,7 +788,7 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     VALUES (?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(node_id) DO UPDATE SET session_id=excluded.session_id,conversation_id=excluded.conversation_id,
       provider_id=excluded.provider_id,model=excluded.model,base_commit=excluded.base_commit,worktree=excluded.worktree,updated_at=excluded.updated_at`)
-    .run(nodeId, parent.id, session.id, session.conversationId, providerId, input.model?.trim() || null,
+    .run(nodeId, parent.id, session.id, session.conversationId, session.providerId, session.model ?? null,
       parent.base_commit, session.worktree ?? null, now(), now());
   // How the capsule reached the agent is a work-trace fact, recorded once the
   // node row owns the session (recordGoalTrace resolves the node through it).
@@ -1133,23 +1144,6 @@ function changesRequestedFor(docketId: string, limit = 3): { note: string; decid
   return out;
 }
 
-function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): void {
-  if (!node.provider_id) return;
-  const usage = node.session_id ? otel.usageFor(node.session_id) : null;
-  const model = node.model || usage?.models[0] || 'provider-default';
-  // Whether the figure was reported is stored beside it. Writing 0 for an
-  // unreported cost and 0 for a genuinely free session made the two
-  // indistinguishable one row later, and Model evidence then showed the
-  // unmetered provider as the cheapest one.
-  const reported = usage?.costStatus === 'reported';
-  const effort = db().prepare('SELECT effort FROM session_log WHERE id=?')
-    .get(node.session_id ?? '') as { effort: string | null } | undefined;
-  db().prepare(`INSERT INTO work_model_outcomes (id,docket_id,node_id,provider_id,model,task_kind,accepted,tests_passed,cost_usd,cost_reported,effort,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET accepted=excluded.accepted,tests_passed=excluded.tests_passed,cost_usd=excluded.cost_usd,cost_reported=excluded.cost_reported,effort=excluded.effort`)
-    .run(uid('outcome'), node.docket_id, node.id, node.provider_id, model, node.kind, accepted ? 1 : 0, testsPassed ? 1 : 0,
-      reported ? usage!.costUsd : 0, reported ? 1 : 0, effort?.effort ?? null, now());
-}
-
 export async function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }): Promise<DocketNode> {
   const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const nodes = rawNodes(parent.id);
   const current = mapNodes(nodes).find((value) => value.id === nodeId)!;
@@ -1237,7 +1231,7 @@ export async function completeNode(nodeId: string, input: { detail?: string; dec
     // The operator still chooses the next provider; this does not route work.
     if (node.kind === 'review') {
       for (const candidate of rawNodes(parent.id)) {
-        if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
+        recordOutcomeReview(candidate, proof.id, decision === 'approve', testsPassed);
       }
     }
     // No interim row for plan/verify. It was written as accepted=0 expecting the
@@ -1658,6 +1652,21 @@ function haltAutopilot(docketId: string, reason: string): void {
     .run(uid('proof'), docketId, null, 'decision', 'recorded', `${AUTOPILOT_HALT_PREFIX}${reason}`, now());
 }
 
+/** The sweep and the queued launch apply the same budget and meter coverage
+ * rule. No previous sessions means no spend yet; a launched session with no
+ * reported dollars is unknown, even if its numeric counter happens to be 0. */
+function autopilotBudgetRefusal(row: DocketRow): string | null {
+  if (row.budget_usd === null) return 'the goal no longer has a budget.';
+  const spend = autopilotSpend(row.id);
+  if (spend.spendUsd >= row.budget_usd) {
+    return `reported spend of $${spend.spendUsd.toFixed(2)} reached the $${row.budget_usd.toFixed(2)} budget.`;
+  }
+  if (spend.spendStatus === 'partial' || spend.spendStatus === 'unreported') {
+    return 'one or more previous sessions have no reported cost, so remaining budget cannot be verified.';
+  }
+  return null;
+}
+
 /**
  * Turn unattended dispatch on or off for one goal.
  *
@@ -1822,9 +1831,8 @@ export function recordHandBack(proofId: string, handBack: NonNullable<GateProofD
  * whole module exists to hold. An `estimate` task is Wanigan's own query over
  * this project's history (relay.ts) and runs itself when the plan before it
  * completes; an agent launched into it would be spending tokens to guess at a
- * number a query records. And a goal whose reported spend has reached its
- * budget stops, rather than continuing on the strength of costs nobody
- * reported.
+ * number a query records. Goals whose reported spend has reached the budget,
+ * or whose previous sessions have unreported cost, stop automatic dispatch.
  */
 export function sweepAutopilot(): number {
   reconcileQueuedNodes();
@@ -1841,13 +1849,9 @@ export function sweepAutopilot(): number {
       haltAutopilot(row.id, 'no provider is recorded for unattended dispatch.');
       continue;
     }
-    if (row.budget_usd === null) {
-      haltAutopilot(row.id, 'the goal no longer has a budget.');
-      continue;
-    }
-    const spend = autopilotSpend(row.id);
-    if (spend.spendUsd >= row.budget_usd) {
-      haltAutopilot(row.id, `reported spend of $${spend.spendUsd.toFixed(2)} reached the $${row.budget_usd.toFixed(2)} budget.`);
+    const budgetRefusal = autopilotBudgetRefusal(row);
+    if (budgetRefusal) {
+      haltAutopilot(row.id, budgetRefusal);
       continue;
     }
     for (const node of mapNodes(rawNodes(row.id))) {
@@ -1881,12 +1885,24 @@ export async function startQueuedNode(nodeId: string): Promise<void> {
   const node = nodeRow(nodeId);
   const parent = docketRow(node.docket_id);
   const mapped = mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId);
-  if (parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review' || mapped.kind === 'estimate') {
+  if (halted() || parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review' || mapped.kind === 'estimate') {
+    clearDispatch(nodeId);
+    return;
+  }
+  // A queued row can wait while another session spends the remaining cap or
+  // loses its meter. Re-read at dispatch, not just when the sweep enqueued it.
+  const budgetRefusal = autopilotBudgetRefusal(parent);
+  if (budgetRefusal) {
+    haltAutopilot(parent.id, budgetRefusal);
     clearDispatch(nodeId);
     return;
   }
   try {
-    await startNode(nodeId, { providerId: parent.autopilot_provider, model: parent.autopilot_model ?? undefined });
+    // Stage pins survive unattended execution. A docket-wide model is only a
+    // fallback for its own provider, never a model name sent to another one.
+    const providerId = node.provider_id ?? parent.autopilot_provider;
+    const model = node.model ?? (providerId === parent.autopilot_provider ? parent.autopilot_model : null);
+    await startNode(nodeId, { providerId, model: model ?? undefined });
   } catch (error) {
     // A real launch failure — no provider, a taken claim, a dead worktree —
     // releases the marker so a later sweep can try again once it is fixed.

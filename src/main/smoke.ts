@@ -263,6 +263,10 @@ export async function runSmoke(): Promise<void> {
     await runGoalPlanSmoke(check, say);
     const { runRelaySmoke } = await import('./smoke-relay');
     await runRelaySmoke(check, say);
+    const { runRelayCostSmoke } = await import('./smoke-relay-cost');
+    runRelayCostSmoke(check, say);
+    const { runControlOutcomesSmoke } = await import('./smoke-control-outcomes');
+    runControlOutcomesSmoke(check, say);
     const { runRelayDeliverySmoke } = await import('./smoke-relay-delivery');
     await runRelayDeliverySmoke(check, say);
     const { runSuggestSmoke } = await import('./smoke-suggest');
