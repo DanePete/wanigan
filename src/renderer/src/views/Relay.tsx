@@ -410,6 +410,16 @@ export default function Relay({ projects, projectId, providers, openSession, ope
 
         <div>
           <Section n={1} title="Start a relay" hint="Nothing runs until you press Start.">
+            {/* A relay belongs to a project and this view has no picker of its
+                own — the one in the header is app-wide. Without this the only
+                signal was "No project" in the eyebrow and a Start button that
+                stayed disabled without saying why. */}
+            {!projectId && (
+              <Note tone="warn">
+                A relay runs inside a project, and none is chosen. Pick one from the folder menu at the top of the
+                window — beside the Wanigan name — and this page will fill in.
+              </Note>
+            )}
             <label>
               <span className="label">What should this relay accomplish?</span>
               <textarea className="field" aria-label="What should this relay accomplish" value={intent}

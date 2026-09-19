@@ -75,6 +75,15 @@ export function mountFluid(
     renderer.resize(w, h);
   };
 
+  // Targets are allocated on the first resize, so a renderer that builds fine
+  // can still fail here. Asking now means the caller gets the same `null` it
+  // already handles, rather than a mount that can only draw nothing.
+  fit();
+  if (renderer.failed()) {
+    renderer.dispose();
+    return null;
+  }
+
   return {
     setGate: (i, open) => solver.setGate(i, open),
     impulse: (basin, seed) => {
@@ -106,6 +115,15 @@ export function mountFluid(
       // water runs slow, it does not later run fast to catch up.
       if (bank > FIXED_DT) bank = FIXED_DT;
       fit();
+      // A resize to a new size can fail where the first one did not. Stopping
+      // leaves the canvas cleared and the CSS rail beneath it visible, which
+      // is the honest picture; continuing would composite from targets that
+      // were never drawn into.
+      if (renderer.failed()) {
+        disposed = true;
+        renderer.dispose();
+        return;
+      }
       const positions = solver.positions;
       renderer.draw(positions, positions.length / 3, rig, theme);
     },
