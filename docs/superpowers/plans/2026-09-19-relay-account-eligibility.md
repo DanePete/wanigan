@@ -1,60 +1,68 @@
 # Relay next phase — account-bound eligibility
 
-Prepared from `be64bb4` on `feat/routing-suggester`, after the recovery phase closed ([handoff](2026-09-19-relay-recovery-implementation-handoff.md)). This is a source-grounded plan. It changes no runtime behaviour and ran no provider. **It is a proposal awaiting approval, not an approved scope**: the recovery plan's last section names this phase in one paragraph, and the decisions in "Open decisions" below are the operator's.
+Prepared on `feat/routing-suggester` after the recovery phase closed ([handoff](2026-09-19-relay-recovery-implementation-handoff.md)), then revised the same day against two primary-source research notes: the [Codex account protocol](../../research/2026-09-19-codex-account-protocol-sources.md) (installed `codex-cli 0.155.1`, its offline-generated types, and `openai/codex` at `rust-v0.155.1`) and [paid-request settlement](../../research/2026-09-19-paid-request-settlement-sources.md) (Anthropic's API and billing documentation and `@anthropic-ai/sdk` 0.68.0 source). This document changes no runtime behaviour and ran no provider. The four decisions that were open in the first draft are made below, each with its reason; they are the author's recommendation and the operator can overrule any of them before implementation starts.
 
 ## Outcome
 
-Before Relay offers or queues a route, Wanigan can say which account would run it, whether that account is signed in now, which models that login was actually offered, what allowance it reported, how old that reading is and when it resets — and says "unknown" wherever it cannot. A reading taken under one login never authorises a launch under another, and a decision made at preview is rechecked when the queued work actually starts.
+Before Wanigan starts work on an account — attended, queued, scheduled or relayed — it can say which login would run it, whether that login is signed in now, what allowance the provider reported and when, and it says "unknown" wherever it cannot. A reading taken under one login never authorises a launch under another, and the check is made again at the moment of dispatch and spawn, not only at preview.
 
-This phase has a **$0 provider-spend scope**. Every read below is an account-native metadata read (`account/read` with `refreshToken:false`, `account/rateLimits/read`, `model/list`, `claude auth status`) or a local fixture. No inference, thread, turn or credit consumption. The $50 allowance stays untouched.
+This phase has a **$0 provider-spend scope**. Every read is account-native metadata that starts no thread or turn and consumes no credit. The $50 allowance stays untouched.
 
-## Where the audit's findings stand today
+## What the research changed
 
-The audit's findings are [DISC-01 to DISC-06](../../research/2026-09-19-relay-audit-execution-discovery.md). `703c46c` landed concurrent Usage/account-identity work after the audit, so its status lines are out of date. Checked against source at `be64bb4`:
+Three assumptions in the first draft did not survive the source, and one capability turned out better than assumed.
 
-| Finding | Status | Evidence in source |
+- **There are no fractions to preserve.** `usedPercent` is an integer in the protocol and in the backend it comes from. DISC-03's "fractional capacity is lost" has nothing to keep on this path; only its "buckets are lost" half is real. Wanigan's `Math.round` is dead code, and removing it must not be described as restoring precision.
+- **`model/list` is not an entitlement.** It is a local catalog filtered only by whether the login is ChatGPT-backed or an API key. That is why the audit's signed-out account returned the same five models. It can be shown as "the catalog this client would offer", never as access.
+- **A file stat cannot see every login change.** `cli_auth_credentials_store` may be `keyring`, `auto` or `ephemeral`, and a keyring save deletes `auth.json`. `usageAccountRevision`, shipped in `703c46c`, is necessary but not sufficient: under keyring storage a cached reading can outlive a login change until its time-to-live ends. That is a small live defect this phase closes.
+- **A quota read is live and free.** `account/rateLimits/read` is a dedicated backend request needing no inference. It returns every named bucket in `rateLimitsByLimitId`, credits, the backend's own `accountId`, and an `ordinaryUsageAllowed` verdict whose type comment says clients must not infer recovery from percentages or reset times. Server notifications exist but follow only a turn or login on the same connection, so they cannot replace a short poll.
+
+## Where the audit's findings stand
+
+| Finding | Status | What remains |
 | --- | --- | --- |
-| DISC-01 default Codex account probes the ambient login | **Closed** | `codex-status.ts` `request(account)` builds the probe environment with `accounts.applyLaunchEnv`, the same call a launch uses; "default" now means the variable is unset. |
-| DISC-02 Codex model list has no account binding or pagination | **Open** | `readCodexModels` keeps one process-global `modelsCached`. No account, no login revision, no cursor loop. The audit's own negative control — a signed-out account returning the full catalog — is why a catalog hit must never read as access. |
-| DISC-03 quota buckets and fractions are lost | **Open** | `windowFrom` applies `Math.round` to `usedPercent`; the snapshot keeps only `primary` and `secondary`, so additional named buckets are dropped. |
-| DISC-04 quota cache survives a reset or failed refresh | **Partly closed** | The cache key now includes `usageAccountRevision`, so a login change invalidates it. A cached window whose `resetsAt` has passed is still served until `CACHE_MS`. |
-| DISC-05 backend catalog cache misses an out-of-band credential change | **Open** | `backend-catalog.ts` keys its cache by backend id only. |
-| DISC-06 Claude's provider-cached usage becomes a fresh local reading | **Partly closed** | `claude-limits.ts` is keyed by login revision. Provider-reported age and reset timezone are still not carried. |
+| DISC-01 default Codex account probes the ambient login | Closed for status by `703c46c` | `requestModels` still reads the ambient `CODEX_HOME`; bind it with `accounts.applyLaunchEnv` as `request` already is. |
+| DISC-02 model list unbound and unpaginated | Open | Key by account and login revision; follow `nextCursor` to `null` under a page bound. One page is the whole list today, so the loop is proven by fixture only and must say so. |
+| DISC-03 buckets and fractions lost | Half real | Read `rateLimitsByLimitId`, falling back to `rateLimits`. Keep every bucket as reported. `normalModelSlug` is the only provider-stated link from a bucket to a model; label inference stays forbidden. |
+| DISC-04 quota cache survives a reset | Partly closed | A passed `resetsAt` makes a reading stale, never recovered. `ordinaryUsageAllowed` outranks percentages; `null` is unknown, never true. |
+| DISC-05 backend catalog misses a credential change | Open | Add the credential callback's revision to the cache key without reading the credential on a hit. |
+| DISC-06 Claude's cached usage shown as fresh | Partly closed | Carry provider-reported age and an explicit timezone basis; when the text gives none, the reset is unknown rather than local midnight. |
 
-`usage-account-identity.ts` (`usageAccountRevision`) is the credential-generation key this phase needs. It hashes file identity and ordinary account metadata, never a credential. Reuse it; do not write a second one.
+## Decisions
+
+**1. A new required module owns eligibility; Usage keeps the readers.** The check has to run where the queue dispatches and where a session spawns, and both of those are required modules. Relay is optional, and an optional module cannot own a refusal that protects somebody's allowance. Usage's declared reason is exposing recorded evidence and readings, which is a different promise from authorising a launch. So: the readers are converted behind required Usage, and a new required `account-eligibility` module owns the record and the refusal, with a declared reason that it decides whether a named login may be used, which a third party must not be able to redefine.
+
+**2. No age threshold. Re-read at the point of use, and refuse only on evidence.** Because the Codex quota read is live and free, reasoning from a cached window is strictly worse than reading again, so the first draft's "how stale is too stale" question dissolves. At dispatch and at spawn Wanigan re-reads `account/read` and the rate limits. It refuses when the login is signed out, when the backend `accountId`, email or plan differs from the reading the decision was made on, or when `ordinaryUsageAllowed` is `false`. It does **not** refuse because quota is unknown: Claude has no equivalent free quota read, so unknown is that harness's normal state, and refusing on it would stop every existing Claude queue. Unknown is recorded and shown. The one asymmetry is identity: unattended work (queue, schedule, automatic Relay) refuses when the login cannot be verified at all, while an attended launch warns and lets the person who is present decide. A cached reading is for display only and carries its age. A refusal never re-routes to another account, because that spends a different person's allowance.
+
+**3. The settlement contract is in this phase, as a sibling table, and nothing ages out.** Without it, one paid call refuses restore for the life of the installation, which makes restore unusable in practice. A new additive `usage_paid_settlements` row points at a receipt; the receipt itself is never updated. Three outcomes may account for a receipt:
+
+- `metered` — a 2xx response, recorded with the provider's `request-id` and the id of the owner's ledger row. The dry-run sample request in `batch/estimate.ts` has no ledger today and needs an owner row first.
+- `not-charged (provider-stated)` — an HTTP error response that carried a `request-id`. Anthropic's help centre states failed requests are not charged; the label names that source rather than asserting zero.
+- `reported-estimate` — a CLI result. Anthropic documents `total_cost_usd` and the OpenTelemetry cost metric as client-side estimates, and as not relevant to billing under a subscription login, so this is accounted for as an estimate and never shown as a bill.
+
+A transport failure, timeout or cut stream stays unresolved: there is no `request-id`, Anthropic states a request the client abandons is still charged, and no source says how much. The Admin cost report is daily and has no request or API-key dimension, and the usage report counts tokens only, so neither can settle one receipt; at most a later reconciliation can attach a labelled `window-consistent` note that settles nothing. Per-attempt receipts on SDK retries are correct and stay: the SDK source confirms the custom `fetch` runs once per attempt, and there is no idempotency key to make a retry safe. Receipts never expire, because unlike a card authorisation the provider publishes no expiry for an abandoned request.
+
+Rejected: letting an operator acknowledgement unblock restore. The Restore screen already promises that acknowledging a warning cannot reconcile a bill, and that promise is worth more than the convenience. The honest way out for a receipt that can never settle is to **carry it forward across a restore** instead of refusing the restore, since the rule being protected is that a restore must not erase financial uncertainty, not that uncertainty must block. That changes Recovery's first-protocol refusal of cross-generation merging, so it is recorded here as the proposed following step and is not part of this phase.
+
+**4. Convert first, in small commits, from the current head.** The working tree is clean and `origin` has not moved, so the concurrent session is idle, but it has edited exactly these files. File moves conflict worst with concurrent edits, so they go first and stay small. Recheck `git status` and the branch before every commit, as the recovery phase did.
 
 ## Order of work
 
-**1. Convert first.** `codex-status.ts`, `claude-limits.ts`, `limits.ts`, `usage-account-identity.ts` and `backend-catalog.ts` are legacy files in `src/main/`, reached through required Usage's facade. AGENTS.md requires the conversion and the change as two commits in that order. Move them behind required Usage (or a required `accounts-eligibility` module if Usage's trust reason does not cover launch authorisation — see decisions) as exact moves with the original facades retained, the way `b9e6f2b` moved the Anthropic helper. `unconverted-fixes.json` is empty, and this phase is not urgent by any of its three conditions, so the escape is not available.
+1. **Convert.** Move `codex-status.ts`, `claude-limits.ts`, `limits.ts`, `usage-account-identity.ts` and `backend-catalog.ts` behind required Usage as exact moves with their facades retained, the way `b9e6f2b` moved the Anthropic helper. `unconverted-fixes.json` is empty and nothing here meets the urgent-fix escape's three conditions, so the escape is not available.
+2. **Register `account-eligibility`** as a required module with its reason, an additive per-account reading table (account id, harness, login revision and whether that revision can witness a login change, auth state, `requiresOpenaiAuth`, backend `accountId`, plan, every bucket as reported, `ordinaryUsageAllowed`, reset, provider-reported age, local fetch time, the `codex --version` that produced it) and an explicit unknown per field. It stores no credential.
+3. **Close the findings** in the table above against that record. For an `apiKey` Codex account, a rate-limit read refused with "chatgpt authentication required" means quota is not applicable, not a fault and not zero.
+4. **Gate dispatch and spawn** per decision 2.
+5. **Settlement** per decision 3, then let Recovery's reader treat an accounted-for receipt as resolved.
+6. **Surface it** in Usage and the Relay composer from the shared primitives, with before and after screenshots in both themes.
 
-**2. One eligibility reading, owned by one module.** A typed, main-only record per account: account id, harness, login revision, auth state, plan, model ids *offered to that login*, every quota bucket with its unrounded value, provider reset time, provider-reported age, local fetch time, and an explicit `unknown` per field. It is evidence, so it is additive in SQLite with the source and time of each observation; it is not a second copy of provider memory and stores no credential or email beyond what `AccountIdentity` already carries.
+## Protocol hygiene
 
-**3. Close the open findings against that record.**
-- DISC-02: key the model cache by account and login revision; follow `nextCursor` to exhaustion with a bounded page count; a signed-out or failed `account/read` yields *no* model access whatever `model/list` returned.
-- DISC-03: keep fractions end to end and keep every bucket the provider names. Do not infer which model draws on which bucket from a label; show buckets as reported.
-- DISC-04: a window whose reset time has passed is stale regardless of cache age; a failed refresh keeps the old reading labelled stale with its failure, never silently as current.
-- DISC-05: add the credential callback's revision to the backend catalog key, without reading the credential on a cache hit (the existing callback design already avoids that).
-- DISC-06: carry provider-reported age and an explicit timezone basis for Claude resets; when the text gives none, the reset is unknown rather than local-midnight.
-
-**4. Revalidate at the point of use.** Relay's preview, the queue's dispatch and the actual spawn each check the reading's login revision, age and reset against the account about to launch. A mismatch refuses with the reason; it never silently re-routes to another account, because that spends a different person's allowance.
-
-**5. Surface it.** Usage and the Relay composer show age, reset, buckets and unknowns from the shared primitives (`Stat`, `Reading`, `Note`, `Pill`), with before/after screenshots in both themes.
+Send `initialize` without `experimentalApi` and follow it with `initialized`; keep every field optional at the parse seam; pass `excludeResetCreditDetails: true` on background polls. Hold the no-mutation invariant by test: the reader's outgoing method set is exactly `initialize`, `initialized`, `account/read`, `account/rateLimits/read` and `model/list`, and `refreshToken` is always `false`. Methods that consume reset credits, send nudge emails, log out or start a login sit beside these reads and must never be sent. The protocol has no version number, so a `src/shared` contract test is built from the JSON Schema generated for the pinned version. Regenerating that schema is offline and belongs in the probe scripts, not in `npm test`.
 
 ## What stays unsupported, and says so
 
-Live Claude quota, OpenRouter authentication and caps, real MCP handshakes, provider 402/429 recovery, and whether two accounts share an allowance pool are unverified by the audit and are not claimed here. Public catalog prices stay separate from account access and from observed execution. No auto-routing on "largest remaining quota".
-
-## Interaction with the recovery phase
-
-`usage_paid_operations` has no settlement contract, so any paid call refuses a later restore. This phase is the natural owner of that contract: an eligibility record that knows the account and the owning ledger can say when a receipt is accounted for. Treat it as a stated follow-on inside this phase, not a quiet change to Recovery's conservative read.
+Live Claude quota, OpenRouter authentication and caps, real MCP handshakes, provider 402 and 429 recovery, whether two accounts share an allowance pool, whether the remote model catalog varies by plan, production `limitId` values beyond `codex` and `codex_other`, the format of `credits.balance`, and any Codex version other than 0.155.1. Public catalog prices stay separate from account access and from observed execution. No automatic routing on "largest remaining quota".
 
 ## Tests and verification
 
-Pure parsing and freshness contracts in `src/shared` (`node --test`): multi-bucket and fractional values, reset-passed staleness, timezone-unknown, cursor exhaustion and the page bound. Reader tests with replaced process and network collaborators, extending `scripts/test-usage-accounts.cjs`: signed-out catalog grants nothing; login change mid-read is refused; two accounts never share a cache entry. Queue revalidation in the execution-recovery lane with a synthetic CLI. Then all eight `npm test` gates, `npm run build`, the affected probes and `git diff --check`. Run `npm test` on its own: its smoke gate fails at once with `script: tcgetattr/ioctl` when launched from a shell command that also contains a heredoc.
-
-## Open decisions
-
-1. **Which module owns eligibility.** Required Usage (it already owns recorded metering and these readers' facade) or a new required module whose declared reason is launch authorisation. A new module is cleaner for the trust reason; extending Usage is fewer moving parts.
-2. **How stale is too stale to launch.** A refusal threshold for quota age at dispatch, versus warn-and-proceed. The audit gives no number.
-3. **Whether the settlement contract is in this phase** or deferred again, given it decides whether restore is usable day to day.
-4. **Coordination.** A concurrent session is editing these same files (`703c46c`, `d640a23`). This phase should start from an agreed commit, not alongside in one checkout.
+Pure contracts in `src/shared`: multi-bucket parsing, integer percentages, reset-passed staleness, `ordinaryUsageAllowed` precedence, timezone-unknown, cursor exhaustion and the page bound, and the settlement outcome rules. Reader tests with replaced process and network collaborators, extending `scripts/test-usage-accounts.cjs`: a signed-out catalog grants nothing; a changed `accountId` under an unchanged file revision invalidates a reading; two accounts never share a cache entry; the outgoing method set is exact. Dispatch and spawn refusal in the execution-recovery lane with a synthetic CLI. Settlement against real SQLite with a fetch double, extending `scripts/test-usage-paid-operations.cjs`. Then all eight `npm test` gates, `npm run build`, the affected probes and `git diff --check`. Run `npm test` on its own: its smoke gate fails at once with `script: tcgetattr/ioctl` when launched from a shell command that also contains a heredoc.
