@@ -8416,8 +8416,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'dialog teardown returns to its opener, a visible navigation destination, or the header toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
     && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
-    && appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('<WorkspaceNavigation')
-    && (appSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') >= 0
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') < appSrc.indexOf('<WorkspaceNavigation tab=')
+    && (workspaceNavSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
     'the header navigation opener remains outside the compact dialog and no obsolete horizontal-rail selector is used for focus');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
     && workspaceNavSrc.includes('<progress className="workbench-batch-progress"')

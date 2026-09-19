@@ -112,6 +112,18 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
   </div>);
 }
 
+/** Shared-frame navigation stays available as the operator's return path when its contents are hidden. */
+export function WorkspaceNavigationToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const keymap = useKeymap().map;
+  return <button className="hdr-toggle" type="button" onClick={onToggle}
+    aria-expanded={open} aria-controls={open ? "wanigan-sidebar" : undefined}
+    aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
+    aria-label={`${open ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
+    <Icon name="panel" />
+    {!open && <span>Show navigation</span>}
+  </button>;
+}
+
 type WorkspaceNavigationProps = {
   tab: Tab; go: (tab: Tab) => void; goArea: (area: SpaceAreaId) => void;
   open: boolean; onClose: () => void; compact: boolean;

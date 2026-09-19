@@ -8,7 +8,7 @@ import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retired
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, WorkspaceLocation, WorkspaceNavigation } from './components/SpaceNavigation';
+import { ProjectSpaces, WorkspaceLocation, WorkspaceNavigation, WorkspaceNavigationToggle } from './components/SpaceNavigation';
 import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
@@ -1086,13 +1086,7 @@ export default function App() {
           so the second row is gone and the terminal is 48px taller. The row
           keeps its left inset for the traffic lights. */}
       <header className="app-header">
-          <button className="hdr-toggle" type="button" onClick={toggleSidebar}
-                  aria-expanded={sidebarOpen} aria-controls={sidebarOpen ? "wanigan-sidebar" : undefined}
-                  aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
-                  title={`${sidebarOpen ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').glyphs})`}
-                  aria-label={`${sidebarOpen ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
-            <Icon name="panel" />
-          </button>
+          <WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />
           <div className="brand-lockup">
             <span className="brand">Wanigan</span>
             {/* The view on screen, not a tagline. A sidebar row is filled to

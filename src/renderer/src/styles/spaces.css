@@ -39,6 +39,7 @@
 .workbench-shell.mission-shell .brand-lockup { display: flex; }
 .workbench-shell .brand-context { display: none; }
 .workbench-shell .hdr-toggle { display: inline-flex; }
+.workbench-shell .hdr-toggle[aria-expanded='false'] { width: auto; min-height: var(--control-h-sm); gap: var(--s-2); padding-inline: var(--s-2); border: 1px solid var(--line-soft); font-size: var(--t-small); white-space: nowrap; }
 .workbench-context { display: flex; align-items: center; gap: var(--s-4); flex: 1; min-width: 0; }
 .workbench-location { display: flex; align-items: center; gap: var(--s-2); min-width: 0; color: var(--text); font-size: var(--t-small); white-space: nowrap; }
 .workbench-location-area, .workbench-location-divider { color: var(--text-faint); }
