@@ -793,6 +793,8 @@ export type CheckpointRevertAction = { path: string; action: 'restore' | 'delete
 export type CheckpointRevertPlan = {
   ok: boolean;
   checkpointId: number;
+  /** Opaque, one-use approval identity for this exact preview; expires on restart. */
+  previewToken: string | null;
   commit: string | null;
   files: CheckpointRevertAction[];
   totalFiles: number;

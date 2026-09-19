@@ -27,7 +27,8 @@ import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { codexHookDelivered, forgetCodexHookSession, prepareCodexHookLaunch } from './codex-hooks';
 import { CODEX_HOOK_HEADERS_ENV, CODEX_HOOK_URL_ENV } from '../shared/codex-hooks';
-import { finalizeSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
+import { cancelSessionCheckpointLaunch, finalizeSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
+import { acquireCheckoutActivity } from './checkout-activity';
 import { archiveSession } from './transcripts';
 import {
   archiveInterruptedTranscripts, deriveSessionTitle, reconcileAbandonedSessions, setLiveSessions,
@@ -349,12 +350,14 @@ type Live = {
     rejectReady: (error: Error) => void;
     timer: ReturnType<typeof setTimeout> | null;
   };
-  /** Settles only after node-pty reports the child gone. */
-  exited: Promise<void>;
-  resolveExit: () => void;
+  /** Final snapshot and checkout ownership bookkeeping, separate from PTY exit. */
+  cleanupSettled: Promise<void>;
+  resolveCleanup: () => void;
 };
 
 const sessions = new Map<string, Live>();
+const openingSessions = new Set<Promise<Session>>();
+let sessionsStopping = false;
 
 /**
  * The three questions Recent asks about running sessions, answered here where
@@ -1079,7 +1082,15 @@ function assertProviderCredentials(def: { id: ProviderId; label: string }): void
   );
 }
 
-export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+export function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+  if (sessionsStopping) return Promise.reject(new Error('Wanigan is shutting down; no new session was started.'));
+  const opening = createSessionPrepared(opts, internal);
+  openingSessions.add(opening);
+  void opening.finally(() => openingSessions.delete(opening)).catch(() => {});
+  return opening;
+}
+
+async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessionInternal): Promise<Session> {
   // First, before provider probing, worktree creation or any injected file
   // exists to roll back. Every attended session in the app comes through here —
   // the renderer, the phone, an autopilot node, the MCP server — so one guard
@@ -1208,36 +1219,58 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       );
     }
   }
+  const launchRoot = worktree ?? project.path;
+  const cwd = fs.realpathSync.native(launchRoot);
+  const directoryIdentity = fs.statSync(cwd, { bigint: true });
+  const checkoutStillOwned = () => {
+    try {
+      if (fs.realpathSync.native(launchRoot) !== cwd) return false;
+      const current = fs.statSync(cwd, { bigint: true });
+      return current.dev === directoryIdentity.dev && current.ino === directoryIdentity.ino;
+    } catch { return false; }
+  };
+  const releaseCheckout = acquireCheckoutActivity(cwd, 'session', id0);
+  let childStarted = false;
+  let mcpFile: string | null = null;
+  let rollback: Promise<void> | null = null;
+  let acquiredResumeKey: string | null = null;
+
+  // Every pre-spawn failure follows this path, including account selection or
+  // provider environment errors. A claim for a process that never started is
+  // releasable; a launched writer remains unresolved until its exit is known.
+  const rollbackLaunch = (): Promise<void> => {
+    rollback ??= (async () => {
+      await cancelSessionCheckpointLaunch(id);
+      if (childStarted) return;
+      if (acquiredResumeKey) resumingConversations.delete(acquiredResumeKey);
+      try { cleanupMcpConfig(mcpFile, id); } catch { /* no MCP config was written */ }
+      try { cleanupHookSettings(id); } catch { /* no hook file was written */ }
+      try { cleanupSessionAttachments(id); } catch { /* no attachment dir was written */ }
+      // A directory or alias replaced during preparation is no longer ours to
+      // remove, even when this launch originally created a worktree there.
+      if (createdWorktree && worktree && checkoutStillOwned()) {
+        try { await removeWorktree(cwd, false); }
+        catch { /* git refused a non-clean tree; preserve work over disk tidiness */ }
+      }
+      releaseCheckout();
+    })();
+    return rollback;
+  };
+
+  try {
   if (internal.requirePrivateDependencies) {
     if (!worktree) throw new Error('Mutating Relay work requires an isolated checkout with private dependencies.');
-    if (!createdWorktree) await ensurePrivateWorktreeDependencies(worktree);
+    if (!createdWorktree) await ensurePrivateWorktreeDependencies(cwd);
   }
-  if (internal.retainWorktree && worktree) retainWorktreeForReview(worktree);
-  const cwd = worktree ?? project.path;
+  if (internal.retainWorktree && worktree) retainWorktreeForReview(cwd);
   // Setup ran with the worktree's port block; the agent it was set up for gets
   // the same one, so its dev server stays off the next worktree's ports. A
   // block that cannot be assigned costs the agent the variables, not the launch.
   let worktreeEnv: Record<string, string> = {};
   if (worktree) {
-    try { worktreeEnv = await worktreeLaunchEnv(worktree); }
+    try { worktreeEnv = await worktreeLaunchEnv(cwd); }
     catch (error) { console.warn('[wanigan] this worktree has no port block for its agent:', error); }
   }
-  let mcpFile: string | null = null;
-
-  // A launch has several filesystem side effects before the PTY exists. Keep
-  // their rollback in one place so a provider change, duplicate-resume guard,
-  // spawn failure or database failure cannot strand a clean worktree or a live
-  // hook credential. A reused historical worktree is never removed here: it
-  // may contain the only copy of prior work.
-  const rollbackLaunch = async () => {
-    try { cleanupMcpConfig(mcpFile, id); } catch { /* no MCP config was written */ }
-    try { cleanupHookSettings(id); } catch { /* no hook file was written */ }
-    try { cleanupSessionAttachments(id); } catch { /* no attachment dir was written */ }
-    if (createdWorktree && worktree) {
-      try { await removeWorktree(worktree, false); }
-      catch { /* git refused a non-clean tree; preserve work over disk tidiness */ }
-    }
-  };
 
   // The repository's own executable configuration — hooks, MCP servers,
   // helpers, env overrides, git hooks — checked against what was last let
@@ -1444,10 +1477,23 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     throw error;
   }
   const baseline = await captureBaseline(cwd);
+  try {
+    // The checkpoint must settle before argv can execute the agent's first
+    // prompt. No new awaits are inserted after final launch revalidation.
+    await registerSessionCheckpoints({ sessionId: id, cwd,
+      hooksCapable: injected.includes('--settings'), gitHead: baseline.head });
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
 
   // No await occurs between this digest/trust revalidation and pty.spawn.
   // A provider disabled or modified while project/worktree setup was running
   // must never launch through the stale definition captured above.
+  if (sessionsStopping) {
+    await rollbackLaunch();
+    throw new Error('Wanigan is shutting down; no new session was started.');
+  }
   refreshProviderPacks();
   const finalDef = providerById(opts.providerId);
   if (!finalDef || finalDef.profileFingerprint !== def.profileFingerprint) {
@@ -1481,7 +1527,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       await rollbackLaunch();
       throw new Error('That conversation is already opening or open in Wanigan. Use its existing tab.');
     }
-    if (!ownsPreclaim) resumingConversations.add(resumeKey);
+    if (!ownsPreclaim) {
+      resumingConversations.add(resumeKey);
+      acquiredResumeKey = resumeKey;
+    }
   }
 
   const meta: Session = {
@@ -1608,7 +1657,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // already-quoted command line needs.
   const ptyArgs = plan.kind === 'interpreter' ? commandLine(plan) : plan.args;
 
-  try { internal.beforeSpawn?.(); } catch (error) {
+  try {
+    if (!checkoutStillOwned()) throw new Error('The session checkout changed while launch was preparing. Refresh and launch again.');
+    internal.beforeSpawn?.();
+  } catch (error) {
     if (resumeKey) resumingConversations.delete(resumeKey);
     await rollbackLaunch();
     throw error;
@@ -1634,6 +1686,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     );
   }
 
+  childStarted = true;
   meta.pid = proc.pid;
   meta.status = 'running';
   meta.baseline = baseline;
@@ -1719,20 +1772,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }
       await rollbackLaunch();
       const detail = e instanceof Error ? e.message : String(e);
-      throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
+      throw new Error(`The agent started, but Wanigan could not record its session (${detail}). Termination was requested; checkout ownership remains unresolved.`);
     }
   }
-  // The launch snapshot is taken before the agent's first action. Gated on
-  // hooks actually being injected: without turn boundaries the chain would be
-  // one orphan commit pretending to be a feature.
-  registerSessionCheckpoints({
-    sessionId: id,
-    cwd,
-    hooksCapable: injected.includes('--settings'),
-    gitHead: baseline.head,
-  });
-  let resolveExit = () => {};
-  const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+  let resolveCleanup = () => {};
+  const cleanupSettled = new Promise<void>((resolve) => { resolveCleanup = resolve; });
   let resolveExactRecovery = () => {};
   let rejectExactRecovery = (_error: Error) => {};
   const exactRecoveryReady = exactRecovery
@@ -1769,8 +1813,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       rejectReady: rejectExactRecovery,
       timer: null,
     } : undefined,
-    exited,
-    resolveExit,
+    cleanupSettled,
+    resolveCleanup,
   };
   sessions.set(id, live);
   if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1878,9 +1922,6 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // is still queued before anything else runs, so a pending flush timer
     // cannot lose it to the teardown below.
     flushSessionData(live);
-    // The OS process is gone at this point even if later archival/notification
-    // bookkeeping throws, so shutdown must be allowed to finish.
-    live.resolveExit();
     live.meta.status = 'exited';
     // node-pty reports exitCode 0 when a process dies by SIGNAL and carries the
     // number separately, so an agent that was killed or crashed was recorded —
@@ -1957,16 +1998,20 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // An ordinary isolated worktree with no changes can be removed. The
     // session-end checkpoint is captured first — removal must never race the
     // snapshot that makes this session's last state recoverable.
-    if (worktree && !internal.retainWorktree) {
-      // finalizeSessionCheckpoints swallows its own failures today, but its
-      // type does not promise to, and .finally() re-raises whatever it is
-      // chained onto.
-      void checkpointsSettled.catch(() => {}).finally(() => {
-        void cleanupSessionWorktree(worktree).catch(() => {
-          /* dirty worktrees are kept on purpose — the human reviews and merges */
-        });
-      });
-    }
+    void checkpointsSettled.catch(() => {}).then(async () => {
+      // The terminal owner exited. A surviving group still owns possible
+      // writers: preserve both the checkout and claim until absence is proven.
+      // Windows has no equivalent group observation here and stays unresolved.
+      if (process.platform === 'win32') return;
+      try { process.kill(-proc.pid, 0); return; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return; }
+      if (!checkoutStillOwned()) return;
+      if (worktree && !internal.retainWorktree) {
+        await cleanupSessionWorktree(cwd).catch(() => { /* preserve dirty work */ });
+      }
+      releaseCheckout();
+    }).catch(error => console.warn('[wanigan] session checkout ownership remains unresolved:', error))
+      .finally(live.resolveCleanup);
 
     broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode });
     broadcast('session:list', sessionListEntries());
@@ -1988,6 +2033,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
 
   broadcast('session:list', sessionListEntries());
   return meta;
+  } catch (error) {
+    if (!childStarted) await rollbackLaunch();
+    throw error;
+  }
 }
 
 
@@ -2263,11 +2312,15 @@ export function killAll(): number {
  * and flush the rollout before the parent process disappears.
  */
 export async function shutdownAll(graceMs = 2000): Promise<void> {
+  sessionsStopping = true;
+  const known = [...sessions.values()];
   const active = [...sessions.values()].filter((value) => value.meta.status !== 'exited');
-  if (!active.length) return;
 
   killAll();
-  const settled = Promise.all(active.map((value) => value.exited));
+  const settled = Promise.allSettled([
+    ...known.map((value) => value.cleanupSettled),
+    ...openingSessions,
+  ]);
   let timer: NodeJS.Timeout | null = null;
   const graceful = await Promise.race([
     settled.then(() => true),

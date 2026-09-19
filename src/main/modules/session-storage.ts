@@ -70,6 +70,9 @@ function migrateWorktreeBootstrap(d: Database.Database) {
   // commands its setup ran even when the repository is registered under a
   // path that is not its root.
   addColumn(d, 'worktrees', 'project_id', 'TEXT');
+  addColumn(d, 'worktree_command_runs', 'recovery_unresolved', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'worktree_command_runs', 'owner_id', 'TEXT');
+  addColumn(d, 'worktree_command_runs', 'owner_pid', 'INTEGER');
   // The first port of the worktree's ten-port block, fixed at creation. Setup,
   // the launch and teardown must all see one block; probing again later would
   // skip the block the worktree's own dev server is listening on.
@@ -123,6 +126,18 @@ export const sessionSchema = {
 
     CREATE INDEX IF NOT EXISTS idx_session_log_recent  ON session_log(started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_log_project ON session_log(project_id, started_at DESC);
+
+    -- Cooperative exclusion shared by Sessions, Headless, Review and restore.
+    -- No expiry: an absent owner is not evidence that its child stopped.
+    CREATE TABLE IF NOT EXISTS checkout_activity (
+      id TEXT PRIMARY KEY,
+      cwd TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      operation_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_checkout_activity_cwd ON checkout_activity(cwd);
 
     `);
   },

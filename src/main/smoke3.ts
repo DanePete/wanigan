@@ -9235,8 +9235,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('A schedule keeps its next fire and catches up')
     && settingsSrc.includes('repository that was mid-run is not resumed')
     && settingsSrc.includes('An interactive session is a live terminal process')
-    && sourceOf('src/main/headless.ts').includes('Nothing was resumed — start the fan-out again for this repository.'),
-    "the 'Before you leave' restart paragraph names both what survives a restart (a queued job, a schedule's next fire) and what does not (a headless repository that was mid-run, an interactive session), and its headless claim still matches the sweep that errors those rows");
+    && sourceOf('src/main/headless.ts').includes('process state is unknown; this repository was not resumed.'),
+    "the 'Before you leave' restart paragraph names both what survives a restart (a queued job, a schedule's next fire) and what does not (a headless repository that was mid-run, an interactive session), and its headless claim matches the sweep that preserves unknown ownership");
 
   // 'Before you leave' answers whether the lid can close, so a row that could
   // not be read must never render as a pass. Three things hold that up, and a

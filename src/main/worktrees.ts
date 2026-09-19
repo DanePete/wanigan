@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -18,6 +18,7 @@ import {
 } from '../shared/worktree-bootstrap';
 import { directoryLinkType } from '../shared/platform';
 import { hostPlatform } from './platform';
+import { acquireCheckoutActivity } from './checkout-activity';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -1409,6 +1410,12 @@ async function runMerge(
 
 /* ── remove ──────────────────────────────────────────────────────────── */
 
+function unresolvedWorktreeCommands(worktree: string): boolean {
+  const rows = db().prepare("SELECT worktree FROM worktree_command_runs WHERE status='running' OR recovery_unresolved=1")
+    .all() as { worktree: string }[];
+  return rows.some(row => canon(row.worktree) === worktree);
+}
+
 /**
  * Removing is the one operation that destroys work, so the refusal is the
  * feature: uncommitted files in a worktree exist nowhere else, and a misclick
@@ -1429,6 +1436,13 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     };
   }
 
+  // Teardown and git removal mutate this checkout across awaits. They must
+  // exclude checkpoint restore even when no agent session owns the worktree.
+  const releaseActivity = acquireCheckoutActivity(abs, 'worktree', `remove-${randomUUID()}`);
+  try {
+  if (!force && unresolvedWorktreeCommands(abs)) {
+    return { removed: false, detail: 'Worktree commands may still be running. The checkout was kept because their ownership remains unresolved; reconcile them before automatic removal.' };
+  }
   const found = await inspect(abs);
   if (!found) {
     throw new Error(`${abs} is not a git worktree. Refusing to delete it — Wanigan only removes directories git says it created.`);
@@ -1458,6 +1472,9 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
   // teardown that could not stop a container is recorded and said below, not
   // turned into a checkout left on disk that exit cleanup would retry forever.
   const teardown = await teardownBefore(abs, info.repoRoot, row);
+  if (!force && unresolvedWorktreeCommands(abs)) {
+    return { removed: false, detail: 'Teardown left unresolved command ownership. Commands may still be running, so the checkout was kept instead of removing their working directory.' };
+  }
 
   const res = await git(info.repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), abs], 5 * 60_000);
   if (!res.ok) {
@@ -1475,6 +1492,7 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     ? ` Branch ${info.branch} is kept${info.ahead ? ` with ${plural(info.ahead, 'unmerged commit')}` : ''} — delete it yourself when you are sure.`
     : '';
   return { removed: true, detail: `Removed the worktree at ${abs}.${kept}${teardownSaid(teardown, true)}` };
+  } finally { releaseActivity(); }
 }
 
 /** The project a recorded worktree was made for: the row's own, or the one its repository is registered as. */

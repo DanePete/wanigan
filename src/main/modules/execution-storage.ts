@@ -36,6 +36,7 @@ export const queueSchema = {
   leases(d: Database.Database): void {
     addColumn(d, 'queue', 'lease_owner', 'TEXT');
     addColumn(d, 'queue', 'lease_expires_at', 'INTEGER');
+    addColumn(d, 'queue', 'recovery_unresolved', 'INTEGER NOT NULL DEFAULT 0');
     // This must follow the additive columns above. `CREATE TABLE IF NOT
     // EXISTS` leaves a pre-lease queue untouched, and attempting this index
     // first makes SQLite abort the entire migration with "no such column".
@@ -91,6 +92,11 @@ export const headlessSchema = {
     // attempt pinned to a commit is refused when this is not that commit. Null
     // for rows from before the column and rows that never reached a spawn.
     addColumn(d, 'headless_rows', 'base_head', 'TEXT');
+    // A process id is an observation, never authority to signal a recovered
+    // process. Unknown ownership remains durable even after a cancel request.
+    addColumn(d, 'headless_rows', 'owner_id', 'TEXT');
+    addColumn(d, 'headless_rows', 'owner_pid', 'INTEGER');
+    addColumn(d, 'headless_rows', 'recovery_unresolved', 'INTEGER NOT NULL DEFAULT 0');
   },
 };
 

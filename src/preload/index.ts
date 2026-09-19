@@ -227,8 +227,8 @@ const api = {
       call<CheckpointDiff>('checkpoints:diff', sessionId, fromId, toId),
     revertPlan: (sessionId: string, checkpointId: number) =>
       call<CheckpointRevertPlan>('checkpoints:revertPlan', sessionId, checkpointId),
-    revert: (sessionId: string, checkpointId: number) =>
-      call<CheckpointRevertResult>('checkpoints:revert', sessionId, checkpointId),
+    revert: (sessionId: string, checkpointId: number, previewToken: string) =>
+      call<CheckpointRevertResult>('checkpoints:revert', sessionId, checkpointId, previewToken),
     removeRepo: (projectPath: string, apply: boolean) =>
       call<{ refs: number; rows: number; applied: boolean }>('checkpoints:removeRepo', projectPath, apply),
   },

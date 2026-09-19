@@ -41,8 +41,8 @@ const RETRY_CAP_MS = 10 * 60_000;
 // The desktop window and launchd service intentionally share one queue
 // database. A process-local `inFlight` map cannot prove a row belongs to a
 // crashed worker, so a claim has a durable owner and a renewable lease instead.
-// Two minutes tolerates a briefly blocked event loop without spuriously
-// launching a second paid worker; a crashed worker is still recovered promptly.
+// Two minutes tolerates a briefly blocked event loop. Expiry detects lost
+// ownership; it cannot prove a detached child or submitted request stopped.
 const LEASE_MS = 120_000;
 const LEASE_RENEW_MS = 30_000;
 const DISPATCHER_OWNER = `queue-${process.pid}-${randomUUID()}`;
@@ -390,7 +390,7 @@ async function dispatch(): Promise<void> {
 
   const ready = d.prepare(`
     SELECT * FROM queue
-    WHERE state='waiting' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+    WHERE state='waiting' AND recovery_unresolved=0 AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
     ORDER BY priority, created_at
     LIMIT ?
   `).all(now, READY_LIMIT) as QueueRow[];
@@ -453,7 +453,7 @@ async function dispatch(): Promise<void> {
     // process from running this item twice. The durable lease prevents a new
     // process from mistaking another process's in-memory work for an orphan.
     const claimed = d.prepare(
-      "UPDATE queue SET state='running', started_at=?, blocked_by=NULL, error=NULL, lease_owner=?, lease_expires_at=? WHERE id=? AND state='waiting'"
+      "UPDATE queue SET state='running', started_at=?, blocked_by=NULL, error=NULL, lease_owner=?, lease_expires_at=? WHERE id=? AND state='waiting' AND recovery_unresolved=0"
     ).run(now, DISPATCHER_OWNER, now + LEASE_MS, row.id);
     if (claimed.changes !== 1) continue;
 
@@ -501,8 +501,8 @@ async function runItem(run: QueueRunner, item: QueueItem, payload: unknown): Pro
 function startLeaseHeartbeat(id: string): () => void {
   const heartbeat = setInterval(() => {
     try {
-      // If this ever affects zero rows, another process has legitimately
-      // recovered the expired row. The stale runner may finish its own cleanup,
+      // If this ever affects zero rows, another process has quarantined
+      // the expired row. The stale runner may finish its own cleanup,
       // but it can no longer alter the queue's authoritative state.
       db().prepare(
         "UPDATE queue SET lease_expires_at=? WHERE id=? AND state='running' AND lease_owner=?"
@@ -611,41 +611,24 @@ function renewOwnLeases(now: number): void {
 }
 
 /**
- * A row is reclaimable only after its durable lease expires. This is the
- * distinction that a fresh desktop process needs: a live launchd worker is not
- * an orphan merely because its in-memory map lives in another process.
- *
- * Pre-lease rows from older Wanigan builds have NULL expiry and are deliberately
- * recovered once; the conditional UPDATE makes concurrent upgrade starts safe.
- *
- * Recovery counts as an attempt. Without that, recovery was the one path that
- * moved a row back to 'waiting' without touching `attempts`, so an item that
- * wedges whatever runs it — the case recovery exists for — was dispatched,
- * wedged, recovered and dispatched again forever, spending on every lap.
- * MAX_ATTEMPTS is what ends that, and a failed row is kept as evidence for a
- * month while a silently looping one is kept nowhere.
+ * Expiry means the owner stopped reporting, not that its work stopped.
+ * A detached child or remotely submitted request can outlive the owner, so no
+ * runner may automatically start this item again without reconciliation.
+ * Retain its original ownership as evidence. Legacy rows with no lease have
+ * the same unknown execution state and receive the same refusal.
  */
 function recoverExpiredLeases(now: number): boolean {
   renewOwnLeases(now);
   const d = db();
 
-  const failed = d.prepare(
-    "UPDATE queue SET state='failed', attempts=attempts+1, started_at=NULL, ended_at=?, next_attempt_at=NULL, blocked_by=NULL, error=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?) AND attempts + 1 >= ?"
+  const unresolved = d.prepare(
+    "UPDATE queue SET state='failed', attempts=attempts+1, ended_at=?, next_attempt_at=NULL, blocked_by=NULL, error=?, recovery_unresolved=1 WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"
   ).run(
     now,
-    `A Wanigan worker stopped reporting before this completed (gave up after ${MAX_ATTEMPTS} attempts).`,
-    now,
-    MAX_ATTEMPTS
-  );
-
-  const requeued = d.prepare(
-    "UPDATE queue SET state='waiting', attempts=attempts+1, started_at=NULL, blocked_by=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"
-  ).run(
-    'The prior Wanigan worker stopped reporting before this completed — it is queued again from the start.',
+    'The prior Wanigan worker stopped reporting. Its process or submitted work has an unknown state, so this item was not retried. Reconcile that execution before starting it again.',
     now
   );
-
-  return failed.changes + requeued.changes > 0;
+  return unresolved.changes > 0;
 }
 
 /** Keeps the table from growing without bound across months of use. */
@@ -655,7 +638,7 @@ export function prune(): number {
     "DELETE FROM queue WHERE state IN ('done','canceled') AND COALESCE(ended_at, created_at) < ?"
   ).run(now - KEEP_DONE_MS);
   const failed = db().prepare(
-    "DELETE FROM queue WHERE state='failed' AND COALESCE(ended_at, created_at) < ?"
+    "DELETE FROM queue WHERE state='failed' AND recovery_unresolved=0 AND COALESCE(ended_at, created_at) < ?"
   ).run(now - KEEP_FAILED_MS);
   return done.changes + failed.changes;
 }

@@ -214,6 +214,8 @@ export async function runSmoke(): Promise<void> {
     await runScoutSmoke(check, say);
     const { runCheckpointSmoke } = await import('./smoke6');
     await runCheckpointSmoke(check, say);
+    const { runCheckpointLaunchSmoke } = await import('./smoke-checkpoint-launch');
+    await runCheckpointLaunchSmoke(check, say);
     const { runReviewSmoke } = await import('./smoke-review');
     await runReviewSmoke(check, say);
     const { runExtensionsSmoke } = await import('./smoke-extensions');

@@ -1,0 +1,29 @@
+{
+  "algorithm": "sha256",
+  "artifacts": {
+    "after/checkpoint-restore-confirmation-dark.png": "f98d104a5983586115844e3b3f33515d8800680b80c2e33268e02f47ee892794",
+    "after/checkpoint-restore-confirmation-light.png": "c20128ee8dee83d4f24f7c2707a9d1d9dcbe0cd87a923ef2465d79948aa2ad79",
+    "after/checkpoint-restore-stale-dark.png": "3df4b7eb71cb58583c34087b2b33bccbb4dc7ff26cd4b4bf0b14e45ea001a4ab",
+    "after/checkpoint-restore-stale-light.png": "3624ef773446cedeb9d5a1fe57f8f6c43d348714f05508ffa0d28dae8d8594dc",
+    "after/verification.json": "5599529f60aa3244c570b6e386b02c7c1786687f44f5b719edbb83bcef838e90",
+    "before/checkpoint-restore-confirmation-dark.png": "f98d104a5983586115844e3b3f33515d8800680b80c2e33268e02f47ee892794",
+    "before/checkpoint-restore-confirmation-light.png": "c20128ee8dee83d4f24f7c2707a9d1d9dcbe0cd87a923ef2465d79948aa2ad79",
+    "before/checkpoint-restore-stale-dark.png": "3df4b7eb71cb58583c34087b2b33bccbb4dc7ff26cd4b4bf0b14e45ea001a4ab",
+    "before/checkpoint-restore-stale-light.png": "3624ef773446cedeb9d5a1fe57f8f6c43d348714f05508ffa0d28dae8d8594dc",
+    "before/verification.json": "a723f35eed419446b05b0f110ef81de19f8dfb8e97ce58b83c26139059b19dd1"
+  },
+  "renderer": {
+    "before": {
+      "assets/index-BjaoRm2G.css": "bd64c0c995c66457d9401f421e6dbc3d9b7149d59fa481cd2e0a27a95abae4ae",
+      "assets/index-CNb0xj_W.js": "9bee63cb6e279129565dc3760d603907c9067ef1adca1d6109db5b1895132ca9",
+      "assets/runtime-DPC_1S4f.js": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "index.html": "16beb43bdcd8595596049096a36b06a6b6fe8ac5bd45df2585b4ac1b40e557a9"
+    },
+    "after": {
+      "assets/index-BjaoRm2G.css": "bd64c0c995c66457d9401f421e6dbc3d9b7149d59fa481cd2e0a27a95abae4ae",
+      "assets/index-D4-MQ8qj.js": "25bf2ac4d9ae4dd4fa5d229d04943ae55940e4986390b29e5e814286f3f4d5a3",
+      "assets/runtime-DPC_1S4f.js": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "index.html": "4403c04af642ea9e3fc1226750d36d667dd342da9e05b3d1f4d5b1e02a0e16df"
+    }
+  }
+}

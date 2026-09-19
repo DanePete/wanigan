@@ -19,9 +19,12 @@ export const checkpointsModule: WaniganModule = {
       if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
       return checkpoints.checkpointRevertPlan(String(sessionId), checkpointId);
     });
-    handle('checkpoints:revert', (sessionId: string, checkpointId: number) => {
+    handle('checkpoints:revert', (sessionId: string, checkpointId: number, previewToken: string) => {
       if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
-      return checkpoints.applyCheckpointRevert(String(sessionId), checkpointId);
+      if (typeof previewToken !== 'string' || !/^[a-f0-9-]{36}$/.test(previewToken)) {
+        throw new Error('Preview the checkpoint again before restoring it.');
+      }
+      return checkpoints.applyCheckpointRevert(String(sessionId), checkpointId, previewToken);
     });
     handle('checkpoints:removeRepo', (projectPath: string, apply: boolean) =>
       checkpoints.removeRepoCheckpoints(String(projectPath), apply === true));

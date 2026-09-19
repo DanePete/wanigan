@@ -267,7 +267,7 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     // Both paths hand their env builder the account itself rather than its
     // environment, because an account that contributes no variable still has to
     // clear an inherited one and a record cannot carry a deletion.
-    check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /agentEnv\(PATH, id, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('sessions.ts'))
+    check(/worktreeEnv = await worktreeLaunchEnv\(cwd\)/.test(launchSrc('sessions.ts')) && /agentEnv\(PATH, id, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('sessions.ts'))
       && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /headlessEnv\(launchPath, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('headless.ts')),
     'both launch paths hand the worktree environment to the process they spawn, so the variables are reachable and not only buildable');
 

@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-19T19:52:29.287Z",
+  "before": true,
+  "rendererRoot": "/private/tmp/wanigan-restore-before-AVLSzs/renderer",
+  "provenance": "Built renderer in isolated Chromium with a synthetic preload bridge. Verifies rendering and bridge arguments only; no main-process restore, native IPC, provider calls, or real user data.",
+  "checks": [
+    "Confirmation shows the recorded checkpoint and exact restore/delete actions.",
+    "Frozen baseline sends session and checkpoint IDs without a preview token.",
+    "A synthetic stale-preview refusal is visible and the consumed approval button is removed."
+  ],
+  "errors": [],
+  "environmentNotes": [
+    "Headless Chromium has no WebGPU adapter; the existing orb fallback is shown."
+  ]
+}

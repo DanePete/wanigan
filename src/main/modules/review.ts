@@ -27,6 +27,16 @@ function migrate(d: Database.Database): void {
       results_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_review_runs_project ON review_runs(project_id, started_at DESC);
+    -- A checkout claim survives its owner. Expiry is uncertainty, never
+    -- permission to repeat commands whose descendants may still be running.
+    CREATE TABLE IF NOT EXISTS review_checkout_owners (
+      cwd TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL UNIQUE,
+      owner_id TEXT NOT NULL,
+      owner_pid INTEGER,
+      lease_expires_at INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'unresolved'))
+    );
   `);
   // Existing command results remain historical evidence with no invented identity.
   addColumn(d, 'review_runs', 'session_id', 'TEXT');

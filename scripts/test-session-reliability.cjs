@@ -58,7 +58,10 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
       refreshProviderPacks: noop, runsClaudeCli: () => false, missingCredentialIds: () => [], providerProbeEnvironment: () => ({}) },
     './store': { projectById: () => project, listProjects: () => [project] },
     './halt': { refuseIfHalted: noop },
-    './accounts': { appliesTo: () => false, resolve: () => ({ account: null }), applyLaunchEnv: noop,
+    './accounts': { appliesTo: () => false, resolve: () => {
+      if (state.accountFailure) throw new Error('The chosen account no longer exists.');
+      return { account: null };
+    }, applyLaunchEnv: noop,
       get: () => null, byId: () => null, supportsAccounts: () => false },
     './handoff': {}, './config-pins': { gateLaunch: async () => ({ allowed: true, note: null }) },
     './hooks': { cleanupHookSettings: noop,
@@ -72,7 +75,10 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
         lastAt: state.providerEvents.at(-1)?.at ?? null, tool: null, since: 0 }),
     },
     './codex-hooks': { prepareCodexHookLaunch: () => null, forgetCodexHookSession: noop, codexHookDelivered: () => false },
-    './checkpoints': { registerSessionCheckpoints: noop, finalizeSessionCheckpoints: async () => { checks.push('checkpoint'); } },
+    './checkout-activity': { acquireCheckoutActivity: () => () => { checks.push('released'); } },
+    './checkpoints': { cancelSessionCheckpointLaunch: async () => { state.checkpointCancelled = true; },
+      registerSessionCheckpoints: async () => { checks.push('register'); await state.registration; },
+      finalizeSessionCheckpoints: async () => { checks.push('checkpoint'); await state.finalization; } },
     './transcripts': {},
     './session-history': { setLiveSessions: noop, deriveSessionTitle: () => null },
     './worktrees': {
@@ -97,6 +103,7 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
   };
   const worktreeDoubles = {
     './db': doubles['./db'], './platform': doubles['./platform'], './store': doubles['./store'],
+    './checkout-activity': doubles['./checkout-activity'],
     './git': { OBJECT_NAME: /^[a-f0-9]+$/, head: async cwd => git(cwd, ['rev-parse', 'HEAD']).out.trim(),
       repoState: async () => ({ kind: 'branch', branch: 'main' }), runGit: async (cwd, args) => {
       if (realGit) return git(cwd, args);
@@ -156,7 +163,11 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
       throw new Error(`Unexpected import ${name}`);
     }
     vm.runInThisContext(`(function(require,module,exports,process,setTimeout,clearTimeout,Date){${code}\n})`, { filename: absolute })(
-      localRequire, mod, mod.exports, { env: {}, platform, pid: process.pid },
+      localRequire, mod, mod.exports, { env: {}, platform, pid: process.pid,
+        kill(pid, signal) {
+          assert.equal(pid, -proc.pid); assert.equal(signal, 0);
+          if (!state.groupAlive) throw Object.assign(new Error('no process group'), { code: 'ESRCH' });
+        } },
       sessionFile ? fakeTimeout : setTimeout, sessionFile ? id => timers.delete(id) : clearTimeout, sessionFile ? Clock : Date,
     );
     return mod.exports;
@@ -302,13 +313,61 @@ test('a clean goal checkout survives process exit and checkpoint completion; ord
   }
 });
 
+test('session cleanup retains a checkout and its ownership when the terminal group survives', async () => {
+  const f = fixture();
+  try {
+    f.state.groupAlive = true;
+    await f.load('src/main/sessions.ts').createSession({ providerId: 'fixture', projectId: 'project', isolate: true });
+    f.proc.exit({ exitCode: 0 }); await new Promise(setImmediate);
+    assert.deepEqual(f.removed, []);
+    assert(!f.checks.includes('released'));
+  } finally { f.close(); }
+});
+
+test('quit waits for an already-exited session checkpoint and ownership cleanup', async () => {
+  const f = fixture();
+  let finish;
+  try {
+    f.state.finalization = new Promise(resolve => { finish = resolve; });
+    const sessions = f.load('src/main/sessions.ts');
+    await sessions.createSession({ providerId: 'fixture', projectId: 'project', isolate: true });
+    f.proc.exit({ exitCode: 0 });
+    let drained = false;
+    const shutdown = sessions.shutdownAll().then(() => { drained = true; });
+    await new Promise(setImmediate);
+    assert.equal(drained, false);
+    finish(); await shutdown;
+    assert.deepEqual(f.removed, [f.worktreePath]);
+    assert(f.checks.includes('released'));
+  } finally { finish?.(); await new Promise(setImmediate); f.close(); }
+});
+
+test('quit refuses a session still waiting for its pre-agent checkpoint', async () => {
+  const f = fixture();
+  let finish;
+  try {
+    f.state.registration = new Promise(resolve => { finish = resolve; });
+    const sessions = f.load('src/main/sessions.ts');
+    const opening = sessions.createSession({ providerId: 'fixture', projectId: 'project', isolate: true });
+    await new Promise(setImmediate);
+    assert(f.checks.includes('register'));
+    assert.equal(f.launches.length, 0);
+    const shutdown = sessions.shutdownAll();
+    finish();
+    await assert.rejects(opening, /shutting down/);
+    await shutdown;
+    assert.equal(f.launches.length, 0);
+    assert(f.checks.includes('released'));
+  } finally { finish?.(); await new Promise(setImmediate); f.close(); }
+});
+
 test('an adopted implementation checkout is checked before spawn and refusal launches no agent', async () => {
   const f = fixture();
   try {
     const sessions = f.load('src/main/sessions.ts'); f.state.privateFailure = true;
     await assert.rejects(sessions.createSession({ providerId: 'fixture', projectId: 'project' },
       { useWorktree: f.worktreePath, retainWorktree: true, requirePrivateDependencies: true }), /private isolation refused/);
-    assert.deepEqual(f.checks, [['private', f.worktreePath]]); assert.equal(f.launches.length, 0);
+    assert.deepEqual(f.checks, [['private', f.worktreePath], 'released']); assert.equal(f.launches.length, 0);
   } finally { f.close(); }
 });
 
@@ -336,7 +395,7 @@ test('final launch authorization is synchronous after preparation, preserves ado
     await assert.rejects(sessions.createSession({ providerId: 'fixture', projectId: 'project' },
       { useWorktree: f.worktreePath, retainWorktree: true, requirePrivateDependencies: true,
         beforeSpawn() {
-          assert.deepEqual(f.checks, [['private', f.worktreePath]]);
+          assert.deepEqual(f.checks, [['private', f.worktreePath], 'register']);
           assert.equal(f.launches.length, 0);
           throw new Error('Automatic spending was paused during preparation');
         } }), /paused during preparation/);
@@ -429,4 +488,60 @@ test('fresh real Git worktrees override the shared default, and clone failure st
       assert.equal(fs.readFileSync(path.join(source, 'parent.txt'), 'utf8'), 'parent survives');
     } finally { f.close(); }
   }
+});
+
+test('a rejected account after preparation cancels its checkpoint and releases the checkout without spawning', async () => {
+  const f = fixture();
+  try {
+    f.state.accountFailure = true;
+    await assert.rejects(f.load('src/main/sessions.ts').createSession({ providerId: 'fixture', projectId: 'project', accountId: 'removed' }), /account no longer exists/);
+    assert.equal(f.launches.length, 0);
+    assert.equal(f.state.checkpointCancelled, true);
+    assert.equal(f.checks.filter(value => value === 'released').length, 1);
+  } finally { f.close(); }
+});
+
+test('a failed resume account does not strand the conversation launch lock', async () => {
+  const f = fixture({ harness: 'codex' });
+  try {
+    const sessions = f.load('src/main/sessions.ts');
+    const saved = await sessions.createSession({ providerId: 'fixture', projectId: 'project' });
+    f.proc.exit({ exitCode: 0 }); await new Promise(setImmediate);
+    f.state.conversationId = '11111111-1111-4111-8111-111111111111';
+    const options = { providerId: 'fixture', projectId: 'project', resumeFrom: { sessionId: saved.id } };
+    f.state.accountFailure = true;
+    await assert.rejects(sessions.createSession(options), /account no longer exists/);
+    f.state.accountFailure = false;
+    await sessions.createSession(options);
+    assert.equal(f.launches.length, 2);
+  } finally { f.close(); }
+});
+
+for (const replacement of ['alias', 'directory']) test(`${replacement} replacement during checkpoint preparation cannot redirect the process outside its claimed checkout`, async () => {
+  const f = fixture(); let finish;
+  try {
+    const held = path.join(f.directory, 'held-project');
+    if (replacement === 'alias') {
+      fs.renameSync(f.projectPath, held);
+      fs.symlinkSync(held, f.projectPath);
+    }
+    f.state.registration = new Promise(resolve => { finish = resolve; });
+    const opening = f.load('src/main/sessions.ts').createSession({ providerId: 'fixture', projectId: 'project' });
+    await new Promise(setImmediate);
+    assert(f.checks.includes('register'));
+    if (replacement === 'alias') {
+      fs.unlinkSync(f.projectPath);
+      fs.symlinkSync(f.worktreePath, f.projectPath);
+    } else {
+      fs.renameSync(f.projectPath, held);
+      fs.mkdirSync(f.projectPath);
+    }
+    finish();
+    await assert.rejects(opening, /checkout.*changed/i);
+    assert.equal(f.launches.length, 0);
+    assert.equal(f.checks.filter(value => value === 'released').length, 1);
+    assert.equal(f.state.checkpointCancelled, true);
+    assert(fs.existsSync(held));
+    assert(fs.existsSync(f.worktreePath));
+  } finally { finish?.(); await new Promise(setImmediate); f.close(); }
 });

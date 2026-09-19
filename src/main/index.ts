@@ -74,6 +74,7 @@ import * as gitOps from './git';
 import { commitChecked, pushChecked } from './guarded-git';
 import { scanFor } from './secret-scan';
 import { assistedByPreview } from './assisted-by';
+import { stopReviewChecks } from './review';
 import { verifyLedger } from './ledger-chain';
 import * as gh from './gh';
 import * as prReadiness from './pr-readiness';
@@ -916,7 +917,7 @@ app.on('before-quit', (event) => {
   // as a fresh failure on the user's phone.
   setSessionExitObserver(null);
   stopServices();
-  void Promise.allSettled([shutdownAll(), headless.shutdownHeadless()]).finally(() => {
+  void Promise.allSettled([shutdownAll(), headless.shutdownHeadless(), stopReviewChecks()]).finally(() => {
     quitReady = true;
     // Released here rather than at the top of the drain: the machine should
     // stay up long enough for Codex to flush its rollout and node-pty to

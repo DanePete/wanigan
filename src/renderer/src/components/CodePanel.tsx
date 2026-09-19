@@ -266,10 +266,10 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
   }
 
   async function doTurnRevert() {
-    if (!sessionId || !cpPlan?.ok) return;
+    if (!sessionId || !cpPlan?.ok || !cpPlan.previewToken) return;
     setCpBusy(true);
     try {
-      const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId);
+      const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId, cpPlan.previewToken);
       setCpResult(res);
       setCpPlan(null);
       setErr(null);
