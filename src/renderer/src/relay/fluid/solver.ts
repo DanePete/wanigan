@@ -173,7 +173,7 @@ export class FluidSolver {
   private sCorrWq: number;
   private avgRho: number;
 
-  constructor(rig: RigLayout, params: Partial<SolverParams> = {}) {
+  constructor(rig: RigLayout, params: Partial<SolverParams> = {}, initialBasin = 0) {
     this.rig = rig;
     this.params = { ...DEFAULT_SOLVER_PARAMS, ...params };
     const p = this.params;
@@ -189,7 +189,7 @@ export class FluidSolver {
     this.invRestDensity = 1 / p.restDensity;
 
     // ── seed the fluid ────────────────────────────────────────────────────
-    this.initialSeed = seedWater(rig, d, p.fill);
+    this.initialSeed = seedWater(rig, d, p.fill, initialBasin);
     this.n = this.initialSeed.length / 3;
     const n = this.n;
     this.px = F32(n); this.py = F32(n); this.pz = F32(n);

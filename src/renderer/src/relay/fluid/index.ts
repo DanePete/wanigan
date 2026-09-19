@@ -54,9 +54,10 @@ const RAY_LIFT = 0.15;
 export function mountFluid(
   canvas: HTMLCanvasElement,
   rig: RigLayout,
-  opts: Partial<Pick<SolverParams, 'spacing' | 'fill'>> = {},
+  opts: Partial<Pick<SolverParams, 'spacing' | 'fill'>> & { initialBasin?: number } = {},
 ): FluidMount | null {
-  const solver = new FluidSolver(rig, opts);
+  const { initialBasin = 0, ...params } = opts;
+  const solver = new FluidSolver(rig, params, initialBasin);
   const renderer = createFluidRenderer(canvas, solver.params.spacing);
   if (!renderer) return null;
 

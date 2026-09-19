@@ -8,7 +8,7 @@ import { fluidAvailable } from './fluid';
  * the OS's reduced-motion preference from `matchMedia`, and whether this
  * device can run the fluid module at all. The decision itself is
  * `fluidTier()` in `src/shared/relay-rig.ts`; this hook only gathers its four
- * inputs and re-gathers the one that can change while the view is open.
+ * inputs and follows motion changes while the view is open.
  *
  * Until the settings have answered the tier is `still`. That is the honest
  * default, not a fallback: a surface that animated before it knew whether it
@@ -43,11 +43,21 @@ export function useFluidTier(): TierReading {
   useEffect(() => {
     let live = true;
     window.wanigan.prefs.all()
-      .then((all) => { if (live) setPrefs({ fluid: all.fluid, motion: all.motion }); })
+      .then((all) => {
+        if (live) setPrefs({ fluid: all.fluid, motion: isMotion(document.documentElement.dataset.motion) ? rootMotion() : all.motion });
+      })
       // Recovery mode: with the settings bridge down the module stays off and
       // the motion setting is whatever the root already carries.
       .catch(() => { if (live) setPrefs({ fluid: 'off', motion: rootMotion() }); });
     return () => { live = false; };
+  }, []);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setPrefs((current) => current ? { ...current, motion: rootMotion() } : current);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] });
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {

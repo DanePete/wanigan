@@ -154,14 +154,14 @@ function gaugeOf(node: DocketNode, read: RelayRead): Gauge {
 /**
  * The one word a basin's pill shows.
  *
- * A running basin whose completions have gone quiet says "stalled" in
- * words, because flat water must never carry meaning on its own; a ready
+ * A running basin whose completions have gone quiet says "quiet" in
+ * words. Tool silence alone is not proof that a session has stalled. A ready
  * basin says "your call", because a phase waiting on a person is the hold
  * and stillness is not allowed to be its only announcement. A completed
  * review reads its decision.
  */
 function stateOf(node: DocketNode, beat: Cadence, decision: Decision | null): PhaseState {
-  if (node.kind === 'review' && node.status === 'completed' && decision) {
+  if (node.kind === 'review' && (node.status === 'completed' || node.status === 'failed') && decision) {
     if (decision === 'approve') return { value: 'pass', word: 'approved' };
     if (decision === 'request_changes') return { value: 'failed', word: 'changes requested' };
     return { value: 'failed', word: 'rejected' };
@@ -169,7 +169,7 @@ function stateOf(node: DocketNode, beat: Cadence, decision: Decision | null): Ph
   switch (node.status) {
     case 'running':
       return beat.kind === 'still' && beat.reason === 'quiet'
-        ? { value: 'stalled', word: 'stalled' }
+        ? { value: 'quiet', word: 'quiet' }
         : { value: 'running', word: node.gateRunningSince !== null ? 'gate running' : 'running' };
     case 'completed': return { value: 'completed', word: 'completed' };
     case 'failed': return { value: 'failed', word: 'failed' };
@@ -201,7 +201,7 @@ export function phasesOf(read: RelayRead, extras: Readonly<Record<string, readon
     const completions = [...(row?.completions ?? []), ...extra];
     const completed = (row?.completed ?? 0) + extra.length;
     const beat = cadence(completions, now);
-    const decision = node.kind === 'review' ? decisionOf(read.docket.proofs, node.id) : null;
+    const decision = node.kind === 'review' ? decisionOf(read.docket.proofs.filter((proof) => proof.createdAt >= (node.reopenedAt ?? 0)), node.id) : null;
     const route = routeOf(node, row);
     const gateOpen = node.status === 'completed';
     return {

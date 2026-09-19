@@ -1,0 +1,10 @@
+{
+  "mode": "before",
+  "scope": "Synthetic renderer fixtures; no provider calls, sessions, main-process behavior, or persistence validated.",
+  "results": [
+    "Captured standard, direct, working, reduced motion, and 900px layouts in both themes.",
+    "Captured the empty Relay composer in both themes.",
+    "Renderer errors: 0"
+  ],
+  "errors": []
+}

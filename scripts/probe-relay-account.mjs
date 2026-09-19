@@ -36,6 +36,7 @@ const INSTRUMENT = `
     { id: 'acct_personal', harness: 'claude-code', label: 'Personal', configDir: '/example/personal', adopted: false, isDefault: false, present: true },
   ];
   window.__relaySent = null;
+  let created = null;
   const accounts = new Proxy({}, {
     get(_t, prop) {
       if (prop === 'listForProvider') return async () => accountsRows;
@@ -47,11 +48,12 @@ const INSTRUMENT = `
       if (prop === 'create') {
         return async (input) => {
           window.__relaySent = JSON.parse(JSON.stringify(input));
-          return { docket: { id: 'dk_new', nodes: [] }, nodes: [], forecast: null };
+          created = { docket: { id: 'dk_new', title: input.intent, objective: input.intent, projectId: input.projectId, projectName: 'storefront', status: 'draft', nodes: [], proofs: [], reviewCommands: 0 }, relay: true, nodes: [], forecast: null, pipeline: null, handbackLimit: 3 };
+          return created;
         };
       }
-      if (prop === 'list') return async () => [];
-      if (prop === 'read') return async () => null;
+      if (prop === 'list') return async () => created ? [created.docket] : [];
+      if (prop === 'read') return async () => created;
       return base.relay[prop];
     },
   });
@@ -72,9 +74,8 @@ async function setTheme(page, theme) {
 }
 
 async function toRelay(page) {
-  await page.locator('.hdr-toggle').first().click().catch(() => {});
-  await page.waitForTimeout(250);
-  await page.locator('[data-nav-tab="relay"]').first().click().catch(() => {});
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Meta+Shift+R');
   await page.waitForTimeout(800);
 }
 
@@ -98,6 +99,7 @@ for (const theme of ['dark', 'light']) {
   check(/This project’s account, then the default/.test(optionText) && /Work/.test(optionText) && /Personal/.test(optionText),
     'it offers the ordinary resolution first, then the accounts this profile can actually use', optionText);
 
+  await page.getByRole('button', { name: 'Show: Choose the model for a stage yourself', exact: true }).click();
   const perStage = page.locator('select[aria-label="Implement account override"]');
   check(await perStage.count() === 1, 'each agent stage can override the account');
   check(await page.locator('select[aria-label="Estimate account override"]').count() === 0,
@@ -113,7 +115,7 @@ for (const theme of ['dark', 'light']) {
 
   await perStage.selectOption('acct_work');
   await page.locator('select[aria-label="Review account override"]').selectOption({ index: 1 });
-  await page.locator('.btn-primary', { hasText: 'Start relay' }).click();
+  await page.locator('.btn-primary', { hasText: 'Create relay' }).click();
   await page.waitForTimeout(500);
 
   const sent = await page.evaluate(() => window.__relaySent);

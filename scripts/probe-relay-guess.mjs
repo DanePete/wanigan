@@ -16,7 +16,8 @@ import { mkdirSync } from 'node:fs';
 import { openRenderer } from './renderer-harness.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const OUT = path.join(ROOT, 'docs/visuals/suggester/relay');
+const outAt = process.argv.indexOf('--out');
+const OUT = path.resolve(ROOT, outAt < 0 ? 'docs/visuals/suggester/relay' : process.argv[outAt + 1]);
 mkdirSync(OUT, { recursive: true });
 
 const problems = [];
@@ -76,12 +77,13 @@ for (const theme of ['dark', 'light']) {
   console.log(`── ${theme}`);
   const { page, close } = await openRenderer({
     theme, width: 1280, height: 1000,
-    onError: (m) => problems.push(m),
+    onError: (m) => { if (!/WebGPU/.test(m)) problems.push(m); },
     instrument: INSTRUMENT,
   });
   await setTheme(page, theme);
 
-  await page.locator('[data-nav-tab="relay"]').first().click().catch(() => {});
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Meta+Shift+R');
   await page.waitForTimeout(800);
 
   const intent = page.locator('textarea[aria-label="What should this relay accomplish"]');
@@ -115,4 +117,4 @@ for (const theme of ['dark', 'light']) {
 for (const message of problems) console.log(`  [error] ${message}`);
 const failed = checks.filter(([ok]) => !ok).length;
 console.log(`\n${checks.length - failed}/${checks.length} checks · ${problems.length} renderer errors · ${OUT}`);
-process.exit(failed ? 1 : 0);
+process.exit(failed || problems.length ? 1 : 0);

@@ -93,6 +93,23 @@ test('the seed lattice sits entirely inside basin 0, above the floor and inside 
   }
 });
 
+test('opening an existing relay seeds only its recorded current basin, including a narrowed three-stage relay', () => {
+  for (const count of [3, 5]) {
+    const rig = rigLayout(count);
+    for (let current = 0; current < count; current++) {
+      const seed = seedWater(rig, DEFAULT_SPACING, DEFAULT_FILL, current);
+      assert.equal(seed.length / 3, 1460, 'changing the current phase preserves the body of water');
+      for (let i = 0; i < seed.length; i += 3) {
+        assert.equal(basinOf(rig, seed[i + 1]), current, 'opening a relay never replays earlier phases');
+        assert.ok(seed[i + 1] >= floorY(rig, current, seed[i]), 'the baseline stays above its own funnel');
+      }
+    }
+    for (const invalid of [-1, count, 0.5]) {
+      assert.throws(() => seedWater(rig, DEFAULT_SPACING, DEFAULT_FILL, invalid), RangeError);
+    }
+  }
+});
+
 test('boundary samples all lie on a real surface, and every gate has samples of its own', () => {
   const rig = rigLayout();
   const { positions, gate } = boundarySamples(rig, DEFAULT_SPACING);

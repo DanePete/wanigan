@@ -1,4 +1,4 @@
-/* relay — the sluice. Imported by views/Relay.tsx, not by index.css.
+/* Relay workspace. Imported by views/Relay.tsx, not by index.css.
 
    One apparatus, one body of water. Five open vessels with funnel floors run
    DOWNWARD, each with a gated drain into a pipe that feeds the vessel below.
@@ -24,14 +24,14 @@
    the spacing system rather than as a bare length. */
 
 :root {
-  --rl-unit: calc(var(--s-6) * 3.6);
+  --rl-unit: calc(var(--s-6) * 2.6);
 }
 
 /* ── the rig ─────────────────────────────────────────────────────────── */
 
 .rl-rig {
   position: relative;
-  inline-size: calc(var(--rl-unit) * var(--rl-w, 2.4));
+  inline-size: calc(var(--s-6) * 1.8);
   block-size: calc(var(--rl-unit) * var(--rl-h, 6.7));
   max-inline-size: 100%;
 }
@@ -119,78 +119,7 @@
 .rl-rig[data-rl-tier='fluid'] .rl-level,
 .rl-rig[data-rl-tier='fluid'] .rl-stream { display: none; }
 
-/* ── labels etched on the glass ──────────────────────────────────────── */
-
 .rl-hud { position: absolute; inset: 0; pointer-events: none; }
-
-/* One block per vessel, top-left, above the water line. Its vertical offset
-   is the vessel's top in world units, written by the view from the rig. */
-.rl-tag {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-start: calc(var(--rl-unit) * var(--rl-y, 0));
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-  padding: var(--s-1) var(--s-2);
-  font-size: var(--t-micro);
-  pointer-events: auto;
-}
-.rl-tag-name {
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  font-weight: 600;
-  color: var(--text);
-}
-.rl-tag-route {
-  font-family: var(--mono);
-  font-size: var(--t-tiny);
-  color: var(--text-dim);
-}
-.rl-tag-grains {
-  font-family: var(--mono);
-  font-size: var(--t-tiny);
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-/* State, at the top right of the vessel. The word is the signal; colour only
-   agrees with it, so with motion off nothing is lost. */
-.rl-tag-state {
-  position: absolute;
-  inset-inline-end: var(--s-2);
-  inset-block-start: var(--s-1);
-  padding: 0 var(--s-2);
-  border-radius: var(--r-pill);
-  font-size: var(--t-tiny);
-  line-height: var(--control-h-sm);
-  color: var(--accent-ink);
-  background: var(--dead);
-  transition: background var(--mo-state) linear, opacity var(--mo-state) linear;
-}
-.rl-tag-state[data-rl-v='pending'] { opacity: .5; }
-.rl-tag-state[data-rl-v='running'] { background: var(--accent); }
-.rl-tag-state[data-rl-v='completed'],
-.rl-tag-state[data-rl-v='pass'] { background: var(--ok); }
-.rl-tag-state[data-rl-v='failed'] { background: var(--bad); }
-.rl-tag-state[data-rl-v='hold'],
-.rl-tag-state[data-rl-v='stalled'] { background: var(--warn); }
-
-/* A real total gets a real <progress>. Only the estimate and verify phases
-   have one; a fill claims a denominator and the other three have none. */
-.rl-tag progress {
-  appearance: none;
-  border: 0;
-  inline-size: calc(var(--s-6) * 4);
-  block-size: var(--s-1);
-  border-radius: var(--r-pill);
-  background: var(--bg-raised);
-  overflow: hidden;
-}
-.rl-tag progress::-webkit-progress-bar { background: transparent; }
-/* No transition: this advances on discrete recorded milestones and steps
-   between them. Tweening would draw progress for moments nothing observed. */
-.rl-tag progress::-webkit-progress-value { background: var(--accent); }
 
 /* ── sediment ────────────────────────────────────────────────────────── */
 
@@ -205,7 +134,9 @@
    last slot matches no rule and stacks in the corner, silently. */
 .rl-silt {
   position: absolute;
-  inset: 0;
+  inset-inline: 0;
+  inset-block-start: calc(var(--rl-unit) * var(--rl-y, 0));
+  block-size: calc(var(--rl-unit) * var(--rl-h, 1));
   pointer-events: none;
   transform-origin: center;
 }
@@ -263,18 +194,6 @@
 .rl-grain[data-rl-i='21'] { inset-inline-start: 76%; inset-block-start: 78%; }
 .rl-grain[data-rl-i='22'] { inset-inline-start: 33%; inset-block-start: 66%; }
 .rl-grain[data-rl-i='23'] { inset-inline-start: 93%; inset-block-start: 89%; }
-
-/* ── the tier badge ──────────────────────────────────────────────────── */
-
-.rl-tier { display: inline-flex; align-items: center; gap: var(--s-2); }
-.rl-tier-dot {
-  inline-size: var(--s-2);
-  block-size: var(--s-2);
-  border-radius: var(--r-pill);
-  background: var(--ok);
-}
-.rl-tier[data-rl-tier='simple'] .rl-tier-dot { background: var(--warn); }
-.rl-tier[data-rl-tier='still'] .rl-tier-dot { background: var(--dead); }
 
 /* ── the no-motion contract ──────────────────────────────────────────── */
 
@@ -421,7 +340,7 @@
 .rl-guess-row progress::-webkit-progress-value {
   border-radius: var(--r-pill);
   background: var(--good);
-  transition: inline-size var(--mo-state) var(--mo-ease);
+
 }
 
 /* Below its gate: shown, and shown as not taken. */
@@ -463,49 +382,105 @@
 /* Asking. A slow breath rather than a spinner: the call is ~350ms and a
    spinner that appears and leaves inside half a second is just a flash. */
 .rl-guess-asking {
-  animation: rl-guess-breathe var(--mo-period) var(--mo-ease) infinite;
+  opacity: .7;
 }
 
-@keyframes rl-guess-breathe {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.55; }
+/* The apparatus is a navigator. Stage labels remain real buttons outside the
+   decorative canvas; a still frame communicates the entire recorded state. */
+.rl-view { --rl-unit: calc(var(--s-6) * 2.6); }
+.rl-view > * { min-inline-size: 0; }
+.rl-view > .pane-head .pane-actions { margin-inline-start: auto; }
+.rl-toolbar { display: flex; align-items: center; gap: var(--s-4); padding-block-end: var(--s-4); border-block-end: 1px solid var(--line); }
+.rl-picker { display: flex; align-items: center; gap: var(--s-3); min-inline-size: 0; flex: 1; }
+.rl-picker .field { min-inline-size: 0; max-inline-size: 42rem; }
+.rl-sync { font-size: var(--t-small); color: var(--text-faint); white-space: nowrap; }
+.rl-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-5); margin-block: 0; }
+.rl-summary h2 { font-size: var(--t-title); margin: 0 0 var(--s-2); overflow-wrap: anywhere; }
+.rl-summary p { margin: 0; max-inline-size: 72ch; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.6; }
+.rl-summary-state { flex-shrink: 0; display: flex; align-items: flex-end; flex-direction: column; gap: var(--s-2); }
+.rl-workspace { display: grid; grid-template-columns: minmax(19rem, .9fr) minmax(0, 1.5fr); align-items: start; gap: var(--s-6); }
+.rl-journey { min-inline-size: 0; }
+.rl-stage-rail { display: grid; grid-template-columns: calc(var(--s-6) * 1.8) minmax(0, 1fr); gap: var(--s-3); block-size: calc(var(--rl-unit) * var(--rl-h)); margin-block-start: var(--s-4); }
+.rl-stage-list { list-style: none; position: relative; margin: 0; padding: 0; }
+.rl-stage { position: absolute; inset-inline: 0; inset-block-start: calc(var(--rl-unit) * var(--rl-y)); min-block-size: calc(var(--rl-unit) * var(--rl-h)); }
+.rl-stage-button { position: relative; display: flex; flex-direction: column; gap: var(--s-2); width: 100%; text-align: start; border: 1px solid transparent; border-radius: var(--r-lg); padding: var(--s-3); background: transparent; color: var(--text); cursor: pointer; }
+.rl-stage-button:hover { background: var(--bg-raised); border-color: var(--line); }
+.rl-stage[data-selected='true'] .rl-stage-button { background: var(--accent-soft); border-color: var(--accent); }
+.rl-stage[data-selected='true'] .rl-stage-button::before { content: ''; position: absolute; inset-inline-start: calc(var(--s-1) * -1); inset-block: var(--s-3); inline-size: var(--s-1); background: var(--accent); border-radius: var(--r-pill); animation: rl-marker-in var(--mo-state) var(--mo-ease) both; transform-origin: center; }
+.rl-stage-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.rl-stage-name { font-size: var(--t-lead); font-weight: 600; }
+.rl-stage-top .pill { font-size: var(--t-tiny); white-space: nowrap; }
+.rl-stage-route { color: var(--text-dim); font-size: var(--t-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-inline-size: 100%; }
+.rl-stage-evidence { color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.rl-stage progress { appearance: none; inline-size: 100%; block-size: var(--s-1); border: 0; border-radius: var(--r-pill); overflow: hidden; background: var(--line-soft); }
+.rl-stage progress::-webkit-progress-bar { background: var(--line-soft); }
+.rl-stage progress::-webkit-progress-value { background: var(--accent); }
+.rl-rail-caption { font-size: var(--t-small); color: var(--text-faint); line-height: 1.6; max-inline-size: 42ch; margin-block-start: 0; }
+.rl-work { display: grid; gap: var(--s-5); min-inline-size: 0; }
+.rl-next { background: var(--accent-soft); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s-5); }
+.rl-next .sec-head { margin-block-end: var(--s-4); }
+.rl-next .sec-right { text-align: end; }
+.rl-next-content h3 { font-size: var(--t-title); line-height: 1.3; margin: 0 0 var(--s-3); }
+.rl-next-content p { color: var(--text-dim); line-height: 1.6; max-inline-size: 65ch; margin: 0 0 var(--s-4); }
+.rl-next-content, .rl-detail-content { animation: rl-content-in var(--mo-view) var(--mo-ease) both; }
+.rl-next-content > .hint { margin-block: var(--s-3); }
+.rl-actions { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.rl-actions .btn { white-space: normal; }
+.rl-detail { padding: 0 var(--s-5); min-inline-size: 0; }
+.rl-stage-instructions { margin-block: var(--s-3); white-space: pre-line; color: var(--text-dim); line-height: 1.6; overflow-wrap: anywhere; }
+.rl-facts { display: grid; gap: var(--s-3); margin-block: var(--s-4); }
+.rl-facts > div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: var(--s-3); }
+.rl-facts dt, .rl-forecast-phases dt { color: var(--text-faint); font-size: var(--t-small); }
+.rl-facts dd { color: var(--text); font-size: var(--t-small); margin: 0; overflow-wrap: anywhere; }
+.rl-route-reason { color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+.rl-evidence { margin-block-start: var(--s-4); border-block-start: 1px solid var(--line); padding-block-start: var(--s-3); }
+.rl-evidence summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); padding-block: var(--s-1); }
+.rl-evidence[open] summary { color: var(--text); }
+.rl-evidence ol { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-3); }
+.rl-evidence li { border-block-end: 1px solid var(--line-soft); padding-block-end: var(--s-3); }
+.rl-evidence li p { font-size: var(--t-small); line-height: 1.6; overflow-wrap: anywhere; margin-block: var(--s-2); }
+.rl-forecast-phases { display: grid; gap: var(--s-3); }
+.rl-forecast-phases > div { display: grid; grid-template-columns: 1fr 2fr; gap: var(--s-3); }
+.rl-forecast-phases dd { margin: 0; font-size: var(--t-small); }
+.rl-forecast-phases dd span { display: block; margin-block-start: var(--s-1); }
+.rl-decision { margin-block-start: var(--s-5); padding-block-start: var(--s-4); border-block-start: 1px solid var(--line); }
+.rl-decision .hint { margin-block-start: var(--s-3); }
+.rl-composer { max-inline-size: 52rem; margin: var(--s-5) auto; inline-size: 100%; animation: rl-content-in var(--mo-view) var(--mo-ease) both; }
+.rl-composer[hidden] { display: none; }
+.rl-composer textarea.field { min-block-size: calc(var(--s-6) * 4); font-size: var(--t-lead); line-height: 1.6; resize: vertical; }
+.rl-composer .section > label { display: block; }
+.rl-start-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); align-items: end; gap: var(--s-3); margin-block: var(--s-4); }
+.rl-start-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); margin-block-start: var(--s-5); padding-block-start: var(--s-4); border-block-start: 1px solid var(--line); }
+.rl-start-actions > .faint { flex-basis: 100%; }
+.rl-view :is(button, select, textarea, input, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@keyframes rl-content-in { from { opacity: 0; transform: translateY(var(--s-1)); } to { opacity: 1; transform: none; } }
+@keyframes rl-marker-in { from { opacity: 0; transform: scaleY(.4); } to { opacity: 1; transform: scaleY(1); } }
+@media (max-width: 1180px) {
+  .rl-workspace { grid-template-columns: minmax(17rem, .85fr) minmax(0, 1.3fr); gap: var(--s-4); }
+  .rl-next { padding: var(--s-4); }
+  .rl-detail { padding-inline: var(--s-2); }
+  .rl-stage-top { align-items: flex-start; }
+  .rl-stage-name { font-size: var(--t-body); }
 }
-
-/* ── starting one ────────────────────────────────────────────────────────
-   Before a relay exists there is nothing to watch, so the rig is not drawn
-   and the composer has the pane to itself: one column, measured for reading,
-   centred. The two-column split returns the moment there is a relay to watch,
-   because then the left half is carrying something. */
-
-.pane > .rl-start {
-  display: grid;
-  gap: var(--s-4);
-  /* Long enough for the guess panel's reasons to breathe, short enough that a
-     sentence is still one eye movement. */
-  max-inline-size: 62rem;
-  margin-inline: auto;
-  inline-size: 100%;
+@media (max-width: 980px) {
+  .rl-workspace { display: flex; flex-direction: column; }
+  .rl-work, .rl-journey { inline-size: 100%; }
+  .rl-stage-rail { display: block; block-size: auto; margin-block-start: var(--s-3); }
+  .rl-stage-rail > .rl-rig { display: none; }
+  .rl-stage-list { display: flex; gap: var(--s-2); overflow-x: auto; padding: var(--s-1) var(--s-1) var(--s-3); }
+  .rl-stage { position: static; min-block-size: 0; flex: 0 0 14rem; }
+  .rl-stage-button { border-color: var(--line); block-size: 100%; }
+  .rl-rail-caption { max-inline-size: none; margin-block-end: 0; }
+  .rl-journey { border-block-end: 1px solid var(--line); padding-block-end: var(--s-4); }
+  .rl-toolbar, .rl-summary { align-items: stretch; flex-direction: column; gap: var(--s-3); }
+  .rl-picker { align-items: stretch; flex-direction: column; gap: var(--s-2); }
+  .rl-picker .field { max-inline-size: none; }
+  .rl-summary-state { align-items: center; flex-direction: row; }
+  .rl-stage-top { align-items: center; }
+  .rl-facts > div { grid-template-columns: 7rem minmax(0, 1fr); }
 }
-
-/* The one question, given the room a question deserves. */
-.rl-start textarea.field {
-  min-block-size: calc(var(--s-6) * 3);
-  font-size: var(--t-body);
-  line-height: 1.5;
-}
-
-/* Profile and account are settings, not the subject. Side by side, out of the
-   way of the sentence above them. */
-.rl-start-meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: var(--s-2) var(--s-3);
-}
-
-.rl-start-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-2) var(--s-3);
-  margin-block-start: var(--s-2);
+:root[data-motion='off'] .rl-view *,
+:root[data-motion='off'] .rl-view *::before { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .rl-view *, :root:not([data-motion='full']) .rl-view *::before { animation: none; transition: none; }
 }
