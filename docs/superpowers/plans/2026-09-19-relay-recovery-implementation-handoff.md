@@ -1,4 +1,13 @@
-# Recovery implementation handoff — unfinished, do not ship yet
+# Recovery implementation handoff — completed 2026-09-19
+
+> **Status: closed. Everything below this block is the historical checkpoint and is no longer current.**
+>
+> - The behaviour WIP described here as uncommitted was committed by a concurrent session in `703c46c`, mixed with unrelated dock, Usage and audit work, and pushed. It was not rewritten. The partial-staging guidance below therefore no longer applies.
+> - Remaining-work items 1–6 landed in `e8968c4` (pre-submission receipts, Improve prompt as a Recovery owner, host-aware storage admission, the seven-check native probe passing for the first time) and `0bc83e7` (Restore capture and note spacing).
+> - Final verification on `0bc83e7`: `npm test` exit 0, smoke 2,701 passed / 0 failed, storage maintenance 15 scenarios, native Backup 6 Electron processes; build, terminal replay, native lifecycle 7/7 and the both-theme recovery probe all exit 0. $0 spent; the $50 allowance is untouched.
+> - Chosen limitation, stated rather than hidden: `usage_paid_operations` has no settlement contract, so any paid call after `e8968c4` refuses a later restore on that installation. Catalog, credential-validation, pricing, Scout and push transports are not fenced at the transport. Details and evidence are in the [platform report](../../research/2026-09-19-relay-recovery-platform-evidence.md).
+> - Harness note: `npm test`'s smoke gate fails at once with `script: tcgetattr/ioctl: Operation not supported on socket` when it is launched from a shell command that also contains a heredoc. Run it on its own.
+> - Next phase is account-bound eligibility, scoped in the last section of the [approved plan](2026-09-19-relay-recovery-completion.md). It has no implementation plan yet.
 
 Checkpoint requested by the user on 2026-09-19 to wrap this session and continue in another AI session. This document supplements, rather than replaces, the approved [implementation plan](2026-09-19-relay-recovery-completion.md). Read `AGENTS.md` first. The user approved implementing that scope; no new permission is needed to continue it. **The behavior implementation is unfinished and remains in the working tree.** Do not mistake the two conversion commits or earlier passing tests for a completed phase.
 
