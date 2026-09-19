@@ -7,6 +7,7 @@ import { providerModelCatalogue } from './launch-choices';
 import * as control from './control';
 import * as accounts from './accounts';
 import * as otel from './otel';
+import { enableDelivery, readDelivery } from './relay-delivery';
 import { intersectChoices, launchFieldChoices } from '../shared/launch-fields';
 import { chooseStage, type RouteCandidate, type RouteDefaults, type StageRoute } from '../shared/relay-route';
 import { phasesFor, type StageAsk, type StageReading } from '../shared/suggest-questions';
@@ -242,6 +243,7 @@ function narrowedPlan(phases: readonly DocketNodeKind[]): DocketPlanNode[] | und
  */
 export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Partial<RelayCreateInput>;
+  if (input.delivery !== undefined && typeof input.delivery !== 'boolean') throw new Error('Relay delivery must be enabled or disabled explicitly.');
   const projectId = text(input.projectId, 'Project', 200);
   if (!projectById(projectId)) throw new Error('Choose a registered project before starting a relay.');
   const intent = text(input.intent, 'Intent', control.MAX_OBJECTIVE);
@@ -363,6 +365,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
           JSON.stringify({ ...pipelineReading, requested: DOCKET_NODE_KINDS }), at);
     }
   })();
+  if (input.delivery !== false) enableDelivery(created.id);
   return readRelay(created.id);
 }
 
@@ -530,7 +533,8 @@ export function readRelay(docketId: unknown): RelayRead {
       route: routes.get(node.id) ?? null,
     };
   });
-  return { docket, relay: flag?.relay === 1, nodes, pipeline: pipelineFor(id), forecast: latestForecast(id), handbackLimit: HANDBACK_LIMIT };
+  return { docket, relay: flag?.relay === 1, nodes, pipeline: pipelineFor(id), forecast: latestForecast(id), handbackLimit: HANDBACK_LIMIT,
+    delivery: flag?.relay === 1 ? readDelivery(id) : null };
 }
 
 type HistoryRow = {

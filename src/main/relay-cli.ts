@@ -28,9 +28,9 @@ const FAILED = 1;
 const USAGE = 2;
 
 export const RELAY_CLI_HELP = `  relay-create <project> <intent…> [--provider ID] [--account ID] [--model M] [--effort E]
-                               plan a relay: a docket, five phases and one
-                               route proof each. Starts no agent and spends
-                               nothing
+                               plan routed work plus explicit commit and
+                               deploy stages. Starts no agent; a configured
+                               routing suggester may spend
   relay-show <docketId>        the phases, their routes, and the forecast —
                                which is history, not a promise
   relay-start <docketId> <kind> --spend
@@ -79,13 +79,19 @@ function words(rest: string[]): string {
 
 function printRead(read: RelayRead, say: Say): void {
   say(`${read.docket.title}`);
-  say(`  ${read.docket.id} · ${read.docket.nodes.length} phases`);
+  say(`  ${read.docket.id} · ${read.docket.nodes.length + (read.delivery ? 2 : 0)} phases`);
   for (const node of read.docket.nodes) {
     const route = node.kind === 'estimate'
       ? 'Wanigan itself — no agent, no provider call'
       : [node.providerId, node.model, node.effort, node.accountId ? `account ${node.accountId}` : null]
         .filter(Boolean).join(' · ') || 'profile default';
     say(`  ${node.status.padEnd(9)} ${node.kind.padEnd(10)} ${route}`);
+  }
+  if (read.delivery) {
+    for (const kind of ['commit', 'deploy'] as const) {
+      const stage = read.delivery[kind];
+      say(`  ${stage.status.padEnd(9)} ${kind.padEnd(10)} ${stage.receipt?.commitHash ?? stage.detail ?? 'Explicit action in Relay'}`);
+    }
   }
 }
 
@@ -122,8 +128,8 @@ export async function cmdRelayCreate(rest: string[], say: Say): Promise<number> 
   say(`Planned a relay on ${project.name}.`);
   printRead(read, say);
   say('');
-  say('Nothing has started and nothing has been spent. Open Relay in Wanigan to start the plan');
-  say(`phase, or read the forecast first with:  npm run cli -- relay-show ${read.docket.id}`);
+  say('No agent or delivery action has started. Open Relay in Wanigan to start the first');
+  say(`phase, or read the forecast with:  npm run cli -- relay-show ${read.docket.id}`);
   return OK;
 }
 
@@ -174,8 +180,8 @@ export function cmdRelayShow(rest: string[], say: Say): number {
  * that a Wanigan is up, and Electron hands that instance our payload on its
  * way past. No socket, no port, no second way in.
  *
- * `--spend` is required and does nothing but be required. Everything else in
- * this file is free, and a command that launched an agent on the strength of a
+ * `--spend` is required and does nothing but be required. Delivery has its own
+ * preview in the app, and a command that launched an agent on the strength of a
  * docket id alone would make "relay-create then relay-start" look like one
  * motion rather than two decisions. The flag is not a safety net against a
  * mistyped id; it is the deliberate act, written down.
@@ -183,6 +189,10 @@ export function cmdRelayShow(rest: string[], say: Say): number {
 export async function cmdRelayStart(rest: string[], say: Say): Promise<number> {
   const [docketId, kind] = rest;
   if (!docketId || !kind) { say('usage: relay-start <docketId> <kind> --spend'); return USAGE; }
+  if (kind === 'commit' || kind === 'deploy') {
+    say(`Open this Relay in Wanigan to preview and explicitly run its ${kind} stage. relay-start launches agent stages only.`);
+    return FAILED;
+  }
   if (!rest.includes('--spend')) {
     say('Starting a phase launches a real agent and spends real money.');
     say('Re-run with --spend once that is what you mean.');

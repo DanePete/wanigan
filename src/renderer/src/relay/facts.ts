@@ -1,4 +1,5 @@
 import type { DocketNode, DocketNodeKind, DocketProof, RelayNodeRead, RelayRead } from '@shared/types';
+import type { RelayDeliveryKind, RelayDeliveryStage } from '@shared/relay-delivery';
 import { DOCKET_NODE_KINDS } from '@shared/types';
 import { cadence, gauge, sediment, seedOf, type Cadence, type Gauge, type Sediment } from '@shared/relay';
 
@@ -33,10 +34,13 @@ export type Route = {
   source: string | null;
 };
 
-export type Phase = {
+type PhaseReading = {
+  id: string;
+  kind: DocketNodeKind | RelayDeliveryKind;
+  status: DocketNode['status'] | RelayDeliveryStage['status'];
+  activityId: string;
   /** Position on the rail, top to bottom: the basin index. */
   index: number;
-  node: DocketNode;
   route: Route;
   /** The short line etched under the phase name. */
   routeText: string;
@@ -57,8 +61,14 @@ export type Phase = {
   streamOn: boolean;
 };
 
-export const KIND_WORD: Record<DocketNodeKind, string> = {
-  plan: 'Plan', estimate: 'Estimate', implement: 'Implement', verify: 'Verify', review: 'Review',
+export type Phase = PhaseReading & (
+  | { source: 'docket'; node: DocketNode }
+  | { source: 'delivery'; stage: RelayDeliveryStage }
+);
+export type DocketPhase = Extract<Phase, { source: 'docket' }>;
+
+export const KIND_WORD: Record<DocketNodeKind | RelayDeliveryKind, string> = {
+  plan: 'Plan', estimate: 'Estimate', implement: 'Implement', verify: 'Verify', review: 'Review', commit: 'Commit', deploy: 'Deploy',
 };
 
 /** The phases that run an agent and so carry a route, silt and a swell. */
@@ -180,12 +190,6 @@ function stateOf(node: DocketNode, beat: Cadence, decision: Decision | null): Ph
   }
 }
 
-/** The basin holding the water: the first phase not yet completed, or the last once all are. */
-function liveIndexOf(nodes: readonly DocketNode[]): number {
-  const first = nodes.findIndex((node) => node.status !== 'completed');
-  return first < 0 ? nodes.length - 1 : first;
-}
-
 /**
  * Every phase of a relay, read from the last poll plus the completions that
  * arrived since it (`extras`, by node id). `now` is the clock the cadence is
@@ -194,8 +198,8 @@ function liveIndexOf(nodes: readonly DocketNode[]): number {
 export function phasesOf(read: RelayRead, extras: Readonly<Record<string, readonly number[]>>, now: number): Phase[] {
   const nodes = orderedNodes(read.docket.nodes);
   const reads = new Map(read.nodes.map((row) => [row.nodeId, row]));
-  const live = liveIndexOf(nodes);
-  return nodes.map((node, index): Phase => {
+
+  const phases = nodes.map((node, index): Phase => {
     const row = reads.get(node.id) ?? null;
     const extra = extras[node.id] ?? [];
     const completions = [...(row?.completions ?? []), ...extra];
@@ -205,13 +209,38 @@ export function phasesOf(read: RelayRead, extras: Readonly<Record<string, readon
     const route = routeOf(node, row);
     const gateOpen = node.status === 'completed';
     return {
+      source: 'docket', id: node.id, kind: node.kind, status: node.status,
+      activityId: `${node.id}:${node.sessionId ?? 'none'}:${node.reopenedAt ?? ''}`,
       index, node, route, routeText: routeText(node.kind, route),
       completions, completed, cadence: beat, sediment: sediment(completed), seed: seedOf(node.id),
       gauge: gaugeOf(node, read), state: stateOf(node, beat, decision), decision,
       handbacks: row?.handbacks ?? 0,
-      live: index === live, gateOpen, streamOn: gateOpen && index + 1 === live,
+      live: false, gateOpen, streamOn: false,
     };
   });
+  // Delivery stages exist only when main has persisted them for this relay.
+  // They are command/commit records, never invented agent task nodes.
+  if (read.delivery) {
+    for (const kind of ['commit', 'deploy'] as const) {
+      const stage = read.delivery[kind];
+      const id = `${read.docket.id}:delivery:${kind}`;
+      const state = stage.status === 'completed' ? { value: 'completed', word: 'completed' }
+        : stage.status === 'running' ? { value: 'running', word: 'running' }
+          : stage.status === 'failed' || stage.status === 'interrupted' ? { value: 'failed', word: stage.status }
+            : { value: 'pending', word: 'pending' };
+      phases.push({
+        source: 'delivery', stage, id, kind, status: stage.status, activityId: id,
+        index: phases.length, route: { providerId: null, model: null, effort: null, reason: null, source: null },
+        routeText: kind === 'commit' ? 'Local git commit' : 'Project deployment command',
+        completions: [], completed: 0, cadence: cadence([], now), sediment: sediment(0), seed: seedOf(id),
+        gauge: null, state, decision: null, handbacks: 0, live: false,
+        gateOpen: stage.status === 'completed', streamOn: false,
+      });
+    }
+  }
+  const first = phases.findIndex((phase) => phase.status !== 'completed');
+  const live = first < 0 ? phases.length - 1 : first;
+  return phases.map((phase, index) => ({ ...phase, live: index === live, streamOn: phase.gateOpen && index + 1 === live }));
 }
 
 /**
@@ -219,7 +248,7 @@ export function phasesOf(read: RelayRead, extras: Readonly<Record<string, readon
  * while the implement phase it fed is running again after at least one.
  */
 export function returnOn(phases: readonly Phase[]): boolean {
-  return phases.some((phase) => phase.node.kind === 'implement' && phase.handbacks > 0 && phase.node.status === 'running');
+  return phases.some((phase) => phase.kind === 'implement' && phase.handbacks > 0 && phase.status === 'running');
 }
 
 /** The grains each basin floor holds at a read, keyed by node id — the baseline a later diff is drawn against. */

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { RelayCreateInput } from '../../shared/types';
 import type { WaniganModule } from '../module-registry';
 import * as relay from '../relay';
+import * as delivery from '../relay-delivery';
 
 /**
  * Relay owns the staged workflow's marker and IPC namespace. The implementation
@@ -20,6 +21,7 @@ function migrate(d: Database.Database) {
   if (!columns.some((column) => column.name === 'relay')) {
     d.exec('ALTER TABLE work_dockets ADD COLUMN relay INTEGER NOT NULL DEFAULT 0');
   }
+  delivery.migrateDelivery(d);
 }
 
 export const relayModule: WaniganModule = {
@@ -40,5 +42,12 @@ export const relayModule: WaniganModule = {
     handle('relay:forecast', (docketId: unknown) => relay.forecast(docketId));
     handle('relay:estimate', (docketId: unknown) => relay.estimate(docketId));
     handle('relay:list', (projectId: unknown, limit?: number) => relay.listRelays(projectId, limit));
+    handle('relay:enableDelivery', (docketId: unknown) => delivery.enableDelivery(docketId));
+    handle('relay:saveDeployConfig', (docketId: unknown, input: unknown) => delivery.saveDeployConfig(docketId, input));
+    handle('relay:reopenDeliveryReview', (docketId: unknown) => delivery.reopenDeliveryReview(docketId));
+    handle('relay:previewDelivery', (docketId: unknown, kind: unknown) => delivery.previewDelivery(docketId, kind));
+    handle('relay:commitDelivery', (docketId: unknown, input: unknown) => delivery.commitDelivery(docketId, input));
+    handle('relay:deployDelivery', (docketId: unknown, input: unknown) => delivery.deployDelivery(docketId, input));
+    handle('relay:cancelDeploy', (docketId: unknown) => delivery.cancelDeploy(docketId));
   },
 };

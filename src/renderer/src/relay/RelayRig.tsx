@@ -21,7 +21,7 @@ function toneOf(phase: Phase): Tone {
   return 'quiet';
 }
 
-const activityKey = (phase: Phase): string => `${phase.node.id}:${phase.node.sessionId ?? 'none'}:${phase.node.reopenedAt ?? ''}`;
+const activityKey = (phase: Phase): string => phase.activityId;
 
 function SedimentGrain({ index, existing }: { index: number; existing: boolean }) {
   // Preserve the arrival class for this element's lifetime so a poll cannot
@@ -48,14 +48,14 @@ function StageSediment({ phase, rig, index }: { phase: Phase; rig: RigLayout; in
 /** One selectable row per recorded stage. The water carries no unique facts. */
 export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: Props) {
   const rig = useMemo(() => rigLayout(Math.max(1, phases.length)), [phases.length]);
-  const returnInto = Math.max(0, phases.findIndex((phase) => phase.node.kind === 'implement'));
+  const returnInto = Math.max(0, phases.findIndex((phase) => phase.kind === 'implement'));
   const shapes = useMemo(() => rigShapes(rig, returnInto), [rig, returnInto]);
   const preference = useFluidTier();
   const [failedFor, setFailedFor] = useState<string | null>(null);
   const handbacks = phases.reduce((total, phase) => total + phase.handbacks, 0);
-  const reopenings = phases.map((phase) => phase.node.reopenedAt ?? '').join(':');
+  const reopenings = phases.map((phase) => phase.source === 'docket' ? phase.node.reopenedAt ?? '' : '').join(':');
   const mountKey = `${relayId}:${handbacks}:${reopenings}`;
-  const finished = phases.length > 0 && phases.every((phase) => phase.node.status === 'completed');
+  const finished = phases.length > 0 && phases.every((phase) => phase.status === 'completed');
   const tier = finished ? 'still' : preference.tier === 'fluid' && failedFor === mountKey ? 'simple' : preference.tier;
   const railEl = useRef<HTMLDivElement>(null);
   const listEl = useRef<HTMLOListElement>(null);
@@ -65,7 +65,7 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
   const fluid = useRef<FluidMount | null>(null);
   const phaseSnapshot = useRef(phases);
   const previous = useRef({ relayId, counts: new Map(phases.map((phase) => [activityKey(phase), phase.completed])) });
-  const selectedIndex = phases.findIndex((phase) => phase.node.id === selectedNodeId);
+  const selectedIndex = phases.findIndex((phase) => phase.id === selectedNodeId);
 
   useEffect(() => { phaseSnapshot.current = phases; }, [phases]);
 
@@ -105,7 +105,7 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
     levelEls.current.forEach((level, index) => {
       if (!level) return;
       const phase = phases[index];
-      if (tier === 'simple' && phase?.node.status === 'running' && phase.cadence.kind === 'swelling') {
+      if (tier === 'simple' && phase?.status === 'running' && phase.cadence.kind === 'swelling') {
         level.dataset.flow = 'live';
         level.style.setProperty('--mo-period', `${Math.round(phase.cadence.periodMs)}ms`);
       } else {
@@ -191,7 +191,7 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
         <div className="rl-rig" data-rl-tier={tier} aria-hidden="true">
           <svg viewBox={shapes.viewBox} preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
             {shapes.basins.map((basin, index) => (
-              <g key={phases[index]?.node.id ?? index}>
+              <g key={phases[index]?.id ?? index}>
                 <path className="rl-vessel" d={basin.vessel} />
                 <path className="rl-level" d={basin.level} data-rl-on={phases[index]?.live ? 'true' : 'false'}
                   ref={(el) => { levelEls.current[index] = el; }} />
@@ -211,10 +211,10 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
         </div>
         <ol className="rl-stage-list" aria-label="Relay stages" ref={listEl}>
           {phases.map((phase, index) => (
-            <li key={phase.node.id} className="rl-stage" data-current={phase.live} data-selected={phase.node.id === selectedNodeId}
+            <li key={phase.id} className="rl-stage" data-current={phase.live} data-selected={phase.id === selectedNodeId}
               ref={(el) => { stageEls.current[index] = el; }}>
-              <button type="button" className="rl-stage-button" aria-pressed={phase.node.id === selectedNodeId}
-                aria-current={phase.live && !finished ? 'step' : undefined} onClick={() => onSelect(phase.node.id)}
+              <button type="button" className="rl-stage-button" aria-pressed={phase.id === selectedNodeId}
+                aria-current={phase.live && !finished ? 'step' : undefined} onClick={() => onSelect(phase.id)}
                 onKeyDown={(event) => {
                   let next: number;
                   if (event.key === 'ArrowLeft') next = Math.max(0, index - 1);
@@ -223,23 +223,24 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
                   else if (event.key === 'End') next = phases.length - 1;
                   else return;
                   event.preventDefault();
-                  onSelect(phases[next].node.id);
+                  onSelect(phases[next].id);
                   stageEls.current[next]?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
                 }}>
                 <span className="rl-stage-top">
-                  <span className="rl-stage-name">{KIND_WORD[phase.node.kind]}</span>
+                  <span className="rl-stage-name">{KIND_WORD[phase.kind]}</span>
                   <Pill status={phase.state.word} tone={toneOf(phase)} />
                 </span>
                 <span className="rl-stage-route">{phase.routeText}</span>
                 <span className="rl-stage-evidence">
                   {phase.gauge
-                    ? `${phase.gauge.value} of ${phase.gauge.max} ${phase.node.kind === 'verify' ? 'checks passed' : 'phases priced'}`
-                    : AGENT_KINDS.includes(phase.node.kind)
+                    ? `${phase.gauge.value} of ${phase.gauge.max} ${phase.kind === 'verify' ? 'checks passed' : 'phases priced'}`
+                    : phase.source === 'docket' && AGENT_KINDS.includes(phase.node.kind)
                       ? `${phase.completed} tool call${phase.completed === 1 ? '' : 's'} recorded`
-                      : phase.node.kind === 'verify' ? 'Project review gate' : 'Local history forecast'}
+                      : phase.source === 'delivery' ? `${phase.stage.attempts.length} recorded attempt${phase.stage.attempts.length === 1 ? '' : 's'}`
+                        : phase.kind === 'verify' ? 'Project review gate' : 'Local history forecast'}
                 </span>
                 {phase.gauge && <progress value={phase.gauge.value} max={phase.gauge.max}
-                  aria-label={`${KIND_WORD[phase.node.kind]} ${phase.node.kind === 'verify' ? 'checks passed' : 'phases priced'}`} />}
+                  aria-label={`${KIND_WORD[phase.kind]} ${phase.kind === 'verify' ? 'checks passed' : 'phases priced'}`} />}
               </button>
             </li>
           ))}

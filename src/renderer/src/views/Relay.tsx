@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocketNode, Project, ProviderInfo, RelayRead, WorkDocket } from '@shared/types';
 import { EmptyState, Hint, Note, PageHead, Pill, Section, SectionHead, Stat, ago, dur, usd } from '../components/bits';
-import { AGENT_KINDS, KIND_WORD, phasesOf, type Phase } from '../relay/facts';
+import { AGENT_KINDS, KIND_WORD, phasesOf, type DocketPhase } from '../relay/facts';
 import RelayComposer from '../relay/RelayComposer';
 import RelayRig from '../relay/RelayRig';
+import { RelayDeliveryAction, RelayDeliveryDetails } from '../relay/RelayDelivery';
 import '../styles/relay.css';
 
 type Props = {
@@ -103,9 +104,9 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
   }); return () => { off(); }; }, [read]);
 
   const phases = useMemo(() => read ? phasesOf(read, Object.fromEntries(read.docket.nodes.map((node) => [node.id, extras[activityKey(node)] ?? []])), clock) : [], [read, extras, clock]);
-  const current = phases.find((phase) => phase.node.status !== 'completed') ?? phases.at(-1) ?? null;
-  const detail = phases.find((phase) => phase.node.id === inspected) ?? current;
-  const completed = phases.filter((phase) => phase.node.status === 'completed').length;
+  const current = phases.find((phase) => phase.status !== 'completed') ?? phases.at(-1) ?? null;
+  const detail = phases.find((phase) => phase.id === inspected) ?? current;
+  const completed = phases.filter((phase) => phase.status === 'completed').length;
   const done = phases.length > 0 && completed === phases.length;
   const composerOpen = creating || (listReady && !selected && !listError);
   const forecast = read?.forecast;
@@ -141,7 +142,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
     select(next.docket.id); setSnapshot(next); setListReady(true);
     setRelays((rows) => [next.docket, ...rows.filter((row) => row.id !== next.docket.id)]);
   };
-  const currentSummary = done ? 'All stages completed' : current ? `${KIND_WORD[current.node.kind]} · ${current.state.word}` : 'Reading stages';
+  const currentSummary = done ? 'All stages completed' : current ? `${KIND_WORD[current.kind]} · ${current.state.word}` : 'Reading stages';
 
   return <main className="pane rl-view">
     <PageHead eyebrow={project?.name ?? 'No project'} title="Relay"
@@ -171,19 +172,21 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
         <header className="rl-summary">
           <div><h2>{read.docket.title}</h2><p className="dim">{read.docket.objective}</p></div>
           <div className="rl-summary-state"><Pill status={current?.state.word ?? 'pending'}
-            tone={current?.state.value === 'failed' ? 'bad' : done ? 'ok' : current?.node.status === 'running' ? 'accent' : 'quiet'} />
-            <span className="faint">{completed} of {phases.length} stages complete</span></div>
+            tone={current?.state.value === 'failed' ? 'bad' : done ? 'ok' : current?.status === 'running' ? 'accent' : 'quiet'} />
+            <span className="faint">{completed} of {phases.length} stages complete</span>
+            {read.delivery && <button className="btn btn-sm" onClick={() => setInspected(`${read.docket.id}:delivery:deploy`)}>{read.delivery.config.command ? 'Deployment settings' : 'Configure deployment'}</button>}</div>
         </header>
         <div className="rl-workspace">
           <section className="rl-journey" aria-label="Relay stages">
             <SectionHead label="Stage by stage" count={phases.length} />
-            <RelayRig key={read.docket.id} relayId={read.docket.id} phases={phases} selectedNodeId={detail?.node.id ?? null} onSelect={chooseStage} />
+            <RelayRig key={read.docket.id} relayId={read.docket.id} phases={phases} selectedNodeId={detail?.id ?? null} onSelect={chooseStage} />
           </section>
           <div className="rl-work">
             <section ref={actionEl} className="rl-next" aria-label="Current relay action" aria-busy={busy !== null}>
               <SectionHead label={done ? 'Relay complete' : 'Up next'} right={<span className="faint" role="status">{currentSummary}</span>} />
-              <div className="rl-next-content" key={`${read.docket.id}:${current?.node.id}:${current?.node.status}`}>
-                {current && <RelayAction phase={current} read={read} done={done} busy={busy} unavailable={!!readError}
+              <div className="rl-next-content" key={`${read.docket.id}:${current?.id}:${current?.status}`}>
+                {current?.source === 'delivery' && <RelayDeliveryAction key={current.id} read={read} kind={current.stage.kind} stage={current.stage} busy={busy} unavailable={!!readError} act={act} />}
+                {current?.source === 'docket' && <RelayAction phase={current} read={read} done={done} busy={busy} unavailable={!!readError}
                   start={start} finish={finish} verify={verify}
                   estimate={() => act('estimate', () => window.wanigan.relay.estimate(read.docket.id))}
                   retry={() => act('retry', () => window.wanigan.control.retry(current.node.id))}
@@ -192,9 +195,11 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
                   action={<button className="btn" onClick={() => openGoal(read.docket.id)}>Open in Goals</button>} />}
               </div>
             </section>
-            {detail && <div className="rl-detail" aria-label={`${KIND_WORD[detail.node.kind]} stage details`}>
+            {detail?.source === 'delivery' && <RelayDeliveryDetails key={detail.id} read={read} kind={detail.stage.kind} stage={detail.stage} busy={busy} unavailable={!!readError} act={act}
+              back={detail.id !== current?.id ? () => setInspected(null) : undefined} />}
+            {detail?.source === 'docket' && <div className="rl-detail" aria-label={`${KIND_WORD[detail.node.kind]} stage details`}>
               <SectionHead label={`${KIND_WORD[detail.node.kind]} details`}
-                right={detail.node.id !== current?.node.id ? <button className="btn btn-sm" onClick={() => setInspected(null)}>Back to current stage</button> : undefined} />
+                right={detail.node.id !== current?.id ? <button className="btn btn-sm" onClick={() => setInspected(null)}>Back to current stage</button> : undefined} />
               <div className="rl-detail-content" key={detail.node.id}>
                 <p className="rl-stage-instructions">{detail.node.instructions || detail.node.title}</p>
                 <dl className="rl-facts">
@@ -217,7 +222,13 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
                 </details>
               </div>
             </div>}
-            <Section title="Forecast" hint="An estimate from comparable phases recorded in this project.">
+            {!read.delivery && <Section title="Commit and deploy" hint="This relay has no delivery stages yet.">
+              <p className="dim">Add a local git commit stage and a deployment stage after review. Each runs only when you explicitly start it.</p>
+              <button className="btn" disabled={busy !== null || !!readError} onClick={() => void act('enable-delivery', () => window.wanigan.relay.enableDelivery(read.docket.id))}>
+                {busy === 'enable-delivery' ? 'Adding stages…' : 'Add commit and deploy stages'}
+              </button>
+            </Section>}
+            <Section title="Forecast" hint="An estimate from recorded planning through review phases. Commit and deployment are excluded.">
               {forecast && forecast.n > 0 ? <>
                 <div className="stat-grid">
                   <Stat label="Estimated time" value={forecast.totalMs === null ? 'Unknown' : dur(forecast.totalMs)} sub={`${forecast.n} recorded phases`} />
@@ -228,7 +239,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
                     <dt>{KIND_WORD[phase.kind]}</dt><dd>{phase.medianMs === null ? 'Unknown time' : dur(phase.medianMs)} / {phase.medianUsd === null ? 'unpriced' : usd(phase.medianUsd)}<span className="faint">{phase.n} comparable phases</span></dd>
                   </div>)}</dl>
                 </details>
-              </> : <Hint>{phases.some((phase) => phase.node.kind === 'estimate')
+              </> : <Hint>{phases.some((phase) => phase.kind === 'estimate')
                 ? 'The forecast appears after planning. Where there is too little comparable history, time and cost stay unknown.'
                 : 'This relay skips planning and estimating. No forecast was recorded.'}</Hint>}
             </Section>
@@ -240,7 +251,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
 }
 
 function RelayAction({ phase, read, done, busy, unavailable, start, finish, verify, estimate, retry, openSession, openGoal }: {
-  phase: Phase; read: RelayRead; done: boolean; busy: string | null; unavailable: boolean;
+  phase: DocketPhase; read: RelayRead; done: boolean; busy: string | null; unavailable: boolean;
   start: (node: DocketNode) => Promise<void>; finish: (node: DocketNode, decision?: 'approve' | 'request_changes' | 'reject') => Promise<void>;
   verify: (node: DocketNode) => Promise<void>; estimate: () => Promise<void>; retry: () => Promise<void>;
   openSession: (id: string) => void; openGoal: () => void;
@@ -250,7 +261,7 @@ function RelayAction({ phase, read, done, busy, unavailable, start, finish, veri
   const disabled = working || unavailable;
   if (read.docket.status === 'rejected') return <><h3>The work was rejected.</h3><p>The review decision is recorded. Inspect its evidence in Goals before deciding what to do next.</p><button className="btn" onClick={openGoal}>Review decision</button></>;
   if (node.kind === 'review' && node.status === 'failed' && phase.decision === 'request_changes') return <><h3>Changes were requested.</h3><p>The review is waiting for an implementation follow-up. Inspect the hand-back evidence before reopening the work.</p><button className="btn btn-primary" onClick={openGoal}>Review hand-back in Goals</button></>;
-  if (done) return <><h3>The relay has reached its final decision.</h3><p>Review the recorded evidence and changes in Goals.</p><button className="btn" onClick={openGoal}>Review outcome</button></>;
+  if (done) return <><h3>All recorded stages are complete.</h3><p>Review the recorded evidence and changes in Goals.</p><button className="btn" onClick={openGoal}>Review outcome</button></>;
   if (node.queued) return <><h3>{KIND_WORD[node.kind]} is queued.</h3><p>Waiting for its turn to launch. Its recorded state will update here.</p><button className="btn" onClick={openGoal}>View queue in Goals</button></>;
   if (node.gateRunningSince !== null) return <><h3>Verification is running.</h3><p>The project’s checks are running. Results will appear with the stage evidence.</p></>;
   if (node.status === 'failed' || node.status === 'canceled') return <><h3>{KIND_WORD[node.kind]} needs attention.</h3><p>{node.detail || 'Inspect the evidence, then reopen this stage when you are ready to retry.'}</p>

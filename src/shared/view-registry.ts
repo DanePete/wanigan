@@ -242,12 +242,12 @@ export const VIEWS = [
   },
   // Past the digit row, like every destination added since it filled. The
   // sidebar draws the AREA's glyph, so a route icon is a name the type and
-  // the smoke suite check, not a picture anyone sees: 'layers' for the five
+  // the smoke suite check, not a picture anyone sees: 'layers' for the
   // stacked phases.
   {
     id: 'relay', label: 'Relay', icon: 'layers', area: 'work',
-    hint: 'One intent, five phases, and the handoffs between them',
-    keywords: 'relay pipeline stages phases plan estimate implement verify review handoff sluice forecast route model effort',
+    hint: 'One intent, from planning through review, commit and deployment',
+    keywords: 'relay pipeline stages phases plan estimate implement verify review commit deploy deployment handoff sluice forecast route model effort',
     projectScope: 'required',
     // R for Relay. Free on macOS, and the digit row is full.
     shortcut: { label: '⌘⇧R', aria: 'Meta+Shift+R Control+Shift+R' },

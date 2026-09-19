@@ -3881,9 +3881,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const before = halt.haltState();
     check(before.halted === false, 'the suite starts unhalted', before);
 
-    // Registered here rather than relying on startup: the smoke path returns
-    // before startServices() runs, so the real registrations are unreachable.
-    // These stand in for them and let the ordering contract be asserted.
+    // Registered here rather than relying on startServices(), which smoke
+    // skips. Extensions may already register their own stoppers on import;
+    // these named fixtures assert the core ordering without excluding them.
     const stopOrder: string[] = [];
     for (const name of ['schedules', 'queue', 'autopilots', 'sessions']) {
       halt.registerHaltStopper({
@@ -3898,7 +3898,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(stopOrder.join(',') === 'schedules,queue,autopilots,sessions',
       'the stop pass runs dispatchers before the processes they would otherwise relaunch',
       stopOrder.join(','));
-    check(pulled.stopped.length === 4 && pulled.stopped.some((entry) => entry.stopped === 2),
+    check(['schedules', 'queue', 'autopilots', 'sessions'].every(name =>
+      pulled.stopped.find(entry => entry.name === name)?.stopped === (name === 'sessions' ? 2 : 1)),
       'each subsystem reports its own count rather than the latch inventing one', pulled.stopped);
 
     // The latch is durable. A restart is not a decision to resume, and the one

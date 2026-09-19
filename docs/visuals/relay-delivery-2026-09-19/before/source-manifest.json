@@ -1,0 +1,31 @@
+{
+  "commit": "59e9c20e618fbc8f49b60d6cd211c6da65b39f1e",
+  "renderer": [
+    {
+      "path": "index.html",
+      "sha256": "c826f947f5fb7ba4c5d2a723f9f5baa917d00da33aea4eed69da128eb0059236"
+    },
+    {
+      "path": "assets/index-BFivxhqe.css",
+      "sha256": "5b0dc558ce62ba88d228822312708561e84f491d6cae7f78964ce437ddace337"
+    },
+    {
+      "path": "assets/studio_small_04_1k-Beh5sjOa.hdr",
+      "sha256": "dd0ca972513d35f55f55f79daf945315a6f25f8ccc7a797816b4945b201f293c"
+    },
+    {
+      "path": "assets/mission-studio-Zt8j2igs.png",
+      "sha256": "84202a2bd73bf833a9a508b57241da7cd8c8f2cd1912106014cfb8068f41320d"
+    },
+    {
+      "path": "assets/index-i2TqYkVC.js",
+      "sha256": "348b142c4c35f57c1af33fa1a25cb45c1abfce914e1f30f9ac6dc50818a5972b"
+    },
+    {
+      "path": "assets/runtime-DPC_1S4f.js",
+      "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    }
+  ],
+  "screenshot_count": 24,
+  "fixture": "Synthetic isolated renderer records only; no provider calls, real session execution, git mutation, or deployment."
+}

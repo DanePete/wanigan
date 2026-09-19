@@ -1,4 +1,5 @@
 import type { SkillCatalogue } from '../shared/skill-catalogue';
+import type { RelayDeliveryKind, RelayDeliveryPreview, RelayDeliveryRead } from '../shared/relay-delivery';
 import type { PermissionControlAction } from '../shared/session-permissions';
 import type { DemoPromptId, DemoState } from '../shared/demo';
 import type { SessionGoal } from '../shared/goal-journey';
@@ -734,7 +735,8 @@ const api = {
   //
   // A relay is a goal (control above) created from one intent with every
   // agent stage routed first. Its stages start through `control.start`; these
-  // calls create, read, price and list it. Nothing here launches an agent.
+  // calls create, read, price and list it. Delivery acts only after its own
+  // preview and explicit commit/deploy request; it never launches an agent.
   relay: {
     create: (input: RelayCreateInput) => call<RelayRead>('relay:create', input),
     /** What the suggester would do with this intent. Makes real calls when it is on; nothing is created. */
@@ -745,6 +747,13 @@ const api = {
     /** Run the estimate phase by hand when it is ready and did not run itself. */
     estimate: (docketId: string) => call<RelayRead>('relay:estimate', docketId),
     list: (projectId: string, limit?: number) => call<WorkDocket[]>('relay:list', projectId, limit),
+    enableDelivery: (docketId: string) => call<RelayDeliveryRead>('relay:enableDelivery', docketId),
+    reopenDeliveryReview: (docketId: string) => call<RelayDeliveryRead>('relay:reopenDeliveryReview', docketId),
+    saveDeployConfig: (docketId: string, input: { command: string; timeoutMs: number }) => call<RelayDeliveryRead>('relay:saveDeployConfig', docketId, input),
+    previewDelivery: (docketId: string, kind: RelayDeliveryKind) => call<RelayDeliveryPreview>('relay:previewDelivery', docketId, kind),
+    commitDelivery: (docketId: string, input: { token: string; message: string }) => call<RelayDeliveryRead>('relay:commitDelivery', docketId, input),
+    deployDelivery: (docketId: string, input: { token: string }) => call<RelayDeliveryRead>('relay:deployDelivery', docketId, input),
+    cancelDeploy: (docketId: string) => call<RelayDeliveryRead>('relay:cancelDeploy', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

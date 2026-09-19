@@ -34,6 +34,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   onCreated: (read: RelayRead) => void; onCancel?: () => void; onPendingChange: (pending: boolean) => void;
 }) {
   const [intent, setIntent] = useState('');
+  const [delivery, setDelivery] = useState(true);
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
   const [draft, setDraft] = useState<RouteDraft>(() => emptyDraft(providers[0]?.id ?? ''));
   const [accountId, setAccountId] = useState('');
@@ -77,7 +78,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   const create = () => act('create', async () => {
     if (!projectId) throw new Error('Choose a project before creating a relay.');
     const next = await window.wanigan.relay.create({ projectId, intent: intent.trim(), providerId,
-      routes: toRoutes(draft, providerId), accountId: accountId || undefined });
+      routes: toRoutes(draft, providerId), accountId: accountId || undefined, delivery });
     setIntent(''); setPreview(null); onCreated(next);
   });
   return <div className="rl-composer" hidden={!active}>
@@ -114,7 +115,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                 {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </label>
-            {/* Which account pays. Five phases start hours apart, so leaving
+            {/* Which account pays. Agent stages start hours apart, so leaving
                 this to whatever the project defaults to by then is how a relay
                 bills an account nobody chose — under a forecast whose whole
                 purpose is knowing the cost first. */}
@@ -249,6 +250,12 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
             ))}
             </Explainer>
 
+            <div className="rl-delivery-choice">
+              <label><input type="checkbox" checked={delivery} disabled={busy !== null} onChange={event => setDelivery(event.target.checked)} /> Include git commit and deploy stages</label>
+              <Hint>{delivery
+                ? 'After review, explicitly commit the approved work and run your project’s deployment command. Configure the command in Deploy details after creating the relay. Neither action runs automatically.'
+                : 'This relay will finish at the review decision.'}</Hint>
+            </div>
             <div className="rl-start-actions"><button className="btn btn-primary" onClick={() => void create()} disabled={busy !== null || !intent.trim() || !providerId || !projectId || accountOptions === null}>
               {busy === 'create' ? 'Creating…' : 'Create relay'}
             </button>

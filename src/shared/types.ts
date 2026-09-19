@@ -1749,6 +1749,8 @@ export type RelayRouteInput = Partial<Record<DocketNodeKind, {
 
 export type RelayCreateInput = {
   projectId: string;
+  /** New relays include deliberate commit/deploy stages unless explicitly disabled. */
+  delivery?: boolean;
   /** The outcome in the operator's words. Becomes the docket's objective. */
   intent: string;
   /** The profile every stage runs on unless `routes` names another for it. */
@@ -1888,6 +1890,8 @@ export type RelayPreview = {
 
 export type RelayRead = {
   docket: DocketDetail;
+  /** Relay-owned delivery stages; null for older relays until explicitly added. */
+  delivery: import('./relay-delivery.ts').RelayDeliveryRead | null;
   /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */
   relay: boolean;
   nodes: RelayNodeRead[];
