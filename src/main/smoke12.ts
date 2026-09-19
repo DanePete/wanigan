@@ -2,6 +2,7 @@ import { db } from './db';
 import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
 import Anthropic from '@anthropic-ai/sdk';
 import { companionUsage } from './modules/companion-usage';
+import { admitPaidOperation, recordPaidResponse } from './modules/usage-paid-operations';
 import { companionPresence } from '../shared/companion-presence';
 import type { Attention, Project, Session, UsageSnapshot } from '../shared/types';
 
@@ -89,6 +90,22 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
   check(!service.cancel(),'cancel has no effect after the request ends');
   respond='ok';const recovered=await service.ask(input);
   check(recovered.status==='answered','a stopped request releases the next explicit send');
+  {
+    // The owner link: a metered turn accounts for its own receipt; a turn whose meters never arrived does not.
+    const settle=async(requestId:string,metered:boolean)=>{
+      const receipt=admitPaidOperation('anthropic:messages');recordPaidResponse(receipt,200,requestId,undefined,true);
+      const owner=createCompanionService({database:db,facts,available:()=>true,checkHalt:()=>{},
+        complete:async(model)=>({text:JSON.stringify({answer:'Quiet.',sourceIds:[]}),model,input:metered?100:null,output:metered?25:null,requestId})});
+      const turn=await owner.ask({...input,question:`settle ${requestId}`});
+      const row=db().prepare('SELECT outcome,owner_table,owner_id FROM usage_paid_settlements WHERE receipt_id=?').get(receipt) as {outcome:string;owner_table:string|null;owner_id:string|null};
+      return {turn,row};
+    };
+    const owned=await settle('req_smoke_companion_metered',true),unowned=await settle('req_smoke_companion_unmetered',false);
+    check(owned.row.outcome==='metered'&&owned.row.owner_table==='companion_turns'&&owned.row.owner_id===owned.turn.id,
+      'a companion turn that recorded its meters accounts for its own paid receipt',owned.row);
+    check(unowned.row.outcome==='responded'&&unowned.row.owner_table===null,
+      'a companion answer whose meters never arrived leaves its receipt unresolved',unowned.row);
+  }
   const restarted=createCompanionService({database:db,facts,available:()=>false,checkHalt:()=>{},complete:async()=>{throw new Error('offline');}});
   db().prepare("UPDATE companion_turns SET status='pending' WHERE id=?").run(recovered.id);
   check(restarted.history(project.id).find(t=>t.id===recovered.id)?.status==='failed','interrupted requests are reconciled after restart without replay');

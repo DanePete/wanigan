@@ -30,7 +30,8 @@ function fixture() {
   module.exports.migrateUsagePaidOperations(native); module.exports.migrateUsagePaidSettlements(native);
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
-    CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);`);
+    CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
     rows: () => native.prepare('SELECT source FROM usage_paid_operations ORDER BY at,rowid').all().map(row => row.source) };
 }
@@ -128,6 +129,17 @@ async function main() {
   await s.paid.admittedFetch(answer(429, 'req_proxy'))('https://proxy.example/v1/messages', { method: 'POST' });
   assert.equal(d.prepare("SELECT outcome FROM usage_paid_settlements WHERE request_id='req_proxy'").get().outcome, 'responded',
     'an intermediary error is not a provider no-charge statement');
+
+  // Companion owns its turns ledger. A turn whose meters never arrived is not evidence.
+  const companionTurn = await receiptFor(answer(200, 'req_companion'));
+  d.exec("INSERT INTO companion_turns VALUES ('turn-unmetered',1,'fixture',NULL,NULL,NULL); INSERT INTO companion_turns VALUES ('turn-1',1,'fixture',40,12,NULL)");
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_companion', outcome: 'metered', ownerTable: 'companion_turns', ownerId: 'turn-unmetered' }, d), false,
+    'a companion turn with no recorded meters accounts for nothing');
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_companion', outcome: 'metered', ownerTable: 'companion_turns', ownerId: 'turn-1' }, d), true,
+    'an unpriced model is a separate owner-level blocker, not missing meters');
+  assert(isAccounted(companionTurn));
+  d.exec("UPDATE companion_turns SET output_tokens=13 WHERE id='turn-1'");
+  assert.equal(isAccounted(companionTurn), false, 'a changed companion turn cannot authorize a restore');
 
   // A settlement that cannot be written never takes the response from its caller.
   d.exec('DROP TABLE usage_paid_settlements');
