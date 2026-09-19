@@ -5433,6 +5433,44 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(Object.keys(accounts.launchEnv(defaultDirAccount)).length === 0,
       'the account that is the platform default sets no variable, because setting it to the default breaks the login it names');
 
+    // Contributing nothing and clearing what was inherited are different acts,
+    // and for the default account only the second one is the account decision.
+    // A Wanigan started from a shell that exports CLAUDE_CONFIG_DIR handed that
+    // directory to every session pinned to the default account: they resumed
+    // into "No conversation found" and new ones used another login's
+    // credentials while the UI named the pinned account.
+    const inherited: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login', KEEP: '1' };
+    accounts.applyLaunchEnv(inherited, defaultDirAccount);
+    check(!('CLAUDE_CONFIG_DIR' in inherited) && inherited.KEEP === '1',
+      'the default account removes an inherited config directory rather than leaving it standing: contributing no variable has to mean the child has none, and nothing else on the environment is touched',
+      inherited);
+    const pinnedOver: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login' };
+    accounts.applyLaunchEnv(pinnedOver, work);
+    check(pinnedOver.CLAUDE_CONFIG_DIR === workDir,
+      'a named account still beats an inherited one, which is the half that already worked', pinnedOver);
+    const noDecision: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login' };
+    accounts.applyLaunchEnv(noDecision, null);
+    check(noDecision.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+      'with no account resolved there is no decision to enforce, so the operator’s own shell is left exactly as it was',
+      noDecision);
+
+    // The environment a PTY would actually receive, not only the helper.
+    const prevAmbientDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/another-login';
+    try {
+      const { __test: sessionsEnvTest } = await import('./sessions');
+      const asDefault = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_default', {}, defaultDirAccount);
+      const asWork = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_work', {}, work);
+      const asNone = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_none');
+      check(asDefault.CLAUDE_CONFIG_DIR === undefined && asWork.CLAUDE_CONFIG_DIR === workDir
+        && asNone.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+        'the account shown at launch is the one the spawned session actually uses: the default account reaches the PTY with no config directory at all, a named one with its own, and an unpinned launch inherits the shell',
+        { asDefault: asDefault.CLAUDE_CONFIG_DIR, asWork: asWork.CLAUDE_CONFIG_DIR, asNone: asNone.CLAUDE_CONFIG_DIR });
+    } finally {
+      if (prevAmbientDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevAmbientDir;
+    }
+
     // Seeding: authored configuration is a convenience, a login is not, and a
     // transcript of everything said is not either.
     const sourceDir = path.join(dataDir(), 'claude-seed-source');

@@ -8,5 +8,28 @@
     "emergency; two is a plan, and a plan does not need an escape hatch.",
     "Each row: the surface, the date, what was urgent, and which file carries the comment at the site."
   ],
-  "surfaces": {}
+  "surfaces": {
+    "src/main/sessions.ts": {
+      "date": "2026-09-18",
+      "condition": "a security issue is live",
+      "urgent": [
+        "A session pinned to the account that is the platform default ran under whichever",
+        "CLAUDE_CONFIG_DIR the operator's shell exported into Wanigan. accounts.launchEnv",
+        "correctly contributes no variable for that account, and agentEnv spread that",
+        "nothing over an inherited environment, so the inherited value survived. The",
+        "session used another login's credentials, history and settings while the launch",
+        "record and the UI both named the account it was pinned to, and resuming one of",
+        "its conversations answered \"No conversation found with session ID\" and exited 1.",
+        "Reproduced by varying only the config directory on one conversation id."
+      ],
+      "comment": "src/main/sessions.ts, in agentEnv where the account environment is applied",
+      "note": [
+        "The decision itself was moved to accounts.applyLaunchEnv, which is tested and is",
+        "not this surface. What is unconverted here is the single call that applies it.",
+        "Four other callers still spread launchEnv the old way and have the same defect:",
+        "headless.ts, claude-limits.ts, codex-status.ts and learning-model-assist.ts.",
+        "They were left alone deliberately — this row buys one fix, not a licence."
+      ]
+    }
+  }
 }

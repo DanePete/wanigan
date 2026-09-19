@@ -19,7 +19,7 @@ import path from 'node:path';
 import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
+import type { AgentAccount, Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
 import { readableFromAccount } from './handoff';
@@ -258,7 +258,7 @@ export function stripAmbientAnthropicCredentials(
  */
 function agentEnv(
   PATH: string, sessionId: string, providerEnv: Record<string, string> = {},
-  accountEnv: Record<string, string> = {}, worktreeEnv: Record<string, string> = {},
+  account: AgentAccount | null = null, worktreeEnv: Record<string, string> = {},
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -293,7 +293,27 @@ function agentEnv(
   // operator's by naming theirs. Wanigan's account decision wins, and it also
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
-  Object.assign(out, accountEnv);
+  //
+  // URGENT-FIX ESCAPE (AGENTS.md, recorded in unconverted-fixes.json): this
+  // line is a fix made in place on an unconverted surface. What was urgent is
+  // that the paragraph above was not true for one account. `launchEnv` returns
+  // nothing for the account that is the platform default — correctly, for the
+  // reason written there — and spreading nothing overrides nothing, so an
+  // inherited CLAUDE_CONFIG_DIR survived and the session ran under whichever
+  // login the operator's shell named. Sessions pinned to that account resumed
+  // into "No conversation found" and new ones used another account's
+  // credentials while the UI named the pinned one. applyLaunchEnv sets or
+  // clears; the decision itself lives in accounts.ts, so what is unconverted
+  // here is one call.
+  //
+  // This reaches Codex as well as Claude Code, and deliberately: a session
+  // pinned to the default CODEX_HOME had the same hole. The retention note
+  // above still holds — CODEX_HOME survives the strip, because it is the
+  // operator's chosen location and not a parent-session marker — and what
+  // happens here is later and narrower. It is an account decision or nothing,
+  // and Codex was probed as reading ~/.codex identically whether the variable
+  // is unset or set to it, so clearing and naming it are the same answer.
+  accounts.applyLaunchEnv(out, account);
   // The worktree's own port block and path, after the pack for the same reason
   // as the account: a manifest must not be able to name them.
   Object.assign(out, worktreeEnv);
@@ -1553,7 +1573,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       // The hook URL and headers path last, for this PTY only: nothing
       // inherited or declared by a pack can point this session's events at
       // another listener. Neither value is the bearer.
-      env: { ...agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account), worktreeEnv), ...(codexHooks?.env ?? {}) },
+      env: { ...agentEnv(PATH, id, providerEnvValues, account, worktreeEnv), ...(codexHooks?.env ?? {}) },
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);

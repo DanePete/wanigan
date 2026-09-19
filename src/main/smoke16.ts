@@ -250,7 +250,7 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     const inheritedPort = process.env.WANIGAN_PORT;
     process.env.WANIGAN_PORT = '1';
     try {
-      const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, null, launchEnv);
       const outside = sessionsTest.agentEnv('/usr/bin', 's_wtboot_outside');
       const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, {}, launchEnv);
       const headlessOutside = headlessEnv('/usr/bin');
@@ -264,7 +264,11 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     }
     const launchRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
     const launchSrc = (file: string) => { try { return fs.readFileSync(path.join(launchRoot, 'src', 'main', file), 'utf8'); } catch { return ''; } };
-    check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('sessions.ts'))
+    // The attended path hands agentEnv the account itself rather than its
+    // environment, because an account that contributes no variable still has to
+    // clear an inherited one and a record cannot carry a deletion. The headless
+    // path still spreads launchEnv, and is pinned here as it stands.
+    check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /agentEnv\(PATH, id, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('sessions.ts'))
       && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('headless.ts')),
     'both launch paths hand the worktree environment to the process they spawn, so the variables are reachable and not only buildable');
 

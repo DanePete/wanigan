@@ -437,6 +437,39 @@ export function launchEnv(account: AgentAccount | null): Record<string, string> 
 }
 
 /**
+ * Put the account's configuration directory onto a launch environment — or
+ * take the inherited one off it.
+ *
+ * `launchEnv` above answers "what does this account contribute", and for the
+ * account that *is* the platform default the honest answer is nothing, for the
+ * reason written there. Callers then spread that record over an environment
+ * inherited from `process.env`, and spreading nothing overrides nothing: a
+ * Wanigan started from a shell that exports CLAUDE_CONFIG_DIR hands that shell's
+ * directory to a session pinned to the default account. The session runs under
+ * another login's credentials, history and settings while the launch record and
+ * the UI both name the account it was pinned to.
+ *
+ * Reproduced on 2026-09-18: the same conversation id resumed from the same
+ * directory answers "No conversation found with session ID" under one config
+ * directory and opens under the other. Three resumes of one conversation failed
+ * that way in ten minutes, each in about a second.
+ *
+ * So "contributes nothing" has to mean the variable is absent, not merely
+ * unwritten, and that is a deletion no `Record<string, string>` can express.
+ * Callers that build a child environment use this rather than spreading
+ * `launchEnv`; an unset variable is what running the CLI by hand actually is,
+ * which is the behaviour `launchEnv`'s own note asks for.
+ */
+export function applyLaunchEnv(out: Record<string, string>, account: AgentAccount | null): void {
+  const key = account ? configEnvVar(account.harness) : null;
+  const set = launchEnv(account);
+  Object.assign(out, set);
+  // Only for an account Wanigan actually resolved: with no account there is no
+  // decision to enforce, and inheriting the operator's shell is the answer.
+  if (key && !(key in set)) delete out[key];
+}
+
+/**
  * Whether an account decision applies to this profile at all, or nothing when
  * the harness has no vendor-specific test and `supportsAccounts` alone decides.
  *
