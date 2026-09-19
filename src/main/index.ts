@@ -32,9 +32,9 @@ import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailabl
 import type {
   AwakeState,
   BackupCheck, BackupRestoreSummary, BackupSummary, RelayStartRequest,
-  HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
+  HookInput,
   McpServerConfig, PluginScope,
-  ProviderManifestInspection, QueueSlots, RunConfig,
+  ProviderManifestInspection, RunConfig,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
@@ -1661,7 +1661,7 @@ function registerIpc() {
   // run before session recovery, collectors and stop handlers are installed.
   const needsStartedServices = new Set([
     'handover:finish',
-    'headless:start', 'attempts:start', 'companion:ask',
+    'attempts:start', 'companion:ask',
     'batch:submit', 'batch:dryRun', 'batch:retry',
     'control:start', 'control:retry', 'control:setAutopilot',
     'interview:start', 'interview:answer', 'interview:conclude',
@@ -2426,39 +2426,6 @@ function registerIpc() {
     const { id, root } = await configRoot(projectId, worktree);
     return configPins.acceptConfig(id, root, digest);
   });
-  // ══ phase 10 · headless fan-out ═════════════════════════════════════
-  handle('headless:start', async (cfg: HeadlessStartRequest) => {
-    const started = await headless.startHeadlessRun(cfg);
-    // startHeadlessRun returns once the children are spawned, not when the
-    // fan-out finishes, so this reconcile happens with the run genuinely live.
-    // Its completion has no IPC boundary at all — the poller releases it.
-    syncAwake();
-    return started;
-  });
-  // Status without the transcript. The run view refires this every three
-  // seconds and renders none of the agent's stdout in the list, so the text
-  // stays in SQLite until a row is expanded — see HeadlessRowSummary.
-  handle('headless:rows', (runId: string): HeadlessRowSummary[] =>
-    headless.headlessRows(runId).map((row) => {
-      const { output, error, ...rest } = row;
-      return {
-        ...rest,
-        output: null,
-        error: null,
-        hasOutput: typeof output === 'string' && output.length > 0,
-        hasError: typeof error === 'string' && error.length > 0,
-      };
-    }));
-  handle('headless:rowDetail', (runId: string, projectId: string): HeadlessRowDetail => {
-    const row = headless.headlessRows(runId).find((value) => value.projectId === projectId);
-    if (!row) throw new Error('That repository is no longer part of this run.');
-    return { runId: row.runId, projectId: row.projectId, output: row.output, error: row.error };
-  });
-  handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
-  handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
-  handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
-    headless.answerHeld(runId, projectId, decision, note));
-
   // ══ attempts · best of N and the paired bench ═══════════════════════
   // Every argument is validated in attempts.ts: a start is re-planned from
   // scratch, ids must match their shape, and a cleanup takes a set id only —
@@ -2473,17 +2440,6 @@ function registerIpc() {
   });
   handle('attempts:keep', (setId: unknown, attemptId: unknown) => attempts.keepAttempt(setId, attemptId));
   handle('attempts:removeOthers', (setId: unknown) => attempts.removeOtherWorktrees(setId));
-
-  // ══ phase 11 · dispatcher ═══════════════════════════════════════════
-  handle('queue:list', (limit?: number) => queue.listQueue(limit));
-  handle('queue:counts', () => queue.queueCounts());
-  handle('queue:cancel', (id: string) => queue.cancelQueued(id));
-  handle('queue:slots', () => queue.slots());
-  handle('queue:setSlots', (next: Partial<QueueSlots>) => {
-    const v = queue.setSlots(next);
-    setSetting('slots', JSON.stringify(v));
-    return v;
-  });
 
   // ══ phase 12 · MCP ══════════════════════════════════════════════════
   handle('mcp:servers', (projectId?: string | null) => mcpRegistry.listServers(projectId));

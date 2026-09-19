@@ -8,28 +8,5 @@
     "emergency; two is a plan, and a plan does not need an escape hatch.",
     "Each row: the surface, the date, what was urgent, and which file carries the comment at the site."
   ],
-  "surfaces": {
-    "src/main/headless.ts": {
-      "date": "2026-09-18",
-      "condition": "a security issue is live",
-      "urgent": [
-        "The same defect as sessions.ts, on the path that runs without a terminal in",
-        "front of anyone. headlessEnv copies process.env wholesale and the account that",
-        "is the platform default contributes no variable, so an inherited",
-        "CLAUDE_CONFIG_DIR survived: a headless run and a model-assisted consolidation",
-        "executed against whichever login the operator's shell named while the record",
-        "said otherwise. The second of those is metered and spends money."
-      ],
-      "comment": "src/main/headless.ts, in headlessEnv where the account environment is applied",
-      "note": [
-        "Fixed in headlessEnv rather than at its two call sites (headless.ts and",
-        "learning-model-assist.ts), so a third caller cannot repeat it \u2014 five callers",
-        "sharing one defect is how this was found. codex-status.ts is the one caller",
-        "still carrying it: its probe allowlist includes CODEX_HOME, so the default",
-        "account's status is read from the shell's home rather than its own. That is a",
-        "wrong reading and not an execution, nothing runs under it, and it was left for",
-        "the conversion rather than spending a third escape on a display bug."
-      ]
-    }
-  }
+  "surfaces": {}
 }

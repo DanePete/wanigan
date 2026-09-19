@@ -1,5 +1,7 @@
 import { registerModule } from '../module-registry';
 import { sessionsModule } from './sessions';
+import { queueModule } from './queue';
+import { headlessModule } from './headless';
 import { worktreesModule } from './worktrees';
 import { checkpointsModule } from './checkpoints';
 import { controlModule } from './control';
@@ -22,6 +24,8 @@ import { openRouterConnectionModule } from './openrouter-connection';
  * modules does this build carry" is one file rather than a grep.
  */
 registerModule(sessionsModule);
+registerModule(queueModule);
+registerModule(headlessModule);
 registerModule(worktreesModule);
 registerModule(checkpointsModule);
 registerModule(controlModule);
