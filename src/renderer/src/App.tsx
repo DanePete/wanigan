@@ -9,6 +9,7 @@ import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
 import { ProjectSpaces, WorkspaceNavigation } from './components/SpaceNavigation';
+import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import { VIEW_RENDERERS, type ViewContext } from './views/registry';
@@ -251,11 +252,7 @@ export default function App() {
   const [demoOn, setDemoOn] = useState(false);
   const [demoPrompt, setDemoPrompt] = useState<{ next: boolean } | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
-  // Compact navigation opens only on request; the desktop rail stays visible.
-  // Rendering closed
-  // until then would flash the shell narrow for everyone who never hid it.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [compactNavigation, setCompactNavigation] = useState(() => window.matchMedia('(max-width: 980px)').matches);
+  const { sidebarOpen, setSidebarOpen, compactNavigation, toggleSidebar } = useWorkspaceNavigation();
   const areaMemory = useRef<AreaMemory>(rememberDestination({}, tab));
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
@@ -362,21 +359,6 @@ export default function App() {
   }, []);
 
   useEffect(() => { void loadMotion(); }, [loadMotion, tab]);
-
-  // The desktop rail stays put. Narrow windows use the shared dialog lifecycle.
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 980px)');
-    const changed = () => { setCompactNavigation(media.matches); setSidebarOpen(false); };
-    media.addEventListener('change', changed);
-    return () => media.removeEventListener('change', changed);
-  }, []);
-  const toggleSidebar = useCallback(() => {
-    if (!window.matchMedia('(max-width: 980px)').matches) {
-      document.querySelector<HTMLElement>('.workbench-area-button[aria-current]')?.focus();
-      return;
-    }
-    setSidebarOpen(open => !open);
-  }, []);
 
   useEffect(() => {
     const again = () => void loadMotion();
@@ -587,7 +569,7 @@ export default function App() {
     void transition.finished.catch((cause: unknown) => {
       announceError(`Could not open this view: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
-  }, [announceError]);
+  }, [announceError, setSidebarOpen]);
 
   const goArea = useCallback((area: SpaceAreaId) => go(areaDestination(area, areaMemory.current)), [go]);
 
