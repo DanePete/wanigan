@@ -155,8 +155,27 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   let targets: { a: Target; b: Target; thick: Target } | null = null;
   const uploaded = new Float32Array(0);
   let staging = uploaded;
-  /** Set once a target could not be allocated completely; nothing is drawn after. */
+  /** Set once this renderer can no longer draw: a bad target, or a lost context. */
   let broken = false;
+
+  /**
+   * A lost context is silent, and this app invites one.
+   *
+   * Every GL call on a lost context succeeds and does nothing, so without this
+   * the fluid keeps ticking into a dead context for the life of the window
+   * while the canvas holds whatever pixels were in its buffer when the context
+   * went. Wanigan runs the companion orb on WebGPU and a renderer per terminal
+   * besides this one, and a machine under that much context pressure evicts
+   * the one it thinks is least busy. That is why this fails after working
+   * rather than instead of working, and why nothing about the GPU's
+   * capabilities predicts it.
+   *
+   * `preventDefault` is deliberately not called: it asks the browser to
+   * prepare a restore, and a half-restored simulation that resumes mid-frame
+   * is a worse picture than the CSS rail. The mount drops to that instead.
+   */
+  const onLost = (event: Event) => { event.stopPropagation(); broken = true; };
+  canvas.addEventListener('webglcontextlost', onLost);
 
   const makeTarget = (): Target | null => {
     const texture = gl.createTexture();
@@ -217,6 +236,7 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   const u = (program: WebGLProgram, name: string) => gl.getUniformLocation(program, name);
 
   const draw = (positions: Float32Array, n: number, rig: RigLayout, theme: FluidTheme) => {
+    if (!broken && gl.isContextLost()) broken = true;
     if (broken || !targets || n <= 0) return;
     const halfW = rig.width / 2, halfH = rig.height / 2, halfD = rig.depth / 2;
 
@@ -316,6 +336,7 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   };
 
   const dispose = () => {
+    canvas.removeEventListener('webglcontextlost', onLost);
     dropTargets();
     gl.deleteRenderbuffer(depthBuffer);
     gl.deleteVertexArray(particleVao);

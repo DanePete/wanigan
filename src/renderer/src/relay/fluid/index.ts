@@ -122,6 +122,11 @@ export function mountFluid(
       if (renderer.failed()) {
         disposed = true;
         renderer.dispose();
+        // The buffer of a lost context keeps its last pixels, and on this rail
+        // that is a block of colour sitting over the SVG. Hiding the canvas is
+        // what the CSS already does for every tier below this one, so the rail
+        // simply becomes the one a machine without the fluid would have had.
+        canvas.hidden = true;
         return;
       }
       const positions = solver.positions;
