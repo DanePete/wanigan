@@ -13,11 +13,14 @@ import {
 import * as codexHooks from './codex-hooks';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
-  killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
-  pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning, sendSessionPermissionControl, setConversationFlag, renameSession, redirectsAnthropicApiFor,
+  killSession, closeSession, scrollback, markRead, shutdownAll, interruptSession,
+  recoverExactCodexThread, setSessionExitObserver,
+  setSessionTuning, sendSessionPermissionControl, redirectsAnthropicApiFor,
   setFocusedSession, recordObservedModel, killAll,
 } from './sessions';
+import {
+  pastSessions, forgetPastSession, setConversationFlag, renameSession, sessionBaseline,
+} from './session-history';
 import { clearHalt, haltState, halted, pullHalt, registerHaltStopper } from './halt';
 import { agentsChain } from './codex-sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';

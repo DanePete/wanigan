@@ -484,7 +484,7 @@ function locate(
  * raised error would take down something far more important than an index.
  *
  * `exactOnly` is for a session whose exit Wanigan never saw: see
- * archiveInterruptedTranscripts in sessions.ts.
+ * archiveInterruptedTranscripts in session-history.ts.
  */
 export function archiveSession(
   sessionId: string,

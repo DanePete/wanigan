@@ -59,9 +59,12 @@ import * as mobile from './mobile';
 import * as tailnet from './tailnet';
 import {
   __test as sessionsTest,
-  createSession, forgetPastSession, goalCapsuleText, killSession, listSessions, pastSessions,
-  reconcileAbandonedSessions, resumeAccountFor, scanCodexNotifications, sessionBaseline, setSessionTuning,
+  createSession, goalCapsuleText, killSession, listSessions,
+  resumeAccountFor, scanCodexNotifications, setSessionTuning,
 } from './sessions';
+import {
+  forgetPastSession, pastSessions, reconcileAbandonedSessions, sessionBaseline,
+} from './session-history';
 import {
   backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads, validateExactCodexThread,
 } from './codex-sessions';
@@ -7902,6 +7905,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // sees every chunk whatever tab is on screen and is told which session that
   // is, so it owns both halves now.
   const sessionsMainSrc = sourceOf('src/main/sessions.ts');
+  const sessionHistorySrc = sourceOf('src/main/session-history.ts');
   check(sessionsMainSrc.includes('.run(live.meta.endedAt, live.meta.exitCode, id)')
     && sessionsMainSrc.includes("broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode })"),
   'durable session history and exit broadcasts both retain the normalized signal exit code');
@@ -8553,7 +8557,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // it. Raising main's cap without touching the view fails here rather than
   // printing a stale forty at the operator.
   check(sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;')
-    && sessionsMainSrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
+    && sessionHistorySrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
     && mainSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
     && sessionsSrc.includes('does not report how many are older')
     && !/Wanigan lists (?:all|every)/.test(sessionsSrc),
