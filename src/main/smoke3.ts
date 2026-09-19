@@ -9062,7 +9062,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && planningViewSrc.includes("import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';")
     && planningViewSrc.includes('plan:planRowsFromDefault()') && controlViewSrc.includes('<Interview projects={projects}')
     && planningViewSrc.includes('plan:toPlanNodes(draft.plan)')
-    && planningViewSrc.includes('<PlanEditor rows={draft.plan} onChange={plan => edit({plan})} />')
+    && /<PlanEditor\b[^\n]*rows=\{draft\.plan\} onChange=\{plan => edit\(\{plan\}\)\}/.test(planningViewSrc)
     && planEditorSrc.includes('return DEFAULT_DOCKET_PLAN.map((node) => ({')
     && preloadSrc.includes('plan?: DocketPlanNode[]')
     && controlSrc.includes('const planned = buildPlan(input.plan?.length ? input.plan : DEFAULT_PLAN);'),

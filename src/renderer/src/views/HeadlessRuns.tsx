@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   HeadlessHeld, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
@@ -500,7 +501,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       <section className="hr-launch" aria-labelledby="headless-launch-title">
         <SectionHead label="The task" />
         <h2 id="headless-launch-title">What should the agent do?</h2>
-        <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><textarea className="field" aria-label="Task for every repository" value={prompt} onChange={(e) => setPrompt(e.target.value)}
+        <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><PromptField scopeKey={`headless:${providerId}:${[...chosen].sort().join(',')}`} purpose="task for every repository" actionsDisabled={busy} className="field" aria-label="Task for every repository" value={prompt} onValueChange={setPrompt}
                   placeholder="Audit this repository, make the requested change, run the relevant checks, and report what you verified." />
           <span className="faint">Use one self-contained request. Each selected repository receives this task independently.</span></label>
         <SectionHead label="Agent and run details" />

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { PromptField } from '../prompt-actions/PromptField';
+import { useId, useMemo, useState } from 'react';
 import type { DocketNodeKind, DocketPlanNode } from '@shared/types';
 import {
   DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS, MAX_DOCKET_NODE_DEPENDENCIES, MAX_DOCKET_PLAN_NODES,
@@ -285,7 +286,8 @@ const KIND_HINT: Record<DocketNodeKind, string> = {
 /**
  * The editor itself: rows in graph order, each waiting only on rows above it.
  */
-export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChange: (rows: PlanRow[]) => void }) {
+export default function PlanEditor({ rows, onChange, scopeKey, actionsDisabled }: { rows: PlanRow[]; onChange: (rows: PlanRow[]) => void; scopeKey: string; actionsDisabled?: boolean }) {
+  const editorId = useId();
   const [expanded, setExpanded] = useState<number | null>(null);
   const problems = useMemo(() => planProblems(rows), [rows]);
   const graphProblems = problems.filter((problem) => problem.row === null);
@@ -352,9 +354,9 @@ export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChan
             </label>
           </div>
           <label><span className="label">Instructions</span>
-            <textarea className="field control-textarea" value={row.instructions}
+            <PromptField scopeKey={`${scopeKey}:${editorId}:task:${index}:${row.kind}:${row.title}`} purpose="task instructions" actionsDisabled={actionsDisabled} className="field control-textarea" value={row.instructions}
                       placeholder="What this task must do, and what it must not."
-                      onChange={(event) => patch(index, { instructions: event.target.value })} />
+                      onValueChange={instructions => patch(index, { instructions })} />
           </label>
           <label><span className="label">Claim path · optional</span>
             <input className="field" value={row.claimPath} placeholder="src/cart/total.ts"

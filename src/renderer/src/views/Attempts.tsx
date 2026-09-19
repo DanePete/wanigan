@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project, ProviderInfo } from '@shared/types';
 import {
@@ -285,7 +286,7 @@ export default function Attempts({ projects, providers, areaSwitch }: {
               </label>
             </div>
             <label className="at-field at-prompt"><span className="label">Task for every attempt</span>
-              <textarea className="field" value={prompt} onChange={(e) => setPrompt(e.target.value)}
+              <PromptField scopeKey={`attempts:${projectId}:${kind}`} purpose="task for every attempt" actionsDisabled={busy === 'start'} className="field" value={prompt} onValueChange={setPrompt}
                         placeholder="Make the retry test pass without charging twice, and run the checkout suite." />
             </label>
             <div className="at-arms" role="group" aria-label="Arms">

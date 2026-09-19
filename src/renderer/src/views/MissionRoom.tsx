@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CompanionSnapshot, CompanionSource, CompanionTurn } from '@shared/companion';
 import type { Attention, Project, Session } from '@shared/types';
@@ -179,9 +180,9 @@ export default function MissionRoom({ story, followedSession, sessions=[], atten
         <PageHead title={title} />
         <div className="mission-summary"><p>Ask about your agents or the recorded overview of your projects.</p></div>
         <form className="mission-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          <textarea ref={input} aria-label="Talk to Wanigan" readOnly={demo} placeholder={demo ? "Companion answers are off in this demo" : "Talk to Wanigan…"} value={question} maxLength={4_000} rows={1}
+          <PromptField scopeKey={`companion:${projectId ?? 'all'}`} purpose="companion question" ref={input} aria-label="Talk to Wanigan" readOnly={demo} placeholder={demo ? "Companion answers are off in this demo" : "Talk to Wanigan…"} value={question} maxLength={4_000} rows={1}
             onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
-            onChange={(event) => {setQuestion(event.target.value);setInputEvent(value=>value+1);}}
+            onValueChange={question => {setQuestion(question);setInputEvent(value=>value+1);}}
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(); } }} />
           {pending ? <button type="button" aria-label="Stop this answer" onClick={() => void window.wanigan.companion.cancel().catch((e) => setError(String(e)))}><Icon name="x" /></button>
             : <button type="submit" aria-label="Send question to Wanigan" disabled={!question.trim() || !snapshot?.available}><span aria-hidden="true">↑</span></button>}

@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentAccount, DocketNodeKind, ProviderInfo, RelayPreview, RelayRead, RelayRouteInput } from '@shared/types';
 import { DEFAULT_MIN_CONFIDENCE } from '@shared/relay-route';
@@ -145,8 +146,8 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
             )}
             <label>
               <span className="label">What should this relay accomplish?</span>
-              <textarea className="field" aria-label="What should this relay accomplish" value={intent}
-                onChange={(e) => { setIntent(e.target.value); setPreview(null); }} rows={4} ref={intentEl}
+              <PromptField scopeKey={`relay:${projectId}:${providerId}`} purpose="relay intent" className="field" aria-label="What should this relay accomplish" value={intent}
+                onValueChange={value => { setIntent(value); setPreview(null); }} rows={4} ref={intentEl}
                 placeholder="Fix checkout retries so one payment creates one order. Include what done looks like." disabled={busy !== null} />
             </label>
             <div className="rl-start-meta">

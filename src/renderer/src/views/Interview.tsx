@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useEffect, useRef, useState } from 'react';
 import type { DocketRisk, Interview as InterviewRecord, InterviewProposal, Project } from '@shared/types';
 import { EmptyState, Note, SectionHead, Segmented, usd } from '../components/bits';
@@ -149,8 +150,8 @@ export default function Interview({ projects, projectId, onDone, onCancel, backL
 
     {stage === 'idea' && <fieldset className="planning-fields" disabled={busy !== null}>
       <h2>What are we making happen?</h2>
-      <label data-planning-cue="Keep going. The rough edges are useful.">Your idea<textarea className="field planning-seed" aria-label="Your goal idea" data-planning-initial value={draft.seed} maxLength={4000}
-        onChange={event => edit({seed:event.target.value})} placeholder="Something to build, a problem to untangle, an idea that won’t leave you alone…" /></label>
+      <label data-planning-cue="Keep going. The rough edges are useful.">Your idea<PromptField scopeKey={`planning:${draft.project}:idea`} purpose="goal idea" actionsDisabled={busy !== null} className="field planning-seed" aria-label="Your goal idea" data-planning-initial value={draft.seed} maxLength={4000}
+        onValueChange={seed => edit({seed})} placeholder="Something to build, a problem to untangle, an idea that won’t leave you alone…" /></label>
       {projectPicker}
       {!projectOptions.length && <button className="btn" type="button" disabled={busy !== null} onClick={() => void addProject()}>Add your first project</button>}
       <details className="planning-settings"><summary>Planning preferences{chosenModel ? ` · ${chosenModel.label}` : ''}</summary>
@@ -178,8 +179,8 @@ export default function Interview({ projects, projectId, onDone, onCancel, backL
       {open && open.answer === null && <>
         <h2>{open.question}</h2>
         {open.why && <p className="planning-fine">{open.why}</p>}
-        <label data-planning-cue="I’m listening. Specific beats polished.">Your answer<textarea className="field planning-seed" aria-label="Your planning answer" data-planning-initial key={`${record?.id}:${open.at}:${record?.turns.length}`}
-          value={answer} maxLength={4000} disabled={busy !== null} onChange={event => setAnswer(event.target.value)}
+        <label data-planning-cue="I’m listening. Specific beats polished.">Your answer<PromptField scopeKey={`planning:${record?.id}:${open.at}:${record?.turns.length}:answer`} purpose="planning answer" className="field planning-seed" aria-label="Your planning answer" data-planning-initial key={`${record?.id}:${open.at}:${record?.turns.length}`}
+          value={answer} maxLength={4000} disabled={busy !== null} onValueChange={setAnswer}
           onKeyDown={event => {if (!event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey) && event.key === 'Enter') {event.preventDefault(); submitAnswer();}}} /></label>
         <div className="planning-actions"><button className="btn btn-primary" type="button" disabled={busy !== null || !answer.trim()} onClick={submitAnswer}>{busy === 'answer' ? 'Thinking it through…' : 'Continue together'}</button><span className="planning-fine">⌘↵ to send</span></div>
       </>}
@@ -199,11 +200,11 @@ export default function Interview({ projects, projectId, onDone, onCancel, backL
         {projectPicker}
         {!projectOptions.length && <button className="btn" type="button" onClick={() => void addProject()}>Add your first project</button>}
         <label data-planning-cue="Give it a name you’ll recognise tomorrow.">Title<input className="field" data-planning-initial maxLength={180} value={draft.title} onChange={event => edit({title:event.target.value})} placeholder="A checkout that never charges twice" /></label>
-        <label data-planning-cue="What changes when this works?">Objective<textarea className="field" value={draft.objective} onChange={event => edit({objective:event.target.value})} placeholder="What should be different, and why?" /></label>
-        <label data-planning-cue="This is the good part. How will we know?">Acceptance checks · one per line<textarea className="field" value={draft.acceptance} onChange={event => edit({acceptance:event.target.value})} placeholder={'Retrying a payment never creates a second charge.\nThe existing checkout tests still pass.'} /></label>
+        <label data-planning-cue="What changes when this works?">Objective<PromptField scopeKey={`planning:${draft.project}:${draft.interviewId ?? 'manual'}:objective`} purpose="goal objective" actionsDisabled={busy !== null} className="field" value={draft.objective} onValueChange={objective => edit({objective})} placeholder="What should be different, and why?" /></label>
+        <label data-planning-cue="This is the good part. How will we know?">Acceptance checks · one per line<PromptField scopeKey={`planning:${draft.project}:${draft.interviewId ?? 'manual'}:acceptance`} purpose="acceptance checks, one per line" actionsDisabled={busy !== null} className="field" value={draft.acceptance} onValueChange={acceptance => edit({acceptance})} placeholder={'Retrying a payment never creates a second charge.\nThe existing checkout tests still pass.'} /></label>
         <div className="planning-inline"><label data-planning-cue="What would be expensive to get wrong?">Risk<select className="field" value={draft.risk} onChange={event => edit({risk:event.target.value as DocketRisk})}>{['low','elevated','high'].map(risk => <option key={risk} value={risk}>{risk}</option>)}</select></label>
           <label data-planning-cue="Give the work a sensible boundary.">Goal budget · USD<input className="field" inputMode="decimal" value={draft.budget} onChange={event => edit({budget:event.target.value})} placeholder="Optional" /></label></div>
-        <section className="planning-plan" data-planning-cue="One job at a time. With the right things waiting."><SectionHead label="The work ahead" count={draft.plan.length} /><PlanEditor rows={draft.plan} onChange={plan => edit({plan})} /></section>
+        <section className="planning-plan" data-planning-cue="One job at a time. With the right things waiting."><SectionHead label="The work ahead" count={draft.plan.length} /><PlanEditor scopeKey={`planning:${draft.project}:${draft.interviewId ?? 'manual'}`} actionsDisabled={busy !== null} rows={draft.plan} onChange={plan => edit({plan})} /></section>
       </fieldset>
       {history}
       {problems.length > 0 && <p className="planning-fine" id="planning-problems">Still needed: {problems.join(', ')}.</p>}

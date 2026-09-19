@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project, ProviderInfo } from '@shared/types';
 import { executionForSchedule, SCHEDULED_BUDGET_USD, SCHEDULED_TIMEOUT_MS } from '@shared/scheduled-execution';
@@ -413,7 +414,7 @@ function ScheduleEditor({draft,setDraft,projects,providers,providersBusy,provide
           {!!draft.providerProfileFingerprint&&<ExecutionSummary payload={{...draft,executionVersion:1}} providers={providers} />}
           {!draft.providerProfileFingerprint&&<p className="sc-fine">Choose the agent that will receive this prompt and project context. Its profile is saved with the schedule; a changed or unavailable profile blocks the run.</p>}
         </section>
-        <label>What should the agent do?<textarea className="field" aria-label="Prompt" value={draft.prompt} placeholder="Review the checkout changes and report risks. Make no changes." onChange={event=>patch({prompt:event.target.value})} /></label>
+        <label>What should the agent do?<PromptField scopeKey={`schedule:${existing?.id ?? 'new'}:${draft.projectId}:${draft.providerId}`} purpose="scheduled task" actionsDisabled={busy} className="field" aria-label="Prompt" value={draft.prompt} placeholder="Review the checkout changes and report risks. Make no changes." onValueChange={prompt=>patch({prompt})} /></label>
         <p className="sc-fine">Each occurrence starts the selected agent with this prompt and the project's current instructions. No sign-in or model call runs while you edit.</p>
         {unpinned&&<div className="sc-scope"><label className="sc-check"><input type="checkbox" checked={draft.allProjects} onChange={event=>patch({allProjects:event.target.checked})} /><span><strong>Run in every registered repository.</strong> New projects will be included automatically.</span></label><p>{projects.length?`${namesOf(projects)}. ${projects.length} repositories today.${selectedProvider?.capabilities.headlessBudget?` Their combined agent spending limits are ${usd(projects.length*SCHEDULED_BUDGET_USD)} per occurrence.`:selectedProvider?' This agent has no dollar spending limit.':''}`:'No repositories are registered. Add one before creating a schedule.'}</p>{!draft.allProjects&&<p>Choose a single project or explicitly allow every registered repository before saving.</p>}</div>}
       </>:<>
