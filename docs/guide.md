@@ -440,6 +440,11 @@ unordered in a `.jsonl` that can be hundreds of megabytes, and anything
 unfinished at 24 hours is gone. The Batches view is the surface that makes that
 survivable.
 
+The batch editor keeps four preparation steps visible. **Back** and **Next**
+move between them without sending work. The **Still to do** buttons beside
+Submit take you to a missing answer or the relevant preflight control. Cost
+estimation, a paid test request, and submission still require their own actions.
+
 | Failure mode | What Wanigan does |
 |---|---|
 | A malformed request isn't reported until the batch ends | **Dry run** sends one row synchronously first |
@@ -470,6 +475,13 @@ vary mid-run, so a comparison where both the model and the effort moved is
 uninterpretable. Every score records the judge's own model and effort, because a
 judgement with no attribution is unfalsifiable.
 
+**Schedules** can repeat an unattended repository task or a saved batch. For
+ordinary timing, choose **Every day**, **Weekdays**, or **Every week**, then
+the local time and (for weekly work) the day. **Custom cron** retains advanced
+patterns. Check the displayed timezone and upcoming occurrences before saving.
+Creating a schedule enables it; the agent, project scope, and execution limits
+remain explicit in the form.
+
 ## Model capabilities come from the API
 
 The model list is `GET /v1/models`, not a hardcoded table. The API returns
@@ -486,17 +498,21 @@ invalidate the cached prefix.
 
 ## Skills and Context
 
-**Skills** is a searchable catalogue of the skills actually on your machine —
-your own, a project's checked-in ones, and everything plugins have installed —
-read from disk with their real descriptions. Selecting one types it into a
-running session, so it is a launcher rather than a reference. Built-in skills
+**Skills** is a searchable catalogue of Claude Code and Codex skill files found
+on your machine. Filter by agent or source, then select a workflow to read it.
+Claude Code entries offer **Copy command**; **Type into session** is available
+for a live Claude Code session in the same project when manual invocation is
+allowed. Typing does not press Enter. Codex entries offer **Copy name** and
+file reading; Wanigan has not verified their loading order or invocation.
+**Sources** lists the directories scanned for both agents. Built-in skills
 are reported as *seen so far* and labelled that way, because Claude Code extracts
 a bundled skill to a temp directory only once it has been used, and scanning that
 directory would report "the skills you happened to invoke recently" while looking
 exactly like a complete inventory.
 
-**Context** answers "what will my agent actually know when it starts?" — the
-resolved CLAUDE.md chain in load order including every ancestor directory,
+**Context** predicts Claude Code's instruction loading from local files; it
+does not predict Codex's launch order. It shows the resolved CLAUDE.md chain
+in load order including every ancestor directory,
 imports to the real four-hop limit with cycles and external imports flagged,
 `.claude/rules/` split into loads-at-launch and loads-on-demand with how many
 files each path-scoped rule currently matches, the auto-memory directory, the
@@ -570,9 +586,9 @@ Use it in this order:
 
 1. Choose the official sources you want to follow. Source URLs are fixed in
    Wanigan; the dashboard only lets you include or exclude them.
-2. Use **Preview locally** to refresh the capability inventory without opening
+2. Use **Check local inventory** to refresh the capability inventory without opening
    a network connection.
-3. Use **Run scout now** for one visible, credential-free check of the enabled
+3. Use **Check official sources online** for one visible, credential-free check of the enabled
    sources. This does not turn on recurring research.
 4. To enable a weekly check, separately allow unattended official-source
    checks, pick a local day/time, then turn on **Weekly watch**. On macOS it

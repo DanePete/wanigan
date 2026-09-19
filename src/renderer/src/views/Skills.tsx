@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ForgedSkill, Project, ProviderInfo, SkillDiagnostic, SkillInstallResult } from '@shared/types';
+import { SKILL_SOURCES, type ForgedSkill, type Project, type ProviderInfo, type Session, type SkillDiagnostic, type SkillInstallResult, type SkillSource } from '@shared/types';
+import { skillTypingUnavailable, type SkillCatalogue as Catalogue, type SkillInfo } from '@shared/skill-catalogue';
+import { sessionName } from '@shared/session-name';
 import { Chip, EmptyState, Hint, Icon, Mark, Note, PageHead, Reading, Section, SectionHead, Segmented, ago, num } from '../components/bits';
 import { useChord } from '../bindings';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/skills.css';
 
 /**
- * The skills on this machine, as a catalogue you can fire into a running agent
- * rather than one you read.
+ * The skills on this machine, with each harness's verified capabilities kept
+ * beside its files. Reading a Codex file does not claim it can be invoked.
  *
  * Three things here are load-bearing rather than decorative:
  *
@@ -26,41 +28,11 @@ import '../styles/skills.css';
  * a name and nothing else. It is hand-authoring and says so: see SkillWriter.
  */
 
-type SkillSource = 'user' | 'project' | 'plugin' | 'builtin';
-
-type SkillInfo = {
-  name: string;
-  description: string;
-  source: SkillSource;
-  path: string;
-  dir: string;
-  invoke: string;
-  plugin: string | null;
-  marketplace: string | null;
-  projectId: string | null;
-  allowedTools: string[];
-  extras: number;
-  bytes: number;
-  modified: number;
-};
-
-type SkillRoot = { source: SkillSource; path: string; exists: boolean; note: string | null };
-
-type Catalogue = {
-  skills: SkillInfo[];
-  counts: Record<SkillSource, number>;
-  roots: SkillRoot[];
-  scannedAt: number;
-};
-
-/** Slot order IS the colourblind-safety mechanism — never reordered to suit meaning. */
-const SOURCES: { id: SkillSource; word: string; glyph: string; color: string; blurb: string }[] = [
-  { id: 'user',    word: 'user',     glyph: '◆', color: 'var(--series-1)', blurb: 'yours, on this machine' },
-  { id: 'project', word: 'project',  glyph: '■', color: 'var(--series-2)', blurb: 'stored in this repository' },
-  { id: 'plugin',  word: 'plugin',   glyph: '▲', color: 'var(--series-3)', blurb: 'installed by a plugin' },
-  { id: 'builtin', word: 'built-in', glyph: '○', color: 'var(--series-4)', blurb: 'bundled with Claude Code' },
-];
-const SRC = Object.fromEntries(SOURCES.map((s) => [s.id, s])) as Record<SkillSource, (typeof SOURCES)[number]>;
+/** Source identity is shared with the catalogue; colour never carries it alone. */
+const SOURCES = SKILL_SOURCES.map((source, index) => ({ ...source, color: `var(--series-${index % 4 + 1})` }));
+const SRC = Object.fromEntries(SOURCES.map(source => [source.id, source])) as Record<SkillSource, (typeof SOURCES)[number]>;
+const harnessName = (harness: SkillInfo['harness']) => harness === 'claude-code' ? 'Claude Code' : 'Codex';
+const emptyCounts = () => Object.fromEntries(SOURCES.map(source => [source.id, 0])) as Record<SkillSource, number>;
 
 const OPT_ID = (i: number) => `skills-opt-${i}`;
 const MAX_SUGGESTIONS = 8;
@@ -172,8 +144,8 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /* ── view ────────────────────────────────────────────────────────────── */
 
-export default function Skills({ projectId, providers, activeSessionId }: {
-  projectId?: string; providers: ProviderInfo[]; activeSessionId?: string | null;
+export default function Skills({ projectId, providers, activeSession }: {
+  projectId?: string; providers: ProviderInfo[]; activeSession?: Session | null;
 }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [projectsErr, setProjectsErr] = useState<string | null>(null);
@@ -190,17 +162,18 @@ export default function Skills({ projectId, providers, activeSessionId }: {
   const project = projects?.find(p => p.id === scopeId) ?? null;
   return <SkillsWorkspace key={scopeId ?? 'personal'} scopeId={scopeId} project={project} projects={projects}
     projectsErr={projectsErr} retryProjects={() => setProjectRead(n => n + 1)} providers={providers}
-    activeSessionId={activeSessionId} pinned={pinnedLive && pinned !== projectId} onPin={setPinned} />;
+    activeSession={activeSession} pinned={pinnedLive && pinned !== projectId} onPin={setPinned} />;
 }
 
 type SkillsArea = 'library' | 'write' | 'sources';
 
-function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProjects, providers, activeSessionId, pinned, onPin }: {
+function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProjects, providers, activeSession, pinned, onPin }: {
   scopeId?: string; project: Project | null; projects: Project[] | null; projectsErr: string | null; retryProjects: () => void;
-  providers: ProviderInfo[]; activeSessionId?: string | null; pinned: boolean; onPin: (id: string | null) => void;
+  providers: ProviderInfo[]; activeSession?: Session | null; pinned: boolean; onPin: (id: string | null) => void;
 }) {
   const [area, setArea] = useViewMemory<SkillsArea>('area', 'library');
   const [cat, setCat] = useState<Catalogue | null>(null);
+  const [harness, setHarness] = useViewMemory<'all' | SkillInfo['harness']>('harness', 'all');
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [q, setQ] = useViewMemory(`catalogue/${scopeId}/query`, '');
@@ -220,25 +193,26 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
     setScanning(true);
     try {
       if (rescan) await window.wanigan.skills.refresh();
-      const next = await window.wanigan.skills.list(scopeId) as Catalogue;
+      const next = await window.wanigan.skills.list(scopeId);
       if (alive.current && mine === sequence.current) { setCat(next); setLoadErr(null); }
     } catch (error) { if (alive.current && mine === sequence.current) setLoadErr(msg(error)); }
     finally { if (alive.current && mine === sequence.current) setScanning(false); }
   }, [scopeId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (!flash) return; const timer = setTimeout(() => setFlash(null), 6000); return () => clearTimeout(timer); }, [flash]);
+  const catalogueSkills = useMemo(() => cat ? [...cat.skills, ...cat.agentSkills] : [], [cat]);
+  const harnessSkills = useMemo(() => catalogueSkills.filter(skill => harness === 'all' || skill.harness === harness), [catalogueSkills, harness]);
   const query = q.trim().toLowerCase();
   const matched = useMemo<Hit[]>(() => {
-    if (!cat) return [];
-    if (!query) return cat.skills.map(skill => ({ skill, tier:TIER.unfiltered, score:0, nameHits:null, descHits:null }));
-    return cat.skills.map(skill => match(skill, query)).filter((hit): hit is Hit => hit !== null)
+    if (!query) return harnessSkills.map(skill => ({ skill, tier:TIER.unfiltered, score:0, nameHits:null, descHits:null }));
+    return harnessSkills.map(skill => match(skill, query)).filter((hit): hit is Hit => hit !== null)
       .sort((a,b) => a.tier - b.tier || b.score - a.score || a.skill.name.localeCompare(b.skill.name));
-  }, [cat, query]);
-  const facets = useMemo(() => { const counts: Record<SkillSource, number> = {user:0, project:0, plugin:0, builtin:0}; for (const hit of matched) counts[hit.skill.source]++; return counts; }, [matched]);
+  }, [harnessSkills, query]);
+  const facets = useMemo(() => { const counts = emptyCounts(); for (const hit of matched) counts[hit.skill.source]++; return counts; }, [matched]);
   const visible = useMemo(() => sources.size ? matched.filter(hit => sources.has(hit.skill.source)) : matched, [matched, sources]);
   const suggestions = query ? visible.slice(0, MAX_SUGGESTIONS) : [];
   const selected = visible.find(hit => hit.skill.path === selectedPath)?.skill ?? visible[0]?.skill ?? null;
-  const total = cat?.skills.length ?? 0;
+  const total = catalogueSkills.length;
   const panelRef = useRememberedScrollRef(`skills/${scopeId}/${area}`);
   useEffect(() => {
     if (!open || active < 0) return;
@@ -248,7 +222,7 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
     else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
   }, [active, open, suggestions.length]);
   useEffect(() => { if (active >= suggestions.length) setActive(suggestions.length - 1); }, [suggestions.length, active]);
-  const clear = () => { setQ(''); setSources(new Set()); setOpen(false); setActive(-1); };
+  const clear = () => { setHarness('all'); setQ(''); setSources(new Set()); setOpen(false); setActive(-1); };
   const choose = (hit: Hit) => { setSelectedPath(hit.skill.path); setOpen(false); setActive(-1); inputRef.current?.focus(); };
   const onKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const n = suggestions.length;
@@ -262,21 +236,21 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
     else if (event.key === 'Tab') { setOpen(false); setActive(-1); }
   };
   const send = async (skill: SkillInfo) => {
-    if (!activeSessionId || sendLock.current || loadErr) return;
+    if (!activeSession || sendLock.current || skillTypingUnavailable(skill, activeSession, scopeId, !!loadErr)) return;
     sendLock.current = true; setSending(true);
     try {
-      await window.wanigan.skills.send(activeSessionId, skill.invoke);
+      await window.wanigan.skills.send(activeSession.id, skill.invoke);
       if (alive.current) setFlash({tone:'ok',text:`Typed ${skill.invoke} into the selected session. It is not submitted; press Enter in that session to run it.`});
     } catch (error) { if (alive.current) setFlash({tone:'error',text:`Could not type ${skill.invoke}: ${msg(error)}`}); }
     finally { sendLock.current = false; if (alive.current) setSending(false); }
   };
   const copy = async (skill: SkillInfo) => {
-    try { await navigator.clipboard.writeText(skill.invoke); if (alive.current) setFlash({tone:'ok',text:`Copied ${skill.invoke}.`}); }
-    catch (error) { if (alive.current) setFlash({tone:'error',text:`The clipboard could not be written: ${msg(error)}. Select the invocation and copy it manually.`}); }
+    try { const text = skill.invoke || skill.name; await navigator.clipboard.writeText(text); if (alive.current) setFlash({tone:'ok',text:`Copied ${text}.`}); }
+    catch (error) { if (alive.current) setFlash({tone:'error',text:`The clipboard could not be written: ${msg(error)}. Select the command or name and copy it manually.`}); }
   };
 
   return <div className="pane wide skills-view">
-    <PageHead compact title="Skills" lead="Find the right workflow. Keep the craft close." actions={<>
+    <PageHead compact title="Skills" lead="Read and write reusable agent workflows." actions={<>
       {projects && projects.length > 0 && <select className="field skills-project" aria-label="Which repository's project skills to include" value={scopeId ?? ''} onChange={event => onPin(event.target.value)}>
         <option value="">No repository</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>}
@@ -287,24 +261,27 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
     {pinned && <div className="skills-pin"><Hint>{scopeId ? `Project skills from ${project?.name ?? scopeId}.` : 'Project skills excluded.'} This choice stays within Skills.</Hint><button className="link" onClick={() => onPin(null)}>Follow the app’s project</button></div>}
     {flash && <Note tone={flash.tone} onDismiss={() => setFlash(null)}>{flash.text}</Note>}
     <div className="skills-workspace">
-      <div className="skills-navigation"><Segmented label="Skills workspace" value={area} onChange={setArea} options={[{value:'library',label:'Library'},{value:'write',label:'Write'},{value:'sources',label:'Sources'}]} /><Hint>{cat ? `${num(total)} Claude Code skills · scanned ${ago(cat.scannedAt)}` : 'Claude Code catalogue'}</Hint></div>
+      <div className="skills-navigation"><Segmented label="Skills workspace" value={area} onChange={setArea} options={[{value:'library',label:'Library'},{value:'write',label:'Write'},{value:'sources',label:'Sources'}]} /><Hint>{cat ? `${num(total)} skills · Claude Code and Codex · scanned ${ago(cat.scannedAt)}` : 'Skills found on this machine'}</Hint></div>
       <div className="skills-scroll" data-area={area} ref={panelRef} tabIndex={0} aria-label={`${area === 'library' ? 'Skill library' : area === 'write' ? 'Skill writer' : 'Skill sources'}`}>
         {loadErr && <Note tone="error">The skill scan did not finish: {loadErr}.{cat ? ' The last successful scan is still shown.' : ' No catalogue has been read.'} <button className="link" disabled={scanning} onClick={() => void load(true)}>Scan again</button></Note>}
         {area === 'library' && (!cat ? !loadErr && <Reading what="skill directories" /> : <div className="skills-library">
           <aside className="skills-directory" aria-label="Skill catalogue">
             <SectionHead label="Your workflows" count={visible.length} />
+            <label>Agent<select className="field" aria-label="Skill agent" value={harness} onChange={event => { setHarness(event.target.value as typeof harness); setSources(new Set()); setOpen(false); }}>
+              <option value="all">All agents</option><option value="claude-code">Claude Code</option><option value="codex">Codex · files on disk</option>
+            </select></label>
             <div className="skills-search-wrap">
               <input ref={inputRef} className="field skills-search" role="combobox" type="text" aria-label="Search skills by name or description" aria-expanded={open && suggestions.length > 0} aria-controls="skills-typeahead" aria-autocomplete="list" aria-activedescendant={open && active >= 0 ? OPT_ID(active) : undefined} autoComplete="off" spellCheck={false} placeholder="Find a skill…" value={q} onChange={event => { setQ(event.target.value); setOpen(true); setActive(-1); }} onKeyDown={onKey} onFocus={() => { if (q) setOpen(true); }} onBlur={() => { setOpen(false); setActive(-1); }} />
               <ul id="skills-typeahead" className="skills-pop" role="listbox" aria-label="Skill matches" ref={popRef} hidden={!open || !suggestions.length}>{suggestions.map((hit,i) => <li key={hit.skill.path} id={OPT_ID(i)} role="option" aria-selected={active === i} className={`skills-opt${active === i ? ' on' : ''}`} ref={el => { optRefs.current[i] = el; }} onMouseDown={event => event.preventDefault()} onClick={() => choose(hit)}><strong><Marked text={hit.skill.name} hits={hit.nameHits} /></strong><small>{TIER_WORD[hit.tier]} · {SRC[hit.skill.source].word}</small></li>)}</ul>
             </div>
             <div className="skills-filters">{SOURCES.map(source => <Chip key={source.id} pressed={sources.has(source.id)} count={facets[source.id]} disabled={!facets[source.id] && !sources.has(source.id)} onToggle={() => setSources(previous => { const next = new Set(previous); if (next.has(source.id)) next.delete(source.id); else next.add(source.id); return next; })}><span aria-hidden="true" style={{color:source.color}}>{source.glyph}</span>{source.word}</Chip>)}</div>
-            <div className="skills-count" role="status">{q || sources.size ? <><span>{visible.length} of {total} skills match</span><button className="link" onClick={clear}>Clear filters</button></> : <span>Names first, then descriptions. Matched letters are highlighted.</span>}</div>
-            {total === 0 ? <EmptyState posture="nothing-yet" title="No Claude Code skills found" cue="Write a skill, or check Sources to see which directories were scanned." action={<button className="btn" onClick={() => setArea('write')}>Write a skill</button>} />
-              : visible.length === 0 ? <EmptyState posture="nothing-in-scope" title={matched.length ? 'Sources hide every match' : 'No skill matches this search'} cue={matched.length ? 'Choose another source or clear the filters.' : 'Try part of a name, its initials, or a phrase from the description.'} action={<button className="btn" onClick={clear}>Clear filters</button>} />
+            <div className="skills-count" role="status">{q || sources.size || harness !== 'all' ? <><span>{visible.length} of {total} skills match</span><button className="link" onClick={clear}>Clear filters</button></> : <span>Names first, then descriptions. Matched letters are highlighted.</span>}</div>
+            {total === 0 ? <EmptyState posture="nothing-yet" title="No skills found" cue="Write a skill, or check Sources to see which directories were scanned." action={<button className="btn" onClick={() => setArea('write')}>Write a skill</button>} />
+              : visible.length === 0 ? <EmptyState posture="nothing-in-scope" title={matched.length ? 'Sources hide every match' : 'No skills match these filters'} cue={matched.length ? 'Choose another source or clear the filters.' : 'Choose another agent, try part of a name, or clear the filters.'} action={<button className="btn" onClick={clear}>Clear filters</button>} />
               : <div className="skills-list">{visible.map(hit => <SkillEntry key={hit.skill.path} hit={hit} selected={selected?.path === hit.skill.path} onRead={() => setSelectedPath(hit.skill.path)} />)}</div>}
-            <Hint>Project files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.</Hint>
+            <Hint>Claude Code commands follow its file precedence. Codex entries are files found on disk; loading order and invocation are unverified. Built-ins show only those seen on disk.</Hint>
           </aside>
-          {selected ? <Reader key={selected.path} skill={selected} scanAt={cat.scannedAt} canSend={!!activeSessionId && !loadErr} sending={sending} onSend={() => void send(selected)} onCopy={() => void copy(selected)} /> : <div className="skills-reader-empty"><EmptyState posture="nothing-in-scope" title="A workflow, in full" cue="Choose a skill to read its instructions, source, and invocation here." /></div>}
+          {selected ? <Reader key={selected.path} skill={selected} scanAt={cat.scannedAt} unavailable={skillTypingUnavailable(selected, activeSession, scopeId, !!loadErr)} destination={activeSession ? `${sessionName(activeSession)} · ${activeSession.projectName}` : null} sending={sending} onSend={() => void send(selected)} onCopy={() => void copy(selected)} /> : <div className="skills-reader-empty"><EmptyState posture="nothing-in-scope" title="A workflow, in full" cue="Choose a skill to read its instructions, source, and invocation here." /></div>}
         </div>)}
         <div hidden={area !== 'write'}>{scopeId && !project
           ? projects === null && !projectsErr ? <Reading what="project details" />
@@ -716,7 +693,7 @@ function SkillEntry({ hit, selected, onRead }: { hit: Hit; selected: boolean; on
     <span className="skills-origin"><span aria-hidden="true" style={{color:source.color}}>{source.glyph}</span>{source.word}{skill.plugin ? ` · ${skill.plugin}` : ''}</span>
     <strong><Marked text={skill.name} hits={hit.nameHits} /></strong>
     <Description text={skill.description} hits={hit.descHits} />
-    <span className="skills-entry-meta"><code>{skill.invoke}</code><span>{skill.extras} helper {skill.extras === 1 ? 'file' : 'files'}</span></span>
+    <span className="skills-entry-meta"><code>{skill.invoke || "File on disk"}</code><span>{harnessName(skill.harness)}</span><span>{skill.extras} helper {skill.extras === 1 ? 'file' : 'files'}</span></span>
   </button>;
 }
 
@@ -727,22 +704,26 @@ function SkillEntry({ hit, selected, onRead }: { hit: Hit; selected: boolean; on
 function Roots({ cat }: { cat: Catalogue }) {
   const contextChord = useChord('view:context').glyphs;
   const paletteChord = useChord('palette').glyphs;
-  const total = cat.skills.length;
+  const skills = [...cat.skills, ...cat.agentSkills];
+  const roots = [...cat.roots, ...cat.agentRoots];
+  const counts = emptyCounts();
+  for (const skill of skills) counts[skill.source]++;
+  const total = skills.length;
   let x = 0;
   const W = 100;
 
   return (
     <div className="skills-sources"><Section title="Where these came from"
-             hint="A project skill shadows a user skill of the same name, which shadows a plugin's — only the file that actually runs is listed here.">
+             hint="Claude Code commands use project, user, then plugin precedence. Codex files are listed as found; their loading order is not verified.">
       {total > 0 && (
         <>
           <svg className="chart-svg" viewBox={`0 0 ${W} 14`} role="img"
-               aria-label={SOURCES.map((s) => `${s.word} ${cat.counts[s.id]}`).join(', ')}>
+               aria-label={SOURCES.map((s) => `${s.word} ${counts[s.id]}`).join(', ')}>
             {SOURCES.map((s) => {
-              const w = (cat.counts[s.id] / total) * W;
+              const w = (counts[s.id] / total) * W;
               const seg = (
                 <rect key={s.id} x={x} y="0" width={Math.max(0, w - 0.5)} height="10" rx="2" fill={s.color}>
-                  <title>{`${s.word}: ${cat.counts[s.id]} of ${total} skills`}</title>
+                  <title>{`${s.word}: ${counts[s.id]} of ${total} skills`}</title>
                 </rect>
               );
               x += w;
@@ -756,7 +737,7 @@ function Roots({ cat }: { cat: Catalogue }) {
                 <span aria-hidden="true" style={{ color: s.color }}>{s.glyph}</span>
                 {s.word}
                 <span className="mono" style={{ color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
-                  {num(cat.counts[s.id])}
+                  {num(counts[s.id])}
                 </span>
               </span>
             ))}
@@ -776,15 +757,15 @@ function Roots({ cat }: { cat: Catalogue }) {
             </tr>
           </thead>
           <tbody>
-            {cat.roots.map((r) => {
+            {roots.map((r) => {
               const s = SRC[r.source];
               return (
-                <tr key={r.source}>
+                <tr key={`${r.source}:${r.path}`}>
                   <td>
                     <span aria-hidden="true" style={{ color: s.color, marginRight: 7 }}>{s.glyph}</span>
-                    {s.word}
+                    {s.word} · {harnessName(s.harness)}
                   </td>
-                  <td className="n">{num(cat.counts[r.source])}</td>
+                  <td className="n">{num(counts[r.source])}</td>
                   <td className="path mono">
                     <span className="skills-root-path" title={r.path}>{r.path}</span>
                   </td>
@@ -806,7 +787,7 @@ function Roots({ cat }: { cat: Catalogue }) {
         </table>
       </div>
 
-      {cat.roots.filter((r) => r.note).map((r) => (
+      {roots.filter((r) => r.note).map((r) => (
         <div key={r.source} style={{ marginTop: 9 }}>
           <Note tone={r.source === 'builtin' ? 'warn' : 'info'}>
             <strong>{r.source === 'builtin' ? '⚠' : 'ℹ'} {SRC[r.source].word}:</strong> {r.note}
@@ -827,8 +808,8 @@ function Roots({ cat }: { cat: Catalogue }) {
   );
 }
 
-function Reader({ skill, scanAt, canSend, sending, onSend, onCopy }: {
-  skill: SkillInfo; scanAt: number; canSend: boolean; sending: boolean; onSend: () => void; onCopy: () => void;
+function Reader({ skill, scanAt, unavailable, destination, sending, onSend, onCopy }: {
+  skill: SkillInfo; scanAt: number; unavailable: string | null; destination: string | null; sending: boolean; onSend: () => void; onCopy: () => void;
 }) {
   const [body, setBody] = useState<{text:string; truncated:boolean; bytes:number} | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -843,10 +824,10 @@ function Reader({ skill, scanAt, canSend, sending, onSend, onCopy }: {
   const source = SRC[skill.source];
   return <aside className="skills-reader" aria-label={`${skill.name} SKILL.md`}>
     <div className="skills-reader-intro">
-      <SectionHead label="Selected workflow" right={<Mark glyph={source.glyph} word={source.word} tone="quiet" />} />
+      <SectionHead label="Selected workflow" right={<Mark glyph={source.glyph} word={`${harnessName(skill.harness)} · ${source.word}`} tone="quiet" />} />
       <h2>{skill.name}</h2><p>{skill.description}</p>
-      <div className="skills-invocation"><code>{skill.invoke}</code><button className="btn btn-sm" onClick={onCopy}>Copy invocation</button>{canSend && <button className="btn btn-primary btn-sm" disabled={sending} onClick={onSend}>{sending ? 'Typing…' : 'Type into session'}</button>}</div>
-      <Hint>{canSend ? 'Types into the selected session without pressing Enter. Review it there before running.' : 'Copy the invocation to use it in a session. Reading and copying work here at any time.'}</Hint>
+      <div className="skills-invocation"><code>{skill.invoke || skill.name}</code><button className="btn btn-sm" onClick={onCopy}>{skill.invoke ? 'Copy command' : 'Copy name'}</button>{!unavailable && <button className="btn btn-primary btn-sm" disabled={sending} onClick={onSend}>{sending ? 'Typing…' : 'Type into session'}</button>}</div>
+      <Hint>{unavailable ?? `Types into ${destination} without pressing Enter. Review it there before running.`}</Hint>
     </div>
     <Segmented label="Skill reader section" value={area} onChange={setArea} options={[{value:'document',label:'SKILL.md'},{value:'details',label:'Details'}]} />
     <div className="skills-reader-content" key={area}>

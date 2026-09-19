@@ -116,7 +116,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
   }, [read, composerOpen]);
 
   const act = async (key: string, run: () => Promise<unknown>) => {
-    if (actionPending.current) return;
+    if (actionPending.current || readError) return;
     actionPending.current = true; setBusy(key); setActionError(null);
     const id = selected;
     try { await run(); if (alive.current && selection.current === id) await loadRead(); }
@@ -163,7 +163,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
       onCancel={selected ? () => { setCreating(false); requestAnimationFrame(() => newButton.current?.focus()); } : undefined} />
     {!composerOpen && selected && <>
       {readError && <Note tone="error" action={{ label: 'Retry refresh', run: loadRead }}>
-        {read ? 'Refresh failed. Showing the last recorded state. ' : ''}{readError}
+        {read ? 'Refresh failed. Showing the last recorded state. Refresh before changing a stage; sessions and evidence remain available. ' : ''}{readError}
       </Note>}
       {actionError && <Note tone="error" onDismiss={() => setActionError(null)}>{actionError}</Note>}
       {!read && !readError && <Note>Reading relay stages…</Note>}
@@ -183,7 +183,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
             <section ref={actionEl} className="rl-next" aria-label="Current relay action" aria-busy={busy !== null}>
               <SectionHead label={done ? 'Relay complete' : 'Up next'} right={<span className="faint" role="status">{currentSummary}</span>} />
               <div className="rl-next-content" key={`${read.docket.id}:${current?.node.id}:${current?.node.status}`}>
-                {current && <RelayAction phase={current} read={read} done={done} busy={busy}
+                {current && <RelayAction phase={current} read={read} done={done} busy={busy} unavailable={!!readError}
                   start={start} finish={finish} verify={verify}
                   estimate={() => act('estimate', () => window.wanigan.relay.estimate(read.docket.id))}
                   retry={() => act('retry', () => window.wanigan.control.retry(current.node.id))}
@@ -239,41 +239,42 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
   </main>;
 }
 
-function RelayAction({ phase, read, done, busy, start, finish, verify, estimate, retry, openSession, openGoal }: {
-  phase: Phase; read: RelayRead; done: boolean; busy: string | null;
+function RelayAction({ phase, read, done, busy, unavailable, start, finish, verify, estimate, retry, openSession, openGoal }: {
+  phase: Phase; read: RelayRead; done: boolean; busy: string | null; unavailable: boolean;
   start: (node: DocketNode) => Promise<void>; finish: (node: DocketNode, decision?: 'approve' | 'request_changes' | 'reject') => Promise<void>;
   verify: (node: DocketNode) => Promise<void>; estimate: () => Promise<void>; retry: () => Promise<void>;
   openSession: (id: string) => void; openGoal: () => void;
 }) {
   const { node } = phase;
   const working = busy !== null;
+  const disabled = working || unavailable;
   if (read.docket.status === 'rejected') return <><h3>The work was rejected.</h3><p>The review decision is recorded. Inspect its evidence in Goals before deciding what to do next.</p><button className="btn" onClick={openGoal}>Review decision</button></>;
   if (node.kind === 'review' && node.status === 'failed' && phase.decision === 'request_changes') return <><h3>Changes were requested.</h3><p>The review is waiting for an implementation follow-up. Inspect the hand-back evidence before reopening the work.</p><button className="btn btn-primary" onClick={openGoal}>Review hand-back in Goals</button></>;
   if (done) return <><h3>The relay has reached its final decision.</h3><p>Review the recorded evidence and changes in Goals.</p><button className="btn" onClick={openGoal}>Review outcome</button></>;
   if (node.queued) return <><h3>{KIND_WORD[node.kind]} is queued.</h3><p>Waiting for its turn to launch. Its recorded state will update here.</p><button className="btn" onClick={openGoal}>View queue in Goals</button></>;
   if (node.gateRunningSince !== null) return <><h3>Verification is running.</h3><p>The project’s checks are running. Results will appear with the stage evidence.</p></>;
   if (node.status === 'failed' || node.status === 'canceled') return <><h3>{KIND_WORD[node.kind]} needs attention.</h3><p>{node.detail || 'Inspect the evidence, then reopen this stage when you are ready to retry.'}</p>
-    <div className="rl-actions"><button className="btn btn-primary" disabled={working} onClick={() => void retry()}>{working ? 'Reopening…' : 'Reopen stage'}</button><button className="btn" onClick={openGoal}>Inspect in Goals</button></div></>;
+    <div className="rl-actions"><button className="btn btn-primary" disabled={disabled} onClick={() => void retry()}>{working ? 'Reopening…' : 'Reopen stage'}</button><button className="btn" onClick={openGoal}>Inspect in Goals</button></div></>;
   if (node.status === 'pending' || node.status === 'blocked') return <><h3>Waiting on an earlier stage.</h3><p>{node.deferUntil ? `Deferred until ${new Date(node.deferUntil).toLocaleString()}.` : 'This stage becomes available when its dependencies are complete.'}</p><button className="btn" onClick={openGoal}>Inspect dependencies</button></>;
-  if (node.kind === 'estimate') return <><h3>Price the work before building.</h3><p>Use this project’s recorded history to estimate time and cost. This step is local and starts no agent.</p><button className="btn btn-primary" disabled={working} onClick={() => void estimate()}>{working ? 'Calculating…' : 'Run forecast'}</button></>;
+  if (node.kind === 'estimate') return <><h3>Price the work before building.</h3><p>Use this project’s recorded history to estimate time and cost. This step is local and starts no agent.</p><button className="btn btn-primary" disabled={disabled} onClick={() => void estimate()}>{working ? 'Calculating…' : 'Run forecast'}</button></>;
   if (node.kind === 'verify') return <><h3>Check the implementation.</h3><p>Run the project’s review commands against the implementation. A current passing result completes verification.</p>
     {read.docket.reviewCommands === 0 && <Hint>No review commands are configured. Set up the review gate in Goals first.</Hint>}
-    <div className="rl-actions"><button className="btn btn-primary" disabled={working || read.docket.reviewCommands === 0} onClick={() => void verify(node)}>{working ? 'Running verification…' : 'Run verification'}</button><button className="btn" onClick={openGoal}>Open review gate</button></div></>;
+    <div className="rl-actions"><button className="btn btn-primary" disabled={disabled || read.docket.reviewCommands === 0} onClick={() => void verify(node)}>{working ? 'Running verification…' : 'Run verification'}</button><button className="btn" onClick={openGoal}>Open review gate</button></div></>;
   if (node.status === 'ready') {
     const verb = node.kind === 'plan' ? 'Start planning' : node.kind === 'implement' ? 'Start implementation' : 'Start review';
     return <><h3>{node.kind === 'plan' ? 'Turn the outcome into a plan.' : node.kind === 'implement' ? 'Ready when you are.' : 'Give the work an independent review.'}</h3>
       <p>{node.kind === 'implement' ? 'Review the forecast below, then start building.' : 'Start this stage in a real agent session.'} It will run on {phase.routeText}.</p>
       {node.kind === 'implement' && <Hint>{read.forecast?.totalUsd === null || !read.forecast ? 'Cost is unpriced. Starting this stage may incur provider charges.' : `Estimated cost: ${usd(read.forecast.totalUsd)}. Actual usage may differ.`}</Hint>}
-      <button className="btn btn-primary" disabled={working} onClick={() => void start(node)}>{working ? 'Starting…' : verb}</button></>;
+      <button className="btn btn-primary" disabled={disabled} onClick={() => void start(node)}>{working ? 'Starting…' : verb}</button></>;
   }
   return <><h3>{KIND_WORD[node.kind]} is running.</h3><p>{phase.state.word === 'quiet' ? 'No recent tool completions have been recorded. Open the session to see what the agent needs.' : 'Open the session to follow the work or respond to the agent.'}</p>
     <div className="rl-actions">{node.sessionId && <button className="btn btn-primary" onClick={() => openSession(node.sessionId!)}>Open live session</button>}
-      {node.kind !== 'review' && <button className="btn" disabled={working} onClick={() => void finish(node)}>{working ? 'Recording…' : `Complete ${node.kind === 'plan' ? 'planning' : 'implementation'}`}</button>}
+      {node.kind !== 'review' && <button className="btn" disabled={disabled} onClick={() => void finish(node)}>{working ? 'Recording…' : `Complete ${node.kind === 'plan' ? 'planning' : 'implementation'}`}</button>}
     </div>
     {node.kind === 'review' ? <div className="rl-decision"><p>After inspecting the work, record your decision.</p><div className="rl-actions">
-      <button className="btn btn-primary" disabled={working} onClick={() => void finish(node, 'approve')}>Approve</button>
-      <button className="btn" disabled={working} onClick={() => void finish(node, 'request_changes')}>Request changes</button>
-      <button className="btn btn-danger" disabled={working} onClick={() => void finish(node, 'reject')}>Reject</button>
+      <button className="btn btn-primary" disabled={disabled} onClick={() => void finish(node, 'approve')}>Approve</button>
+      <button className="btn" disabled={disabled} onClick={() => void finish(node, 'request_changes')}>Request changes</button>
+      <button className="btn btn-danger" disabled={disabled} onClick={() => void finish(node, 'reject')}>Reject</button>
     </div><Hint>{read.nodes.find((row) => row.nodeId === read.docket.nodes.find((row) => row.kind === 'implement')?.id)?.handbacks ?? 0} of {read.handbackLimit} automatic hand-backs used. Requesting changes may launch another implementation turn.</Hint></div>
       : <Hint>Complete this stage only after reviewing the agent’s work. Required checks are validated before it advances.</Hint>}
   </>;

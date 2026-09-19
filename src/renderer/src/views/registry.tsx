@@ -146,8 +146,8 @@ export const VIEW_RENDERERS: Record<Tab, (ctx: ViewContext) => ReactNode> = {
   scout: ({ projects, openGoal }) => (
     <ImprovementScout projects={projects} onOpenGoal={openGoal} />
   ),
-  skills: ({ projectId, providers, activeSessionId }) => (
-    <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
+  skills: ({ projectId, providers, activeSessionId, sessions }) => (
+    <Skills projectId={projectId} providers={providers} activeSession={sessions.find(session => session.id === activeSessionId)} />
   ),
   context: ({ projectId, projects, projectsRead, choose, loadShell, openLearning }) => (
     <Context projectId={projectId} projects={projects} projectsRead={projectsRead} onPickProject={choose}

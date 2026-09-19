@@ -1,0 +1,91 @@
+{
+  "at": "2026-09-19T14:37:42.698Z",
+  "before": false,
+  "rendererRoot": "out/renderer",
+  "checks": [
+    "Daily and weekday controls produce the same cron input for the authoritative preview; an empty time blocks saving.",
+    "Sunday 0 is generated for a chosen weekly cadence. Existing Sunday 7 with internal spacing stays Custom and is submitted unchanged.",
+    "Back/Next and blocker links select and focus the destination, preserving draft fields. Navigation makes no API/estimate/dry-run/submission call. Explicit Estimate runs once; failed test request remains a submission blocker.",
+    "Batch preparation fits a 960px window without horizontal page overflow."
+  ],
+  "errors": [],
+  "calls": [
+    [
+      "schedule.update",
+      "custom",
+      {
+        "name": "Custom weekly audit",
+        "cron": "0  9 * * 7",
+        "payload": {
+          "prompt": "Review this repository without changing files.",
+          "allProjects": false,
+          "executionVersion": 1,
+          "providerId": "claude",
+          "providerProfileFingerprint": "fixture-claude"
+        },
+        "projectId": "p1"
+      }
+    ],
+    [
+      "batch.preview",
+      {
+        "kind": "csv",
+        "text": "name\nMaple\nBirch"
+      },
+      "Classify {{name}}."
+    ],
+    [
+      "batch.estimate",
+      {
+        "name": "Tree classification",
+        "projectId": "p1",
+        "preset": "blank",
+        "model": "fixture-model",
+        "source": {
+          "kind": "csv",
+          "text": "name\nMaple\nBirch"
+        },
+        "system": [
+          {
+            "text": "Classify each tree name.",
+            "cache": true
+          }
+        ],
+        "userTemplate": "Classify {{name}}.",
+        "maxTokens": 256,
+        "cacheTtl": "1h",
+        "effort": "medium",
+        "thinking": "off",
+        "extendedOutput": false
+      },
+      null
+    ],
+    [
+      "batch.dryRun",
+      {
+        "name": "Tree classification",
+        "projectId": "p1",
+        "preset": "blank",
+        "model": "fixture-model",
+        "source": {
+          "kind": "csv",
+          "text": "name\nMaple\nBirch"
+        },
+        "system": [
+          {
+            "text": "Classify each tree name.",
+            "cache": true
+          }
+        ],
+        "userTemplate": "Classify {{name}}.",
+        "maxTokens": 256,
+        "cacheTtl": "1h",
+        "effort": "medium",
+        "thinking": "off",
+        "extendedOutput": false
+      },
+      0
+    ]
+  ],
+  "provenance": "Production renderer with fictional API fixtures in an isolated Electron profile. No main-process integration, real scheduler mutation, provider, estimate, or API request."
+}

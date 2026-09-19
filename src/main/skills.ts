@@ -1,3 +1,4 @@
+import type { SkillCatalogue, SkillInfo, SkillRootStatus } from '../shared/skill-catalogue';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -32,43 +33,6 @@ import type {
 
 export type { SkillSource } from '../shared/types';
 
-export type SkillInfo = {
-  /**
-   * What the command is keyed by. For personal and project skills that is the
-   * DIRECTORY name: the docs say a frontmatter `name` there "sets only the
-   * display label shown in skill listings, and the command still comes from
-   * the directory name" (docs/en/skills, read 2026-09-05 against CLI 2.1.261).
-   * For plugin skills it is the frontmatter name, directory as fallback, and
-   * the plugin prefix stays in place.
-   */
-  name: string;
-  /** The display label: frontmatter `name` when present, else `name`. */
-  label: string;
-  description: string;
-  source: SkillSource;
-  /** Whose loader reads the root this came from. */
-  harness: 'claude-code' | 'codex';
-  /** Absolute path to SKILL.md. */
-  path: string;
-  dir: string;
-  /**
-   * What you type to invoke it. Plugin skills are namespaced. Empty for the
-   * `.agents` family: Wanigan has not verified how Codex invokes one.
-   */
-  invoke: string;
-  plugin: string | null;
-  marketplace: string | null;
-  projectId: string | null;
-  allowedTools: string[];
-  /** Helper files shipped alongside the skill, which is a rough proxy for depth. */
-  extras: number;
-  bytes: number;
-  modified: number;
-  /** Predicted from SKILL.md frontmatter and skillOverrides; never a runtime fact. */
-  invocable: SkillInvocability;
-  /** Set when Wanigan's own compiler wrote this file — an applied or stale projection. */
-  projection: SkillProjectionLink | null;
-};
 
 const HOME = os.homedir();
 /** Where the CLI extracts bundled skills, per version. Incomplete by design. */
@@ -539,25 +503,6 @@ function projectionLinks(paths: string[]): Map<string, SkillProjectionLink> {
 
 /* ── the catalogue ───────────────────────────────────────────────────── */
 
-export type SkillRootStatus = { source: SkillSource; path: string; exists: boolean; note: string | null };
-
-export type SkillCatalogue = {
-  /** Claude Code's loader: what `/name` runs, one row per command. */
-  skills: SkillInfo[];
-  counts: Record<SkillSource, number>;
-  /** Where each Claude source was read from, so an empty section is explicable. */
-  roots: SkillRootStatus[];
-  /** Files present but not the one that runs for their command, and which file shadows them. */
-  shadowed: ShadowedSkill[];
-  /**
-   * The `.agents/skills` family, harness-labelled. Listed as found, in no
-   * precedence order: Codex's loader was not consulted, so which of two
-   * same-named directories it would prefer is not claimed.
-   */
-  agentSkills: SkillInfo[];
-  agentRoots: SkillRootStatus[];
-  scannedAt: number;
-};
 
 export type DiscoverOptions = {
   /** Test seam: the home the personal and plugin roots hang off. Production callers omit it. */

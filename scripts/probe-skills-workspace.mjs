@@ -2,13 +2,14 @@
 // Real renderer in isolated Electron. Every record and action below is synthetic.
 import { STUB, rendererURL } from './renderer-harness.mjs';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 const require=createRequire(import.meta.url),{_electron}=require('playwright-core');
-const root=path.resolve(import.meta.dirname,'..'),before=process.argv.includes('--before');
-const out=path.join(root,'docs/visuals/skills-workspace',before?'before':'after');
+const root=path.resolve(import.meta.dirname,'..'),before=process.argv.includes('--before'),baseline=process.argv.includes('--baseline');
+const out=process.env.WANIGAN_SKILLS_CAPTURE_OUTPUT || path.join(root,'docs/visuals/skills-workspace',before?'before':'after');
 mkdirSync(out,{recursive:true});
 const dir=mkdtempSync(path.join(tmpdir(),'wanigan-skills-'));
 writeFileSync(path.join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
@@ -27,9 +28,11 @@ try {
   const original=window.wanigan,now=Date.now();window.__skillCalls=[];window.__skillReads=[];
   const skill=(name,description,source,projectId=null)=>({name,label:name,description,source,projectId,harness:'claude-code',path:'/example/'+(projectId??source)+'/.claude/skills/'+name+'/SKILL.md',dir:'/example/'+(projectId??source)+'/.claude/skills/'+name,invoke:'/'+name,plugin:source==='plugin'?'workbench':null,marketplace:source==='plugin'?'team-tools':null,allowedTools:source==='project'?['Read','Bash']:[],extras:source==='project'?3:0,bytes:1640,modified:now-7200000,invocable:{user:true,model:true},projection:null});
   window.__skillRows=[skill('verification-before-completion','Check the behavior you changed and record the evidence before handing work back.','user'),skill('review-checkout','Review retries, payment boundaries and the order confirmation flow.','project','p1'),skill('component-craft','Shape a deliberate interface with accessible controls and thoughtful motion.','plugin'),skill('trace-request','Follow one request from the route to its data boundary.','user'),skill('compact','Summarize the useful context before continuing a long session.','builtin'),skill('query-contract','Verify the search ranking contract before changing the index.','project','p2')];
-  window.__skillBodies={};for(const s of window.__skillRows)window.__skillBodies[s.path]='---\nname: '+s.name+'\ndescription: '+s.description+'\n---\n\n# '+s.name+'\n\n## When to use\n\n'+s.description+'\n\n## Workflow\n\n1. Inspect the relevant changes and their callers.\n2. Check the behavior at the boundary.\n3. Run the focused verification and record its outcome.\n\n## Verification\n\nThe handoff names the checks that ran and any remaining uncertainty.\n';
-  window.__skillCatalog=id=>{const skills=window.__skillRows.filter(s=>!s.projectId||s.projectId===id);const counts={user:0,project:0,plugin:0,builtin:0};skills.forEach(s=>counts[s.source]++);return {skills,counts,roots:Object.keys(counts).map(source=>({source,path:source==='project'?(id?'/example/'+id+'/.claude/skills':'—'):'/example/'+source+'/.claude/skills',exists:source!=='project'||!!id,note:source==='builtin'?'Only extracted built-ins are shown; this is not the complete bundled set.':null})),agentSkills:[],agentRoots:[],shadowed:[],scannedAt:Date.now()};};
+  window.__agentRows=[{...skill('verify-deploy','Check a deployment through its recorded evidence.','agents-project','p1'),harness:'codex',path:'/example/p1/.agents/skills/verify-deploy/SKILL.md',dir:'/example/p1/.agents/skills/verify-deploy',invoke:'',invocable:{user:'unknown',model:'unknown'}}];
+  window.__skillBodies={};for(const s of [...window.__skillRows,...window.__agentRows])window.__skillBodies[s.path]='---\nname: '+s.name+'\ndescription: '+s.description+'\n---\n\n# '+s.name+'\n\n## When to use\n\n'+s.description+'\n\n## Workflow\n\n1. Inspect the relevant changes and their callers.\n2. Check the behavior at the boundary.\n3. Run the focused verification and record its outcome.\n\n## Verification\n\nThe handoff names the checks that ran and any remaining uncertainty.\n';
+  window.__skillCatalog=id=>{const skills=window.__skillRows.filter(s=>!s.projectId||s.projectId===id);const counts={user:0,project:0,plugin:0,builtin:0};skills.forEach(s=>counts[s.source]++);return {skills,counts,roots:Object.keys(counts).map(source=>({source,path:source==='project'?(id?'/example/'+id+'/.claude/skills':'—'):'/example/'+source+'/.claude/skills',exists:source!=='project'||!!id,note:source==='builtin'?'Only extracted built-ins are shown; this is not the complete bundled set.':null})),agentSkills:window.__agentRows.filter(s=>s.projectId===id),agentRoots:[{source:'agents-project',path:id?'/example/'+id+'/.agents/skills':'—',exists:!!id,note:'Codex files are listed as found; loading order and invocation are unverified.'}],shadowed:[],scannedAt:Date.now()};};
   window.wanigan=new Proxy(original,{get(api,service){
+   if(service==='sessions')return new Proxy(api.sessions,{get(sessions,method){if(method==='list')return async()=>(await sessions.list()).filter(s=>s.id==='s1').map(s=>({...s,harnessId:localStorage.getItem('__skillSessionHarness')||'claude-code',displayTitle:'Checkout bug',projectPath:'/example/storefront'}));return sessions[method];}});
    if(service==='skills')return {list:async id=>{window.__skillReads.push(['list',id]);if(window.__scanFailure)throw new Error('Fixture directory cannot be read');const value=window.__skillCatalog(id);if(window.__holdScan===id)return new Promise(resolve=>window.__releaseScan=()=>resolve(value));return structuredClone(value);},refresh:async()=>{window.__skillReads.push(['refresh']);return true;},body:async path=>{window.__skillReads.push(['body',path]);if(window.__bodyFailure===path)throw new Error('Fixture skill file was moved');const value={text:window.__skillBodies[path]??'# New skill',truncated:!!window.__truncated,bytes:window.__truncated?250000:1640};if(window.__holdBody===path)return new Promise(resolve=>window.__releaseBody=()=>resolve(value));return value;},send:async(...args)=>{window.__skillCalls.push(['send',...args]);if(window.__sendFailure)throw new Error('Selected harness does not support this invocation');if(window.__holdSend)await new Promise(resolve=>window.__releaseSend=resolve);return true;}};
    if(service==='learning')return new Proxy(api.learning,{get(learning,method){
     if(method==='forgeSkill')return async input=>{window.__skillReads.push(['forge',input]);if(window.__forgeFailure)throw new Error('Fixture draft could not be built');const value={name:input.name,scope:input.scope,skillMd:'---\nname: '+input.name+'\ndescription: '+input.description+'\n---\n\n# '+input.name+'\n\n## When to use\n'+input.trigger+'\n\n## Workflow\n'+input.steps.map((s,i)=>(i+1)+'. '+s.instruction).join('\n')+'\n\n## Verification\n'+input.verification.join('\n'),allowedTools:[],providerIds:input.providerIds,estimatedTokens:142};if(window.__holdForge)return new Promise(resolve=>window.__releaseForge=()=>resolve(value));return value;};
@@ -43,12 +46,16 @@ try {
   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__skillCalls.push(['copy',text]);if(window.__copyFailure)throw new Error('Fixture clipboard unavailable');}}});
  });
  await page.goto(rendererURL);await page.locator('.mission-room').waitFor();
- await page.locator('.space-dock button').first().focus();await page.keyboard.press('Meta+Shift+s');await page.getByRole('heading',{name:'Skills',exact:true}).waitFor();
+ await page.locator('body').click({position:{x:4,y:100}});await page.keyboard.press('Meta+Shift+s');await page.getByRole('heading',{name:'Skills',exact:true}).waitFor();
  await page.getByRole('combobox',{name:"Which repository's project skills to include",exact:true}).selectOption('p1');
  await page.waitForFunction(()=>document.querySelector('.skills-view')?.textContent.includes('verification-before-completion'));
  const capture=async name=>{await page.evaluate(()=>document.activeElement?.blur());for(const theme of ['dark','light']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);await page.screenshot({path:path.join(out,`${name}-${theme}.png`),scale:'css'});}};
  await capture('library');
- if(before){
+ if(baseline){
+  await page.locator('.skills-md').waitFor();await capture('reader');
+  await page.getByRole('group',{name:'Skills workspace',exact:true}).getByRole('button',{name:'Sources',exact:true}).click();await capture('sources');
+  await page.getByRole('button',{name:'Write a skill',exact:true}).click();await capture('writer');
+ }else if(before){
   await page.getByRole('button',{name:'verification-before-completion',exact:true}).click();await page.locator('.skills-md').waitFor();await capture('reader');
   await page.locator('.skills-reader').getByTitle('Close the reading pane',{exact:true}).click();
   await page.getByRole('button',{name:'Write a skill',exact:true}).click();await page.locator('#skills-writer').scrollIntoViewIfNeeded();await capture('writer');
@@ -64,6 +71,13 @@ try {
   const search=page.getByRole('combobox',{name:'Search skills by name or description'});
   assert.deepEqual(await calls(),[]);
   await reader.locator('.skills-md').waitFor();await capture('reader');
+  const harness=page.getByRole('combobox',{name:'Skill agent',exact:true});
+  await harness.selectOption('codex');await choose('verify-deploy');assert.equal(await page.locator('.skills-entry').count(),1);assert.equal(await reader.getByRole('button',{name:'Type into session'}).count(),0);assert.match(await reader.innerText(),/not verified/);await reader.getByRole('button',{name:'Copy name',exact:true}).click();assert.deepEqual((await calls()).at(-1),['copy','verify-deploy']);await capture('codex-file');
+  await area('Sources');assert.match(await page.locator('.skills-sources').innerText(),/agents.skills/);await area('Library');await harness.selectOption('all');await choose('verification-before-completion');
+  await page.evaluate(()=>{window.__skillRows[0].invocable.user=false;});await page.getByRole('button',{name:'Rescan disk'}).click();await waitText('.skills-reader','prevent manual invocation');assert.equal(await reader.getByRole('button',{name:'Type into session'}).count(),0);await page.evaluate(()=>{window.__skillRows[0].invocable.user=true;});await page.getByRole('button',{name:'Rescan disk'}).click();await reader.getByRole('button',{name:'Type into session'}).waitFor();assert.match(await reader.innerText(),/Checkout bug.*storefront/);
+  await scope.selectOption('p2');await reader.getByRole('button',{name:'Copy command'}).waitFor();assert.match(await reader.innerText(),/another project/);assert.equal(await reader.getByRole('button',{name:'Type into session'}).count(),0);await scope.selectOption('p1');await reader.getByRole('button',{name:'Type into session'}).waitFor();
+  record('Both harnesses appear in the library and Sources; Codex copies its name without an invented invocation, and manual-disabled or different-project commands cannot be typed.');
+
   await choose('review-checkout');await readerArea('Details');await waitText('.skills-details','Read');await capture('details');
   await area('Sources');await page.getByRole('heading',{name:'Where these came from'}).waitFor();await capture('sources');
   await area('Library');await waitText('.skills-reader','review-checkout');assert.equal(await reader.getByRole('button',{name:'Details',exact:true}).getAttribute('aria-pressed'),'true');await readerArea('SKILL.md');
@@ -71,7 +85,7 @@ try {
   await search.press('ArrowDown');assert(await search.getAttribute('aria-activedescendant'));await search.press('Enter');assert(await search.evaluate(el=>el===document.activeElement));await waitText('.skills-reader','verification-before-completion');await capture('search');
   await page.getByRole('button',{name:'Clear filters',exact:true}).click();await page.locator('.skills-filters').getByRole('button',{name:/plugin/}).click();assert.equal(await page.locator('.skills-entry').count(),1);
   await search.fill('vbc');await waitText('.skills-directory','Sources hide every match');await page.locator('.skills-count').getByRole('button',{name:'Clear filters'}).click();
-  await search.fill('zqzqzq');await waitText('.skills-directory','No skill matches this search');await capture('no-match');await page.locator('.skills-count').getByRole('button',{name:'Clear filters'}).click();
+  await search.fill('zqzqzq');await waitText('.skills-directory','No skills match these filters');await capture('no-match');await page.locator('.skills-count').getByRole('button',{name:'Clear filters'}).click();
   await page.getByRole('group',{name:'Skills workspace',exact:true}).getByRole('button',{name:'Library',exact:true}).focus();await page.keyboard.press('ArrowRight');assert.equal(await page.getByRole('group',{name:'Skills workspace'}).getByRole('button',{name:'Write',exact:true}).getAttribute('aria-pressed'),'true');await area('Library');
   record('Search keeps visible match ranking, source facets and keyboard typeahead; selection and reader sections survive workspace navigation.');
 
@@ -86,8 +100,8 @@ try {
   await page.evaluate(()=>window.__scanFailure=true);await page.getByRole('button',{name:'Rescan disk'}).click();await waitText('.skills-scroll','last successful scan is still shown');assert.equal(await reader.getByRole('button',{name:'Type into session'}).count(),0);await capture('scan-unavailable');await page.evaluate(()=>window.__scanFailure=false);await page.getByRole('button',{name:'Scan again',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.skills-scroll').textContent.includes('last successful scan is still shown'));
   record('Project changes clear old records immediately; a failed rescan keeps dated records and removes session typing until the scan succeeds.');
 
-  await choose('verification-before-completion');await reader.getByRole('button',{name:'Copy invocation',exact:true}).click();assert.deepEqual((await calls()).at(-1),['copy','/verification-before-completion']);
-  await page.evaluate(()=>window.__copyFailure=true);await reader.getByRole('button',{name:'Copy invocation'}).click();await waitText('.skills-view','clipboard could not be written');await page.evaluate(()=>window.__copyFailure=false);
+  await choose('verification-before-completion');await reader.getByRole('button',{name:'Copy command',exact:true}).click();assert.deepEqual((await calls()).at(-1),['copy','/verification-before-completion']);
+  await page.evaluate(()=>window.__copyFailure=true);await reader.getByRole('button',{name:'Copy command'}).click();await waitText('.skills-view','clipboard could not be written');await page.evaluate(()=>window.__copyFailure=false);
   await reader.getByRole('button',{name:'Reveal folder'}).click();assert.equal((await calls()).at(-1)[0],'reveal');
   await page.evaluate(()=>window.__holdSend=true);let n=(await calls()).length;await reader.getByRole('button',{name:'Type into session'}).click();await page.waitForFunction(()=>!!window.__releaseSend);assert(await reader.getByRole('button',{name:'Typing…'}).isDisabled());assert.equal((await calls()).length,n+1);await page.evaluate(()=>{window.__holdSend=false;window.__releaseSend();});await waitText('.skills-view','It is not submitted');assert.equal((await calls()).at(-1)[0],'send');
   await page.evaluate(()=>window.__sendFailure=true);await reader.getByRole('button',{name:'Type into session'}).click();await waitText('.skills-view','Selected harness does not support');await page.evaluate(()=>window.__sendFailure=false);
@@ -110,16 +124,16 @@ try {
   record('Install uses the reviewed bytes and project; partial receipts stay visible, retries target only failed providers and duplicate writes are disabled.');
 
   await scope.selectOption('p2');await page.locator('.skills-writer-form').waitFor();assert.equal(await form.getByRole('textbox',{name:'Skill name'}).inputValue(),'');await scope.selectOption('p1');assert.equal(await form.getByRole('textbox',{name:'Skill name'}).inputValue(),'verify-checkout');assert.equal(await preview.getByRole('button',{name:/Write .* to disk/}).count(),0);
-  await page.locator('.space-dock').getByRole('button',{name:'Mission room',exact:true}).click();await page.locator('.mission-room').waitFor();await page.keyboard.press('Meta+Shift+s');await form.waitFor();assert.equal(await form.getByRole('textbox',{name:'Skill name'}).inputValue(),'verify-checkout');assert.equal(await scope.inputValue(),'p1');
+  await page.keyboard.press('Meta+Shift+h');await page.locator('.mission-room').waitFor();await page.keyboard.press('Meta+Shift+s');await form.waitFor();assert.equal(await form.getByRole('textbox',{name:'Skill name'}).inputValue(),'verify-checkout');assert.equal(await scope.inputValue(),'p1');
   record('Writer inputs and scope pins survive leaving Skills; switching projects restores the correct draft and requires a fresh preview.');
 
   await area('Library');await choose('review-checkout');await readerArea('Details');
   for(const [setting,expected] of [['off',0],['auto',0],['full',1]]){await page.evaluate(value=>document.documentElement.dataset.motion=value,setting);await readerArea('SKILL.md');await readerArea('Details');const duration=await page.locator('.skills-reader-content').evaluate(el=>parseFloat(getComputedStyle(el).animationDuration));assert.equal(duration>0?1:0,expected);}
   await page.evaluate(()=>document.documentElement.dataset.motion='off');const win=await app.browserWindow(page);await win.evaluate(w=>w.setSize(1024,900));await capture('library-narrow');
   for(const name of ['Library','Write','Sources']){await area(name);const size=await page.evaluate(()=>({width:innerWidth,page:document.documentElement.scrollWidth,panel:document.querySelector('.skills-scroll').clientWidth,scroll:document.querySelector('.skills-scroll').scrollWidth}));dimensions.push({name,...size});assert(size.page<=size.width);assert(size.scroll<=size.panel+1);if(name!=='Library')await capture(name.toLowerCase()+'-narrow');}
-  await win.evaluate(w=>w.setSize(1440,1000));await area('Library');await page.evaluate(()=>window.__skillRows=[]);await page.getByRole('button',{name:'Rescan disk'}).click();await waitText('.skills-directory','No Claude Code skills found');await capture('empty');
+  await win.evaluate(w=>w.setSize(1440,1000));await area('Library');await page.evaluate(()=>{window.__skillRows=[];window.__agentRows=[];});await page.getByRole('button',{name:'Rescan disk'}).click();await waitText('.skills-directory','No skills found');await capture('empty');
   record('Motion respects Off, Auto and Full; all three areas fit a narrow desktop and an empty scan offers a clear next action.');
 
  }
- assert.deepEqual(errors,[]);writeFileSync(path.join(out,'verification.json'),JSON.stringify({checks,errors,dimensions},null,2)+'\n');console.log('Skills captures complete.');
+ assert.deepEqual(errors,[]);writeFileSync(path.join(out,'verification.json'),JSON.stringify({provenance:'Production renderer in isolated Electron with fictional bridge records. No real providers, user data, network checks or model calls.',baseline,checks,errors,dimensions,rendererIndexSha256:crypto.createHash('sha256').update(readFileSync(path.join(process.env.WANIGAN_RENDERER_ROOT||path.join(root,'out/renderer'),'index.html'))).digest('hex')},null,2)+'\n');console.log('Skills captures complete.');
 }finally{await app.close();rmSync(dir,{recursive:true,force:true});}

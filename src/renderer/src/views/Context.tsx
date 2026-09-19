@@ -676,7 +676,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
 function Head({project,projects,onPick,onRescan,busy}: {
   project:Project|null;projects:Project[];onPick:(id:string)=>void;onRescan:()=>void;busy:boolean;
 }) {
-  return <PageHead compact title="Context" lead="The files and knowledge behind your next session."
+  return <PageHead compact title="Context" lead="Inspect local instructions and knowledge. Loading predictions and estimates cover Claude Code; Codex launch order is unverified here."
     actions={<>{project&&<select className="field field-inline" aria-label="Context project" value={project.id}
       onChange={event=>onPick(event.target.value)}>{projects.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select>}
       {project&&<button className="btn" type="button" disabled={busy} onClick={onRescan}><Icon name="clock"/>{busy?'Re-scanning…':'Re-scan'}</button>}</>}/>;

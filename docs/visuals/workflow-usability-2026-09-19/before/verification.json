@@ -1,0 +1,192 @@
+{
+  "phase": "before",
+  "passed": true,
+  "rendererRoot": "/private/tmp/wanigan-usability-before-20260919/renderer",
+  "indexSha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263",
+  "provenance": "Isolated production renderer with explicit fictional records and refused mutations. No real provider, PTY, user-data, budget, or repository operation. Before captures record the old behavior; after assertions verify the listed changes.",
+  "checks": [
+    "Captured Fleet baseline before and after live status changes and record removal."
+  ],
+  "errors": [],
+  "environmentNotes": [
+    "Headless Chromium has no WebGPU adapter; the existing orb fallback is shown."
+  ],
+  "screenshots": [
+    {
+      "file": "fleet-selected-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-selected-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-status-changed-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-status-changed-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "fleet-empty-filter-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "fleet-finished-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-finished-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "insights-empty-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "relay-review-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-review-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "relay-stale-review-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "home-finished-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "home-finished-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    }
+  ]
+}

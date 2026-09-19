@@ -1,0 +1,36 @@
+{
+  "mode": "before",
+  "capturedAt": "2026-09-19T14:37:32.849Z",
+  "renderer": {
+    "root": "/private/tmp/wanigan-usability-before-20260919/renderer",
+    "sha256": "d67bb6eeb11f4c8244dd794cd0ff5cd3dfb291c0a78d6daf54b8711d305f9cbf",
+    "assets": [
+      {
+        "path": "assets/index-BaYGaAp_.js",
+        "sha256": "10d2209b308f2fb31fe9ce5853f217be6020c655c4584e123ea4df97550c20bd"
+      },
+      {
+        "path": "assets/index-H1pxXTOi.css",
+        "sha256": "3db74179d22a5342ed11cd8ad8ce16a5b31584d65391f7e705d1a14777b7e224"
+      },
+      {
+        "path": "assets/runtime-DPC_1S4f.js",
+        "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+      },
+      {
+        "path": "index.html",
+        "sha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263"
+      }
+    ]
+  },
+  "sourcePaths": [
+    "src/renderer/src/views/Context.tsx",
+    "src/renderer/src/views/ImprovementScout.tsx",
+    "src/renderer/src/views/Extensions.tsx"
+  ],
+  "fixtureOnly": true,
+  "checks": [
+    "Extension inspection retains the visible safety limitation, consent review gate, and deliberate install action. No fixture install was requested."
+  ],
+  "errors": []
+}

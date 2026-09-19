@@ -442,7 +442,7 @@ export default function Extensions() {
     <div className="pane ex-view">
       <PageHead
         title="Extensions"
-        lead="Bundles of declarations — MCP servers, skills, review gates, instructions — for the surfaces Wanigan already has."
+        lead="Add and manage reusable tools, skills, and checks for your workspace."
         actions={
           <>
             <button type="button" className="btn btn-primary" disabled={locked}
@@ -460,7 +460,8 @@ export default function Extensions() {
         }
       />
 
-      <Explainer id="extensions-what" title="What an extension is, and what Wanigan checks">
+      <Hint>These are Wanigan extensions. Claude Code plugins are managed separately in Plugins.</Hint>
+      <Explainer id="extensions-what" title="What an extension is, and what Wanigan checks" defaultHidden>
         <p>
           An extension is a bundle of declarations, never a place to load code. Nothing it ships runs
           inside Wanigan: anything that has to compute runs out of process behind a protocol Wanigan

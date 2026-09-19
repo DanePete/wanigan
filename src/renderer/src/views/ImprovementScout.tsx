@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project } from '@shared/types';
-import { EmptyState, Explainer, Note, PageHead, Reading, SectionHead, Segmented } from '../components/bits';
+import { EmptyState, Explainer, Hint, Note, PageHead, Reading, SectionHead, Segmented } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/improvement-scout.css';
 
@@ -458,12 +458,13 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
   const clearFilters = () => { setQuery(''); setStatus('all'); };
 
   return <div className="pane wide scout-view">
-    <PageHead compact eyebrow="Knowledge" title="Scout" lead="A watchful eye on what’s next. You decide what’s worth pursuing."
+    <PageHead compact eyebrow="Knowledge" title="Scout" lead="Find improvements in your workspace and official sources, then choose what to pursue."
       actions={<>
         <button className="btn" disabled={loading || busy !== null} onClick={() => void load()}>{loading ? 'Refreshing…' : 'Refresh'}</button>
-        <button className="btn" disabled={disabled || !settings.enabled} onClick={() => void run('preview')} title="Refresh the local inventory without contacting a source.">{busy === 'run-preview' ? 'Previewing…' : 'Preview locally'}</button>
-        <button className="btn btn-primary" disabled={disabled || !settings.enabled} onClick={() => void run('manual')} title="One explicit online check of enabled official sources. Does not enable the weekly watch.">{busy === 'run-manual' ? 'Checking sources…' : 'Run scout now'}</button>
+        <button className="btn" disabled={disabled || !settings.enabled} onClick={() => void run('preview')}>{busy === 'run-preview' ? 'Checking locally…' : 'Check local inventory'}</button>
+        <button className="btn btn-primary" disabled={disabled || !settings.enabled} onClick={() => void run('manual')}>{busy === 'run-manual' ? 'Checking sources…' : 'Check official sources online'}</button>
       </>} />
+    <Hint>Online checks read only enabled official sources. Both checks use local rules, make no model calls, and leave your weekly watch unchanged.</Hint>
     <div className="scout-workspace">
       <div className="scout-navigation">
         <Segmented<ScoutArea> label="Scout workspace" value={area} onChange={setArea} options={[{ value: 'proposals', label: 'Proposals' }, { value: 'sources', label: 'Sources' }, { value: 'watch', label: 'Watch' }]} />
@@ -546,7 +547,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
           <div className="scout-watch-settings">
             <SectionHead label="Workspace & permissions" />
             <label className="scout-switch"><span><strong>Enable Scout workspace</strong><small>Allow local previews and explicit source checks. Saved permissions are retained when paused.</small></span><input type="checkbox" checked={settings.enabled} disabled={disabled} onChange={event => void patchSettings({ enabled: event.target.checked }, event.target.checked ? 'Scout workspace enabled. Saved watch permissions are shown below.' : 'Scout workspace paused.')} /></label>
-            <label className="scout-switch"><span><strong>Allow unattended official-source checks</strong><small>Permission for scheduled network access. “Run scout now” requests a single online check separately.</small></span><input type="checkbox" checked={settings.networkEnabled} disabled={disabled || !settings.enabled} onChange={event => void patchSettings({ networkEnabled: event.target.checked }, 'Unattended network permission updated.')} /></label>
+            <label className="scout-switch"><span><strong>Allow unattended official-source checks</strong><small>Permission for scheduled network access. “Check official sources online” requests a single online check separately.</small></span><input type="checkbox" checked={settings.networkEnabled} disabled={disabled || !settings.enabled} onChange={event => void patchSettings({ networkEnabled: event.target.checked }, 'Unattended network permission updated.')} /></label>
             <label className="scout-switch"><span><strong>Weekly watch</strong><small>A scheduled check needs both unattended permission and an enabled source.</small></span><input type="checkbox" checked={settings.weeklyEnabled} disabled={disabled || !settings.enabled || !settings.networkEnabled} onChange={event => void patchSettings({ weeklyEnabled: event.target.checked }, 'Weekly watch updated.')} /></label>
             <div className="scout-schedule"><label><span className="label">Day</span><select className="field" aria-label="Weekly watch day" disabled={disabled || !settings.enabled} value={settings.weekday} onChange={event => void patchSettings({ weekday: Number(event.target.value) }, 'Watch day updated.')}>{WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label><span className="label">Local time</span><select className="field" aria-label="Weekly watch time" disabled={disabled || !settings.enabled} value={settings.hour} onChange={event => void patchSettings({ hour: Number(event.target.value) }, 'Watch time updated.')}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{String(hour).padStart(2, '0')}:00</option>)}</select></label></div>
             <section className="scout-last-run"><SectionHead label="Last recorded scan" /><div className="scout-run-outcome"><strong>{overview.latestRun ? `${RUN_GLYPH[overview.latestRun.status]} ${overview.latestRun.status}` : 'No scan recorded'}</strong><span>{formatWhen(overview.latestRun?.finishedAt ?? overview.lastRunAt)}</span></div>{overview.latestRun && <><p>{overview.latestRun.error ?? overview.latestRun.detail ?? 'No run detail was recorded.'}</p><span className="scout-limit">{overview.latestRun.networkAllowed ? 'Network allowed' : 'Local only'} · {overview.latestRun.suggestionCount} proposals recorded</span></>}</section>

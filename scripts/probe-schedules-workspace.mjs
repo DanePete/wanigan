@@ -8,7 +8,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{_electron}=require('playwright-core');
 const root=path.resolve(import.meta.dirname,'..'),before=process.argv.includes('--before');
-const out=path.join(root,'docs/visuals/schedules-workspace',before?'before':'after');mkdirSync(out,{recursive:true});
+const outputAt=process.argv.indexOf('--out');
+const out=outputAt>=0?path.resolve(process.argv[outputAt+1]):path.join(root,'docs/visuals/schedules-workspace',before?'before':'after');mkdirSync(out,{recursive:true});
 const dir=mkdtempSync(path.join(tmpdir(),'wanigan-schedules-'));
 writeFileSync(path.join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
 const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;for(const key of Object.keys(env))if(key.startsWith('VSCODE_'))delete env[key];
@@ -50,11 +51,12 @@ try{
  await go('Meta+8');await page.getByRole('heading',{name:'Schedules',exact:true}).waitFor();
  const capture=async name=>{
   if(!before)await page.waitForFunction(()=>![...document.querySelectorAll('.sc-inspector')].some(el=>el.innerText.includes('Reading next occurrences…')));
-  await page.waitForFunction(()=>document.querySelector('.wanigan-orb-small')?.dataset.physics==='ready'&&Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>0);
+  const orbVisible=await page.locator('.wanigan-orb-small').first().isVisible();
+  if(orbVisible)await page.waitForFunction(()=>document.querySelector('.wanigan-orb-small')?.dataset.physics==='ready'&&Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>0);
   for(const theme of ['dark','light']){
-   const frame=Number(await page.locator('.wanigan-orb-small canvas').getAttribute('data-frames'));
+   const frame=orbVisible?Number(await page.locator('.wanigan-orb-small canvas').getAttribute('data-frames')):null;
    await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);
-   await page.waitForFunction(frame=>Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>frame,frame);
+   if(frame!==null)await page.waitForFunction(frame=>Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>frame,frame);
    await page.screenshot({path:path.join(out,`${name}-${theme}.png`),scale:'css',animations:'disabled'});
   }
  };
@@ -81,6 +83,7 @@ try{
   await page.evaluate(()=>{window.__holdScheduleAction=null;window.__releaseScheduleAction();});await detail.getByRole('button',{name:'Resume',exact:true}).waitFor();assert.equal((await calls()).filter(call=>call[0]==='setEnabled').length,1);
   record('Search, selection and edit drafts survive navigation; removing a project pin requires explicit fan-out intent, deletion stays confirmed, and a pending pause cannot repeat.');
   await view.getByRole('button',{name:'New schedule',exact:true}).click();await form.getByLabel('Schedule name',{exact:true}).fill('Read the release notes');await form.getByLabel('Scheduled agent').selectOption(JSON.stringify(['claude','fixture-claude']));await form.getByLabel('Prompt',{exact:true}).fill('Read the release notes and report anything missing.');await capture('create');
+  await form.getByLabel('Schedule repeat').selectOption('custom');
   await page.evaluate(()=>window.__holdPreview='4 4 * * *');await form.getByLabel('Cron expression',{exact:true}).fill('4 4 * * *');await page.waitForFunction(()=>typeof window.__releasePreview==='function');
   await form.getByLabel('Cron expression',{exact:true}).fill('broken');await form.getByText('A cron expression needs five fields.',{exact:true}).waitFor();await page.evaluate(async()=>{window.__holdPreview=null;window.__releasePreview();await Promise.resolve();});assert(await form.getByRole('button',{name:'Create schedule',exact:true}).isDisabled());
   await form.getByLabel('Cron expression',{exact:true}).fill('7 8 * * 1');await page.waitForFunction(()=>!document.querySelector('.sc-editor button[type=submit]')?.disabled);

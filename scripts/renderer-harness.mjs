@@ -400,7 +400,10 @@ export const STUB = `
 // and on a file:// origin 'self' is opaque, so the module script never runs and
 // the page paints an empty #root. A one-file static server is the whole fix.
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const ROOT = path.join(REPO, 'out/renderer');
+// A frozen build lets a before/after probe use identical fixtures without
+// replacing the working renderer while another audit is running.
+const ROOT = process.env.WANIGAN_RENDERER_ROOT
+  ? path.resolve(process.env.WANIGAN_RENDERER_ROOT) : path.join(REPO, 'out/renderer');
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent((req.url ?? '/').split('?')[0]);
   const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);

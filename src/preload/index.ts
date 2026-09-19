@@ -1,3 +1,4 @@
+import type { SkillCatalogue } from '../shared/skill-catalogue';
 import type { PermissionControlAction } from '../shared/session-permissions';
 import type { DemoPromptId, DemoState } from '../shared/demo';
 import type { SessionGoal } from '../shared/goal-journey';
@@ -558,7 +559,7 @@ const api = {
   },
   // ── phase 22 · skills ────────────────────────────────────────────────
   skills: {
-    list: (projectId?: string) => call<any>('skills:list', projectId),
+    list: (projectId?: string) => call<SkillCatalogue>('skills:list', projectId),
     refresh: () => call<boolean>('skills:refresh'),
     body: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('skills:body', p),
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),

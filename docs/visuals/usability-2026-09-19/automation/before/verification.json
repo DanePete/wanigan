@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-19T14:36:09.294Z",
+  "before": true,
+  "rendererRoot": "/private/tmp/wanigan-usability-before-20260919/renderer",
+  "checks": [],
+  "errors": [],
+  "calls": [
+    [
+      "batch.preview",
+      {
+        "kind": "csv",
+        "text": "name\nMaple\nBirch"
+      },
+      "Classify {{name}}."
+    ]
+  ],
+  "provenance": "Production renderer with fictional API fixtures in an isolated Electron profile. No main-process integration, real scheduler mutation, provider, estimate, or API request."
+}

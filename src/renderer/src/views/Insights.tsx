@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@shared/types';
 import { spendKeyLabel, type SpendDimension, type SpendSourceReport } from '@shared/spend-sources';
-import { Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
+import { EmptyState, Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
 import '../styles/insights.css';
 import { useViewMemory } from '../components/viewMemory';
 
@@ -673,18 +673,11 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const t = batch?.totals ?? {};
   const hasBatch = (t.runs ?? 0) > 0;
   const cacheTotal = cache.reduce((a, c) => a + c.read + c.write + c.input, 0);
-  /**
-   * Whether anything has been billed at all — the gate on the empty state.
-   *
-   * The transcript meter belongs in it, and its absence was a real defect
-   * rather than a missing nicety: every other term here describes work Wanigan
-   * launched, so a person who has run Claude Code for a year from a terminal or
-   * the VS Code extension and has just installed Wanigan saw "Nothing has been
-   * billed yet" over a store holding tens of thousands of turns. The one card
-   * that could have corrected the page was below the return that produced it.
-   */
-  const everSpent =
-    hasBatch || win.total > 0 || cacheTotal > 0 ||
+  // Local evidence can establish recorded activity, never the absence of a
+  // provider bill. An unpriced request is activity too.
+  const hasRecordedActivity =
+    hasBatch || unified.some(row => row.sessionUsd > 0 || row.batchUsd > 0 || row.headlessUsd > 0
+      || row.unpricedRequests > 0 || row.unpricedHeadlessRows > 0) || cacheTotal > 0 ||
     effort.some((e) => e.costUsd > 0 || e.requests > 0) ||
     buds.some((b) => b.spentUsd > 0) || (codexUsage?.totalTokens ?? 0) > 0 ||
     (transcripts?.requests ?? 0) > 0;
@@ -734,40 +727,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             Retry now
           </button>
         </Note>
-      </div>
-    );
-  }
-
-  if (!everSpent && buds.length === 0) {
-    return (
-      <div className="pane wide insights">
-        {head}
-        <div className="card" style={{ padding: 22 }}>
-          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Nothing has been billed yet</h2>
-          <p className="dim" style={{ marginTop: 8, lineHeight: 1.55, maxWidth: 640 }}>
-            This page reports on money already spent, so it stays blank until something has cost
-            something. Three things fill it, and any one of them is enough:
-          </p>
-          <ul className="dim ins-start">
-            <li>
-              <strong>Open a session.</strong> Cost and effort arrive from the agent's own
-              telemetry, so the first numbers land after its first API call. Claude Code's
-              transcripts are read separately and fill this page on their own, including for
-              sessions Wanigan never launched — if that store is still being read, this page
-              will populate without you doing anything.
-            </li>
-            <li>
-              <strong>Submit a batch run.</strong> Batch rates are half of list, and the synchronous
-              comparison only has something to compare once a run has finished.
-            </li>
-            <li>
-              <strong>Set a budget.</strong> A cap with no spend against it still draws its meter,
-              it warns before the money is gone, and once it is reached it holds the work nobody is
-              watching start.
-            </li>
-          </ul>
-          <BudgetEditor projects={projects} buds={buds} onSaved={setBuds} />
-        </div>
       </div>
     );
   }
@@ -826,6 +785,9 @@ export default function InsightsView({ onOpenRun, projects: given }: {
           {/* Keep reports mounted: changing a report must not discard a budget or reconciliation draft. */}
           <section id="ins-report-spending" className="ins-report" hidden={report !== 'spending'} aria-label="Spending report">
             <div className="ins-intro"><h2>Spending</h2><p>Recorded costs across your projects · last {days} days</p></div>
+            {!hasRecordedActivity && !errs.spend && !errs.batch ? <EmptyState posture="nothing-yet" title="No recorded activity yet"
+              cue="These reports fill from local session, transcript and run records. Missing records do not tell you what a provider has billed. You can set a budget before work begins."
+              action={<button className="btn" onClick={() => setReport('budgets')}>View budgets</button>} /> : <>
             <div className="ins-filters">
               <span className="label">Meter</span>
               <Segmented label="Which meter the totals below are read from" value={meterMode} onChange={setMeterMode}
@@ -845,6 +807,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
               <summary>Compare with synchronous pricing</summary>
               <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
             </details>
+            </>}
           </section>
           <section id="ins-report-activity" className="ins-report" hidden={report !== 'activity'} aria-label="Tokens and pace report">
             <div className="ins-intro"><h2>Tokens &amp; pace</h2><p>Live provider windows, {days}-day transcripts, and all-time effort and cache.</p></div>
