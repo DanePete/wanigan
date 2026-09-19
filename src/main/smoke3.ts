@@ -5884,8 +5884,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(nextYear !== null && nextYear > new Date(2026, 11, 28).getTime(),
       'a reset date the provider printed without a year rolls into next year when this year would be far past');
     const onTheHour = claudeLimits.__test.parseResetAt('Sep 6 at 9pm (America/Chicago)', new Date(2026, 8, 4).getTime());
-    check(onTheHour !== null && new Date(onTheHour).getHours() === 21 && new Date(onTheHour).getMinutes() === 0,
+    const chicagoHour = (at: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hourCycle: 'h23', hour: 'numeric', minute: 'numeric' }).format(at);
+    check(onTheHour !== null && chicagoHour(onTheHour) === '21:00',
       'a reset printed on the hour as "9pm", with no minutes, still parses — a runtime probe caught this returning null');
+    // The zone the provider printed decides the instant, not this machine's.
+    const tokyo = claudeLimits.__test.parseResetAt('Sep 20 at 9pm (Asia/Tokyo)', new Date(Date.UTC(2026, 8, 19)).getTime());
+    check(tokyo === Date.UTC(2026, 8, 20, 12, 0, 0)
+      && claudeLimits.__test.parseResetAt('Sep 20 at 9pm', new Date(Date.UTC(2026, 8, 19)).getTime()) === null
+      && claudeLimits.__test.parseResetAt('Sep 20 at 9pm (Nowhere/Invented)', new Date(Date.UTC(2026, 8, 19)).getTime()) === null
+      // 1:30am happens twice on the US fall-back date; an ambiguous wall time still resolves to one of them.
+      && claudeLimits.__test.parseResetAt('Nov 1 at 1:30am (America/Chicago)', new Date(Date.UTC(2026, 9, 30)).getTime()) !== null,
+      'a reset is resolved in the zone the provider printed, and one with no zone or an unknown zone gets no countdown rather than a local-time guess');
+    const aged = claudeLimits.__test.parseUsage('Showing last-known usage (50 minutes ago)\nCurrent session: 32% used\n');
+    check(aged.providerAge === 'Showing last-known usage (50 minutes ago)' && aged.windows.length === 1
+      && claudeLimits.__test.parseUsage('Current session: 32% used\n').providerAge === null,
+      'the provider saying its figures are last-known is kept in its own words beside the windows, and absent when it did not say so');
     check(claudeLimits.__test.parseResetAt('whenever it feels like it') === null,
       'an unparseable reset time is null, and the verbatim text carries the answer instead');
 

@@ -71,6 +71,16 @@ const SIGNED_OUT = /(not logged in|please run \/login|login expired|invalid api 
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
+/** How far `zone` is from UTC at `at`, in milliseconds, or null for a zone this runtime does not know. */
+function zoneOffset(at: number, zone: string): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric',
+      month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(at);
+    const part = (type: string) => Number(parts.find((entry) => entry.type === type)?.value);
+    return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second')) - Math.floor(at / 1000) * 1000;
+  } catch { return null; }
+}
+
 /**
  * "Sep 6 at 8:59pm (America/Chicago)" to an epoch, or null.
  *
@@ -79,11 +89,16 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
  * year is inferred because the provider omits it — a date that lands far in the
  * past is read as next year, which is the only reading that makes sense for a
  * reset time.
+ *
+ * The wall time is resolved in the zone the provider printed. It used to be
+ * built in this machine's zone, so a reset printed for Asia/Tokyo became a
+ * countdown fourteen hours wrong in Chicago. A reset with no zone, or one this
+ * runtime cannot resolve, has no honest epoch and gets none.
  */
 export function parseResetAt(text: string, now = Date.now()): number | null {
   // Minutes are optional: the agent prints "9pm" on the hour and "1:29pm"
   // otherwise, and an on-the-hour reset was silently unparseable without this.
-  const match = /^([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)/i.exec(text.trim());
+  const match = /^([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*(?:\(([A-Za-z0-9_+\-/]+)\))?/i.exec(text.trim());
   if (!match) return null;
   const month = MONTHS.indexOf(match[1].toLowerCase());
   if (month < 0) return null;
@@ -91,16 +106,26 @@ export function parseResetAt(text: string, now = Date.now()): number | null {
   let hour = Number(match[3]) % 12;
   if (match[5].toLowerCase() === 'pm') hour += 12;
   const minute = match[4] === undefined ? 0 : Number(match[4]);
-  if (!Number.isFinite(day) || !Number.isFinite(minute)) return null;
+  const zone = match[6];
+  if (!Number.isFinite(day) || !Number.isFinite(minute) || !zone) return null;
+  const inZone = (year: number): number | null => {
+    const wall = Date.UTC(year, month, day, hour, minute, 0, 0);
+    const first = zoneOffset(wall, zone);
+    if (first === null) return null;
+    // Asked again at the corrected instant, so a reset beside a clock change
+    // takes the offset in force at the reset rather than the one a day away.
+    const second = zoneOffset(wall - first, zone);
+    return second === null ? null : wall - second;
+  };
   const year = new Date(now).getFullYear();
-  // Built in local time deliberately: the provider prints its zone name, and
-  // resolving an IANA zone by hand is more ways to be wrong than it is worth.
-  // A machine in the zone it printed reads exactly right; one elsewhere is off
-  // by its offset, which is why the verbatim text stays the primary display.
-  let at = new Date(year, month, day, hour, minute, 0, 0).getTime();
-  if (at < now - 45 * 86_400_000) at = new Date(year + 1, month, day, hour, minute, 0, 0).getTime();
-  return Number.isFinite(at) ? at : null;
+  let at = inZone(year);
+  if (at !== null && at < now - 45 * 86_400_000) at = inZone(year + 1);
+  return at !== null && Number.isFinite(at) ? at : null;
 }
+
+/** "Showing last-known usage (50 minutes ago)". The provider is saying the
+ * figures below are its own cached ones; that sentence is kept verbatim. */
+const PROVIDER_AGE = /\b(?:showing\s+)?last[- ]known usage\b[^\n]*/i;
 
 const num = (raw: string): number | null => {
   const value = Number(raw.replace(/,/g, ''));
@@ -108,7 +133,7 @@ const num = (raw: string): number | null => {
 };
 
 /** Parse the CLI's reply. Exported so the shape can be tested without spawning. */
-export function parseUsage(text: string, now = Date.now()): { windows: LimitWindow[]; factors: UsageFactors[]; plan: string | null } {
+export function parseUsage(text: string, now = Date.now()): { windows: LimitWindow[]; factors: UsageFactors[]; plan: string | null; providerAge: string | null } {
   const windows: LimitWindow[] = [];
   const factors: UsageFactors[] = [];
   let plan: string | null = null;
@@ -150,7 +175,7 @@ export function parseUsage(text: string, now = Date.now()): { windows: LimitWind
       if (planMatch) plan = planMatch[1];
     }
   }
-  return { windows, factors, plan };
+  return { windows, factors, plan, providerAge: PROVIDER_AGE.exec(text)?.[0].trim().slice(0, 200) ?? null };
 }
 
 /**
@@ -362,7 +387,11 @@ export async function limitsFor(account: AgentAccount, force = false): Promise<A
   }
   // The agent's own word for the tier beats the phrase in the usage preamble:
   // "max" is a plan, "subscription" is a category.
+  // fetchedAt is when Wanigan asked. When the provider says its figures are its
+  // own last-known ones, that is said beside them in its words: a fresh question
+  // does not make an old answer current.
   return remember({ ...base, identity, state: 'ok', fetchedAt: Date.now(),
+    detail: parsed.providerAge ? `Claude reported: “${parsed.providerAge}”. These figures are as old as that, not as recent as this check.` : null,
     plan: identity.plan ?? parsed.plan, windows: parsed.windows, factors: parsed.factors });
 }
 
