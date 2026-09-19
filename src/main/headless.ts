@@ -1,9 +1,9 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
-import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
 import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
+import { findOnPath, isExecutableFile } from './platform';
 import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall, waniganCredentialDirs } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
@@ -267,27 +267,17 @@ export async function resolveBin(def: ProviderDef): Promise<string> {
   const key = binCacheKey(def);
   const cached = binCache.get(key);
   if (cached) {
-    try {
-      fs.accessSync(cached, fs.constants.X_OK);
-      return cached;
-    } catch {
-      binCache.delete(key);
-    }
+    if (isExecutableFile(cached)) return cached;
+    binCache.delete(key);
   }
 
-  const PATH = await shellPath();
-  const candidates = [
-    ...(path.isAbsolute(def.bin)
-      ? [def.bin]
-      : PATH.split(':').filter(Boolean).map((d) => path.join(d, def.bin))),
-    ...def.fallbacks(),
-  ];
-  for (const c of candidates) {
-    try {
-      fs.accessSync(c, fs.constants.X_OK);
-      binCache.set(key, c);
-      return c;
-    } catch { /* next candidate */ }
+  // findOnPath applies PATHEXT on Windows, where the CLI a profile calls
+  // `claude` is on disk as `claude.cmd`, and checks isFile() everywhere, where
+  // access(X_OK) alone would accept a *directory* named after the binary.
+  const resolved = findOnPath(def.bin, await shellPath(), def.fallbacks());
+  if (resolved) {
+    binCache.set(key, resolved);
+    return resolved;
   }
   throw new Error(
     `Could not find the ${def.label} CLI ("${def.bin}"). Install it, or open one interactive ` +

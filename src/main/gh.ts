@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { repoState, scopeOf } from './git';
 import { shellPath } from './providers';
+import { findOnPath, toPathValue } from './platform';
 import type { GhCreateResult, GhPr, GhPrChecks, GhPrStatus, GhStatusReport } from '../shared/types';
 
 const exec = promisify(execFile);
@@ -150,7 +151,7 @@ export function setGhSearchDirsForTest(dirs: string[] | null): void {
 }
 
 async function searchPath(): Promise<string> {
-  return searchDirsForTest ? searchDirsForTest.join(':') : shellPath();
+  return searchDirsForTest ? toPathValue(searchDirsForTest) : shellPath();
 }
 
 /**
@@ -159,12 +160,8 @@ async function searchPath(): Promise<string> {
  * refresh, not after a restart.
  */
 export async function resolveGh(): Promise<string | null> {
-  const dirs = (await searchPath()).split(':').filter(Boolean);
-  for (const d of dirs) {
-    const candidate = path.join(d, 'gh');
-    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* next */ }
-  }
-  return null;
+  // `gh` is `gh.exe` on Windows, so the name alone is not a filename there.
+  return findOnPath('gh', await searchPath());
 }
 
 /** Version is cosmetic (a tooltip), so a cheap stamp-keyed cache is enough. */

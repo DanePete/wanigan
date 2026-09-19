@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { shell } from 'electron';
 import { runGit, head, repoState, scopeOf } from './git';
 import { shellPath } from './providers';
+import { findOnPath, isExecutableFile } from './platform';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 
 const exec = promisify(execFile);
@@ -21,26 +22,15 @@ const EDITORS = [
 
 export type Editor = { id: string; label: string; path: string };
 
-function isExecutableFile(full: string): boolean {
-  try {
-    // `access(X_OK)` alone accepts a directory. execFile will reject it later,
-    // but an editor entry should always be something we can actually execute.
-    if (!fs.statSync(full).isFile()) return false;
-    fs.accessSync(full, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export async function detectEditors(): Promise<Editor[]> {
   const p = await shellPath();
   const found: Editor[] = [];
   for (const e of EDITORS) {
-    for (const dir of p.split(':').filter(Boolean)) {
-      const full = path.join(dir, e.bin);
-      if (isExecutableFile(full)) { found.push({ ...e, path: full }); break; }
-    }
+    // `code` is `code.cmd` on Windows -- a VS Code install is otherwise
+    // invisible to the editor picker even though typing `code` works.
+    const full = findOnPath(e.bin, p);
+    if (full) found.push({ ...e, path: full });
   }
   return found;
 }

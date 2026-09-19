@@ -8,6 +8,7 @@ import type { ProviderCapabilities, ProviderId, ProviderInfo, ProviderLaunchFiel
 import { getProviderKey } from './keys';
 import { probeProviderAdapter } from './provider-adapter';
 import { observeOnlyHooksStatus } from './codex-hooks';
+import { findOnPath, hostSearchDirs, loginShellPath, pathDirs, toPathValue } from './platform';
 import {
   createDefaultProviderPackRegistry,
   type ProviderCapabilityDeclaration,
@@ -113,20 +114,13 @@ function editorExtensions(prefix: string): string[] {
  */
 export function searchedLocations(PATH: string): string[] {
   const seen = new Set<string>();
-  for (const dir of [...PATH.split(path.delimiter), ...EDITOR_EXT_DIRS]) {
+  for (const dir of [...pathDirs(PATH), ...EDITOR_EXT_DIRS]) {
     if (!dir) continue;
     try { if (fs.statSync(dir).isDirectory()) seen.add(dir); } catch { /* absent */ }
   }
   return [...seen];
 }
 
-/** First existing executable among the candidates, or null. */
-function firstExecutable(candidates: string[]): string | null {
-  for (const c of candidates) {
-    try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* next */ }
-  }
-  return null;
-}
 
 /**
  * Adding a provider is this object and nothing else — the session manager and
@@ -664,40 +658,27 @@ export function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
 }
 
 /**
- * A GUI app inherits launchd's PATH, not the shell's, so `claude` installed via
- * nvm or homebrew is invisible unless we go looking. This resolves the CLI the
- * way a login shell would.
+ * The PATH a CLI should be looked for on, which is not this process's PATH.
+ *
+ * A macOS GUI app inherits launchd's PATH rather than the shell's, so `claude`
+ * installed via nvm or homebrew is invisible unless the login shell is asked.
+ * Windows has no equivalent question -- see loginShellPath() -- but it has the
+ * same symptom for a different reason, so both go through hostSearchDirs().
  */
 let cachedShellPath: string | null = null;
 
 export async function shellPath(): Promise<string> {
   if (cachedShellPath) return cachedShellPath;
-  const shell = process.env.SHELL || '/bin/zsh';
-  try {
-    const { stdout } = await exec(shell, ['-lic', 'printf %s "$PATH"'], { timeout: 8000 });
-    cachedShellPath = stdout.trim() || process.env.PATH || '';
-  } catch {
-    cachedShellPath = process.env.PATH || '';
-  }
-  // Always include the usual suspects, in case the login shell is unusual.
-  const extras = [
-    '/opt/homebrew/bin', '/usr/local/bin', `${os.homedir()}/.local/bin`,
-    ...nvmBinDirs(),
-  ];
-  const parts = cachedShellPath.split(':').filter(Boolean);
-  for (const e of extras) if (!parts.includes(e) && fs.existsSync(e)) parts.push(e);
-  cachedShellPath = parts.join(':');
+  // Windows has no login shell to ask and no rc file adding to PATH, so this
+  // returns the inherited value there rather than spawning a shell for it.
+  const discovered = await loginShellPath();
+  const parts = pathDirs(discovered);
+  // Always include the usual suspects, in case the login shell is unusual --
+  // or, on Windows, because the npm global prefix is added to the *user* PATH
+  // by its installer and an already-running desktop session has not re-read it.
+  for (const extra of hostSearchDirs()) if (!parts.includes(extra)) parts.push(extra);
+  cachedShellPath = toPathValue(parts);
   return cachedShellPath;
-}
-
-function nvmBinDirs(): string[] {
-  const base = path.join(os.homedir(), '.nvm', 'versions', 'node');
-  try {
-    return fs.readdirSync(base)
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-      .map((v) => path.join(base, v, 'bin'))
-      .filter((d) => fs.existsSync(d));
-  } catch { return []; }
 }
 
 /**
@@ -779,11 +760,10 @@ export async function cliVersionOf(def: ProviderDef, resolved: string): Promise<
 }
 
 async function which(def: ProviderDef): Promise<string | null> {
-  const p = await shellPath();
-  const onPath = path.isAbsolute(def.bin)
-    ? firstExecutable([def.bin])
-    : firstExecutable(p.split(':').filter(Boolean).map((d) => path.join(d, def.bin)));
-  return onPath ?? firstExecutable(def.fallbacks());
+  // findOnPath applies PATHEXT on Windows, so a profile declaring `bin: claude`
+  // resolves the `claude.cmd` npm actually wrote. Declaring `claude.cmd` in a
+  // manifest instead would be a profile that only works on one platform.
+  return findOnPath(def.bin, await shellPath(), def.fallbacks());
 }
 
 /**
