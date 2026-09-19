@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db';
 import * as accounts from './accounts';
-import { isPricedModel, syncCostOf } from './batch/pricing';
+import { isPricedModel, syncCostOf } from './modules/batch/pricing';
 
 /**
  * Claude Code's own transcripts, read as a meter.

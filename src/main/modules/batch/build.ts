@@ -1,4 +1,4 @@
-import type { RunConfig, UploadedFile } from '../../shared/types';
+import type { RunConfig, UploadedFile } from '../../../shared/types';
 import { customIdFor, render, missingSlots, type Row } from './template';
 import { modelFor } from './pricing';
 import { asUploadedFile, contentBlockFor, FILES_BETA, FILE_REF_COLUMN } from './files';

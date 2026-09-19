@@ -2,7 +2,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import * as batch from './batch';
+import * as batch from './modules/batch';
 import { db } from './db';
 import { addProject, listProjects } from './store';
 import type { RunConfig } from '../shared/types';

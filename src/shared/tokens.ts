@@ -31,7 +31,7 @@ const WIDE_CHARS_PER_TOKEN = 1.2;
  * model's vocabulary, so it is directional for a corpus and can be wrong about
  * any single string. It runs on every project open, so it must work offline and
  * with no API key — spending a network round trip to label a panel would be
- * absurd — and it carries the same honesty src/main/batch/pricing.ts carries
+ * absurd — and it carries the same honesty src/main/modules/batch/pricing.ts carries
  * about pricing not being in the API.
  *
  * Provider telemetry and the countTokens endpoint remain truth. Anything shown

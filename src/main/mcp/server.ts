@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import { db } from '../db';
-import * as batch from '../batch';
+import * as batch from '../modules/batch';
 import { projectById } from '../store';
 import { createSession, listSessions } from '../sessions';
 import { findRepos } from '../browse';

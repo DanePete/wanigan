@@ -1,4 +1,4 @@
-import type { RunConfig } from '../../shared/types';
+import type { RunConfig } from '../../../shared/types';
 
 /**
  * Presets are templates — the project a run targets is chosen in the UI from

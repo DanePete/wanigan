@@ -12,12 +12,12 @@ import * as limits from './limits';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy, trustGlyph } from '../shared/types';
 import * as worktrees from './worktrees';
 import * as code from './code';
-import { loadSource } from './batch/sources';
+import { loadSource } from './modules/batch/sources';
 import * as transcripts from './transcripts';
 import * as notify from './notify';
 import * as spend from './spend';
-import * as evals from './batch/evals';
-import * as cachediag from './batch/cachediag';
+import * as evals from './modules/batch/evals';
+import * as cachediag from './modules/batch/cachediag';
 import * as mcpRegistry from './mcp/registry';
 import * as mcpServer from './mcp/server';
 import * as ctxConfig from './context/config';
@@ -34,11 +34,11 @@ import * as control from './control';
 import * as halt from './halt';
 import * as codexSessions from './codex-sessions';
 import * as interview from './modules/interview';
-import * as pricing from './batch/pricing';
+import * as pricing from './modules/batch/pricing';
 import * as sessionsModule from './sessions';
 import * as headless from './headless';
 import { buildApplicationMenu, setComposerShown } from './menu';
-import { createAndSubmitRun as submitRun } from './batch/submit';
+import { createAndSubmitRun as submitRun } from './modules/batch/submit';
 import * as queue from './queue';
 import * as accounts from './accounts';
 import * as claudeLimits from './claude-limits';
@@ -52,7 +52,7 @@ import * as providers from './providers';
 import * as plugins from './plugins';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 import { mcpTrustPrompt } from './mcp/consent';
-import * as batch from './batch';
+import * as batch from './modules/batch';
 import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as mobile from './mobile';
@@ -7022,7 +7022,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // routes.ts derives TABS from it, so an assertion about what a row SAYS reads
   // the registry; routes.ts no longer contains a hint to grep.
   const viewRegistrySrc = sourceOf('src/shared/view-registry.ts');
-  check(/handle\(\s*'batch:runsInFlight'/.test(mainSrc)
+  // The batch channels are registered by the batch module, not index.ts.
+  check(/handle\(\s*'batch:runsInFlight'/.test(sourceOf('src/main/modules/batch/module.ts'))
     && /runsInFlight:\s*\(\)/.test(preloadSrc)
     && appSrc.includes('window.wanigan.batch.runsInFlight()')
     && !appSrc.includes('window.wanigan.batch.runs()')
@@ -7399,7 +7400,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsMainAudit = sourceOf('src/main/sessions.ts');
   const pluginsMainSrc = sourceOf('src/main/plugins.ts');
   const pluginsViewAudit = sourceOf('src/renderer/src/views/Plugins.tsx');
-  const batchIndexSrc = sourceOf('src/main/batch/index.ts');
+  const batchIndexSrc = sourceOf('src/main/modules/batch/index.ts');
   const insightsViewSrc = sourceOf('src/renderer/src/views/Insights.tsx');
   const sessionsViewAudit = sourceOf('src/renderer/src/views/Sessions.tsx');
 
@@ -7483,7 +7484,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // is not 'eval', could only ever be handed a run nothing could produce. Same
   // for the rescue price: the copy promised it and main computed it, and no
   // screen ever showed it.
-  const evalsMainSrc = sourceOf('src/main/batch/evals.ts');
+  const evalsMainSrc = sourceOf('src/main/modules/batch/evals.ts');
   const batchesViewAudit = sourceOf('src/renderer/src/views/Batches.tsx');
   check(mainIndexSrc.includes("handle('evals:variant'")
     && mainIndexSrc.includes("handle('evals:judge'")

@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { toFile } from '@anthropic-ai/sdk';
-import { db } from '../db';
+import { db } from '../../db';
 import { client, isMock, explainApiError } from './anthropic';
-import type { UploadedFile } from '../../shared/types';
+import type { UploadedFile } from '../../../shared/types';
 
 /**
  * Rows as uploaded files.

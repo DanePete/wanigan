@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ensurePrivateDir, ensurePrivateFile, PRIVATE_FILE_MODE, resultsDir } from '../db';
+import { ensurePrivateDir, ensurePrivateFile, PRIVATE_FILE_MODE, resultsDir } from '../../db';
 
 /**
  * Local stand-in for the Batches API. Same object shapes, same lifecycle

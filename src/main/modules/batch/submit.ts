@@ -1,12 +1,12 @@
-import { db, logEvent, newRunId } from '../db';
+import { db, logEvent, newRunId } from '../../db';
 import { client, isMock, EXTENDED_OUTPUT_BETA, stripForbidden } from './anthropic';
 import { buildRequests, type BuiltRequest } from './build';
 import { estimate } from './estimate';
 import { loadSource } from './sources';
-import { refuseIfHalted } from '../halt';
-import type { RunConfig } from '../../shared/types';
+import { refuseIfHalted } from '../../halt';
+import type { RunConfig } from '../../../shared/types';
 import { mockCreate } from './mock';
-import { spendCap } from '../settings';
+import { spendCap } from '../../settings';
 
 export type SubmitResult = { runId: string; batchIds: string[]; requests: number };
 
@@ -93,7 +93,7 @@ export async function createAndSubmitRun(
     // that did NOT happen reads as work still running. Imported lazily because
     // notify reaches back into batch through mobile, and a static edge here
     // would close that loop at module-evaluation time.
-    const { announceSpendCapTrip } = await import('../notify');
+    const { announceSpendCapTrip } = await import('../../notify');
     announceSpendCapTrip(cfg.name, projected, cap);
     throw new Error(
       `Estimated cost $${projected.toFixed(2)} exceeds your $${cap.toFixed(2)} per-run spend cap. ` +

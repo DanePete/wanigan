@@ -1,4 +1,4 @@
-import { db, logEvent } from '../db';
+import { db, logEvent } from '../../db';
 import { loadSource } from './sources';
 import { buildRequests, type BuiltRequest } from './build';
 import { estimate } from './estimate';
@@ -7,7 +7,7 @@ import { rollUp } from './results';
 import { explainApiError } from './anthropic';
 import { MODELS, findModel, isPricedModel, modelFor } from './pricing';
 import { modelInfo } from './models';
-import type { CacheTtl, ModelInfo, RunConfig } from '../../shared/types';
+import type { CacheTtl, ModelInfo, RunConfig } from '../../../shared/types';
 
 /**
  * The refusal lane.

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { db } from './db';
 import * as claudeUsage from './claude-usage';
-import { CACHE_MULTIPLIER, MODELS, costOf, findModel, isPricedModel, pickRate, rateAt } from './batch/pricing';
+import { CACHE_MULTIPLIER, MODELS, costOf, findModel, isPricedModel, pickRate, rateAt } from './modules/batch/pricing';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;

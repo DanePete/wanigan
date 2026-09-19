@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { MODELS, DEFAULT_MODEL, modelFor } from '../batch/pricing';
+import { MODELS, DEFAULT_MODEL, modelFor } from '../modules/batch/pricing';
 import { isServablePath, managedPolicyDir } from './instructions';
 import { estimateTokens } from '../../shared/tokens';
 import type { SkillOverrideEntry } from '../../shared/types';

@@ -5,8 +5,8 @@ import path from 'node:path';
 import { db, dataDir } from './db';
 import { isPickedPath, PICKED_MAX } from './browse';
 import { getSetting, setSetting } from './settings';
-import { uploadFile, isUploadable } from './batch/files';
-import { findModel, DEFAULT_MODEL } from './batch/pricing';
+import { uploadFile, isUploadable } from './modules/batch/files';
+import { findModel, DEFAULT_MODEL } from './modules/batch/pricing';
 import type { AttachmentReclaimPreview, AttachmentReclaimSummary } from '../shared/types';
 
 /**

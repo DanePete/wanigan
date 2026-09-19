@@ -1,8 +1,8 @@
-import { db } from '../db';
-import { getKey, authHeaders } from '../keys';
+import { db } from '../../db';
+import { getKey, authHeaders } from '../../keys';
 import { isMock } from './anthropic';
 import { MODELS as FALLBACK } from './pricing';
-import type { ModelInfo } from '../../shared/types';
+import type { ModelInfo } from '../../../shared/types';
 
 /**
  * The model catalog comes from GET /v1/models, not a hardcoded table.

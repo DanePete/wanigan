@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
 import type { WaniganModule } from '../module-registry';
 import { db } from '../db';
-import { client } from '../batch/anthropic';
-import { MODELS } from '../batch/pricing';
+import { client } from './batch/anthropic';
+import { MODELS } from './batch/pricing';
 import { getKey } from '../keys';
 import { getSetting, setSetting } from '../settings';
 import { refuseIfHalted, registerHaltStopper } from '../halt';

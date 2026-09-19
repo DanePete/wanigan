@@ -1,8 +1,8 @@
 import { client, isMock, explainApiError } from './anthropic';
 import { minimumCacheablePrefix } from './cachediag';
 import { costOf, isPricedModel, modelFor } from './pricing';
-import { estimateTokens } from '../../shared/tokens';
-import type { RunConfig } from '../../shared/types';
+import { estimateTokens } from '../../../shared/tokens';
+import type { RunConfig } from '../../../shared/types';
 import type { BuiltRequest } from './build';
 
 export type Estimate = {

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { db } from './db';
-import { isPricedModel, syncCostOf } from './batch/pricing';
+import { isPricedModel, syncCostOf } from './modules/batch/pricing';
 import type { ConsumptionPoint, ModelConsumption } from '../shared/types';
 import type { PromptImproveResult } from '../shared/prompt-improve';
 

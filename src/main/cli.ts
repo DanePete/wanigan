@@ -2,7 +2,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db';
-import * as batch from './batch';
+import * as batch from './modules/batch';
 import { enqueue, SESSION_NOT_QUEUED } from './queue';
 import {
   cmdExtensionInit, cmdExtensionPreview, cmdExtensionValidate, EXTENSION_CLI_HELP,

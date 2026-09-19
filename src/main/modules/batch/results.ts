@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { finished } from 'node:stream/promises';
-import { db, ensurePrivateDir, ensurePrivateFile, logEvent, PRIVATE_FILE_MODE, resultsDir } from '../db';
+import { db, ensurePrivateDir, ensurePrivateFile, logEvent, PRIVATE_FILE_MODE, resultsDir } from '../../db';
 import { client, isMock } from './anthropic';
 import { costOf } from './pricing';
-import type { CacheTtl } from '../../shared/types';
+import type { CacheTtl } from '../../../shared/types';
 import { mockResults } from './mock';
 
 type ResultLine = {

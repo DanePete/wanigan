@@ -1,4 +1,4 @@
-import { db } from '../db';
+import { db } from '../../db';
 import { loadSource } from './sources';
 import { buildRequests } from './build';
 import { estimate, dryRun } from './estimate';
@@ -9,8 +9,8 @@ import { PRESETS } from './presets';
 import { cachedModels, refreshModels } from './models';
 import { DEFAULT_MODEL } from './pricing';
 import { isMock } from './anthropic';
-import { projectById } from '../store';
-import type { RunConfig, RunRow, SourceConfig } from '../../shared/types';
+import { projectById } from '../../store';
+import type { RunConfig, RunRow, SourceConfig } from '../../../shared/types';
 
 /**
  * Presets carry a {{PROJECT_PATH}} placeholder rather than a hardcoded path, so
