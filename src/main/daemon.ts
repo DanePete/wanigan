@@ -9,8 +9,9 @@
  *
  * So a backend answers four questions — where its registration lives, whether
  * it is installed, how to install it, how to remove it — and `backend()` picks
- * one for the host. This commit is the move alone: launchd goes behind the seam
- * and every platform still does exactly what it did.
+ * one for the host. launchd and Task Scheduler are both real implementations
+ * rather than one plus an adapter written around it, which is the only way to
+ * know the seam is in the right place.
  *
  * What a backend does NOT get to decide is the shape of the answer. `status()`
  * always returns the same record, including `caveat`, which exists because the
@@ -29,8 +30,9 @@ import { hostPlatform } from './platform';
 
 const exec = promisify(execFile);
 
-/** The launchd job label. A backend that registers by name uses this too. */
+/** The launchd job label; the Windows task name is below. Both want stability. */
 const LABEL = 'io.deadnorth.wanigan.scheduler';
+const TASK_NAME = 'Wanigan Scheduler';
 
 export type DaemonStatus = {
   supported: boolean;
@@ -117,18 +119,79 @@ const launchd: DaemonBackend = {
   },
 };
 
+/* ── Task Scheduler (Windows) ─────────────────────────────────────────── */
+
+/**
+ * `schtasks` rather than a .lnk in the Startup folder.
+ *
+ * A Startup shortcut would be simpler and is the wrong shape: it is a file
+ * anything can drop, it runs only in an interactive session that has already
+ * drawn a desktop, and it cannot say it failed. A registered task is inspectable
+ * in one place the operator already trusts, and `/Query` gives an honest answer
+ * to "is this installed" rather than "does a file exist".
+ *
+ * `/SC ONLOGON` is launchd's RunAtLoad. There is deliberately no equivalent of
+ * its KeepAlive: restarting a dead task needs a full task XML definition rather
+ * than a schtasks flag, and claiming a restart that will not happen is worse
+ * than not claiming it. The caveat below says so rather than leaving somebody to
+ * find out from a schedule that stopped firing.
+ */
+const schtasks: DaemonBackend = {
+  id: 'schtasks',
+  path: () => `Task Scheduler \\ ${TASK_NAME}`,
+  caveat: 'This PC must be signed in and awake. The task starts at logon and is not restarted if it stops.',
+  installedDetail: 'A Windows scheduled task starts the local Wanigan scheduler at logon, without a window.',
+
+  async installed() {
+    try {
+      await exec('schtasks', ['/Query', '/TN', TASK_NAME], { timeout: 10_000, windowsHide: true });
+      return true;
+    } catch {
+      // schtasks exits non-zero when the task does not exist, which is the
+      // normal answer here rather than a failure to report.
+      return false;
+    }
+  },
+
+  async install(argv) {
+    // One string for /TR, with the executable quoted because Program Files has
+    // a space in it and schtasks splits on the first one otherwise.
+    const [bin, ...rest] = argv;
+    const command = [`"${bin}"`, ...rest].join(' ');
+    try {
+      await exec('schtasks', ['/Create', '/TN', TASK_NAME, '/TR', command, '/SC', 'ONLOGON', '/F'], {
+        timeout: 15_000, windowsHide: true,
+      });
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e);
+      throw new Error(`The scheduled task could not be created: ${text}`);
+    }
+  },
+
+  async uninstall() {
+    try {
+      await exec('schtasks', ['/Delete', '/TN', TASK_NAME, '/F'], { timeout: 10_000, windowsHide: true });
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e);
+      // Already gone is the outcome the caller wanted.
+      if (/cannot find|does not exist/i.test(text)) return;
+      throw new Error(`Could not remove the scheduled task: ${text}`);
+    }
+  },
+};
+
 /* ── selection ────────────────────────────────────────────────────────── */
 
 function backend(): DaemonBackend | null {
   const platform = hostPlatform();
   if (platform === 'darwin') return launchd;
-  // Windows and Linux have backends to write — a scheduled task and a systemd
-  // user unit — and neither is written here. This commit moves launchd behind
-  // the seam without changing what any platform does.
+  if (platform === 'win32') return schtasks;
+  // Linux is a systemd user unit and nobody has written or run one. Saying that
+  // is better than a third implementation this repository cannot verify.
   return null;
 }
 
-const UNSUPPORTED = 'A durable local scheduler is currently implemented for macOS launchd. Schedules run while Wanigan is open.';
+const UNSUPPORTED = 'A durable local scheduler is implemented for macOS launchd and the Windows Task Scheduler. Schedules run while Wanigan is open.';
 
 export async function daemonStatus(): Promise<DaemonStatus> {
   const impl = backend();

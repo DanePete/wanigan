@@ -8786,8 +8786,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Two real backends rather than one plus an adapter shaped around it. A
   // capability only the built-in can reach is an extension point that does not
   // exist (AGENTS.md), and the platform branch this replaced had no seam at all.
-  check(/launchctl/.test(daemonSrc) && /function backend\(/.test(daemonSrc),
-    'the background scheduler picks a backend rather than branching on the platform');
+  check(/schtasks/.test(daemonSrc) && /launchctl/.test(daemonSrc) && /function backend\(/.test(daemonSrc),
+    'the background scheduler picks a backend rather than branching on the platform, and ships launchd and Task Scheduler behind it');
   check(/caveat/.test(daemonSrc) && !/This Mac must be awake/.test(sourceOf('src/renderer/src/views/Schedules.tsx')),
     'what is true while the scheduler is installed comes from the backend that installed it, not from a sentence about macOS hardcoded in the view');
   check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
