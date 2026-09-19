@@ -32,6 +32,7 @@ function fixture() {
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE batches(id TEXT PRIMARY KEY,run_id TEXT,chunk_index INTEGER,processing_status TEXT,request_count INTEGER,created_at INTEGER);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
     rows: () => native.prepare('SELECT source FROM usage_paid_operations ORDER BY at,rowid').all().map(row => row.source) };
@@ -133,12 +134,33 @@ async function main() {
   assert.equal(settlement(borrower).outcome, 'responded');
   // Meters with no provider request id are still recorded, and account for nothing.
   assert.equal(meters({ requestId: null }), false); assert.equal(ledger().length, 2);
+  // A batch submission hands off to the batches row made from its response.
+  const beforeBatch = new Set(d.prepare('SELECT id FROM usage_paid_operations').all().map(row => row.id));
+  await s.paid.admittedFetch(answer(200, 'req_batch'))('https://api.anthropic.com/v1/messages/batches', { method: 'POST' });
+  const submitted = d.prepare('SELECT id FROM usage_paid_operations').all().map(row => row.id).find(id => !beforeBatch.has(id));
+  const handOff = (requestId, ownerId) => s.paid.accountForPaidOperation({ requestId, outcome: 'recorded-in-batch-ledger', ownerTable: 'batches', ownerId }, d);
+  assert.equal(handOff('req_batch', 'msgbatch_1'), false, 'no batches row, no hand-off');
+  d.exec("INSERT INTO batches VALUES ('msgbatch_1','run-1',0,'in_progress',250,1700000000000)");
+  assert.equal(handOff('req_turn', 'msgbatch_1'), false, 'a Messages request cannot hand off to a batch');
+  assert.equal(handOff('req_batch', 'msgbatch_1'), true);
+  const batchEvidence = () => evidence.exports.paidOperationAccountedFor(d, d.prepare(`SELECT o.id,o.source,o.at,
+    s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash FROM usage_paid_operations o
+    JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE o.id=?`).get(submitted));
+  assert.equal(batchEvidence(), true);
+  d.exec("UPDATE batches SET processing_status='ended' WHERE id='msgbatch_1'");
+  assert.equal(batchEvidence(), true, 'a batch finishing is not a change to what was submitted');
+  d.exec("UPDATE batches SET request_count=1 WHERE id='msgbatch_1'");
+  assert.equal(batchEvidence(), false, 'a rewritten submission no longer accounts for its receipt');
+  d.exec("UPDATE batches SET request_count=250 WHERE id='msgbatch_1'"); assert.equal(batchEvidence(), true);
+  d.exec("DELETE FROM batches WHERE id='msgbatch_1'"); assert.equal(batchEvidence(), false);
+  d.exec("INSERT INTO batches VALUES ('msgbatch_1','run-1',0,'ended',250,1700000000000)");
+
   const cliReceipt = s.paid.admitPaidOperation('learning:cli');
   d.exec("INSERT INTO learning_model_runs VALUES ('run',1,'ok',1,0.002)");
   assert.equal(s.paid.accountForPaidOperation({ receiptId: 'not-a-receipt', outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), false);
   assert.equal(s.paid.accountForPaidOperation({ receiptId: cliReceipt, outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), true);
   assert.equal(settlement(cliReceipt).outcome, 'reported-estimate');
-  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 8, 'no receipt was ever updated or removed');
+  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 9, 'no receipt was ever updated or removed');
   const isAccounted = id => evidence.exports.paidOperationAccountedFor(d, d.prepare(`SELECT o.id,o.source,o.at,
     s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash FROM usage_paid_operations o
     JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE o.id=?`).get(id));
@@ -186,6 +208,6 @@ async function main() {
   reply = Object.assign(new Error('rate limited'), { status: 429 });
   assert.equal((await dryModule.exports.dryRun(request)).ok, false);
   assert.equal(recorded.length, 1, 'a refused sample records no meters; the transport already recorded the provider\'s error response');
-  console.log('Usage paid operations: receipt-before-send, retry re-admission, late maintenance hold, failed-receipt refusal, bounded record and non-billable passthrough the three accounting outcomes and the dry-run ledger passed.');
+  console.log('Usage paid operations: receipt-before-send, retry re-admission, late maintenance hold, failed-receipt refusal, bounded record and non-billable passthrough the accounting outcomes, the dry-run ledger and the batch hand-off passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

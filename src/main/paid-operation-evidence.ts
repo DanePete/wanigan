@@ -24,6 +24,16 @@ export function paidSettlementEvidenceHash(d: Database.Database, row: PaidOperat
       if (!['anthropic:messages', 'anthropic:batches'].includes(row.source) || !row.request_id || !PAID_REQUEST_ID.test(row.request_id)) return null;
       if (row.outcome === 'not-charged-provider-stated') {
         if (!Number.isInteger(row.http_status) || row.http_status! < 400 || row.http_status! > 599 || row.owner_table !== null || row.owner_id !== null) return null;
+      } else if (row.outcome === 'recorded-in-batch-ledger') {
+        // A batch is billed per result, not per submission. Its exposure lives
+        // on the batches row created from this response, which Recovery
+        // inspects separately for unfinished, un-ingested and lost results.
+        // Only that row's immutable columns are bound: its status changes as
+        // the batch runs, and a binding that broke then would be a false alarm.
+        if (row.source !== 'anthropic:batches' || !Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299
+            || row.owner_table !== 'batches' || !row.owner_id) return null;
+        owner = d.prepare('SELECT id,run_id,chunk_index,request_count,created_at FROM batches WHERE id=?').get(row.owner_id) as Record<string, unknown> | undefined;
+        if (!owner || typeof owner.run_id !== 'string' || !owner.run_id || !count(owner.request_count) || !count(owner.created_at)) return null;
       } else if (row.outcome === 'metered') {
         if (row.source !== 'anthropic:messages' || !Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299 || !row.owner_id) return null;
         // Each ledger is named here with the columns that are its meters. Tokens

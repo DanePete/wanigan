@@ -48,6 +48,8 @@ export function paidOperationSource(method: string, pathname: string): PaidOpera
  *   provider's request id. Anthropic's help centre states failed requests are
  *   not charged; the name records whose statement that is, not an observed zero.
  * - `metered`: the provider answered and the owning ledger recorded its meters.
+ * - `recorded-in-batch-ledger`: a batch submission whose `batches` row exists.
+ *   Nothing is metered at submission; the exposure is that row's, inspected there.
  * - `reported-estimate`: a CLI reported a cost, which its vendor documents as a
  *   client-side estimate. Accounted for as that, never presented as a bill.
  *
@@ -56,7 +58,7 @@ export function paidOperationSource(method: string, pathname: string): PaidOpera
  * failure or timeout writes no row at all, and the provider states an abandoned
  * request is still charged, so it never ages out.
  */
-export type PaidSettlementOutcome = 'responded' | 'not-charged-provider-stated' | 'metered' | 'reported-estimate';
+export type PaidSettlementOutcome = 'responded' | 'not-charged-provider-stated' | 'metered' | 'reported-estimate' | 'recorded-in-batch-ledger';
 
 export function migrateUsagePaidSettlements(d: Database.Database): void {
   d.exec(`CREATE TABLE IF NOT EXISTS usage_paid_settlements (
@@ -100,7 +102,7 @@ export function recordPaidResponse(receiptId: string, status: number, requestId:
  * receipt has no response row to find. Returns whether a receipt was accounted for. */
 export function accountForPaidOperation(input: {
   requestId?: string | null; receiptId?: string | null;
-  outcome: 'metered' | 'reported-estimate'; ownerTable: string; ownerId: string;
+  outcome: 'metered' | 'reported-estimate' | 'recorded-in-batch-ledger'; ownerTable: string; ownerId: string;
 }, d?: Database.Database): boolean {
   try {
     const database = d ?? db();

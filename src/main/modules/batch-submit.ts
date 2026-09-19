@@ -7,6 +7,7 @@ import { refuseIfHalted } from '../halt';
 import type { RunConfig } from '../../shared/types';
 import { mockCreate } from '../batch/mock';
 import { spendCap } from '../settings';
+import { accountForPaidOperation } from './usage-paid-operations';
 
 export type SubmitResult = { runId: string; batchIds: string[]; requests: number };
 
@@ -179,6 +180,11 @@ export async function createAndSubmitRun(
         Date.parse(batch.created_at as string) || now,
         Date.parse(batch.expires_at as string) || now + 24 * 3600_000
       );
+
+      // The submission's pre-send receipt hands off to the row just written:
+      // a batch bills per result, and that row is what Recovery inspects.
+      accountForPaidOperation({ requestId: (batch as { _request_id?: string | null })._request_id,
+        outcome: 'recorded-in-batch-ledger', ownerTable: 'batches', ownerId: batch.id }, d);
 
       linkRequestsToBatch(runId, batch.id, chunkReqs.map((r) => r.custom_id));
 
