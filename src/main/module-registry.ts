@@ -32,12 +32,17 @@ import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '
  * envelope — passed in so a module registers a channel through it and cannot
  * reach `ipcMain` around it.
  */
+/** Guarded fire-and-forget traffic; the host retains sender/demo checks. */
+export type IpcOn = (channel: string, fn: (...args: never[]) => void) => void;
+
 export type IpcHandle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
 /** Runtime-owned capabilities a module may need without discovering globals. */
 export type ModuleIpcContext = {
   /** The exact window owned by index.ts at the moment the handler runs. */
   getWindow: () => BrowserWindow | null;
+  /** Reconcile app-wide power management after a module starts an agent. */
+  onAgentLaunched?: () => void;
 };
 
 /**
@@ -61,6 +66,13 @@ export type ModuleSchedule = {
   describe: string;
   run: (payload: unknown) => Promise<void>;
   sync: () => void;
+};
+
+/** Free module upkeep; separate from queue lanes that authorize paid work. */
+export type ModuleMaintenance = {
+  id: string;
+  intervalMs: number;
+  run: () => Promise<void>;
 };
 
 export type WaniganModule = {
@@ -87,9 +99,13 @@ export type WaniganModule = {
    * namespace is a channel nobody can attribute.
    */
   ipc?: (handle: IpcHandle, context: ModuleIpcContext) => void;
+  /** Fire-and-forget channels use the same module namespace and host trust boundary. */
+  events?: (on: IpcOn) => void;
   /** Module-local IPC operations that require the app's services to be ready. */
   requiresStartedServices?: readonly string[];
   schedules?: () => ModuleSchedule[];
+  /** Declared here; the runtime host owns starting and stopping these timers. */
+  maintenance?: () => ModuleMaintenance[];
   /** Outbound destinations and their current conditions. Local reads only;
    * include disabled capabilities with activeNow false, without probing them. */
   egress?: () => EgressHost[];
@@ -189,4 +205,17 @@ export function registerModuleIpc(
 /** Every module's recurring work, flattened for the scheduler in registration order. */
 export function moduleSchedules(): ModuleSchedule[] {
   return registry.flatMap((module) => module.schedules?.() ?? []);
+}
+
+/** Register hot-path traffic through the host's guarded event wrapper. */
+export function registerModuleEvents(on: IpcOn): void {
+  for (const module of registry) {
+    const prefix = `${module.id}:`;
+    module.events?.((channel, fn) => {
+      if (!channel.startsWith(prefix)) {
+        throw new Error(`Module "${module.id}" tried to register IPC event "${channel}" outside its namespace "${prefix}".`);
+      }
+      on(channel, fn);
+    });
+  }
 }

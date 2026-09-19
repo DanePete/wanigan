@@ -24,9 +24,10 @@
  */
 import fs from 'node:fs';
 import { db } from './db';
+import { conversationProof } from '../shared/resumable';
 import { flags } from './settings';
 import { forgetSessionCheckpoints } from './checkpoints';
-import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
+import { archiveSession, conversationEvidenceFor, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
 import { backfillCodexThreadIds, codexRolloutFiles, normalizeCodexThreadId } from './codex-sessions';
 import type { Baseline, PastSession } from '../shared/types';
 
@@ -471,4 +472,36 @@ export function sessionBaseline(sessionId: string): Baseline | null {
   // `started_at` is the launch stamp rather than the capture stamp; they are
   // milliseconds apart and no reader distinguishes them.
   return { head: row.baseline_head, dirty, at: row.started_at };
+}
+
+/**
+ * Refuse a resume whose conversation does not exist, before anything is spent
+ * on it.
+ *
+ * Wanigan chooses the Claude CLI's conversation id at launch and passes it as
+ * `--session-id`, so the id is recorded before the CLI has created anything
+ * under it. A session that exits without taking a turn leaves the id naming
+ * nothing, and `claude --resume` answers "No conversation found with session
+ * ID" and exits 1. Wanigan kept offering that resume: on 2026-09-18 one id was
+ * tried three times, and because the original isolated worktree had been
+ * removed at session end, each attempt built a fresh worktree, failed in a
+ * second, and wrote another session row chained to the last.
+ *
+ * So the check belongs here, at the boundary where the renderer's payload
+ * becomes a launch: before a worktree is created, before a row is written, and
+ * on the one path both the desktop's Recent and the phone's resume reach.
+ * `control.ts` reads the same predicate when it classifies a receipt, because
+ * an offer nobody can act on and a launch that cannot start are one defect.
+ *
+ * It refuses only what it can disprove. A conversation id this Mac has no row
+ * for is left to createSession, which says that in its own words, and anything
+ * the evidence cannot rule out stays resumable.
+ */
+export function assertConversationExists(resumeFrom: { sessionId: string; conversationId: string | null } | null): void {
+  if (!resumeFrom?.sessionId) return;
+  const evidence = conversationEvidenceFor(resumeFrom.sessionId);
+  if (!evidence) return;
+  const proof = conversationProof(evidence);
+  if (proof.resumable) return;
+  throw new Error(proof.detail);
 }

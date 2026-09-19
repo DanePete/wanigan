@@ -1,4 +1,7 @@
 import { registerModule } from '../module-registry';
+import { sessionsModule } from './sessions';
+import { worktreesModule } from './worktrees';
+import { checkpointsModule } from './checkpoints';
 import { controlModule } from './control';
 import { relayModule } from './relay';
 import { reviewModule } from './review';
@@ -16,6 +19,9 @@ import { promptImproveModule } from './prompt-improve';
  * main-process counterpart of src/shared/view-registry.ts's VIEWS, so "which
  * modules does this build carry" is one file rather than a grep.
  */
+registerModule(sessionsModule);
+registerModule(worktreesModule);
+registerModule(checkpointsModule);
 registerModule(controlModule);
 registerModule(reviewModule);
 registerModule(usageModule);

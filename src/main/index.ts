@@ -12,14 +12,14 @@ import {
 } from './providers';
 import * as codexHooks from './codex-hooks';
 import {
-  initSessions, listSessions, createSession, writeSession, resizeSession,
-  killSession, closeSession, scrollback, markRead, shutdownAll, interruptSession,
-  recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning, sendSessionPermissionControl, redirectsAnthropicApiFor,
+  initSessions, listSessions, liveSessionIds, createSession, writeSession,
+  scrollback, shutdownAll, interruptSession,
+  setSessionExitObserver,
+  redirectsAnthropicApiFor,
   setFocusedSession, recordObservedModel, killAll,
 } from './sessions';
 import {
-  pastSessions, forgetPastSession, setConversationFlag, renameSession, sessionBaseline,
+  assertConversationExists, pastSessions, sessionBaseline,
 } from './session-history';
 import { clearHalt, haltState, halted, pullHalt, registerHaltStopper } from './halt';
 import { agentsChain } from './codex-sessions';
@@ -33,8 +33,8 @@ import type {
   AwakeState,
   BackupCheck, BackupRestoreSummary, BackupSummary, RelayStartRequest,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
-  InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
-  ProviderManifestInspection, QueueSlots, RunConfig, Session,
+  McpServerConfig, PluginScope,
+  ProviderManifestInspection, QueueSlots, RunConfig,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
@@ -51,10 +51,7 @@ import * as hooks from './hooks';
 import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
-import { conversationProof } from '../shared/resumable';
 import * as worktrees from './worktrees';
-import * as worktreeSetup from './worktree-setup';
-import { forecastCollisions } from './collisions';
 import * as configPins from './config-pins';
 import * as queue from './queue';
 import * as policy from './policy';
@@ -124,7 +121,7 @@ import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
-import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc } from './module-registry';
+import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents } from './module-registry';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -206,43 +203,6 @@ let quitConfirmed = false;
 let quitDraining = false;
 let quitReady = false;
 let stopHookEventListener: (() => void) | null = null;
-
-/**
- * Refuse a resume whose conversation does not exist, before anything is spent
- * on it.
- *
- * Wanigan chooses the Claude CLI's conversation id at launch and passes it as
- * `--session-id`, so the id is recorded before the CLI has created anything
- * under it. A session that exits without taking a turn leaves the id naming
- * nothing, and `claude --resume` answers "No conversation found with session
- * ID" and exits 1. Wanigan kept offering that resume: on 2026-09-18 one id was
- * tried three times, and because the original isolated worktree had been
- * removed at session end, each attempt built a fresh worktree, failed in a
- * second, and wrote another session row chained to the last.
- *
- * So the check belongs here, at the boundary where the renderer's payload
- * becomes a launch: before a worktree is created, before a row is written, and
- * on the one path both the desktop's Recent and the phone's resume reach.
- * `control.ts` reads the same predicate when it classifies a receipt, because
- * an offer nobody can act on and a launch that cannot start are one defect.
- *
- * It refuses only what it can disprove. A conversation id this Mac has no row
- * for is left to createSession, which says that in its own words, and anything
- * the evidence cannot rule out stays resumable.
- */
-function assertConversationExists(resumeFrom: { sessionId: string; conversationId: string | null } | null): void {
-  if (!resumeFrom?.sessionId) return;
-  const evidence = transcripts.conversationEvidenceFor(resumeFrom.sessionId);
-  if (!evidence) return;
-  const proof = conversationProof(evidence);
-  if (proof.resumable) return;
-  throw new Error(proof.detail);
-}
-
-/** Every session that has not exited — what reconcileWorktrees calls an owner. */
-function liveSessionIds(): ReadonlySet<string> {
-  return new Set(listSessions().filter((s) => s.status !== 'exited').map((s) => s.id));
-}
 
 /**
  * Tell awake.ts what is running, so it can hold or release the Mac.
@@ -652,27 +612,6 @@ async function defaultHeadlessProviderId(): Promise<string> {
     'No installed provider has proven a headless protocol, so there is nothing to run this unattended. '
     + 'Install or enable a provider that declares one, refresh providers, then let the schedule fire again.'
   );
-}
-
-/**
- * The session list as the renderer receives it.
- *
- * Identical to listSessions() except that the launch snapshot is reduced to a
- * count. `baseline.dirty` is one string per file already modified when the
- * session started — 84 in this repository, thousands in a monorepo — and three
- * independent pollers re-serialise the whole list every few seconds to render a
- * row of status text that never shows a path. The paths still exist; the code
- * panel asks for one session's worth through `sessions:baseline`.
- */
-function sessionListEntries(): Session[] {
-  return listSessions().map((value) => {
-    const { baseline, ...rest } = value;
-    if (!baseline) return rest;
-    return {
-      ...rest,
-      baselineSummary: { head: baseline.head, dirtyCount: baseline.dirty.length, at: baseline.at },
-    };
-  });
 }
 
 /** Where the backup save dialog opens. Documents is only a starting point — the
@@ -1716,7 +1655,7 @@ function registerIpc() {
   // The shell can be used while Keychain is pending, but a new agent must not
   // run before session recovery, collectors and stop handlers are installed.
   const needsStartedServices = new Set([
-    'sessions:create', 'sessions:recoverExactCodex', 'handover:finish',
+    'handover:finish',
     'headless:start', 'attempts:start', 'companion:ask',
     'batch:submit', 'batch:dryRun', 'batch:retry',
     'control:start', 'control:retry', 'control:setAutopilot',
@@ -2244,83 +2183,6 @@ function registerIpc() {
     return addProject(res.filePaths[0]);
   });
 
-  handle('sessions:list', () => sessionListEntries());
-  // The dispatcher meter's missing half. Every other surface is a queue row and
-  // can be counted from the queue; an interactive session never creates one, so
-  // the limit sessions.ts now enforces read "0 of N" on the page that sets it.
-  // sessions.ts keeps its own live count module-private, so this derives the
-  // same thing from the session list rather than reaching into that module.
-  handle('sessions:liveCount', (): InteractiveSessionLoad => ({
-    live: listSessions().filter((value) => value.status !== 'exited').length,
-    limit: queue.slots().session,
-  }));
-  handle('sessions:create', async (opts: LaunchOptions) => {
-    assertConversationExists(opts?.resumeFrom ?? null);
-    const created = await createSession(opts);
-    // The first live agent is what takes the power-save blocker. Doing it here
-    // rather than waiting for the poller means the Mac is already held before
-    // the operator has finished closing the lid.
-    syncAwake();
-    return created;
-  });
-  // Separate from sessions:create: only the exact UUID + selected project
-  // cross this boundary, so arbitrary launch flags cannot turn recovery into a
-  // broad Codex picker or a second writer.
-  handle('sessions:recoverExactCodex', (input: { threadId: unknown; projectId: unknown }) =>
-    recoverExactCodexThread(input));
-  handle('sessions:scrollback', (id: string) => scrollback(id));
-  handle('sessions:interrupt', (id: string, force?: boolean) => interruptSession(id, force === true));
-  handle('sessions:kill', (id: string) => killSession(id));
-  handle('sessions:close', (id: string) => { closeSession(id); return true; });
-  handle('sessions:markRead', (id: string) => { markRead(id); return true; });
-  // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
-  // slash command and its session-record update cannot drift apart.
-  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => setSessionTuning(id, field, value));
-  handle('sessions:permissionControl', (id: unknown, action: unknown) => sendSessionPermissionControl(id, action));
-  // The status bar may reveal only the folder of a live Wanigan session. A
-  // generic renderer-controlled shell.openPath bridge would let a compromised
-  // renderer invoke arbitrary file handlers on this Mac.
-  handle('sessions:reveal', async (id: string) => {
-    if (typeof id !== 'string' || !id.trim() || id.length > 200) {
-      throw new Error('Choose a live session to reveal its folder.');
-    }
-    const value = listSessions().find((candidate) => candidate.id === id);
-    if (!value) throw new Error('That session is no longer open in Wanigan.');
-    const target = value.worktree ?? value.projectPath;
-    const error = await shell.openPath(target);
-    if (error) throw new Error(`Wanigan could not open this session folder: ${error}`);
-    return true;
-  });
-  handle('sessions:baseline', (id: string) => sessionBaseline(id));
-  handle('sessions:past', (projectId?: unknown) => {
-    if (projectId != null && (typeof projectId !== 'string' || !projectId.trim() || projectId.length > 200)) {
-      throw new Error('Choose a valid project to read recent conversations.');
-    }
-    return pastSessions(40, projectId as string | null | undefined);
-  });
-  handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
-  handle('sessions:setConversationFlag', (id: string, flag: unknown, on: unknown) => {
-    if (flag !== 'pin' && flag !== 'settle') throw new Error('That is not a lifecycle flag Wanigan knows.');
-    return setConversationFlag(String(id), flag, on === true);
-  });
-  handle('sessions:rename', (id: string, title: unknown) => renameSession(String(id), title));
-
-  handle('checkpoints:list', (sessionId: string) => checkpoints.listCheckpoints(String(sessionId)));
-  handle('checkpoints:diff', (sessionId: string, fromId: number, toId: number) => {
-    if (!Number.isInteger(fromId) || !Number.isInteger(toId)) throw new Error('Those checkpoint ids are not valid.');
-    return checkpoints.checkpointDiff(String(sessionId), fromId, toId);
-  });
-  handle('checkpoints:revertPlan', (sessionId: string, checkpointId: number) => {
-    if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
-    return checkpoints.checkpointRevertPlan(String(sessionId), checkpointId);
-  });
-  handle('checkpoints:revert', (sessionId: string, checkpointId: number) => {
-    if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
-    return checkpoints.applyCheckpointRevert(String(sessionId), checkpointId);
-  });
-  handle('checkpoints:removeRepo', (projectPath: string, apply: boolean) =>
-    checkpoints.removeRepoCheckpoints(String(projectPath), apply === true));
-
   // ── batches ──────────────────────────────────────────────────────────
   handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));
   // Rethrown, not swallowed. Returning an 'unavailable' shape resolved the
@@ -2534,43 +2396,6 @@ function registerIpc() {
     return transcripts.claudeContextUsage(s.worktree ?? s.projectPath, s.conversationId ?? null, s.createdAt);
   });
 
-  // ══ phase 9 · worktrees ═════════════════════════════════════════════
-  // Read paths are confined too. Every other handler in this block passes its
-  // root through assertManagedRoot; these two took whatever the renderer named
-  // and ran git in it, which is the one rule this file states most often —
-  // renderer input is untrusted until main has validated it. Reading is a
-  // smaller grant than removing a tree, and it is still a grant.
-  //
-  // No String() on the way in: assertManagedRoot is typed (root: unknown) and
-  // answers a non-string with "That repository is not a folder Wanigan can act
-  // on", whereas String(Symbol()) throws a TypeError that names nothing and
-  // String(undefined) manufactures the path "undefined" for it to refuse.
-  //
-  // One honest caveat: listWorktrees returns paths straight from `git worktree
-  // list --porcelain`, which can name a worktree outside every managed root, so
-  // a future UI that lists those and then asks about one gets a refusal from
-  // worktrees:status rather than a status.
-  handle('worktrees:list', (repoRoot: unknown) =>
-    worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository')));
-  handle('worktrees:status', (p: unknown) =>
-    worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree')));
-  // removeWorktree already refuses a directory git does not call a worktree,
-  // but that leaves every worktree on the machine in range of a channel name.
-  // Confining the base first means Wanigan only deletes trees inside the
-  // projects and worktrees it has a record of.
-  handle('worktrees:remove', (p: string, force: boolean) =>
-    worktrees.removeWorktree(assertManagedRoot(p, 'That worktree'), force));
-  // Without this a fleet run ends with N worktrees holding the only copy of the
-  // work and no way to land any of them from inside the app. Every refusal
-  // comes back as { merged: false, detail }; it only throws when there is no
-  // worktree at the path at all, so ok:false here is the rare case.
-  handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
-    worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
-  // Whether the agents' worktrees would merge — with their base and with each
-  // other — asked of git in the object database while the work is in flight.
-  // Keyed on a project id; main resolves the repository and every worktree.
-  handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
-  handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
   // The repository's executable config and whether it matches what was last let
   // launch. Keyed on a project id and optionally one of that project's own
   // worktrees; accepting recomputes the digest in main instead of trusting the
@@ -2595,20 +2420,6 @@ function registerIpc() {
     const { id, root } = await configRoot(projectId, worktree);
     return configPins.acceptConfig(id, root, digest);
   });
-  handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
-  handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
-  // What each new worktree of a project is given: how dependency folders
-  // arrive, and the setup and teardown commands. Keyed on a project id; main
-  // resolves the repository. Saving commands is command text `$SHELL -lc` runs
-  // in every worktree Wanigan makes for the project, from sessions and headless
-  // runs alike, so the question goes on the save — asked here, where a
-  // compromised renderer cannot decline to render it — and never on the run.
-  handle('worktrees:setup', (projectId: unknown) => worktrees.worktreeSetupConfig(projectId));
-  handle('worktrees:setDepsMode', (projectId: unknown, mode: unknown) => worktreeSetup.setDepsMode(projectId, mode));
-  handle('worktrees:saveCommands', (projectId: unknown, input: unknown) =>
-    worktreeSetup.saveWorktreeCommandsWithConsent(win, projectId, input));
-  handle('worktrees:commandRuns', (projectId: unknown, limit?: unknown) => worktreeSetup.worktreeCommandRuns(projectId, limit));
-
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
   handle('headless:start', async (cfg: HeadlessStartRequest) => {
     const started = await headless.startHeadlessRun(cfg);
@@ -3074,7 +2885,7 @@ function registerIpc() {
   // ── module-owned channels ──────────────────────────────────────────
   // Each module registers through this same `handle`, inside its own
   // `${id}:` namespace; the registry refuses a channel outside it.
-  registerModuleIpc(handle, { getWindow: () => win });
+  registerModuleIpc(handle, { getWindow: () => win, onAgentLaunched: syncAwake });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
   handle('accounts:list', (harness: string) => accounts.list(harness));
@@ -3663,11 +3474,10 @@ function registerIpc() {
   });
 
   // Hot-path traffic: fire-and-forget, no round trip.
-  ipcMain.on('sessions:write', (event, id: string, data: string) => {
-    if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) writeSession(id, data);
-  });
-  ipcMain.on('sessions:resize', (event, id: string, cols: number, rows: number) => {
-    if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) resizeSession(id, cols, rows);
+  registerModuleEvents((channel, fn) => {
+    ipcMain.on(channel, (event, ...args) => {
+      if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) fn(...args as never[]);
+    });
   });
   // The View menu's Show/Hide Composer label. A demo window reports too: the
   // label describes the window on screen, and it changes nothing but a word.

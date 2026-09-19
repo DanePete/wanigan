@@ -296,17 +296,8 @@ function agentEnv(
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
   //
-  // URGENT-FIX ESCAPE (AGENTS.md, recorded in unconverted-fixes.json): this
-  // line is a fix made in place on an unconverted surface. What was urgent is
-  // that the paragraph above was not true for one account. `launchEnv` returns
-  // nothing for the account that is the platform default — correctly, for the
-  // reason written there — and spreading nothing overrides nothing, so an
-  // inherited CLAUDE_CONFIG_DIR survived and the session ran under whichever
-  // login the operator's shell named. Sessions pinned to that account resumed
-  // into "No conversation found" and new ones used another account's
-  // credentials while the UI named the pinned one. applyLaunchEnv sets or
-  // clears; the decision itself lives in accounts.ts, so what is unconverted
-  // here is one call.
+  // Account application sets or clears the inherited directory, so a default
+  // account cannot accidentally retain the parent shell's credentials.
   //
   // This reaches Codex as well as Claude Code, and deliberately: a session
   // pinned to the default CODEX_HOME had the same hole. The retention note
@@ -2244,4 +2235,9 @@ export async function shutdownAll(graceMs = 2000): Promise<void> {
     settled,
     new Promise<void>((resolve) => setTimeout(resolve, 500)),
   ]);
+}
+
+/** Every session that has not exited — what reconcileWorktrees calls an owner. */
+export function liveSessionIds(): ReadonlySet<string> {
+  return new Set(listSessions().filter((s) => s.status !== 'exited').map((s) => s.id));
 }

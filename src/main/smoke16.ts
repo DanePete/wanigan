@@ -412,10 +412,10 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
       'a list longer than the limit is refused whole rather than saved short', tooMany);
     const appRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
     let indexSrc = '';
-    try { indexSrc = fs.readFileSync(path.join(appRoot, 'src', 'main', 'index.ts'), 'utf8'); } catch { /* asserted below */ }
+    try { indexSrc = fs.readFileSync(path.join(appRoot, 'src', 'main', 'modules', 'worktrees.ts'), 'utf8'); } catch { /* asserted below */ }
     const handler = /handle\('worktrees:saveCommands'[\s\S]{0,200}?\)\);/.exec(indexSrc)?.[0] ?? '';
-    check(handler.includes('saveWorktreeCommandsWithConsent(win,') && !/saveWorktreeCommands\(/.test(indexSrc),
-      'IPC reaches worktree commands only through the consent wrapper, never the unguarded save', handler || 'handler not found in src/main/index.ts');
+    check(handler.includes('saveWorktreeCommandsWithConsent(context.getWindow(),') && !/saveWorktreeCommands\(/.test(indexSrc),
+      'IPC reaches worktree commands only through the consent wrapper, never the unguarded save', handler || 'handler not found in src/main/modules/worktrees.ts');
 
     removeProject(cmdProject.id);
     projectIds.splice(projectIds.indexOf(cmdProject.id), 1);

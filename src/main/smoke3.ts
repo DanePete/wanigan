@@ -6804,6 +6804,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Wanigan runs one Codex model probe rather than two — the private four-second copy in index.ts is gone and the ten-minute cached app-server read in codex-status.ts is the only one left — and the catalogue reaches the window through a typed preload binding rather than a renderer-side guess',
     mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES'));
   const mainSrc = sourceOf('src/main/index.ts');
+  const sessionsModuleSrc = sourceOf('src/main/modules/sessions.ts');
+  const worktreesModuleSrc = sourceOf('src/main/modules/worktrees.ts');
 
   // The quit dialog offers reopening, and reopening is armed where it is safe.
   // This sat at two buttons — keep, or quit — and the answer people actually
@@ -7428,7 +7430,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // ended" for one that had already exited and could never render its own
   // "had no live process to stop" sentence.
   check(sessionsMainAudit.includes('export function killSession(sessionId: string): boolean')
-    && mainIndexSrc.includes("handle('sessions:kill', (id: string) => killSession(id));")
+    && sessionsModuleSrc.includes("handle('sessions:kill', (id: string) => killSession(id));")
     && fleetViewSrc.includes('Stop sent to')
     && !fleetViewSrc.includes('was ended.'),
   'stopping a session reports whether a live process was actually signalled, and the surface says the stop was sent rather than claiming an end it has not observed');
@@ -7521,7 +7523,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     "the 'batch' queue kind has a runner — without one every batch schedule blocks on 'no runner registered' forever");
   check(/typeof p\.prompt === 'string'/.test(mainSrc),
     'the headless runner handles a schedule-shaped payload as well as a fan-out one');
-  check(/handle\(\s*'worktrees:merge'/.test(mainSrc) && /merge:\s*\(/.test(preloadSrc),
+  check(/handle\(\s*'worktrees:merge'/.test(worktreesModuleSrc) && /merge:\s*\(/.test(preloadSrc),
     'worktrees:merge is registered and bound, so a fleet run can be landed from inside the app');
   check(!/mergeFn/.test(sessionsSrc),
     'and the probe that stood in for the missing channel is gone rather than left as a fallback');
@@ -8584,7 +8586,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // printing a stale forty at the operator.
   check(sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;')
     && sessionHistorySrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
-    && mainSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
+    && sessionsModuleSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
     && sessionsSrc.includes('does not report how many are older')
     && !/Wanigan lists (?:all|every)/.test(sessionsSrc),
   'the cap the renderer prints is the number main actually defaults to and the number the IPC handler actually passes, and the sentence names that cap while explicitly declining to count what sits behind it — a PastSession[] of forty cannot say whether forty-one were recorded, so the renderer states the limit rather than inventing a total',
@@ -8717,7 +8719,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
     && /recordProviderEvent/.test(sessionManagerSrc),
   'Codex interactive turns expose approval and completion transitions without editing global config');
-  check(/handle\(\s*'sessions:recoverExactCodex'/.test(mainSrc)
+  check(/handle\(\s*'sessions:recoverExactCodex'/.test(sessionsModuleSrc)
     && /recoverExactCodex:\s*\(/.test(preloadSrc)
     && sessionsSrc.includes('Recover exact Codex UUID…')
     && sessionManagerSrc.includes('recoverExactCodexThread')
@@ -8768,11 +8770,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // String() wrappers on the worktree pair were noise that turned a symbol into
   // a TypeError naming nothing; browse:reveal keeps its coercion because
   // assertOpenablePath is still typed (target: string).
-  check(mainSrc.includes("worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository'))")
-    && mainSrc.includes("worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree'))")
+  check(worktreesModuleSrc.includes("worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository'))")
+    && worktreesModuleSrc.includes("worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree'))")
     && mainSrc.includes("browse.revealInFinder(assertOpenablePath(String(p)))")
     && mainSrc.includes("plugins.details(pluginId(name))")
-    && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(mainSrc)
+    && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(worktreesModuleSrc)
     && !/handle\('browse:reveal', \(p: string\) => browse\.revealInFinder\(p\)\)/.test(mainSrc),
   'reading a worktree, revealing a path in the Finder and asking about a plugin all validate the renderer’s argument, like every other handler beside them');
   // The plugin file reader was a hand-rolled backdrop inside the pane: it
@@ -8827,7 +8829,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the record attach:add checks is written only by the two calls that put a native dialog in front of a person, never by browse.browse(), whose unconfined readdir would hand back exactly what the check refuses',
     (browseSrc.match(/rememberPicked\(/g) ?? []).length);
   check(/saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc)
-    && /registerModuleIpc\(handle, \{ getWindow: \(\) => win \}\)/.test(mainSrc)
+    && /registerModuleIpc\(handle, \{ getWindow: \(\) => win, onAgentLaunched: syncAwake \}\)/.test(mainSrc)
     && moduleRegistrySrc.includes('getWindow: () => BrowserWindow | null')
     && moduleRegistrySrc.includes('context: ModuleIpcContext = { getWindow: () => null }')
     && !/saveRecipe\(projectId, commands\)/.test(reviewModuleSrc)
