@@ -6,6 +6,8 @@ import path from 'node:path';
 import { db } from './db';
 import { listProjects, projectById } from './store';
 import type { Project } from '../shared/types';
+import { shellCommand } from '../shared/platform';
+import { hostPlatform, killProcessTree } from './platform';
 import {
   DEFAULT_DEPS_MODE, WORKTREE_PHASE_BUDGET_MS, asDepsMode, durationText, newCommands, parseCommandInput,
   type DepsMode, type WorktreeCommandEnv, type WorktreeCommandLists, type WorktreeCommandResult,
@@ -237,18 +239,21 @@ function limitText(ms: number): string {
 function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs: number, stopNote: string): Promise<WorktreeCommandResult> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const shell = process.env.SHELL || '/bin/zsh';
+    const { file: shell, args: shellArgs } = shellCommand(command, hostPlatform(), process.env);
     let out = '';
     let truncated = false;
     let timedOut = false;
     let settled = false;
     let killer: NodeJS.Timeout | null = null;
     let linger: NodeJS.Timeout | null = null;
-    const child = spawn(shell, ['-lc', command], {
+    const child = spawn(shell, shellArgs, {
       cwd,
       env: { ...process.env, NO_COLOR: '1', TERM: 'dumb', ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      // On Windows detaching gives the child its own console window, which
+      // would flash over whatever the operator is doing on every command.
+      windowsHide: true,
     });
     // Recorded output that stops mid-sentence has to say so: a capped record
     // that reads as the whole run is a false record.
@@ -261,11 +266,7 @@ function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs
     };
     child.stdout?.on('data', add);
     child.stderr?.on('data', add);
-    const stop = (signal: NodeJS.Signals) => {
-      try { if (child.pid) process.kill(-child.pid, signal); } catch {
-        try { child.kill(signal); } catch { /* already exited */ }
-      }
-    };
+    const stop = (signal: NodeJS.Signals) => { killProcessTree(child, signal); };
     const timer = setTimeout(() => {
       timedOut = true;
       stop('SIGTERM');

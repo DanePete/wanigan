@@ -17,7 +17,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import {
   asPlatform,
   executableCandidates,
@@ -161,4 +161,58 @@ function nodeVersionManagerDirs(platform: Platform): string[] {
   }
   if (process.env.VOLTA_HOME) out.push(p.join(process.env.VOLTA_HOME, 'bin'));
   return out;
+}
+
+/**
+ * Stop a child and everything it started, and say whether anything was signalled.
+ *
+ * `child.kill()` reaches only the immediate pid. Anything it spawned — a dev
+ * server, a build, an install — survives that and keeps the inherited stdout
+ * pipe open, which is how a "hard stop" becomes a row that never ends. On POSIX
+ * the child is spawned detached so it leads its own process group and a
+ * negative pid takes the lot down.
+ *
+ * Windows has no process groups to signal. `process.kill(-pid, ...)` throws
+ * there — it does not merely fail to reach the tree — so every copy of this
+ * pattern fell through to killing the single pid and orphaned the rest.
+ * `taskkill /T` walks the parent/child tree by pid instead, which is the same
+ * intent by the only mechanism the platform offers.
+ *
+ * The signal distinction does not survive the translation and is not pretended
+ * to: `taskkill` without `/F` asks a process with a window to close and does
+ * little to a console program, so a graceful stop is attempted for SIGTERM and
+ * SIGKILL goes straight to `/F`. The caller's SIGTERM-then-SIGKILL escalation
+ * therefore still means something here, just less than it does on POSIX.
+ *
+ * Nothing is signalled once the child has exited: its pid can already have been
+ * recycled, and neither a negative pid nor taskkill knows it is now aiming at
+ * somebody else.
+ */
+export function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  const pid = child.pid;
+  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return false;
+
+  if (isWindows()) {
+    const args = ['/pid', String(pid), '/T'];
+    if (signal === 'SIGKILL') args.push('/F');
+    try {
+      // Detached and fully ignored: taskkill's own output is not this run's
+      // output, and an unread pipe on a killer is a way to hang the killing.
+      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+      killer.unref();
+      killer.once('error', () => { try { child.kill(signal); } catch { /* already gone */ } });
+      return true;
+    } catch {
+      try { return child.kill(signal); } catch { return false; }
+    }
+  }
+
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch {
+    // No group (spawn refused detach) or it is already gone; the direct pid is
+    // still worth a try before giving up.
+    try { return child.kill(signal); } catch { return false; }
+  }
 }

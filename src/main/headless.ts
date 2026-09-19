@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import { db, logEvent, newRunId } from './db';
 import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
-import { findOnPath, isExecutableFile } from './platform';
+import { findOnPath, isExecutableFile, killProcessTree } from './platform';
 import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall, waniganCredentialDirs } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
@@ -542,16 +542,7 @@ const hookSessionId = (runId: string, projectId: string) => `h_${runId}__${proje
  * somebody else's process group.
  */
 function killTree(child: ChildProcess, sig: NodeJS.Signals): boolean {
-  const pid = child.pid;
-  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return false;
-  try {
-    process.kill(-pid, sig);
-    return true;
-  } catch {
-    // No group (spawn refused detach) or it is already gone; the direct pid is
-    // still worth a try before giving up.
-    try { return child.kill(sig); } catch { return false; }
-  }
+  return killProcessTree(child, sig);
 }
 
 let sweptInterrupted = false;
@@ -1337,6 +1328,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       // agent *and* whatever it started. Killing the CLI alone leaves a build or
       // a dev server behind holding this row's stdout pipe open.
       detached: true,
+      // On Windows detaching gives the child its own console window.
+      windowsHide: true,
     });
   } catch (e) {
     releaseHooks();

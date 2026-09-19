@@ -286,6 +286,37 @@ export function commandLine(plan: SpawnPlan): string {
 }
 
 /**
+ * How to run a user-authored shell command line on this platform.
+ *
+ * Unlike `spawnPlan`, a shell is what is *wanted* here. These are the commands
+ * somebody put in a worktree bootstrap or a review gate — `npm ci && npm test`
+ * — so `&&` is theirs and must keep working. The refusal logic in `spawnPlan`
+ * would be exactly wrong applied to this.
+ *
+ * On Windows that is `cmd.exe /d /s /c`, and the command goes through as one
+ * argument: Node quotes it, and `/s` strips precisely the first and last quote
+ * before running the rest, so the line arrives intact. `/d` still skips the
+ * registry's AutoRun, which would otherwise run inside this command's
+ * environment.
+ *
+ * `%ComSpec%` rather than a literal, because that is where Windows says the
+ * command interpreter is, and a machine with a relocated one is not a machine
+ * to guess about.
+ */
+export function shellCommand(
+  command: string,
+  platform: Platform,
+  env: Readonly<Record<string, string | undefined>> = {},
+): { file: string; args: string[] } {
+  if (platform === 'win32') {
+    return { file: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command] };
+  }
+  // A login shell, because these commands expect the PATH a person has: nvm,
+  // pyenv and rbenv all install their shims from an rc file.
+  return { file: env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/sh'), args: ['-lc', command] };
+}
+
+/**
  * The kind of directory link this platform can make without elevated rights.
  *
  * `fs.symlink(..., 'dir')` on Windows needs either an Administrator token or

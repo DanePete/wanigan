@@ -9,6 +9,8 @@ import { projectById } from './store';
 import { checkoutSnapshot } from './review-checkout';
 import { repoRootFor } from './worktrees';
 import type { ReviewCheckoutSnapshot, ReviewEvidence, ReviewFreshness, ReviewRecipe, ReviewRun } from '../shared/types';
+import { shellCommand } from '../shared/platform';
+import { hostPlatform, killProcessTree } from './platform';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -286,12 +288,21 @@ export function assertPassNotSuperseded(runId: string, projectId: string, cwd: s
 async function runCommand(command: string, cwd: string): Promise<ReviewRun['results'][number]> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const shell = process.env.SHELL || '/bin/zsh';
+    const { file: shell, args: shellArgs } = shellCommand(command, hostPlatform(), process.env);
     let out = ''; let timedOut = false;
     // Its own process group: the spawned thing is a shell, and signalling the
     // shell alone leaves the `npm test` underneath it running after the gate
-    // has given up on it.
-    const child = spawn(shell, ['-lc', command], { cwd, env: { ...process.env, NO_COLOR: '1', TERM: 'dumb' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    // has given up on it. Windows has no process groups and detaching there
+    // gives the child its own console, so windowsHide keeps that window from
+    // flashing over whatever the operator is doing; killProcessTree uses
+    // taskkill /T rather than a negative pid.
+    const child = spawn(shell, shellArgs, {
+      cwd,
+      env: { ...process.env, NO_COLOR: '1', TERM: 'dumb' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      windowsHide: true,
+    });
     // Stored evidence that stops mid-sentence has to say so. A 128KB cap is
     // fine; a capped record that reads as the whole run is a false record.
     let truncated = false;
@@ -303,10 +314,7 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
       else out += text;
     };
     child.stdout?.on('data', add); child.stderr?.on('data', add);
-    const stop = (signal: NodeJS.Signals) => {
-      try { if (child.pid) process.kill(-child.pid, signal); }
-      catch { try { child.kill(signal); } catch { /* already exited */ } }
-    };
+    const stop = (signal: NodeJS.Signals) => { killProcessTree(child, signal); };
     let killer: NodeJS.Timeout | null = null;
     const timer = setTimeout(() => {
       timedOut = true;

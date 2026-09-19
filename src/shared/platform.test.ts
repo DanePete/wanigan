@@ -22,6 +22,7 @@ import {
   needsCommandInterpreter,
   pathDelimiter,
   quoteForCmd,
+  shellCommand,
   spawnPlan,
   splitPath,
   unquotableForCmd,
@@ -250,6 +251,29 @@ test('Windows links a directory with a junction, which needs no elevation', () =
   assert.equal(directoryLinkType('win32'), 'junction');
   assert.equal(directoryLinkType('darwin'), 'dir');
   assert.equal(directoryLinkType('linux'), 'dir');
+});
+
+test('a bootstrap command keeps its shell, because its shell is the point', () => {
+  // Unlike a session argv, `&&` here belongs to whoever wrote the bootstrap.
+  // Applying spawnPlan's refusals to this would break every useful command.
+  assert.deepEqual(shellCommand('npm ci && npm test', 'win32', {}), {
+    file: 'cmd.exe',
+    args: ['/d', '/s', '/c', 'npm ci && npm test'],
+  });
+  assert.deepEqual(shellCommand('npm ci && npm test', 'darwin', {}), {
+    file: '/bin/zsh',
+    args: ['-lc', 'npm ci && npm test'],
+  });
+  assert.deepEqual(shellCommand('npm ci', 'linux', {}), { file: '/bin/sh', args: ['-lc', 'npm ci'] });
+});
+
+test('the command interpreter is the one the machine names', () => {
+  assert.equal(shellCommand('x', 'win32', { ComSpec: 'D:\\Windows\\system32\\cmd.exe' }).file,
+    'D:\\Windows\\system32\\cmd.exe');
+  assert.equal(shellCommand('x', 'darwin', { SHELL: '/opt/homebrew/bin/fish' }).file, '/opt/homebrew/bin/fish');
+  // A Windows machine's SHELL, if some tool set one, must not be read as a
+  // POSIX login shell.
+  assert.equal(shellCommand('x', 'win32', { SHELL: '/bin/bash' }).file, 'cmd.exe');
 });
 
 /* ── the environment around it ────────────────────────────────────────── */
