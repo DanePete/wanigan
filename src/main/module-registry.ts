@@ -43,6 +43,8 @@ export type ModuleIpcContext = {
   getWindow: () => BrowserWindow | null;
   /** Reconcile app-wide power management after a module starts an agent. */
   onAgentLaunched?: () => void;
+  /** Restart the host after Backup has replaced and closed its database. */
+  relaunchAfterRestore?: () => void;
 };
 
 /**

@@ -1,9 +1,11 @@
 import { registerModule } from '../module-registry';
+import { storageModule } from './storage';
 import { sessionsModule } from './sessions';
 import { queueModule } from './queue';
 import { headlessModule } from './headless';
 import { worktreesModule } from './worktrees';
 import { checkpointsModule } from './checkpoints';
+import { backupModule } from './backup';
 import { controlModule } from './control';
 import { relayModule } from './relay';
 import { reviewModule } from './review';
@@ -23,11 +25,13 @@ import { openRouterConnectionModule } from './openrouter-connection';
  * main-process counterpart of src/shared/view-registry.ts's VIEWS, so "which
  * modules does this build carry" is one file rather than a grep.
  */
+registerModule(storageModule);
 registerModule(sessionsModule);
 registerModule(queueModule);
 registerModule(headlessModule);
 registerModule(worktreesModule);
 registerModule(checkpointsModule);
+registerModule(backupModule);
 registerModule(controlModule);
 registerModule(reviewModule);
 registerModule(usageModule);
