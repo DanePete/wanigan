@@ -110,11 +110,23 @@ Within a session, **Review work** opens Changes and Checks & evidence. They
 share the session's checkout identity, and switching sections preserves your
 selected file and unsaved check commands. Checks run only when requested.
 
+Goals keeps project and status filters under **Filters**, with the current
+scope always visible. Search accepts words in any order. Filtering the list
+keeps the inspected goal open and says when it falls outside that filter.
+On narrow windows, **Browse goals** opens the list and selecting a goal
+returns the space to its tasks and evidence.
+
 ## Sessions
 
 Each session is a real pseudo-terminal running the actual agent CLI. Nothing is
 proxied or re-implemented, so the full TUI, permission prompts, slash commands
 and resume flows behave exactly as they do in your shell.
+
+**Find a conversation** filters open sessions and the recent conversations
+already loaded for the selected project space. Search by name, project,
+agent or model; settled matches appear automatically. The active terminal
+keeps running while you search. **Search saved history** carries the query
+into the history reader to look through older conversations and messages.
 
 Adding a provider is one object in `src/main/providers.ts` — the session manager
 and the UI both read from it.
@@ -321,6 +333,12 @@ provider, timeout, budget and isolation, then inspect every row's output, cost,
 worktree and changed-file count. A row is never silently landed; worktrees can
 be squash-merged from the review surface once you have read the result.
 
+**Repository runs** shows those runs; **Compare attempts** opens repeated
+attempts at one task. A new run starts with the task, then the agent and
+repositories. Additional agent options fold away unless the profile declares
+required settings. Timeout, budget, isolation and the declaration for running
+across every project stay visible. Browsing or preparing a run starts nothing.
+
 A headless agent has no human at the keyboard, so it cannot escalate a
 permission prompt. A repo whose trust level does not permit what the run asks
 for is marked blocked and never spawned, and the run that does start is handed
@@ -382,9 +400,11 @@ npm run cli -- queue headless "audit" '{"projectId":"prj_…","prompt":"…"}'  
 
 ## Reviewing code
 
-The Sessions **Code** rail is intentionally a compact live reading surface: it
-shows what changed and what the agent touched most recently. Select a file and
-use **Pop out** when the review needs more room. The inspector has its own
+Session **Details** groups **Changes**, recorded **Activity**, and launch
+**Context**. **Expand details** gives the reader the available width while
+keeping the terminal and composer mounted; **Back to terminal** returns to
+the conversation. The expanded reading stays open when the window resizes.
+Select a file and use **Pop out** for a separate diff reader. The inspector has its own
 full-height scroll region, line numbers, find, wrapping, top/bottom controls
 and an external-editor handoff, so a long file is never trapped in the rail.
 
@@ -798,7 +818,7 @@ The terminal owns its keystrokes: while it has focus, only `⌘.` gets through.
 | `⌘4`–`⌘9` | Batches · Insights · Learning · Plugins · Schedules · Changes |
 | `⌘0` · `⌘,` | Runs · Settings |
 | `⌘⇧S` · `⌘⇧C` · `⌘⇧U` · `⌘⇧I` · `⌘⇧B` | Skills · Context · Usage · Scout · Board |
-| `⌘B` | toggle the side panel (Code / Timeline / Learning) |
+| `⌘B` | toggle session details (Changes / Activity / Context), or return from expanded details |
 | `⌘E` | show the composer and attachments, or hide them for more terminal |
 | `⌥⌘←` · `⌥⌘→` | previous · next session |
 | `⌘.` | interrupt the running agent, even from inside the terminal |

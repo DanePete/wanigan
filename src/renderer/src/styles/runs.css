@@ -1,8 +1,12 @@
 /* Unattended work: a run ledger beside its repository evidence. */
 .pane.hr-view { overflow: hidden; }
+.hr-history-state { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: safe center; align-items: center; gap: var(--s-4); padding: var(--s-5) 0; }
+.hr-history-state > .empty { flex: none; }
+.hr-empty-comparison { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--s-2); margin: 0; color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; }
 .hr-workspace { display: grid; grid-template-columns: minmax(270px, .72fr) minmax(0, 1.6fr); gap: var(--s-6); flex: 1; min-height: 0; }
 .hr-history { display: flex; flex-direction: column; gap: var(--s-3); min-height: 0; min-width: 0; }
 .hr-history > .btn { align-self: flex-start; }
+.hr-filter-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-2); min-height: var(--control-h-sm); color: var(--text-faint); font-size: var(--t-small); }
 .hr-run-list { overflow-y: auto; min-height: 0; padding-right: var(--s-2); scrollbar-gutter: stable; }
 .hr-run { display: grid; gap: var(--s-2); width: 100%; padding: var(--s-4); border: 1px solid transparent; border-bottom-color: var(--line-soft); border-radius: var(--r-md); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .hr-run:hover { background: var(--bg-soft); }
@@ -39,6 +43,9 @@
 .hr-prompt textarea { min-height: 160px; resize: vertical; line-height: 1.6; }
 .hr-prompt > .faint, .hr-provider-field > .faint { font-size: var(--t-small); line-height: 1.5; }
 .hr-provider-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+.hr-agent-options { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.hr-agent-options > summary { color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; cursor: pointer; }
+.hr-agent-options[open] > summary { margin-bottom: var(--s-4); }
 .hr-provider-field { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
 .hr-check { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 32px; color: var(--text-dim); font-size: var(--t-small); }
 .hr-check input, .hr-declare input { inline-size: 17px; block-size: 17px; flex: none; accent-color: var(--accent); }
@@ -71,6 +78,7 @@
 }
 @media (max-width: 720px) {
   .pane.hr-view { overflow-y: auto; }
+  .hr-history-state { flex: none; }
   .hr-workspace, .hr-compose { display: flex; flex-direction: column; flex: none; overflow: visible; gap: var(--s-5); }
   .hr-run-list { max-height: 240px; }
   .hr-detail, .hr-project-picker { overflow: visible; border-left: 0; border-top: 1px solid var(--line-soft); padding: var(--s-4) 0 0; }

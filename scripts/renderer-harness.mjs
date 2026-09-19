@@ -276,6 +276,15 @@ export const STUB = `
     // card, and a sweep that only counts screenshots still wrote a PNG. A
     // harness that renders 13 of 15 views is a harness that reviews 13.
     'policy.defaultTrust': 'project',
+    // A real empty ledger has no signing fingerprint. The shape-agnostic
+    // fallback is truthy and its slice() returns an array, which crashes the
+    // Settings trust panel when it formats the fingerprint with match().
+    'policy.chain': {
+      total: 0, unchainedBefore: 0, chained: 0, verifiedThrough: 0,
+      lastVerifiedId: null, firstBreak: null, head: null, watched: null,
+      signature: { state: 'unsigned', reason: 'Nothing is chained yet, so there is no head to sign.' },
+      keyFingerprint: null, checkedAt: now,
+    },
     'mobile.status': {
       config: { dashboardEnabled: false, remoteControlEnabled: false, port: 47831,
                 dashboardUrl: '', pushEnabled: false, pushServer: 'https://ntfy.sh', pushTopic: '' },

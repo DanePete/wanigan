@@ -63,7 +63,7 @@ export const BINDINGS = [
     does: 'Move focus in the list — Enter or Space opens the focused view', scope: 'not-terminal', skipsTerminal: false },
 
   { id: 'side-panel',  keys: '⌘B',   aria: 'Meta+B Control+B', group: 'Sessions view',
-    does: 'Toggle the side panel (Code / Timeline / Learning)', scope: 'sessions', skipsTerminal: false },
+    does: 'Toggle session details (Changes / Activity / Context)', scope: 'sessions', skipsTerminal: false },
   { id: 'composer',    keys: '⌘E',   aria: 'Meta+E Control+E', group: 'Sessions view',
     does: 'Show the composer and attachments, focused — or hide them for more terminal', scope: 'sessions', skipsTerminal: false },
   { id: 'close-tab',   keys: '⌘⌫',  aria: 'Meta+Backspace Control+Backspace', group: 'Sessions view',

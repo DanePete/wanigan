@@ -45,7 +45,7 @@ try {
  await go('Meta+9');await page.locator('.gt-review-controls').waitFor();await page.locator('.gt-review-controls > summary').click();await page.getByRole('textbox',{name:'Review gate commands'}).waitFor();await capture('review-checks');
  await page.locator('.gt-review-controls details > summary').first().click();await capture('review-output');
  await go('Meta+2');await page.getByRole('button',{name:'Show tasks',exact:true}).click();await page.getByText('checkout-reliability',{exact:true}).scrollIntoViewIfNeeded();if(!before)await page.locator('.team-workspace').evaluate(el=>{el.scrollIntoView({block:'start'});el.closest('.pane').scrollTop-=100;});await capture('team');
- await go('Meta+1');await page.getByRole('button',{name:'Learning',exact:true}).click();await page.getByRole('region',{name:'Session learning ledger'}).waitFor();await capture('learning');
+ await go('Meta+1');await (before?page:page.getByRole('group',{name:'Session details',exact:true})).getByRole('button',{name:before?'Learning':'Context',exact:true}).click();await page.getByRole('region',{name:'Session learning ledger'}).waitFor();await capture('learning');
  if(before){await page.getByRole('button',{name:'recent',exact:true}).click();await capture('learning-signals');}
  if(before && process.argv.includes('--diagnose')) {
   await go('Meta+9');await page.locator('.gt-review-controls').evaluate(el=>el.open=true);
@@ -104,7 +104,7 @@ try {
   await resize(800,900);await team.evaluate(el=>{el.scrollIntoView({block:'start'});el.closest('.pane').scrollTop-=100;});await noOverflow('.team-workspace');await capture('team-compact');await resize(1440,1000);
   ok('Team tasks and all stored message previews stay reachable; filters, dependency counts and stale-read recovery hold');
 
-  await go('Meta+1');await page.getByRole('button',{name:'Learning',exact:true}).click();const ledger=page.getByRole('region',{name:'Session learning ledger'});
+  await go('Meta+1');await page.getByRole('group',{name:'Session details',exact:true}).getByRole('button',{name:'Context',exact:true}).click();const ledger=page.getByRole('region',{name:'Session learning ledger'});
   await ledger.getByRole('group',{name:'Session learning area'}).getByRole('button',{name:'Signals 18',exact:true}).click();await ledger.locator('.sl-signal summary').first().click();assert.match(await ledger.locator('.sl-signal-copy:visible').innerText(),/needs a regression check before acceptance/);await capture('learning-signals');
   await ledger.getByRole('button',{name:'Show more signals',exact:true}).click();assert.equal(await ledger.locator('.sl-signal').count(),18);
   await ledger.getByRole('checkbox',{name:'Failures and denials only'}).check();assert.equal(await ledger.locator('.sl-signal').count(),1);

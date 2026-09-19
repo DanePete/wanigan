@@ -1,0 +1,183 @@
+{
+  "baseline": {
+    "baseCommit": "ebad0f0ac082d083b31e198142d1f247b8662549",
+    "source": "Isolated git archive; no production overlays",
+    "buildIndexSha256": "9d7ba06afff5408e2638afecef434cbfb6b3b6e36e8924aef7954f8849594192",
+    "screenshots": 34
+  },
+  "after": {
+    "baseCommit": "a5f71c39fac1ff80ef21e7c183bfef6bc69a507a",
+    "source": "Shared working tree, including Sessions, Goals, Runs, and concurrent Relay changes. Changed and untracked production sources are listed below; remaining tracked inputs come from the base commit.",
+    "buildIndexSha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263",
+    "screenshots": 52,
+    "interactionGroups": 5,
+    "captureOutput": "/private/tmp/wanigan-feature-repro; complete successful output copied into after/",
+    "subsequentBuildIndexMatchesCapture": true
+  },
+  "productionSourceOverrides": [
+    {
+      "path": "src/main/smoke3.ts",
+      "sha256": "86740404945fa8ecc7d2cdb982d75c0c4220610a9538f9f2c02883cfaac58ac1"
+    },
+    {
+      "path": "src/renderer/src/relay/RelayComposer.tsx",
+      "sha256": "bb6d664804c683f83e29fc9344c78f8d3817587c8b1c8d982c10f3d0e0a74ecb"
+    },
+    {
+      "path": "src/renderer/src/relay/RelayRig.tsx",
+      "sha256": "ba71836d3350f21d5172a9002e846b3d5c230eafb0b2dbdf14e040417b0b239a"
+    },
+    {
+      "path": "src/renderer/src/relay/facts.ts",
+      "sha256": "4f95e25fa57377acd24c9d3c6e8a6ae040a9888516e7867b3e438899f08b8a59"
+    },
+    {
+      "path": "src/renderer/src/relay/fluid/index.ts",
+      "sha256": "923bebdc1e25ec035276e3892936c5965fbb7b47744e3eb80ad7664eac240970"
+    },
+    {
+      "path": "src/renderer/src/relay/fluid/solver.ts",
+      "sha256": "09178b464ba98e13d2d58ca3112727ebbaee70087aa45acdfa072640db2e5f99"
+    },
+    {
+      "path": "src/renderer/src/relay/useFluidTier.ts",
+      "sha256": "e907f400204f7e05ebda760fd1a701d7b74a8c4c5923934997bc09025ae40bd3"
+    },
+    {
+      "path": "src/renderer/src/styles/control.css",
+      "sha256": "4d96ef63e412eef90bd7ea52cd8fab48da96720d61930ee7534a7f0fb7c680ed"
+    },
+    {
+      "path": "src/renderer/src/styles/relay.css",
+      "sha256": "17bf89f4843e8701356e979d1b33dbaf24638dd3bbb9c4ef582f7478574ab7ae"
+    },
+    {
+      "path": "src/renderer/src/styles/runs.css",
+      "sha256": "fd61330147489353812d843061dbf86edf77e898054a91eb1b3df7aa5ecfe6a7"
+    },
+    {
+      "path": "src/renderer/src/styles/sessions.css",
+      "sha256": "97120e18517dc52939881d85de496371ab444f65aa0906dfe26b1b2a56fcb3b1"
+    },
+    {
+      "path": "src/renderer/src/views/Control.tsx",
+      "sha256": "eaf9bfc6ea0ccdc3eb741639e7c22f2cdcf6ce944569e7b33c46364d9ce74894"
+    },
+    {
+      "path": "src/renderer/src/views/HeadlessRuns.tsx",
+      "sha256": "7605e89fe79877fb2263f2ae1f28a0709cf6f6bd6c6729113fabf37ea34a8333"
+    },
+    {
+      "path": "src/renderer/src/views/Relay.tsx",
+      "sha256": "983fb984eca85cde1653b909f9476e0ef8753f9c57f9c57c5c65f38e02ca6913"
+    },
+    {
+      "path": "src/renderer/src/views/Sessions.tsx",
+      "sha256": "51fe8d500a523be1ad8495a2578b8904c61daf1c15fab53158e06c675e550fc6"
+    },
+    {
+      "path": "src/shared/bindings.ts",
+      "sha256": "7a94918cb06853a650ecf5a28259a72288aca8c12e08be22109e2c3b288afef5"
+    },
+    {
+      "path": "src/shared/relay-rig.test.ts",
+      "sha256": "6f067caab612de7f5da1d7ec26bdc01cc7fa383b705f6ab083441967c0bdb50c"
+    },
+    {
+      "path": "src/shared/relay-rig.ts",
+      "sha256": "f438afd2ed1d563631cba7b5282b761f11a53a40102b428040fa73ae4e1ea016"
+    }
+  ],
+  "validationFiles": [
+    {
+      "path": "scripts/capture-feature-pages.mjs",
+      "sha256": "bfbbfb8bb38cba2d74ff44d5607832042b864a119654be3e12a5efbf5c41efd8"
+    },
+    {
+      "path": "scripts/probe-attempts.mjs",
+      "sha256": "09bb825d2b68ca66fba05bfa0e9d7363a4cda91649440760679258b956b256b6"
+    },
+    {
+      "path": "scripts/probe-followthrough.mjs",
+      "sha256": "6fa720ff1a87eb94c8ba2611a993782b9d6c984a5e098c2caacc4bad819bcbb9"
+    },
+    {
+      "path": "scripts/probe-next-ten.mjs",
+      "sha256": "9e5d8e0d81784cd7b79c8363f2e6a7d5f447a899769ea2713efbba92aebd32ac"
+    },
+    {
+      "path": "scripts/probe-observed-telemetry.mjs",
+      "sha256": "ba9a0df08b7d0eac041a1b1185c838dff3f76f3733f48c85142986158a1355e0"
+    },
+    {
+      "path": "scripts/probe-relay-account.mjs",
+      "sha256": "76b72afde67c9f947311f12839c5217b5d614644f34693eba37a4f2363b651a0"
+    },
+    {
+      "path": "scripts/probe-relay-guess.mjs",
+      "sha256": "30039b07d208675298009178b312bb13933a8475dbd098ef175ed04f2512d405"
+    },
+    {
+      "path": "scripts/probe-relay-workspace.mjs",
+      "sha256": "928ece0ac4664a91689fc419bdb5eef0dd56e6869decbc59c043d378fcecbaf2"
+    },
+    {
+      "path": "scripts/probe-review-checkout.mjs",
+      "sha256": "c1d199e14f0bd72b1d914b8c17944e6cbba7b4f44354091507c78af632b21502"
+    },
+    {
+      "path": "scripts/probe-review-notes.mjs",
+      "sha256": "49783b29dffd1964c0747a26d79c579fc7e7bf2b61ee982cc260a89ffe27fcc2"
+    }
+  ],
+  "captureHarness": {
+    "path": "scripts/renderer-harness.mjs",
+    "source": "HEAD at capture time; the subsequent policy.chain fixture change is not part of these captures",
+    "sha256": "47cece260c4b4d87d9c293576f8e7bb18202eb049f11358ab5a12c75e2a8686e"
+  },
+  "buildConfiguration": [
+    {
+      "path": ".nvmrc",
+      "sha256": "08062faf0d7a2d22f5d7933c50e975dd1527034275597be7c1b3b9fd2b9d079a"
+    },
+    {
+      "path": "package.json",
+      "sha256": "c4b2f05b0c36fe3d2b737e6066278fbb8dfd02668926a667577932a24ecb6f91"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "e58d60765d97eb11d411428b09d5d47e1374899e4f4fa95bb7a079d4583e5773"
+    },
+    {
+      "path": "electron.vite.config.ts",
+      "sha256": "ed50c1c276fd46a90ef44c54c7c955e447ff70fe27c212e38556eb321ac17dd9"
+    }
+  ],
+  "builtRendererFiles": [
+    {
+      "path": "out/renderer/assets/index-BaYGaAp_.js",
+      "sha256": "10d2209b308f2fb31fe9ce5853f217be6020c655c4584e123ea4df97550c20bd"
+    },
+    {
+      "path": "out/renderer/assets/index-H1pxXTOi.css",
+      "sha256": "3db74179d22a5342ed11cd8ad8ce16a5b31584d65391f7e705d1a14777b7e224"
+    },
+    {
+      "path": "out/renderer/assets/mission-studio-Zt8j2igs.png",
+      "sha256": "84202a2bd73bf833a9a508b57241da7cd8c8f2cd1912106014cfb8068f41320d"
+    },
+    {
+      "path": "out/renderer/assets/runtime-DPC_1S4f.js",
+      "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    },
+    {
+      "path": "out/renderer/assets/studio_small_04_1k-Beh5sjOa.hdr",
+      "sha256": "dd0ca972513d35f55f55f79daf945315a6f25f8ccc7a797816b4945b201f293c"
+    },
+    {
+      "path": "out/renderer/index.html",
+      "sha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263"
+    }
+  ],
+  "validationSource": "Validation scripts in the final checkout; only capture-feature-pages.mjs and captureHarness were used for the 52 feature-page screenshots."
+}

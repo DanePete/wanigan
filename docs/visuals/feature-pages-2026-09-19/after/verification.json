@@ -1,0 +1,537 @@
+{
+  "phase": "after",
+  "source": "Shared working tree at a5f71c3 plus uncommitted feature and Relay changes; diagnostic reproduction",
+  "provenance": "Production renderer in an isolated Electron profile with explicit fictional Goals, Runs and Sessions fixtures. No Wanigan main process, real provider/PTY/model calls, user-data reads or writes. Renderer behavior only; not an IPC or persistence test.",
+  "screenshots": [
+    {
+      "file": "control-empty-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n0 of 0 goals\n\nNo goals yet. Add an objective and its acceptance checks to start tracking work here.\n\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-empty-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n0 of 0 goals\n\nNo goals yet. Add an objective and its acceptance checks to start tracking work here.\n\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-empty-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nChoose a goal\nBrowse goals\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-empty-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nChoose a goal\nBrowse goals\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "runs-empty-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n○\nNothing has run yet\n\nPrepare one task for selected repositories. Each worker’s outcome, output and reported cost will appear here.\n\nPrepare a run\n\nTrying the same task more than once?\nCompare attempts"
+    },
+    {
+      "file": "runs-empty-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n○\nNothing has run yet\n\nPrepare one task for selected repositories. Each worker’s outcome, output and reported cost will appear here.\n\nPrepare a run\n\nTrying the same task more than once?\nCompare attempts"
+    },
+    {
+      "file": "runs-empty-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\nHalt\n+\nNew session\nSearch\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n○\nNothing has run yet\n\nPrepare one task for selected repositories. Each worker’s outcome, output and reported cost will appear here.\n\nPrepare a run\n\nTrying the same task more than once?\nCompare attempts"
+    },
+    {
+      "file": "runs-empty-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\nHalt\n+\nNew session\nSearch\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n○\nNothing has run yet\n\nPrepare one task for selected repositories. Each worker’s outcome, output and reported cost will appear here.\n\nPrepare a run\n\nTrying the same task more than once?\nCompare attempts"
+    },
+    {
+      "file": "sessions-empty-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\nNothing waiting.\nNo sessions running. Start one with ⌘T and it appears here the moment it blocks.\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\n\nno sessions\n\nplatform\nfeature/rail\n+\n\nno sessions\n\n+ Add projectRecover exact Codex UUID…\nSessions\n\nChoose a conversation or start something new.\n\nResume\nNew session\nDetails\nNo sessions running\n\nEach session is a real terminal, so permission prompts and the full TUI work exactly as they do in your shell.\n\nNew session ⌘T\n⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel"
+    },
+    {
+      "file": "sessions-empty-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\nNothing waiting.\nNo sessions running. Start one with ⌘T and it appears here the moment it blocks.\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\n\nno sessions\n\nplatform\nfeature/rail\n+\n\nno sessions\n\n+ Add projectRecover exact Codex UUID…\nSessions\n\nChoose a conversation or start something new.\n\nResume\nNew session\nDetails\nNo sessions running\n\nEach session is a real terminal, so permission prompts and the full TUI work exactly as they do in your shell.\n\nNew session ⌘T\n⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel"
+    },
+    {
+      "file": "sessions-empty-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\nHalt\n+\nNew session\nSearch\nAttention\nNothing waiting.\nNo sessions running. Start one with ⌘T and it appears here the moment it blocks.\nSessions\n\nChoose a conversation or start something new.\n\nSessions\nResume\nNew session\nDetails\nNo sessions running\n\nEach session is a real terminal, so permission prompts and the full TUI work exactly as they do in your shell.\n\nNew session ⌘T\n⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel"
+    },
+    {
+      "file": "sessions-empty-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\nHalt\n+\nNew session\nSearch\nAttention\nNothing waiting.\nNo sessions running. Start one with ⌘T and it appears here the moment it blocks.\nSessions\n\nChoose a conversation or start something new.\n\nSessions\nResume\nNew session\nDetails\nNo sessions running\n\nEach session is a real terminal, so permission prompts and the full TUI work exactly as they do in your shell.\n\nNew session ⌘T\n⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel"
+    },
+    {
+      "file": "runs-compose-empty-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n0\nChoose where to run\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n+\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nAdd a task, choose repositories, and complete the agent settings.\nRun in 0 repos"
+    },
+    {
+      "file": "runs-compose-empty-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n0\nChoose where to run\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n+\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nAdd a task, choose repositories, and complete the agent settings.\nRun in 0 repos"
+    },
+    {
+      "file": "control-populated-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n3 of 3 goals\n?\nreview\n4m ago\nCheckout clarity · fictional goal\nstorefront\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\n○\ndraft\n4m ago\nKeyboard navigation · fictional goal\nstorefront\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nAdd a decision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-populated-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n3 of 3 goals\n?\nreview\n4m ago\nCheckout clarity · fictional goal\nstorefront\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\n○\ndraft\n4m ago\nKeyboard navigation · fictional goal\nstorefront\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nAdd a decision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-populated-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\n?\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nCheckout clarity · fictional goal\nBrowse goals\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nAdd a decision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-populated-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\n?\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nCheckout clarity · fictional goal\nBrowse goals\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nAdd a decision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "runs-populated-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\nRecent runs\n3\nAll\nActive\nAttention\n3 of 3 recent runs\nCheckout audit · fictional run\n1 succeeded · 0 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nAccessibility pass · fictional run\n0 succeeded · 0 failed · 0 blocked · 1 open\n$0.21 · 30m ago\nAPI contract check · fictional run\n0 succeeded · 1 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nended\nCheckout audit · fictional run\n\nfixture-model · 0 open · 30m ago\n\nSucceeded\n1\n0 failed · 0 blocked\nChanged\n1\nfiles outside the launch baseline\nCost\n$0.21\nthe CLI’s own figure; Wanigan never prices it\nstorefront\nsucceeded · 1 file · $0.21\nAgent output"
+    },
+    {
+      "file": "runs-populated-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\nRecent runs\n3\nAll\nActive\nAttention\n3 of 3 recent runs\nCheckout audit · fictional run\n1 succeeded · 0 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nAccessibility pass · fictional run\n0 succeeded · 0 failed · 0 blocked · 1 open\n$0.21 · 30m ago\nAPI contract check · fictional run\n0 succeeded · 1 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nended\nCheckout audit · fictional run\n\nfixture-model · 0 open · 30m ago\n\nSucceeded\n1\n0 failed · 0 blocked\nChanged\n1\nfiles outside the launch baseline\nCost\n$0.21\nthe CLI’s own figure; Wanigan never prices it\nstorefront\nsucceeded · 1 file · $0.21\nAgent output"
+    },
+    {
+      "file": "runs-populated-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\n?\nHalt\n+\nNew session\nSearch\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\nRecent runs\n3\nAll\nActive\nAttention\n3 of 3 recent runs\nCheckout audit · fictional run\n1 succeeded · 0 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nAccessibility pass · fictional run\n0 succeeded · 0 failed · 0 blocked · 1 open\n$0.21 · 30m ago\nAPI contract check · fictional run\n0 succeeded · 1 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nended\nCheckout audit · fictional run\n\nfixture-model · 0 open · 30m ago\n\nSucceeded\n1\n0 failed · 0 blocked\nChanged\n1\nfiles outside the launch baseline\nCost\n$0.21\nthe CLI’s own figure; Wanigan never prices it\nstorefront\nsucceeded · 1 file · $0.21\nAgent output"
+    },
+    {
+      "file": "runs-populated-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\n?\nHalt\n+\nNew session\nSearch\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\nRecent runs\n3\nAll\nActive\nAttention\n3 of 3 recent runs\nCheckout audit · fictional run\n1 succeeded · 0 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nAccessibility pass · fictional run\n0 succeeded · 0 failed · 0 blocked · 1 open\n$0.21 · 30m ago\nAPI contract check · fictional run\n0 succeeded · 1 failed · 0 blocked · 0 open\n$0.21 · 30m ago\nended\nCheckout audit · fictional run\n\nfixture-model · 0 open · 30m ago\n\nSucceeded\n1\n0 failed · 0 blocked\nChanged\n1\nfiles outside the launch baseline\nCost\n$0.21\nthe CLI’s own figure; Wanigan never prices it\nstorefront\nsucceeded · 1 file · $0.21\nAgent output"
+    },
+    {
+      "file": "sessions-populated-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-populated-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-populated-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-populated-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "runs-compose-populated-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n0\nChoose where to run\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n+\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nAdd a task, choose repositories, and complete the agent settings.\nRun in 0 repos"
+    },
+    {
+      "file": "runs-compose-populated-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n0\nChoose where to run\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n+\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nAdd a task, choose repositories, and complete the agent settings.\nRun in 0 repos"
+    },
+    {
+      "file": "sessions-details-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nHide details\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\nChanges\nActivity\nContext\nExpand details\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\n\nSelect a changed file to see its diff.\n\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-details-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nHide details\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\nChanges\nActivity\nContext\nExpand details\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\n\nSelect a changed file to see its diff.\n\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-picker-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nSession switcher\nViewing API cleanup · fictional open session\n×\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-picker-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nSession switcher\nViewing API cleanup · fictional open session\n×\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-details-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\n\nSelect a changed file to see its diff.\n\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-details-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\n\nSelect a changed file to see its diff.\n\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "goals-filtered-selection-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n1 of 3 goals\nClear filters\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\nYou are still viewing Checkout clarity · fictional goal. It is outside the current list filters.Show selected goal\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nDecision note added\nDecision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "goals-filtered-selection-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\nFilters\nEvery project · All states\n1 of 3 goals\nClear filters\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\nYou are still viewing Checkout clarity · fictional goal. It is outside the current list filters.Show selected goal\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nDecision note added\nDecision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "goals-browse-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\n?\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nCheckout clarity · fictional goal\nClose goal list\nGoals\nFilters\nEvery project · All states\nProject\nEvery project\nstorefront\nplatform\nAll\n3\nreview\n1\nblocked\n1\ndraft\n1\n3 of 3 goals\n?\nreview\n4m ago\nCheckout clarity · fictional goal\nstorefront\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\n○\ndraft\n4m ago\nKeyboard navigation · fictional goal\nstorefront\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nDecision note added\nDecision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "goals-browse-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Across all projects\n?\nHalt\n+\nNew session\nSearch\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nCheckout clarity · fictional goal\nClose goal list\nGoals\nFilters\nEvery project · All states\nProject\nEvery project\nstorefront\nplatform\nAll\n3\nreview\n1\nblocked\n1\ndraft\n1\n3 of 3 goals\n?\nreview\n4m ago\nCheckout clarity · fictional goal\nstorefront\n■\nblocked\n4m ago\nAPI pagination · fictional goal\nplatform\n○\ndraft\n4m ago\nKeyboard navigation · fictional goal\nstorefront\nstorefront\nreview\nlow risk\nRecord details\nCheckout clarity · fictional goal\n\nFictional objective: improve checkout clarity and preserve its recorded behavior.\n\nYour eye for the finish.\n\nRead the proof against your acceptance checks.\n\nReview the decision ↗\n3 / 4\ntasks complete\n0\nproof records\n—\nno session yet\n○\noff\nautopilot\nTask journey\n4\nChoose a task to review\n01\nPlan\nDefine the change\n✓\ncompleted\n02\nImplement\nUpdate checkout flow\n✓\ncompleted\n03\nVerify\nCheck the result\n✓\ncompleted\n04\nReview\nDecide what to keep\n◦\nready\nYour decision\nready\nDecide what to keep\n\nFictional task instructions. No task can execute in this visual fixture.\n\nPrerequisites\nCheck the result\n✓\ncompleted\nDecision note added\nDecision note\nApprove\nRequest changes\nReject\nStart isolated task\nWhat done looks like\n2 acceptance checks\nCheckout summary describes the selected plan.\nKeyboard users can reach the next action.\nEvidence\nAcross this goal\nProof\nHandoffs\nActivity\nProof bundle\n0\n\nNo evidence yet. A passing review gate is required before verification can complete.\n\nExecution & spending\n○\nAutopilot off\nClaude Code\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "runs-composer-draft-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nOptional fixture option\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n1\n1 repository selected\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n✓\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nStart launches real agents in the selected repositories.\nRun in 1 repo"
+    },
+    {
+      "file": "runs-composer-draft-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options\nOptional fixture option\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n1\n1 repository selected\n\nEach selected repository receives the same task and its own timeout.\n\nSelect all projects\n✓\nstorefront\n+\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nStart launches real agents in the selected repositories.\nRun in 1 repo"
+    },
+    {
+      "file": "sessions-search-settled-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nClear\n0 open · 1 recent matches\nRecent conversations\nAll history\nSettled (1)\n▾\nOld invoice tests · fictional settled conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤒\n×\nSearch saved history+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-search-settled-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nClear\n0 open · 1 recent matches\nRecent conversations\nAll history\nSettled (1)\n▾\nOld invoice tests · fictional settled conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤒\n×\nSearch saved history+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live agent or terminal process.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-expanded-details-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123fi\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional updated text.\n \n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-expanded-details-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nFind a conversation\nOpen and recent across projects\nstorefront\nmain\n+\nCheckout review · fictional open session\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nAPI cleanup · fictional open session ⑂\nCodex · pid 4088\n✎\nMigration notes · fictional exited session\nClaude Code · exited 0\n✎\nRecent conversations\nAll history\n★ Receipt layout · fictional saved conversation\nstorefront · Codex · fixture-model\n2h ago\nRead\nturns\n★\n⤓\n×\nPagination notes · fictional saved conversation\nplatform · Codex · fixture-model\n2h ago\nRead\nturns\n☆\n⤓\n×\nSettled (1)\n▸\n+ Add projectRecover exact Codex UUID…\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123fi\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional updated text.\n \n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-expanded-details-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123fi\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional updated text.\n \n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-expanded-details-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "All spaces\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nAPI cleanup · fictional open session\n\nCodex/Isolated worktree/Running\n\nReview work\nSessions\nResume\nNew session\nTerminal\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nBack to terminal\nplatform\nChanges\nActivity\nContext\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123fi\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional updated text.\n \n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "runs-reading-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n\nReading recent runs…"
+    },
+    {
+      "file": "runs-reading-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n\nReading recent runs…"
+    },
+    {
+      "file": "runs-unavailable-1440x1000-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n✕\nCould not read recent runs\n\nFictional run-history read failure.\n\nTry again"
+    },
+    {
+      "file": "runs-unavailable-1440x1000-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nRuns\n\nSend one task to selected repositories, then review each result.\n\nRepository runs\nCompare attempts\nRefresh runs\nNew run\n✕\nCould not read recent runs\n\nFictional run-history read failure.\n\nTry again"
+    },
+    {
+      "file": "runs-required-options-720x640-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\nHalt\n+\nNew session\nSearch\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options · includes required settings\nRequired fixture option · required\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n2\n2 repositories selected\n\nEach selected repository receives the same task and its own timeout.\n\nClear projects\n✓\nstorefront\n✓\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nRun in every registered repository. All 2 repositories will receive an unattended agent. A zero budget passes no cost ceiling to the CLI.\nConfirm every repository above, or narrow the selection.\nRun in 2 repos"
+    },
+    {
+      "file": "runs-required-options-720x640-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 720,
+        "height": 640
+      },
+      "scrollWidth": 720,
+      "bodyText": "Workspace tools\nHalt\n+\nNew session\nSearch\nNew run\n\nOne task, with a separate worker in each selected repository.\n\nBack to runs\nThe task\nWhat should the agent do?\nTask for every repository\nUse one self-contained request. Each selected repository receives this task independently.\nAgent and run details\nRun name optional\nProvider\nClaude Code\nCodex\nModel\nReasoning effort\nAdditional agent options · includes required settings\nRequired fixture option · required\nClaude Code is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.\nRepositories\n2\n2 repositories selected\n\nEach selected repository receives the same task and its own timeout.\n\nClear projects\n✓\nstorefront\n✓\nplatform\nCLI budget / repository\n$\nTimeout per repository\n5 minutes\n15 minutes\n30 minutes\n60 minutes\nisolate in worktrees\nhold approvals for me\nRun in every registered repository. All 2 repositories will receive an unattended agent. A zero budget passes no cost ceiling to the CLI.\nConfirm every repository above, or narrow the selection.\nRun in 2 repos"
+    }
+  ],
+  "errors": [],
+  "checks": [
+    "Goals supports unordered search and accurate result counts without changing the selected goal or its draft. Filter recovery restores search focus; compact browse selects explicitly and restores picker focus; resizing preserves visible keyboard focus.",
+    "Runs filters retain the selected inspector and explain when it is outside the list. Both recovery actions restore search focus. New run focuses the assignment, optional controls start folded, and assignment/project/options drafts and selected run survive leaving the form and a Compare attempts/Repository runs round trip without launching.",
+    "Sessions search covers open, recent, and settled names using unordered words without changing the active session, pooled terminal, or draft; full-history handoff preserves the query. Expanded details preserve terminal/draft and keyboard focus through composer shortcut, native Show Composer, and desktop/narrow resize round trips. Nested history and picker Escape closes only the top layer and returns focus to the picker trigger.",
+    "A pending initial run-history read remains Reading recent runs and a failure remains unavailable, neither claims zero runs. Resolve/retry reaches one full-width empty state, with no duplicate list/inspector placeholders.",
+    "Required agent options begin open and block launch even when folded. All-repository launch requires a fresh explicit declaration; changing selection retires it. Budget, timeout, worktree isolation, and approval controls remain explicit. Compact goal browsing and run setup scroll to their final controls. No launch button was pressed."
+  ],
+  "buildIndexSha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263",
+  "result": "pass"
+}

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Built renderer with a synthetic bridge. No real main process, Git, agents, or user data.
+// node scripts/probe-review-checkout.mjs [--before] [--out /absolute/output/directory]
 import { STUB, rendererURL } from './renderer-harness.mjs';
 import { createRequire } from 'node:module';
 import { createReadStream, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -11,7 +12,11 @@ import assert from 'node:assert/strict';
 const root = path.resolve(import.meta.dirname, '..');
 const { _electron } = createRequire(import.meta.url)('playwright-core');
 const before = process.argv.includes('--before');
-const out = path.join(root, 'docs/visuals/review-checkout-2026-09-15', before ? 'before' : 'after');
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory');
+const out = outAt < 0
+  ? path.join(root, 'docs/visuals/review-checkout-2026-09-15', before ? 'before' : 'after')
+  : path.resolve(root, process.argv[outAt + 1]);
 mkdirSync(out, { recursive: true });
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-review-checkout-'));
 writeFileSync(path.join(dir, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
@@ -41,7 +46,8 @@ try {
       const sessions=proxy(api.sessions,{list:async()=>(await api.sessions.list()).filter(s=>s.id==='s1').map(s=>({...s,projectPath:'/example/storefront',worktree:state.sessionCwd,displayTitle:'Repair checkout validation',harnessId:'claude-code',capabilities:{hooks:false}})),baseline:async()=>({head:'a1b2c3d',dirty:[],at:now-90000}),buffer:async()=>''});
       const code=proxy(api.code,{editors:async()=>[],changes:async()=>({isRepo:true,branch:'wanigan/checkout-validation',headMoved:false,commits:0,files:[{path:'src/checkout.ts',index:' ',work:'M',staged:false,untracked:false,preexisting:false}],attributed:true,unreadable:null}),diff:async()=> ['diff --git a/src/checkout.ts b/src/checkout.ts','--- a/src/checkout.ts','+++ b/src/checkout.ts','@@ -12,3 +12,4 @@',' export function validateCheckout(cart) {','+  if (cart.items.length === 0) return { ok: false };','   return { ok: true };',' }'].join(String.fromCharCode(10))});
       const review=proxy(api.review,{recipe:async()=>({projectId:'p1',commands:['npm test','git diff --check'],updatedAt:now-50000}),history:async(projectId,limit,sessionId)=>{state.historyCalls.push([projectId,limit,sessionId??null]);if(state.historyFail)throw Error('Synthetic comparison temporarily unavailable');return [structuredClone(sessionId?state.run:state.projectRun)];},run:async(projectId,sessionId)=>{state.runCalls.push([projectId,sessionId??null]);return structuredClone(sessionId?state.run:state.projectRun);}});
-      window.wanigan=proxy(api,{sessions,code,review,prefs:proxy(api.prefs,{all:async()=>({...await api.prefs.all(),motion:'off',navSidebar:'closed'})}),handoff:proxy(api.handoff,{plan:async()=>({targets:[]})}),policy:proxy(api.policy,{trust:async()=>'project'})});
+      const worktrees=proxy(api.worktrees,{setup:async projectId=>({projectId,depsMode:'skip',setup:[],teardown:[],updatedAt:null,include:{state:'absent'}}),commandRuns:async()=>[]});
+      window.wanigan=proxy(api,{sessions,code,review,worktrees,prefs:proxy(api.prefs,{all:async()=>({...await api.prefs.all(),motion:'off',navSidebar:'closed'})}),handoff:proxy(api.handoff,{plan:async()=>({targets:[]})}),policy:proxy(api.policy,{trust:async()=>'project'})});
     })();
   `);
   let url = rendererURL;
@@ -56,6 +62,10 @@ try {
     fixtureServer.unref(); url = 'http://127.0.0.1:' + fixtureServer.address().port + '/index.html';
   }
   const go = async key => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); };
+  const showSessionChecks = async () => {
+    if (!before) await page.getByRole('group', { name: 'Session review section', exact: true })
+      .getByRole('button', { name: 'Checks & evidence', exact: true }).click();
+  };
   const shots = async name => {
     for (const theme of ['dark', 'light']) {
       await page.evaluate(theme => {
@@ -73,6 +83,8 @@ try {
   await page.getByRole('button', { name: 'Review work', exact: true }).click();
   await page.getByRole('dialog', { name: 'Review session work' }).waitFor();
   await page.locator('.session-review .code-panel').getByRole('button', { name: /src\/checkout.ts/ }).click();
+  if (!before) await shots('session-review-changes');
+  await showSessionChecks();
   await page.locator('.review-result > summary').first().click();
   await check('Session Review has code and recorded checks', async () => {
     assert.equal(await page.locator('.session-review .code-panel').count(), 1);
@@ -84,7 +96,7 @@ try {
     await check('Session history requests the recorded session scope', async () => {
       assert((await page.evaluate(() => window.__reviewCheckout.historyCalls)).some(args => args[0] === 'p1' && args[1] === 12 && args[2] === 's1'));
       assert.match(await page.locator('.session-review').innerText(), /Content matches/);
-      assert.match(await page.locator('.session-review-checks').innerText(), /\/example\/storefront-isolated/);
+      assert.equal(await page.locator('.session-review-toolbar .session-history-identity').innerText(), '/example/storefront-isolated');
     });
     await page.getByRole('button', { name: 'Run checks', exact: true }).click();
     await check('Run checks sends project and session IDs without renderer cwd', async () => {
@@ -131,7 +143,7 @@ try {
   }
   await page.getByRole('button', { name: 'Back to session', exact: true }).click();
   await go('Meta+9'); await page.getByRole('heading', { name: 'Changes', exact: true }).waitFor();
-  await page.locator('.gt-review-controls > summary').click();
+  await page.locator('.gt-review-controls > summary').filter({ hasText: 'Review gate' }).click();
   await page.locator('.review-result > summary').first().click();
   await check('Project ReviewGate remains available from Changes', async () => assert.match(await page.locator('.review-checks').innerText(), /Synthetic fixture: 28 tests passed/));
   if (!before) {
@@ -159,17 +171,22 @@ try {
     await go('Meta+1');
     await page.getByRole('button', { name: 'Review work', exact: true }).click();
     await page.getByRole('dialog', { name: 'Review session work' }).waitFor();
+    await showSessionChecks();
     await page.locator('.review-result > summary').first().click();
     await page.locator('.review-result .review-caption').filter({ hasText: 'Checkout:' }).scrollIntoViewIfNeeded();
     await check('A 1024px desktop wraps long checkout provenance without horizontal overflow', async () => {
-      const dimensions=await page.locator('.session-review-checks, .review-result, .review-result .review-caption').evaluateAll(elements => elements.map(element => ({ className:element.className, width:element.clientWidth, scrollWidth:element.scrollWidth })));
+      const dimensions=await page.locator('.session-review-toolbar, .session-review-checks, .review-result, .review-result .review-caption').evaluateAll(elements => elements.map(element => ({ className:element.className, width:element.clientWidth, scrollWidth:element.scrollWidth })));
       assert(dimensions.every(value => value.scrollWidth <= value.width + 1), JSON.stringify(dimensions));
+      assert.match(await page.locator('.session-review-toolbar .session-history-identity').innerText(), /deliberately-long-worktree-path-regression/);
       assert.match(await page.locator('.session-review-checks').innerText(), /deliberately-long-worktree-path-regression/);
     });
     await shots('session-review-1024-long-path');
   }
 } catch (error) {
   failures.push({ name: 'Probe orchestration', error: String(error.stack ?? error) });
+  if (page) for (const detail of await page.locator('.view-recovery-details').allTextContents()) {
+    failures.push({ name: 'Renderer view recovery', error: detail });
+  }
   if (page) await page.screenshot({ path: path.join(out, 'failure.png') }).catch(() => {});
 } finally {
   writeFileSync(path.join(out, 'verification.json'), JSON.stringify({ at: new Date().toISOString(), provenance: 'Built renderer in isolated Electron, synthetic bridge; no real main, Git commands, agent calls, or user-data writes.', checks, failures, errors }, null, 2) + '\n');

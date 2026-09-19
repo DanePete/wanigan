@@ -239,7 +239,7 @@ try {
   await go('Meta+1'); await page.locator('.sessions-view').waitFor();
   // The Claude Code session on storefront; the Codex one has no status line or trace to show.
   await page.locator('.sessions-view').getByText('pid 4021', { exact: true }).click();
-  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  await (before ? page : page.getByRole('group', { name: 'Session details', exact: true })).getByRole('button', { name: before ? 'Timeline' : 'Activity', exact: true }).click();
   await page.locator('.tl').waitFor();
   await page.locator('.tl-turns').waitFor();
   if (before) {

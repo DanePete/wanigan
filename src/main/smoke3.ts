@@ -7149,18 +7149,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // "Recent runs", "Nothing has run yet", and the inspector's invitation to
   // start a fan-out. A failed read shows the error and a retry instead.
   const runsViewSrc = sourceOf('src/renderer/src/views/HeadlessRuns.tsx');
-  const runsGate = runsViewSrc.indexOf('{!loaded ? (');
+  const runsGate = runsViewSrc.indexOf(': !loaded ? <div className="hr-history-state"');
   const runsNothingYet = runsViewSrc.indexOf('title="Nothing has run yet"');
   const runsNoSelection = runsViewSrc.indexOf('title="No run selected"');
-  const runsDetailReading = runsViewSrc.indexOf('<Reading what="the run history" />');
+  const runsHistoryReading = runsViewSrc.indexOf('<Reading what="recent runs" />');
+  const runsWorkspace = runsViewSrc.indexOf(': <div className="hr-workspace">');
   check(runsViewSrc.includes('const [loaded, setLoaded] = useState(false)')
     && runsViewSrc.includes('setLoaded(true);')
     && runsGate > 0
     && runsNothingYet > runsGate
     && runsNoSelection > runsGate
-    && runsDetailReading > 0 && runsDetailReading < runsNoSelection
-    && /\{loaded \? runs\.length/.test(runsViewSrc)
-    && runsViewSrc.includes('<Reading what="recent runs" />')
+    && runsHistoryReading > runsGate && runsHistoryReading < runsNothingYet
+    && runsWorkspace > runsNothingYet
+    && runsViewSrc.indexOf('<SectionHead label="Recent runs" count={runs.length}') > runsWorkspace
     && runsViewSrc.includes('posture="could-not-read" title="Could not read recent runs"')
     && runsViewSrc.includes('cue={loadFailed}')
     && /Try again<\/button>/.test(runsViewSrc),
@@ -8547,13 +8548,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   say('── Recent conversations · the ninth row is reachable, and what is hidden is counted');
 
-  check(sessionsSrc.includes('activePast.slice(0, activeShown)')
+  check(sessionsSrc.includes('activePast.slice(0, searchingPicker ? undefined : activeShown)')
+    && sessionsSrc.includes('settledPast.slice(0, searchingPicker ? undefined : settledShown)')
+    && sessionsSrc.includes('!searchingPicker && activePast.length > activeShown')
+    && sessionsSrc.includes('!searchingPicker && settledOpen && settledPast.length > settledShown')
     && !sessionsSrc.includes('activePast.slice(0, 8)')
     && sessionsSrc.includes('{activePast.length - activeShown} not shown')
     && sessionsSrc.includes('{settledPast.length - settledShown} not shown')
     && sessionsSrc.split('rail-more').length - 1 >= 2
     && /'views\/Sessions\.tsx': 125,/.test(styleGateSrc),
-  'both bands of Recent conversations page rather than truncate, each control states the rows still hidden as a subtraction over the array that render already holds rather than as an estimate or a bare button, the two controls share one class instead of two inline style objects that could drift apart, and the inline-style debt that paydown settled was recorded in the gate rather than left as headroom for the next regression',
+  'both bands of Recent conversations page rather than truncate when browsing, search reveals every loaded match, each paging control states the rows still hidden as a subtraction over the array that render already holds, the two controls share one class, and the inline-style debt that paydown settled stays recorded in the gate',
   sessionsSrc.split('rail-more').length - 1);
 
   // Three files have to agree about one number, and only one of them defines

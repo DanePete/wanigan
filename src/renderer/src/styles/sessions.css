@@ -406,6 +406,19 @@
 .session-detail-return { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-soft); }
 .session-detail-return > span { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: var(--t-small); }
 .term-full[data-detail-focus='true'] .code-panel { border-left: 0; }
+.session-detail-tools { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--s-2); padding: var(--s-2); border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); background: var(--bg-soft); }
+.session-detail-tools .seg { min-width: 0; }
+.term-full[data-detail-focus='true'] .session-detail-tools { border-left: 0; }
+
+/* Filter only the picker. Searching must never switch or unmount a terminal. */
+.session-picker-search { display: grid; flex: none; gap: var(--s-2); padding: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.session-picker-search .label { margin: 0; }
+.session-picker-search-field { display: flex; align-items: center; gap: var(--s-1); }
+.session-picker-search-field .field { width: 100%; min-width: 0; font-size: var(--t-small); }
+.session-picker-search [role='status'] { font-size: var(--t-micro); line-height: 1.4; }
+.session-picker-no-match { display: grid; gap: var(--s-2); padding: var(--s-3); font-size: var(--t-small); line-height: 1.45; }
+.session-picker-no-match p { margin: 0; }
+.session-picker-history-search { width: 100%; justify-content: center; margin-top: var(--s-3); }
 
 /* Continue this conversation on another account. Hidden entirely unless main
    says there is somewhere for it to go. */
