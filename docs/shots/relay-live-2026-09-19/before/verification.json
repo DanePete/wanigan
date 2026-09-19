@@ -1,0 +1,127 @@
+{
+  "phase": "before",
+  "at": "2026-09-19T16:35:18.197Z",
+  "renderer": "/private/tmp/wanigan-live-relay-ui-before/renderer",
+  "rendererFiles": [
+    {
+      "path": "assets/index-DAkPYLmE.css",
+      "sha256": "aa7e70835453c5590fa875807f9d65733c6afcd3ba242149a704bb6dfee8f250"
+    },
+    {
+      "path": "assets/index-Dhkwl75W.js",
+      "sha256": "d1a1e8e245884c0fe8dbd653073a776b9561df2d51887bf1f21f6810f4bfd998"
+    },
+    {
+      "path": "assets/mission-studio-Zt8j2igs.png",
+      "sha256": "84202a2bd73bf833a9a508b57241da7cd8c8f2cd1912106014cfb8068f41320d"
+    },
+    {
+      "path": "assets/runtime-DPC_1S4f.js",
+      "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    },
+    {
+      "path": "assets/studio_small_04_1k-Beh5sjOa.hdr",
+      "sha256": "dd0ca972513d35f55f55f79daf945315a6f25f8ccc7a797816b4945b201f293c"
+    },
+    {
+      "path": "index.html",
+      "sha256": "8877cbbdc4f4385c57bb9f8ad3e260d229d313190120a02538d57f9817ba31c9"
+    }
+  ],
+  "runnerSha256": "1f32654b7f83a2a6ddd51ead3c97ac828c8936919a4a255339426e2d8bdbb0c6",
+  "checks": [
+    "BEFORE: ready review offers Start review and no direct human decision.",
+    "Running review preserves Open live session and all three decision dispatches.",
+    "A failed refresh disables decisions on the stale running review until a successful reread.",
+    "Blocked, pending, failed, canceled, queued, checking, rejected and changes-requested states expose no decision or review launch bypass.",
+    "Composer auto/manual captured in dark/light via isolated real Electron IPC; no Relay/provider action."
+  ],
+  "errors": [],
+  "screenshots": [
+    {
+      "file": "fixture-review-ready-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-ready-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-running-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-running-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-blocked-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-blocked-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-failed-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-failed-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-rejected-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-rejected-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-changes-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-changes-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "electron-composer-dark.png",
+      "theme": "dark",
+      "provenance": "isolated Electron real IPC; mock discovery; no model or Relay mutation"
+    },
+    {
+      "file": "electron-composer-light.png",
+      "theme": "light",
+      "provenance": "isolated Electron real IPC; mock discovery; no model or Relay mutation"
+    },
+    {
+      "file": "electron-composer-manual-dark.png",
+      "theme": "dark",
+      "provenance": "isolated Electron real IPC; mock discovery; local form change only"
+    },
+    {
+      "file": "electron-composer-manual-light.png",
+      "theme": "light",
+      "provenance": "isolated Electron real IPC; mock discovery; local form change only"
+    }
+  ],
+  "provenance": {
+    "review": "Chromium built production renderer; deliberately synthetic RelayRead rows and recorded preload calls. No main-process state, IPC, provider, PTY, persistence, quality or cost claim.",
+    "composer": "Real Electron main/preload IPC in freshly created and removed userData, WANIGAN_MOCK=1 discovery. Added local project path to isolated DB and edited form only. No preview/create/start, paid call or live user profile access."
+  },
+  "passed": true
+}

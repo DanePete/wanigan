@@ -273,6 +273,14 @@ function RelayAction({ phase, read, done, busy, unavailable, start, finish, veri
     <div className="rl-actions"><button className="btn btn-primary" disabled={disabled || read.docket.reviewCommands === 0} onClick={() => void verify(node)}>{working ? 'Running verification…' : 'Run verification'}</button><button className="btn" onClick={openGoal}>Open review gate</button></div></>;
   if (node.status === 'ready') {
     const verb = node.kind === 'plan' ? 'Start planning' : node.kind === 'implement' ? 'Start implementation' : 'Start review';
+    if (node.kind === 'review') return <><h3>Inspect the changes before deciding.</h3>
+      <p>Review the changes and make sure the recorded checks are passing before you decide whether to approve, request changes, or reject this work.</p>
+      <div className="rl-decision"><div className="rl-actions">
+        <button className="btn btn-primary" disabled={disabled} onClick={() => void finish(node, 'approve')}>Approve</button>
+        <button className="btn" disabled={disabled} onClick={() => void finish(node, 'request_changes')}>Request changes</button>
+        <button className="btn btn-danger" disabled={disabled} onClick={() => void finish(node, 'reject')}>Reject</button>
+      </div><Hint>{read.nodes.find((row) => row.nodeId === read.docket.nodes.find((row) => row.kind === 'implement')?.id)?.handbacks ?? 0} of {read.handbackLimit} automatic hand-backs used. Requesting changes may launch another implementation turn.</Hint></div>
+      <div className="rl-actions"><button className="btn" disabled={disabled} onClick={() => void start(node)}>{working ? 'Starting…' : 'Start review agent (optional)'}</button></div></>;
     return <><h3>{node.kind === 'plan' ? 'Turn the outcome into a plan.' : node.kind === 'implement' ? 'Ready when you are.' : 'Give the work an independent review.'}</h3>
       <p>{node.kind === 'implement' ? 'Review the forecast below, then start building.' : 'Start this stage in a real agent session.'} It will run on {phase.routeText}.</p>
       {node.kind === 'implement' && <Hint>{read.forecast?.totalUsd === null || !read.forecast ? 'Cost is unpriced. Starting this stage may incur provider charges.' : `Estimated cost: ${usd(read.forecast.totalUsd)}. Actual usage may differ.`}</Hint>}

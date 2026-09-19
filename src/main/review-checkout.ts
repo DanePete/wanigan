@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import type { ReviewCheckoutSnapshot } from '../shared/types';
 
 const exec = promisify(execFile);
-const LIMITS = { files: 20_000, bytes: 512 * 1024 * 1024, fileBytes: 16 * 1024 * 1024, gitBytes: 8 * 1024 * 1024, ms: 15_000 };
+const LIMITS = { files: 20_000, bytes: 1024 * 1024 * 1024, fileBytes: 16 * 1024 * 1024, gitBytes: 8 * 1024 * 1024, ms: 15_000 };
 type Inventory = { head: string | null; index: string; untracked: string; files: string[] };
 type Budget = { deadline: number; expired: boolean };
 type Content = { digest: string; identities: Map<string, string | null> };
@@ -135,7 +135,7 @@ async function contentHash(root: string, cwd: string, state: Inventory, budget: 
     if (!before.isFile()) throw new Error('Checkout contains a nonregular file or an embedded repository.');
     if (before.size > BigInt(LIMITS.fileBytes)) throw new Error('A checkout file exceeds the 16 MiB fingerprint limit.');
     bytes += Number(before.size);
-    if (bytes > LIMITS.bytes) throw new Error('Checkout content exceeds the 512 MiB fingerprint limit.');
+    if (bytes > LIMITS.bytes) throw new Error('Checkout content exceeds the 1 GiB fingerprint limit.');
     // O_NOFOLLOW protects the final component; ancestry and descriptor identity
     // are checked again before reading and afterward to reject detected races.
     const handle = await open(path.join(root, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);

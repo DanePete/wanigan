@@ -93,24 +93,24 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   });
   const stageFields = <>
     <p>
-      {manual ? 'Leave a field empty to use the profile default.'
-        : 'Leave a field empty to use the profile default or an enabled routing suggestion.'}
+      {manual ? 'Leave a field empty to use the coding assistant default choice.'
+        : 'Leave a field empty to use the coding assistant default or an enabled model suggestion.'}
       {' '}An override uses exactly the model or effort you enter.
     </p>
-    <p>Use a model and effort supported by the selected profile. Invalid choices are refused before a session starts.</p>
+    <p>Use a model and effort supported by the selected coding assistant. Invalid choices are refused before a session starts.</p>
     {AGENT_KINDS.map((kind) => (
       <div key={kind} className="row2">
         <label>
           <span className="label">{KIND_WORD[kind]} model</span>
-          <input className="field" aria-label={`${KIND_WORD[kind]} model override`} value={draft[kind]?.model ?? ''}
+          <input className="field" aria-label={`${KIND_WORD[kind]} model`} value={draft[kind]?.model ?? ''}
             onChange={(e) => updateDraft(kind, { model: e.target.value })}
-            placeholder="profile default" disabled={busy !== null} />
+            placeholder="coding assistant default" disabled={busy !== null} />
         </label>
         <label>
           <span className="label">{KIND_WORD[kind]} effort</span>
-          <input className="field" aria-label={`${KIND_WORD[kind]} effort override`} value={draft[kind]?.effort ?? ''}
+          <input className="field" aria-label={`${KIND_WORD[kind]} effort`} value={draft[kind]?.effort ?? ''}
             onChange={(e) => updateDraft(kind, { effort: e.target.value })}
-            placeholder="profile default" disabled={busy !== null} />
+            placeholder="coding assistant default" disabled={busy !== null} />
         </label>
         {accountOptions !== null && accountOptions.length > 0 && (
           <label>
@@ -132,7 +132,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   </>;
   return <div className="rl-composer" hidden={!active}>
     {error && <Note tone="error" onDismiss={() => setError(null)}>{error}</Note>}
-    {providers.length === 0 && <Note tone="warn">Connect an agent profile in Settings before creating a relay.</Note>}
+    {providers.length === 0 && <Note tone="warn">Connect a coding assistant in Settings before creating a relay.</Note>}
           <Section title="Create a relay" hint="Describe the outcome, choose who will work on it, then create the stages. You start the first stage separately.">
             {/* A relay belongs to a project and this view has no picker of its
                 own — the one in the header is app-wide. Without this the only
@@ -152,8 +152,8 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
             </div>
             <div className="rl-start-meta">
             <label>
-              <span className="label">Profile</span>
-              <select className="field" aria-label="Profile for this relay" value={providerId}
+              <span className="label">Coding assistant</span>
+              <select className="field" aria-label="Coding assistant" value={providerId}
                 onChange={(e) => {
                   setProviderId(e.target.value);
                   setDraft(emptyDraft(e.target.value)); setPreview(null);
@@ -170,12 +170,12 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                 purpose is knowing the cost first. */}
             {accountError ? (
               <Note tone="error" action={{ label: 'Retry accounts', run: () => setAccountRetry((value) => value + 1) }}>
-                Could not read this profile’s accounts. {accountError}
+                Could not read this coding assistant’s accounts. {accountError}
               </Note>
             ) : accountOptions === null ? (
-              <p className="faint">Reading the accounts this profile can use…</p>
+              <p className="faint">Reading the accounts this coding assistant can use…</p>
             ) : accountOptions.length === 0 ? (
-              <Hint>This profile uses its current login. Separate accounts are unavailable.</Hint>
+              <Hint>This coding assistant uses its current login. Separate accounts are unavailable.</Hint>
             ) : (
               <label>
                 <span className="label">Account</span>
@@ -191,17 +191,17 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
             </div>
             <div className="rl-start-meta">
               <label>
-                <span className="label">Routing</span>
-                <select className="field" aria-label="Relay routing mode" value={routing.mode}
+                <span className="label">Choose models</span>
+                <select className="field" aria-label="Choose models" value={routing.mode}
                   onChange={event => updateRouting({ mode: event.target.value as RelayRoutingSettings['mode'] })}
                   disabled={busy !== null}>
-                  <option value="auto">Auto</option>
-                  <option value="manual">Manual</option>
+                  <option value="auto">Choose for me</option>
+                  <option value="manual">I’ll choose</option>
                 </select>
               </label>
               {!manual && <label>
-                <span className="label">Auto preference</span>
-                <select className="field" aria-label="Auto routing preference" value={routing.preference}
+                <span className="label">What matters most?</span>
+                <select className="field" aria-label="What matters most?" value={routing.preference}
                   onChange={event => updateRouting({ preference: event.target.value as RelayRoutingSettings['preference'] })}
                   disabled={busy !== null}>
                   {RELAY_ROUTING_PREFERENCES.map(option => (
@@ -211,26 +211,27 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
               </label>}
             </div>
             <Hint>{manual
-              ? 'Use the profile defaults or choose a model and effort for each stage. Manual routing makes no JEV call.'
+              ? 'Use the coding assistant defaults or choose a model and effort for each stage. Choosing models yourself does not call JEV.'
               : RELAY_ROUTING_PREFERENCES.find(option => option.value === routing.preference)?.description}</Hint>
-            <Hint>Required tests and human review stay the same for every routing choice.</Hint>
-            {!manual && <Hint>When enabled, JEV suggests models and effort within this profile. Suggesting routes and creating a relay each call it and may incur a cost. You can override any stage.</Hint>}
+            <Hint>Reasoning effort controls how much thinking a model does. More thinking can take longer and cost more.</Hint>
+            <Hint>Required tests and human review stay the same for every model choice.</Hint>
+            {!manual && <Hint>When enabled, JEV model suggestions choose models and effort within this coding assistant. Suggesting models and creating a relay can each incur a cost. You can override any stage.</Hint>}
             <button className={busy === 'preview' ? 'btn rl-guess-asking' : 'btn'} onClick={() => void suggest()}
                     disabled={busy !== null || !intent.trim() || !providerId}>
-              {busy === 'preview' ? (manual ? 'Previewing…' : 'Asking…') : manual ? 'Preview routes' : 'Suggest routes'}
+              {busy === 'preview' ? (manual ? 'Previewing…' : 'Asking…') : manual ? 'Preview my choices' : 'Suggest models'}
             </button>
             {/* A disabled control that does not say why reads as a broken one.
                 This is the only reason it is ever disabled with a profile set. */}
             {!intent.trim() && providerId && (
               <Hint>{manual
                 ? 'Say what the relay should accomplish first, then preview the stage defaults and overrides.'
-                : 'Say what the relay should accomplish first, and Suggest routes will ask which model and effort fit each phase.'}</Hint>
+                : 'Say what the relay should accomplish first, and Suggest models will ask which model and effort fit each phase.'}</Hint>
             )}
 
             {preview && !preview.asked && !manual && (
               <Note tone="info">
-                No routing suggestion was used. Each stage will use the profile defaults or your overrides.
-                Enable the routing suggester in Settings to get model and effort recommendations.
+                No model suggestion was used. Each stage will use the coding assistant defaults or your overrides.
+                Enable JEV model suggestions in Settings to get model and effort recommendations.
               </Note>
             )}
 
@@ -242,7 +243,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                     {preview.asked ? <>
                       Suggestion estimate: {preview.pipeline ? `${preview.pipeline.pipeline} · ` : ''}
                       {preview.estimatedUsd === null ? 'usage not reported' : `$${preview.estimatedUsd.toFixed(6)}`}
-                    </> : manual ? 'Manual · no suggestion call' : 'Profile defaults · no suggestion call'}
+                    </> : manual ? 'I’ll choose · no suggestion call' : 'Coding assistant defaults · no suggestion call'}
                   </span>
                 </div>
 
@@ -258,7 +259,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                       <li key={kind} className="rl-guess-row" data-verdict={verdict} data-dropped={dropped || undefined}>
                         <span className="rl-guess-stage">{KIND_WORD[kind]}</span>
                         <span className="rl-guess-pick">
-                          {dropped ? 'not run' : shown ?? 'profile default'}
+                          {dropped ? 'not run' : shown ?? 'coding assistant default'}
                           {!dropped && row?.route.effort && <em> · {row.route.effort} effort</em>}
                         </span>
                         {proposed ? (
@@ -284,11 +285,11 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
 
                 <p className="rl-guess-foot">
                   {preview.asked ? <>
-                    Suggestions need at least {DEFAULT_MIN_CONFIDENCE.toFixed(2)} confidence. Below that, the profile default is kept.
+                    Suggestions need at least {DEFAULT_MIN_CONFIDENCE.toFixed(2)} confidence. Below that, the coding assistant default choice is kept.
                     Creating the relay asks again and records the result. You can override any agent stage below.
                   </> : manual
-                    ? 'These are the profile defaults and your stage overrides. Creating the relay records these routes without a suggestion call.'
-                    : 'These are the profile defaults and your stage overrides. Auto checks the routing suggester again when you create the relay.'}
+                    ? 'These are the coding assistant defaults and your stage overrides. Creating the relay records these choices without a suggestion call.'
+                    : 'These are the coding assistant defaults and your stage overrides. Choose for me checks model suggestions again when you create the relay.'}
                 </p>
               </div>
             )}
