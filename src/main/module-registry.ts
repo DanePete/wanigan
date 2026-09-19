@@ -70,7 +70,8 @@ export type WaniganModule = {
    * Additive schema, the same contract as every `migrate*` in `db.ts`: CREATE
    * IF NOT EXISTS, ADD COLUMN guarded by a read, never DROP. Called inside
    * `db.ts`'s migration pass — inside its transaction, after the built-in
-   * migrations — in registration order.
+   * migrations — in registration order. Required schemas with legacy dependents
+   * may also bootstrap earlier through migrateRequiredModule.
    */
   migrate?: (d: Database.Database) => void;
   /**
@@ -128,6 +129,19 @@ export function registerModule(module: WaniganModule): void {
 
 export function modules(): readonly WaniganModule[] {
   return registry;
+}
+
+/**
+ * Bootstrap a required module at an existing legacy dependency boundary.
+ * Some built-in migrations still extend a required module's tables before
+ * runtime imports can finish registration. Keep that order explicit while
+ * the module remains the sole schema owner; the normal pass is idempotent.
+ */
+export function migrateRequiredModule(module: WaniganModule, d: Database.Database): void {
+  if (!module.required?.reason.trim()) {
+    throw new Error(`Module "${module.id}" must declare why it is required before its schema can bootstrap legacy dependencies.`);
+  }
+  module.migrate?.(d);
 }
 
 /** Called from `db.ts` after the built-in `migrate*` functions, inside their transaction. */

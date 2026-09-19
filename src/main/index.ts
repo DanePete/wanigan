@@ -31,7 +31,7 @@ import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailabl
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
   AwakeState,
-  BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode, RelayStartRequest,
+  BackupCheck, BackupRestoreSummary, BackupSummary, RelayStartRequest,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
   ProviderManifestInspection, QueueSlots, RunConfig, Session,
@@ -3126,34 +3126,6 @@ function registerIpc() {
     if (!def || !usesAnthropicAccount(def) || redirectsAnthropicApiFor(def)) return [];
     return accounts.list(def.harness);
   });
-  handle('control:list', (projectId?: string | null, limit?: number) => control.listDockets(projectId, limit));
-  handle('control:get', (id: string) => control.docket(id));
-  handle('control:sessionGoal', (id: string) => control.sessionGoal(id));
-  handle('control:create', (input: {
-    projectId: string; title: string; objective: string; acceptance?: string[];
-    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null; plan?: DocketPlanNode[];
-  }) => control.createDocket(input));
-  handle('control:claim', (nodeId: string, relPath: string) => control.claimPath(nodeId, relPath));
-  handle('control:releaseClaim', (id: string) => control.releaseClaim(id));
-  handle('control:start', (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
-    control.startNode(nodeId, input));
-  handle('control:retry', (nodeId: string) => control.retryNode(nodeId));
-  handle('control:checkpoint', (nodeId: string, note: string) => control.checkpointNode(nodeId, note));
-  handle('control:runProof', (nodeId: string) => control.runProof(nodeId));
-  handle('control:complete', (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
-    control.completeNode(nodeId, input ?? {}));
-  handle('control:setAutopilot', (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
-    control.setAutopilot(docketId, input));
-  // Budget is a separate call rather than a field on setAutopilot: arming and
-  // capping are two decisions, and a goal created without a cap needs a way to
-  // get one before it can ever be armed. The value stays untrusted until
-  // setDocketBudget bounds it in the main process.
-  handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
-    control.setDocketBudget(docketId, budgetUsd));
-  handle('control:setGate', (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
-    control.setGoalGate(docketId, input ?? {}));
-  // The board reads the same rows the goal graph does, a second way. There is
-  // no ticket table behind it — see control.boardCards.
   // ── the interview ────────────────────────────────────────────────────
   //
   // Every call spends money, so every call is one the operator took: there is
@@ -3175,24 +3147,6 @@ function registerIpc() {
   handle('interview:get', (id: string) => interview.interview(id));
   handle('interview:list', (projectId?: string | null, limit?: number) =>
     interview.listInterviews(projectId, limit));
-
-  handle('control:board', (projectId?: string | null, limit?: number) =>
-    control.boardCards({ projectId, limit }));
-  handle('control:defer', (nodeId: string, until: number | null) => control.deferNode(nodeId, until));
-  handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
-  handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
-  handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));
-  handle('control:triageEvent', (id: string, input?: { title?: string; acceptance?: string[]; risk?: 'low' | 'elevated' | 'high' }) =>
-    control.triageEvent(id, input ?? {}));
-  handle('control:dismissEvent', (id: string) => control.dismissEvent(id));
-  handle('control:mcpTasks', (docketId?: string) => control.mcpTasks(docketId));
-  handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
-  handle('control:resumeReceipts', (docketId: string) => control.resumeReceipts(docketId));
-  handle('control:traces', (docketId: string, limit?: number) => control.traces(docketId, limit));
-  handle('control:plan', (docketId: unknown) => {
-    if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
-    return control.goalPlan(docketId);
-  });
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());

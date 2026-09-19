@@ -1,4 +1,5 @@
 import { registerModule } from '../module-registry';
+import { controlModule } from './control';
 import { relayModule } from './relay';
 import { scoutModule } from './scout';
 import { suggestModule } from './suggest';
@@ -13,6 +14,7 @@ import { usageModule } from './usage';
  * main-process counterpart of src/shared/view-registry.ts's VIEWS, so "which
  * modules does this build carry" is one file rather than a grep.
  */
+registerModule(controlModule);
 registerModule(usageModule);
 registerModule(scoutModule);
 registerModule(suggestModule);

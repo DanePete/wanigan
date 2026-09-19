@@ -6939,6 +6939,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const daemonSrc = sourceOf('src/main/daemon.ts');
   const reviewSrc = sourceOf('src/main/review.ts');
   const controlSrc = sourceOf('src/main/control.ts');
+  const controlModuleSrc = sourceOf('src/main/modules/control.ts');
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
   // The cancel notice has to be written from the receipt, after the call. act
   // evaluates its third argument before the work runs, and the node status the
@@ -8816,7 +8817,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && reviewSrc.indexOf('dialog.showMessageBox') < reviewSrc.indexOf('export async function runAt'),
     'saving a review recipe asks the person and running one does not, because the stored text is written once and run many times from both review:run and a goal’s verify task, so the consent sits where the capability is made rather than on each use of it',
     /review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc));
-  check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
+  check(/handle\(\s*'control:create'/.test(controlModuleSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(registrySrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
   // control.ts kept its own DEFAULT_PLAN and NODE_KINDS until the renderer
@@ -9042,7 +9043,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && controlViewSrc.includes('>Arm autopilot<')
     && controlViewSrc.includes('>Disarm autopilot<')
     && preloadSrc.includes("call<DocketDetail>('control:setAutopilot'")
-    && mainSrc.includes("handle('control:setAutopilot'")
+    && controlModuleSrc.includes("handle('control:setAutopilot'")
     && controlSrc.includes('export function setAutopilot('),
     'Control can arm and disarm goal autopilot, so the sweep, the node queue runner and the halt behind control.setAutopilot have a caller instead of being a finished lane no screen could enter');
 
