@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { WaniganModule } from '../module-registry';
+import { accountForPaidOperation } from './usage-paid-operations';
 import { db } from '../db';
 import { listProjects } from '../store';
 import { listSessions } from '../sessions';
@@ -47,7 +48,9 @@ export function companionFacts(projects: Project[], sessions: Session[], attenti
 }
 
 type Message = { role: 'user' | 'assistant'; content: string };
-type Completion = { text: string; model: string; input: number | null; output: number | null; stopReason?: string | null };
+type Completion = { text: string; model: string; input: number | null; output: number | null; stopReason?: string | null;
+  /** The provider's id for this request, which is how its pre-submission receipt is found. */
+  requestId?: string | null };
 type Dependencies = {
   database: typeof db;
   facts: (projectId: string | null) => CompanionSnapshot;
@@ -183,6 +186,8 @@ export function createCompanionService(deps: Dependencies) {
         // Meter even malformed or cancelled replies if usage reached us.
         deps.database().prepare('UPDATE companion_turns SET input_tokens=?,output_tokens=?,cost_usd=? WHERE id=?')
           .run(validUsage(result.input) ? result.input : null, validUsage(result.output) ? result.output : null, cost, id);
+        // This turn is the ledger for that request, once it holds its meters.
+        if (metered) accountForPaidOperation({ requestId: result.requestId, outcome: 'metered', ownerTable: 'companion_turns', ownerId: id }, deps.database());
         if (controller.signal.aborted) throw new Error('Answer stopped. The provider may still bill the request.');
         // Structured output can still be refused or cut short. Check after
         // metering, before accepting even a syntactically valid partial reply.
@@ -223,7 +228,8 @@ export async function completeCompanion(model: string, messages: Message[], sign
   const response = await api.messages.create(request,
     { signal, timeout: 60_000, maxRetries: 0 });
   return { text: response.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n'), model: response.model,
-    input: response.usage?.input_tokens ?? null, output: response.usage?.output_tokens ?? null, stopReason: response.stop_reason };
+    input: response.usage?.input_tokens ?? null, output: response.usage?.output_tokens ?? null, stopReason: response.stop_reason,
+    requestId: (response as { _request_id?: string | null })._request_id ?? null };
 }
 
 export const companion = createCompanionService({

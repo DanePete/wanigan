@@ -30,7 +30,8 @@ function fixture() {
   module.exports.migrateUsagePaidOperations(native); module.exports.migrateUsagePaidSettlements(native);
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
-    CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);`);
+    CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
     rows: () => native.prepare('SELECT source FROM usage_paid_operations ORDER BY at,rowid').all().map(row => row.source) };
 }
@@ -107,12 +108,20 @@ async function main() {
   assert.deepEqual({ ...settlement(answered) }, { outcome: 'metered', http_status: 200, request_id: 'req_answered', owner_table: 'prompt_improve_usage', owner_id: 'improve-1' });
   assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_answered', outcome: 'metered', ownerTable: 'other', ownerId: 'again' }, d), false, 'accounted for once');
 
+  // Each ledger is named in the contract with its own meters. A turn with no
+  // tokens is not a meter, an unpriced one is, and an unnamed table is nothing.
+  const turn = await receiptFor(answer(200, 'req_turn'));
+  d.exec("INSERT INTO companion_turns VALUES ('unmetered',1,'fixture',NULL,NULL,NULL),('unpriced',1,'fixture',9,3,NULL)");
+  const link = (ownerTable, ownerId) => s.paid.accountForPaidOperation({ requestId: 'req_turn', outcome: 'metered', ownerTable, ownerId }, d);
+  assert.equal(link('companion_turns', 'unmetered'), false); assert.equal(link('interviews', 'unpriced'), false);
+  assert.equal(link('companion_turns', 'unpriced'), true);
+  assert.equal(settlement(turn).owner_table, 'companion_turns');
   const cliReceipt = s.paid.admitPaidOperation('learning:cli');
   d.exec("INSERT INTO learning_model_runs VALUES ('run',1,'ok',1,0.002)");
   assert.equal(s.paid.accountForPaidOperation({ receiptId: 'not-a-receipt', outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), false);
   assert.equal(s.paid.accountForPaidOperation({ receiptId: cliReceipt, outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), true);
   assert.equal(settlement(cliReceipt).outcome, 'reported-estimate');
-  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 5, 'no receipt was ever updated or removed');
+  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 6, 'no receipt was ever updated or removed');
   const isAccounted = id => evidence.exports.paidOperationAccountedFor(d, d.prepare(`SELECT o.id,o.source,o.at,
     s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash FROM usage_paid_operations o
     JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE o.id=?`).get(id));

@@ -25,12 +25,19 @@ export function paidSettlementEvidenceHash(d: Database.Database, row: PaidOperat
       if (row.outcome === 'not-charged-provider-stated') {
         if (!Number.isInteger(row.http_status) || row.http_status! < 400 || row.http_status! > 599 || row.owner_table !== null || row.owner_id !== null) return null;
       } else if (row.outcome === 'metered') {
-        if (row.source !== 'anthropic:messages' || !Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299
-            || row.owner_table !== 'prompt_improve_usage' || !row.owner_id) return null;
-        owner = d.prepare(`SELECT request_id,at,model,input_tokens,output_tokens,cache_read_tokens,estimated_cost_usd
-          FROM prompt_improve_usage WHERE request_id=?`).get(row.owner_id) as Record<string, unknown> | undefined;
-        if (!owner || !count(owner.input_tokens) || !count(owner.output_tokens) || !count(owner.cache_read_tokens)
-            || typeof owner.model !== 'string' || !owner.model || (owner.estimated_cost_usd !== null && !amount(owner.estimated_cost_usd))) return null;
+        if (row.source !== 'anthropic:messages' || !Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299 || !row.owner_id) return null;
+        // Each ledger is named here with the columns that are its meters. Tokens
+        // are the meter; a price is arithmetic over them and may be absent.
+        if (row.owner_table === 'prompt_improve_usage') {
+          owner = d.prepare(`SELECT request_id,at,model,input_tokens,output_tokens,cache_read_tokens,estimated_cost_usd
+            FROM prompt_improve_usage WHERE request_id=?`).get(row.owner_id) as Record<string, unknown> | undefined;
+          if (!owner || !count(owner.cache_read_tokens) || (owner.estimated_cost_usd !== null && !amount(owner.estimated_cost_usd))) return null;
+        } else if (row.owner_table === 'companion_turns') {
+          owner = d.prepare('SELECT id,at,model,input_tokens,output_tokens,cost_usd FROM companion_turns WHERE id=?')
+            .get(row.owner_id) as Record<string, unknown> | undefined;
+          if (!owner || (owner.cost_usd !== null && !amount(owner.cost_usd))) return null;
+        } else return null;
+        if (!count(owner.input_tokens) || !count(owner.output_tokens) || typeof owner.model !== 'string' || !owner.model) return null;
       } else return null;
     }
     return createHash('sha256').update(JSON.stringify([
