@@ -36,6 +36,12 @@ export function paidSettlementEvidenceHash(d: Database.Database, row: PaidOperat
           owner = d.prepare('SELECT id,at,model,input_tokens,output_tokens,cost_usd FROM companion_turns WHERE id=?')
             .get(row.owner_id) as Record<string, unknown> | undefined;
           if (!owner || (owner.cost_usd !== null && !amount(owner.cost_usd))) return null;
+        } else if (row.owner_table === 'usage_direct_requests') {
+          // Required Usage's own ledger, for a caller that keeps none. The row
+          // must be the one written for this very response.
+          owner = d.prepare('SELECT id,at,source,model,input_tokens,output_tokens,request_id FROM usage_direct_requests WHERE id=?')
+            .get(row.owner_id) as Record<string, unknown> | undefined;
+          if (!owner || owner.request_id !== row.request_id) return null;
         } else return null;
         if (!count(owner.input_tokens) || !count(owner.output_tokens) || typeof owner.model !== 'string' || !owner.model) return null;
       } else return null;

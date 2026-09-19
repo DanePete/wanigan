@@ -4,7 +4,7 @@ import * as otel from '../otel';
 import * as statusline from '../statusline';
 import { migrateUsage } from './usage-storage';
 import { inspectRecoveryOwner } from '../recovery-inspection';
-import { migrateUsagePaidOperations, migrateUsagePaidSettlements } from './usage-paid-operations';
+import { migrateUsageDirectRequests, migrateUsagePaidOperations, migrateUsagePaidSettlements } from './usage-paid-operations';
 
 /** Usage owns the existing telemetry and consumption channels. The evidence
  * collector and database remain the source of truth; these reads cannot be
@@ -13,7 +13,7 @@ export const usageModule: WaniganModule = {
   id: 'usage',
   label: 'Usage',
   required: { reason: 'Exposes recorded session evidence and provider usage readings across the app.' },
-  migrate: d => { migrateUsage(d); migrateUsagePaidOperations(d); migrateUsagePaidSettlements(d); },
+  migrate: d => { migrateUsage(d); migrateUsagePaidOperations(d); migrateUsagePaidSettlements(d); migrateUsageDirectRequests(d); },
   recovery: { inspect: d => inspectRecoveryOwner(d, 'usage') },
   ipc(handle) {
     // ══ phase 1 · telemetry ═════════════════════════════════════════════

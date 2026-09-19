@@ -122,6 +122,49 @@ export function accountForPaidOperation(input: {
   }
 }
 
+/**
+ * The ledger for a paid request whose caller keeps none of its own. A feature
+ * with a ledger links that instead; this exists so "has no ledger" is never
+ * the reason a metered request stays unaccounted for. Bounded to a closed
+ * source label, the model and the token counts the provider reported: no
+ * prompt, reply, row content or price. A price is arithmetic a reader can redo.
+ */
+export type DirectRequestSource = 'batch:dry-run';
+
+export function migrateUsageDirectRequests(d: Database.Database): void {
+  d.exec(`CREATE TABLE IF NOT EXISTS usage_direct_requests (
+    id TEXT PRIMARY KEY,
+    at INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    request_id TEXT
+  )`);
+}
+
+/** Records the meters, then lets them account for the request's receipt. A
+ * reply with no usable meters records nothing and leaves the receipt open.
+ * Never throws: the caller already has its answer. */
+export function recordDirectRequestMeters(input: {
+  source: DirectRequestSource; model: unknown; inputTokens: unknown; outputTokens: unknown; requestId: string | null | undefined;
+}, d?: Database.Database): boolean {
+  try {
+    const tokens = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+    const model = typeof input.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(input.model) ? input.model : null;
+    if (!model || !tokens(input.inputTokens) || !tokens(input.outputTokens)) return false;
+    const database = d ?? db();
+    const id = randomUUID();
+    const requestId = input.requestId && PAID_REQUEST_ID.test(input.requestId) ? input.requestId : null;
+    database.prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id) VALUES (?,?,?,?,?,?,?)')
+      .run(id, Date.now(), input.source, model, input.inputTokens, input.outputTokens, requestId);
+    return accountForPaidOperation({ requestId, outcome: 'metered', ownerTable: 'usage_direct_requests', ownerId: id }, database);
+  } catch (error) {
+    console.warn('[wanigan] direct request meters not recorded; its receipt stays unresolved:', error instanceof Error ? error.message : error);
+    return false;
+  }
+}
+
 type Fetch = typeof globalThis.fetch;
 export function admittedFetch(
   send: Fetch = globalThis.fetch,

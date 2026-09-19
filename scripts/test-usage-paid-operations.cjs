@@ -28,6 +28,7 @@ function fixture() {
     throw new Error(`Unexpected import: ${name}`);
   }, module, module.exports);
   module.exports.migrateUsagePaidOperations(native); module.exports.migrateUsagePaidSettlements(native);
+  module.exports.migrateUsageDirectRequests(native);
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
@@ -116,12 +117,28 @@ async function main() {
   assert.equal(link('companion_turns', 'unmetered'), false); assert.equal(link('interviews', 'unpriced'), false);
   assert.equal(link('companion_turns', 'unpriced'), true);
   assert.equal(settlement(turn).owner_table, 'companion_turns');
+  // Usage's own ledger, for a caller that keeps none (the dry-run sample).
+  const sample = await receiptFor(answer(200, 'req_sample'));
+  const meters = extra => s.paid.recordDirectRequestMeters({ source: 'batch:dry-run', model: 'fixture-model', inputTokens: 40, outputTokens: 8, requestId: 'req_sample', ...extra }, d);
+  const ledger = () => d.prepare('SELECT source,model,input_tokens,output_tokens,request_id FROM usage_direct_requests').all().map(row => ({ ...row }));
+  for (const unusable of [{ inputTokens: null }, { outputTokens: -1 }, { inputTokens: 1.5 }, { model: '' }, { model: 'has spaces and\nnewlines' }]) assert.equal(meters(unusable), false);
+  assert.deepEqual(ledger(), [], 'a reply with no usable meters records nothing and leaves the receipt open');
+  assert.equal(settlement(sample).outcome, 'responded');
+  assert.equal(meters({}), true);
+  assert.deepEqual(ledger(), [{ source: 'batch:dry-run', model: 'fixture-model', input_tokens: 40, output_tokens: 8, request_id: 'req_sample' }]);
+  assert.equal(settlement(sample).owner_table, 'usage_direct_requests');
+  // Another request cannot borrow that row: the ledger row must be the one written for this response.
+  const borrower = await receiptFor(answer(200, 'req_borrower'));
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_borrower', outcome: 'metered', ownerTable: 'usage_direct_requests', ownerId: settlement(sample).owner_id }, d), false);
+  assert.equal(settlement(borrower).outcome, 'responded');
+  // Meters with no provider request id are still recorded, and account for nothing.
+  assert.equal(meters({ requestId: null }), false); assert.equal(ledger().length, 2);
   const cliReceipt = s.paid.admitPaidOperation('learning:cli');
   d.exec("INSERT INTO learning_model_runs VALUES ('run',1,'ok',1,0.002)");
   assert.equal(s.paid.accountForPaidOperation({ receiptId: 'not-a-receipt', outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), false);
   assert.equal(s.paid.accountForPaidOperation({ receiptId: cliReceipt, outcome: 'reported-estimate', ownerTable: 'learning_model_runs', ownerId: 'run' }, d), true);
   assert.equal(settlement(cliReceipt).outcome, 'reported-estimate');
-  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 6, 'no receipt was ever updated or removed');
+  assert.equal(d.prepare('SELECT COUNT(*) AS n FROM usage_paid_operations').get().n, 8, 'no receipt was ever updated or removed');
   const isAccounted = id => evidence.exports.paidOperationAccountedFor(d, d.prepare(`SELECT o.id,o.source,o.at,
     s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash FROM usage_paid_operations o
     JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE o.id=?`).get(id));
@@ -149,6 +166,26 @@ async function main() {
   try { assert.equal(await observerFailure('https://api.anthropic.com/v1/messages', { method: 'POST' }), response,
     'bookkeeping failure must not look like a transport failure and provoke an SDK retry'); }
   finally { console.warn = quiet; }
-  console.log('Usage paid operations: receipt-before-send, retry re-admission, late maintenance hold, failed-receipt refusal, bounded record and non-billable passthrough and the three accounting outcomes passed.');
+  // The production dry run, with only the SDK client replaced.
+  const recorded = []; let reply;
+  const dryModule = { exports: {} };
+  const dryFile = path.join(__dirname, '../src/main/modules/batch-dry-run.ts');
+  vm.runInThisContext(`(function(require,module,exports){${ts.transpileModule(fs.readFileSync(dryFile, 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText}\n})`, { filename: dryFile })(name => {
+    if (name === '../batch/anthropic') return { isMock: () => false, explainApiError: error => error.message,
+      client: () => ({ messages: { create: async () => { if (reply instanceof Error) throw reply; return reply; } } }) };
+    if (name === '../../shared/tokens') return { estimateTokens: () => 0 };
+    if (name === './usage-paid-operations') return { recordDirectRequestMeters: input => { recorded.push(input); return true; } };
+    throw new Error(`Unexpected import: ${name}`);
+  }, dryModule, dryModule.exports);
+  const request = { custom_id: 'row-1', rendered: 'never recorded', params: {} };
+  reply = { model: 'fixture-model', usage: { input_tokens: 40, output_tokens: 8 }, content: [{ type: 'text', text: 'never recorded either' }], stop_reason: 'end_turn', _request_id: 'req_dry' };
+  assert.equal((await dryModule.exports.dryRun(request)).ok, true);
+  assert.deepEqual(recorded, [{ source: 'batch:dry-run', model: 'fixture-model', inputTokens: 40, outputTokens: 8, requestId: 'req_dry' }],
+    'the sample records its meters and request id, and none of its prompt or reply');
+  reply = Object.assign(new Error('rate limited'), { status: 429 });
+  assert.equal((await dryModule.exports.dryRun(request)).ok, false);
+  assert.equal(recorded.length, 1, 'a refused sample records no meters; the transport already recorded the provider\'s error response');
+  console.log('Usage paid operations: receipt-before-send, retry re-admission, late maintenance hold, failed-receipt refusal, bounded record and non-billable passthrough the three accounting outcomes and the dry-run ledger passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,5 +1,6 @@
 import { client, isMock, explainApiError } from '../batch/anthropic';
 import { estimateTokens } from '../../shared/tokens';
+import { recordDirectRequestMeters } from './usage-paid-operations';
 import type { BuiltRequest } from '../batch/build';
 
 /**
@@ -22,6 +23,10 @@ export async function dryRun(req: BuiltRequest) {
   }
   try {
     const msg = await client().messages.create(req.params as never);
+    // The one paid request here with no ledger of its own: a sample nobody
+    // keeps. Its meters go to Usage's, so its receipt can be accounted for.
+    recordDirectRequestMeters({ source: 'batch:dry-run', model: msg.model, inputTokens: msg.usage?.input_tokens,
+      outputTokens: msg.usage?.output_tokens, requestId: (msg as { _request_id?: string | null })._request_id });
     const text = msg.content
       .flatMap((b) => (b.type === 'text' ? [b.text] : []))
       .join('\n');
