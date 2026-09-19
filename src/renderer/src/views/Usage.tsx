@@ -315,7 +315,7 @@ function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
               <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
                   title={row.costStatus === 'reported' ? 'Every request carried a provider cost.'
                     : row.costStatus === 'partial' ? 'Some requests carried no provider cost, so this total is a floor.'
-                    : row.estimatedCostUsd !== undefined ? 'Estimated from reported input tokens at the rate saved for each call. This is not a provider bill.'
+                    : row.estimatedCostUsd !== undefined ? 'Estimated from reported token usage at the rate saved for each call. This is not a provider bill.'
                       : 'This provider reported no cost, so there is no figure to show.'}>
                 {consumptionCost(row)}
               </td>

@@ -180,7 +180,7 @@ export default function MissionRoom({ story, followedSession, sessions=[], atten
         <PageHead title={title} />
         <div className="mission-summary"><p>Ask about your agents or the recorded overview of your projects.</p></div>
         <form className="mission-composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-          <PromptField scopeKey={`companion:${projectId ?? 'all'}`} purpose="companion question" ref={input} aria-label="Talk to Wanigan" readOnly={demo} placeholder={demo ? "Companion answers are off in this demo" : "Talk to Wanigan…"} value={question} maxLength={4_000} rows={1}
+          <PromptField scopeKey={`companion:${projectId ?? 'all'}`} purpose="companion question" actionsDisabled={pending} ref={input} aria-label="Talk to Wanigan" readOnly={demo} placeholder={demo ? "Companion answers are off in this demo" : "Talk to Wanigan…"} value={question} maxLength={4_000} rows={1}
             onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)}
             onValueChange={question => {setQuestion(question);setInputEvent(value=>value+1);}}
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(); } }} />

@@ -8,6 +8,7 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+import type { PromptImproveRequest, PromptImproveResult, PromptImproveStatus } from '../shared/prompt-improve';
 import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
 import type { AssistedByPreview } from '../shared/assisted-by';
 import type { LedgerChainStatus } from '../shared/ledger-chain';
@@ -85,6 +86,12 @@ export type SuggestStatusShape = {
 };
 
 const api = {
+  promptImprove: {
+    status: () => call<PromptImproveStatus>('prompt-improve:status'),
+    setEnabled: (enabled: boolean) => call<PromptImproveStatus>('prompt-improve:setEnabled', enabled),
+    improve: (input: PromptImproveRequest) => call<PromptImproveResult>('prompt-improve:improve', input),
+    cancel: (requestId: string) => call<boolean>('prompt-improve:cancel', requestId),
+  },
   windowVisibility: {
     current:()=>call<boolean>('window:visible'),
     onChanged:(cb:(visible:boolean)=>void)=>{

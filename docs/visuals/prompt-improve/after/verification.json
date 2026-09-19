@@ -1,0 +1,205 @@
+{
+  "at": "2026-09-19T16:50:05.471Z",
+  "before": false,
+  "rendererRoot": "/private/tmp/wanigan-prompt-verify-20260919/out/renderer",
+  "provenance": "Built production renderer in an isolated Electron profile. All projects, sessions, accounts, models and bridge responses are fictional fixtures. These screenshots and checks establish DOM/layout behavior only; no main-process, IPC, persistence, live agent or provider claim.",
+  "checks": [
+    "orb: prompt draft visible in both themes",
+    "improve-review: prompt draft visible in both themes",
+    "Opening the helper discloses the provider and token/cost use without a paid call; Escape preserves the draft and restores focus.",
+    "improve-no-key: prompt draft visible in both themes",
+    "improve-disabled: prompt draft visible in both themes",
+    "Empty drafts, missing API credentials, and a disabled extension prevent generation. Enabling the extension restores availability without a rewrite request.",
+    "An input above 16,000 characters disables prompt improvement and makes no request.",
+    "sessions: prompt draft visible in both themes",
+    "improve-suggestion: prompt draft visible in both themes",
+    "Only Generate suggestion requests a rewrite; questions stay visible, Keep original preserves the draft, and applying an edited suggestion changes the draft without sending.",
+    "improve-failure: prompt draft visible in both themes",
+    "A failed rewrite retains the original draft; closing a pending rewrite cancels its request and ignores the late result.",
+    "A concurrent draft edit makes a late suggestion stale; applying is disabled and the newer draft survives.",
+    "new-session: prompt draft visible in both themes",
+    "Cmd+Enter in a suggestion cannot trigger the enclosing new-session launch shortcut.",
+    "Changing the originating project closes and cancels its pending improvement; the late result cannot overwrite the newly selected project’s draft.",
+    "relay: prompt draft visible in both themes",
+    "goal-idea: prompt draft visible in both themes",
+    "planning-answer: prompt draft visible in both themes",
+    "goal-objective: prompt draft visible in both themes",
+    "acceptance-checks: prompt draft visible in both themes",
+    "task-instructions: prompt draft visible in both themes",
+    "repository-run: prompt draft visible in both themes",
+    "attempts: prompt draft visible in both themes",
+    "schedule: prompt draft visible in both themes",
+    "orb-compact: prompt draft visible in both themes",
+    "improve-suggestion-compact: prompt draft visible in both themes",
+    "The 720px Orb and stacked suggestion preview fit the viewport in both themes.",
+    "No live model call ran, and no session write, launch, run, relay, goal, or schedule mutation was attempted through the fictional bridge."
+  ],
+  "captures": [
+    "orb-dark.png",
+    "orb-light.png",
+    "improve-review-dark.png",
+    "improve-review-light.png",
+    "improve-no-key-dark.png",
+    "improve-no-key-light.png",
+    "improve-disabled-dark.png",
+    "improve-disabled-light.png",
+    "sessions-dark.png",
+    "sessions-light.png",
+    "improve-suggestion-dark.png",
+    "improve-suggestion-light.png",
+    "improve-failure-dark.png",
+    "improve-failure-light.png",
+    "new-session-dark.png",
+    "new-session-light.png",
+    "relay-dark.png",
+    "relay-light.png",
+    "goal-idea-dark.png",
+    "goal-idea-light.png",
+    "planning-answer-dark.png",
+    "planning-answer-light.png",
+    "goal-objective-dark.png",
+    "goal-objective-light.png",
+    "acceptance-checks-dark.png",
+    "acceptance-checks-light.png",
+    "task-instructions-dark.png",
+    "task-instructions-light.png",
+    "repository-run-dark.png",
+    "repository-run-light.png",
+    "attempts-dark.png",
+    "attempts-light.png",
+    "schedule-dark.png",
+    "schedule-light.png",
+    "orb-compact-dark.png",
+    "orb-compact-light.png",
+    "improve-suggestion-compact-dark.png",
+    "improve-suggestion-compact-light.png"
+  ],
+  "errors": [],
+  "improveCalls": [
+    [
+      "status"
+    ],
+    [
+      "status"
+    ],
+    [
+      "status"
+    ],
+    [
+      "setEnabled",
+      true
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "0b18517e-e76e-4961-bc9c-46fa61f52b56",
+        "draft": "fix checkout retries and test it",
+        "purpose": "session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "07f26227-b414-424f-9001-ec80069fee5b",
+        "draft": "fix checkout retries and test it",
+        "purpose": "session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "edc6cf79-0256-4eb6-9fb0-cca6c8aebc07",
+        "draft": "Make checkout retries safe. Run the checkout tests and explain the result.",
+        "purpose": "session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "3b0a5a18-72ec-42ce-9387-f3a5b168248d",
+        "draft": "Make checkout retries safe. Run the checkout tests and explain the result.",
+        "purpose": "session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "cancel",
+      "3b0a5a18-72ec-42ce-9387-f3a5b168248d"
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "9d89fd9a-3640-4b00-8fab-e808fbc122b0",
+        "draft": "Make checkout retries safe. Run the checkout tests and explain the result.",
+        "purpose": "session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "d978b1b6-0f2d-4770-a944-8d7efa94304f",
+        "draft": "make checkout retries safe",
+        "purpose": "first session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "eb0a59f0-ca28-496b-ac3a-a7d62f3d6716",
+        "draft": "make checkout retries safe",
+        "purpose": "first session message",
+        "maxLength": 24000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ],
+    [
+      "cancel",
+      "eb0a59f0-ca28-496b-ac3a-a7d62f3d6716"
+    ],
+    [
+      "status"
+    ],
+    [
+      "improve",
+      {
+        "requestId": "054fdad9-913b-4745-87e4-67a773c6e494",
+        "draft": "help me understand what my agents need next",
+        "purpose": "companion question",
+        "maxLength": 4000,
+        "model": "claude-haiku-4-5-20251001"
+      }
+    ]
+  ]
+}

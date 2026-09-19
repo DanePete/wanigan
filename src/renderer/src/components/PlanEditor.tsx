@@ -353,11 +353,11 @@ export default function PlanEditor({ rows, onChange, scopeKey, actionsDisabled }
                      onChange={(event) => patch(index, { title: event.target.value })} />
             </label>
           </div>
-          <label><span className="label">Instructions</span>
-            <PromptField scopeKey={`${scopeKey}:${editorId}:task:${index}:${row.kind}:${row.title}`} purpose="task instructions" actionsDisabled={actionsDisabled} className="field control-textarea" value={row.instructions}
+          <div className="prompt-field-group"><label htmlFor={`${editorId}-task-${index}`}><span className="label">Instructions</span></label>
+            <PromptField id={`${editorId}-task-${index}`} scopeKey={`${scopeKey}:${editorId}:task:${index}:${row.kind}:${row.title}`} purpose="task instructions" maxLength={8_000} actionsDisabled={actionsDisabled} className="field control-textarea" value={row.instructions}
                       placeholder="What this task must do, and what it must not."
                       onValueChange={instructions => patch(index, { instructions })} />
-          </label>
+          </div>
           <label><span className="label">Claim path · optional</span>
             <input className="field" value={row.claimPath} placeholder="src/cart/total.ts"
                    onChange={(event) => patch(index, { claimPath: event.target.value })} />

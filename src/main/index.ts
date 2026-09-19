@@ -125,7 +125,7 @@ import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
-import { moduleSchedules, registerModuleIpc } from './module-registry';
+import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc } from './module-registry';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -1744,7 +1744,7 @@ function registerIpc() {
         // Only the read is shared; a write from a demo window still falls to
         // the demo reader below and is refused.
         if (channel === 'keymap:get') return { ok: true, data: keymapState() };
-        if (!demo && !attendedServicesStarted && needsStartedServices.has(channel)) {
+        if (!demo && !attendedServicesStarted && (needsStartedServices.has(channel) || moduleNeedsStartedServices(channel))) {
           throw new Error(startupState.phase === 'recovery'
             ? 'Local services are in recovery mode. Retry local services before starting work.'
             : 'Wanigan is still opening encrypted credentials and starting local services. Try again when startup finishes.');

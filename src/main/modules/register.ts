@@ -4,6 +4,7 @@ import { relayModule } from './relay';
 import { scoutModule } from './scout';
 import { suggestModule } from './suggest';
 import { usageModule } from './usage';
+import { promptImproveModule } from './prompt-improve';
 
 /**
  * Every module Wanigan ships, registered in one place.
@@ -19,3 +20,4 @@ registerModule(usageModule);
 registerModule(scoutModule);
 registerModule(suggestModule);
 registerModule(relayModule);
+registerModule(promptImproveModule);

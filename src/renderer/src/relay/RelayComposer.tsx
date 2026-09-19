@@ -144,12 +144,12 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                 window — beside the Wanigan name — and this page will fill in.
               </Note>
             )}
-            <label>
-              <span className="label">What should this relay accomplish?</span>
-              <PromptField scopeKey={`relay:${projectId}:${providerId}`} purpose="relay intent" className="field" aria-label="What should this relay accomplish" value={intent}
+            <div className="prompt-field-group">
+              <label htmlFor="relay-intent"><span className="label">What should this relay accomplish?</span></label>
+              <PromptField id="relay-intent" scopeKey={`relay:${projectId}:${providerId}`} purpose="relay intent" maxLength={12_000} className="field" aria-label="What should this relay accomplish" value={intent}
                 onValueChange={value => { setIntent(value); setPreview(null); }} rows={4} ref={intentEl}
                 placeholder="Fix checkout retries so one payment creates one order. Include what done looks like." disabled={busy !== null} />
-            </label>
+            </div>
             <div className="rl-start-meta">
             <label>
               <span className="label">Profile</span>

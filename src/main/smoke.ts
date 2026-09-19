@@ -271,6 +271,8 @@ export async function runSmoke(): Promise<void> {
     await runRelayDeliverySmoke(check, say);
     const { runSuggestSmoke } = await import('./smoke-suggest');
     await runSuggestSmoke(check, say);
+    const { runPromptImproveSmoke } = await import('./smoke-prompt-improve');
+    await runPromptImproveSmoke(check, say);
     const { runSandboxAndCredentialSmoke } = await import('./smoke24');
     await runSandboxAndCredentialSmoke(check, say);
     const { runVerifiedDoneSmoke } = await import('./smoke26');

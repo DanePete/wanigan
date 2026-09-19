@@ -2,7 +2,7 @@ import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project, ProviderInfo } from '@shared/types';
 import {
-  PASS_FORM_WORDS, ceilingWords, isTrialStatus, planAttempts,
+  ATTEMPT_LIMITS, PASS_FORM_WORDS, ceilingWords, isTrialStatus, planAttempts,
   type AttemptArmInput, type AttemptCleanupOutcome, type AttemptCleanupResult, type AttemptGate, type AttemptRow,
   type AttemptSetDetail, type AttemptSetKind, type AttemptSetSummary, type CostPerSolved, type PassFigure,
 } from '@shared/attempts';
@@ -285,10 +285,10 @@ export default function Attempts({ projects, providers, areaSwitch }: {
                 </select>
               </label>
             </div>
-            <label className="at-field at-prompt"><span className="label">Task for every attempt</span>
-              <PromptField scopeKey={`attempts:${projectId}:${kind}`} purpose="task for every attempt" actionsDisabled={busy === 'start'} className="field" value={prompt} onValueChange={setPrompt}
+            <div className="at-field at-prompt prompt-field-group"><label htmlFor="attempt-task"><span className="label">Task for every attempt</span></label>
+              <PromptField id="attempt-task" scopeKey={`attempts:${projectId}:${kind}`} purpose="task for every attempt" maxLength={ATTEMPT_LIMITS.promptChars} actionsDisabled={busy === 'start'} className="field" value={prompt} onValueChange={setPrompt}
                         placeholder="Make the retry test pass without charging twice, and run the checkout suite." />
-            </label>
+            </div>
             <div className="at-arms" role="group" aria-label="Arms">
               <SectionHead label="Arms" count={arms.length} right={
                 <button className="btn btn-sm" disabled={arms.length >= 4} onClick={() => setArms((prior) => [...prior, { providerId: '', model: '', effort: '' }])}>Add arm</button>

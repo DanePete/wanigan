@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { ConsumptionPoint, ModelConsumption, QueueKind } from '../shared/types';
+import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '../shared/types';
 
 /**
  * The main-process half of "everything is a module" (AGENTS.md).
@@ -80,7 +80,12 @@ export type WaniganModule = {
    * namespace is a channel nobody can attribute.
    */
   ipc?: (handle: IpcHandle) => void;
+  /** Module-local IPC operations that require the app's services to be ready. */
+  requiresStartedServices?: readonly string[];
   schedules?: () => ModuleSchedule[];
+  /** Outbound destinations and their current conditions. Local reads only;
+   * include disabled capabilities with activeNow false, without probing them. */
+  egress?: () => EgressHost[];
   /** Local recorded consumption outside agent sessions. Reads must never call
    * a provider or infer a quota. `since` is the Usage ledger's clamped cutoff;
    * the module owns its records and preserves estimates apart from billed cost. */
@@ -129,6 +134,13 @@ export function registerModule(module: WaniganModule): void {
 
 export function modules(): readonly WaniganModule[] {
   return registry;
+}
+
+/** Startup policy is declared beside the operation, not restated in index.ts. */
+export function moduleNeedsStartedServices(channel: string): boolean {
+  return registry.some((module) => module.requiresStartedServices?.some(
+    (operation) => channel === `${module.id}:${operation}`,
+  ));
 }
 
 /**

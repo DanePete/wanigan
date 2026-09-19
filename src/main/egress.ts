@@ -11,6 +11,7 @@ import { SUGGEST_HOST, SUGGEST_PATH, enabled as suggesterEnabled } from './modul
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 import { catalogUrl } from '../shared/backend-catalog';
+import { modules } from './module-registry';
 
 /**
  * What leaves this machine, assembled where it is actually knowable.
@@ -476,7 +477,7 @@ function hosts(): EgressHost[] {
 
   // Appended last: an installed pack can add destinations to this table, and
   // the rows above stay the ones with the stronger claim behind them.
-  return [...enumerated, ...packBackendHosts()];
+  return [...enumerated, ...modules().flatMap((module) => module.egress?.() ?? []), ...packBackendHosts()];
 }
 
 /* ── pinned variables ────────────────────────────────────────────────── */
@@ -597,7 +598,7 @@ const UNENUMERATED = [
 
 const PROVENANCE =
   "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the official-source registry the Scout's installed extensions declare — " +
-  'with one derived exception: model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
+  'with module-owned destinations contributed by the registered modules themselves. Model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
   'The rows marked “agent” are where each CLI sends your prompts, which Wanigan supplies for GLM, DeepSeek and Grok and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
   'An “agent” row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { ImprovePromptAction } from './ImprovePromptAction';
 
 /** Draft access shared by optional prompt actions. Applying never sends. */
 export type PromptActionContext = {
@@ -8,6 +9,8 @@ export type PromptActionContext = {
   purpose: string;
   disabled: boolean;
   maxLength?: number;
+  /** Check the live field as well as React state before replacing a draft. */
+  isCurrent: (original: string) => boolean;
 };
 
 export type PromptAction = {
@@ -16,4 +19,6 @@ export type PromptAction = {
 };
 
 /** Built-in actions use the same field contract as any future contribution. */
-export const promptActions: readonly PromptAction[] = [];
+export const promptActions: readonly PromptAction[] = [
+  { id: 'prompt-improve', Component: ImprovePromptAction },
+];
