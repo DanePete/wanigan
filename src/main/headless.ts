@@ -213,7 +213,7 @@ const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
  * account's config directory after even those, because a pack is untrusted
  * data and must not be able to point a run's login at a directory it chose. */
 export function headlessEnv(
-  PATH: string, providerEnv: Record<string, string> = {}, accountEnv: Record<string, string> = {},
+  PATH: string, providerEnv: Record<string, string> = {}, account: AgentAccount | null = null,
   worktreeEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
@@ -231,7 +231,18 @@ export function headlessEnv(
   }
   out.PATH = PATH;
   Object.assign(out, providerEnv);
-  Object.assign(out, accountEnv);
+  // URGENT-FIX ESCAPE (AGENTS.md, recorded in unconverted-fixes.json): a fix
+  // made in place on an unconverted surface, on the same live defect the
+  // attended path carried and for the same reason. This function copies
+  // process.env wholesale, and the account that is the platform default
+  // contributes no variable, so an inherited CLAUDE_CONFIG_DIR survived: a
+  // headless run and a model-assisted consolidation both executed against
+  // whichever login the operator's shell named while the record said
+  // otherwise. Taking the account rather than its environment is what lets the
+  // decision clear as well as set — a record cannot carry a deletion — and it
+  // is why the next caller of this function cannot forget, which is how five
+  // call sites came to share one defect.
+  accounts.applyLaunchEnv(out, account);
   Object.assign(out, worktreeEnv);
   // The same strip an attended launch applies, and this path needed it more.
   // It copies process.env wholesale, so a fan-out on any profile that redirects
@@ -1302,7 +1313,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       harness: def.harness, projectId,
       appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
     }).account;
-    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account), worktreeEnv);
+    env = headlessEnv(launchPath, providerEnvValues, account, worktreeEnv);
     args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule, resume ? { cliSessionId: resume.cliSessionId } : null);
   } catch (error) {
     releaseHooks();

@@ -252,7 +252,7 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     try {
       const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, null, launchEnv);
       const outside = sessionsTest.agentEnv('/usr/bin', 's_wtboot_outside');
-      const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, null, launchEnv);
       const headlessOutside = headlessEnv('/usr/bin');
       check(attended.WANIGAN_PORT === launchEnv.WANIGAN_PORT && attended.WANIGAN_PORT_COUNT === launchEnv.WANIGAN_PORT_COUNT
         && attended.WANIGAN_WORKTREE === sw.path && headless.WANIGAN_PORT === launchEnv.WANIGAN_PORT && headless.WANIGAN_WORKTREE === sw.path
@@ -264,12 +264,11 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     }
     const launchRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
     const launchSrc = (file: string) => { try { return fs.readFileSync(path.join(launchRoot, 'src', 'main', file), 'utf8'); } catch { return ''; } };
-    // The attended path hands agentEnv the account itself rather than its
+    // Both paths hand their env builder the account itself rather than its
     // environment, because an account that contributes no variable still has to
-    // clear an inherited one and a record cannot carry a deletion. The headless
-    // path still spreads launchEnv, and is pinned here as it stands.
+    // clear an inherited one and a record cannot carry a deletion.
     check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /agentEnv\(PATH, id, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('sessions.ts'))
-      && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('headless.ts')),
+      && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /headlessEnv\(launchPath, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('headless.ts')),
     'both launch paths hand the worktree environment to the process they spawn, so the variables are reachable and not only buildable');
 
     const dirtyTree = await create(cmds.dir, 'kept for its files', 's_wtboot_dirty');

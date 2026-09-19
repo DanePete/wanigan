@@ -460,7 +460,7 @@ export function launchEnv(account: AgentAccount | null): Record<string, string> 
  * `launchEnv`; an unset variable is what running the CLI by hand actually is,
  * which is the behaviour `launchEnv`'s own note asks for.
  */
-export function applyLaunchEnv(out: Record<string, string>, account: AgentAccount | null): void {
+export function applyLaunchEnv(out: Record<string, string | undefined>, account: AgentAccount | null): void {
   const key = account ? configEnvVar(account.harness) : null;
   const set = launchEnv(account);
   Object.assign(out, set);

@@ -26,9 +26,32 @@
       "note": [
         "The decision itself was moved to accounts.applyLaunchEnv, which is tested and is",
         "not this surface. What is unconverted here is the single call that applies it.",
-        "Four other callers still spread launchEnv the old way and have the same defect:",
-        "headless.ts, claude-limits.ts, codex-status.ts and learning-model-assist.ts.",
-        "They were left alone deliberately — this row buys one fix, not a licence."
+        "Corrected 2026-09-18 after reading the other callers rather than grepping them:",
+        "claude-limits.ts does NOT have this defect. Its probe builds an environment from",
+        "an explicit allowlist that never carries CLAUDE_CONFIG_DIR, so there is nothing",
+        "inherited to survive — it is the one caller that was already right."
+      ]
+    },
+    "src/main/headless.ts": {
+      "date": "2026-09-18",
+      "condition": "a security issue is live",
+      "urgent": [
+        "The same defect as sessions.ts, on the path that runs without a terminal in",
+        "front of anyone. headlessEnv copies process.env wholesale and the account that",
+        "is the platform default contributes no variable, so an inherited",
+        "CLAUDE_CONFIG_DIR survived: a headless run and a model-assisted consolidation",
+        "executed against whichever login the operator's shell named while the record",
+        "said otherwise. The second of those is metered and spends money."
+      ],
+      "comment": "src/main/headless.ts, in headlessEnv where the account environment is applied",
+      "note": [
+        "Fixed in headlessEnv rather than at its two call sites (headless.ts and",
+        "learning-model-assist.ts), so a third caller cannot repeat it — five callers",
+        "sharing one defect is how this was found. codex-status.ts is the one caller",
+        "still carrying it: its probe allowlist includes CODEX_HOME, so the default",
+        "account's status is read from the shell's home rather than its own. That is a",
+        "wrong reading and not an execution, nothing runs under it, and it was left for",
+        "the conversion rather than spending a third escape on a display bug."
       ]
     }
   }

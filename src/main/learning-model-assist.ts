@@ -488,7 +488,7 @@ async function invoke(
       harness: def.harness, projectId: null,
       appliesToAnthropic: accounts.appliesTo(def, false),
     }).account;
-    env = headlessEnv(await shellPath(), def.env?.() ?? {}, accounts.launchEnv(account));
+    env = headlessEnv(await shellPath(), def.env?.() ?? {}, account);
     // An empty directory, never a repository. There is nothing here to read,
     // edit or leak, which is a stronger guarantee than a tool clamp alone.
     scratch = path.join(app.getPath('userData'), 'learning-phrasing');

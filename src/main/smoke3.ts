@@ -5466,6 +5466,17 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         && asNone.CLAUDE_CONFIG_DIR === '/tmp/another-login',
         'the account shown at launch is the one the spawned session actually uses: the default account reaches the PTY with no config directory at all, a named one with its own, and an unpinned launch inherits the shell',
         { asDefault: asDefault.CLAUDE_CONFIG_DIR, asWork: asWork.CLAUDE_CONFIG_DIR, asNone: asNone.CLAUDE_CONFIG_DIR });
+
+      // The headless path copies process.env wholesale too, and it is the one
+      // that spends money without a terminal in front of anyone.
+      const { headlessEnv: headlessEnvUnderTest } = await import('./headless');
+      const runAsDefault = headlessEnvUnderTest('/usr/bin', {}, defaultDirAccount);
+      const runAsWork = headlessEnvUnderTest('/usr/bin', {}, work);
+      const runAsNone = headlessEnvUnderTest('/usr/bin');
+      check(runAsDefault.CLAUDE_CONFIG_DIR === undefined && runAsWork.CLAUDE_CONFIG_DIR === workDir
+        && runAsNone.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+        'a headless run and a model-assisted call answer to the same account decision as an attended session: the default account reaches them with no config directory, a named one with its own, and only an unpinned launch inherits the shell',
+        { runAsDefault: runAsDefault.CLAUDE_CONFIG_DIR, runAsWork: runAsWork.CLAUDE_CONFIG_DIR, runAsNone: runAsNone.CLAUDE_CONFIG_DIR });
     } finally {
       if (prevAmbientDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = prevAmbientDir;
