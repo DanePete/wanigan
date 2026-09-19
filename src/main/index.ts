@@ -121,7 +121,7 @@ import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as goalGate from './goal-gate';
 import * as interview from './interview';
-import { companion } from './companion';
+import { companion } from './modules/companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents, startModuleMaintenance } from './module-registry';
@@ -1679,7 +1679,7 @@ function registerIpc() {
   // run before session recovery, collectors and stop handlers are installed.
   const needsStartedServices = new Set([
     'handover:finish',
-    'attempts:start', 'companion:ask',
+    'attempts:start',
     'batch:submit', 'batch:dryRun', 'batch:retry',
     'control:start', 'control:retry', 'control:setAutopilot',
     'interview:start', 'interview:answer', 'interview:conclude',
@@ -1726,11 +1726,6 @@ function registerIpc() {
   // This handler is intentionally database-free. It remains available when a
   // failed migration has put the attended UI in recovery mode, so the renderer
   // can explain why normal controls are paused and offer one bounded retry.
-  handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
-  handle('companion:history', (projectId: unknown) => companion.history(projectId));
-  handle('companion:ask', (input: unknown) => companion.ask(input));
-  handle('companion:cancel', () => companion.cancel());
-
   handle('startup:status', () => startupSnapshot());
   handle('window:visible', () => !!win&&!win.isDestroyed()&&win.isVisible()&&!win.isMinimized());
   handle('startup:retry', () => startAttendedServices());

@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { db } from './db';
-import { listProjects } from './store';
-import { listSessions } from './sessions';
-import { attentionFor } from './attention';
-import { getKey } from './keys';
-import { client } from './batch/anthropic';
-import { DEFAULT_MODEL, MODELS, syncCostOf } from './batch/pricing';
-import { refuseIfHalted } from './halt';
-import { snapshot as readUsage } from './usage';
-import { companionUsage } from './companion-usage';
-import type { Attention, Project, Session, UsageSnapshot } from '../shared/types';
-import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../shared/companion';
+import type { WaniganModule } from '../module-registry';
+import { db } from '../db';
+import { listProjects } from '../store';
+import { listSessions } from '../sessions';
+import { attentionFor } from '../attention';
+import { getKey } from '../keys';
+import { client } from '../batch/anthropic';
+import { DEFAULT_MODEL, MODELS, syncCostOf } from '../batch/pricing';
+import { refuseIfHalted } from '../halt';
+import { snapshot as readUsage } from '../usage';
+import { companionUsage } from '../companion-usage';
+import type { Attention, Project, Session, UsageSnapshot } from '../../shared/types';
+import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../../shared/companion';
 
 const MAX_QUESTION = 4_000;
 const MAX_CONTEXT = 32_000;
@@ -233,3 +234,17 @@ export const companion = createCompanionService({
   usage: () => readUsage({ days: 14 }),
   complete: completeCompanion,
 });
+
+export const companionModule = {
+  id: 'companion', label: 'Ask Wanigan',
+  // Disabling removes the question box and its answers; the room's presence,
+  // sessions and every recorded turn are untouched.
+  required: null,
+  requiresStartedServices: ['ask'],
+  ipc(handle) {
+    handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
+    handle('companion:history', (projectId: unknown) => companion.history(projectId));
+    handle('companion:ask', (input: unknown) => companion.ask(input));
+    handle('companion:cancel', () => companion.cancel());
+  },
+} satisfies WaniganModule;
