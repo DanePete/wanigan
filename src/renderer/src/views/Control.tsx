@@ -514,7 +514,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     onDone={id => { setCreateOpen(false); void choose(id); setNotice('Goal created. Choose a task when you are ready to begin.'); }} />;
 
   return <div className="pane control-view">
-    <PageHead compact title="Review" lead="The work. The proof. Your call."
+    <PageHead compact title="Goals" lead="The work. The proof. Your call."
       actions={<><button className="btn" type="button" disabled={busy !== null} onClick={() => void load()}>{refreshing ? 'Refreshing…' : 'Refresh'}</button><button className="btn btn-primary" type="button" disabled={actionBusy !== null} ref={createButton} onClick={() => setCreateOpen(true)}><Icon name="plus" />New goal</button></>} />
     {error && !createOpen && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error} {loadError && !actionError && <button className="btn btn-sm" disabled={refreshing} onClick={() => void load()}>Try again</button>}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
@@ -660,7 +660,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
         <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
       </ol>
-      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
+      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in the Review task.</p></div>
       </div>
     </Explainer>
     </details>
@@ -821,7 +821,7 @@ function GoalGateCard({ docket, busy, onChoose }: { docket: DocketDetail; busy: 
     <SectionHead label="Verified done" right={<Mark {...GATE_MARKS[choice]} />} />
     <p>{GATE_READING[choice]}</p>
     {finished ? <Hint>This goal is finished, so there is no agent left to gate.</Hint>
-      : noCommands && choice === 'off' ? <Hint>This project has no review gate commands, so there is nothing to run when an agent stops. Add them under Git › Review gate, then choose here.</Hint>
+      : noCommands && choice === 'off' ? <Hint>This project has no review gate commands, so there is nothing to run when an agent stops. Add them under Changes › Review gate, then choose here.</Hint>
       : <div className="control-gate-choice" aria-busy={busy !== null}>
           <Segmented<GateChoice> label="When an agent stops" value={choice} onChange={(next) => { if (busy === null && next !== choice) onChoose(next); }}
             options={[{ value: 'off', label: 'Take its word' }, { value: 'gate', label: 'Run the gate' }, { value: 'hand-back', label: 'Run the gate, hand failures back' }]} />
@@ -867,7 +867,7 @@ function TaskGate({ node, gate, proof }: { node: DocketNode; gate: DocketGate; p
     {detail?.failure && <details className="control-gate-failure">
       <summary>What failed · <code>{detail.failure.command}</code> {detail.failure.exitCode === null ? 'was stopped' : `exited ${detail.failure.exitCode}`}</summary>
       <pre>{detail.failure.excerpt || 'The command printed nothing.'}</pre>
-      {detail.failure.cut && <Hint>Only the lines that looked like errors were kept, and some of those were cut to fit. Git › Review gate has the full output.</Hint>}
+      {detail.failure.cut && <Hint>Only the lines that looked like errors were kept, and some of those were cut to fit. Changes › Review gate has the full output.</Hint>}
     </details>}
     {detail?.handBack && <Hint>{detail.handBack.sentence}</Hint>}
     {flags.length > 0 && <Note tone="warn" role="none">

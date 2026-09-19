@@ -3889,7 +3889,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
   {
-    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Review.',
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Goals.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
 ];
@@ -4613,7 +4613,7 @@ function RecallProjects({ projects, serverOn, archiving }: { projects: Project[]
    ════════════════════════════════════════════════════════════════════════ */
 
 /**
- * The opt-in half of GitHub intake. Review's event inbox reads GitHub whenever
+ * The opt-in half of GitHub intake. The Goals event inbox reads GitHub whenever
  * the operator presses; this decides whether Wanigan also asks on its own while
  * it is running. Off until turned on, because it reads with the operator's gh
  * credentials on a clock they did not start. The interval is checked in main,
@@ -4638,7 +4638,7 @@ function GitHubIntakeTimer() {
       setDraft(null);
       setResult({ tone: 'ok', text: saved.enabled
         ? `GitHub is checked every ${saved.intervalMinutes} minutes while Wanigan is running. The first check comes within a minute.`
-        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Review.` });
+        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Goals.` });
     } catch (e) {
       setResult({ tone: 'error', text: `Nothing was saved. ${msg(e)}` });
     } finally {
@@ -4647,7 +4647,7 @@ function GitHubIntakeTimer() {
   }
 
   return (
-    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into Review’s event inbox.">
+    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into the Goals event inbox.">
       <Frame v={timer.v} what="the GitHub intake timer" onRetry={timer.reload}>{(loaded) => {
         const saved = stored ?? loaded;
         const typed = draft ?? String(saved.intervalMinutes);
@@ -4655,7 +4655,7 @@ function GitHubIntakeTimer() {
           <Toggle on={saved.enabled} title="Check GitHub on a timer" busy={busy}
                   onChange={(on) => void save({ enabled: on, intervalMinutes: saved.intervalMinutes })}>
             While Wanigan is running, read each GitHub project’s opened, labelled and commented issues and its failed runs
-            every {saved.intervalMinutes} minutes, and add what is new to Review’s event inbox for you to triage. Nothing is
+            every {saved.intervalMinutes} minutes, and add what is new to the Goals event inbox for you to triage. Nothing is
             written to GitHub. Nothing watches while Wanigan is closed or this Mac sleeps, and the next check says for how long.
           </Toggle>
           <label className="label" htmlFor="intake-interval">Minutes between checks (at least {INTAKE_MIN_INTERVAL_MINUTES})</label>
@@ -4666,7 +4666,7 @@ function GitHubIntakeTimer() {
                     onClick={() => void save({ enabled: saved.enabled, intervalMinutes: Number(typed) })}>Save interval</button>
           </div>
           <p className="set-caption">
-            Each check is three reads per repository. A press in Review checks one project at any time, whether this is on or off.
+            Each check is three reads per repository. A press in Goals checks one project at any time, whether this is on or off.
           </p>
           <Result r={result} />
         </>;

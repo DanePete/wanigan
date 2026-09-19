@@ -515,7 +515,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
                 {readerArea === 'goal' && <div className="scout-goal">
                   <SectionHead label="From idea to work" />
                   <h3>{linkedGoal ? 'This idea has a home.' : 'Give this idea a destination.'}</h3>
-                  <p>Create a Goal with this proposal and its retained evidence. Starting an agent is a separate action in Review.</p>
+                  <p>Create a Goal with this proposal and its retained evidence. Starting an agent is a separate action in Goals.</p>
                   {linkedGoal ? <button className="btn btn-primary" onClick={() => openGoal(linkedGoal)}>Open linked Goal →</button> : selected.status === 'dismissed' ? <Note role="none">Reopen this proposal before creating a Goal.</Note> : <>
                     <label className="scout-project"><span className="label">Project for Goal</span><select className="field" aria-label="Project for Goal" value={projects.some(project => project.id === goalProjectId) ? goalProjectId : ''} disabled={disabled} onChange={event => setGoalProjectId(event.target.value)}><option value="">Choose a project</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
                     {!selected.evidence.length && <Note role="none">This proposal has no retained evidence. A linked Goal is unavailable.</Note>}

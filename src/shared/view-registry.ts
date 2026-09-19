@@ -67,9 +67,9 @@ export const VIEWS = [
     demo: true, digit: true,
   },
   {
-    id: 'control', label: 'Review', icon: 'target', area: 'review',
+    id: 'control', label: 'Goals', icon: 'target', area: 'work',
     hint: 'Goals — a contract, a task graph, evidence and your decision',
-    keywords: 'control goals goal dockets tasks work graph',
+    keywords: 'control goals goal review dockets tasks work graph',
     projectScope: 'workspace',
     shortcut: { label: '⌘3', aria: 'Meta+3 Control+3' },
     phone: { narrowedBy: 'goals' },
@@ -103,7 +103,7 @@ export const VIEWS = [
     demo: false, digit: true,
   },
   {
-    id: 'plugins', label: 'Plugins', icon: 'plug', area: 'knowledge',
+    id: 'plugins', label: 'Plugins', icon: 'plug', area: 'settings',
     hint: 'Claude Code’s own plugins and marketplaces, read from this machine',
     keywords: 'claude code marketplace integrations',
     projectScope: 'workspace',
@@ -157,7 +157,7 @@ export const VIEWS = [
     demo: false, digit: false,
   },
   {
-    id: 'context', label: 'Context', icon: 'file-text', area: 'work',
+    id: 'context', label: 'Context', icon: 'file-text', area: 'knowledge',
     hint: 'Instructions, memory and configuration, per project',
     keywords: 'instructions memory configuration',
     projectScope: 'required',
@@ -232,7 +232,7 @@ export const VIEWS = [
   //
   // E for Extensions. X reads as "close" on every other surface in this app.
   {
-    id: 'extensions', label: 'Extensions', icon: 'plug', area: 'knowledge',
+    id: 'extensions', label: 'Extensions', icon: 'plug', area: 'settings',
     hint: 'Install MCP servers and skills as one bundle, or package your own',
     keywords: 'extension plugin marketplace shop install mcp figma bundle author publish',
     projectScope: 'workspace',
@@ -266,21 +266,18 @@ export const VIEWS = [
  * this row back rather than keeping its own copy.
  *
  * `tabs` is the sidebar's order within an area, and it is the second order this
- * file carries. It is not `VIEWS` order and is not derivable from it: Projects
- * lists Sessions, Board, Changes, Context while `TABS` reaches them first,
- * ninth, thirteenth and sixteenth. It was transcribed from `SPACE_AREAS`
- * verbatim when this registry was built; now the direction has reversed —
- * `SPACE_AREAS` is this array, read back under its old name — so this comment
- * is the only place that order is still explained.
+ * file carries. It is not `VIEWS` order and is not derivable from it: Work
+ * groups the session, task board, goal and change views together without
+ * moving any established keyboard shortcut. `SPACE_AREAS` reads this array
+ * under its old name; there is no separate presentation table to keep in step.
  */
 export const VIEW_AREAS = [
-  { id: 'mission', label: 'Home', icon: 'compass', tabs: ['mission'] },
-  { id: 'work', label: 'Projects', icon: 'terminal', tabs: ['sessions', 'board', 'relay', 'git', 'context'] },
-  { id: 'fleet', label: 'Fleet', icon: 'grid', tabs: ['fleet', 'usage', 'insights'] },
-  { id: 'review', label: 'Review', icon: 'target', tabs: ['control'] },
-  { id: 'knowledge', label: 'Knowledge', icon: 'brain', tabs: ['learning', 'skills', 'scout', 'extensions', 'plugins'] },
-  { id: 'automation', label: 'Automation', icon: 'clock', tabs: ['runs', 'batches', 'schedules'] },
-  { id: 'settings', label: 'Settings', icon: 'sliders', tabs: ['settings'] },
+  { id: 'mission', label: 'Home', description: 'Your work at a glance', icon: 'compass', tabs: ['mission'] },
+  { id: 'work', label: 'Work', description: 'Sessions, goals and changes', icon: 'terminal', tabs: ['sessions', 'board', 'control', 'relay', 'git'] },
+  { id: 'fleet', label: 'Monitor', description: 'Activity, limits and spend', icon: 'grid', tabs: ['fleet', 'usage', 'insights'] },
+  { id: 'knowledge', label: 'Knowledge', description: 'Memory, skills and context', icon: 'brain', tabs: ['learning', 'skills', 'context', 'scout'] },
+  { id: 'automation', label: 'Automation', description: 'Runs, schedules and batches', icon: 'clock', tabs: ['runs', 'schedules', 'batches'] },
+  { id: 'settings', label: 'Manage', description: 'Settings and integrations', icon: 'sliders', tabs: ['settings', 'extensions', 'plugins'] },
 ] as const satisfies readonly ViewArea[];
 
 /** The route id union, derived rather than typed a second time. */

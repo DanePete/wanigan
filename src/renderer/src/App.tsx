@@ -8,7 +8,7 @@ import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retired
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, WorkspaceNavigation } from './components/SpaceNavigation';
+import { ProjectSpaces, WorkspaceLocation, WorkspaceNavigation } from './components/SpaceNavigation';
 import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
@@ -26,7 +26,7 @@ import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './co
 import { useThemePreference } from './theme';
 import { claudeContextStatus, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
-import { areaFor, areaDestination, rememberDestination, projectScopeFor, type AreaMemory, type SpaceAreaId } from '@shared/spaces';
+import { areaFor, areaDestination, projectDestination, rememberDestination, projectScopeFor, type AreaMemory, type SpaceAreaId } from '@shared/spaces';
 import { sessionName } from '@shared/session-name';
 import './styles/spaces.css';
 
@@ -252,7 +252,10 @@ export default function App() {
   const [demoOn, setDemoOn] = useState(false);
   const [demoPrompt, setDemoPrompt] = useState<{ next: boolean } | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
-  const { sidebarOpen, setSidebarOpen, compactNavigation, toggleSidebar } = useWorkspaceNavigation();
+  const { sidebarOpen, closeSidebar, closeDrawer, compactNavigation, toggleSidebar } = useWorkspaceNavigation(message => setError({ message }));
+  useEffect(() => {
+    setNeedAnchor(anchor => anchor?.isConnected ? anchor : null);
+  }, [sidebarOpen, compactNavigation]);
   const areaMemory = useRef<AreaMemory>(rememberDestination({}, tab));
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
@@ -554,7 +557,7 @@ export default function App() {
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
     areaMemory.current = rememberDestination(areaMemory.current, next);
-    setSidebarOpen(false);
+    closeDrawer();
     if (next === tabRef.current) return;
     const swap = () => setTab(next);
     const doc = document as ViewTransitionDoc;
@@ -569,7 +572,7 @@ export default function App() {
     void transition.finished.catch((cause: unknown) => {
       announceError(`Could not open this view: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
-  }, [announceError, setSidebarOpen]);
+  }, [announceError, closeDrawer]);
 
   const goArea = useCallback((area: SpaceAreaId) => go(areaDestination(area, areaMemory.current)), [go]);
 
@@ -622,7 +625,11 @@ export default function App() {
     setPaletteHits([]);
     if (!restoreFocus) return;
     const opener = paletteOpenerRef.current;
-    requestAnimationFrame(() => opener?.focus());
+    requestAnimationFrame(() => {
+      const target = opener?.isConnected && opener.getClientRects().length > 0
+        ? opener : document.querySelector<HTMLElement>('.hdr-toggle');
+      target?.focus();
+    });
   }, []);
 
   const openSession = useCallback((id: string) => {
@@ -909,6 +916,15 @@ export default function App() {
       haystack: 'resume session history restore continue reopen past recent conversation transcript',
       run: requestResumeSession,
     }, {
+      key: 'action:sidebar',
+      title: sidebarOpen ? 'Hide navigation' : 'Show navigation',
+      hint: sidebarOpen ? 'Give the current workspace more room' : 'Browse workspaces and all tools',
+      meta: chordLabels(keymap, 'sidebar').glyphs,
+      group: 'Actions',
+      staysPut: !compactNavigation,
+      haystack: 'sidebar side bar navigation menu rail panel collapse expand hide show focus',
+      run: toggleSidebar,
+    }, {
       key: 'action:shortcuts',
       title: 'Keyboard shortcuts',
       hint: 'Every binding, grouped by where it works',
@@ -930,6 +946,7 @@ export default function App() {
         hint: value === 'system' ? `Follow the Mac's appearance (${themeResolved} right now)` : `Use the ${word.toLowerCase()} theme everywhere`,
         meta: 'Setting',
         group: 'Actions',
+        searchOnly: true,
         staysPut: true,
         mark: themePreference === value ? { glyph: '●', word: 'current' } : undefined,
         haystack: `appearance theme ${value} light dark system colour color`,
@@ -975,7 +992,7 @@ export default function App() {
         mark: active ? { glyph: '●', word: 'selected' } : undefined,
         meta: 'Project', group: 'Projects',
         haystack: `${p.name} ${p.path} ${p.branch ?? ''} project repository folder`,
-        run: () => { choose(p.id); go(areaDestination('work', areaMemory.current)); },
+        run: () => { choose(p.id); go(projectDestination(areaMemory.current)); },
       });
     }
     for (const entry of SETTINGS_INDEX) {
@@ -985,6 +1002,7 @@ export default function App() {
         hint: `Settings › ${entry.tabLabel} — ${entry.hint}`,
         meta: 'Setting',
         group: 'Settings',
+        searchOnly: true,
         haystack: `${entry.section} ${entry.keywords} settings ${entry.tabLabel}`,
         run: () => jumpToSettings({ tab: entry.tab, section: entry.section }),
       });
@@ -1003,7 +1021,7 @@ export default function App() {
     });
     return items;
   }, [attention, choose, go, jumpToSettings, keymap, openSession, paletteHits, paletteQuery, spaceId, projects,
-    reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved]);
+    reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved, sidebarOpen, toggleSidebar, compactNavigation]);
 
   // The shell state each view renderer reads, under the shell's own names.
   // A plain object rather than a memo: the branches it replaced read these
@@ -1069,10 +1087,10 @@ export default function App() {
           keeps its left inset for the traffic lights. */}
       <header className="app-header">
           <button className="hdr-toggle" type="button" onClick={toggleSidebar}
-                  aria-expanded={sidebarOpen} aria-controls={compactNavigation && !sidebarOpen ? undefined : "wanigan-sidebar"}
+                  aria-expanded={sidebarOpen} aria-controls={sidebarOpen ? "wanigan-sidebar" : undefined}
                   aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
-                  title={`${compactNavigation ? 'Open navigation' : 'Focus navigation'} (${chordLabels(keymap, 'sidebar').glyphs})`}
-                  aria-label={`${compactNavigation ? 'Open navigation' : 'Focus navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
+                  title={`${sidebarOpen ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').glyphs})`}
+                  aria-label={`${sidebarOpen ? 'Hide navigation' : 'Show navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
             <Icon name="panel" />
           </button>
           <div className="brand-lockup">
@@ -1085,7 +1103,7 @@ export default function App() {
           </div>
 
         <div className="workbench-context">
-          <span className="workbench-location">{labelForTab(tab)}</span>
+          <WorkspaceLocation tab={tab} go={go} />
           {projectScopeFor(tab) !== 'workspace'
             ? <ProjectSpaces projects={projects} selected={spaceId ?? (projectScopeFor(tab) === 'required' ? projectId ?? null : null)} ready={projectsRead} onAdd={addProject}
                 onSelect={(id) => { setSpaceId(id); if (id) choose(id);
@@ -1093,6 +1111,12 @@ export default function App() {
             : <span className="workbench-scope">{areaFor(tab).id === 'fleet' || tab === 'control' ? 'Across all projects' : tab === 'settings' ? 'Application settings' : 'Workspace tools'}</span>}
         </div>
           <div className="nav-actions">
+            {!sidebarOpen && mark && <button className={`workbench-header-attention tone-${mark.tone}`} type="button"
+              aria-haspopup="dialog" aria-expanded={needAnchor !== null}
+              aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
+              onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
+              <span aria-hidden="true">{mark.glyph}</span><span>{needs.total} need you</span>
+            </button>}
             {/* The Learning view owns its scope control now — a nav-level
                 project select that only sometimes rendered was the invisible
                 scope that let two surfaces state contradictory counts. */}
@@ -1188,7 +1212,7 @@ export default function App() {
       {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
       <div className="workspace">
         <WorkspaceNavigation tab={tab} go={go} goArea={goArea} compact={compactNavigation}
-          open={sidebarOpen} onClose={() => setSidebarOpen(false)} needs={needs.total} running={running}
+          open={sidebarOpen} onClose={closeSidebar} onSearch={() => { closeDrawer(); openPalette(); }} needs={needs.total} running={running}
           runsInFlight={runsInFlight} batchWork={batchWork}
           attentionAction={mark ? <button className={`workbench-attention tone-${mark.tone}`} type="button"
             aria-haspopup="dialog" aria-expanded={needAnchor !== null}
@@ -1198,7 +1222,7 @@ export default function App() {
           </button> : undefined}
           batchAction={!hasKey ? <button className="workbench-key" type="button"
             aria-label="Batch submission needs an API key. Open Settings, Agents, Claude Platform API key."
-            onClick={() => { setSidebarOpen(false); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined}
+            onClick={() => { closeDrawer(); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined}
           companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
             expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
             onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
@@ -1750,18 +1774,26 @@ function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun 
     const rows: PaletteItem[] = [];
     for (const key of recent) {
       const item = byKey.get(key);
-      if (item) rows.push({ ...item, group: 'Recent', primary: false });
+      if (item) rows.push({ ...item, group: 'Recent', primary: false, searchOnly: false });
     }
     if (rows.length === 0) return items;
     const actions = items.filter((item) => item.group === 'Actions');
-    const rest = items.filter((item) => item.group !== 'Actions');
+    const recentKeys = new Set(rows.map(item => item.key));
+    const rest = items.filter((item) => item.group !== 'Actions' && !recentKeys.has(item.key));
     return [...actions, ...rows, ...rest];
   }, [items, normalizedQuery, recent]);
   const [scope, setScope] = useState('All');
-  const matching = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
-  const shown = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
-    || (scope === 'Settings' && item.key.startsWith('action:appearance:'))), [matching, scope]);
-  const groups = useMemo(() => groupPalette(shown), [shown]);
+  const matching = useMemo(() => filterPalette(scope === 'Settings'
+    ? withRecent.map(item => ({ ...item, searchOnly: false })) : withRecent, query), [withRecent, query, scope]);
+  const scoped = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
+    || (scope === 'Settings' && (item.key.startsWith('action:appearance:') || item.key.startsWith('setting:')))
+    || (scope === 'Views' && item.key.startsWith('view:'))
+    || (scope === 'Projects' && item.key.startsWith('project:'))
+    || (scope === 'Live sessions' && item.key.startsWith('session:'))), [matching, scope]);
+  const groups = useMemo(() => groupPalette(scoped), [scoped]);
+  // Keyboard indices and rendered indices must agree after ranked results
+  // from different categories are regrouped for display.
+  const shown = useMemo(() => groups.flatMap(group => group.items), [groups]);
   const run = (item: PaletteItem) => { rememberRecent(item.key); onRun(item); };
   // Reaching the third result used to take three Tabs. One highlighted row,
   // moved with the arrow keys and taken with Enter, is what every palette on

@@ -75,7 +75,11 @@ export type ViewModule = {
  * than in a second table, for the same reason `tabs` is: one array cannot
  * disagree with itself.
  */
-export type ViewArea = { id: string; label: string; icon: string; tabs: readonly string[] };
+export type ViewArea = {
+  id: string; label: string; icon: string; tabs: readonly string[];
+  /** A short description keeps a collapsed area discoverable. */
+  description?: string;
+};
 
 /** How many chords the digit row has. Mirrors `DIGIT_ROUTES`. */
 export const DIGIT_SLOTS = 9;

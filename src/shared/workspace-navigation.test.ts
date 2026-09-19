@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TABS, SIDEBAR_GROUPS, TAB_SHORTCUTS } from './routes.ts';
-import { SPACE_AREAS, areaDestination, rememberDestination, projectScopeFor } from './spaces.ts';
+import { SPACE_AREAS, areaDestination, rememberDestination, projectDestination, projectScopeFor } from './spaces.ts';
 import { filterPalette } from './palette.ts';
 import { sessionName } from './session-name.ts';
 
@@ -25,9 +25,18 @@ test('the same area map reaches every route once and preserves established keybo
   assert.equal(TAB_SHORTCUTS.git.label, '⌘9');
 });
 
+test('opening a project never reuses a workspace-wide goal view from Work memory', () => {
+  const goals = rememberDestination({}, 'control');
+  assert.equal(areaDestination('work', goals), 'control', 'returning to Work retains the goal destination');
+  assert.equal(projectDestination(goals), 'sessions', 'opening a project chooses a scoped destination');
+  assert.equal(projectDestination(rememberDestination({}, 'git')), 'git');
+  assert.equal(projectDestination(rememberDestination({}, 'board')), 'board');
+  assert.equal(projectDestination({}), 'sessions');
+});
+
 test('current destination labels and legacy names both resolve in command search', () => {
   const entries = TABS.map(item => ({ key: item.id, title: item.label, hint: `${item.group} · ${item.hint}`, meta: '', group: 'Views', haystack: `${item.label} ${item.group} ${item.keywords}` }));
-  for (const [query, route] of [['Changes', 'git'], ['Git', 'git'], ['Home', 'mission'], ['Mission room', 'mission'], ['Automation', 'batches']]) {
+  for (const [query, route] of [['Changes', 'git'], ['Git', 'git'], ['Home', 'mission'], ['Mission room', 'mission'], ['Automation', 'batches'], ['Goals', 'control'], ['Review', 'control'], ['Monitor', 'usage'], ['Manage', 'extensions']]) {
     assert.ok(filterPalette(entries, query).some(item => item.key === route), `${query} finds ${route}`);
   }
 });

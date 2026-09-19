@@ -635,7 +635,7 @@ export default function Relay({ projects, projectId, providers, openSession, ope
                       Open {KIND_WORD[p.node.kind].toLowerCase()} session
                     </button>
                   ))}
-                  <button className="btn btn-sm" onClick={() => openGoal(read.docket.id)}>Open in Review</button>
+                  <button className="btn btn-sm" onClick={() => openGoal(read.docket.id)}>Open in Goals</button>
                 </div>
               )}
             </Section>

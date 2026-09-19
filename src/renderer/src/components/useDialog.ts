@@ -65,8 +65,8 @@ function visible(el: HTMLElement | null): el is HTMLElement {
 
 /**
  * Where focus goes when the dialog closes: the control that opened it, or —
- * when that control unmounted with the view — the sidebar's single roving tab
- * stop, and failing that the header's sidebar toggle, so a keyboard user is
+ * when that control unmounted with the view — the current sidebar area,
+ * and failing that the header's sidebar toggle, so a keyboard user is
  * never dropped on the document body.
  *
  * Two fallbacks, not one, because App renders the nav list only while the
@@ -76,7 +76,7 @@ function visible(el: HTMLElement | null): el is HTMLElement {
 function restoreFocus(opener: HTMLElement | null): void {
   const target = visible(opener)
     ? opener
-    : document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')
+    : document.querySelector<HTMLElement>('[data-nav-tab][aria-current][tabindex="0"]')
       ?? document.querySelector<HTMLElement>('.hdr-toggle');
   target?.focus();
 }

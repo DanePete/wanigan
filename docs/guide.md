@@ -9,7 +9,7 @@ repo, one prompt fanned across ten thousand rows, and the gap between them, one
 prompt across every repo you own. Sessions, headless runs and batches share one
 project list, one database and one dispatcher for that reason.
 
-**Contents:** [Running it](#running-it) · [Sessions](#sessions) ·
+**Contents:** [Running it](#running-it) · [Finding your way](#finding-your-way) · [Sessions](#sessions) ·
 [What Wanigan knows about a running session](#what-wanigan-knows-about-a-running-session) ·
 [Sessions Wanigan did not start](#sessions-wanigan-did-not-start) · [Trust](#trust) ·
 [The third speed](#the-third-speed) · [The CLI](#the-cli) · [Reviewing code](#reviewing-code) ·
@@ -81,6 +81,34 @@ one administrator prompt for the staging/swap only. The app is quit and
 launched by your signed-in session, never by the privileged helper. To install
 a separately built verified bundle, pass
 `npm run install:mac:arm64 -- --source "/path/to/Wanigan.app"`.
+
+## Finding your way
+
+The sidebar groups tools by the job they support:
+
+| Group | Tools |
+| --- | --- |
+| Home | Companion and workspace overview |
+| Work | Sessions, Board, Goals, Relay, Changes |
+| Monitor | Fleet, Usage, Insights |
+| Knowledge | Learning, Skills, Context, Scout |
+| Automation | Runs, Schedules, Batches |
+| Manage | Settings, Extensions, Plugins |
+
+Use a group's chevron to expand or collapse its tools without leaving your
+current view. Clicking its name returns to the view you last used there.
+The panel button hides the sidebar and remembers that desktop preference;
+the header's view picker and Search still reach every tool. Narrow windows
+use a temporary navigation drawer without changing the desktop preference.
+
+Search accepts words in any order: “review git” finds Changes, and
+“backup restore” finds the restore settings. Detailed settings appear when
+searched or when you select the Settings search category. Existing shortcuts
+keep their destinations, including ⌘3 for Goals, formerly named Review.
+
+Within a session, **Review work** opens Changes and Checks & evidence. They
+share the session's checkout identity, and switching sections preserves your
+selected file and unsaved check commands. Checks run only when requested.
 
 ## Sessions
 
@@ -363,7 +391,7 @@ and an external-editor handoff, so a long file is never trapped in the rail.
 `⌘K` opens the view palette. It is the keyboard route to every surface when the
 header is narrower than the tab strip; `⌘0` opens Runs directly.
 
-**Verified done** is a goal's choice under Review › Execution & spending. An
+**Verified done** is a goal's choice under Goals › Execution & spending. An
 agent ending its turn is a claim that the work is done. With **Run the gate**,
 each Stop from an implementation or verification session runs the project's
 review gate in that task's tree, records which tree it ran on, and skips the run
@@ -766,8 +794,8 @@ The terminal owns its keystrokes: while it has focus, only `⌘.` gets through.
 | `⌘K` | command palette: views, projects, live sessions, settings, transcripts |
 | `⌘T` | new session |
 | `⌘⇧H` | Mission room |
-| `⌘1` · `⌘2` · `⌘3` | Sessions · Fleet · Review |
-| `⌘4`–`⌘9` | Batches · Insights · Learning · Plugins · Schedules · Git |
+| `⌘1` · `⌘2` · `⌘3` | Sessions · Fleet · Goals |
+| `⌘4`–`⌘9` | Batches · Insights · Learning · Plugins · Schedules · Changes |
 | `⌘0` · `⌘,` | Runs · Settings |
 | `⌘⇧S` · `⌘⇧C` · `⌘⇧U` · `⌘⇧I` · `⌘⇧B` | Skills · Context · Usage · Scout · Board |
 | `⌘B` | toggle the side panel (Code / Timeline / Learning) |

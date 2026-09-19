@@ -7629,15 +7629,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // Opener restoration is explicit now rather than incidental: closing has to
     // hand focus back to the control that opened it, not drop it on the body.
     && appSrc.includes('const opener = paletteOpenerRef.current')
-    && appSrc.includes('opener?.focus()')
+    && appSrc.includes('opener?.isConnected && opener.getClientRects().length > 0')
+    && appSrc.includes("? opener : document.querySelector<HTMLElement>('.hdr-toggle')")
+    && appSrc.includes('target?.focus()')
     // Reaching the third result used to cost three Tabs. The highlight moves on
     // arrow keys and is published to assistive tech, while focus stays in the
     // field so typing never stops mid-search.
     && appSrc.includes("if (e.key === 'ArrowDown')")
     && appSrc.includes('aria-activedescendant={active >= 0')
-    // The persistent area rail is a roving tab stop. Its component now owns
-    // the focus order while the palette owns its announced highlight.
-    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('tabIndex={active ? 0 : -1}')
+    // The rail owns its visible focus order; collapsed groups are skipped.
+    // The palette owns its separate announced highlight.
+    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('tabIndex={0}')
+    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('.filter(button => button.getClientRects().length > 0)')
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
     // Off-list views are reachable and are labelled with a real shortcut where
     // one exists rather than a blank column. Nothing is off the list any more,
@@ -8389,7 +8392,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const workspaceNavSrc = sourceOf('src/renderer/src/components/SpaceNavigation.tsx');
   const workspaceCssSrc = sourceOf('src/renderer/src/styles/spaces.css');
   check(workspaceNavSrc.includes('SPACE_AREAS.map(area =>')
-    && workspaceNavSrc.includes('<Icon name={area.icon} /><span>{area.label}</span>')
+    && workspaceNavSrc.includes('<Icon name={area.icon} /><span className="workbench-area-label"><span>{area.label}</span>')
     && workspaceNavSrc.includes('const keymap = useKeymap().map')
     && workspaceNavSrc.includes('chordLabels(keymap, `view:${id}`).aria')
     && workspaceNavSrc.includes('chordLabels(keymap, `view:${id}`).keys'),
@@ -8402,12 +8405,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && workspaceNavSrc.includes('data-initial-focus={active ? true : undefined}')
     && workspaceCssSrc.includes('.workbench-navigation-dialog')
     && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')"),
-    'the pinned area rail remembers its last destination; compact navigation uses the shared focus and Escape dialog lifecycle');
-  check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
-    && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={active ? 0 : -1}')
+    'the workspace rail remembers its last destination; compact navigation uses the shared focus and Escape dialog lifecycle');
+  check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][aria-current][tabindex="0"]')`)
+    && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={0}')
     && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
     && useDialogSrc.includes('restoreFocus(opener);'),
-    'dialog teardown returns to its opener, a visible current navigation destination, or the compact header toggle');
+    'dialog teardown returns to its opener, a visible navigation destination, or the header toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
     && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
     && appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('<WorkspaceNavigation')
@@ -9339,10 +9342,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     `th ${(mcpFn.match(/<th\b/g) ?? []).length}, colSpan7 ${(mcpFn.match(/colSpan=\{7\}/g) ?? []).length}`);
 
   // The Dispatcher row that caps a lane names the surface that arms it.
-  check(settingsSrc.includes('armed per goal in Review')
+  check(settingsSrc.includes('armed per goal in Goals')
     && !settingsSrc.includes('Tasks a goal dispatches on its own, unattended.'),
     'the Dispatcher row that limits goal autopilot names the surface that switches it on, instead of describing a lane with no stated way in',
-    String(settingsSrc.includes('armed per goal in Review')));
+    String(settingsSrc.includes('armed per goal in Goals')));
 
   // Settings now uses shared buttons for its section index. The removed
   // .set-jump reset has no remaining callers; the renderer probe exercises

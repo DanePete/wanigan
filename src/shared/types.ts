@@ -2856,7 +2856,7 @@ export type WaniganSettings = {
   motion: MotionSetting;
   /** Whether the Relay rail renders the real fluid module or its CSS fallback. */
   fluid: FluidSetting;
-  /** Whether the destination sidebar is showing. Persisted, not per-window. */
+  /** Persisted desktop sidebar preference. Compact navigation is a temporary per-window drawer. */
   navSidebar: 'open' | 'closed';
   theme: ThemeSetting;
   telemetry: boolean;

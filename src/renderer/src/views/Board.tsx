@@ -201,7 +201,7 @@ export default function Board({ projects, providers, projectId, selectedProjectI
     <div className="brd-guide"><Explainer id="board-columns" title="How tasks move" defaultHidden>
       Columns follow the goal graph: Waiting means prerequisites are unfinished, while Blocked means a failure needs attention.
       Start launches work; Retry reopens a task. Parked tasks return on their date. Completed and canceled tasks keep their own labels in Closed.
-      Open a task for its instructions, prerequisites and actions, or continue to Review for model choices and evidence.
+      Open a task for its instructions, prerequisites and actions, or continue to Goals for model choices and evidence.
       This view reads up to 500 of the most recently updated goals, keeping every included goal's tasks together.
     </Explainer></div>
     {selection && <TaskSheet selection={selection} card={selected} cards={cards ?? []} busy={busy} stale={!!error}
@@ -263,7 +263,7 @@ function TaskSheet({selection,card,cards,busy,stale,note,provider,providers,prov
               {parked && <button className="btn" type="button" disabled={disabled} onClick={()=>void onPark(card,null)}>Bring back now</button>}
               {['failed','canceled'].includes(card.node.status) && <button className="btn" type="button" disabled={disabled} onClick={()=>void onRetry(card)}>{busy===card.node.id?'Reopening…':'Retry task'}</button>}
               {card.node.sessionId && <button className="btn" type="button" onClick={()=>onOpenSession(card.node.sessionId!)}>Open session</button>}
-              <button className="btn" type="button" onClick={()=>onOpenGoal(card.docketId)}>Open goal in Review<Icon name="external" /></button>
+              <button className="btn" type="button" onClick={()=>onOpenGoal(card.docketId)}>Open in Goals<Icon name="external" /></button>
             </div>
             {!parked && !['running','completed'].includes(card.node.status) && !card.node.queued && <details className="brd-park-menu">
               <summary>Park for later<Icon name="chevron-down" /></summary>

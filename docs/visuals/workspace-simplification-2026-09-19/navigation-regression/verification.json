@@ -1,0 +1,30 @@
+{
+  "provenance": "Production renderer, isolated Electron profile, explicitly fictional STUB bridge. No real providers, PTYs, user-data reads, repository writes or model calls.",
+  "baselinePath": "/Users/dane/Projects/drupal/wanigan/docs/visuals/ux-audit-2026-09-15/probes/verification.json",
+  "baselineFailures": {
+    "projectReturn": true,
+    "navigationEscape": true,
+    "changesSearch": true,
+    "renamedSessionSearch": true
+  },
+  "checks": [
+    "Changes → Monitor → Work restores Changes and storefront; Fleet labels global scope explicitly",
+    "Session draft and pooled xterm survive area round trip; terminal retains digit shortcut ownership",
+    "Changes and a displayed session title are searchable, including a name changed without a session-state transition",
+    "Explicit all-projects selection survives a global-area visit separately from remembered project identity",
+    "Compact navigation focuses current area, arrows focus without navigating, Escape restores opener, selecting Automation closes dialog"
+  ],
+  "screenshots": [
+    "sessions-1440x1000-dark.png",
+    "sessions-1440x1000-light.png",
+    "sessions-1280x900-dark.png",
+    "sessions-1280x900-light.png",
+    "sessions-960x560-dark.png",
+    "sessions-960x560-light.png",
+    "navigation-960x560-dark.png",
+    "navigation-960x560-light.png"
+  ],
+  "errors": [],
+  "buildIndexSha256": "7325298fb3dbadaeab8bfc8f5a7604df715d0ec500f9f8315c5728b6bf8e2365",
+  "result": "pass"
+}

@@ -19,20 +19,37 @@ export type PaletteEntry = {
   /** True when running this leaves the view alone, so focus has to go back to
    *  whatever opened the palette rather than falling to the document body. */
   staysPut?: boolean;
+  /** Detailed destinations stay searchable without filling the initial menu.
+   *  A Recent entry can explicitly clear this flag to stay visible. */
+  searchOnly?: boolean;
   /**
    * Already matched by a real index (transcript FTS). The palette's substring
-   * filter must not re-judge it: FTS tokenisation and substring inclusion
+   * filter must not re-judge it: FTS tokenisation and local word matching
    * disagree, and dropping a genuine hit would misreport the archive.
    */
   prefiltered?: boolean;
 };
 
 export function filterPalette<T extends PaletteEntry>(items: T[], query: string): T[] {
-  const q = query.trim().toLocaleLowerCase();
+  const normalize = (text: string) => text.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+  const q = normalize(query);
   // No query, no search results: prefiltered rows exist only as answers.
-  if (!q) return items.filter((item) => !item.prefiltered);
-  return items.filter((item) =>
-    item.prefiltered || `${item.title} ${item.hint} ${item.haystack}`.toLocaleLowerCase().includes(q));
+  if (!q) return items.filter((item) => !item.prefiltered && !item.searchOnly);
+  const words = q.split(' ');
+  return items.map((item, index) => {
+    // Keep the index's own relevance order; its snippets need not contain the
+    // literal query (stemming and tokenisation are the archive's decisions).
+    if (item.prefiltered) return { item, index, rank: 4 };
+    const title = normalize(item.title);
+    const text = normalize(`${item.title} ${item.hint} ${item.haystack}`);
+    const rank = !words.every((word) => text.includes(word)) ? -1
+      : title === q ? 0
+        : title.startsWith(q) ? 1
+          : words.every((word) => title.includes(word)) ? 2 : 3;
+    return { item, index, rank };
+  }).filter(({ rank }) => rank >= 0)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ item }) => item);
 }
 
 export type PaletteGroup<T> = { label: string; items: T[] };

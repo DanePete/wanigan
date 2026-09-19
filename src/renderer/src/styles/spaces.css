@@ -32,15 +32,19 @@
 .space-switch-footer button:hover { background: var(--bg-sunk); }
 .space-switch-footer > span { font-size: var(--t-micro); color: var(--text-faint); }
 
-/* One context header and one stable destination rail. Content owns the height. */
+/* One context header and a destination list the operator can put away. */
 .workbench-shell.mission-shell .app-header { min-height: var(--topbar-h); border-bottom: 1px solid var(--line-soft); gap: var(--s-3); }
 .workbench-shell.mission-shell .workspace { padding: 0; }
 .workbench-shell.mission-shell .body { border: 0; border-radius: 0; }
 .workbench-shell.mission-shell .brand-lockup { display: flex; }
 .workbench-shell .brand-context { display: none; }
-.workbench-shell .hdr-toggle { display: none; }
+.workbench-shell .hdr-toggle { display: inline-flex; }
 .workbench-context { display: flex; align-items: center; gap: var(--s-4); flex: 1; min-width: 0; }
-.workbench-location { color: var(--text); font-size: var(--t-small); white-space: nowrap; }
+.workbench-location { display: flex; align-items: center; gap: var(--s-2); min-width: 0; color: var(--text); font-size: var(--t-small); white-space: nowrap; }
+.workbench-location-area, .workbench-location-divider { color: var(--text-faint); }
+.workbench-location select { min-width: 0; max-width: 160px; padding: var(--s-1) var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-soft); color: var(--text); font: inherit; cursor: pointer; }
+.workbench-header-attention { display: inline-flex; align-items: center; gap: var(--s-2); flex: none; min-height: var(--control-h-sm); padding: var(--s-1) var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); color: var(--warning); font-size: var(--t-small); white-space: nowrap; }
+.workbench-header-attention:hover { background: var(--bg-sunk); }
 .workbench-scope { color: var(--text-faint); font-size: var(--t-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workbench-context .project-spaces { width: 240px; margin: 0; }
 .workbench-context .space-switch-trigger { background: var(--bg-soft); border-radius: var(--r-sm); box-shadow: none; min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); }
@@ -48,24 +52,27 @@
 .workbench-navigation { display: flex; flex-direction: column; flex: none; width: var(--sidebar-w); min-height: 0; padding: var(--s-4) var(--s-2); background: var(--bg-chrome); border-right: 1px solid var(--line-soft); }
 .workbench-areas { display: flex; flex-direction: column; gap: var(--s-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .workbench-area { min-width: 0; }
-.workbench-area-button { display: flex; width: 100%; align-items: center; gap: var(--s-3); text-align: left; min-height: var(--control-h); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); }
+.workbench-area-heading { display: flex; align-items: center; border-radius: var(--r-sm); }
+.workbench-area-heading[data-current='true'] { background: var(--bg-selected); }
+.workbench-area-button { display: flex; flex: 1; min-width: 0; width: 100%; align-items: center; gap: var(--s-2); text-align: left; min-height: var(--control-h); padding: var(--s-2) var(--s-2); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); }
 .workbench-area-button > .icon { flex: none; color: var(--text-faint); }
 .workbench-area-button > span:first-of-type { flex: 1; }
+.workbench-area-label { display: grid; gap: var(--s-1); min-width: 0; }
+.workbench-area-label small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text-faint); font-size: var(--t-micro); font-weight: 400; line-height: 1.4; }
 .workbench-area-button:hover { background: var(--bg-sunk); color: var(--text); }
-.workbench-area-button[aria-current] { background: var(--bg-selected); color: var(--text); font-weight: 550; }
+.workbench-area-button[aria-current] { color: var(--text); font-weight: 550; }
 .workbench-area-button[aria-current] > .icon { color: var(--text); }
 .workbench-area-count { font-size: var(--t-micro); font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.workbench-area-disclosure { display: grid; place-items: center; align-self: stretch; flex: none; min-width: var(--control-h-sm); border-radius: var(--r-sm); color: var(--text-faint); }
+.workbench-area-disclosure:hover { background: var(--bg-sunk); color: var(--text); }
 .workbench-local-routes { display: grid; gap: var(--s-1); padding: var(--s-2) 0 var(--s-2) var(--s-4); }
+.workbench-local-routes[hidden] { display: none; }
 .workbench-local-routes > button { display: flex; align-items: center; gap: var(--s-2); text-align: left; color: var(--text-faint); border-radius: var(--r-sm); min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); font-size: var(--t-small); }
 .workbench-local-routes > button:hover { color: var(--text); background: var(--bg-sunk); }
 .workbench-local-routes > button[aria-current] { color: var(--accent); background: var(--accent-soft); }
 .workbench-local-routes .nav-tab-label { flex: 1; }
 .workbench-local-routes .nav-tab-chord { font-size: var(--t-micro); }
-/* An area you are not in keeps its views listed, a step quieter and tighter, so
-   seventeen destinations fit the rail without the current area losing its weight. */
-.workbench-local-routes[data-area-active='false'] { gap: 0; padding-block: 0 var(--s-1); }
-.workbench-local-routes[data-area-active='false'] > button { min-height: calc(var(--control-h-sm) - var(--s-1)); padding-block: calc(var(--s-1) / 2); }
-.workbench-local-routes[data-area-active='false'] .nav-tab-chord { opacity: .7; }
+.workbench-local-routes[data-area-active='false'] .nav-tab-chord { color: var(--text-faint); }
 .workbench-area-settings { margin-top: var(--s-3); border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
 .workbench-attention, .workbench-key { display: block; text-align: left; margin: var(--s-1) var(--s-3) var(--s-2); padding: var(--s-1) 0; font-size: var(--t-micro); color: var(--text-faint); }
 .workbench-attention { color: var(--warning); }
@@ -77,14 +84,30 @@
 .workbench-navigation-companion .companion-caption { display: grid; max-width: 110px; }
 .workbench-navigation-companion .wanigan-orb-small canvas { width: 40px; height: 40px; }
 .workbench-local-note { display: block; padding: var(--s-3); color: var(--text-faint); font-size: var(--t-micro); }
-.workbench-navigation-title { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-3) var(--s-4); color: var(--text-dim); font-size: var(--t-small); }
+.workbench-navigation-title { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex: none; padding: 0 var(--s-2) var(--s-2); color: var(--text-dim); font-size: var(--t-small); }
 .workbench-navigation-title button { display: grid; place-items: center; min-height: var(--control-h); min-width: var(--control-h); border-radius: var(--r-sm); }
 .workbench-navigation-title button:hover { background: var(--bg-sunk); }
+.workbench-search { display: flex; align-items: center; gap: var(--s-2); flex: none; min-height: var(--control-h); margin-bottom: var(--s-3); padding: var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-small); text-align: left; }
+.workbench-search:hover { background: var(--bg-sunk); color: var(--text); }
+.workbench-search > .icon { flex: none; }
+.workbench-search > span { flex: 1; }
+.workbench-search kbd { color: var(--text-faint); font: inherit; font-size: var(--t-micro); }
 .overlay-backdrop.workbench-navigation-backdrop { justify-content: flex-start; align-items: stretch; padding: var(--s-3); }
 .workbench-navigation-dialog { width: 240px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
+/* The temporary drawer spends its height on destinations. The desktop list
+   keeps descriptions and the companion; long expanded groups still scroll. */
+.workbench-navigation-dialog { padding-block: var(--s-2); }
+.workbench-navigation-dialog .workbench-area-label small,
+.workbench-navigation-dialog .workbench-navigation-companion { display: none; }
+.workbench-navigation-dialog .workbench-navigation-title { padding-bottom: var(--s-1); }
+.workbench-navigation-dialog .workbench-search { margin-bottom: var(--s-2); }
+.workbench-navigation-dialog .workbench-area-button { padding-block: var(--s-1); }
+.workbench-navigation-dialog .workbench-local-routes { gap: 0; padding-block: var(--s-1); }
+.workbench-navigation-dialog .workbench-area-settings { margin-top: var(--s-1); padding-top: var(--s-1); }
 @media (max-width: 1180px) {
   .workbench-shell.mission-shell .nav-new-session-label { display: inline; }
   .workbench-shell .nav-shortcut { display: none; }
+  .workbench-location-area, .workbench-location-divider { display: none; }
 }
 @media (max-width: 980px) {
   .workbench-shell .hdr-toggle { display: inline-flex; }
@@ -99,6 +122,7 @@
   .workbench-context { gap: var(--s-2); }
   .workbench-context .project-spaces { width: auto; flex: 1; }
   .workbench-location { display: none; }
+  .workbench-header-attention > span:last-child { display: none; }
   .workbench-shell .nav-new-session-label, .workbench-shell .nav-resume-session-label { display: none; }
   .workbench-shell .nav-views-shortcut { display: none; }
 }

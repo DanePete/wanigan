@@ -5,6 +5,24 @@ import { Icon } from './bits';
 import { chordLabels, useKeymap } from '../bindings';
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useDialog } from './useDialog';
+import { useViewMemory } from './viewMemory';
+
+/** The current view remains a door to its family when the sidebar is hidden. */
+export function WorkspaceLocation({ tab, go }: { tab: Tab; go: (tab: Tab) => void }) {
+  const current = areaFor(tab);
+  return <div className="workbench-location">
+    {current.tabs.length > 1 && <><span className="workbench-location-area">{current.label}</span>
+      <span className="workbench-location-divider" aria-hidden="true">/</span></>}
+    <select aria-label="Switch workspace view" value={tab} onChange={(event) => {
+      const destination = SPACE_AREAS.flatMap(area => [...area.tabs]).find(id => id === event.currentTarget.value);
+      if (destination) go(destination);
+    }}>
+      {SPACE_AREAS.map(area => <optgroup key={area.id} label={area.label}>
+        {area.tabs.map(id => <option key={id} value={id}>{labelForTab(id)}</option>)}
+      </optgroup>)}
+    </select>
+  </div>;
+}
 
 export function ProjectSpaces({ projects, selected, ready, onSelect, onAdd }: {
   projects: Project[]; selected: string | null; ready: boolean;
@@ -97,6 +115,7 @@ function SpaceSwitcher({ id, projects, selected, ready, onClose, onSelect, onAdd
 type WorkspaceNavigationProps = {
   tab: Tab; go: (tab: Tab) => void; goArea: (area: SpaceAreaId) => void;
   open: boolean; onClose: () => void; compact: boolean;
+  onSearch?: () => void;
   needs: number; running: number; runsInFlight: number | null;
   batchWork: { done: number; total: number } | null;
   attentionAction?: ReactNode; batchAction?: ReactNode; companion?: ReactNode;
@@ -104,7 +123,8 @@ type WorkspaceNavigationProps = {
 
 /** The area list is stable; only its local destinations change with the work. */
 export function WorkspaceNavigation(props: WorkspaceNavigationProps) {
-  if (props.compact) return props.open ? <NavigationDialog {...props} /> : null;
+  if (!props.open) return null;
+  if (props.compact) return <NavigationDialog {...props} />;
   return <aside className="workbench-navigation" id="wanigan-sidebar"><NavigationContents {...props} /></aside>;
 }
 
@@ -112,21 +132,41 @@ function NavigationDialog(props: WorkspaceNavigationProps) {
   const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose: props.onClose, initialFocus: 'first' });
   return portal(<div {...backdropProps} className={`${backdropProps.className} workbench-navigation-backdrop`}>
     <div {...dialogProps} id="wanigan-sidebar" className="workbench-navigation workbench-navigation-dialog" aria-label="Workspace navigation">
-      <div className="workbench-navigation-title"><span>Navigation</span><button type="button" onClick={props.onClose} aria-label="Close navigation"><Icon name="x" /></button></div>
       <NavigationContents {...props} />
     </div>
   </div>);
 }
 
-function NavigationContents({ tab, go, goArea, onClose, compact, needs, running, runsInFlight, batchWork, attentionAction, batchAction, companion }: WorkspaceNavigationProps) {
+function NavigationContents({ tab, go, goArea, onClose, onSearch, compact, needs, running, runsInFlight, batchWork, attentionAction, batchAction, companion }: WorkspaceNavigationProps) {
   const current = areaFor(tab);
   const keymap = useKeymap().map;
-  const openArea = (id: SpaceAreaId) => { goArea(id); if (compact) onClose(); };
+  const id = useId();
+  const [expanded, setExpanded] = useViewMemory<Partial<Record<SpaceAreaId, boolean>>>('navigation-expanded', {
+    mission: true, work: true, [current.id]: true,
+  });
+  // A direct shortcut or search result reveals its destination. A later
+  // manual collapse is respected until another navigation takes place.
+  useEffect(() => {
+    setExpanded(previous => previous[current.id] ? previous : { ...previous, [current.id]: true });
+  }, [current.id, tab, setExpanded]);
+  const openArea = (id: SpaceAreaId) => {
+    setExpanded(previous => ({ ...previous, [id]: true }));
+    goArea(id);
+    if (compact) onClose();
+  };
   const openView = (id: Tab) => { go(id); if (compact) onClose(); };
   return <>
+    <div className="workbench-navigation-title"><span>Workspace</span><button type="button" onClick={onClose}
+      aria-label={compact ? 'Close navigation' : 'Hide navigation'}><Icon name={compact ? 'x' : 'panel'} /></button></div>
+    {onSearch && <button type="button" className="workbench-search" aria-label="Search all tools"
+      aria-keyshortcuts={chordLabels(keymap, 'palette').aria} onClick={() => {
+        if (compact) { onClose(); requestAnimationFrame(onSearch); }
+        else onSearch();
+      }}><Icon name="search" /><span>Search all tools</span><kbd aria-hidden="true">{chordLabels(keymap, 'palette').keys}</kbd></button>}
     <nav className="workbench-areas" aria-label="Workspace navigation" onKeyDown={(event) => {
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')]
+        .filter(button => button.getClientRects().length > 0);
       const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
       if (at < 0) return;
       event.preventDefault();
@@ -135,22 +175,32 @@ function NavigationContents({ tab, go, goArea, onClose, compact, needs, running,
     }}>
       {SPACE_AREAS.map(area => {
         const active = current.id === area.id;
+        const isExpanded = expanded[area.id] === true;
+        const routesId = `${id}-${area.id}-routes`;
+        const descriptionId = `${id}-${area.id}-description`;
+        const countId = `${id}-${area.id}-count`;
         const count = area.id === 'fleet' ? needs : area.id === 'work' ? running : area.id === 'automation' ? runsInFlight : null;
         return <div key={area.id} className={`workbench-area${area.id === 'settings' ? ' workbench-area-settings' : ''}`}>
+          <div className="workbench-area-heading" data-current={active}>
           <button type="button" className="workbench-area-button" aria-label={area.label}
-            aria-current={active ? 'page' : undefined} data-nav-tab={active ? tab : area.tabs[0]} tabIndex={active ? 0 : -1}
+            aria-describedby={`${descriptionId}${count !== null && count > 0 ? ` ${countId}` : ''}`}
+            aria-current={active ? area.tabs.length > 1 ? 'location' : 'page' : undefined}
+            data-nav-tab={active ? tab : area.tabs[0]} tabIndex={0}
             data-initial-focus={active ? true : undefined} onClick={() => openArea(area.id)}>
-            <Icon name={area.icon} /><span>{area.label}</span>
-            {count !== null && count > 0 && <span className="workbench-area-count" aria-label={area.id === 'fleet' ? `${count} need you` : `${count} active`}>{count}</span>}
+            <Icon name={area.icon} /><span className="workbench-area-label"><span>{area.label}</span>
+              <small id={descriptionId}>{area.description}</small></span>
+            {count !== null && count > 0 && <span id={countId} className="workbench-area-count" aria-label={area.id === 'fleet' ? `${count} need you` : `${count} active`}>{count}</span>}
           </button>
-          {/* Every area lists its views, not only the one you are in. Rendering
-              them for the active area alone left ten of seventeen views —
-              Changes, Usage, Skills, Batches and the rest — invisible until you
-              happened to open the area above them, the same way resume once
-              hid behind a button called History. Only the current area's rows
-              are Tab stops; the arrow keys still reach every row. */}
-          {area.tabs.length > 1 && <nav className="workbench-local-routes" data-area-active={active} aria-label={`${area.label} views`}>
-            {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id} tabIndex={active ? undefined : -1}
+          {area.tabs.length > 1 && <button type="button" className="workbench-area-disclosure"
+            aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${area.label}`} aria-expanded={isExpanded}
+            aria-controls={routesId} onClick={() => setExpanded(previous => ({ ...previous, [area.id]: !previous[area.id] }))}>
+            <Icon name={isExpanded ? 'chevron-down' : 'chevron-right'} /></button>}
+          </div>
+          {/* Descriptions and an explicit disclosure keep every area findable;
+              search keeps every destination one query away even when folded. */}
+          {area.tabs.length > 1 && <nav id={routesId} className="workbench-local-routes" hidden={!isExpanded}
+            data-area-active={active} aria-label={`${area.label} views`}>
+            {area.tabs.map(id => <button key={id} type="button" data-nav-tab={id}
               aria-current={id === tab ? 'page' : undefined} aria-keyshortcuts={chordLabels(keymap, `view:${id}`).aria}
               title={`${labelForTab(id)} (${chordLabels(keymap, `view:${id}`).keys})`} onClick={() => openView(id)}>
               <span className="nav-tab-label">{labelForTab(id)}</span><span className="nav-tab-chord" aria-hidden="true">{chordLabels(keymap, `view:${id}`).keys}</span>
