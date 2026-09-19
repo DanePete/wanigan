@@ -21,6 +21,7 @@ import {
   loginShellProbe,
   needsCommandInterpreter,
   pathDelimiter,
+  processStartProbe,
   quoteForCmd,
   shellCommand,
   spawnPlan,
@@ -274,6 +275,34 @@ test('the command interpreter is the one the machine names', () => {
   // A Windows machine's SHELL, if some tool set one, must not be read as a
   // POSIX login shell.
   assert.equal(shellCommand('x', 'win32', { SHELL: '/bin/bash' }).file, 'cmd.exe');
+});
+
+test('asking when a process started is ps here and PowerShell there', () => {
+  assert.deepEqual(processStartProbe([12, 34], 'darwin'), {
+    file: 'ps', args: ['-o', 'pid=,lstart=', '-p', '12,34'],
+  });
+
+  const win = processStartProbe([12, 34], 'win32');
+  assert.equal(win?.file, 'powershell.exe');
+  assert.deepEqual(win?.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
+  assert.ok(win, 'Windows has a probe');
+  const script = Buffer.from(win.args[3], 'base64').toString('utf16le');
+  assert.match(script, /Get-Process -Id 12,34/);
+  // The unreadable-date branch is deliberate: "listed but undated" means
+  // running with an unknown start, and must not collapse into "gone".
+  assert.match(script, /catch \{ "\$\(\$_\.Id\) unknown" \}/);
+  // ISO-8601 round-trips through Date.parse, which is what parsePsStart uses.
+  assert.match(script, /ToString\('o'\)/);
+});
+
+test('a pid that is not a plain positive integer never reaches a command line', () => {
+  // These are rendered straight into a PowerShell script, so the filter is the
+  // only thing between a registry file and an injected command.
+  assert.equal(processStartProbe([], 'win32'), null);
+  assert.equal(processStartProbe([0, -1, 1.5, Number.NaN], 'win32'), null);
+  const probe = processStartProbe([0, -1, 7, Number.NaN], 'win32');
+  assert.ok(probe, 'one valid pid is still a probe');
+  assert.match(Buffer.from(probe.args[3], 'base64').toString('utf16le'), /-Id 7 /);
 });
 
 /* ── the environment around it ────────────────────────────────────────── */

@@ -4992,6 +4992,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(observed.parsePsStart('PID STARTED') === null && observed.parsePsStart('   ') === null,
       'and a line with no pid on it is not a process at all, which is a third answer rather than a pid of NaN');
 
+    // The Windows probe is PowerShell rather than ps, and it is shaped to this
+    // same parser: `<pid> <ISO-8601>`. The 'o' round-trip format carries seven
+    // fractional digits where ISO usually carries three, so this is the case
+    // that would have silently returned NaN and dated every Windows process to
+    // never. Its access-denied branch prints an unparseable stamp on purpose —
+    // "running, start unknown" is the middle answer above, not the absent one.
+    const psWindows = observed.parsePsStart('54186 2026-09-06T01:14:20.7890000Z');
+    check(psWindows !== null && psWindows.pid === 54186 && psWindows.at === Date.parse('2026-09-06T01:14:20.789Z'),
+      'a PowerShell ISO-8601 line with seven fractional digits yields its pid and the same instant',
+      JSON.stringify(psWindows));
+    const psDenied = observed.parsePsStart('54186 unknown');
+    check(psDenied !== null && psDenied.pid === 54186 && psDenied.at === null,
+      'a process this account may not inspect is still listed, with no start time rather than no row',
+      JSON.stringify(psDenied));
+
     fs.rmSync(path.join(obsReg, `${process.pid}.json`));
     writeEntry('999999', { pid: 999999, sessionId: 'smoke-dead', cwd: tmp, startedAt: Date.now() });
     check((await observed.listObserved()).length === 0, 'a pid that is not alive is dropped');

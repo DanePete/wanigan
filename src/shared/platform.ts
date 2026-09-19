@@ -317,6 +317,56 @@ export function shellCommand(
 }
 
 /**
+ * How to ask this platform when a set of processes started.
+ *
+ * A pid is not an identity: a registry file left by a SIGKILL keeps its pid, the
+ * kernel hands that number out again, and the stale row then looks live. The
+ * answer both platforms have to give is the same — which of these pids exist,
+ * and when each began — so that a start time can be compared against what the
+ * file claims.
+ *
+ * On Windows this is PowerShell, passed as `-EncodedCommand`: base64 of the
+ * UTF-16LE script. That is not ceremony either. The script contains quotes and
+ * `$(...)`, and between Node's CreateProcess quoting and PowerShell's own
+ * command-line parsing there are two layers that disagree about escaping — the
+ * same class of problem `spawnPlan` refuses arguments over. Encoding sidesteps
+ * both: there is nothing left for either layer to interpret.
+ *
+ * The output is shaped to the parser that already exists. `ps -o pid=,lstart=`
+ * emits `<pid> <date>`, and so does this; ISO-8601 round-trips through
+ * Date.parse exactly, where `lstart` needs LC_ALL=C to be readable at all.
+ * `StartTime` throws for a process this account may not inspect, so that case
+ * prints an unparseable stamp on purpose: the caller distinguishes "ps never
+ * mentioned this pid" (gone) from "mentioned it, date unreadable" (running,
+ * start unknown), and collapsing the second into the first drops a live session.
+ */
+export function processStartProbe(
+  pids: readonly number[],
+  platform: Platform,
+): { file: string; args: string[] } | null {
+  // Every pid is rendered into a command line, so each must be a plain
+  // non-negative integer and nothing else.
+  const safe = pids.filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+  if (!safe.length) return null;
+
+  if (platform !== 'win32') {
+    return { file: 'ps', args: ['-o', 'pid=,lstart=', '-p', safe.join(',')] };
+  }
+  const script = `Get-Process -Id ${safe.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { `
+    + `try { "$($_.Id) $($_.StartTime.ToUniversalTime().ToString('o'))" } `
+    + `catch { "$($_.Id) unknown" } }`;
+  return {
+    file: 'powershell.exe',
+    args: [
+      '-NoProfile',        // a profile script can print anything into stdout
+      '-NonInteractive',   // never stop for a prompt inside a 5s probe
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+  };
+}
+
+/**
  * The kind of directory link this platform can make without elevated rights.
  *
  * `fs.symlink(..., 'dir')` on Windows needs either an Administrator token or

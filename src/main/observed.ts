@@ -7,6 +7,8 @@ import { getSetting, setSetting } from './settings';
 import * as accounts from './accounts';
 import { listSessions } from './sessions';
 import type { ObservedSession, ObservedState } from '../shared/types';
+import { processStartProbe } from '../shared/platform';
+import { hostPlatform } from './platform';
 
 const exec = promisify(execFile);
 
@@ -196,9 +198,14 @@ async function processStarts(
     // and dropped down the branch that is supposed to mean "this file is stale".
     // A silently missing row is the failure this whole module exists to end, so
     // the probe asks for the one format the parser can read.
-    const { stdout } = await exec('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')], {
-      timeout: 5000,
+    const probe = processStartProbe(pids, hostPlatform());
+    if (!probe) return { starts: new Map(), listed: new Set() };
+    const { stdout } = await exec(probe.file, probe.args, {
+      // PowerShell starts slower than ps does; this is the whole probe's budget
+      // and a miss here degrades to "cannot say", never to a wrong answer.
+      timeout: 10_000,
       env: { ...process.env, LC_ALL: 'C' },
+      windowsHide: true,
     });
     const starts = new Map<number, number>();
     const listed = new Set<number>();
