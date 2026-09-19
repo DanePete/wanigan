@@ -22,6 +22,11 @@ project list, one database and one dispatcher for that reason.
 
 ## Running it
 
+> On Windows, read [windows.md](windows.md) first: it covers the build tools
+> `npm ci` needs, how a `claude.cmd` shim is resolved and started, and which
+> features are not there yet.
+
+
 ```bash
 nvm use          # Node 22.23.2 (see .nvmrc) — not optional, see below
 npm install      # rebuilds node-pty and better-sqlite3 for Electron's ABI
