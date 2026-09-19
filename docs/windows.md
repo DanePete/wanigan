@@ -67,13 +67,27 @@ prefix (`%APPDATA%\npm`) was added to your *user* `PATH` by the installer and
 the already-running desktop session has not re-read it. Wanigan searches there
 anyway; signing out and back in fixes it everywhere else.
 
+## Scheduling while the window is closed
+
+Wanigan can register a Windows scheduled task — **Task Scheduler \ Wanigan
+Scheduler** — that starts a windowless instance at logon, so schedules fire
+while the app is closed. Turn it on from **Schedules → Scheduler settings**.
+
+It is not quite the macOS LaunchAgent it mirrors, and the view says so rather
+than leaving you to find out: the task starts at logon and is **not restarted if
+it stops**, because re-arming a stopped task needs a full task XML definition
+rather than a flag, and claiming a restart that will not happen is worse than
+not claiming it. The PC also has to be signed in and awake.
+
+Nothing is elevated, nothing opens a port, and the task runs the same installed
+executable with `--daemon`.
+
 ## What is not there yet
 
 These are honest gaps, not bugs to report. Each one says what you get instead.
 
 | Feature | On Windows |
 |---|---|
-| **Durable scheduling** | Not available. The background scheduler is a macOS LaunchAgent. Schedules still run while Wanigan is open. |
 | **Status line relay** | Not available. The relay is a POSIX shell script; Wanigan says so on screen rather than failing per launch. |
 | **Codex hook forwarding** | Not available. The forwarding command needs `/bin/sh` and `/usr/bin/curl`. |
 | **Codex writer locks** | Fails closed. Verifying that a lock file is held needs `lsof`, so Wanigan refuses to open a second writer rather than risk two. Delete the stale `.lock` under your Codex home if you are sure. |
