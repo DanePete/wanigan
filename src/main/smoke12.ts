@@ -1,5 +1,8 @@
 import { db } from './db';
-import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
+import { companionEgress, companionFacts, completeCompanion, createCompanionService } from './modules/companion';
+import { interviewEgress } from './modules/interview';
+import { batchDryRunEgress } from './modules/batch/module';
+import { egressReport } from './egress';
 import Anthropic from '@anthropic-ai/sdk';
 import { companionUsage } from './modules/companion-usage';
 import { admitPaidOperation, recordPaidResponse } from './modules/usage-paid-operations';
@@ -105,6 +108,16 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
       'a companion turn that recorded its meters accounts for its own paid receipt',owned.row);
     check(unowned.row.outcome==='responded'&&unowned.row.owner_table===null,
       'a companion answer whose meters never arrived leaves its receipt unresolved',unowned.row);
+  }
+  {
+    // Every direct Messages request Wanigan makes is on the privacy panel, declared by the module that makes it.
+    const rows=egressReport().hosts.filter(h=>h.by==='wanigan'&&h.paths.includes('/v1/messages'));
+    const declared=[companionEgress(true)[0],interviewEgress(true)[0],batchDryRunEgress(true)[0]];
+    check(declared.every(row=>rows.filter(h=>h.purpose===row.purpose&&h.when===row.when).length===1),
+      'companion, the goal interview and the dry-run sample each appear exactly once on the privacy panel',rows.map(h=>h.purpose.slice(0,40)));
+    check(companionEgress(true,'https://user:secret@proxy.example/anthropic')[0].host==='proxy.example'
+      &&interviewEgress(false,'not a url')[0].host==='api.anthropic.com'&&interviewEgress(false)[0].activeNow===false,
+      'a module egress row names only the host of an override, never its credentials, and falls back to the provider when it cannot be parsed');
   }
   const restarted=createCompanionService({database:db,facts,available:()=>false,checkHalt:()=>{},complete:async()=>{throw new Error('offline');}});
   db().prepare("UPDATE companion_turns SET status='pending' WHERE id=?").run(recovered.id);

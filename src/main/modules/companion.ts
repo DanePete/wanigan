@@ -12,7 +12,7 @@ import { refuseIfHalted, registerHaltStopper } from '../halt';
 import { snapshot as readUsage } from '../usage';
 import { companionUsage } from './companion-usage';
 import { accountForPaidOperation } from './usage-paid-operations';
-import type { Attention, Project, Session, UsageSnapshot } from '../../shared/types';
+import type { Attention, EgressHost, Project, Session, UsageSnapshot } from '../../shared/types';
 import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../../shared/companion';
 
 const MAX_QUESTION = 4_000;
@@ -241,6 +241,19 @@ export const companion = createCompanionService({
   complete: completeCompanion,
 });
 
+/** The destination as egress.ts declared it before Companion was a module: the
+ * configured host, or the provider's when the override cannot be parsed. */
+export function companionEgress(available: boolean, baseUrl = process.env.ANTHROPIC_BASE_URL): EgressHost[] {
+  let host = 'api.anthropic.com';
+  try { host = new URL(baseUrl?.trim() || 'https://api.anthropic.com').hostname; } catch { /* keep the provider's host */ }
+  return [{
+    host, paths: ['/v1/messages'], by: 'wanigan',
+    purpose: 'Answering an explicit companion question from bounded project and session status, without agent transcripts or files.',
+    when: 'Only when you send a question to Wanigan with a Claude Platform API key connected. Each send makes one bounded request.',
+    activeNow: available, overrideEnv: 'ANTHROPIC_BASE_URL',
+  }];
+}
+
 /** The turns ledger, as db.ts created it before Companion was a module. */
 export function migrateCompanion(d: Database.Database): void {
   d.exec(`
@@ -260,6 +273,7 @@ export const companionModule = {
   required: null,
   migrate: migrateCompanion,
   requiresStartedServices: ['ask'],
+  egress: () => { try { return companionEgress(Boolean(getKey())); } catch { return companionEgress(false); } },
   ipc(handle) {
     registerHaltStopper({ name: 'companion', stop: () => ({ name: 'companion', stopped: companion.cancel() ? 1 : 0, note: 'pending answer stopped; provider billing may still apply' }) });
     handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
