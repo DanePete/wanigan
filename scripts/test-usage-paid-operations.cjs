@@ -31,6 +31,10 @@ function fixture() {
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE batches(id TEXT PRIMARY KEY,run_id TEXT,processing_status TEXT,results_ingested_at INTEGER);
+    CREATE TABLE events(run_id TEXT,level TEXT,message TEXT);
+    CREATE TABLE batch_submissions(batch_id TEXT PRIMARY KEY,at INTEGER,request_id TEXT);
+    CREATE TABLE batch_ingestions(batch_id TEXT PRIMARY KEY,at INTEGER,results INTEGER,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,cache_creation_tokens INTEGER);
     CREATE TABLE batch_dry_runs(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,cache_creation_tokens INTEGER,cost_usd REAL);
     CREATE TABLE interview_calls(id TEXT PRIMARY KEY,interview_id TEXT,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
@@ -162,6 +166,32 @@ async function main() {
   assert(isAccounted(sample));
   d.exec("UPDATE batch_dry_runs SET cache_read_tokens=9 WHERE id='sample-1'");
   assert.equal(isAccounted(sample), false, 'a changed dry-run sample cannot authorize a restore');
+
+  // A batch submission is metered by its ingested results, under Recovery's own rule for a batch.
+  const submitTo = async requestId => { const before = new Set(d.prepare('SELECT id FROM usage_paid_operations').all().map(row => row.id));
+    await s.paid.admittedFetch(answer(200, requestId))('https://api.anthropic.com/v1/messages/batches', { method: 'POST' });
+    return d.prepare('SELECT id FROM usage_paid_operations').all().map(row => row.id).find(id => !before.has(id)); };
+  const account = (requestId, batchId) => s.paid.accountForPaidOperation({ requestId, outcome: 'metered', ownerTable: 'batch_ingestions', ownerId: batchId }, d);
+  const submitted = await submitTo('req_batch');
+  d.exec(`INSERT INTO batches VALUES ('batch-1','run-1','in_progress',NULL); INSERT INTO batch_submissions VALUES ('batch-1',1,'req_batch');
+    INSERT INTO batch_ingestions VALUES ('batch-1',2,3,900,120,400,0)`);
+  assert.equal(account('req_batch', 'batch-1'), false, 'a batch still in progress accounts for nothing, whatever a snapshot says');
+  d.exec("UPDATE batches SET processing_status='ended',results_ingested_at=-5 WHERE id='batch-1'");
+  assert.equal(account('req_batch', 'batch-1'), false, 'a download still in flight is not an ingestion');
+  d.exec("UPDATE batches SET results_ingested_at=5 WHERE id='batch-1'");
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_batch', outcome: 'metered', ownerTable: 'batch_dry_runs', ownerId: 'sample-1' }, d), false,
+    'a Messages ledger cannot account for a batch submission');
+  assert.equal(account('req_sample_other', 'batch-1'), false);
+  assert.equal(account('req_batch', 'batch-1'), true);
+  assert(isAccounted(submitted));
+  d.exec("INSERT INTO events VALUES ('run-1','error','Batch batch-1 was never downloaded and its results are now past the 29-day window.')");
+  assert.equal(isAccounted(submitted), false, 'a batch whose results were lost cannot authorize a restore');
+
+  const other = await submitTo('req_batch_other');
+  d.exec(`INSERT INTO batches VALUES ('batch-2','run-1','ended',5); INSERT INTO batch_submissions VALUES ('batch-2',1,'req_somebody_else');
+    INSERT INTO batch_ingestions VALUES ('batch-2',2,3,900,120,0,0)`);
+  assert.equal(account('req_batch_other', 'batch-2'), false, 'a response cannot account for a batch some other request created');
+  assert.equal(isAccounted(other), false);
 
   // A settlement that cannot be written never takes the response from its caller.
   d.exec('DROP TABLE usage_paid_settlements');

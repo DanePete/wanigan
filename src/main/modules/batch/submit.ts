@@ -6,6 +6,7 @@ import { loadSource } from './sources';
 import { refuseIfHalted } from '../../halt';
 import type { RunConfig } from '../../../shared/types';
 import { mockCreate } from './mock';
+import { recordBatchSubmission } from './submission-ledger';
 import { spendCap } from '../../settings';
 
 export type SubmitResult = { runId: string; batchIds: string[]; requests: number };
@@ -180,6 +181,7 @@ export async function createAndSubmitRun(
         Date.parse(batch.expires_at as string) || now + 24 * 3600_000
       );
 
+      recordBatchSubmission(batch.id, (batch as { _request_id?: string | null })._request_id);
       linkRequestsToBatch(runId, batch.id, chunkReqs.map((r) => r.custom_id));
 
       batchIds.push(batch.id);

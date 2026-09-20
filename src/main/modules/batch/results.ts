@@ -6,6 +6,7 @@ import { client, isMock } from './anthropic';
 import { costOf } from './pricing';
 import type { CacheTtl } from '../../../shared/types';
 import { mockResults } from './mock';
+import { recordBatchIngestion } from './submission-ledger';
 
 type ResultLine = {
   custom_id: string;
@@ -73,6 +74,7 @@ export async function ingestResults(runId: string, batchId: string, model: strin
   logEvent(runId, 'info', `Ingested ${ingested.toLocaleString()} results from ${batchId} → ${path.basename(archive)}`);
 
   d.prepare('UPDATE batches SET results_ingested_at = ? WHERE id = ?').run(Date.now(), batchId);
+  recordBatchIngestion(batchId, ingested);
   rollUp(runId, model);
   return { ingested };
 }

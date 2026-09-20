@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { dialog } from 'electron';
+import type Database from 'better-sqlite3';
 import { db } from '../../db';
 import type { WaniganModule } from '../../module-registry';
 import type { RunConfig, SourceConfig } from '../../../shared/types';
@@ -8,6 +9,7 @@ import {
   previewSource, refreshModels, retryFailed, runDetail, runResults, runsInFlight,
 } from './index';
 import { migrateBatchDryRuns } from './dry-run-ledger';
+import { migrateBatchSubmissionLedger } from './submission-ledger';
 
 /** Streams a run's results to disk without materialising them in memory. */
 export function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
@@ -41,10 +43,10 @@ export const batchModule = {
   id: 'batch', label: 'Batches',
   // Disabling removes batch runs over a dataset; sessions and every other view still work.
   required: null,
-  // This module's own schema is the dry-run ledger. runs, batches, requests and events stay in db.ts: Recovery requires them as
+  // This module's own schema is the dry-run and submission ledgers. runs, batches, requests and events stay in db.ts: Recovery requires them as
   // evidence and `runs` is shared with headless work. The poller, its halt
   // stopper and the queue runner stay in index.ts, where the halt order is pinned.
-  migrate: migrateBatchDryRuns,
+  migrate: (d: Database.Database) => { migrateBatchDryRuns(d); migrateBatchSubmissionLedger(d); },
   requiresStartedServices: ['submit', 'dryRun', 'retry'],
   ipc(handle, context) {
     handle('batch:presets', (projectId?: string) => presetsFor(projectId));

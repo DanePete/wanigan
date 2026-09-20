@@ -5,6 +5,7 @@ import path from 'node:path';
 import * as batch from './modules/batch';
 import { writeExport } from './modules/batch/module';
 import { recordDryRun } from './modules/batch/dry-run-ledger';
+import { recordBatchIngestion, recordBatchSubmission } from './modules/batch/submission-ledger';
 import { admitPaidOperation, recordPaidResponse } from './modules/usage-paid-operations';
 import { db } from './db';
 import { addProject, listProjects } from './store';
@@ -177,6 +178,25 @@ export async function runSmoke(): Promise<void> {
   check(first.custom_id.startsWith('r0-'), 'custom_id keyed to source column', first.custom_id);
   check(first.rendered.includes('Barton Hall'), 'input preserved beside output');
   check(batch.runResults(sub.runId, 'all', 'Veneta', 0).total === 1, 'search filters rows');
+  {
+    // The real submit and ingest path, on the mock: both ledger rows are written,
+    // and with no provider request id there is nothing to account for.
+    const ledger = db().prepare(`SELECT s.request_id,i.results,i.input_tokens,i.output_tokens FROM batches b
+      JOIN batch_submissions s ON s.batch_id=b.id JOIN batch_ingestions i ON i.batch_id=b.id WHERE b.run_id=?`).all(sub.runId) as { request_id: string | null; results: number; input_tokens: number; output_tokens: number }[];
+    check(ledger.length === 1 && ledger[0].request_id === null && ledger[0].results === 3 && ledger[0].input_tokens > 0 && ledger[0].output_tokens > 0,
+      'a submitted and ingested batch leaves its submission row and one snapshot of what ingestion metered', ledger);
+    // The same two calls with a provider request id and a real receipt.
+    const receipt = admitPaidOperation('anthropic:batches'); recordPaidResponse(receipt, 200, 'req_smoke_batch', undefined, true);
+    db().prepare("INSERT INTO batches (id,run_id,chunk_index,processing_status,request_count,created_at) VALUES ('msgbatch_smoke_ledger',?,99,'in_progress',0,?)").run(sub.runId, Date.now());
+    recordBatchSubmission('msgbatch_smoke_ledger', 'req_smoke_batch');
+    const early = recordBatchIngestion('msgbatch_smoke_ledger', 0);
+    db().prepare("UPDATE batches SET processing_status='ended', results_ingested_at=? WHERE id='msgbatch_smoke_ledger'").run(Date.now());
+    const settled = recordBatchIngestion('msgbatch_smoke_ledger', 0);
+    const row = db().prepare('SELECT outcome,owner_table,owner_id FROM usage_paid_settlements WHERE receipt_id=?').get(receipt) as { outcome: string; owner_table: string | null; owner_id: string | null };
+    check(early === false && settled === true && row.outcome === 'metered' && row.owner_table === 'batch_ingestions' && row.owner_id === 'msgbatch_smoke_ledger',
+      'a batch submission is accounted for only once its batch has ended and its results were ingested', { early, settled, row });
+    db().prepare("DELETE FROM batches WHERE id='msgbatch_smoke_ledger'").run();
+  }
 
   // Run from the built bundle, which is where a relative require has no file to find.
   const exportPath = path.join(os.tmpdir(), `wanigan-smoke-export-${process.pid}.csv`);

@@ -25,9 +25,23 @@ export function paidSettlementEvidenceHash(d: Database.Database, row: PaidOperat
       if (row.outcome === 'not-charged-provider-stated') {
         if (!Number.isInteger(row.http_status) || row.http_status! < 400 || row.http_status! > 599 || row.owner_table !== null || row.owner_id !== null) return null;
       } else if (row.outcome === 'metered') {
-        if (row.source !== 'anthropic:messages' || !Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299
-            || !row.owner_id) return null;
-        if (row.owner_table === 'prompt_improve_usage') {
+        if (!Number.isInteger(row.http_status) || row.http_status! < 200 || row.http_status! > 299 || !row.owner_id) return null;
+        // A submission is metered by its results and by nothing else; a Messages call never is.
+        if ((row.source === 'anthropic:batches') !== (row.owner_table === 'batch_ingestions')) return null;
+        if (row.owner_table === 'batch_ingestions') {
+          // Recovery's own rule for a batch: ended, really ingested, and not the
+          // expiry path that stamps ingestion while saying the results were lost.
+          owner = d.prepare(`SELECT i.batch_id,i.at,i.results,i.input_tokens,i.output_tokens,i.cache_read_tokens,i.cache_creation_tokens,
+            s.request_id AS submit_request_id,b.processing_status,b.results_ingested_at,
+            EXISTS (SELECT 1 FROM events e WHERE e.run_id=b.run_id AND e.level='error'
+              AND instr(e.message,'Batch ' || b.id || ' was never downloaded and its results are now past the 29-day window')=1) AS results_lost
+            FROM batch_ingestions i JOIN batch_submissions s ON s.batch_id=i.batch_id JOIN batches b ON b.id=i.batch_id
+            WHERE i.batch_id=?`).get(row.owner_id) as Record<string, unknown> | undefined;
+          if (!owner || owner.submit_request_id !== row.request_id || owner.processing_status !== 'ended'
+              || !count(owner.results_ingested_at) || owner.results_ingested_at === 0 || owner.results_lost !== 0
+              || !count(owner.results) || !count(owner.input_tokens) || !count(owner.output_tokens)
+              || !count(owner.cache_read_tokens) || !count(owner.cache_creation_tokens)) return null;
+        } else if (row.owner_table === 'prompt_improve_usage') {
           owner = d.prepare(`SELECT request_id,at,model,input_tokens,output_tokens,cache_read_tokens,estimated_cost_usd
             FROM prompt_improve_usage WHERE request_id=?`).get(row.owner_id) as Record<string, unknown> | undefined;
           if (!owner || !count(owner.input_tokens) || !count(owner.output_tokens) || !count(owner.cache_read_tokens)
