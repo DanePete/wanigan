@@ -60,12 +60,52 @@ export const batchModule = {
   id: 'batch', label: 'Batches',
   // Disabling removes batch runs over a dataset; sessions and every other view still work.
   required: null,
-  // This module's own schema is the dry-run and submission ledgers. runs, batches, requests and events stay in db.ts: Recovery requires them as
-  // evidence and `runs` is shared with headless work. The poller, its halt
-  // stopper and the queue runner stay in index.ts, where the halt order is pinned.
+  // This module's own schema is the dry-run and submission ledgers. runs,
+  // batches, requests and events stay in db.ts: Recovery requires them as
+  // evidence and `runs` is shared with headless work.
   migrate: (d: Database.Database) => { migrateBatchDryRuns(d); migrateBatchSubmissionLedger(d); },
   requiresStartedServices: ['submit', 'dryRun', 'retry'],
   egress: () => batchDryRunEgress(keyReachable()),
+  // Polling a batch is a read. It rides the host's heartbeat so the emergency
+  // stop halts it with everything else, and it tells the window what ended.
+  async heartbeat({ notify }) {
+    const s = await pollOnce();
+    if (s.ended || s.ingested) notify('batch:changed', s);
+  },
+  runners: () => [{
+    kind: 'batch' as const,
+    describe: 'Submits again the batch run a schedule names, re-reading its dataset at fire time.',
+    // Schedules have offered a Batch option since phase 25 and nothing has ever
+    // been registered for the kind, so every batch schedule ever created sat in
+    // the queue with blocked_by 'no runner registered' — armed, visible, and
+    // firing nothing. The payload names a run rather than carrying a config: a
+    // batch is a dataset, a model and a template, so re-reading the run at fire
+    // time means editing the run changes what fires, and a glob or command source
+    // re-reads the world instead of replaying a frozen copy of it.
+    run: async (payload: unknown) => {
+      const p = payload as { runId?: unknown };
+      if (typeof p.runId !== 'string' || !p.runId) {
+        throw new Error(
+          'Nothing here names a run to submit. A batch is a dataset, a model and a template, so the payload has to carry {"runId":"<run>"}. ' +
+          'A schedule showing this was created before the form could store one — delete it and create it again from Schedules.'
+        );
+      }
+      // runDetail throws `Run <id> not found.` when the run has been deleted,
+      // which is the right answer: the schedule points at nothing and the history
+      // row says so by name.
+      const cfg = runDetail(p.runId).config as RunConfig;
+      const stamp = new Date().toLocaleDateString();
+      // No estimate on purpose. submit.ts prices an unpriced run itself and holds
+      // the per-run spend cap against the ceiling, so passing nothing here is what
+      // puts a schedule firing with nobody watching behind the same gate as a
+      // human pressing Submit.
+      await createAndSubmitRun(
+        { ...cfg, name: `${cfg.name} — scheduled ${stamp}` },
+        { parentRunId: p.runId }
+      );
+      void pollOnce().catch(() => {});
+    },
+  }],
   ipc(handle, context) {
     handle('batch:presets', (projectId?: string) => presetsFor(projectId));
     // Rethrown, not swallowed. Returning an 'unavailable' shape resolved the

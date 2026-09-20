@@ -73,6 +73,30 @@ export type ModuleSchedule = {
   sync: () => void;
 };
 
+/**
+ * A queue lane this module runs, declared rather than wired.
+ *
+ * A schedule already brings its lane's runner with it. This is for a lane with
+ * no schedule of the module's own: rows arrive from elsewhere, such as a
+ * schedule a person created, and the module is what knows how to run them. One
+ * lane has one runner; the host refuses a second claim rather than letting
+ * registration order decide who runs paid work.
+ */
+export type ModuleRunner = {
+  kind: QueueKind;
+  /** What a row on this lane does, in a sentence. */
+  describe: string;
+  /** The payload is untrusted, exactly as in a `queue.registerRunner` callback. */
+  run: (payload: unknown) => Promise<void>;
+};
+
+/** What a heartbeat may reach. The window is the host's; a module gets a send. */
+export type ModuleHeartbeatContext = {
+  /** Tell the live window something changed, on one of the module's own
+   * `${id}:` channels. A no-op when there is no window. */
+  notify: (channel: string, payload: unknown) => void;
+};
+
 /** Free module upkeep; separate from queue lanes that authorize paid work. */
 export type ModuleMaintenance = {
   id: string;
@@ -111,8 +135,19 @@ export type WaniganModule = {
   /** Module-local IPC operations that require the app's services to be ready. */
   requiresStartedServices?: readonly string[];
   schedules?: () => ModuleSchedule[];
+  /** Queue lanes this module runs that no schedule of its own brings. */
+  runners?: () => ModuleRunner[];
   /** Declared here; the runtime host owns starting and stopping these timers. */
   maintenance?: () => ModuleMaintenance[];
+  /**
+   * Watching work on the host's heartbeat, which `maintenance` cannot be: the
+   * emergency stop halts the heartbeat and clearing the halt resumes it, so
+   * this never runs while halted, and it can tell the window what it saw. The
+   * host owns the clock and the order; a module's failure is its own and is
+   * retried on the next beat. Reads only: anything that spends belongs on a
+   * queue lane, where the budget gate is.
+   */
+  heartbeat?: (context: ModuleHeartbeatContext) => Promise<void>;
   /** Outbound destinations and their current conditions. Local reads only;
    * include disabled capabilities with activeNow false, without probing them. */
   egress?: () => EgressHost[];
@@ -214,6 +249,36 @@ export function registerModuleIpc(
 /** Every module's recurring work, flattened for the scheduler in registration order. */
 export function moduleSchedules(): ModuleSchedule[] {
   return registry.flatMap((module) => module.schedules?.() ?? []);
+}
+
+/** Every lane a module runs without a schedule. Two claims on one lane are refused. */
+export function moduleRunners(): ModuleRunner[] {
+  const claimed = new Map<string, string>();
+  return registry.flatMap((module) => (module.runners?.() ?? []).map((runner) => {
+    const owner = claimed.get(runner.kind);
+    if (owner) throw new Error(`Modules "${owner}" and "${module.id}" both claim the "${runner.kind}" queue lane. One lane has one runner.`);
+    claimed.set(runner.kind, module.id);
+    return runner;
+  }));
+}
+
+/**
+ * One beat, in registration order, each module isolated from the next. `send`
+ * is the host's way to the window; a module may only use it on its own channels.
+ * Failures are quiet on purpose: a beat is retried in seconds, and an offline
+ * machine would otherwise write the same warning six times a minute.
+ */
+export async function runModuleHeartbeats(send: (channel: string, payload: unknown) => void): Promise<void> {
+  for (const module of registry) {
+    if (!module.heartbeat) continue;
+    const prefix = `${module.id}:`;
+    try {
+      await module.heartbeat({ notify: (channel, payload) => {
+        if (!channel.startsWith(prefix)) throw new Error(`Module "${module.id}" tried to notify on "${channel}" outside its namespace "${prefix}".`);
+        send(channel, payload);
+      } });
+    } catch { /* transient; the next beat retries */ }
+  }
 }
 
 /** Free upkeep is module-owned and never occupies or replaces a paid queue lane. */

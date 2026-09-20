@@ -25,7 +25,6 @@ import {
 import { clearHalt, haltState, halted, pullHalt, registerHaltStopper } from './halt';
 import { agentsChain } from './codex-sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
-import * as batch from './modules/batch';
 import * as code from './code';
 import { setSetting, setTheme, setUserPreference, spendCap } from './settings';
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId, initializeCredentials,
@@ -35,7 +34,7 @@ import type {
   RelayStartRequest,
   HookInput,
   McpServerConfig, PluginScope,
-  ProviderManifestInspection, RunConfig,
+  ProviderManifestInspection,
   ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
@@ -118,7 +117,7 @@ import * as control from './control';
 import * as goalGate from './goal-gate';
 import * as accounts from './accounts';
 import * as usage from './usage';
-import { moduleNeedsStartedServices, moduleSchedules, registerModuleIpc, registerModuleEvents, startModuleMaintenance } from './module-registry';
+import { moduleNeedsStartedServices, moduleRunners, moduleSchedules, registerModuleIpc, registerModuleEvents, runModuleHeartbeats, startModuleMaintenance } from './module-registry';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -281,13 +280,12 @@ function startPoller() {
   // halted fleet should not be keeping a laptop up to watch work it stopped.
   if (halted()) return;
   const tick = async () => {
-    try {
-      const s = await batch.pollOnce();
-      if (s.ended || s.ingested) {
-        const w = liveWindow();
-        if (w && !w.isDestroyed()) w.webContents.send('batch:changed', s);
-      }
-    } catch { /* transient; the next tick retries */ }
+    // What modules watch on this beat: today, batch polling. Each is isolated
+    // and quiet in the registry, so nothing here can stop the work below.
+    await runModuleHeartbeats((channel, payload) => {
+      const w = liveWindow();
+      if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
+    });
     // Persistent attention is also the retry source for a transient ntfy
     // failure. Transition-aware dedupe makes this cheap/noiseless when delivery
     // already succeeded, while a failed phone alert retries after its backoff.
@@ -1106,37 +1104,6 @@ async function startServices() {
     }, null, schedule.fireFromQueue(payload));
   });
 
-  // Schedules have offered a Batch option since phase 25 and nothing has ever
-  // been registered for the kind, so every batch schedule ever created sat in
-  // the queue with blocked_by 'no runner registered' — armed, visible, and
-  // firing nothing. The payload names a run rather than carrying a config: a
-  // batch is a dataset, a model and a template, so re-reading the run at fire
-  // time means editing the run changes what fires, and a glob or command source
-  // re-reads the world instead of replaying a frozen copy of it.
-  queue.registerRunner('batch', async (payload) => {
-    const p = payload as { runId?: unknown };
-    if (typeof p.runId !== 'string' || !p.runId) {
-      throw new Error(
-        'Nothing here names a run to submit. A batch is a dataset, a model and a template, so the payload has to carry {"runId":"<run>"}. ' +
-        'A schedule showing this was created before the form could store one — delete it and create it again from Schedules.'
-      );
-    }
-    // runDetail throws `Run <id> not found.` when the run has been deleted,
-    // which is the right answer: the schedule points at nothing and the history
-    // row says so by name.
-    const cfg = batch.runDetail(p.runId).config as RunConfig;
-    const stamp = new Date().toLocaleDateString();
-    // No estimate on purpose. submit.ts prices an unpriced run itself and holds
-    // the per-run spend cap against the ceiling, so passing nothing here is what
-    // puts a schedule firing with nobody watching behind the same gate as a
-    // human pressing Submit.
-    await batch.createAndSubmitRun(
-      { ...cfg, name: `${cfg.name} — scheduled ${stamp}` },
-      { parentRunId: p.runId }
-    );
-    void batch.pollOnce().catch(() => {});
-  });
-
   // Recurring work each module declared: the runner on its lane, then the
   // durable row it arms — the same two steps, in the same order, that were
   // hand-wired here per feature.
@@ -1144,6 +1111,8 @@ async function startServices() {
     queue.registerRunner(job.kind, job.run);
     job.sync();
   }
+  // And each lane a module runs without a schedule of its own.
+  for (const runner of moduleRunners()) queue.registerRunner(runner.kind, runner.run);
   headless.registerHeadlessRunner((runId, projectId) => {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
