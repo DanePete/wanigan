@@ -513,3 +513,8 @@
 .rl-delivery-output { margin-block: var(--s-3); padding: var(--s-3); max-block-size: 20rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r-md); font-size: var(--t-small); }
 .rl-delivery-hash { overflow-wrap: anywhere; }
 .rl-delivery-preview .rl-facts code, .rl-detail .rl-facts code { white-space: pre-wrap; }
+
+/* What Usage last read about the chosen account. It sits in the pickers' grid,
+   so it takes the whole row beneath them rather than a column beside them,
+   where its height would push both pickers down. The grid's gap spaces it. */
+.rl-account-reading { grid-column: 1 / -1; }

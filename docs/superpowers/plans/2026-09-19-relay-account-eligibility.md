@@ -4,7 +4,7 @@ Prepared on `feat/routing-suggester` after the recovery phase closed ([handoff](
 
 ## Implementation status — 2026-09-19
 
-Steps 1 to 5 are implemented and committed on `feat/routing-suggester`; step 6 needed no new renderer code. Read this section before the plan below, because two things landed differently than planned and one part is deliberately unfinished.
+Steps 1 to 6 are implemented and committed on `feat/routing-suggester`. Step 6 is one note in the Relay composer: under a named account, what Usage last read against that login and how old that reading is, from `usage.known()` and never from a new probe, with [before and after captures](../../visuals/relay-account-reading/) in both themes. It mirrors the launch gate's evidence, is worded as a warning rather than the decision, and says nothing where there is no reading, nothing reported, or no account named yet. The Usage row now carries `ordinaryUsageAllowed` as a field so that note never has to match prose. Read this section before the plan below, because two things landed differently than planned and one part is deliberately unfinished.
 
 | Step | Commit | What landed |
 | --- | --- | --- |

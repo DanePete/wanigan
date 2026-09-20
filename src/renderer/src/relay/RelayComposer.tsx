@@ -1,12 +1,13 @@
 import { PromptField } from '../prompt-actions/PromptField';
 import { useEffect, useRef, useState } from 'react';
-import type { AgentAccount, DocketNodeKind, ProviderInfo, RelayPreview, RelayRead, RelayRouteInput } from '@shared/types';
+import type { AccountLimits, AgentAccount, DocketNodeKind, ProviderInfo, RelayPreview, RelayRead, RelayRouteInput } from '@shared/types';
 import { DEFAULT_MIN_CONFIDENCE } from '@shared/relay-route';
 import { DEFAULT_RELAY_ROUTING, RELAY_ROUTING_PREFERENCES, type RelayRoutingSettings } from '@shared/relay-routing';
 import { Explainer, Hint, Note, Section, SectionHead } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
 import { AGENT_KINDS, KIND_WORD } from './facts';
 import ModelEconomics from './ModelEconomics';
+import { accountReadingNote } from '@shared/account-reading-note';
 
 const INHERIT_NONE = '\u0000none';
 
@@ -48,6 +49,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
   const [accountError, setAccountError] = useState<string | null>(null);
   const [accountRetry, setAccountRetry] = useState(0);
   const [accountOptions, setAccountOptions] = useState<AgentAccount[] | null>(null);
+  const [knownLimits, setKnownLimits] = useState<{ at: number; limits: AccountLimits[] } | null>(null);
   const [preview, setPreview] = useState<RelayPreview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +70,17 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
       .catch((cause: unknown) => { if (live) setAccountError(cause instanceof Error ? cause.message : String(cause)); });
     return () => { live = false; };
   }, [providerId, accountRetry]);
+
+  // Only what a visit to Usage already established. Reading limits spends an
+  // account probe, and opening this form must not start one.
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    void window.wanigan.usage.known().then((known) => { if (live) setKnownLimits(known); }).catch(() => { if (live) setKnownLimits(null); });
+    return () => { live = false; };
+  }, [active]);
+  // Said for a named account only. The ordinary resolution names none until launch.
+  const accountReading = accountId ? accountReadingNote(knownLimits?.limits.find((row) => row.accountId === accountId), Date.now()) : null;
 
   const updateDraft = (kind: DocketNodeKind, patch: Partial<RouteDraft[string]>) => {
     setDraft((value) => ({ ...value, [kind]: { ...value[kind], ...patch } }));
@@ -180,7 +193,7 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
               <p className="faint">Reading the accounts this coding assistant can use…</p>
             ) : accountOptions.length === 0 ? (
               <Hint>This coding assistant uses its current login. Separate accounts are unavailable.</Hint>
-            ) : (
+            ) : (<>
               <label>
                 <span className="label">Account</span>
                 <select className="field" aria-label="Account every phase of this relay launches as" value={accountId}
@@ -191,7 +204,8 @@ export default function RelayComposer({ projectId, providers, active, onCreated,
                   ))}
                 </select>
               </label>
-            )}
+              {accountReading && <div className="rl-account-reading"><Note tone={accountReading.tone}>{accountReading.text}</Note></div>}
+            </>)}
             </div>
             <div className="rl-start-meta">
               <label>

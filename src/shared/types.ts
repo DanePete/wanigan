@@ -2207,6 +2207,9 @@ export type AccountLimits = {
     sharedWith: { accountId: string; accountLabel: string; basis: 'saved-login' | 'configuration-directory' }[];
   };
   state: 'ok' | 'signed-out' | 'unreadable' | 'unsupported' | 'stale';
+  /** The provider's own verdict on ordinary included usage, where it gives one.
+   * null or absent is unavailable, and is never read as allowed. */
+  ordinaryUsageAllowed?: boolean | null;
   /** Why, when state is not 'ok'. */
   detail: string | null;
   fetchedAt: number | null;

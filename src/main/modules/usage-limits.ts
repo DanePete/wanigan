@@ -105,7 +105,8 @@ function fromCodexStatus(account: AgentAccount, status: CodexStatus, now = Date.
     status.loginWitnessed === false
       ? 'This account keeps its credentials outside auth.json, so Wanigan cannot see a login change from files and re-reads it every time.' : null,
   ].filter(Boolean).join(' ');
-  return { ...base, state: 'ok' as const, fetchedAt: status.fetchedAt, windows, detail: detail || null };
+  return { ...base, state: 'ok' as const, fetchedAt: status.fetchedAt, windows, detail: detail || null,
+    ordinaryUsageAllowed: status.ordinaryUsageAllowed ?? null };
 }
 
 async function codexLimitsFor(account: AgentAccount, force: boolean): Promise<AccountLimits> {
