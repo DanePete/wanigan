@@ -19,6 +19,7 @@ import { promptImproveModule } from './prompt-improve';
 import { companionModule } from './companion';
 import { interviewModule } from './interview';
 import { batchModule } from './batch/module';
+import { cacheModule, evalsModule, refusalModule, uploadsModule } from './batch/depth-modules';
 import { modelEconomicsModule } from './model-economics';
 import { openRouterConnectionModule } from './openrouter-connection';
 
@@ -51,5 +52,9 @@ registerModule(promptImproveModule);
 registerModule(companionModule);
 registerModule(interviewModule);
 registerModule(batchModule);
+registerModule(uploadsModule);
+registerModule(refusalModule);
+registerModule(cacheModule);
+registerModule(evalsModule);
 registerModule(modelEconomicsModule);
 registerModule(openRouterConnectionModule);

@@ -7485,10 +7485,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // for the rescue price: the copy promised it and main computed it, and no
   // screen ever showed it.
   const evalsMainSrc = sourceOf('src/main/modules/batch/evals.ts');
+  // The evals and refusal channels are registered by their own module records.
+  const batchDepthSrc = sourceOf('src/main/modules/batch/depth-modules.ts');
   const batchesViewAudit = sourceOf('src/renderer/src/views/Batches.tsx');
-  check(mainIndexSrc.includes("handle('evals:variant'")
-    && mainIndexSrc.includes("handle('evals:judge'")
-    && mainIndexSrc.includes("handle('refusal:estimate'")
+  check(batchDepthSrc.includes("handle('evals:variant'")
+    && batchDepthSrc.includes("handle('evals:judge'")
+    && batchDepthSrc.includes("handle('refusal:estimate'")
     && preloadIndexSrc.includes("'evals:variant'")
     && preloadIndexSrc.includes("'evals:judge'")
     && preloadIndexSrc.includes("'refusal:estimate'")
@@ -7500,9 +7502,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // trusted: a variant may vary only the fields a pair is allowed to vary, and
   // exactly one of them, which is the rule createPair enforces after the money
   // has already been spent.
-  check(mainIndexSrc.includes("if (!allowed.has(key)) throw new Error(`A variant cannot change ${key}.`);")
-    && mainIndexSrc.includes("if (Object.keys(patch).length !== 1)")
-    && mainIndexSrc.includes('A judge needs a rubric')
+  check(batchDepthSrc.includes("if (!allowed.has(key)) throw new Error(`A variant cannot change ${key}.`);")
+    && batchDepthSrc.includes("if (Object.keys(patch).length !== 1)")
+    && batchDepthSrc.includes('A judge needs a rubric')
     && batchesViewAudit.includes('void runVariant()')
     && batchesViewAudit.includes('void judge(sel)')
     && batchesViewAudit.includes('window.wanigan.refusal.estimate(runId, pick)')
