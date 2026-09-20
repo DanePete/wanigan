@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as batch from './modules/batch';
+import { writeExport } from './modules/batch/module';
 import { db } from './db';
 import { addProject, listProjects } from './store';
 import type { RunConfig } from '../shared/types';
@@ -154,6 +155,20 @@ export async function runSmoke(): Promise<void> {
   check(first.custom_id.startsWith('r0-'), 'custom_id keyed to source column', first.custom_id);
   check(first.rendered.includes('Barton Hall'), 'input preserved beside output');
   check(batch.runResults(sub.runId, 'all', 'Veneta', 0).total === 1, 'search filters rows');
+
+  // Run from the built bundle, which is where a relative require has no file to find.
+  const exportPath = path.join(os.tmpdir(), `wanigan-smoke-export-${process.pid}.csv`);
+  let exported = '';
+  try {
+    writeExport(sub.runId, 'csv', exportPath);
+    for (let i = 0; i < 50 && (exported.match(/^r\d+-\d+,/gm) ?? []).length < 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      exported = fs.existsSync(exportPath) ? fs.readFileSync(exportPath, 'utf8') : '';
+    }
+  } catch (error) { exported = `threw: ${error instanceof Error ? error.message : String(error)}`; }
+  finally { fs.rmSync(exportPath, { force: true }); }
+  check(exported.startsWith('custom_id,row_index,status,') && (exported.match(/^r\d+-\d+,/gm) ?? []).length === 3,
+    'exporting a run writes its header and every row from the built app', exported.slice(0, 200));
 
   say('── dead-letter queue (real failures)');
   const rows = ['id,city,venue'];

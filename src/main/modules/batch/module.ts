@@ -1,4 +1,6 @@
+import fs from 'node:fs';
 import { dialog } from 'electron';
+import { db } from '../../db';
 import type { WaniganModule } from '../../module-registry';
 import type { RunConfig, SourceConfig } from '../../../shared/types';
 import {
@@ -7,15 +9,9 @@ import {
 } from './index';
 
 /** Streams a run's results to disk without materialising them in memory. */
-function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
-  // Deliberately lazy: this path runs during quit, after the module graph has
-  // already been torn down in some exit orders. typescript-eslint renamed the
-  // rule to no-require-imports in v8, which is why the old directive name here
-  // had stopped disabling anything.
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const fs = require('node:fs') as typeof import('node:fs');
-  const { db } = require('../../db') as typeof import('../../db');
-  /* eslint-enable @typescript-eslint/no-require-imports */
+export function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
+  // Static imports, not a lazy require: the bundler leaves a relative require
+  // as written, and the built app has no db.js beside it to find.
 
   const stmt = db().prepare(`
     SELECT custom_id, row_index, row_json, rendered, status, output_text,
