@@ -36,7 +36,7 @@ import type {
   HookInput,
   McpServerConfig, PluginScope,
   ProviderManifestInspection, RunConfig,
-  SourceConfig, ThemeSetting, TrustLevel,
+  ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu, setComposerShown } from './menu';
@@ -1679,7 +1679,6 @@ function registerIpc() {
   const needsStartedServices = new Set([
     'handover:finish',
     'attempts:start',
-    'batch:submit', 'batch:dryRun', 'batch:retry',
     'control:start', 'control:retry', 'control:setAutopilot',
     'schedule:tick', 'learning:phrase',
   ]);
@@ -2202,43 +2201,6 @@ function registerIpc() {
     });
     if (res.canceled || !res.filePaths[0]) return null;
     return addProject(res.filePaths[0]);
-  });
-
-  // ── batches ──────────────────────────────────────────────────────────
-  handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));
-  // Rethrown, not swallowed. Returning an 'unavailable' shape resolved the
-  // renderer's await, so its catch never ran, its "Model refresh failed" Note
-  // could never fire, and the button went back to rest above a capability table
-  // the page then described as freshly read. The renderer already has the
-  // failure path; this is what reaches it.
-  handle('batch:refreshModels', () => batch.refreshModels());
-  handle('batch:insights', () => batch.insights());
-  handle('batch:preview', (source: SourceConfig, userTemplate: string) => batch.previewSource(source, userTemplate));
-  handle('batch:estimate', (config: RunConfig, observedOut?: number) => batch.estimateRun(config, observedOut));
-  handle('batch:dryRun', (config: RunConfig, rowIndex?: number) => batch.dryRunOne(config, rowIndex));
-  handle('batch:runs', () => batch.listRuns());
-  handle('batch:runsInFlight', () => batch.runsInFlight());
-  handle('batch:run', (id: string) => batch.runDetail(id));
-  handle('batch:results', (id: string, status: string, q: string, offset: number) =>
-    batch.runResults(id, status, q, offset));
-  handle('batch:submit', async (config: RunConfig, est?: { input: number; output: number; cost: number }) => {
-    const r = await batch.createAndSubmitRun(config, { estimate: est });
-    void batch.pollOnce().catch(() => {});
-    return r;
-  });
-  handle('batch:cancel', (id: string) => batch.cancelRun(id));
-  handle('batch:retry', (id: string) => batch.retryFailed(id));
-  handle('batch:delete', (id: string) => { batch.deleteRun(id); return true; });
-  handle('batch:poll', () => batch.pollOnce());
-  handle('batch:export', async (id: string, format: 'jsonl' | 'csv') => {
-    if (!win) return null;
-    const res = await dialog.showSaveDialog(win, {
-      title: 'Export results',
-      defaultPath: `${id}.${format}`,
-      filters: [{ name: format.toUpperCase(), extensions: [format] }],
-    });
-    if (res.canceled || !res.filePath) return null;
-    return writeExport(id, format, res.filePath);
   });
 
   // ── api key ──────────────────────────────────────────────────────────
@@ -3338,38 +3300,4 @@ function registerIpc() {
   ipcMain.on('menu:composerShown', (event, shown: unknown) => {
     if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);
   });
-}
-
-/** Streams a run's results to disk without materialising them in memory. */
-function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
-  // Deliberately lazy: this path runs during quit, after the module graph has
-  // already been torn down in some exit orders. typescript-eslint renamed the
-  // rule to no-require-imports in v8, which is why the old directive name here
-  // had stopped disabling anything.
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const fs = require('node:fs') as typeof import('node:fs');
-  const { db } = require('./db') as typeof import('./db');
-  /* eslint-enable @typescript-eslint/no-require-imports */
-
-  const stmt = db().prepare(`
-    SELECT custom_id, row_index, row_json, rendered, status, output_text,
-           error_type, error_message, in_tokens, out_tokens
-    FROM requests WHERE run_id = ? ORDER BY row_index
-  `);
-  const out = fs.createWriteStream(filePath, { flags: 'w' });
-  const cell = (v: unknown) => {
-    if (v === null || v === undefined) return '';
-    const s = String(v);
-    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  if (format === 'csv') {
-    out.write('custom_id,row_index,status,output_text,error_type,error_message,in_tokens,out_tokens\n');
-  }
-  for (const r of stmt.iterate(runId) as Iterable<Record<string, unknown>>) {
-    out.write(format === 'jsonl'
-      ? JSON.stringify({ ...r, row: JSON.parse(String(r.row_json)) }) + '\n'
-      : [r.custom_id, r.row_index, r.status, r.output_text, r.error_type, r.error_message, r.in_tokens, r.out_tokens].map(cell).join(',') + '\n');
-  }
-  out.end();
-  return filePath;
 }

@@ -18,6 +18,7 @@ import { learningModelAssistModule } from './learning-model-assist';
 import { promptImproveModule } from './prompt-improve';
 import { companionModule } from './companion';
 import { interviewModule } from './interview';
+import { batchModule } from './batch';
 import { modelEconomicsModule } from './model-economics';
 import { openRouterConnectionModule } from './openrouter-connection';
 
@@ -49,5 +50,6 @@ registerModule(relayModule);
 registerModule(promptImproveModule);
 registerModule(companionModule);
 registerModule(interviewModule);
+registerModule(batchModule);
 registerModule(modelEconomicsModule);
 registerModule(openRouterConnectionModule);

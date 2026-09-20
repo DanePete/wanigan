@@ -7027,7 +7027,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // routes.ts derives TABS from it, so an assertion about what a row SAYS reads
   // the registry; routes.ts no longer contains a hint to grep.
   const viewRegistrySrc = sourceOf('src/shared/view-registry.ts');
-  check(/handle\(\s*'batch:runsInFlight'/.test(mainSrc)
+  // The batch channels are registered by the batch module, not index.ts.
+  check(/handle\(\s*'batch:runsInFlight'/.test(sourceOf('src/main/modules/batch.ts'))
     && /runsInFlight:\s*\(\)/.test(preloadSrc)
     && appSrc.includes('window.wanigan.batch.runsInFlight()')
     && !appSrc.includes('window.wanigan.batch.runs()')
