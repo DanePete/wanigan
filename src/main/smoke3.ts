@@ -72,7 +72,7 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject, removeProject } from './store';
-import { registerModuleIpc, type IpcHandle } from './module-registry';
+import { moduleNeedsStartedServices, registerModuleIpc, type IpcHandle } from './module-registry';
 import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
@@ -7487,6 +7487,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const evalsMainSrc = sourceOf('src/main/modules/batch/evals.ts');
   // The evals and refusal channels are registered by their own module records.
   const batchDepthSrc = sourceOf('src/main/modules/batch/depth-modules.ts');
+  check(['batch:submit', 'batch:dryRun', 'batch:retry', 'refusal:rescue', 'evals:variant', 'evals:judge'].every(moduleNeedsStartedServices)
+    && !['refusal:estimate', 'refusal:rows', 'evals:pairs', 'evals:diff', 'cache:ttl', 'uploads:list', 'batch:runs'].some(moduleNeedsStartedServices),
+    'every channel that submits a paid run waits for the stop handlers to be installed, and the reads beside them do not');
   const batchesViewAudit = sourceOf('src/renderer/src/views/Batches.tsx');
   check(batchDepthSrc.includes("handle('evals:variant'")
     && batchDepthSrc.includes("handle('evals:judge'")

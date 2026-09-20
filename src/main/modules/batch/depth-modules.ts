@@ -25,6 +25,8 @@ export const uploadsModule = {
 
 export const refusalModule = {
   id: 'refusal', label: 'Refusal rescue',
+  // A rescue submits a paid run, so it waits for the stop handlers exactly as batch:submit does.
+  requiresStartedServices: ['rescue'],
   // Disabling removes re-running refused rows on another model; the original results are unaffected.
   required: null,
   ipc(handle) {
@@ -54,6 +56,8 @@ export const cacheModule = {
 
 export const evalsModule = {
   id: 'evals', label: 'Evals',
+  // A variant and a judge each submit a paid run, so they wait for the stop handlers exactly as batch:submit does.
+  requiresStartedServices: ['variant', 'judge'],
   // Disabling removes paired comparisons and golden sets; ordinary batch runs are unaffected.
   required: null,
   ipc(handle) {
