@@ -159,9 +159,19 @@ try {
   const maintenanceStartup = await opened.page.evaluate(() => window.wanigan.startup.status());
   assert.equal(maintenanceStartup.phase, 'recovery');
   assert.match(maintenanceStartup.message, /storage maintenance without background services or credentials/);
-  await opened.page.evaluate(() => document.activeElement?.blur());
-  await opened.page.keyboard.press('Meta+,');
-  await opened.page.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
+  // One keypress did not reliably open Settings here: two runs in five failed
+  // on an unchanged checkout, with the app healthy, no page error, and the
+  // maintenance alert ("Esc closes") on screen. That alert taking the keypress
+  // is the likely cause and was not measured. Close it and press again rather
+  // than trusting one keypress; six of six runs passed with this loop.
+  const settingsHeading = opened.page.getByRole('heading', { name: 'Settings', exact: true });
+  for (let attempt = 0; attempt < 5 && !(await settingsHeading.isVisible()); attempt++) {
+    await opened.page.keyboard.press('Escape');
+    await opened.page.evaluate(() => document.activeElement?.blur());
+    await opened.page.keyboard.press('Meta+,');
+    await settingsHeading.waitFor({ timeout: 3000 }).catch(() => {});
+  }
+  await settingsHeading.waitFor();
   await opened.page.locator('#settings-tab-backup').click();
   await opened.page.getByRole('heading', { name: 'Restore a backup', exact: true }).waitFor();
   await opened.page.keyboard.press('Meta+Shift+Y');
