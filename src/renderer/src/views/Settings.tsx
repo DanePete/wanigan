@@ -5965,7 +5965,9 @@ function Backup() {
           <p>
             <strong>Stop running work separately before restoring.</strong> Unknown checkout ownership,
             unfinished commands and unresolved remote charges block a restore. An expired lease or a
-            missing process does not prove completion. Recovery explains each recorded claim.
+            missing process does not prove completion. Recovery explains each recorded claim. The one
+            exception is a paid request nothing has accounted for: its record is carried into the restored
+            database, still unresolved, rather than blocking the restore.
           </p>
           <p>
             <strong>Begin with a maintenance restart.</strong> The restore button first offers to
@@ -6026,6 +6028,13 @@ function Backup() {
                       ? 'Yes — the database in place held work recorded after this backup.'
                       : 'No — the database in place held nothing newer.'}</td>
                   </tr>
+                  {restored.carriedPaidReceipts > 0 && (
+                    <tr>
+                      <td>Paid requests carried over</td>
+                      <td>{plural(restored.carriedPaidReceipts, 'record')} of a paid request nothing had accounted for. Restoring does not
+                        erase what they may have cost, so they were written into this database and are still unresolved in Recovery.</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

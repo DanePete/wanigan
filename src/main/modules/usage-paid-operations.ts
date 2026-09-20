@@ -16,6 +16,27 @@ export function migrateUsagePaidOperations(d: Database.Database): void {
     source TEXT NOT NULL,
     at INTEGER NOT NULL
   )`);
+  // Set only when a restore carried an unaccounted receipt into this database.
+  const columns = d.prepare('PRAGMA table_info(usage_paid_operations)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'carried_from_generation')) d.exec('ALTER TABLE usage_paid_operations ADD COLUMN carried_from_generation TEXT');
+}
+
+/** Writes what a restore carried into the database about to be installed. The
+ * backup may predate these tables, so they are created first. A receipt the
+ * backup already holds is left exactly as the backup has it. */
+export function installRestoreCarry(d: Database.Database, carry: {
+  receipts: { id: string; source: string; at: number; carried_from_generation: string | null }[];
+  settlements: Record<string, unknown>[];
+}): number {
+  if (!carry.receipts.length) return 0;
+  migrateUsagePaidOperations(d); migrateUsagePaidSettlements(d);
+  const receipt = d.prepare('INSERT OR IGNORE INTO usage_paid_operations(id,source,at,carried_from_generation) VALUES (?,?,?,?)');
+  const settlement = d.prepare(`INSERT OR IGNORE INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id,owner_table,owner_id,evidence_hash)
+    VALUES (@receipt_id,@at,@outcome,@http_status,@request_id,@owner_table,@owner_id,@evidence_hash)`);
+  let installed = 0;
+  for (const row of carry.receipts) installed += receipt.run(row.id, row.source, row.at, row.carried_from_generation).changes;
+  for (const row of carry.settlements) settlement.run({ http_status: null, request_id: null, owner_table: null, owner_id: null, evidence_hash: null, ...row });
+  return installed;
 }
 
 /** Synchronous on purpose: call it immediately before the send or spawn, after

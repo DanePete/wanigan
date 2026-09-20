@@ -8,7 +8,8 @@ import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import { transcriptsDir } from './transcripts';
 import { snapshotBackupFiles, verifyBackupFiles, copyVerifiedBackupFiles } from './backup-files';
 import { beginStorageRestore, storageStatus } from './storage-maintenance';
-import { assertRestoreSafe } from './recovery';
+import { assertRestoreSafe, restoreCarry, type RestoreCarry } from './recovery';
+import { installRestoreCarry } from './modules/usage-paid-operations';
 import { assertStorageRuntimeRestoreReady } from './modules/storage-runtime';
 
 /** Restarting for restore must not become consent to stop an unrelated owner. */
@@ -123,6 +124,12 @@ export type RestoreReport = {
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
+  /**
+   * Paid requests the replaced database had recorded and nothing had accounted
+   * for. They were written into the restored database rather than left behind,
+   * and remain unresolved there.
+   */
+  carriedPaidReceipts: number;
   /**
    * Always true. The database connection this process held was closed to swap
    * the file underneath it; every later db() call in this process will throw
@@ -693,6 +700,8 @@ export function restoreBackup(
   const installed: string[] = [];
   let maintenance: ReturnType<typeof beginStorageRestore> | null = null;
   let closeAttempted = false;
+  let carry: RestoreCarry = { receipts: [], settlements: [] };
+  let carriedPaidReceipts = 0;
 
   try {
     const stagedDb = path.join(staging, DB_NAME);
@@ -725,6 +734,9 @@ export function restoreBackup(
         assertStorageRuntimeRestoreReady();
         validateRestoreSource(dir, receipt);
         assertRestoreSafe(db());
+        // Read here, under the fence and from the database about to be
+        // replaced, so nothing can be recorded between this read and the swap.
+        carry = restoreCarry(db(), receipt.generation);
       },
     });
 
@@ -735,6 +747,9 @@ export function restoreBackup(
     try {
       restoredDb.transaction(() => {
         maintenance!.prepareRestoredDatabase(restoredDb);
+        // A restore must not erase financial uncertainty. For a paid request
+        // nothing has accounted for, that means taking its receipt along.
+        carriedPaidReceipts = installRestoreCarry(restoredDb, carry);
         if (hasColumn(restoredDb, 'transcripts', 'stored_path')) {
           const names = new Set(manifest.transcripts.entries.map(entry => entry.name));
           const rows = restoredDb.prepare('SELECT session_id, stored_path FROM transcripts').all() as { session_id: string; stored_path: string }[];
@@ -803,6 +818,7 @@ export function restoreBackup(
       attachments: inspection.attachments,
       replacedDir: replaced,
       discardedNewer: inspection.wouldDiscardNewer,
+      carriedPaidReceipts,
       relaunchRequired: true,
     };
   } catch (error) {

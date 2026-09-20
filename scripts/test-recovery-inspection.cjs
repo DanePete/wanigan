@@ -228,9 +228,6 @@ test('each independent owner or remote liability refuses direct restore without 
     ['Improve prompt stopped before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','cancelled')")],
     ['Improve prompt failed before meters', f => f.native.exec("INSERT INTO prompt_improve_usage(request_id,at,requested_model,status) VALUES ('improve',1,'fixture','failed')")],
     ['Improve prompt answered on an unpriced model', f => f.native.exec("INSERT INTO prompt_improve_usage VALUES ('improve',1,'fixture','fixture','answered',4,2,0,NULL)")],
-    ['paid request admitted before submission', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)")],
-    ['paid request answered with no recorded meters', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('paid',2,'responded',200,'req')")],
-    ['terminal label without evidence', f => f.native.exec("INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1); INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('paid',2,'metered',200,'req')")],
     ['remote batch', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'in_progress',NULL)")],
     ['ended batch without ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',NULL)")],
     ['ended batch with partial ingestion', f => f.native.exec("INSERT INTO batches VALUES ('batch','run',1,'ended',-1)")],
@@ -290,7 +287,7 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       INSERT INTO learning_model_runs VALUES ('learning',1,'ok',1,0);
       INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);
       INSERT INTO prompt_improve_usage VALUES ('answered',1,'fixture','fixture','answered',4,2,0,0.001);
-      INSERT INTO usage_paid_operations VALUES ('stated','anthropic:messages',1),('metered','anthropic:messages',1),('estimated','learning:cli',1);
+      INSERT INTO usage_paid_operations(id,source,at) VALUES ('stated','anthropic:messages',1),('metered','anthropic:messages',1),('estimated','learning:cli',1);
       INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);`);
     f.paid.recordPaidResponse('stated', 429, 'req_a', f.database, true);
     f.paid.recordPaidResponse('metered', 200, 'req_b', f.database, true);
@@ -311,12 +308,12 @@ test('accounted requests become blockers again when their linked evidence change
     f => f.native.exec("DELETE FROM prompt_improve_usage WHERE request_id='owner'"),
     f => f.native.exec("UPDATE prompt_improve_usage SET input_tokens=99 WHERE request_id='owner'"),
     f => f.native.exec("UPDATE usage_paid_settlements SET owner_id='other' WHERE receipt_id='paid'"),
-    f => { f.native.exec("INSERT INTO usage_paid_operations VALUES ('duplicate','anthropic:messages',1)");
+    f => { f.native.exec("INSERT INTO usage_paid_operations(id,source,at) VALUES ('duplicate','anthropic:messages',1)");
       f.paid.recordPaidResponse('duplicate', 200, 'req_owned', f.database, true); },
   ]) {
     const f = fixture();
     try {
-      f.native.exec("INSERT INTO prompt_improve_usage VALUES ('owner',1,'fixture','fixture','answered',4,2,0,0.001); INSERT INTO usage_paid_operations VALUES ('paid','anthropic:messages',1)");
+      f.native.exec("INSERT INTO prompt_improve_usage VALUES ('owner',1,'fixture','fixture','answered',4,2,0,0.001); INSERT INTO usage_paid_operations(id,source,at) VALUES ('paid','anthropic:messages',1)");
       f.paid.recordPaidResponse('paid', 200, 'req_owned', f.database, true);
       assert(f.paid.accountForPaidOperation({ requestId: 'req_owned', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'owner' }, f.database));
       assert.doesNotThrow(() => f.recovery.assertRestoreSafe(f.database));
@@ -369,10 +366,48 @@ test('an interview is covered only when every counted call has its own per-reque
     // A first call that failed left nothing behind before receipts existed; since then it is a receipt.
     f.native.exec("INSERT INTO interviews VALUES ('failed-before',3,'failed',0,0),('failed-since',30,'failed',0,0)");
     assert.deepEqual(blocked(f), ['failed-before', 'failed-since', 'older', 'uncounted'], 'with no receipt ever recorded, every such failure predates them');
-    f.native.exec("INSERT INTO usage_paid_operations VALUES ('first-receipt','anthropic:messages',10)");
+    f.native.exec("INSERT INTO usage_paid_operations(id,source,at) VALUES ('first-receipt','anthropic:messages',10)");
     assert.deepEqual(blocked(f), ['failed-before', 'older', 'uncounted']);
     f.native.exec('DROP INDEX idx_usage_direct_requests_subject; ALTER TABLE usage_direct_requests DROP COLUMN subject_id');
     assert(blocked(f).includes('covered'), 'a ledger that cannot name its subject covers no interview');
+  } finally { f.close(); }
+});
+
+test('an unaccounted paid receipt is shown, carried across a restore with its origin, and never excuses another claim', () => {
+  const f = fixture({ register: false });
+  try {
+    f.native.exec(`INSERT INTO usage_paid_operations(id,source,at) VALUES ('silent','anthropic:messages',1),('answered','anthropic:messages',2),('settled','anthropic:messages',3);
+      INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('answered',4,'responded',200,'req_answered');
+      INSERT INTO prompt_improve_usage VALUES ('owner',1,'fixture','fixture','answered',4,2,0,0.001);`);
+    const paid = f.paid;
+    f.native.exec("INSERT INTO usage_paid_settlements(receipt_id,at,outcome,http_status,request_id) VALUES ('settled',4,'responded',200,'req_settled')");
+    assert.equal(paid.accountForPaidOperation({ requestId: 'req_settled', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'owner' }, f.database), true);
+
+    // Still shown, and still unresolved: carrying is not settling.
+    assert.deepEqual(f.recovery.inspectRecovery().observations.map(row => [row.operationId, row.billing]), [['answered', 'unresolved'], ['silent', 'unresolved']]);
+    assert.doesNotThrow(() => f.recovery.assertRestoreSafe(f.database), 'financial uncertainty is taken along, not used to refuse');
+    const carry = f.recovery.restoreCarry(f.database, 'generation-being-replaced');
+    assert.deepEqual(carry.receipts.map(row => [row.id, row.carried_from_generation]), [['answered', 'generation-being-replaced'], ['silent', 'generation-being-replaced']]);
+    assert.deepEqual(carry.settlements.map(row => [row.receipt_id, row.outcome]), [['answered', 'responded']], 'an accounted receipt is not carried; it is nobody\'s open question');
+
+    // Into a backup that predates these tables entirely.
+    const { DatabaseSync } = require('node:sqlite'); const older = new DatabaseSync(':memory:');
+    const olderDb = { exec: sql => older.exec(sql), prepare: sql => older.prepare(sql) };
+    assert.equal(paid.installRestoreCarry(olderDb, carry), 2);
+    assert.equal(paid.installRestoreCarry(olderDb, carry), 0, 'installing twice adds nothing');
+    assert.deepEqual(older.prepare('SELECT id,carried_from_generation FROM usage_paid_operations ORDER BY id').all().map(row => ({ ...row })),
+      [{ id: 'answered', carried_from_generation: 'generation-being-replaced' }, { id: 'silent', carried_from_generation: 'generation-being-replaced' }]);
+    assert.equal(older.prepare("SELECT outcome FROM usage_paid_settlements WHERE receipt_id='answered'").get().outcome, 'responded');
+    older.close();
+
+    // Carried once already: a second restore keeps the generation it first came from, and Recovery says where it is from.
+    f.native.exec("UPDATE usage_paid_operations SET carried_from_generation='original-generation-abcdef' WHERE id='silent'");
+    assert.equal(f.recovery.restoreCarry(f.database, 'later').receipts.find(row => row.id === 'silent').carried_from_generation, 'original-generation-abcdef');
+    assert.match(f.recovery.inspectRecovery().observations.find(row => row.operationId === 'silent').source, /carried across a restore from generation original-gen/);
+
+    // Any other claim still refuses, and the receipt does not soften it.
+    f.native.exec("INSERT INTO suggest_usage(at,model,attempt_status) VALUES (1,'fixture','unresolved')");
+    assert.throws(() => f.recovery.assertRestoreSafe(f.database), /Restore refused: 1 execution or billing claim/);
   } finally { f.close(); }
 });
 

@@ -91,12 +91,18 @@ function inspectPaidOperations(d: Database.Database): RecoveryObservation[] {
   const rows = d.prepare(`SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash
     FROM usage_paid_operations o LEFT JOIN usage_paid_settlements s ON s.receipt_id=o.id
     ORDER BY o.id`).all() as PaidOperationEvidence[];
+  // Where a restore carried a receipt in, that is said: it was recorded by
+  // another generation of this database, and that is where its history is.
+  const carriedFrom = new Map<string, string>(hasColumn(d, 'usage_paid_operations', 'carried_from_generation')
+    ? (d.prepare('SELECT id,carried_from_generation AS generation FROM usage_paid_operations WHERE carried_from_generation IS NOT NULL')
+      .all() as { id: string; generation: string }[]).map(row => [row.id, row.generation]) : []);
+  const origin = (id: string) => carriedFrom.has(id) ? `, carried across a restore from generation ${carriedFrom.get(id)!.slice(0, 12)}` : '';
   return rows.filter(row => !paidOperationAccountedFor(d, row)).map(row => ({
     key: `usage:usage_paid_operations:${row.id}`, module: 'usage', operationId: row.id, cwd: null,
     execution: 'unsupported', checkout: 'not claimed', billing: 'unresolved',
     source: row.outcome
-      ? `Paid request accounting is incomplete (${row.source})`
-      : `Paid request admitted before submission (${row.source}) with no recorded response`,
+      ? `Paid request accounting is incomplete (${row.source}${origin(row.id)})`
+      : `Paid request admitted before submission (${row.source}${origin(row.id)}) with no recorded response`,
     observedAt: row.at,
     reason: row.outcome
       ? 'The response or linked accounting evidence is incomplete, ambiguous or changed. An outcome label alone cannot settle this request.'

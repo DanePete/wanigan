@@ -4076,6 +4076,8 @@ export type BackupRestoreSummary = {
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
+  /** Unaccounted paid-request records carried into the restored database, still unresolved. */
+  carriedPaidReceipts: number;
   /** Always true: the swap closed this process's database connection. */
   relaunchRequired: true;
 };

@@ -119,6 +119,11 @@ async function electronFixture() {
       // teardown is not a product action that can settle a real remote bill.
       d.prepare('DELETE FROM suggest_usage WHERE request_id=?').run(liability);
       fs.writeFileSync(path.join(artifactDir, 'report.txt'), 'retained newer artifact');
+      // A paid request recorded after the backup was taken and never answered.
+      // Unlike every claim above it does not refuse the restore: it is the one
+      // thing a restore carries, because leaving it behind would erase it.
+      const carriedReceipt = load('src/main/modules/usage-paid-operations.ts').admitPaidOperation('anthropic:messages');
+      const replacedGeneration = storage.storageStatus().generation;
       preview = backup.previewBackupRestore(made.dir);
       if (phase === 'fault') {
         const originalRename = fs.renameSync;
@@ -145,6 +150,7 @@ async function electronFixture() {
       }
       const report = backup.restoreBackup(made.dir, { confirm: true, overwriteNewer: true, previewToken: preview.token });
       assert.equal(storage.storageStatus().mode, 'inspection');
+      assert.equal(report.carriedPaidReceipts, 1, 'the unanswered paid request was taken along, not left in the replaced database');
       assert.throws(() => backup.restoreBackup(made.dir, { confirm: true, overwriteNewer: true, previewToken: preview.token }), /already used/i);
       assert.equal(fs.readFileSync(path.join(artifactDir, 'report.txt'), 'utf8'),
         version === 2 ? 'backed up artifact' : 'retained newer artifact');
@@ -153,8 +159,8 @@ async function electronFixture() {
       assert.throws(() => d.prepare('SELECT 1').get(), /fenced|closed/i);
       assert.throws(() => storage.assertStorageAdmission({ automatic: true }), /inspection|archived/i);
       assert.throws(() => storage.assertStorageAdmission({ paid: true }), /spending|historical/i);
-      fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify({ ...report, attached }));
-      console.log('Backup recovery restore: native staging, source/revision/one-use refusal, unknown owner refusal, retained originals and held publication passed.');
+      fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify({ ...report, attached, carriedReceipt, replacedGeneration }));
+      console.log('Backup recovery restore: native staging, source/revision/one-use refusal, unknown owner refusal, a carried paid receipt, retained originals and held publication passed.');
     } else {
       const status = storage.storageStatus();
       assert.equal(status.mode, 'inspection');
@@ -162,6 +168,12 @@ async function electronFixture() {
       assert.equal(d.prepare("SELECT v FROM settings WHERE k='fixture-spend-history'").get().v, 'old total');
       const report = JSON.parse(fs.readFileSync(path.join(directory, 'report.json'), 'utf8'));
       if (version === 2) assert.equal(d.prepare('SELECT stored_path FROM attachments WHERE id=?').get(report.attached.id).stored_path, report.attached.storedPath);
+      // The restored database is the old one, plus the one record it never had.
+      assert.deepEqual({ ...d.prepare('SELECT source,carried_from_generation FROM usage_paid_operations WHERE id=?').get(report.carriedReceipt) },
+        { source: 'anthropic:messages', carried_from_generation: report.replacedGeneration });
+      const carriedClaim = load('src/main/recovery.ts').inspectRecovery().observations.find(row => row.operationId === report.carriedReceipt);
+      assert.equal(carriedClaim.billing, 'unresolved', 'carrying is not settling');
+      assert.match(carriedClaim.source, /carried across a restore from generation/);
       assert.equal(d.prepare("SELECT state FROM queue WHERE id='historical-job'").get().state, 'waiting');
       assert.equal(d.prepare("SELECT next_at FROM schedules WHERE id='historical-schedule'").get().next_at, 1);
       let ran = 0;

@@ -137,8 +137,44 @@ export function applyRecovery(token: unknown): { id: string; decision: string } 
   }).immediate();
 }
 
-/** The first restore protocol refuses cross-generation execution/liability merging. */
+/**
+ * The one claim a restore carries instead of refusing: a paid request's
+ * pre-send receipt that nothing has accounted for. The rule being protected is
+ * that a restore must not erase financial uncertainty, and for this ledger
+ * that is satisfied by taking the uncertainty along. It is self-contained
+ * evidence with no checkout, process or business row attached. Everything else
+ * here is state another generation would have to be merged with, which the
+ * restore protocol still refuses.
+ */
+const CARRIED_PREFIX = 'usage:usage_paid_operations:';
+const carried = (row: RecoveryObservation) =>
+  row.key.startsWith(CARRIED_PREFIX) && row.module === 'usage' && row.cwd === null && row.checkout === 'not claimed';
+
+export type RestoreCarry = {
+  receipts: { id: string; source: string; at: number; carried_from_generation: string | null }[];
+  settlements: Record<string, unknown>[];
+};
+
+/** Refuses unless every remaining claim is one a restore can carry. */
 export function assertRestoreSafe(d: Database.Database): void {
-  const rows = observations(d);
+  const rows = observations(d).filter(row => !carried(row));
   if (rows.length) throw new Error(`Restore refused: ${rows.length} execution or billing claim(s) remain. ${rows[0].source}: ${rows[0].reason} Inspect Recovery first.`);
+}
+
+/** Read under the restore fence, after assertRestoreSafe, from the database
+ * about to be replaced. A receipt already carried once keeps the generation it
+ * first came from. */
+export function restoreCarry(d: Database.Database, generation: string): RestoreCarry {
+  const ids = observations(d).filter(carried).map(row => row.operationId);
+  if (!ids.length) return { receipts: [], settlements: [] };
+  const marked = hasColumn(d, 'usage_paid_operations', 'carried_from_generation');
+  const receipts = ids.map(id => d.prepare(`SELECT id,source,at,${marked ? 'carried_from_generation' : 'NULL AS carried_from_generation'}
+    FROM usage_paid_operations WHERE id=?`).get(id) as RestoreCarry['receipts'][number])
+    .map(row => ({ ...row, carried_from_generation: row.carried_from_generation ?? generation }));
+  const settlements = ids.flatMap(id => d.prepare('SELECT * FROM usage_paid_settlements WHERE receipt_id=?').all(id) as Record<string, unknown>[]);
+  return { receipts, settlements };
+}
+
+function hasColumn(d: Database.Database, table: string, column: string): boolean {
+  return (d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(row => row.name === column);
 }
