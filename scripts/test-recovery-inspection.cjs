@@ -22,7 +22,8 @@ function fixture({ register = true } = {}) {
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER NOT NULL,status TEXT NOT NULL,cost_reported INTEGER NOT NULL,cost_usd REAL NOT NULL);
     CREATE TABLE batch_dry_runs(id TEXT PRIMARY KEY,at INTEGER NOT NULL,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER NOT NULL,status TEXT NOT NULL,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
-    CREATE TABLE interviews(id TEXT PRIMARY KEY,updated_at INTEGER NOT NULL,status TEXT NOT NULL,calls INTEGER,spend_usd REAL);`);
+    CREATE TABLE interviews(id TEXT PRIMARY KEY,updated_at INTEGER NOT NULL,status TEXT NOT NULL,calls INTEGER,spend_usd REAL,created_at INTEGER);
+    CREATE TABLE interview_calls(id TEXT PRIMARY KEY,interview_id TEXT NOT NULL,at INTEGER NOT NULL,model TEXT NOT NULL,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   const database = { prepare: sql => native.prepare(sql), exec: sql => native.exec(sql), transaction: fn => {
     const invoke = (...args) => {
       native.exec('BEGIN IMMEDIATE');
@@ -244,7 +245,7 @@ test('each independent owner or remote liability refuses direct restore without 
     ['unknown learning attempt state', f => f.native.exec("INSERT INTO learning_model_runs VALUES ('learning',1,'pending',1,0)")],
     ['dry-run sample with missing cost', f => f.native.exec("INSERT INTO batch_dry_runs VALUES ('sample',1,40,12,NULL)")],
     ['companion with missing cost', f => f.native.exec("INSERT INTO companion_turns VALUES ('turn',1,'failed',NULL,NULL,NULL)")],
-    ['legacy committed interview cannot prove every prior request settled', f => f.native.exec("INSERT INTO interviews VALUES ('interview',1,'committed',2,0.05)")],
+    ['legacy committed interview cannot prove every prior request settled', f => f.native.exec("INSERT INTO interviews VALUES ('interview',1,'committed',2,0.05,1)")],
   ];
   for (const [label, seed] of cases) {
     const f = fixture({ register: false });
@@ -293,7 +294,9 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       INSERT INTO learning_model_runs VALUES ('refused',1,'refused',0,0);
       INSERT INTO prompt_improve_usage VALUES ('answered',1,'fixture','fixture','answered',4,2,0,0.001);
       INSERT INTO usage_paid_operations VALUES ('stated','anthropic:messages',1),('metered','anthropic:messages',1),('estimated','learning:cli',1);
-      INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);`);
+      INSERT INTO prompt_improve_usage VALUES ('metered-failure',1,'fixture','fixture','failed',4,2,0,0.001);
+      INSERT INTO interviews VALUES ('ledgered',2,'committed',2,0.04,1);
+      INSERT INTO interview_calls VALUES ('call-1','ledgered',1,'fixture',4,2,0.02),('call-2','ledgered',2,'fixture',4,2,0.02);`);
     f.paid.recordPaidResponse('stated', 429, 'req_a', f.database, true);
     f.paid.recordPaidResponse('metered', 200, 'req_b', f.database, true);
     assert(f.paid.accountForPaidOperation({ requestId: 'req_b', outcome: 'metered', ownerTable: 'prompt_improve_usage', ownerId: 'answered' }, f.database));
@@ -302,6 +305,17 @@ test('reported zero-dollar telemetry and headless completion are valid controls,
       .run('headless', 'fixture', 'Fixture', f.checkout, 'done', 1, 2, 1, 0);
     assert.deepEqual(f.recovery.inspectRecovery().observations, []);
     assert.doesNotThrow(() => f.recovery.assertRestoreSafe(f.database));
+    // Each condition that lets a ledgered interview through, broken alone and put back.
+    const interviewHeld = () => f.recovery.inspectRecovery().observations.map(o => o.key).join() === 'legacy:interviews:ledgered';
+    for (const [broken, mended] of [
+      ["UPDATE interview_calls SET cost_usd=NULL WHERE id='call-2'", "UPDATE interview_calls SET cost_usd=0.02 WHERE id='call-2'"],
+      ["UPDATE interview_calls SET output_tokens=NULL WHERE id='call-2'", "UPDATE interview_calls SET output_tokens=2 WHERE id='call-2'"],
+      ["UPDATE interviews SET calls=3 WHERE id='ledgered'", "UPDATE interviews SET calls=2 WHERE id='ledgered'"],
+      ["UPDATE interviews SET created_at=0 WHERE id='ledgered'", "UPDATE interviews SET created_at=1 WHERE id='ledgered'"],
+    ]) {
+      f.native.exec(broken); assert(interviewHeld(), broken);
+      f.native.exec(mended); assert.deepEqual(f.recovery.inspectRecovery().observations, [], mended);
+    }
     f.native.exec("INSERT INTO suggest_usage(at,model,attempt_status) VALUES (1,'fixture','unresolved')");
     assert.throws(() => f.recovery.assertRestoreSafe(f.database), /TypeSafe/);
     assert.equal(f.recovery.inspectRecovery().observations[0].billing, 'unresolved');

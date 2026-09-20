@@ -118,6 +118,25 @@ function usageRevision(d: Database.Database, row: { session_id: string; at: numb
   return hash.digest('hex');
 }
 
+/**
+ * The one way an interview stops refusing a restore. Its per-call ledger must
+ * agree with its own count, every call must carry its meters and a price, and
+ * paid receipts must already have existed when it began: only then did every
+ * attempt, including one that failed and left no ledger row, leave a receipt
+ * that blocks on its own until it is accounted for. An interview older than the
+ * receipts could match its ledger while an earlier attempt is recorded nowhere.
+ * Anything this cannot read is not ledgered; COALESCE turns unknown into refusal.
+ */
+function interviewLedgered(d: Database.Database): string {
+  const columns = hasTable(d, 'interviews') ? (d.prepare('PRAGMA table_info(interviews)').all() as { name: string }[]).map(column => column.name) : [];
+  if (!hasTable(d, 'interview_calls') || !hasTable(d, 'usage_paid_operations') || !columns.includes('created_at')) return '0';
+  return `(i.calls >= 1
+    AND i.created_at >= (SELECT MIN(at) FROM usage_paid_operations)
+    AND i.calls = (SELECT COUNT(*) FROM interview_calls c WHERE c.interview_id=i.id)
+    AND NOT EXISTS (SELECT 1 FROM interview_calls c WHERE c.interview_id=i.id
+      AND (c.input_tokens IS NULL OR c.output_tokens IS NULL OR c.cost_usd IS NULL)))`;
+}
+
 /** Legacy remote submission has no module adapter yet. Read it without changing ownership. */
 export function inspectLegacyRemoteLiability(d: Database.Database): RecoveryObservation[] {
   // abandonUnfetchable deliberately stops polling after the result-retention
@@ -138,7 +157,8 @@ export function inspectLegacyRemoteLiability(d: Database.Database): RecoveryObse
     // Interview totals do not preserve a reservation or a result for every
     // attempted call. A later successful answer can replace an earlier error.
     // Even a committed/abandoned interview cannot prove that history settled.
-    { table: 'interviews', sql: 'SELECT id,id AS operation_id,updated_at AS at,status,calls,spend_usd FROM interviews', source: 'legacy interview without a complete per-request liability ledger' },
+    { table: 'interviews', sql: `SELECT id,id AS operation_id,updated_at AS at,status,calls,spend_usd FROM interviews i
+      WHERE COALESCE(${interviewLedgered(d)},0)=0`, source: 'interview without a complete per-request liability ledger' },
   ];
   return reads.flatMap(read => {
     if (!hasTable(d, read.table)) return [];
