@@ -20,6 +20,7 @@ function fixture({ register = true } = {}) {
     CREATE TABLE batches(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,created_at INTEGER NOT NULL,processing_status TEXT NOT NULL,results_ingested_at INTEGER);
     CREATE TABLE events(id INTEGER PRIMARY KEY,run_id TEXT NOT NULL,at INTEGER NOT NULL,level TEXT NOT NULL,message TEXT NOT NULL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER NOT NULL,status TEXT NOT NULL,cost_reported INTEGER NOT NULL,cost_usd REAL NOT NULL);
+    CREATE TABLE batch_dry_runs(id TEXT PRIMARY KEY,at INTEGER NOT NULL,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER NOT NULL,status TEXT NOT NULL,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE interviews(id TEXT PRIMARY KEY,updated_at INTEGER NOT NULL,status TEXT NOT NULL,calls INTEGER,spend_usd REAL);`);
   const database = { prepare: sql => native.prepare(sql), exec: sql => native.exec(sql), transaction: fn => {
@@ -241,6 +242,7 @@ test('each independent owner or remote liability refuses direct restore without 
     ['unmetered learning result', f => f.native.exec("INSERT INTO learning_model_runs VALUES ('learning',1,'ok',0,0)")],
     ['failed unmetered learning result', f => f.native.exec("INSERT INTO learning_model_runs VALUES ('learning',1,'failed',0,0)")],
     ['unknown learning attempt state', f => f.native.exec("INSERT INTO learning_model_runs VALUES ('learning',1,'pending',1,0)")],
+    ['dry-run sample with missing cost', f => f.native.exec("INSERT INTO batch_dry_runs VALUES ('sample',1,40,12,NULL)")],
     ['companion with missing cost', f => f.native.exec("INSERT INTO companion_turns VALUES ('turn',1,'failed',NULL,NULL,NULL)")],
     ['legacy committed interview cannot prove every prior request settled', f => f.native.exec("INSERT INTO interviews VALUES ('interview',1,'committed',2,0.05)")],
   ];

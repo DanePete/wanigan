@@ -134,6 +134,7 @@ export function inspectLegacyRemoteLiability(d: Database.Database): RecoveryObse
       FROM learning_model_runs WHERE status NOT IN ('ok','failed','refused')
       OR (status IN ('ok','failed') AND COALESCE(cost_reported,0)!=1)`, source: 'learning-model request with unresolved metering' },
     { table: 'companion_turns', sql: 'SELECT id,id AS operation_id,at,status,input_tokens,output_tokens,cost_usd FROM companion_turns WHERE cost_usd IS NULL', source: 'companion turn without accounted cost' },
+    { table: 'batch_dry_runs', sql: 'SELECT id,id AS operation_id,at,input_tokens,output_tokens,cost_usd FROM batch_dry_runs WHERE cost_usd IS NULL', source: 'dry-run sample without accounted cost' },
     // Interview totals do not preserve a reservation or a result for every
     // attempted call. A later successful answer can replace an earlier error.
     // Even a committed/abandoned interview cannot prove that history settled.

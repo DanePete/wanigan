@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import * as batch from './modules/batch';
 import { writeExport } from './modules/batch/module';
+import { recordDryRun } from './modules/batch/dry-run-ledger';
+import { admitPaidOperation, recordPaidResponse } from './modules/usage-paid-operations';
 import { db } from './db';
 import { addProject, listProjects } from './store';
 import type { RunConfig } from '../shared/types';
@@ -121,6 +123,26 @@ export async function runSmoke(): Promise<void> {
   check((est.estimate?.cachedPrefixTokens ?? 0) > 0, 'cached prefix measured');
   const dr = await batch.dryRunOne(cfg());
   check(dr.result?.ok === true, 'dry run passes', JSON.stringify(dr.result));
+  {
+    // The mock sample spends nothing and records nothing. An answered sample is
+    // exercised with the message shape the SDK returns and a real receipt.
+    const samples = () => (db().prepare('SELECT COUNT(*) AS n FROM batch_dry_runs').get() as { n: number }).n;
+    check(samples() === 0, 'a mock dry run, which spends nothing, leaves no dry-run ledger row', samples());
+    const settle = (requestId: string, usage: Record<string, number> | null) => {
+      const receipt = admitPaidOperation('anthropic:messages'); recordPaidResponse(receipt, 200, requestId, undefined, true);
+      const id = recordDryRun({ model: 'claude-sonnet-5', _request_id: requestId, usage }, 'claude-sonnet-5');
+      return { id, row: db().prepare('SELECT outcome,owner_table,owner_id FROM usage_paid_settlements WHERE receipt_id=?').get(receipt) as { outcome: string; owner_table: string | null; owner_id: string | null } };
+    };
+    const owned = settle('req_smoke_sample_metered', { input_tokens: 900, output_tokens: 120, cache_read_input_tokens: 400 });
+    const unowned = settle('req_smoke_sample_unmetered', null);
+    const ledger = db().prepare('SELECT input_tokens,cache_read_tokens,cache_creation_tokens,cost_usd FROM batch_dry_runs WHERE id=?').get(owned.id) as { input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number | null };
+    check(ledger.input_tokens === 900 && ledger.cache_read_tokens === 400 && ledger.cache_creation_tokens === 0 && (ledger.cost_usd ?? 0) > 0,
+      'an answered dry-run sample is recorded with every meter the API reported, priced at synchronous rates', ledger);
+    check(owned.row.outcome === 'metered' && owned.row.owner_table === 'batch_dry_runs' && owned.row.owner_id === owned.id,
+      'a metered dry-run sample accounts for its own paid receipt', owned.row);
+    check(unowned.id !== null && unowned.row.outcome === 'responded' && unowned.row.owner_table === null,
+      'a dry-run answer whose meters never arrived is recorded and leaves its receipt unresolved', unowned.row);
+  }
 
   say('── guard rails');
   await expectThrow(() => batch.createAndSubmitRun(cfg({ maxTokens: 0 })),

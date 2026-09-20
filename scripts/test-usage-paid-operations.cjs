@@ -31,6 +31,7 @@ function fixture() {
   module.exports.migrateUsagePaidSettlements(native);
   native.exec(`CREATE TABLE prompt_improve_usage(request_id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,estimated_cost_usd REAL);
     CREATE TABLE learning_model_runs(id TEXT PRIMARY KEY,at INTEGER,status TEXT,cost_reported INTEGER,cost_usd REAL);
+    CREATE TABLE batch_dry_runs(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cache_read_tokens INTEGER,cache_creation_tokens INTEGER,cost_usd REAL);
     CREATE TABLE interview_calls(id TEXT PRIMARY KEY,interview_id TEXT,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);
     CREATE TABLE companion_turns(id TEXT PRIMARY KEY,at INTEGER,model TEXT,input_tokens INTEGER,output_tokens INTEGER,cost_usd REAL);`);
   return { native, paid: module.exports, hold() { held = true; },
@@ -151,6 +152,16 @@ async function main() {
   assert(isAccounted(interviewCall));
   d.exec("DELETE FROM interview_calls WHERE id='call-1'");
   assert.equal(isAccounted(interviewCall), false, 'a deleted interview call cannot authorize a restore');
+
+  // A dry-run sample can use the cache, so a row missing its cache meters is incomplete.
+  const sample = await receiptFor(answer(200, 'req_sample'));
+  d.exec("INSERT INTO batch_dry_runs VALUES ('sample-partial',1,'fixture',40,12,NULL,NULL,NULL); INSERT INTO batch_dry_runs VALUES ('sample-1',1,'fixture',40,12,0,0,NULL)");
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_sample', outcome: 'metered', ownerTable: 'batch_dry_runs', ownerId: 'sample-partial' }, d), false,
+    'a dry-run sample without its cache meters accounts for nothing');
+  assert.equal(s.paid.accountForPaidOperation({ requestId: 'req_sample', outcome: 'metered', ownerTable: 'batch_dry_runs', ownerId: 'sample-1' }, d), true);
+  assert(isAccounted(sample));
+  d.exec("UPDATE batch_dry_runs SET cache_read_tokens=9 WHERE id='sample-1'");
+  assert.equal(isAccounted(sample), false, 'a changed dry-run sample cannot authorize a restore');
 
   // A settlement that cannot be written never takes the response from its caller.
   d.exec('DROP TABLE usage_paid_settlements');

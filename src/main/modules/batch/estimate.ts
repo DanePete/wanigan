@@ -4,6 +4,7 @@ import { costOf, isPricedModel, modelFor } from './pricing';
 import { estimateTokens } from '../../../shared/tokens';
 import type { RunConfig } from '../../../shared/types';
 import type { BuiltRequest } from './build';
+import { recordDryRun } from './dry-run-ledger';
 
 export type Estimate = {
   requests: number;
@@ -196,6 +197,7 @@ export async function dryRun(req: BuiltRequest) {
   }
   try {
     const msg = await client().messages.create(req.params as never);
+    recordDryRun(msg, String((req.params as { model?: unknown }).model ?? ''));
     const text = msg.content
       .flatMap((b) => (b.type === 'text' ? [b.text] : []))
       .join('\n');
