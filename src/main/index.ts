@@ -280,25 +280,30 @@ function startPoller() {
   // halted fleet should not be keeping a laptop up to watch work it stopped.
   if (halted()) return;
   const tick = async () => {
-    // What modules watch on this beat: today, batch polling. Each is isolated
-    // and quiet in the registry, so nothing here can stop the work below.
-    await runModuleHeartbeats((channel, payload) => {
-      const w = liveWindow();
-      if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
-    });
-    // Persistent attention is also the retry source for a transient ntfy
-    // failure. Transition-aware dedupe makes this cheap/noiseless when delivery
-    // already succeeded, while a failed phone alert retries after its backoff.
-    // On macOS the last window can close while Wanigan, its PTYs and the phone
-    // monitor keep running. Phone delivery/retry cannot depend on a renderer.
-    announceCurrentAttention();
-    try { finalizeProviderRemovals(); } catch { /* an active profile is expected */ }
-    // The backstop for every lifecycle this file cannot see the end of. A
-    // headless row finishing writes no IPC message and a PTY that dies with the
-    // exit observer detached reports to nobody, so a reconcile that is cheap
-    // when nothing changed is what stops a released hold from being missed —
-    // and what starts one in the daemon, which has no window and no handlers.
-    try { syncAwake(); } catch { /* power management is never worth a dead poll */ }
+    try {
+      // Persistent attention is also the retry source for a transient ntfy
+      // failure. Transition-aware dedupe makes this cheap/noiseless when delivery
+      // already succeeded, while a failed phone alert retries after its backoff.
+      // On macOS the last window can close while Wanigan, its PTYs and the phone
+      // monitor keep running. Phone delivery/retry cannot depend on a renderer.
+      announceCurrentAttention();
+      try { finalizeProviderRemovals(); } catch { /* an active profile is expected */ }
+      // The backstop for every lifecycle this file cannot see the end of. A
+      // headless row finishing writes no IPC message and a PTY that dies with the
+      // exit observer detached reports to nobody, so a reconcile that is cheap
+      // when nothing changed is what stops a released hold from being missed —
+      // and what starts one in the daemon, which has no window and no handlers.
+      try { syncAwake(); } catch { /* power management is never worth a dead poll */ }
+    } finally {
+      // What modules watch on this beat: today, batch polling. Last on purpose.
+      // Everything above is the kernel's and reads none of it, and a module that
+      // is slow, such as an ingest of a large result file, must not be what a
+      // phone alert or a released awake hold waits behind.
+      await runModuleHeartbeats((channel, payload) => {
+        const w = liveWindow();
+        if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
+      });
+    }
   };
   pollTimer = setInterval(tick, 10_000);
   void tick();

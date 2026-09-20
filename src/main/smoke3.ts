@@ -72,7 +72,7 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject, removeProject } from './store';
-import { moduleNeedsStartedServices, moduleRunners, modules, registerModule, registerModuleIpc, runModuleHeartbeats, type IpcHandle } from './module-registry';
+import { claimRunnerLanes, moduleNeedsStartedServices, moduleRunners, modules, registerModule, registerModuleIpc, runModuleHeartbeats, type IpcHandle } from './module-registry';
 import { batchModule } from './modules/batch/module';
 import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
@@ -7503,6 +7503,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(beats === 1 && JSON.stringify(sent.filter(([channel]) => channel.startsWith('smoke-beat'))) === JSON.stringify([['smoke-beat:seen', 1]])
       && !sent.some(([, payload]) => (payload as { forged?: boolean } | null)?.forged === true),
       'a module heartbeat runs after one that failed, reaches the window on its own channels, and cannot speak on another module\u2019s', sent);
+    const fake = (id: string, extra: Record<string, unknown>) => ({ id, label: id, required: null, ...extra }) as never;
+    const runner = { kind: 'scout' as const, describe: 'fixture', run: async () => {} };
+    const scheduled = { id: 'fixture-schedule', kind: 'scout' as const, describe: 'fixture', run: async () => {}, sync: () => {} };
+    const refused = (list: never[]) => { try { claimRunnerLanes(list); return ''; } catch (error) { return error instanceof Error ? error.message : String(error); } };
+    check(claimRunnerLanes([fake('one', { runners: () => [runner] }), fake('two', {})]).length === 1
+      && /"one" and "two" both claim the "scout" queue lane/.test(refused([fake('one', { runners: () => [runner] }), fake('two', { runners: () => [runner] })]))
+      && /"one \(schedule fixture-schedule\)" and "two" both claim the "scout" queue lane/.test(refused([fake('one', { schedules: () => [scheduled] }), fake('two', { runners: () => [runner] })])),
+      'one queue lane has one runner: a second module claiming it is refused, and so is a lane another module\u2019s schedule already runs');
+    const beat = sourceOf('src/main/index.ts');
+    const kernelAt = beat.indexOf('announceCurrentAttention();\n'), awakeAt = beat.indexOf('try { syncAwake(); } catch { /* power management'), beatsAt = beat.indexOf('await runModuleHeartbeats(');
+    check(kernelAt > 0 && kernelAt < awakeAt && awakeAt < beatsAt && /\} finally \{\s*\/\/ What modules watch on this beat/.test(beat),
+      'on each beat the kernel\u2019s attention, removals and awake reconcile run before any module heartbeat, and the heartbeats run even if that work throws', { kernelAt, awakeAt, beatsAt });
     const lane = moduleRunners().filter((runner) => runner.kind === 'batch');
     let refusal = '';
     try { await batchModule.runners()[0].run({}); } catch (error) { refusal = error instanceof Error ? error.message : String(error); }

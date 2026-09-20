@@ -143,8 +143,9 @@ export type WaniganModule = {
    * Watching work on the host's heartbeat, which `maintenance` cannot be: the
    * emergency stop halts the heartbeat and clearing the halt resumes it, so
    * this never runs while halted, and it can tell the window what it saw. The
-   * host owns the clock and the order; a module's failure is its own and is
-   * retried on the next beat. Reads only: anything that spends belongs on a
+   * host owns the clock and the order, and runs its own work on a beat before
+   * any module's, so a slow heartbeat delays other modules and never the
+   * kernel. A module's failure is its own and is retried on the next beat. Reads only: anything that spends belongs on a
    * queue lane, where the budget gate is.
    */
   heartbeat?: (context: ModuleHeartbeatContext) => Promise<void>;
@@ -251,15 +252,23 @@ export function moduleSchedules(): ModuleSchedule[] {
   return registry.flatMap((module) => module.schedules?.() ?? []);
 }
 
-/** Every lane a module runs without a schedule. Two claims on one lane are refused. */
-export function moduleRunners(): ModuleRunner[] {
+/** Every lane a module runs without a schedule. Two claims on one lane are
+ * refused, and so is a lane some module's schedule already brings a runner for:
+ * the host registers both, and the later one would silently replace the other.
+ * Pure over the list it is given, so the rule is testable without the registry. */
+export function claimRunnerLanes(list: readonly WaniganModule[]): ModuleRunner[] {
   const claimed = new Map<string, string>();
-  return registry.flatMap((module) => (module.runners?.() ?? []).map((runner) => {
+  for (const module of list) for (const job of module.schedules?.() ?? []) claimed.set(job.kind, `${module.id} (schedule ${job.id})`);
+  return list.flatMap((module) => (module.runners?.() ?? []).map((runner) => {
     const owner = claimed.get(runner.kind);
     if (owner) throw new Error(`Modules "${owner}" and "${module.id}" both claim the "${runner.kind}" queue lane. One lane has one runner.`);
     claimed.set(runner.kind, module.id);
     return runner;
   }));
+}
+
+export function moduleRunners(): ModuleRunner[] {
+  return claimRunnerLanes(registry);
 }
 
 /**
