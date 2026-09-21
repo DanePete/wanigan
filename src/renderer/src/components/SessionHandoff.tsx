@@ -22,10 +22,12 @@ import type { HandoffPlan } from '@shared/handoff';
  * account added or removed under Settings is offered or withdrawn without a
  * restart.
  */
-export default function SessionHandoff({ session, onOpened, onError }: {
+export default function SessionHandoff({ session, onOpened, onError, placement = 'up' }: {
   session: Session;
   onOpened: (id: string, projectId?: string) => void;
   onError: (message: string) => void;
+  /** Which way the menu opens: up from a status bar, down from a row inside a panel. */
+  placement?: 'up' | 'down';
 }) {
   const [plan, setPlan] = useState<HandoffPlan | null>(null);
   const [open, setOpen] = useState(false);
@@ -94,7 +96,7 @@ export default function SessionHandoff({ session, onOpened, onError }: {
         ⇄ continue on…
       </button>
       {open && (
-        <span className="session-handoff-menu" role="menu">
+        <span className={placement === 'down' ? 'session-handoff-menu down' : 'session-handoff-menu'} role="menu">
           {targets.map((target) => (
             <button key={target.accountId} type="button" role="menuitem"
                     className="session-handoff-item" disabled={busy !== null}
