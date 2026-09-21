@@ -54,7 +54,10 @@ function fixture() {
       if (name in stubs) return stubs[name];
       if (name === 'node:crypto') return require(name); // Owner recovery hashes bounded SQLite evidence locally.
       if (!name.startsWith('.')) throw new Error(`Unexpected runtime import: ${name}`);
-      return load(path.relative(root, path.resolve(path.dirname(file), `${name}.ts`)));
+      // Stub keys are spelled with '/', and on Windows path.relative answers
+      // with '\\': every stub then missed, the real sessions.ts loaded, and
+      // its shared/platform import of node:path was refused as unexpected.
+      return load(path.relative(root, path.resolve(path.dirname(file), `${name}.ts`)).split(path.sep).join('/'));
     };
     vm.runInThisContext(`(function(require,module,exports){${code}\n})`, { filename: file })(localRequire, mod, mod.exports);
     return mod.exports;

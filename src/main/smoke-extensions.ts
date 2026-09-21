@@ -5,7 +5,7 @@ import { db } from './db';
 import * as registry from './mcp/registry';
 import * as extensions from './extensions/store';
 import * as builtin from './extensions/builtin';
-import { clearProviderKey } from './keys';
+import { clearProviderKey, encryptionAvailable, initializeCredentials } from './keys';
 import { EXTENSION_MANIFEST_FILE, ownerExtensionId, scoutFingerprint } from '../shared/extension-manifest';
 import type { ExtensionInfo, ExtensionInspection } from '../shared/types';
 
@@ -373,22 +373,41 @@ export async function runExtensionsSmoke(check: Check, say: (text: string) => vo
     const bare = sessionHeaders();
     check(bare.Accept === 'application/json, text/event-stream' && bare.Authorization === undefined,
       'with no key saved, the header is left off rather than sent as a bare prefix', bare);
-    await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', '  sk-smoke-123\n', new Set());
-    const sent = sessionHeaders();
-    check(sent.Authorization === 'Bearer sk-smoke-123', 'the saved key reaches the server as its header, after the declared prefix', sent);
-    check(extensions.listExtensions().find((x) => x.id === 'smoke-ext-hdr')?.credentials[0]?.present === true,
-      'and the extension reads it back only as present');
-    // A hand edit in Settings sends no headers field; the declared ones must survive it.
-    registry.upsertServer({ id: hdrRow()!.id, projectId: null, name: 'smoke-ext-hdr', transport: 'http', url: 'https://mcp.smoke.example/v2', enabled: true });
-    check(hdrRow()?.url === 'https://mcp.smoke.example/v2' && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
-      'editing the server by hand keeps the headers an extension declared');
     const providerRefusal = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', 'x', new Set(['smoke-ext-hdr.key']))
       .then(() => '', (error: unknown) => String(error));
     check(/provider pack/.test(providerRefusal), 'a credential id a provider pack owns cannot be set through an extension', providerRefusal);
     const injection = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', 'a\r\nX-Evil: 1', new Set())
       .then(() => '', (error: unknown) => String(error));
-    check(/line break/.test(injection) && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
-      'a key with a line break is refused and the saved one is untouched', injection);
+    check(/line break/.test(injection) && sessionHeaders().Authorization === undefined,
+      'a key with a line break is refused before anything is stored', injection);
+    // The flag is set by initialisation, which storeCredential awaits itself;
+    // asked before that it reads false on a machine whose keychain is fine.
+    await initializeCredentials();
+    if (!encryptionAvailable()) {
+      // A CI runner has no OS keychain, and Wanigan's answer to that is a
+      // refusal by name rather than a plaintext file. That refusal is the
+      // fact to pin here; the checks that need a saved key cannot run and
+      // say so, rather than failing the suite for a keychain it never had.
+      const refusal = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', '  sk-smoke-123\n', new Set())
+        .then(() => '', (error: unknown) => String(error));
+      check(/keychain is unavailable/.test(refusal) && sessionHeaders().Authorization === undefined,
+        'with no OS keychain, saving the key is refused by name and no header is sent — there is no plaintext fallback', refusal);
+      say('   (no OS keychain here: the saved-key header checks did not run)');
+    } else {
+      await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', '  sk-smoke-123\n', new Set());
+      const sent = sessionHeaders();
+      check(sent.Authorization === 'Bearer sk-smoke-123', 'the saved key reaches the server as its header, after the declared prefix', sent);
+      check(extensions.listExtensions().find((x) => x.id === 'smoke-ext-hdr')?.credentials[0]?.present === true,
+        'and the extension reads it back only as present');
+      // A hand edit in Settings sends no headers field; the declared ones must survive it.
+      registry.upsertServer({ id: hdrRow()!.id, projectId: null, name: 'smoke-ext-hdr', transport: 'http', url: 'https://mcp.smoke.example/v2', enabled: true });
+      check(hdrRow()?.url === 'https://mcp.smoke.example/v2' && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
+        'editing the server by hand keeps the headers an extension declared');
+      const later = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', 'a\r\nX-Evil: 1', new Set())
+        .then(() => '', (error: unknown) => String(error));
+      check(/line break/.test(later) && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
+        'a key with a line break is refused and the saved one is untouched', later);
+    }
   } catch (error) {
     check(false, 'extensions smoke completed', String(error));
   } finally {
