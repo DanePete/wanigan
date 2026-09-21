@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ExtensionInfo } from '@shared/types';
+import type { ExtensionInfo, McpServerReview } from '@shared/types';
 import type { StoreEntry, StoreInstall, StoreSourceInfo, StoreUpdate } from '@shared/mcp-registry';
 import type {
   StorePublisher, StoreResults, StoreRuns, StoreRuntime, StoreSort, StoreState,
 } from '@shared/store-query';
 import {
-  Chip, EmptyState, Explainer, Hint, Mark, Note, Reading, SectionHead, Segmented, ago, num, type Tone,
+  Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, Reading, SectionHead, Segmented, ago, num, type Tone,
 } from '../components/bits';
 
 /*
@@ -48,6 +48,56 @@ function runsAs(install: StoreInstall): { glyph: string; word: string; tone: Ton
   }
 }
 
+/** The exact line an enabled stdio server runs, as the registry stores it. */
+function commandLine(server: McpServerReview): string {
+  return [server.command ?? '', ...server.args].join(' ').trim();
+}
+
+function hostOf(url: string | null): string {
+  if (!url) return 'its host';
+  try { return new URL(url).host; } catch { return url; }
+}
+
+/** The MCP server an installed store extension registered, if it registered one. */
+function serverOf(extension: ExtensionInfo | undefined, servers: McpServerReview[]): McpServerReview | null {
+  const artifact = extension?.artifacts.find((a) => a.kind === 'mcp-server' && a.applied);
+  if (!artifact) return null;
+  return servers.find((s) => s.name === artifact.ref && s.projectId === artifact.projectId) ?? null;
+}
+
+/**
+ * The second approval, where the operator already is. Installing registered the
+ * server switched off; turning it on is its own decision, and this says exactly
+ * what that decision grants. For a stdio server it trusts the command digest the
+ * operator is looking at — the main process refuses to enable one whose exact
+ * command line was not approved, and refuses a digest that no longer matches — so
+ * the store cannot shortcut the gate Settings enforces, only put it in view.
+ */
+function TurnOnConfirm({ server, busy, onRun, onCancel }: {
+  server: McpServerReview; busy: boolean; onRun: () => Promise<void>; onCancel: () => void;
+}) {
+  const local = server.transport === 'stdio';
+  return (
+    <ConfirmNote
+      busy={busy}
+      verb={busy ? 'Turning on…' : local && server.trust !== 'trusted' ? 'Trust and turn on' : 'Turn on'}
+      onRun={onRun}
+      onCancel={onCancel}
+      what={local ? (
+        <>
+          <strong>Turn on {server.name}?</strong> Every session that uses it will start this command on this
+          machine, as you, with your files: <span className="mono">{commandLine(server)}</span>
+        </>
+      ) : (
+        <>
+          <strong>Turn on {server.name}?</strong> Every session that uses it will send its tool calls
+          to <span className="mono">{hostOf(server.url)}</span>.
+        </>
+      )}
+    />
+  );
+}
+
 export default function McpStore({ installed, busy, justInstalled, onDismissInstalled, onReview }: {
   installed: ExtensionInfo[];
   busy: string | null;
@@ -74,6 +124,10 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
   const [sync, setSync] = useState<{ phase: 'idle' | 'syncing' | 'done' | 'error'; error?: string }>({ phase: 'idle' });
   const [syncTick, setSyncTick] = useState(0);
   const [updates, setUpdates] = useState<StoreUpdate[] | null>(null);
+  const [servers, setServers] = useState<McpServerReview[]>([]);
+  const [confirming, setConfirming] = useState<{ serverId: string; where: 'note' | 'card' } | null>(null);
+  const [turning, setTurning] = useState(false);
+  const [turned, setTurned] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   // Every query is numbered, and only the newest may write results: a slow
   // answer to an older filter must not replace the current one.
   const generation = useRef(0);
@@ -133,6 +187,35 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
         if (alive.current && mine === generation.current) setSync({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
       });
   }, [sourceKey, spec, syncTick, installedKey]);
+
+  // The servers installed store extensions registered, for whether each is on.
+  // Read through the same call Settings uses; nothing here writes except turnOn.
+  const reloadServers = useCallback(async () => {
+    try {
+      const rows = await window.wanigan.mcp.review();
+      if (alive.current) setServers(rows);
+    } catch { /* the cards fall back to showing no switch at all */ }
+  }, []);
+  useEffect(() => { void reloadServers(); }, [installedKey, reloadServers]);
+
+  async function turnOn(server: McpServerReview) {
+    setTurning(true);
+    setTurned(null);
+    try {
+      // The digest passed back is the one on screen. If the command changed in
+      // between, the main process refuses it and nothing is trusted.
+      if (server.transport === 'stdio' && server.trust !== 'trusted') await window.wanigan.mcp.trust(server.id, server.sha256);
+      await window.wanigan.mcp.setEnabled(server.id, true);
+      if (!alive.current) return;
+      setConfirming(null);
+      setTurned({ tone: 'ok', text: `${server.name} is on. Sessions started from now on can use it; one already running picks it up when it restarts.` });
+      await reloadServers();
+    } catch (e) {
+      if (alive.current) setTurned({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      if (alive.current) setTurning(false);
+    }
+  }
 
   async function showMore() {
     if (!sourceKey || !results || loadingMore) return;
@@ -194,15 +277,25 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
         // came in switched on, and a store that said "installed" and nothing else
         // would leave a local server off with nobody told why.
         const notes = justInstalled.artifacts.map((a) => a.note).filter((n): n is string => !!n);
-        const switchedOff = notes.some((n) => /switched off/i.test(n));
+        const server = serverOf(byId.get(justInstalled.id) ?? justInstalled, servers);
+        const off = !!server && !server.enabled;
         return (
-          <Note tone={switchedOff ? 'info' : 'ok'} role="status" onDismiss={onDismissInstalled}>
-            <strong>{justInstalled.label} is installed.</strong>{' '}
-            {notes.join(' ')}
-            {switchedOff && ' Settings is ⌘, from anywhere in Wanigan.'}
-          </Note>
+          <>
+            <Note tone={off ? 'info' : 'ok'} role="status" onDismiss={onDismissInstalled}
+                  action={off && confirming?.serverId !== server.id
+                    ? { label: 'Turn on here', run: () => setConfirming({ serverId: server.id, where: 'note' }) }
+                    : undefined}>
+              <strong>{justInstalled.label} is installed.</strong>{' '}
+              {off ? 'It is switched off: installing never turns a server on for you. Turn it on here, or later in Settings → Connections → MCP servers.' : notes.join(' ')}
+            </Note>
+            {off && confirming?.serverId === server.id && confirming.where === 'note' && (
+              <TurnOnConfirm server={server} busy={turning} onRun={() => turnOn(server)} onCancel={() => setConfirming(null)} />
+            )}
+          </>
         );
       })()}
+
+      {turned && <Note tone={turned.tone} role="status" onDismiss={() => setTurned(null)}>{turned.text}</Note>}
 
       {updates && updates.length > 0 && (
         <Note tone="info" role="status">
@@ -348,8 +441,14 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
                 key={`${entry.sourceId}|${entry.name}`}
                 entry={entry}
                 have={byId.get(entry.extensionId) ?? null}
+                server={serverOf(byId.get(entry.extensionId), servers)}
                 busy={busy}
+                confirming={confirming?.where === 'card' ? confirming.serverId : null}
+                turning={turning}
                 onReview={() => onReview(entry.sourceId, entry.name, entry.version)}
+                onAskTurnOn={(id) => setConfirming({ serverId: id, where: 'card' })}
+                onTurnOn={turnOn}
+                onCancelTurnOn={() => setConfirming(null)}
               />
             ))}
           </div>
@@ -371,11 +470,18 @@ function flip<T>(list: T[], value: T): T[] {
 }
 
 /** One catalog entry: who published it, how it runs, what it asks for, and where it stands on this machine. */
-function StoreCard({ entry, have, busy, onReview }: {
+function StoreCard({ entry, have, server, busy, confirming, turning, onReview, onAskTurnOn, onTurnOn, onCancelTurnOn }: {
   entry: StoreEntry;
   have: ExtensionInfo | null;
+  /** The server this entry's installed extension registered, when it is installed. */
+  server: McpServerReview | null;
   busy: string | null;
+  confirming: string | null;
+  turning: boolean;
   onReview: () => void;
+  onAskTurnOn: (serverId: string) => void;
+  onTurnOn: (server: McpServerReview) => Promise<void>;
+  onCancelTurnOn: () => void;
 }) {
   const locked = busy !== null;
   const fetching = busy === `stage:${entry.name}`;
@@ -390,6 +496,9 @@ function StoreCard({ entry, have, busy, onReview }: {
           <h3 className="ex-title">{entry.title}</h3>
           <span className="ex-ver mono">{entry.version}</span>
           {state === 'installed' && <Mark glyph="✓" word="Installed" tone="ok" />}
+          {have && server && (server.enabled
+            ? <Mark glyph="●" word="On" tone="ok" />
+            : <Mark glyph="○" word="Switched off" tone="quiet" />)}
           {state === 'update' && <Mark glyph="↑" word={`Installed ${have!.version}, update available`} tone="accent" />}
           {entry.deprecated && <Mark glyph="!" word="Deprecated by its publisher" tone="warn" />}
         </div>
@@ -397,6 +506,11 @@ function StoreCard({ entry, have, busy, onReview }: {
           {link && (
             <button type="button" className="btn btn-sm" onClick={() => void window.wanigan.shell.openExternal(link)}>
               {entry.repositoryUrl ? 'Source' : 'Website'}
+            </button>
+          )}
+          {server && !server.enabled && confirming !== server.id && (
+            <button type="button" className="btn btn-sm" disabled={locked || turning} onClick={() => onAskTurnOn(server.id)}>
+              Turn on…
             </button>
           )}
           {entry.install.kind !== 'unsupported' && state !== 'installed' && (
@@ -421,6 +535,10 @@ function StoreCard({ entry, have, busy, onReview }: {
       </div>
 
       {entry.install.kind === 'unsupported' && <p className="ex-blurb">{entry.install.reason}</p>}
+
+      {server && confirming === server.id && (
+        <TurnOnConfirm server={server} busy={turning} onRun={() => onTurnOn(server)} onCancel={onCancelTurnOn} />
+      )}
     </article>
   );
 }
