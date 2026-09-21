@@ -66,10 +66,18 @@ jobs:
           tar --extract --xz --file shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           mv "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" .
 
-      # The three scripts a contributor actually runs: launch.sh, smoke.sh and
-      # cli.sh.
+      # scripts/ no longer ships a shell script: launch, smoke and cli moved to
+      # Node (see scripts/runner.mjs for why nothing there shells out). The
+      # gate stays so that a shell script added later is checked, and passes
+      # when there is none rather than failing on an unmatched glob.
       - name: Check shell scripts
-        run: ./shellcheck scripts/*.sh
+        run: |
+          mapfile -t scripts < <(find scripts -name '*.sh' -type f | sort)
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "No shell scripts under scripts/; nothing to check."
+            exit 0
+          fi
+          ./shellcheck "${scripts[@]}"
 
   secrets:
     name: gitleaks
