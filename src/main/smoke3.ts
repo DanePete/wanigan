@@ -72,7 +72,8 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject, removeProject } from './store';
-import { moduleNeedsStartedServices, registerModuleIpc, type IpcHandle } from './module-registry';
+import { claimRunnerLanes, moduleNeedsStartedServices, moduleRunners, modules, registerModule, registerModuleIpc, runModuleHeartbeats, type IpcHandle } from './module-registry';
+import { batchModule } from './modules/batch';
 import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
@@ -7492,6 +7493,40 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const evalsMainSrc = sourceOf('src/main/batch/evals.ts');
   // The evals and refusal channels are registered by their own module records.
   const batchDepthSrc = sourceOf('src/main/modules/batch-depth.ts');
+  {
+    // The two extension points batch needed to leave index.ts: a beat on the
+    // host's heartbeat, and a queue lane with no schedule of the module's own.
+    let beats = 0;
+    if (!modules().some((m) => m.id === 'smoke-beat-broken')) {
+      registerModule({ id: 'smoke-beat-broken', label: 'smoke', required: null, heartbeat: async () => { throw new Error('offline'); } });
+      registerModule({ id: 'smoke-beat', label: 'smoke', required: null, heartbeat: async ({ notify }) => {
+        beats++; notify('smoke-beat:seen', beats); notify('batch:changed', { forged: true });
+      } });
+    }
+    const sent: [string, unknown][] = [];
+    await runModuleHeartbeats((channel, payload) => { sent.push([channel, payload]); });
+    check(beats === 1 && JSON.stringify(sent.filter(([channel]) => channel.startsWith('smoke-beat'))) === JSON.stringify([['smoke-beat:seen', 1]])
+      && !sent.some(([, payload]) => (payload as { forged?: boolean } | null)?.forged === true),
+      'a module heartbeat runs after one that failed, reaches the window on its own channels, and cannot speak on another module\u2019s', sent);
+    const fake = (id: string, extra: Record<string, unknown>) => ({ id, label: id, required: null, ...extra }) as never;
+    const runner = { kind: 'scout' as const, describe: 'fixture', run: async () => {} };
+    const scheduled = { id: 'fixture-schedule', kind: 'scout' as const, describe: 'fixture', run: async () => {}, sync: () => {} };
+    const refused = (list: never[]) => { try { claimRunnerLanes(list); return ''; } catch (error) { return error instanceof Error ? error.message : String(error); } };
+    check(claimRunnerLanes([fake('one', { runners: () => [runner] }), fake('two', {})]).length === 1
+      && /"one" and "two" both claim the "scout" queue lane/.test(refused([fake('one', { runners: () => [runner] }), fake('two', { runners: () => [runner] })]))
+      && /"one \(schedule fixture-schedule\)" and "two" both claim the "scout" queue lane/.test(refused([fake('one', { schedules: () => [scheduled] }), fake('two', { runners: () => [runner] })])),
+      'one queue lane has one runner: a second module claiming it is refused, and so is a lane another module\u2019s schedule already runs');
+    const beat = sourceOf('src/main/index.ts');
+    const kernelAt = beat.indexOf('announceCurrentAttention();\n'), awakeAt = beat.indexOf('try { syncAwake(); } catch { /* power management'), beatsAt = beat.indexOf('await runModuleHeartbeats(');
+    check(kernelAt > 0 && kernelAt < awakeAt && awakeAt < beatsAt && /\} finally \{\s*\/\/ What modules watch on this beat/.test(beat),
+      'on each beat the kernel\u2019s attention, removals and awake reconcile run before any module heartbeat, and the heartbeats run even if that work throws', { kernelAt, awakeAt, beatsAt });
+    const lane = moduleRunners().filter((r) => r.kind === 'batch');
+    let refusal = '';
+    try { await batchModule.runners()[0].run({}); } catch (error) { refusal = error instanceof Error ? error.message : String(error); }
+    check(lane.length === 1 && typeof batchModule.heartbeat === 'function' && refusal.startsWith('Nothing here names a run to submit.')
+      && !/pollOnce|registerRunner\('batch'/.test(beat),
+      'the batch lane has exactly one runner, declared by the batch module, which refuses a payload that names no run; index.ts polls and runs no batch itself', { lanes: lane.length, refusal });
+  }
   check(['batch:submit', 'batch:dryRun', 'batch:retry', 'refusal:rescue', 'evals:variant', 'evals:judge'].every(moduleNeedsStartedServices)
     && !['refusal:estimate', 'refusal:rows', 'evals:pairs', 'evals:diff', 'cache:ttl', 'uploads:list', 'batch:runs'].some(moduleNeedsStartedServices),
     'every channel that submits a paid run waits for the stop handlers to be installed, and the reads beside them do not');
@@ -7555,7 +7590,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /if \(claimed\.current !== view\) \{\s*claimed\.current = view;\s*store\?\.scopeMounted\(view\);\s*\}/.test(viewMemorySrc),
   'a scope claims its view while it renders, ahead of the view below reading its keys in a useState initializer, so Reload after a crash hands the fresh instance a cleared scope instead of the state that broke it');
 
-  check(/registerRunner\(\s*'batch'/.test(mainSrc),
+  // The lane is declared by the batch module and registered by the host's loop
+  // over moduleRunners(); both halves have to exist for a schedule to fire.
+  check(moduleRunners().some((runner) => runner.kind === 'batch')
+    && /for \(const runner of moduleRunners\(\)\) queue\.registerRunner\(runner\.kind, runner\.run\);/.test(mainSrc),
     "the 'batch' queue kind has a runner — without one every batch schedule blocks on 'no runner registered' forever");
   check(/typeof p\.prompt === 'string'/.test(mainSrc),
     'the headless runner handles a schedule-shaped payload as well as a fan-out one');
