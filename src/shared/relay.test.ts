@@ -226,3 +226,33 @@ test('every function survives an empty, absurd or non-finite reading without thr
     }
   }
 });
+
+/* ── the plan: a chain, narrowed at the front and extended after the build ── */
+import { RELAY_REFINE_TITLE, RELAY_STAGE_KEYS, relayPlan, stageKeyOf } from './relay.ts';
+import { DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS } from './types.ts';
+
+test('the full plan without a clean-up stage is the default plan, chained by position', () => {
+  const plan = relayPlan(DOCKET_NODE_KINDS, false);
+  assert.deepEqual(plan.map((node) => node.kind), DEFAULT_DOCKET_PLAN.map((node) => node.kind));
+  assert.deepEqual(plan.map((node) => node.dependsOn), [[], [0], [1], [2], [3]]);
+});
+
+test('a clean-up stage is a second implement node right after the build, and verify now waits on it', () => {
+  const plan = relayPlan(DOCKET_NODE_KINDS, true);
+  assert.deepEqual(plan.map((node) => node.kind), ['plan', 'estimate', 'implement', 'implement', 'verify', 'review']);
+  assert.equal(plan[3].title, RELAY_REFINE_TITLE);
+  assert.deepEqual(plan.map((node) => node.dependsOn), [[], [0], [1], [2], [3], [4]]);
+  assert.deepEqual(plan.map(stageKeyOf), ['plan', 'estimate', 'implement', 'refine', 'verify', 'review']);
+});
+
+test('narrowing the front and adding the clean-up stage compose: the chain stays a chain', () => {
+  const plan = relayPlan(['estimate', 'implement', 'verify', 'review'], true);
+  assert.deepEqual(plan.map(stageKeyOf), ['estimate', 'implement', 'refine', 'verify', 'review']);
+  assert.deepEqual(plan.map((node) => node.dependsOn), [[], [0], [1], [2], [3]]);
+});
+
+test('the stage keys are the docket kinds with refine after implement, and nothing is a refine by kind alone', () => {
+  assert.deepEqual([...RELAY_STAGE_KEYS], ['plan', 'estimate', 'implement', 'refine', 'verify', 'review']);
+  assert.equal(stageKeyOf({ kind: 'implement', title: 'Implement in an isolated worktree' }), 'implement');
+  assert.equal(stageKeyOf({ kind: 'verify', title: RELAY_REFINE_TITLE }), 'verify');
+});

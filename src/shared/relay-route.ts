@@ -1,4 +1,4 @@
-import type { RelayPhase } from './relay.ts';
+import type { RelayStageKey } from './types.ts';
 
 /**
  * Which model and effort one relay stage runs at, decided only from the moves a
@@ -165,13 +165,13 @@ const sentence = (parts: readonly (string | null)[]): string => parts.filter((pa
  * and a stage that cannot be routed still has to be recorded.
  */
 export function chooseStage(
-  phase: RelayPhase,
+  phase: RelayStageKey,
   candidates: readonly RouteCandidate[],
   defaults: RouteDefaults,
   suggestion?: StageSuggestion | null,
   opts?: RouteOptions,
 ): StageRoute {
-  const stage = `The ${String(phase)} stage`;
+  const stage = phase === 'refine' ? 'The clean-up stage' : `The ${String(phase)} stage`;
   const notes: string[] = [];
 
   // 1. The operator's own choice outranks everything, because the whole point
