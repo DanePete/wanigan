@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_FILL, DEFAULT_SPACING, rigLayout, type RigLayout } from '@shared/relay-rig';
 import { SEDIMENT_CAP } from '@shared/relay';
 import { Pill, type Tone } from '../components/bits';
-import { AGENT_KINDS, KIND_WORD, returnOn, type Phase } from './facts';
+import { AGENT_KINDS, KIND_WORD, returnOn, type Phase, nodeWord } from './facts';
 import { rigShapes, tagPlacement } from './rig-svg';
 import { useFluidTier } from './useFluidTier';
 import { mountFluid, type FluidMount } from './fluid';
@@ -227,7 +227,7 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
                   stageEls.current[next]?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
                 }}>
                 <span className="rl-stage-top">
-                  <span className="rl-stage-name">{KIND_WORD[phase.kind]}</span>
+                  <span className="rl-stage-name">{phase.source === 'docket' ? nodeWord(phase.node) : KIND_WORD[phase.kind]}</span>
                   <Pill status={phase.state.word} tone={toneOf(phase)} />
                 </span>
                 <span className="rl-stage-route">{phase.routeText}</span>
@@ -240,7 +240,7 @@ export default function RelayRig({ relayId, phases, selectedNodeId, onSelect }: 
                         : phase.kind === 'verify' ? 'Project review gate' : 'Local history forecast'}
                 </span>
                 {phase.gauge && <progress value={phase.gauge.value} max={phase.gauge.max}
-                  aria-label={`${KIND_WORD[phase.kind]} ${phase.kind === 'verify' ? 'checks passed' : 'phases priced'}`} />}
+                  aria-label={`${phase.source === 'docket' ? nodeWord(phase.node) : KIND_WORD[phase.kind]} ${phase.kind === 'verify' ? 'checks passed' : 'phases priced'}`} />}
               </button>
             </li>
           ))}
