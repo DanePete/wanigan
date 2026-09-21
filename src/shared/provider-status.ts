@@ -62,6 +62,7 @@ const PROVIDER_TINT = new Map<string, string>([
   // Local open models through NVIDIA PAIR: the Codex tint, because it is the
   // Codex harness, on a backend that costs nothing.
   ['pair-codex', 'var(--codex)'],
+  ['pair-claude', 'var(--claude)'],
 ]);
 
 /**

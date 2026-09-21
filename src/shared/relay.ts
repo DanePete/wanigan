@@ -1,4 +1,4 @@
-import type { DocketNodeKind } from './types.ts';
+import { DEFAULT_DOCKET_PLAN, type DocketNodeKind, type DocketPlanNode, type RelayStageKey } from './types.ts';
 
 /**
  * The arithmetic behind the Relay sluice: how fast a live basin breathes, how
@@ -24,6 +24,53 @@ import type { DocketNodeKind } from './types.ts';
  * second list. `DOCKET_NODE_KINDS` in `types.ts` carries the order.
  */
 export type RelayPhase = DocketNodeKind;
+
+/** Every key a relay route may name, in pipeline order. */
+export const RELAY_STAGE_KEYS: readonly RelayStageKey[] = ['plan', 'estimate', 'implement', 'refine', 'verify', 'review'];
+
+/**
+ * The clean-up stage's title, which is also how a docket node is recognised
+ * as that stage: it is an implement node, and this title is the one thing
+ * that tells it apart from the build. Kept as a constant so the renderer, the
+ * router and the record cannot drift on the spelling.
+ */
+export const RELAY_REFINE_TITLE = 'Clean up and correct';
+
+export const RELAY_REFINE_INSTRUCTIONS =
+  'A different assistant built the changes in this checkout. Review every change against the outcome and the '
+  + 'accepted plan: fix what is wrong, remove dead code and leftovers, tighten names and comments, and make the '
+  + 'project’s checks pass. Do not widen the scope. Report what you changed and anything you could not fix here.';
+
+/**
+ * The relay's plan: the default docket plan narrowed to `phases`, with the
+ * clean-up node spliced in after the build when `refine` is on. Always a
+ * straight chain, relinked by position, which is what lets a suggester narrow
+ * the front and lets this splice one node without either knowing about the
+ * other. The default plan is checked to still be a chain first, because a
+ * relink of a graph that was not one would silently rewire it.
+ */
+export function relayPlan(phases: readonly DocketNodeKind[], refine: boolean): DocketPlanNode[] {
+  DEFAULT_DOCKET_PLAN.forEach((node, index) => {
+    const expected = index === 0 ? [] : [index - 1];
+    if (JSON.stringify(node.dependsOn ?? []) !== JSON.stringify(expected)) {
+      throw new Error('The default docket plan is no longer a straight chain, so it cannot be narrowed or extended by relinking.');
+    }
+  });
+  const nodes: DocketPlanNode[] = [];
+  for (const node of DEFAULT_DOCKET_PLAN) {
+    if (!phases.includes(node.kind)) continue;
+    nodes.push({ ...node });
+    if (refine && node.kind === 'implement') {
+      nodes.push({ kind: 'implement', title: RELAY_REFINE_TITLE, instructions: RELAY_REFINE_INSTRUCTIONS });
+    }
+  }
+  return nodes.map((node, index) => ({ ...node, dependsOn: index === 0 ? [] : [index - 1] }));
+}
+
+/** Which relay stage a docket node is: its kind, or `refine` for the clean-up node. */
+export function stageKeyOf(node: { kind: DocketNodeKind; title: string }): RelayStageKey {
+  return node.kind === 'implement' && node.title === RELAY_REFINE_TITLE ? 'refine' : node.kind;
+}
 
 /** Whether a basin breathes, and why it does not. */
 export type Cadence =

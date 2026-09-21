@@ -518,3 +518,22 @@
    so it takes the whole row beneath them rather than a column beside them,
    where its height would push both pickers down. The grid's gap spaces it. */
 .rl-account-reading { grid-column: 1 / -1; }
+
+/* ── the runner rail: who runs each stage ─────────────────────────────── */
+.rl-runners { list-style: none; margin: 0 0 var(--s-4); padding: 0; display: grid; gap: var(--s-2); }
+.rl-runners + .hint, .rl-composer .rl-runners ~ .sec-head { margin-block-start: var(--s-4); }
+.rl-runner { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-raised); }
+.rl-runner[data-fixed] { background: transparent; border-style: dashed; }
+.rl-runner[data-off] .rl-runner-summary, .rl-runner[data-off] .rl-runner-blurb { color: var(--text-faint); }
+.rl-runner-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.rl-runner-n { display: grid; place-items: center; inline-size: 1.7em; block-size: 1.7em; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font-size: var(--t-micro); font-weight: 650; }
+.rl-runner[data-fixed] .rl-runner-n { background: var(--line-soft); color: var(--text-dim); }
+.rl-runner-name { font-size: var(--t-body); font-weight: 600; color: var(--text); }
+.rl-runner-summary { flex: 1; min-inline-size: 12rem; font-size: var(--t-small); color: var(--text-dim); }
+.rl-runner-blurb { margin: 0; font-size: var(--t-small); line-height: 1.45; color: var(--text-faint); }
+.rl-runner-toggle { display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-small); color: var(--text); }
+.rl-runner-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--s-3); padding-block-start: var(--s-3); border-block-start: 1px solid var(--line-soft); animation: rl-content-in var(--mo-view) var(--mo-ease) both; }
+.rl-runner-fields .label { margin-block-end: var(--s-1); }
+.rl-runner-note { grid-column: 1 / -1; }
+.rl-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-block: var(--s-3); }
+.rl-presets > .faint { flex-basis: 100%; }

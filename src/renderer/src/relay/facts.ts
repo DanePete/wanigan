@@ -1,7 +1,7 @@
-import type { DocketNode, DocketNodeKind, DocketProof, RelayNodeRead, RelayRead } from '@shared/types';
+import type { DocketNode, DocketNodeKind, DocketProof, RelayNodeRead, RelayRead, RelayStageKey } from '@shared/types';
 import type { RelayDeliveryKind, RelayDeliveryStage } from '@shared/relay-delivery';
 import { DOCKET_NODE_KINDS } from '@shared/types';
-import { cadence, gauge, sediment, seedOf, type Cadence, type Gauge, type Sediment } from '@shared/relay';
+import { cadence, gauge, sediment, seedOf, stageKeyOf, type Cadence, type Gauge, type Sediment } from '@shared/relay';
 
 /**
  * What the rail says about each phase, derived from recorded rows and
@@ -70,6 +70,17 @@ export type DocketPhase = Extract<Phase, { source: 'docket' }>;
 export const KIND_WORD: Record<DocketNodeKind | RelayDeliveryKind, string> = {
   plan: 'Plan', estimate: 'Estimate', implement: 'Implement', verify: 'Verify', review: 'Review', commit: 'Commit', deploy: 'Deploy',
 };
+
+/** Every relay stage key's word, the clean-up stage included. */
+export const STAGE_WORD: Record<RelayStageKey, string> = { ...KIND_WORD, refine: 'Clean up' };
+
+/**
+ * The word for one docket node. Two implement nodes look alike by kind; the
+ * clean-up node is told apart by its title, the same way main tells it apart.
+ */
+export function nodeWord(node: Pick<DocketNode, 'kind' | 'title'>): string {
+  return STAGE_WORD[stageKeyOf(node)];
+}
 
 /** The phases that run an agent and so carry a route, silt and a swell. */
 export const AGENT_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'review'];
