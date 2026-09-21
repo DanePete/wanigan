@@ -7,3 +7,12 @@
 # that commit, file, rule and line and nothing else, so a real credential
 # anywhere else, including later in the same file, still fails the scan.
 cf66478224c5d779d20a6d7590a177e5510c2a43:src/shared/pr-readiness.test.ts:private-key:249
+#
+# Two fixtures on feat/helper-sweep, a branch neither of these PRs contains:
+# 7dfd799 tests a redaction with `api_key=` in src/main/smoke39.ts, and a0e3dad
+# tests a rejection message holding a curl Authorization header in
+# src/shared/rejections.test.ts. The hygiene workflow fetches every branch and
+# `gitleaks detect` reads all of them, so a fixture on any branch fails every
+# open PR. Each fingerprint names one commit, file, rule and line.
+7dfd799b54bc1ff5378004ca68ddad5522c69eb3:src/main/smoke39.ts:generic-api-key:117
+a0e3dad82a95e1ac82a0e4eb61d84b97798ee57e:src/shared/rejections.test.ts:curl-auth-header:24
