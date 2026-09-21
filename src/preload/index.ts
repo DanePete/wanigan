@@ -172,6 +172,15 @@ const api = {
       call<ExtensionInfo[]>('extensions:setEnabled', extensionId, enabled),
     uninstall: (extensionId: string) => call<ExtensionRemoval>('extensions:uninstall', extensionId),
     /**
+     * Give an installed extension a credential it declares. The value goes to
+     * the OS keychain and is never returned; the list that comes back says only
+     * whether each credential is present.
+     */
+    setCredential: (extensionId: string, credentialId: string, value: string) =>
+      call<ExtensionInfo[]>('extensions:setCredential', extensionId, credentialId, value),
+    clearCredential: (extensionId: string, credentialId: string) =>
+      call<ExtensionInfo[]>('extensions:clearCredential', extensionId, credentialId),
+    /**
      * Write this Wanigan's own configuration out as an extension directory.
      * The destination is chosen in the main process's own folder picker, so
      * there is no path to pass and a dismissed picker answers null.

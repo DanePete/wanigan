@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { app } from 'electron';
 import { db } from '../db';
 import { removeServer, setServerEnabled, upsertServer } from '../mcp/registry';
+import { clearProviderKey, hasProviderKey, setProviderKey } from '../keys';
 import {
   EXTENSION_MANIFEST_FILE, declaredArtifacts, extensionConsent, extensionOwner,
   mcpFingerprint, ownerExtensionId, scoutFingerprint, validateExtensionManifest,
@@ -668,12 +669,71 @@ function toInfo(row: PluginRow): ExtensionInfo {
     updatedAt: row.updated_at,
     artifacts: manifest ? artifactState(manifest, row.origin === 'builtin') : [],
     consent: manifest ? extensionConsent(manifest) : [],
+    credentials: manifest
+      ? (manifest.credentials ?? []).map((c) => ({ id: c.id, label: c.label, help: c.help ?? null, present: hasProviderKey(c.id) }))
+      : [],
   };
 }
 
 export function listExtensions(): ExtensionInfo[] {
   const rows = db().prepare('SELECT * FROM plugins ORDER BY label').all() as PluginRow[];
   return rows.map(toInfo);
+}
+
+/* ── credentials ─────────────────────────────────────────────────────── */
+
+/*
+ * An extension could always declare a credential — the consent screen named it,
+ * and its server's env referenced it — but nothing could ever give it a value:
+ * key:setProvider accepts only ids a provider pack declares. So every declared
+ * credential resolved to nothing and the server launched without it. These set
+ * one, under the rules that make it this extension's alone.
+ */
+const MAX_CREDENTIAL_CHARS = 16_384;
+
+function declaredCredential(extensionId: unknown, credentialId: unknown, providerOwned: ReadonlySet<string>): void {
+  if (typeof extensionId !== 'string' || !extensionId || extensionId.length > 200) throw new Error('An extension id is required.');
+  if (typeof credentialId !== 'string' || !credentialId || credentialId.length > 200) throw new Error('A credential id is required.');
+  const row = pluginRow(extensionId);
+  if (!row) throw new Error('That extension is not installed.');
+  if (row.trusted_sha256 !== row.manifest_sha256) throw new Error('Approve this extension before giving it a credential.');
+  let manifest: ExtensionManifest | null = null;
+  try {
+    const result = validateExtensionManifest(JSON.parse(row.manifest_json) as unknown, { appVersion: appVersion() });
+    manifest = result.ok ? result.manifest : null;
+  } catch { manifest = null; }
+  if (!manifest) throw new Error('This extension cannot be read, so it cannot be given a credential.');
+  // The manifest validator already refuses a credential named outside the
+  // extension's own id; this is the same check made at the moment of writing.
+  if (!(manifest.credentials ?? []).some((c) => c.id === credentialId)) {
+    throw new Error(`"${extensionId}" does not ask for a credential called "${credentialId}".`);
+  }
+  // Provider keys and extension credentials share one keychain namespace. An id
+  // a provider pack owns is that pack's key, and no extension may overwrite it.
+  if (providerOwned.has(credentialId)) throw new Error('That id is a provider pack\u2019s key, which an extension may not set.');
+}
+
+export async function setExtensionCredential(
+  extensionId: unknown, credentialId: unknown, value: unknown, providerOwned: ReadonlySet<string>,
+): Promise<ExtensionInfo[]> {
+  declaredCredential(extensionId, credentialId, providerOwned);
+  if (typeof value !== 'string') throw new Error('Paste the value to store.');
+  const text = value.trim();
+  if (!text) throw new Error('That value is empty.');
+  if (text.length > MAX_CREDENTIAL_CHARS) throw new Error('That value is longer than Wanigan will store for a credential.');
+  // It ends up in an environment variable or an HTTP header. A line break in a
+  // header is how one request becomes two, so it is refused, not stripped.
+  if (/[\r\n\u0000]/.test(text)) throw new Error('A credential cannot contain a line break.');
+  await setProviderKey(credentialId as string, text);
+  return listExtensions();
+}
+
+export function clearExtensionCredential(
+  extensionId: unknown, credentialId: unknown, providerOwned: ReadonlySet<string>,
+): ExtensionInfo[] {
+  declaredCredential(extensionId, credentialId, providerOwned);
+  clearProviderKey(credentialId as string);
+  return listExtensions();
 }
 
 /**

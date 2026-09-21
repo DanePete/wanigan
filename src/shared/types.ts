@@ -2529,7 +2529,16 @@ export type ExtensionInfo = {
   updatedAt: number;
   artifacts: ExtensionArtifactInfo[];
   consent: ExtensionConsentLine[];
+  /** What it asks the operator for, and which have been given. Empty for an invalid manifest. */
+  credentials: ExtensionCredentialState[];
 };
+
+/**
+ * A credential an extension declares, and whether it has a value. Never the
+ * value: it lives in the OS keychain and is read only when a session's MCP
+ * config is written.
+ */
+export type ExtensionCredentialState = { id: string; label: string; help: string | null; present: boolean };
 
 /** A directory read as an extension, before anything is installed from it. */
 export type ExtensionInspection = {

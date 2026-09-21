@@ -13,6 +13,7 @@ import {
   SectionHead, Segmented, Stat, ago, num, type Tone,
 } from '../components/bits';
 import McpStore from './McpStore';
+import ExtensionCredentials from './ExtensionCredentials';
 
 /*
  * The extension store.
@@ -842,6 +843,7 @@ export default function Extensions() {
                 onToggle={(enabled) => void setEnabled(x, enabled)}
                 onUninstall={() => uninstall(x)}
                 onReviewUpdate={() => setPanel('add')}
+                onCredentials={setList}
               />
             ))}
           </div>
@@ -853,8 +855,10 @@ export default function Extensions() {
 }
 
 /** One store card. Identity, what it provides, its state, and what it held back. */
-function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel, onToggle, onUninstall, onReviewUpdate }: {
+function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel, onToggle, onUninstall, onReviewUpdate, onCredentials }: {
   x: ExtensionInfo;
+  /** A fresh list after a credential this extension declares is saved or removed. */
+  onCredentials: (list: ExtensionInfo[]) => void;
   dense: boolean;
   busy: string | null;
   update: { from: string; to: string } | null;
@@ -907,6 +911,12 @@ function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel
       </div>
 
       <p className="ex-blurb">{status.blurb}</p>
+
+      {/* What it asks for. Before this, a declared credential could be named on
+          the consent screen and never given a value. */}
+      {x.status !== 'invalid' && x.credentials.length > 0 && (
+        <ExtensionCredentials extension={x} onChanged={onCredentials} />
+      )}
 
       {x.status === 'invalid' && x.errors.length > 0 && (
         <Note tone="error" role="none">

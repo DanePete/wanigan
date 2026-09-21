@@ -2113,6 +2113,13 @@ function registerIpc() {
     return extensionStore.setExtensionEnabled(extensionId(id), enabled);
   });
   handle('extensions:uninstall', (id: unknown) => extensionStore.uninstallExtension(extensionId(id)));
+  // An extension's own declared credentials. Validated in the store module
+  // against the installed, approved manifest; the provider-owned ids are passed
+  // in so no extension can overwrite a provider pack's key.
+  handle('extensions:setCredential', (id: unknown, credentialId: unknown, value: unknown) =>
+    extensionStore.setExtensionCredential(id, credentialId, value, managedCredentialIds()));
+  handle('extensions:clearCredential', (id: unknown, credentialId: unknown) =>
+    extensionStore.clearExtensionCredential(id, credentialId, managedCredentialIds()));
   // The store. Browsing and staging live in extensions/mcp-store.ts, which
   // validates every argument itself; these are thin because they have to sit in
   // this closure. A staged directory is one Wanigan wrote, so it is added to the
