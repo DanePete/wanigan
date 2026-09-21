@@ -5,16 +5,22 @@ import type { HandoffPlan } from '@shared/handoff';
 /**
  * Continue this conversation on another account.
  *
- * An account is a CODEX_HOME, and Codex files a conversation into the home it
- * was launched under — so when the account you are on runs out of usage, the
- * thread is not merely paused, it is invisible to the account that still has
- * usage left. This links the one conversation into that account's home and
- * resumes it there.
+ * An account is a configuration directory, and each harness files a
+ * conversation under the directory it was launched under — so when the account
+ * you are on runs out of usage, the conversation is not merely paused, it is
+ * invisible to the account that still has usage left. Main says how this
+ * harness gets across (`plan.method`): Codex links the one conversation into
+ * the other account's home and resumes it there; Claude Code reads the original
+ * transcript by path and records the continuation as a new conversation under
+ * the account you pick.
  *
  * It renders nothing unless main says there is somewhere to go. The plan comes
  * back with a reason when there is not — one account, no recorded conversation,
- * a rollout it could not find — and a control that cannot work is worse than no
- * control, so the reason is shown only while the menu is open and asked for.
+ * a transcript it could not find — and a control that cannot work is worse
+ * than no control, so the reason is shown only while the menu is open and
+ * asked for. The list of accounts is read when the session changes, so an
+ * account added or removed under Settings is offered or withdrawn without a
+ * restart.
  */
 export default function SessionHandoff({ session, onOpened, onError }: {
   session: Session;
@@ -24,9 +30,11 @@ export default function SessionHandoff({ session, onOpened, onError }: {
   const [plan, setPlan] = useState<HandoffPlan | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  // A running session holds the conversation open, and Codex cannot write one
-  // rollout from two processes — the resume refuses it, rightly. So continuing
-  // elsewhere ends this session first, and only after a second, explicit press.
+  // A running session holds the conversation open. Codex cannot write one
+  // rollout from two processes — the resume refuses it, rightly — and a Claude
+  // transcript still being written would fork without its last turn. So
+  // continuing elsewhere ends this session first, and only after a second,
+  // explicit press.
   const [confirming, setConfirming] = useState<string | null>(null);
   const running = session.status !== 'exited';
 
@@ -76,6 +84,7 @@ export default function SessionHandoff({ session, onOpened, onError }: {
 
   const targets = plan?.targets ?? [];
   if (!plan || targets.length === 0) return null;
+  const fork = plan.method === 'fork';
 
   return (
     <span className="session-handoff">
@@ -93,9 +102,11 @@ export default function SessionHandoff({ session, onOpened, onError }: {
               <span className="session-handoff-label">{target.label}</span>
               <span className="session-handoff-why">
                 {busy === target.accountId
-                  ? (running ? 'Ending this session, then resuming…' : 'Linking and resuming…')
+                  ? (running ? 'Ending this session, then resuming…' : fork ? 'Branching and resuming…' : 'Linking and resuming…')
                   : confirming === target.accountId
                     ? 'Press again to end this session and continue there'
+                  : fork
+                    ? 'Branches this conversation under that account, then resumes it'
                   : target.alreadyThere
                     ? 'Already readable there — resumes straight away'
                     : 'Links this conversation into that account, then resumes it'}
@@ -107,8 +118,9 @@ export default function SessionHandoff({ session, onOpened, onError }: {
               for good, and can still continue it afterwards. */}
           <span className="session-handoff-note">
             {running && 'This session is still running; continuing elsewhere ends it first, because one conversation cannot be written from two places. '}
-            The conversation stays where it is too. Nothing is copied when both
-            accounts sit on one volume.
+            {fork
+              ? 'The conversation stays where it is. The continuation is a new conversation, read from the original transcript and recorded under the account you pick.'
+              : 'The conversation stays where it is too. Nothing is copied when both accounts sit on one volume.'}
           </span>
         </span>
       )}
