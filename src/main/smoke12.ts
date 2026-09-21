@@ -1,5 +1,8 @@
 import { db } from './db';
-import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
+import { companionFacts, completeCompanion, createCompanionService, companionEgress } from './modules/companion';
+import { interviewEgress } from './modules/interview';
+import { batchDryRunEgress } from './modules/batch';
+import { egressReport } from './egress';
 import { admittedFetch } from './modules/usage-paid-operations';
 import { directRequestConsumption, directRequestDaily } from './modules/usage-direct-requests';
 import { paidOperationAccountedFor, type PaidOperationEvidence } from './paid-operation-evidence';
@@ -118,6 +121,16 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
   check(!service.cancel(),'cancel has no effect after the request ends');
   respond='ok';const recovered=await service.ask(input);
   check(recovered.status==='answered','a stopped request releases the next explicit send');
+  {
+    // Every direct Messages request Wanigan makes is on the privacy panel, declared by the module that makes it.
+    const rows=egressReport().hosts.filter(h=>h.by==='wanigan'&&h.paths.includes('/v1/messages'));
+    const declared=[companionEgress(true)[0],interviewEgress(true)[0],batchDryRunEgress(true)[0]];
+    check(declared.every(row=>rows.filter(h=>h.purpose===row.purpose&&h.when===row.when).length===1),
+      'companion, the goal interview and the dry-run sample each appear exactly once on the privacy panel',rows.map(h=>h.purpose.slice(0,40)));
+    check(companionEgress(true,'https://user:secret@proxy.example/anthropic')[0].host==='proxy.example'
+      &&interviewEgress(false,'not a url')[0].host==='api.anthropic.com'&&interviewEgress(false)[0].activeNow===false,
+      'a module egress row names only the host of an override, never its credentials, and falls back to the provider when it cannot be parsed');
+  }
   const restarted=createCompanionService({database:db,facts,available:()=>false,checkHalt:()=>{},complete:async()=>{throw new Error('offline');}});
   db().prepare("UPDATE companion_turns SET status='pending' WHERE id=?").run(recovered.id);
   check(restarted.history(project.id).find(t=>t.id===recovered.id)?.status==='failed','interrupted requests are reconciled after restart without replay');

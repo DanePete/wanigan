@@ -11,7 +11,7 @@ import { DEFAULT_MODEL, MODELS, syncCostOf } from '../batch/pricing';
 import { refuseIfHalted } from '../halt';
 import { snapshot as readUsage } from '../usage';
 import { companionUsage } from '../companion-usage';
-import type { Attention, Project, Session, UsageSnapshot } from '../../shared/types';
+import type { Attention, EgressHost, Project, Session, UsageSnapshot } from '../../shared/types';
 import type { CompanionAsk, CompanionSession, CompanionSnapshot, CompanionSource, CompanionTurn } from '../../shared/companion';
 
 const MAX_QUESTION = 4_000;
@@ -241,12 +241,30 @@ export const companion = createCompanionService({
   complete: completeCompanion,
 });
 
+/** The configured host, or the provider's when the override cannot be parsed.
+ * Never the whole URL: an override can carry credentials. */
+function anthropicHost(baseUrl = process.env.ANTHROPIC_BASE_URL): string {
+  try { return new URL(baseUrl?.trim() || 'https://api.anthropic.com').hostname; } catch { return 'api.anthropic.com'; }
+}
+const keyReachable = (): boolean => { try { return Boolean(getKey()); } catch { return false; } };
+
+/** The destination as egress.ts declared it before Companion owned its row. */
+export function companionEgress(available: boolean, baseUrl?: string): EgressHost[] {
+  return [{
+    host: anthropicHost(baseUrl), paths: ['/v1/messages'], by: 'wanigan',
+    purpose: 'Answering an explicit companion question from bounded project and session status, without agent transcripts or files.',
+    when: 'Only when you send a question to Wanigan with a Claude Platform API key connected. Each send makes one bounded request.',
+    activeNow: available, overrideEnv: 'ANTHROPIC_BASE_URL',
+  }];
+}
+
 export const companionModule = {
   id: 'companion', label: 'Ask Wanigan',
   // Disabling removes the question box and its answers; the room's presence,
   // sessions and every recorded turn are untouched.
   required: null,
   requiresStartedServices: ['ask'],
+  egress: () => companionEgress(keyReachable()),
   ipc(handle) {
     handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
     handle('companion:history', (projectId: unknown) => companion.history(projectId));

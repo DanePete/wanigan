@@ -15,7 +15,7 @@ import {
 } from '../../shared/types';
 import type {
   DocketDetail, DocketNodeKind, DocketPlanNode, DocketRisk,
-  Interview, InterviewProposal, InterviewTurn,
+  EgressHost, Interview, InterviewProposal, InterviewTurn,
 } from '../../shared/types';
 
 /**
@@ -539,12 +539,30 @@ export function interviewModels(): { id: string; label: string; costPerQuestion:
     .map((model) => ({ id: model.id, label: model.label, costPerQuestion: costPerQuestion(model.id) }));
 }
 
+/** The configured host, or the provider's when the override cannot be parsed.
+ * Never the whole URL: an override can carry credentials. */
+function anthropicHost(baseUrl = process.env.ANTHROPIC_BASE_URL): string {
+  try { return new URL(baseUrl?.trim() || 'https://api.anthropic.com').hostname; } catch { return 'api.anthropic.com'; }
+}
+const keyReachable = (): boolean => { try { return Boolean(getKey()); } catch { return false; } };
+
+/** Declared here because nothing else did: the interview's requests were on no row of the privacy panel. */
+export function interviewEgress(available: boolean, baseUrl?: string): EgressHost[] {
+  return [{
+    host: anthropicHost(baseUrl), paths: ['/v1/messages'], by: 'wanigan',
+    purpose: 'Asking one goal-interview question at a time, or proposing the goal, from the idea you typed, your answers and the project name; no repository files or session history are sent.',
+    when: 'Only when you start a goal interview, answer a question or ask it to conclude, with a Claude Platform API key connected. Each makes one request that may be billed, inside the budget you set.',
+    activeNow: available, overrideEnv: 'ANTHROPIC_BASE_URL',
+  }];
+}
+
 export const interviewModule = {
   id: 'interview', label: 'Interview',
   // Disabling removes the guided way to write a goal; goals can still be
   // written by hand, and every recorded interview is untouched.
   required: null,
   requiresStartedServices: ['start', 'answer', 'conclude'],
+  egress: () => interviewEgress(keyReachable()),
   ipc(handle) {
     // Every call spends money, so every call is one the operator took: there is
     // no timer and no background pass here. `start` is the consent, and the

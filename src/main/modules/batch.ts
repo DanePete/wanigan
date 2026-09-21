@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { dialog } from 'electron';
 import { db } from '../db';
 import type { WaniganModule } from '../module-registry';
-import type { RunConfig, SourceConfig } from '../../shared/types';
+import type { EgressHost, RunConfig, SourceConfig } from '../../shared/types';
+import { getKey } from '../keys';
 import {
   cancelRun, createAndSubmitRun, deleteRun, dryRunOne, estimateRun, insights, listRuns, pollOnce, presetsFor,
   previewSource, refreshModels, retryFailed, runDetail, runResults, runsInFlight,
@@ -36,6 +37,24 @@ export function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: st
   return filePath;
 }
 
+/** The configured host, or the provider's when the override cannot be parsed.
+ * Never the whole URL: an override can carry credentials. */
+function anthropicHost(baseUrl = process.env.ANTHROPIC_BASE_URL): string {
+  try { return new URL(baseUrl?.trim() || 'https://api.anthropic.com').hostname; } catch { return 'api.anthropic.com'; }
+}
+const keyReachable = (): boolean => { try { return Boolean(getKey()); } catch { return false; } };
+
+/** The batch submission and file rows stay in egress.ts. The dry-run sample goes
+ * to a different path, and was on no row of the privacy panel. */
+export function batchDryRunEgress(available: boolean, baseUrl?: string): EgressHost[] {
+  return [{
+    host: anthropicHost(baseUrl), paths: ['/v1/messages'], by: 'wanigan',
+    purpose: 'Sending exactly one request of a batch you are building, synchronously, so a malformed run fails before the whole batch is submitted. It carries that row and the run\u2019s prompts.',
+    when: 'When you press Dry run in the batch builder, or when an agent calls the wanigan_dry_run tool, with a Claude Platform API key connected. Each makes one request that may be billed.',
+    activeNow: available, overrideEnv: 'ANTHROPIC_BASE_URL',
+  }];
+}
+
 export const batchModule = {
   id: 'batch', label: 'Batches',
   // Disabling removes batch runs over a dataset; sessions and every other view still work.
@@ -45,6 +64,7 @@ export const batchModule = {
   // shared with headless work. The poller, its halt stopper and the queue
   // runner stay in index.ts, where the halt order is pinned.
   requiresStartedServices: ['submit', 'dryRun', 'retry'],
+  egress: () => batchDryRunEgress(keyReachable()),
   ipc(handle, context) {
     handle('batch:presets', (projectId?: string) => presetsFor(projectId));
     // Rethrown, not swallowed. Returning an 'unavailable' shape resolved the
