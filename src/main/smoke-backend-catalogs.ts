@@ -5,6 +5,7 @@ import { getProviderKey } from './keys';
 import { providerModelCatalogue } from './launch-choices';
 import { BUILTIN_PROVIDER_PACKS, validateProviderPackManifest } from './provider-packs';
 import { launchFieldsFor, providerById, providerPackRegistry } from './providers';
+import { redirectsAnthropicApi } from './sessions';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 
@@ -155,6 +156,22 @@ export async function runBackendCatalogsSmoke(check: Check, say: (text: string) 
       const pairRow = egressReport().hosts.find((h) => h.overrideEnv === 'WANIGAN_PAIR_MODELS_URL');
       check(pairRow?.host === '127.0.0.1' && pairRow.paths[0] === '/v1/models',
         'pair: the privacy panel names the loopback host and path the reader fetches', pairRow);
+
+      // The Claude Code profile on the same backend: redirected to loopback
+      // with a fixed token, so no Claude account applies and no key is asked
+      // for; the effort field is withheld because the server would ignore it.
+      const claudeProfile = pairPack?.profiles.find((profile) => profile.id === 'pair-claude');
+      const env = claudeProfile?.environment ?? {};
+      check(!!claudeProfile && claudeProfile.harness === 'claude-code' && claudeProfile.backend.id === 'pair'
+        && env.ANTHROPIC_AUTH_TOKEN?.source === 'literal'
+        && env.ANTHROPIC_BASE_URL?.source === 'process' && env.ANTHROPIC_BASE_URL.fallback === 'http://127.0.0.1:11434',
+        'pair-claude: Claude Code on the same loopback backend, with a fixed token rather than a credential');
+      check(!(claudeProfile?.launchFields ?? []).some((field) => field.id === 'effort'),
+        'pair-claude: effort is not offered, because Ollama ignores the thinking budget Claude’s flag sets');
+      const claudeDef = providerById('pair-claude');
+      check(!!claudeDef && claudeDef.backendId === 'pair' && claudeDef.harness === 'claude-code'
+        && redirectsAnthropicApi(claudeDef.env?.() ?? {}),
+        'pair-claude: the profile resolves to its backend on the Claude harness and counts as redirected, so no Anthropic account is pinned to it');
     }
 
     /* ── a catalog cannot spend another pack's credential ─────────────── */

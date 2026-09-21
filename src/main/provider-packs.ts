@@ -987,9 +987,45 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
     // and Codex 0.155.1: a turn with a tool call ran on a paired PC's RTX-class
     // card through the Responses API the proxy forwards. Nothing here spends:
     // the backend is unpriced and is recorded that way.
-    description: 'Codex CLI on an open model served by NVIDIA PAIR’s local endpoint, routed to whichever paired machine holds the model.',
+    description: 'Claude Code or Codex on an open model served by NVIDIA PAIR’s local endpoint, routed to whichever paired machine holds the model.',
     publisher: { id: 'wanigan', name: 'Wanigan' },
     profiles: [{
+      // Claude Code on the same endpoint: Ollama serves an Anthropic-shaped
+      // API at /v1/messages and PAIR forwards it, so this is the DeepSeek and
+      // xAI shape with a loopback base URL and a fixed token — Ollama takes any
+      // bearer token and checks none. Verified 2026-09-21 on a paired PC:
+      // Claude Code on qwen3.6:27b-coding thought, ran a Bash tool call, read
+      // its result and answered from it. The harness's own hooks, transcript
+      // and resume work unchanged because the binary is the reviewed one.
+      //
+      // Effort is not offered: Claude's --effort maps to a thinking budget
+      // the Anthropic API understands and Ollama does not, and a flag the
+      // server ignores is a promise the session cannot keep.
+      id: 'pair-claude', label: 'Claude Code · local (PAIR)', harness: 'claude-code',
+      backend: {
+        id: 'pair', label: 'NVIDIA PAIR', baseUrl: 'http://127.0.0.1:11434',
+        catalog: {
+          url: { source: 'process', name: 'WANIGAN_PAIR_MODELS_URL', fallback: 'http://127.0.0.1:11434/v1/models' },
+          shape: 'openai-models',
+          fallback: [{ id: 'qwen3.6:27b-coding', label: 'Qwen 3.6 27B coding' }, { id: 'gpt-oss:20b', label: 'gpt-oss 20B' }],
+        },
+      },
+      command: CLAUDE_COMMAND,
+      launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
+      resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },
+      environment: {
+        ANTHROPIC_BASE_URL: { source: 'process', name: 'WANIGAN_PAIR_BASE_URL', fallback: 'http://127.0.0.1:11434' },
+        ANTHROPIC_AUTH_TOKEN: { source: 'literal', value: 'ollama' },
+        // What the harness's own aliases resolve to when no model is chosen at
+        // launch: the coding model for the two it uses for work, the smaller
+        // one for the background requests it sends to its "haiku" slot.
+        ANTHROPIC_DEFAULT_OPUS_MODEL: { source: 'process', name: 'WANIGAN_PAIR_MODEL', fallback: 'qwen3.6:27b-coding' },
+        ANTHROPIC_DEFAULT_SONNET_MODEL: { source: 'process', name: 'WANIGAN_PAIR_MODEL', fallback: 'qwen3.6:27b-coding' },
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: { source: 'process', name: 'WANIGAN_PAIR_SMALL_MODEL', fallback: 'gpt-oss:20b' },
+      },
+      capabilities: CLAUDE_CAPABILITIES,
+      headless: 'claude-json',
+    }, {
       id: 'pair-codex', label: 'Codex · local (PAIR)', harness: 'codex',
       backend: {
         id: 'pair', label: 'NVIDIA PAIR', baseUrl: 'http://127.0.0.1:11434',
