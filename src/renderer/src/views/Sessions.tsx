@@ -1076,7 +1076,8 @@ export default function Sessions({
 
           {active && (
             <SessionHeader key={active.id} session={active} defaultTrust={defaultTrust} onRefresh={refresh}
-                           provider={providers.find((p) => p.id === active.providerId)} />
+                           provider={providers.find((p) => p.id === active.providerId)}
+                           onOpened={onActiveChange} onError={onError} />
           )}
 
           {!ready ? (
@@ -1491,9 +1492,11 @@ const LABEL_MAX = 60;
 
 /* ── P19 + P9 · the session header ────────────────────────────────────── */
 
-function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
+function SessionHeader({ session, defaultTrust, onRefresh, provider, onOpened, onError }: {
   session: Session; defaultTrust: TrustLevel | null; onRefresh: () => Promise<void>;
   provider?: ProviderInfo;
+  onOpened: (id: string, projectId?: string) => void;
+  onError: (message: string) => void;
 }) {
   const trust = session.trust ?? null;
   const elevated = !!trust && !!defaultTrust && rank(trust) > rank(defaultTrust);
@@ -1523,7 +1526,13 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
   const permissionControls = session.status === 'running' && permissionActionsFor(harness).length > 0;
-  const hasTuning = tunable || codexControls || declaresTuning || permissionControls;
+  // The account is a session control like model and effort, and the one that
+  // matters after the session has exited: an account that has run out of usage
+  // is exactly when the conversation needs to continue under another. So this
+  // row is offered whether the session is running or not, for the harnesses
+  // whose account is a configuration directory Wanigan can point.
+  const accountRow = (harness === 'claude-code' || harness === 'codex') && !!session.accountLabel;
+  const hasTuning = tunable || codexControls || declaresTuning || permissionControls || accountRow;
   const hasControls = !!session.worktree || hasTuning;
   if (!elevated && !hasControls) return null;
 
@@ -1544,8 +1553,9 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
       )}
       {hasTuning && <details className="session-controls">
         <summary>Session controls<span className="faint">
-          {tunable || codexControls ? 'Model, effort & permissions'
-            : permissionControls ? 'Permissions' : 'Provider capabilities'}
+          {tunable || codexControls ? (accountRow ? 'Model, effort, permissions & account' : 'Model, effort & permissions')
+            : permissionControls ? (accountRow ? 'Permissions & account' : 'Permissions')
+            : accountRow ? 'Account' : 'Provider capabilities'}
         </span></summary>
         <div className="session-controls-content">
           {tunable && <RunConfigBar session={session} provider={provider} />}
@@ -1558,6 +1568,18 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
           )}
           {codexControls && <CodexControlBar session={session} />}
           {permissionControls && <SessionPermissionControls key={session.id} session={session} harness={harness} />}
+          {accountRow && (
+            <div className="session-permissions" role="group" aria-label="Session account">
+              <span className="label">Account</span>
+              <span>{session.accountLabel}</span>
+              <SessionHandoff session={session} onOpened={onOpened} onError={onError} inline />
+              <span className="faint" role="status">
+                {session.status === 'running'
+                  ? 'Switching ends this session and continues the conversation under the account you pick. Accounts come from Settings › Accounts.'
+                  : 'Continue this conversation under another account. Accounts come from Settings › Accounts.'}
+              </span>
+            </div>
+          )}
         </div>
       </details>}
     </div>

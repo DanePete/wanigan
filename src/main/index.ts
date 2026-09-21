@@ -1785,7 +1785,7 @@ function registerIpc() {
   });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
-      threadId: null, fromAccountId: null, targets: [], unavailable: 'No session was named.',
+      method: null, threadId: null, fromAccountId: null, targets: [], unavailable: 'No session was named.',
     }));
   /*
    * The write half. main decides: the account must be one of the targets this

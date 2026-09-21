@@ -30,7 +30,7 @@ import { codexHookDelivered, forgetCodexHookSession, prepareCodexHookLaunch } fr
 import { CODEX_HOOK_HEADERS_ENV, CODEX_HOOK_URL_ENV } from '../shared/codex-hooks';
 import { cancelSessionCheckpointLaunch, finalizeSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { acquireCheckoutActivity } from './checkout-activity';
-import { archiveSession } from './transcripts';
+import { archiveSession, exactTranscriptPath } from './transcripts';
 import {
   archiveInterruptedTranscripts, deriveSessionTitle, reconcileAbandonedSessions, setLiveSessions,
 } from './session-history';
@@ -843,19 +843,29 @@ function harnessName(harness: string): string {
  * silent fallback and not an exception from deeper down. Whether the CLI would
  * in fact find the conversation is not known until it runs, and the messages
  * say "may not", not "will not".
+ *
+ * Two ways across accounts exist, one per harness. A Codex conversation handed
+ * over is readable from the other home, and resumes there by id. A Claude Code
+ * conversation is never moved: the CLI takes a transcript's absolute path in
+ * place of an id, so another account resumes it from where it lies and, with
+ * `--fork-session`, records the continuation under its own directory. That is
+ * `forkFrom`: the transcript the launch must name instead of the conversation
+ * id, and the signal that the new session needs an id of its own.
  */
 export function resumeAccountFor(
   sessionId: string, harness: string, requestedAccountId: string | null,
-): { accountId: string | null; note: string | null } {
-  if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null };
-  const row = db().prepare('SELECT account_id, conversation_id FROM session_log WHERE id = ?')
-    .get(sessionId) as { account_id: string | null; conversation_id: string | null } | undefined;
+): { accountId: string | null; note: string | null; forkFrom: string | null } {
+  if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null, forkFrom: null };
+  const row = db().prepare('SELECT account_id, conversation_id, project_path, worktree FROM session_log WHERE id = ?')
+    .get(sessionId) as
+      { account_id: string | null; conversation_id: string | null; project_path: string; worktree: string | null } | undefined;
   if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
   if (!row.account_id) {
     return {
       accountId: requestedAccountId,
       note: `Account at launch unknown: this conversation was recorded before Wanigan tracked accounts. `
         + `${harnessName(harness)} may not find it under the account shown.`,
+      forkFrom: null,
     };
   }
   const owner = accounts.byId(row.account_id);
@@ -876,14 +886,30 @@ export function resumeAccountFor(
       return {
         accountId: asked.id,
         note: `Continuing on “${asked.label}”: this conversation was handed over and is readable from that account’s directory.`,
+        forkFrom: null,
       };
+    }
+    // Claude Code needs no handoff on disk: any account can read the transcript
+    // by its path. What it cannot do is continue under the same id, because the
+    // continuation is filed under the other directory — so it forks. Measured
+    // on 2026-09-21 with CLI 2.1.278; see handoff.ts for what was observed.
+    if (asked && harness === 'claude-code') {
+      const transcript = exactTranscriptPath(row.conversation_id, row.worktree ?? row.project_path);
+      if (transcript) {
+        return {
+          accountId: asked.id,
+          note: `Continuing on “${asked.label}” as a branch: the conversation was recorded under “${owner.label}” `
+            + 'and stays there. This session reads it from that transcript and records the continuation under its own account.',
+          forkFrom: transcript,
+        };
+      }
     }
     throw new Error(
       `This conversation belongs to the “${owner.label}” account, not “${asked?.label ?? requestedAccountId}”. `
       + `Resume it under “${owner.label}” — ${harnessName(harness)} may not find it under another account’s directory.`
     );
   }
-  return { accountId: owner.id, note: null };
+  return { accountId: owner.id, note: null, forkFrom: null };
 }
 
 /** Bounds on the capsule text, so a wide fan-out cannot turn it into a page. */
@@ -1194,8 +1220,18 @@ async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessio
     conversationId = randomUUID();
   }
 
+  // A conversation continued on another Claude account is a fork: the CLI
+  // reads the original transcript by path and writes a new conversation under
+  // this account's directory. It takes `--session-id` alongside `--resume`
+  // only together with `--fork-session` (its own refusal says so), which is
+  // what lets Wanigan choose the new id here exactly as it does for a fresh
+  // launch, rather than learn it afterwards from a hook.
+  const forkFrom = pinnedAccount?.forkFrom ?? null;
+  if (forkFrom) conversationId = randomUUID();
   const idArgs = isResuming
-    ? def.resumeArgs(conversationId)
+    ? forkFrom && conversationId
+      ? ['--resume', forkFrom, '--fork-session', '--session-id', conversationId]
+      : def.resumeArgs(conversationId)
     : conversationId ? ['--session-id', conversationId] : [];
 
   // Trust is resolved once, at launch, and travels with the session — a policy

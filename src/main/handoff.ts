@@ -1,39 +1,74 @@
 /**
  * Continuing one conversation on another account.
  *
- * An account is a CODEX_HOME, and Codex writes a conversation into the home it
- * was launched under. So a thread started on the account that has just run out
- * of usage is, from the other account, not merely locked — it is invisible.
- * codex-sessions.ts already says this about reading ("a thread written under a
- * second account's home is invisible from the first"), and solves it there by
- * scanning every home. Launching cannot scan: it pins one home.
+ * An account is a configuration directory — CODEX_HOME for Codex,
+ * CLAUDE_CONFIG_DIR for Claude Code — and each harness writes a conversation
+ * into the directory it was launched under. So a conversation started on the
+ * account that has just run out of usage is, from the other account, not
+ * merely locked — it is invisible. Reading solves that by scanning every
+ * directory; launching cannot scan: it pins one.
  *
- * What Codex needs to resume is the rollout file and nothing else. That was
+ * The two harnesses need different things from a handoff, and the plan says
+ * which (`method`):
+ *
+ * Codex resumes by conversation id and looks for the rollout only under its
+ * own home. What it needs is the rollout file and nothing else. That was
  * measured rather than assumed: a home containing one hardlinked rollout and no
  * `session_index.jsonl`, no `state_5.sqlite` and no other entry resumed the
- * conversation exactly as a home with all of them did. So a handoff is one
- * directory entry, and on one volume a hardlink costs no bytes and no time.
+ * conversation exactly as a home with all of them did. So a Codex handoff is
+ * one directory entry, and on one volume a hardlink costs no bytes and no time.
+ *
+ * Claude Code accepts the absolute path of a transcript in place of an id
+ * (`--resume <path>`), and with `--fork-session` writes the continuation as a
+ * new conversation under whichever directory it was launched with. Measured on
+ * 2026-09-21 with CLI 2.1.278: a transcript under one account's directory,
+ * resumed by path under a second account's login, continued under that login
+ * and filed its fork under the second directory, copying nothing into it and
+ * writing nothing back to the first. So a Claude handoff writes nothing ahead
+ * of time; the launch does the work, and this module only decides where the
+ * transcript is and who else could read it.
  *
  * What this deliberately is not: T3 Code's shadow home, which symlinks a shared
- * `sessions/` between accounts so either may continue anything. That makes both
- * accounts permanently able to read every conversation the other ever had. This
- * moves one named conversation, when asked, and leaves the rest alone —
- * which keeps the promise `SEEDABLE` already makes by refusing to copy
- * `sessions/` and `history.jsonl` into a new account.
+ * `sessions/` between accounts so either may continue anything, or the
+ * `--share-history` symlink of `projects/` that Claude account switchers offer.
+ * Both make every account permanently able to read every conversation the
+ * others ever had. This moves one named conversation, when asked, and leaves
+ * the rest alone — which keeps the promise `SEEDABLE` already makes by refusing
+ * to copy `sessions/` and `history.jsonl` into a new account.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import * as accounts from './accounts';
+import { db } from './db';
 import { codexRolloutFiles, codexThreadIdForSession } from './codex-sessions';
+import { exactTranscriptPath } from './transcripts';
 import type { AgentAccount } from '../shared/types';
 import type { HandoffPlan, HandoffResult, HandoffTarget } from '../shared/handoff';
 
-export type { HandoffPlan, HandoffResult, HandoffTarget } from '../shared/handoff';
+export type { HandoffMethod, HandoffPlan, HandoffResult, HandoffTarget } from '../shared/handoff';
 
+const CODEX = 'codex';
+const CLAUDE = 'claude-code';
 
+type SessionRow = {
+  harness_id: string | null;
+  provider_id: string;
+  conversation_id: string | null;
+  project_path: string;
+  worktree: string | null;
+};
 
-/** Only Codex keeps a conversation as one self-contained file under its home. */
-const HARNESS = 'codex';
+function sessionRow(sessionId: string): SessionRow | undefined {
+  return db().prepare(`
+    SELECT harness_id, provider_id, conversation_id, project_path, worktree
+    FROM session_log WHERE id = ?
+  `).get(sessionId) as SessionRow | undefined;
+}
+
+/** A conversation id is a UUID; nothing else is ever looked up as a file name. */
+const CONVERSATION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+/* ── Codex: link the rollout ────────────────────────────────────────── */
 
 /** This conversation's rollout, wherever it is readable from. */
 function rolloutFor(threadId: string): string | null {
@@ -62,7 +97,7 @@ function reachableFrom(home: string, source: string): boolean {
 }
 
 /**
- * Whether one conversation is readable from one account's home right now.
+ * Whether one Codex conversation is readable from one account's home right now.
  *
  * This is the fact an exact resume under that account rests on, and a handoff
  * is precisely what changes it from no to yes. The resume path used to refuse
@@ -74,22 +109,15 @@ function reachableFrom(home: string, source: string): boolean {
  */
 export function readableFromAccount(threadId: string, accountId: string): boolean {
   const account = accounts.byId(accountId);
-  if (!account || account.harness !== HARNESS) return false;
+  if (!account || account.harness !== CODEX) return false;
   const source = rolloutFor(threadId);
   return !!source && reachableFrom(account.configDir, source);
 }
 
-/**
- * What a session could be continued on, and why not when it could not.
- *
- * Read-only. It answers for a surface that has to decide whether to offer a
- * control at all, so every refusal carries its reason rather than an empty list
- * that reads as "no other accounts".
- */
-export function handoffPlan(sessionId: string): HandoffPlan {
-  const empty = { threadId: null, fromAccountId: null, targets: [] as HandoffTarget[] };
+function codexPlan(sessionId: string): HandoffPlan {
+  const empty = { method: 'link' as const, threadId: null, fromAccountId: null, targets: [] as HandoffTarget[] };
   let rows: AgentAccount[];
-  try { rows = accounts.list(HARNESS); }
+  try { rows = accounts.list(CODEX); }
   catch { return { ...empty, unavailable: 'Wanigan could not read its account list.' }; }
   if (rows.length < 2) {
     return { ...empty, unavailable: 'There is only one Codex account to run this on.' };
@@ -101,7 +129,7 @@ export function handoffPlan(sessionId: string): HandoffPlan {
   }
   const source = rolloutFor(threadId);
   if (!source) {
-    return { threadId, fromAccountId: null, targets: [], unavailable: 'Wanigan could not find this conversation on disk.' };
+    return { ...empty, threadId, unavailable: 'Wanigan could not find this conversation on disk.' };
   }
 
   const fromAccount = rows.find((row) => reachableFrom(row.configDir, source)) ?? null;
@@ -115,6 +143,7 @@ export function handoffPlan(sessionId: string): HandoffPlan {
     }));
 
   return {
+    method: 'link',
     threadId,
     fromAccountId: fromAccount?.id ?? null,
     targets,
@@ -122,37 +151,18 @@ export function handoffPlan(sessionId: string): HandoffPlan {
   };
 }
 
-
-/**
- * Make one conversation resumable under another account.
- *
- * The source is never written to, moved or removed: after this the thread is
- * readable from both homes, and the account it started on can still continue it.
- * That matters because the reason for doing this at all is usually that one
- * account is out of usage for a while, not for good.
- */
-export function handoffConversation(sessionId: string, toAccountId: string): HandoffResult {
-  const plan = handoffPlan(sessionId);
-  if (!plan.threadId) throw new Error(plan.unavailable ?? 'This session has no conversation to hand over.');
-
-  const target = plan.targets.find((row) => row.accountId === toAccountId);
-  if (!target) {
-    // The renderer named an account; main decides whether it is one of this
-    // conversation's actual options, exactly as projects:add refuses a path.
-    throw new Error('Choose one of this conversation’s own accounts.');
-  }
-
-  const source = rolloutFor(plan.threadId);
+function linkRollout(plan: HandoffPlan, target: HandoffTarget): HandoffResult {
+  const threadId = plan.threadId!;
+  const source = rolloutFor(threadId);
   if (!source) throw new Error('Wanigan could not find this conversation on disk.');
   const destination = destinationFor(target.configDir, source);
   if (!destination) throw new Error('This conversation is not filed where Codex keeps its sessions.');
 
-  if (target.alreadyThere) {
-    return { threadId: plan.threadId, accountId: toAccountId, linkedTo: destination, hardlinked: true };
-  }
+  const done = (hardlinked: boolean): HandoffResult =>
+    ({ threadId, accountId: target.accountId, method: 'link', linkedTo: destination, hardlinked });
+  if (target.alreadyThere) return done(true);
 
   fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-  let hardlinked = true;
   try {
     fs.linkSync(source, destination);
   } catch (error) {
@@ -161,12 +171,120 @@ export function handoffConversation(sessionId: string, toAccountId: string): Han
     // own data directory, and those can differ. A copy is correct, just not
     // free; a rollout can be hundreds of megabytes.
     const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === 'EEXIST') {
-      return { threadId: plan.threadId, accountId: toAccountId, linkedTo: destination, hardlinked: true };
-    }
+    if (code === 'EEXIST') return done(true);
     if (code !== 'EXDEV') throw error;
     fs.copyFileSync(source, destination);
-    hardlinked = false;
+    return done(false);
   }
-  return { threadId: plan.threadId, accountId: toAccountId, linkedTo: destination, hardlinked };
+  return done(true);
+}
+
+/* ── Claude Code: fork from the transcript ──────────────────────────── */
+
+function physical(p: string): string {
+  const resolved = path.resolve(p);
+  try { return fs.realpathSync.native(resolved); } catch { return resolved; }
+}
+
+/** Whether `file` lies somewhere under `dir`, comparing physical paths. */
+export function within(dir: string, file: string): boolean {
+  const rel = path.relative(physical(dir), physical(file));
+  return rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * The account whose directory holds this transcript, or null.
+ *
+ * Read from the filesystem rather than from the session row's `account_id`:
+ * the row says which account launched the session, and that is usually the
+ * same answer, but a transcript is a file and the account that can no longer
+ * be found on disk is not one anybody can resume under.
+ */
+export function transcriptOwner(rows: readonly AgentAccount[], transcript: string): AgentAccount | null {
+  return rows.find((row) => within(row.configDir, transcript)) ?? null;
+}
+
+function claudePlan(row: SessionRow): HandoffPlan {
+  const empty = { method: 'fork' as const, threadId: null, fromAccountId: null, targets: [] as HandoffTarget[] };
+  let rows: AgentAccount[];
+  try { rows = accounts.list(CLAUDE); }
+  catch { return { ...empty, unavailable: 'Wanigan could not read its account list.' }; }
+  if (rows.length < 2) {
+    return { ...empty, unavailable: 'There is only one Claude Code account to run this on.' };
+  }
+
+  const threadId = row.conversation_id?.trim() ?? '';
+  if (!CONVERSATION_ID.test(threadId)) {
+    return { ...empty, unavailable: 'This session has not recorded a Claude Code conversation yet.' };
+  }
+  const source = exactTranscriptPath(threadId, row.worktree ?? row.project_path);
+  if (!source) {
+    return { ...empty, threadId, unavailable: 'Wanigan could not find this conversation’s transcript on disk.' };
+  }
+
+  // Every other Claude account can read the file by path, so every other
+  // account is a target — there is no "already there" for a fork, because
+  // the fork does not exist until the launch makes it.
+  const fromAccount = transcriptOwner(rows, source);
+  const targets = rows
+    .filter((row) => row.id !== fromAccount?.id)
+    .map((row) => ({ accountId: row.id, label: row.label, configDir: row.configDir, alreadyThere: false }));
+
+  return {
+    method: 'fork',
+    threadId,
+    fromAccountId: fromAccount?.id ?? null,
+    targets,
+    unavailable: targets.length ? null : 'No other Claude Code account can take this conversation.',
+  };
+}
+
+/* ── the surface ─────────────────────────────────────────────────────── */
+
+/**
+ * What a session could be continued on, and why not when it could not.
+ *
+ * Read-only. It answers for a surface that has to decide whether to offer a
+ * control at all, so every refusal carries its reason rather than an empty list
+ * that reads as "no other accounts".
+ */
+export function handoffPlan(sessionId: string): HandoffPlan {
+  const empty = { method: null, threadId: null, fromAccountId: null, targets: [] as HandoffTarget[] };
+  const row = sessionRow(sessionId);
+  if (!row) return { ...empty, unavailable: 'Wanigan has no record of this session.' };
+  const harness = row.harness_id ?? row.provider_id;
+  if (harness === CODEX) return codexPlan(sessionId);
+  if (harness === CLAUDE) return claudePlan(row);
+  return { ...empty, unavailable: 'Wanigan cannot continue this harness’s conversations on another account.' };
+}
+
+/**
+ * Make one conversation resumable under another account.
+ *
+ * The source is never written to, moved or removed: after this the conversation
+ * is readable from both accounts, and the account it started on can still
+ * continue it. That matters because the reason for doing this at all is usually
+ * that one account is out of usage for a while, not for good.
+ *
+ * For Claude Code this writes nothing: the launch that follows resumes from the
+ * transcript's path and forks. The result still names where the other account
+ * will read from, so the caller and the tests can see the same fact.
+ */
+export function handoffConversation(sessionId: string, toAccountId: string): HandoffResult {
+  const plan = handoffPlan(sessionId);
+  if (!plan.threadId || !plan.method) throw new Error(plan.unavailable ?? 'This session has no conversation to hand over.');
+
+  const target = plan.targets.find((row) => row.accountId === toAccountId);
+  if (!target) {
+    // The renderer named an account; main decides whether it is one of this
+    // conversation's actual options, exactly as projects:add refuses a path.
+    throw new Error('Choose one of this conversation’s own accounts.');
+  }
+
+  if (plan.method === 'link') return linkRollout(plan, target);
+
+  const row = sessionRow(sessionId)!;
+  const source = exactTranscriptPath(plan.threadId, row.worktree ?? row.project_path);
+  if (!source) throw new Error('Wanigan could not find this conversation’s transcript on disk.');
+  return { threadId: plan.threadId, accountId: toAccountId, method: 'fork', linkedTo: source, hardlinked: false };
 }

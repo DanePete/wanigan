@@ -251,6 +251,96 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
     check(false, 'the handoff checks ran without throwing', String(error));
   }
 
+  // ── the same, for Claude Code: a fork rather than a link ───────────────
+  // A Claude account is a CLAUDE_CONFIG_DIR and the transcript is filed under
+  // it, so a resume by id under the other account answers "No conversation
+  // found". The CLI takes a transcript's absolute path in place of an id and,
+  // with --fork-session, records the continuation under the directory it was
+  // launched with. So the handoff writes nothing: it names the file, and the
+  // launch names it to the CLI. Measured 2026-09-21 on CLI 2.1.278.
+  say('── conversation handoff · Claude Code forks from the transcript');
+  try {
+    const { handoffConversation, handoffPlan, transcriptOwner, within } = await import('./handoff');
+    const { resumeAccountFor } = await import('./sessions');
+    const { claudeProjectSlug } = await import('../shared/claude-slug');
+    const accountsMod = await import('./accounts');
+    const { db, dataDir } = await import('./db');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
+    check(within('/Users/x/.claude', '/Users/x/.claude/projects/-tmp/a.jsonl')
+      && !within('/Users/x/.claude', '/Users/x/.claude-work/projects/-tmp/a.jsonl')
+      && !within('/Users/x/.claude', '/Users/x/.claude'),
+      'a transcript is inside a directory only when it really is below it — a sibling with the same prefix is not');
+
+    const from = accountsMod.create({ harness: 'claude-code', label: 'Fork From', configDir: path.join(dataDir(), 'fork-from') });
+    const to = accountsMod.create({ harness: 'claude-code', label: 'Fork To', configDir: path.join(dataDir(), 'fork-to') });
+    const third = accountsMod.create({ harness: 'claude-code', label: 'Fork Third', configDir: path.join(dataDir(), 'fork-third') });
+    const thread = '3f9b2c40-6d1e-4a7b-9c2d-8e5f1a0b7c3d';
+    const cwd = path.join(dataDir(), 'fork-repo');
+    const transcript = path.join(from.configDir, 'projects', claudeProjectSlug(cwd), `${thread}.jsonl`);
+    fs.mkdirSync(path.dirname(transcript), { recursive: true });
+    fs.writeFileSync(transcript, JSON.stringify({ type: 'user', sessionId: thread, cwd }) + '\n');
+
+    const sid = 's_fork_smoke';
+    db().prepare(`INSERT OR REPLACE INTO session_log
+        (id, project_id, project_path, project_name, provider_id, harness_id, origin, conversation_id, account_id, started_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(sid, 'prj_fork', cwd, 'fork', 'claude', 'claude-code', 'wanigan', thread, from.id, Date.now());
+
+    check(transcriptOwner([from, to, third], transcript)?.id === from.id,
+      'the account that holds the transcript is read off the filesystem, not the row');
+
+    const plan = handoffPlan(sid);
+    check(plan.method === 'fork' && plan.threadId === thread && plan.fromAccountId === from.id,
+      'a Claude session plans a fork from the account whose directory holds the transcript',
+      JSON.stringify({ method: plan.method, threadId: plan.threadId, from: plan.fromAccountId, why: plan.unavailable }));
+    // Compared as a set rather than a list: the suite's environment may hold
+    // the operator's own adopted ~/.claude too, and that account is exactly as
+    // much a target as the two created here.
+    const targetIds = new Set(plan.targets.map((t) => t.accountId));
+    check(targetIds.has(to.id) && targetIds.has(third.id) && !targetIds.has(from.id),
+      'every other Claude account is a target and the holder is not — any login can read the file by path, so accounts that come and go are simply listed or not',
+      plan.targets.map((t) => t.label));
+    check(plan.targets.every((t) => !t.alreadyThere),
+      'no target is "already there": a fork does not exist until the launch makes it');
+
+    const moved = handoffConversation(sid, to.id);
+    check(moved.method === 'fork' && moved.linkedTo === transcript && !moved.hardlinked,
+      'handing over names the original transcript and writes nothing', JSON.stringify(moved));
+    check(!fs.existsSync(path.join(to.configDir, 'projects')),
+      'nothing was created under the other account ahead of the launch');
+
+    // The resume that follows must name the transcript, and must ask for a
+    // fresh id: the continuation is filed under the other directory, and the
+    // CLI only takes --session-id beside --resume together with --fork-session.
+    const resumed = resumeAccountFor(sid, 'claude-code', to.id);
+    check(resumed.accountId === to.id && resumed.forkFrom === transcript && /as a branch/.test(resumed.note ?? ''),
+      'resuming under the other account is allowed, names the transcript to fork from, and says so', JSON.stringify(resumed));
+    const onThird = resumeAccountFor(sid, 'claude-code', third.id);
+    check(onThird.accountId === third.id && onThird.forkFrom === transcript,
+      'and so is any other Claude account, with no handoff step first');
+    const home = resumeAccountFor(sid, 'claude-code', from.id);
+    check(home.accountId === from.id && home.forkFrom === null,
+      'resuming under the account that holds it is an ordinary resume by id, not a fork');
+    const unasked = resumeAccountFor(sid, 'claude-code', null);
+    check(unasked.accountId === from.id && unasked.forkFrom === null,
+      'and with no account asked for, the owner is pinned as before');
+
+    fs.rmSync(transcript);
+    const gone = handoffPlan(sid);
+    check(gone.targets.length === 0 && /transcript/.test(gone.unavailable ?? ''),
+      'a transcript that has since been removed leaves nothing to offer, and says so', gone.unavailable);
+    let refusedGone = false;
+    try { resumeAccountFor(sid, 'claude-code', to.id); } catch { refusedGone = true; }
+    check(refusedGone, 'and the cross-account resume is refused rather than launched at a file that is not there');
+
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(sid);
+    accountsMod.remove(third.id); accountsMod.remove(to.id); accountsMod.remove(from.id);
+  } catch (error) {
+    check(false, 'the Claude handoff checks ran without throwing', String(error));
+  }
+
   // ── carrying a conversation into a fresh one ──────────────────────────
   // The pure half — when it may speak and what it may claim — is in
   // src/shared/context-handover.test.ts and runs in a tenth of a second. What
