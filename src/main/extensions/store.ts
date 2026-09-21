@@ -515,10 +515,7 @@ function artifactState(manifest: ExtensionManifest, builtin = false): ExtensionA
         projectId: mine.project_id,
         detail: describeServer(mine),
         applied: true,
-        note: mine.enabled === 1
-          ? null
-          : 'Registered and switched off. An enabled stdio server is a command the agent’s CLI runs at every ' +
-            'launch, so trust its exact command in Settings → Connections → MCP servers, then enable it.',
+        note: mine.enabled === 1 ? null : switchedOffNote(mine.transport),
       };
     }
 
@@ -535,14 +532,36 @@ function artifactState(manifest: ExtensionManifest, builtin = false): ExtensionA
       };
     }
 
+    // Not installed yet and nothing in the way: installing will register it, so
+    // the review panel says "will be applied". Reported as false, the panel
+    // printed "declared, will not be applied" above a note saying it would be.
     return {
       ...info,
-      applied: false,
+      applied: !installed,
       note: installed
         ? `No MCP server called "${info.ref}" is registered any more. It was removed after this extension was installed.`
-        : 'Installing this extension registers it, switched off, for you to trust and enable.',
+        : server.transport === 'http'
+          ? 'Installing this extension registers it, switched off, for you to enable.'
+          : 'Installing this extension registers it, switched off, for you to trust and enable.',
     };
   });
+}
+
+/*
+ * What to do about a server the installer registered switched off. It never
+ * switches one on, whatever the transport; what differs is the step between.
+ * A stdio server has a command, and the registry refuses to enable one whose
+ * exact command line was not approved. An http server has no command to approve
+ * — telling someone to trust one sends them looking for a step that does not
+ * exist — but switching it on is still a standing grant: every session that
+ * uses it sends its tool calls to that host.
+ */
+function switchedOffNote(transport: string): string {
+  return transport === 'http'
+    ? 'Registered and switched off. An enabled http server receives the tool calls of every session that ' +
+      'uses it, so switch it on in Settings → Connections → MCP servers when you want sessions to reach it.'
+    : 'Registered and switched off. An enabled stdio server is a command the agent’s CLI runs at every ' +
+      'launch, so trust its exact command in Settings → Connections → MCP servers, then enable it.';
 }
 
 /**
@@ -596,9 +615,10 @@ function sourceState(
         'reads each page once, so this declaration was left out: drop it, or point it at a different page.',
     };
   }
+  // As for an MCP server above: not installed and unobstructed means installing applies it.
   return {
     ...info,
-    applied: false,
+    applied: !installed,
     note: installed
       ? `No Scout source "${source.id}" is registered any more. It was removed after this extension was installed.`
       : 'Installing this extension adds it to Improvement Scout’s weekly read, switched on.',
