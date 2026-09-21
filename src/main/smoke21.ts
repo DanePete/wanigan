@@ -149,9 +149,9 @@ export async function runDeferredApprovalSmoke(check: Check, say: Say): Promise<
         'a held call is not resumed under a different permission mode than it was held under', four);
     }
 
-    const index = appSource('src/main/index.ts');
+    const module = appSource('src/main/modules/headless.ts');
     const view = appSource('src/renderer/src/views/HeadlessRuns.tsx');
-    check(index.includes("handle('headless:answerHeld'") && view.includes('window.wanigan.headless.answerHeld(')
+    check(module.includes("handle('headless:answerHeld'") && view.includes('window.wanigan.headless.answerHeld(')
       && view.includes('holdForApproval,') && view.includes('<HeldCall held={row.held}'),
     'Runs offers the opt-in when a run starts and the three answers on a held row, through the typed preload');
   } catch (error) {

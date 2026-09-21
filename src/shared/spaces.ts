@@ -35,6 +35,12 @@ export function areaDestination(id: SpaceAreaId, memory: AreaMemory): Tab {
   return remembered && (area.tabs as readonly Tab[]).includes(remembered) ? remembered : area.tabs[0];
 }
 
+/** Opening a project must land on a view that can actually use its scope. */
+export function projectDestination(memory: AreaMemory): Tab {
+  const remembered = areaDestination('work', memory);
+  return projectScopeFor(remembered) === 'workspace' ? 'sessions' : remembered;
+}
+
 /**
  * A workspace view does not pretend the remembered project filters its data.
  *

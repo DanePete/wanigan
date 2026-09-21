@@ -174,6 +174,20 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [selected, setSelected] = useViewMemory<string | null>('selected', null);
   const [query, setQuery] = useViewMemory('query', '');
   const [scope, setScope] = useViewMemory('projectScope', '');
+  const [filtersOpen, setFiltersOpen] = useViewMemory('filters-open', false);
+  const [goalListOpen, setGoalListOpen] = useState(false);
+  const goalPicker = useRef<HTMLButtonElement>(null);
+  const goalSearch = useRef<HTMLInputElement>(null);
+  const goalList = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const compact = window.matchMedia('(max-width: 720px)');
+    const restoreVisibleFocus = () => {
+      if (compact.matches && !goalListOpen && goalList.current?.contains(document.activeElement)) goalPicker.current?.focus();
+      else if (!compact.matches && document.activeElement === goalPicker.current) goalSearch.current?.focus();
+    };
+    compact.addEventListener('change', restoreVisibleFocus);
+    return () => compact.removeEventListener('change', restoreVisibleFocus);
+  }, [goalListOpen]);
   const [taskSelection, setTaskSelection] = useViewMemory<Record<string, string>>('taskSelection', {});
   const [createOpen, setCreateOpen] = useViewMemory('creating', false);
   const createButton = useRef<HTMLButtonElement>(null);
@@ -486,8 +500,29 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, 'Event turned into a reviewed goal; no agent was launched automatically.');
 
   const scopedDockets = dockets.filter(docket => !scope || docket.projectId === scope);
-  const shownDockets = scopedDockets.filter(docket => (statusFilter === 'all' || docket.status === statusFilter)
-    && `${docket.title} ${docket.projectName} ${docket.objective}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const queryWords = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const searchedDockets = scopedDockets.filter(docket => {
+    const text = `${docket.title} ${docket.projectName} ${docket.objective}`.toLocaleLowerCase();
+    return queryWords.every(word => text.includes(word));
+  });
+  const shownDockets = searchedDockets.filter(docket => statusFilter === 'all' || docket.status === statusFilter);
+  const hasFilters = !!(query.trim() || scope || statusFilter !== 'all');
+  const clearFilters = () => {
+    setQuery(''); setScope(''); setStatusFilter('all');
+    requestAnimationFrame(() => {
+      if (window.matchMedia('(max-width: 720px)').matches && !goalListOpen) goalPicker.current?.focus();
+      else goalSearch.current?.focus();
+    });
+  };
+  const selectedOutsideFilters = detail && dockets.some(docket => docket.id === detail.id)
+    && !shownDockets.some(docket => docket.id === detail.id);
+  const filterScope = scope ? projectOptions.find(project => project.id === scope)?.name ?? 'Project unavailable' : 'Every project';
+  const filterState = statusFilter === 'all' ? 'All states' : markOf(statusFilter).word;
+  const chooseFromList = (id: string) => {
+    void choose(id);
+    setGoalListOpen(false);
+    if (window.matchMedia('(max-width: 720px)').matches) requestAnimationFrame(() => goalPicker.current?.focus());
+  };
   const activeNode = detail?.nodes.find(node => node.id === taskSelection[detail.id])
     ?? detail?.nodes.find(node => node.kind === 'review' && node.status === 'ready')
     ?? detail?.nodes.find(node => ['failed', 'canceled', 'running', 'ready'].includes(node.status))
@@ -514,37 +549,52 @@ export default function Control({ projects, providers, onOpenSession }: {
     onDone={id => { setCreateOpen(false); void choose(id); setNotice('Goal created. Choose a task when you are ready to begin.'); }} />;
 
   return <div className="pane control-view">
-    <PageHead compact title="Review" lead="The work. The proof. Your call."
+    <PageHead compact title="Goals" lead="The work. The proof. Your call."
       actions={<><button className="btn" type="button" disabled={busy !== null} onClick={() => void load()}>{refreshing ? 'Refreshing…' : 'Refresh'}</button><button className="btn btn-primary" type="button" disabled={actionBusy !== null} ref={createButton} onClick={() => setCreateOpen(true)}><Icon name="plus" />New goal</button></>} />
     {error && !createOpen && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error} {loadError && !actionError && <button className="btn btn-sm" disabled={refreshing} onClick={() => void load()}>Try again</button>}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
 
     <div className="control-workbench">
-
-
-      <aside className="control-list" aria-label="Goals">
-        <SectionHead label="Goals" count={ready ? dockets.length : undefined} />
-        <input type="search" className="field" aria-label="Search goals" placeholder="Find a goal…" value={query} onChange={event => setQuery(event.target.value)} />
-        <select className="field" aria-label="Filter goals by project" value={scope} onChange={event => setScope(event.target.value)}>
-          <option value="">Every project</option>{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select>
-        {dockets.length > 0 && <div className="control-chips" role="group" aria-label="Filter goals by status">
-          <Chip pressed={statusFilter === 'all'} count={scopedDockets.length} onToggle={() => setStatusFilter('all')}>All</Chip>
-          {[...new Set([...scopedDockets.map(d => d.status), ...(statusFilter === 'all' ? [] : [statusFilter])])].map(status => <Chip key={status} pressed={statusFilter === status}
-            count={scopedDockets.filter(d => d.status === status).length} onToggle={() => setStatusFilter(statusFilter === status ? 'all' : status)}>{markOf(status).word}</Chip>)}
-        </div>}
+      <div className="control-picker">
+        <span>{dockets.find(docket => docket.id === selected)?.title ?? 'Choose a goal'}</span>
+        <button className="btn btn-sm" type="button" ref={goalPicker} aria-expanded={goalListOpen} aria-controls="control-goal-list"
+          onClick={() => {
+            setGoalListOpen(!goalListOpen);
+            if (!goalListOpen) requestAnimationFrame(() => goalSearch.current?.focus());
+          }}>{goalListOpen ? 'Close goal list' : 'Browse goals'}</button>
+      </div>
+      <aside ref={goalList} className="control-list" id="control-goal-list" aria-label="Goals" data-compact-open={goalListOpen}>
+        <SectionHead label="Goals" />
+        <input ref={goalSearch} type="search" className="field" aria-label="Search goals" placeholder="Find a goal…" value={query} onChange={event => setQuery(event.target.value)} />
+        <details className="control-filters" open={filtersOpen} onToggle={event => setFiltersOpen(event.currentTarget.open)}>
+          <summary><span>Filters</span><span>{filterScope} · {filterState}</span></summary>
+          <label><span className="label">Project</span><select className="field" aria-label="Filter goals by project" value={scope} onChange={event => setScope(event.target.value)}>
+            <option value="">Every project</option>{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+          </select></label>
+          {dockets.length > 0 && <div className="control-chips" role="group" aria-label="Filter goals by status">
+            <Chip pressed={statusFilter === 'all'} count={searchedDockets.length} onToggle={() => setStatusFilter('all')}>All</Chip>
+            {[...new Set([...scopedDockets.map(d => d.status), ...(statusFilter === 'all' ? [] : [statusFilter])])].map(status => <Chip key={status} pressed={statusFilter === status}
+              count={searchedDockets.filter(d => d.status === status).length} onToggle={() => setStatusFilter(statusFilter === status ? 'all' : status)}>{markOf(status).word}</Chip>)}
+          </div>}
+        </details>
+        {ready && (!loadError || dockets.length > 0) && <div className="control-filter-results"><span role="status">{shownDockets.length} of {dockets.length} goal{dockets.length === 1 ? '' : 's'}{loadError ? ' · last reading' : ''}</span>
+          {hasFilters && <button className="btn btn-sm" type="button" onClick={clearFilters}>Clear filters</button>}</div>}
         {!ready && <Reading what="your goals" />}
         {ready && loadError !== null && dockets.length === 0 && <EmptyState posture="could-not-read" title="Could not read your goals" cue={loadError} action={<button className="btn" onClick={() => void load()}>Try again</button>} />}
         {ready && loadError === null && dockets.length === 0 && <Hint>No goals yet. Add an objective and its acceptance checks to start tracking work here.</Hint>}
-        {shownDockets.length === 0 && dockets.length > 0 && <EmptyState posture="nothing-yet" title="No matching goals" cue="Try another title, project, or state." action={<button className="btn" onClick={() => { setQuery(''); setScope(''); setStatusFilter('all'); }}>Clear filters</button>} />}
+        {shownDockets.length === 0 && dockets.length > 0 && <EmptyState posture="nothing-yet" title="No matching goals" cue="Try another title, project, or state." />}
         <div className="control-goals">{shownDockets.map(docket => <button type="button" key={docket.id} data-goal-id={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`}
-          disabled={actionBusy !== null} aria-current={selected === docket.id ? 'true' : undefined} onClick={() => void choose(docket.id)}>
+          disabled={actionBusy !== null} aria-current={selected === docket.id ? 'true' : undefined} onClick={() => chooseFromList(docket.id)}>
           <span className="control-goal-state"><Mark {...markOf(docket.status)} /><small>{ago(docket.updatedAt)}</small></span>
           <strong>{docket.title}</strong><small>{docket.projectName}</small>
           {docket.autopilot.enabled && <Mark {...AUTOPILOT_MARKS.armed} word="Autopilot armed" />}
         </button>)}</div>
       </aside>
       <div className="control-reading" aria-busy={refreshing}>
+        {selectedOutsideFilters && <div className="control-filter-notice"><Note tone="info">
+          You are still viewing <strong>{detail.title}</strong>. It is outside the current list filters.
+          <button className="btn btn-sm" type="button" onClick={clearFilters}>Show selected goal</button>
+        </Note></div>}
         {!detail && (refreshing ? <Reading what="the goal" /> : <EmptyState posture={loadError ? 'could-not-read' : 'nothing-yet'}
           title={loadError ? 'This goal could not be read' : 'Make room for your next decision.'}
           cue={loadError ?? 'Keep an objective, its tasks, and the proof of what changed together.'}
@@ -660,7 +710,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
         <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
       </ol>
-      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
+      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in the Review task.</p></div>
       </div>
     </Explainer>
     </details>
@@ -821,7 +871,7 @@ function GoalGateCard({ docket, busy, onChoose }: { docket: DocketDetail; busy: 
     <SectionHead label="Verified done" right={<Mark {...GATE_MARKS[choice]} />} />
     <p>{GATE_READING[choice]}</p>
     {finished ? <Hint>This goal is finished, so there is no agent left to gate.</Hint>
-      : noCommands && choice === 'off' ? <Hint>This project has no review gate commands, so there is nothing to run when an agent stops. Add them under Git › Review gate, then choose here.</Hint>
+      : noCommands && choice === 'off' ? <Hint>This project has no review gate commands, so there is nothing to run when an agent stops. Add them under Changes › Review gate, then choose here.</Hint>
       : <div className="control-gate-choice" aria-busy={busy !== null}>
           <Segmented<GateChoice> label="When an agent stops" value={choice} onChange={(next) => { if (busy === null && next !== choice) onChoose(next); }}
             options={[{ value: 'off', label: 'Take its word' }, { value: 'gate', label: 'Run the gate' }, { value: 'hand-back', label: 'Run the gate, hand failures back' }]} />
@@ -867,7 +917,7 @@ function TaskGate({ node, gate, proof }: { node: DocketNode; gate: DocketGate; p
     {detail?.failure && <details className="control-gate-failure">
       <summary>What failed · <code>{detail.failure.command}</code> {detail.failure.exitCode === null ? 'was stopped' : `exited ${detail.failure.exitCode}`}</summary>
       <pre>{detail.failure.excerpt || 'The command printed nothing.'}</pre>
-      {detail.failure.cut && <Hint>Only the lines that looked like errors were kept, and some of those were cut to fit. Git › Review gate has the full output.</Hint>}
+      {detail.failure.cut && <Hint>Only the lines that looked like errors were kept, and some of those were cut to fit. Changes › Review gate has the full output.</Hint>}
     </details>}
     {detail?.handBack && <Hint>{detail.handBack.sentence}</Hint>}
     {flags.length > 0 && <Note tone="warn" role="none">

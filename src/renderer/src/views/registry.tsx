@@ -23,6 +23,7 @@ import Schedules from './Schedules';
 import Git from './Git';
 import HeadlessRuns from './HeadlessRuns';
 import Relay from './Relay';
+import Recovery from './Recovery';
 import SettingsView, { DemoPanel, type SettingsJump } from './Settings';
 
 /** One-shot deep link into Learning, consumed by nonce like newSessionRequest. */
@@ -119,9 +120,8 @@ export const VIEW_RENDERERS: Record<Tab, (ctx: ViewContext) => ReactNode> = {
   fleet: ({ projects, openSession, requestNewSession }) => (
     <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />
   ),
-  board: ({ projects, providers, projectId, spaceId, setSpaceId, choose, openGoal, openSession }) => (
+  board: ({ projects, providers, projectId, spaceId, openGoal, openSession }) => (
     <Board projects={projects} providers={providers} projectId={projectId} selectedProjectId={spaceId}
-           onPickProject={(id) => { setSpaceId(id); if (id) choose(id); }}
            onOpenGoal={openGoal} onOpenSession={openSession} />
   ),
   control: ({ projects, providers, openSession }) => (
@@ -137,6 +137,7 @@ export const VIEW_RENDERERS: Record<Tab, (ctx: ViewContext) => ReactNode> = {
   ),
   insights: () => <InsightsView />,
   usage: () => <UsageView />,
+  recovery: () => <Recovery />,
   learning: ({ projectId, projects, providers, choose, learningTarget }) => (
     <Learning projectId={projectId} projects={projects} providers={providers}
               onPickProject={choose} initialTarget={learningTarget} />
@@ -146,11 +147,11 @@ export const VIEW_RENDERERS: Record<Tab, (ctx: ViewContext) => ReactNode> = {
   scout: ({ projects, openGoal }) => (
     <ImprovementScout projects={projects} onOpenGoal={openGoal} />
   ),
-  skills: ({ projectId, providers, activeSessionId }) => (
-    <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
+  skills: ({ projectId, providers, activeSessionId, sessions }) => (
+    <Skills projectId={projectId} providers={providers} activeSession={sessions.find(session => session.id === activeSessionId)} />
   ),
-  context: ({ projectId, projects, projectsRead, choose, loadShell, openLearning }) => (
-    <Context projectId={projectId} projects={projects} projectsRead={projectsRead} onPickProject={choose}
+  context: ({ projectId, projects, projectsRead, loadShell, openLearning }) => (
+    <Context projectId={projectId} projects={projects} projectsRead={projectsRead}
              onReloadProjects={loadShell} onOpenLearning={openLearning} />
   ),
   plugins: () => <Plugins />,

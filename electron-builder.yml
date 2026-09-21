@@ -123,3 +123,51 @@ dmg:
       y: 220
       type: link
       path: /Applications
+
+# ── Windows ─────────────────────────────────────────────────────────────────
+#
+# node-pty and better-sqlite3 are rebuilt from source here exactly as they are
+# on macOS (npmRebuild above), so a Windows build host needs the Visual Studio
+# Build Tools with the "Desktop development with C++" workload and Python. That
+# is a real prerequisite, not an optional nicety: without it `npm ci` fails at
+# postinstall, long before packaging.
+#
+# The asarUnpack rules above already cover Windows and for the same reasons —
+# `**/*.node` catches node-pty's conpty.node and better_sqlite3.node, and
+# `node_modules/node-pty/**` catches conpty_console_list.node and the
+# winpty-agent.exe fallback that node-pty exec's rather than loads. A file
+# inside app.asar has no filesystem path, so neither dlopen nor CreateProcess
+# can reach it, and the failure arrives at runtime on a path that is plainly
+# there in the source tree.
+win:
+  # x64 only for now. Windows-on-ARM would need node-gyp to produce arm64
+  # builds of both native addons, and shipping an untested arm64 artifact is
+  # worse than not offering one: it installs cleanly and then cannot open the
+  # database. Add it when there is a machine to prove it on.
+  target:
+    - target: nsis
+      arch: [x64]
+    # The same reasoning as the macOS zip: the only format that round-trips a
+    # built app without a human clicking through an installer, so it is what a
+    # scripted install or an update feed consumes.
+    - target: zip
+      arch: [x64]
+
+  # With no certificate configured, electron-builder logs that it skipped
+  # signing and still produces the installer. That artifact works, and
+  # SmartScreen will warn the first person who runs it until the binary earns
+  # reputation or a real Authenticode certificate is configured through
+  # CSC_LINK/CSC_KEY_PASSWORD. Said plainly here because "unsigned" is a
+  # property of this build, not a defect to debug.
+  signAndEditExecutable: true
+
+nsis:
+  # Per-user, and not one-click. Wanigan writes only to its own user-data
+  # directory, so it needs no elevation, and an installer that silently chooses
+  # a location is one nobody can point at a different drive — which on a
+  # Windows dev box is exactly where the repositories live.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

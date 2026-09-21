@@ -1,0 +1,6 @@
+.recovery-entry { display: flex; flex-direction: column; gap: var(--s-2); border-top: 1px solid var(--line); padding-block: var(--s-4); }
+.recovery-path { overflow-wrap: anywhere; font-family: var(--mono); }
+.recovery-facts { display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 0; }
+.recovery-facts dt { color: var(--text-faint); }
+.recovery-facts dd { margin: 0; overflow-wrap: anywhere; }
+.recovery-actions { display: flex; gap: var(--s-2); }

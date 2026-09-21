@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { CodexHookExchange } from '../shared/codex-hooks';
+import { killProcessTree } from './platform';
 
 /**
  * One run of Codex's app-server, asked one question: how would you treat these
@@ -78,12 +79,13 @@ export function exchangeHooksList(opts: HooksListExchangeOptions): Promise<Hooks
       stdio: ['pipe', 'pipe', 'pipe'],
       // Its own process group, so the kill reaches anything app-server started.
       detached: true,
+      // On Windows detaching gives the child its own console; hide it.
+      windowsHide: true,
     });
 
     const signal = (name: NodeJS.Signals) => {
-      if (exited || child.pid === undefined) return;
-      try { process.kill(-child.pid, name); }
-      catch { try { child.kill(name); } catch { /* already gone */ } }
+      if (exited) return;
+      killProcessTree(child, name);
     };
 
     const cleanup = (result: CodexHookExchange) => {

@@ -100,6 +100,58 @@ jobs:
       - name: Smoke
         run: xvfb-run --auto-servernum npm run smoke
 
+  windows:
+    name: Windows
+    # Wanigan is written on a Mac and its CI has run on Linux, which between
+    # them hide every Windows-shaped assumption: PATH split on ':', PATHEXT
+    # ignored, access(X_OK) treated as meaningful, and an npm .cmd shim handed
+    # straight to CreateProcess. src/shared/platform.ts takes the platform as a
+    # parameter so those rules are covered by test:shared on any host — but a
+    # pure test cannot prove that node-pty's ConPTY build compiles, that
+    # better-sqlite3 loads, or that the app reaches app.whenReady() here. Only a
+    # Windows runner answers those, and only by actually starting the thing.
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # windows-latest ships the Visual Studio Build Tools and Python that
+      # node-gyp needs, so postinstall's rebuild of node-pty and better-sqlite3
+      # compiles without extra setup. That rebuild is most of the point of this
+      # job: a native addon that cannot build on Windows is a Windows build that
+      # does not exist, and it fails here rather than in somebody's first clone.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Shared contract tests
+        run: npm run test:shared
+
+      - name: Renderer style gate
+        run: npm run test:renderer-style
+
+      - name: Dead code and undeclared dependencies
+        run: npm run test:dead-code
+
+      - name: Lint
+        run: npm run test:lint
+
+      # No Xvfb equivalent and none needed: Windows runners have a desktop
+      # session, so Electron reaches app.whenReady() without one. This is the
+      # step that could not run at all until the three launcher scripts stopped
+      # being bash — `npm test` used to end here with a spawn error, which meant
+      # nothing about Windows was provable, including whether Windows worked.
+      - name: Smoke
+        run: npm run smoke
+
   packaging:
     name: macOS packaging suites
     # The other two thirds of `npm test`. These are fixture-only: they build no

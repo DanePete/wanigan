@@ -54,6 +54,19 @@ const SKILL_NAME_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** RFC 9110 token: what an HTTP field name may be. */
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+const MAX_HEADERS = 20;
+/*
+ * Headers the transport owns. A manifest that set one could frame the request
+ * itself — a Content-Length or Transfer-Encoding that disagrees with the body is
+ * request smuggling — or reroute it with Host, so they are refused, not passed.
+ */
+const FORBIDDEN_HEADERS = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'upgrade',
+  'te', 'trailer', 'proxy-connection', 'proxy-authorization', 'expect',
+]);
+
 /** `>=x.y.z`, or a bare `x.y.z` meaning the same floor. */
 const REQUIRES_RE = /^(?:>=\s*)?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
@@ -62,6 +75,7 @@ const MAX_SKILLS = 50;
 const MAX_GATES = 20;
 const MAX_INSTRUCTIONS = 20;
 const MAX_SCOUT_SOURCES = 20;
+const MAX_STORE_SOURCES = 10;
 const MAX_CREDENTIALS = 20;
 /** Matches `saveRecipe` in `src/main/review.ts`, which stores at most 20 and refuses one over 2,000 characters. */
 const MAX_GATE_COMMANDS = 20;
@@ -122,6 +136,15 @@ export type ExtensionEnvValue =
   | { source: 'credential'; id: string }
   | { source: 'literal'; value: string };
 
+/**
+ * A request header an http server is sent. A credential may carry a literal
+ * prefix, for the `Bearer <key>` shape: the operator is asked for the key, and
+ * the prefix is the manifest's, shown on the consent screen.
+ */
+export type ExtensionHeaderValue =
+  | { source: 'literal'; value: string }
+  | { source: 'credential'; id: string; prefix?: string };
+
 export type ExtensionMcpServer = {
   name: string;
   transport: 'stdio' | 'http';
@@ -131,6 +154,8 @@ export type ExtensionMcpServer = {
   description?: string;
   scope?: 'global' | 'project';
   env?: Record<string, ExtensionEnvValue>;
+  /** http servers only. */
+  headers?: Record<string, ExtensionHeaderValue>;
 };
 
 export type ExtensionSkill = { name: string; file: string; description?: string };
@@ -139,6 +164,14 @@ export type ExtensionInstruction = { scope: 'project' | 'personal'; title: strin
 
 /** The same three Improvement Scout already reads; the manifest mirrors the code, not the other way round. */
 const SCOUT_SOURCE_KINDS = ['changelog', 'release-notes', 'documentation'] as const;
+/**
+ * How a store source's url is read. One format today, declared anyway: a catalog
+ * read as the wrong shape is a list of entries that are not what they say, and
+ * the field is what lets a second format arrive without every existing
+ * manifest's meaning changing underneath it.
+ */
+export const STORE_SOURCE_FORMATS = ['mcp-registry'] as const;
+export type ExtensionStoreSourceFormat = typeof STORE_SOURCE_FORMATS[number];
 export type ExtensionScoutSourceKind = typeof SCOUT_SOURCE_KINDS[number];
 
 /**
@@ -159,6 +192,30 @@ export type ExtensionScoutSource = {
   kind: ExtensionScoutSourceKind;
 };
 
+/**
+ * A catalog of installable extensions, declared the same way a Scout source is.
+ *
+ * The store browses these and nothing else: there is no built-in address and no
+ * fallback, so the set of places Wanigan will fetch an extension from is exactly
+ * the set some manifest declared and an operator consented to. Wanigan's own
+ * catalog is a built-in extension for that reason — a default reachable by a
+ * private path would be an extension point nobody has proven works.
+ *
+ * A source is an index, never a payload. Fetching one yields a list of entries
+ * to show; installing one of them still stages a directory and goes through
+ * `validateExtensionManifest`, the consent screen and digest trust, exactly as
+ * a directory chosen in a picker does.
+ */
+export type ExtensionStoreSource = {
+  id: string;
+  label: string;
+  description: string;
+  /** https, and the index document itself rather than a page describing it. */
+  url: string;
+  publisher: string;
+  format: ExtensionStoreSourceFormat;
+};
+
 export type ExtensionManifest = {
   schemaVersion: 1;
   id: string;
@@ -174,6 +231,7 @@ export type ExtensionManifest = {
     gates?: ExtensionGate[];
     instructions?: ExtensionInstruction[];
     scoutSources?: ExtensionScoutSource[];
+    storeSources?: ExtensionStoreSource[];
   };
 };
 
@@ -382,6 +440,63 @@ function parseEnv(
   return out;
 }
 
+function parseHeaders(
+  raw: unknown,
+  where: string,
+  errors: string[],
+  declaredCredentials: Set<string>,
+): Record<string, ExtensionHeaderValue> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isObject(raw)) {
+    errors.push(`${where} must be an object.`);
+    return undefined;
+  }
+  const entries = Object.entries(raw);
+  if (entries.length > MAX_HEADERS) errors.push(`${where} has more than ${MAX_HEADERS} entries.`);
+  const out: Record<string, ExtensionHeaderValue> = {};
+  const seen = new Set<string>();
+  for (const [name, value] of entries.slice(0, MAX_HEADERS)) {
+    if (!HEADER_NAME_RE.test(name)) { errors.push(`${where}.${name} is not a valid HTTP header name.`); continue; }
+    const lower = name.toLowerCase();
+    if (FORBIDDEN_HEADERS.has(lower)) { errors.push(`${where}.${name} is a header the transport sets itself, so an extension may not.`); continue; }
+    // HTTP field names are case-insensitive: two spellings are one header.
+    if (seen.has(lower)) { errors.push(`${where} declares ${name} twice.`); continue; }
+    seen.add(lower);
+    if (!isObject(value)) { errors.push(`${where}.${name} must be an object.`); continue; }
+    const source = own(value, 'source');
+    if (source === 'literal') {
+      const v = own(value, 'value');
+      if (typeof v !== 'string' || /[\r\n\u0000]/.test(v)) {
+        errors.push(`${where}.${name}.value must be a string without line breaks or NUL bytes.`);
+        continue;
+      }
+      if (v.length > 2_000) { errors.push(`${where}.${name}.value is longer than 2,000 characters.`); continue; }
+      out[name] = { source: 'literal', value: v };
+    } else if (source === 'credential') {
+      const id = text(own(value, 'id'), `${where}.${name}.id`, errors, { required: true, max: MAX_ID, pattern: EXTENSION_ID_RE });
+      if (id === undefined) continue;
+      // The env block's rule, for the same reason: naming an undeclared id would
+      // read another extension's key and send it to a host of this one's choosing.
+      if (!declaredCredentials.has(id)) {
+        errors.push(
+          `${where}.${name}.id is "${id}", which this manifest does not declare in credentials. ` +
+          'An extension may only read a credential it asks the operator for itself.'
+        );
+        continue;
+      }
+      const prefix = own(value, 'prefix');
+      if (prefix !== undefined && (typeof prefix !== 'string' || prefix.length > 64 || /[\r\n\u0000]/.test(prefix))) {
+        errors.push(`${where}.${name}.prefix must be a string of at most 64 characters without line breaks.`);
+        continue;
+      }
+      out[name] = { source: 'credential', id, ...(typeof prefix === 'string' && prefix ? { prefix } : {}) };
+    } else {
+      errors.push(`${where}.${name}.source must be "credential" or "literal".`);
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function parseMcpServer(
   raw: unknown,
   where: string,
@@ -454,6 +569,10 @@ function parseMcpServer(
   if (transport === 'http' && url !== undefined) validateHttpUrl(url, `${where}.url`, errors);
 
   const env = parseEnv(own(raw, 'env'), `${where}.env`, errors, declaredCredentials);
+  const headers = parseHeaders(own(raw, 'headers'), `${where}.headers`, errors, declaredCredentials);
+  // A stdio server is not an HTTP client; headers on one are a belief about it
+  // that is not true, refused as the url on a stdio server is.
+  if (headers && transportRaw !== 'http') errors.push(`${where}.headers is only valid for an http server.`);
 
   if (name === undefined || !transport) return null;
   return {
@@ -465,6 +584,7 @@ function parseMcpServer(
     ...(description ? { description } : {}),
     ...(scope ? { scope } : {}),
     ...(env ? { env } : {}),
+    ...(headers && transportRaw === 'http' ? { headers } : {}),
   };
 }
 
@@ -546,6 +666,29 @@ function parseScoutSource(raw: unknown, where: string, errors: string[]): Extens
     return null;
   }
   return { id, label, description, url, publisher, kind };
+}
+
+function parseStoreSource(raw: unknown, where: string, errors: string[]): ExtensionStoreSource | null {
+  if (!isObject(raw)) {
+    errors.push(`${where} must be an object.`);
+    return null;
+  }
+  const id = text(own(raw, 'id'), `${where}.id`, errors, { required: true, max: MAX_ID, pattern: EXTENSION_ID_RE });
+  const label = text(own(raw, 'label'), `${where}.label`, errors, { required: true, max: MAX_LABEL });
+  const description = text(own(raw, 'description'), `${where}.description`, errors, { required: true, max: MAX_DESCRIPTION });
+  const url = text(own(raw, 'url'), `${where}.url`, errors, { required: true, max: MAX_URL_CHARS });
+  const publisher = text(own(raw, 'publisher'), `${where}.publisher`, errors, { required: true, max: MAX_LABEL });
+  // The same rule a Scout source gets, for the same reason: this url is fetched
+  // without a person watching, so plain http and an embedded credential are both
+  // refused rather than warned about.
+  if (url !== undefined) validateScoutUrl(url, `${where}.url`, errors);
+  const formatRaw = own(raw, 'format');
+  const format = (STORE_SOURCE_FORMATS as readonly unknown[]).includes(formatRaw) ? formatRaw as ExtensionStoreSourceFormat : null;
+  if (!format) errors.push(`${where}.format must be ${STORE_SOURCE_FORMATS.map((entry) => `"${entry}"`).join(', ')}.`);
+  if (id === undefined || label === undefined || description === undefined || url === undefined || publisher === undefined || !format) {
+    return null;
+  }
+  return { id, label, description, url, publisher, format };
 }
 
 function parseSkill(raw: unknown, where: string, errors: string[]): ExtensionSkill | null {
@@ -804,12 +947,31 @@ export function validateExtensionManifest(value: unknown, opts: { appVersion?: s
       }
     }
 
+    const storeSourcesRaw = own(providesRaw, 'storeSources');
+    if (storeSourcesRaw !== undefined) {
+      if (!Array.isArray(storeSourcesRaw)) errors.push('provides.storeSources must be an array.');
+      else {
+        if (storeSourcesRaw.length > MAX_STORE_SOURCES) errors.push(`provides.storeSources has more than ${MAX_STORE_SOURCES} entries.`);
+        const sources: ExtensionStoreSource[] = [];
+        storeSourcesRaw.slice(0, MAX_STORE_SOURCES).forEach((entry, i) => {
+          const parsed = parseStoreSource(entry, `provides.storeSources[${i}]`, errors);
+          if (parsed) sources.push(parsed);
+        });
+        const seen = new Set<string>();
+        for (const source of sources) {
+          if (seen.has(source.id)) errors.push(`provides.storeSources declares "${source.id}" twice.`);
+          seen.add(source.id);
+        }
+        if (sources.length) provides.storeSources = sources;
+      }
+    }
+
     // An extension that declares nothing installs nothing, and an install
     // dialog with an empty consent list is a dialog that cannot be answered
     // honestly: there is no wording for "this will do nothing" that a person
     // would read as anything other than a bug.
     if (!Object.keys(provides).length && !errors.some((entry) => entry.startsWith('provides.'))) {
-      errors.push('provides must declare at least one MCP server, skill, gate, instruction or Scout source.');
+      errors.push('provides must declare at least one MCP server, skill, gate, instruction, Scout source or store source.');
     }
   }
 
@@ -819,6 +981,9 @@ export function validateExtensionManifest(value: unknown, opts: { appVersion?: s
   const referenced = new Set<string>();
   for (const server of provides.mcpServers ?? []) {
     for (const spec of Object.values(server.env ?? {})) {
+      if (spec.source === 'credential') referenced.add(spec.id);
+    }
+    for (const spec of Object.values(server.headers ?? {})) {
       if (spec.source === 'credential') referenced.add(spec.id);
     }
   }
@@ -929,6 +1094,19 @@ export function extensionConsent(manifest: ExtensionManifest): ExtensionConsentL
     });
   }
 
+  // A store source is fetched when the operator opens the store, not on a
+  // schedule — so the line says "when you browse" rather than borrowing Scout's
+  // "on its own". What it must not hide is that browsing a catalog is already a
+  // request to a stranger's machine, before anything is installed.
+  for (const source of manifest.provides.storeSources ?? []) {
+    let host = source.url;
+    try { host = new URL(source.url).host; } catch { host = source.url; }
+    hosts.push({
+      kind: 'host',
+      text: `Wanigan will fetch ${host} when you browse the store, for the catalog “${source.label}”.`,
+    });
+  }
+
   // A gate's commands reach `$SHELL -lc`, which makes them the largest thing
   // this format can do to a machine — so they are never left off this screen.
   // But installing does not apply a gate in this build, and a consent line that
@@ -957,6 +1135,13 @@ export function extensionConsent(manifest: ExtensionManifest): ExtensionConsentL
     for (const server of servers) {
       for (const [name, spec] of Object.entries(server.env ?? {})) {
         if (spec.source === 'credential' && spec.id === credential.id) destinations.push(`"${server.name}" as ${name}`);
+      }
+      for (const [name, spec] of Object.entries(server.headers ?? {})) {
+        if (spec.source !== 'credential' || spec.id !== credential.id) continue;
+        // A header leaves this machine, so the line names the host it goes to.
+        let host = server.url ?? '';
+        try { host = new URL(host).host; } catch { /* printed as declared */ }
+        destinations.push(`"${server.name}" in the ${name} header${spec.prefix ? ` after "${spec.prefix}"` : ''}, sent to ${host}`);
       }
     }
     credentialLines.push({
@@ -1108,6 +1293,10 @@ export function mcpFingerprint(server: ExtensionMcpServer): string {
     .map(([name, spec]): [string, string] =>
       [name, spec.source === 'credential' ? `credential:${spec.id}` : `literal:${spec.value}`])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const headers = Object.entries(server.headers ?? {})
+    .map(([name, spec]): [string, string] =>
+      [name.toLowerCase(), spec.source === 'credential' ? `credential:${spec.id}:${spec.prefix ?? ''}` : `literal:${spec.value}`])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return JSON.stringify({
     v: EXTENSION_SCHEMA_VERSION,
     name: server.name,
@@ -1117,6 +1306,9 @@ export function mcpFingerprint(server: ExtensionMcpServer): string {
     args: server.args ?? [],
     url: server.url ?? null,
     env,
+    // Only when present: every fingerprint recorded before headers existed must
+    // still match its server, or each would read as edited by hand.
+    ...(headers.length ? { headers } : {}),
   });
 }
 

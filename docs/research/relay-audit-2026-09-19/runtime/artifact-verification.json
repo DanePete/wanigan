@@ -1,0 +1,95 @@
+{
+  "verifiedAt": "2026-09-19T19:03:05.356Z",
+  "scenarioRecords": 19,
+  "assertions": "passed",
+  "processes": [
+    {
+      "pid": 32871,
+      "alive": false
+    },
+    {
+      "pid": 35612,
+      "alive": false
+    },
+    {
+      "pid": 35633,
+      "alive": false
+    },
+    {
+      "pid": 35636,
+      "alive": false
+    },
+    {
+      "pid": 35650,
+      "alive": false
+    },
+    {
+      "pid": 35671,
+      "alive": false
+    },
+    {
+      "pid": 35674,
+      "alive": false
+    },
+    {
+      "pid": 32013,
+      "alive": false
+    },
+    {
+      "pid": 32305,
+      "alive": false
+    },
+    {
+      "pid": 32338,
+      "alive": false
+    },
+    {
+      "pid": 89181,
+      "alive": false
+    },
+    {
+      "pid": 88048,
+      "alive": false
+    },
+    {
+      "pid": 88073,
+      "alive": false
+    },
+    {
+      "pid": 88069,
+      "alive": false
+    },
+    {
+      "pid": 88095,
+      "alive": false
+    },
+    {
+      "pid": 88072,
+      "alive": false
+    },
+    {
+      "pid": 88098,
+      "alive": false
+    }
+  ],
+  "receipts": [
+    {
+      "file": "core-results.json",
+      "sha256": "652dcb78844dd003b9d464ffbe1e0cabf8175d533af44ceded70b2720f01540f"
+    },
+    {
+      "file": "concurrency-results.json",
+      "sha256": "3ad6fff318929d30783a879d7a10c9431a7904db40173ed6a3e541eab53035a5"
+    },
+    {
+      "file": "verification-results.json",
+      "sha256": "51479b0c4a47059143269af2815fe7f8fb24e1b743aa76f9c0170b7e17686120"
+    }
+  ],
+  "notes": [
+    "All process ids are audit fixture owners, shells or sentinels.",
+    "No production app/data/process was used.",
+    "Graceful-owner evidence is Node SIGTERM, not Electron before-quit.",
+    "Queue runner is a sentinel adapter, not a production paid harness."
+  ]
+}

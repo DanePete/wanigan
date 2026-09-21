@@ -1,0 +1,935 @@
+{
+  "evidence": "native CLI read-only account/model/quota RPC, no thread or inference",
+  "records": [
+    {
+      "id": "acct_22fefe2f-541",
+      "label": "Personal",
+      "isDefault": true,
+      "observedAt": "2026-09-19T18:58:14.540472+00:00",
+      "methods": [
+        "initialize",
+        "account/read",
+        "account/rateLimits/read",
+        "model/list"
+      ],
+      "inferenceRequests": 0,
+      "initialized": true,
+      "auth": {
+        "type": "chatgpt",
+        "planType": "pro",
+        "requiresOpenaiAuth": true
+      },
+      "quota": {
+        "legacy": {
+          "limitId": "codex",
+          "limitName": null,
+          "planType": "pro",
+          "primary": {
+            "usedPercent": 91,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790424520
+          },
+          "secondary": null,
+          "spendControlReached": false,
+          "rateLimitReachedType": null,
+          "credits": {
+            "hasCredits": false,
+            "unlimited": false,
+            "balance": "0"
+          }
+        },
+        "buckets": {
+          "base_model_inference": {
+            "limitId": "base_model_inference",
+            "limitName": "gpt-reserve",
+            "planType": "pro",
+            "primary": {
+              "usedPercent": 0,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790449095
+            },
+            "secondary": null,
+            "spendControlReached": null,
+            "rateLimitReachedType": null,
+            "credits": null
+          },
+          "codex": {
+            "limitId": "codex",
+            "limitName": null,
+            "planType": "pro",
+            "primary": {
+              "usedPercent": 91,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790424520
+            },
+            "secondary": null,
+            "spendControlReached": false,
+            "rateLimitReachedType": null,
+            "credits": {
+              "hasCredits": false,
+              "unlimited": false,
+              "balance": "0"
+            }
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "model": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "model": "gpt-5.6-sol",
+          "displayName": "GPT-5.6-Sol",
+          "defaultReasoningEffort": "low",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "model": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "model": "gpt-5.6-luna",
+          "displayName": "GPT-5.6-Luna",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "model": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        }
+      ],
+      "catalogueComplete": true,
+      "stderrCategories": [],
+      "completedAt": "2026-09-19T18:58:15.198871+00:00"
+    },
+    {
+      "id": "acct_f80c68ea-f69",
+      "label": "gamedev",
+      "isDefault": false,
+      "observedAt": "2026-09-19T18:58:15.199355+00:00",
+      "methods": [
+        "initialize",
+        "account/read",
+        "account/rateLimits/read",
+        "model/list"
+      ],
+      "inferenceRequests": 0,
+      "initialized": true,
+      "auth": {
+        "type": "chatgpt",
+        "planType": "prolite",
+        "requiresOpenaiAuth": true
+      },
+      "quota": {
+        "legacy": {
+          "limitId": "codex",
+          "limitName": null,
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 100,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790429324
+          },
+          "secondary": null,
+          "spendControlReached": false,
+          "rateLimitReachedType": "rate_limit_reached",
+          "credits": {
+            "hasCredits": false,
+            "unlimited": false,
+            "balance": "0"
+          }
+        },
+        "buckets": {
+          "codex": {
+            "limitId": "codex",
+            "limitName": null,
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 100,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790429324
+            },
+            "secondary": null,
+            "spendControlReached": false,
+            "rateLimitReachedType": "rate_limit_reached",
+            "credits": {
+              "hasCredits": false,
+              "unlimited": false,
+              "balance": "0"
+            }
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "model": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "model": "gpt-5.6-sol",
+          "displayName": "GPT-5.6-Sol",
+          "defaultReasoningEffort": "low",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "model": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "model": "gpt-5.6-luna",
+          "displayName": "GPT-5.6-Luna",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "model": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        }
+      ],
+      "catalogueComplete": true,
+      "stderrCategories": [],
+      "completedAt": "2026-09-19T18:58:16.546361+00:00"
+    },
+    {
+      "id": "acct_3b56053e-39d",
+      "label": "Temporary",
+      "isDefault": false,
+      "observedAt": "2026-09-19T18:58:16.547454+00:00",
+      "methods": [
+        "initialize",
+        "account/read",
+        "account/rateLimits/read",
+        "model/list"
+      ],
+      "inferenceRequests": 0,
+      "initialized": true,
+      "auth": {
+        "type": "chatgpt",
+        "planType": "prolite",
+        "requiresOpenaiAuth": true
+      },
+      "quota": {
+        "legacy": {
+          "limitId": "codex",
+          "limitName": null,
+          "planType": "prolite",
+          "primary": {
+            "usedPercent": 0,
+            "windowDurationMins": 10080,
+            "resetsAt": 1790449097
+          },
+          "secondary": null,
+          "spendControlReached": false,
+          "rateLimitReachedType": null,
+          "credits": {
+            "hasCredits": false,
+            "unlimited": false,
+            "balance": "0"
+          }
+        },
+        "buckets": {
+          "codex": {
+            "limitId": "codex",
+            "limitName": null,
+            "planType": "prolite",
+            "primary": {
+              "usedPercent": 0,
+              "windowDurationMins": 10080,
+              "resetsAt": 1790449097
+            },
+            "secondary": null,
+            "spendControlReached": false,
+            "rateLimitReachedType": null,
+            "credits": {
+              "hasCredits": false,
+              "unlimited": false,
+              "balance": "0"
+            }
+          }
+        }
+      },
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "model": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "model": "gpt-5.6-sol",
+          "displayName": "GPT-5.6-Sol",
+          "defaultReasoningEffort": "low",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "model": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "model": "gpt-5.6-luna",
+          "displayName": "GPT-5.6-Luna",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "model": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        }
+      ],
+      "catalogueComplete": true,
+      "stderrCategories": [],
+      "completedAt": "2026-09-19T18:58:18.071408+00:00"
+    },
+    {
+      "id": "acct_9d5d4e0c-490",
+      "label": "temp2",
+      "isDefault": false,
+      "observedAt": "2026-09-19T18:58:18.071937+00:00",
+      "methods": [
+        "initialize",
+        "account/read",
+        "account/rateLimits/read",
+        "model/list"
+      ],
+      "inferenceRequests": 0,
+      "initialized": true,
+      "auth": {
+        "type": null,
+        "planType": null,
+        "requiresOpenaiAuth": true
+      },
+      "quota": {
+        "legacy": null,
+        "buckets": {},
+        "error": {
+          "errorCode": -32600,
+          "errorCategory": "authentication"
+        }
+      },
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "model": "gpt-6-astra",
+          "displayName": "GPT-6-Astra",
+          "defaultReasoningEffort": "low",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "model": "gpt-5.6-sol",
+          "displayName": "GPT-5.6-Sol",
+          "defaultReasoningEffort": "low",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "model": "gpt-5.6-terra",
+          "displayName": "GPT-5.6-Terra",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            },
+            {
+              "reasoningEffort": "ultra",
+              "description": "Maximum reasoning with automatic task delegation"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "model": "gpt-5.6-luna",
+          "displayName": "GPT-5.6-Luna",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "max",
+              "description": "Maximum reasoning depth for the hardest problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "model": "gpt-5.5",
+          "displayName": "GPT-5.5",
+          "defaultReasoningEffort": "medium",
+          "supportedReasoningEfforts": [
+            {
+              "reasoningEffort": "low",
+              "description": "Fast responses with lighter reasoning"
+            },
+            {
+              "reasoningEffort": "medium",
+              "description": "Balances speed and reasoning depth for everyday tasks"
+            },
+            {
+              "reasoningEffort": "high",
+              "description": "Greater reasoning depth for complex problems"
+            },
+            {
+              "reasoningEffort": "xhigh",
+              "description": "Extra high reasoning depth for complex problems"
+            }
+          ],
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ]
+        }
+      ],
+      "catalogueComplete": true,
+      "stderrCategories": [],
+      "completedAt": "2026-09-19T18:58:18.123916+00:00"
+    }
+  ]
+}

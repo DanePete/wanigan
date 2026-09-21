@@ -1,0 +1,419 @@
+{
+  "phase": "after",
+  "fixture": true,
+  "measurements": [
+    {
+      "label": "empty-1440x960",
+      "width": 1440,
+      "height": 960,
+      "docOverflow": false,
+      "pane": {
+        "x": 13,
+        "y": 113,
+        "width": 1414,
+        "height": 782,
+        "clientHeight": 782,
+        "scrollHeight": 782
+      },
+      "attention": {
+        "x": 13,
+        "y": 113,
+        "width": 247,
+        "height": 148.3125,
+        "clientHeight": 147,
+        "scrollHeight": 147
+      },
+      "toolbar": {
+        "x": 261,
+        "y": 113,
+        "width": 1166,
+        "height": 66,
+        "clientHeight": 65,
+        "scrollHeight": 65
+      },
+      "config": {
+        "x": 261,
+        "y": 179,
+        "width": 1166,
+        "height": 77,
+        "clientHeight": 76,
+        "scrollHeight": 76
+      },
+      "terminal": {
+        "x": 261,
+        "y": 256,
+        "width": 1166,
+        "height": 395.46875,
+        "clientHeight": 395,
+        "scrollHeight": 395
+      },
+      "dock": {
+        "x": 261,
+        "y": 651.46875,
+        "width": 1166,
+        "height": 215.53125,
+        "clientHeight": 215,
+        "scrollHeight": 215
+      },
+      "dockBody": {
+        "x": 261,
+        "y": 686.46875,
+        "width": 1166,
+        "height": 180.53125,
+        "clientHeight": 181,
+        "scrollHeight": 181
+      },
+      "area": {
+        "x": 274,
+        "y": 727.46875,
+        "width": 1140,
+        "height": 68.53125,
+        "clientHeight": 69,
+        "scrollHeight": 69
+      },
+      "actions": {
+        "x": 399.859375,
+        "y": 796,
+        "width": 1014.140625,
+        "height": 37,
+        "clientHeight": 37,
+        "scrollHeight": 37
+      },
+      "foot": {
+        "x": 0,
+        "y": 896,
+        "width": 1440,
+        "height": 64,
+        "clientHeight": 64,
+        "scrollHeight": 64
+      },
+      "dockButton": {
+        "x": 424.890625,
+        "y": 910,
+        "width": 82.296875,
+        "height": 36,
+        "clientHeight": 36,
+        "scrollHeight": 36
+      },
+      "status": {
+        "x": 261,
+        "y": 867,
+        "width": 1166,
+        "height": 28,
+        "clientHeight": 27,
+        "scrollHeight": 27
+      }
+    },
+    {
+      "label": "empty-960x800",
+      "width": 960,
+      "height": 800,
+      "docOverflow": false,
+      "pane": {
+        "x": 13,
+        "y": 113,
+        "width": 934,
+        "height": 622,
+        "clientHeight": 622,
+        "scrollHeight": 622
+      },
+      "attention": {
+        "x": 13,
+        "y": 113,
+        "width": 204.46875,
+        "height": 147.3125,
+        "clientHeight": 146,
+        "scrollHeight": 146
+      },
+      "toolbar": {
+        "x": 218.46875,
+        "y": 113,
+        "width": 728.53125,
+        "height": 59,
+        "clientHeight": 58,
+        "scrollHeight": 58
+      },
+      "config": {
+        "x": 218.46875,
+        "y": 172,
+        "width": 728.53125,
+        "height": 77,
+        "clientHeight": 76,
+        "scrollHeight": 76
+      },
+      "terminal": {
+        "x": 218.46875,
+        "y": 249,
+        "width": 728.53125,
+        "height": 262.46875,
+        "clientHeight": 262,
+        "scrollHeight": 262
+      },
+      "dock": {
+        "x": 218.46875,
+        "y": 511.46875,
+        "width": 728.53125,
+        "height": 195.53125,
+        "clientHeight": 195,
+        "scrollHeight": 195
+      },
+      "dockBody": {
+        "x": 218.46875,
+        "y": 546.46875,
+        "width": 728.53125,
+        "height": 160.53125,
+        "clientHeight": 161,
+        "scrollHeight": 161
+      },
+      "area": {
+        "x": 227.46875,
+        "y": 579.46875,
+        "width": 710.53125,
+        "height": 60.53125,
+        "clientHeight": 61,
+        "scrollHeight": 61
+      },
+      "actions": {
+        "x": 353.328125,
+        "y": 640,
+        "width": 584.671875,
+        "height": 37,
+        "clientHeight": 37,
+        "scrollHeight": 37
+      },
+      "foot": {
+        "x": 0,
+        "y": 736,
+        "width": 960,
+        "height": 64,
+        "clientHeight": 64,
+        "scrollHeight": 64
+      },
+      "dockButton": {
+        "x": 200.890625,
+        "y": 750,
+        "width": 82.296875,
+        "height": 36,
+        "clientHeight": 36,
+        "scrollHeight": 36
+      },
+      "status": {
+        "x": 218.46875,
+        "y": 707,
+        "width": 728.53125,
+        "height": 28,
+        "clientHeight": 27,
+        "scrollHeight": 27
+      }
+    },
+    {
+      "label": "empty-900x560",
+      "width": 900,
+      "height": 560,
+      "docOverflow": false,
+      "pane": {
+        "x": 13,
+        "y": 97,
+        "width": 874,
+        "height": 406,
+        "clientHeight": 406,
+        "scrollHeight": 406
+      },
+      "attention": {
+        "x": 13,
+        "y": 97,
+        "width": 191.265625,
+        "height": 174.0625,
+        "clientHeight": 173,
+        "scrollHeight": 173
+      },
+      "toolbar": {
+        "x": 205.265625,
+        "y": 97,
+        "width": 681.734375,
+        "height": 47,
+        "clientHeight": 46,
+        "scrollHeight": 46
+      },
+      "config": {
+        "x": 205.265625,
+        "y": 144,
+        "width": 681.734375,
+        "height": 69,
+        "clientHeight": 68,
+        "scrollHeight": 68
+      },
+      "terminal": {
+        "x": 205.265625,
+        "y": 213,
+        "width": 681.734375,
+        "height": 131,
+        "clientHeight": 131,
+        "scrollHeight": 131
+      },
+      "dock": {
+        "x": 205.265625,
+        "y": 344,
+        "width": 681.734375,
+        "height": 131,
+        "clientHeight": 130,
+        "scrollHeight": 130
+      },
+      "dockBody": {
+        "x": 205.265625,
+        "y": 379,
+        "width": 681.734375,
+        "height": 96,
+        "clientHeight": 96,
+        "scrollHeight": 115
+      },
+      "area": {
+        "x": 210.265625,
+        "y": 385,
+        "width": 671.734375,
+        "height": 46,
+        "clientHeight": 46,
+        "scrollHeight": 46
+      },
+      "actions": {
+        "x": 336.125,
+        "y": 431,
+        "width": 545.875,
+        "height": 37,
+        "clientHeight": 37,
+        "scrollHeight": 37
+      },
+      "foot": {
+        "x": 0,
+        "y": 504,
+        "width": 900,
+        "height": 56,
+        "clientHeight": 56,
+        "scrollHeight": 56
+      },
+      "dockButton": {
+        "x": 170.890625,
+        "y": 514,
+        "width": 82.296875,
+        "height": 36,
+        "clientHeight": 36,
+        "scrollHeight": 36
+      },
+      "status": {
+        "x": 205.265625,
+        "y": 475,
+        "width": 681.734375,
+        "height": 28,
+        "clientHeight": 27,
+        "scrollHeight": 27
+      }
+    },
+    {
+      "label": "long-draft-resized-900x560",
+      "width": 900,
+      "height": 560,
+      "docOverflow": false,
+      "pane": {
+        "x": 13,
+        "y": 97,
+        "width": 874,
+        "height": 406,
+        "clientHeight": 406,
+        "scrollHeight": 406
+      },
+      "attention": {
+        "x": 13,
+        "y": 97,
+        "width": 191.265625,
+        "height": 174.0625,
+        "clientHeight": 173,
+        "scrollHeight": 173
+      },
+      "toolbar": {
+        "x": 205.265625,
+        "y": 97,
+        "width": 681.734375,
+        "height": 47,
+        "clientHeight": 46,
+        "scrollHeight": 46
+      },
+      "config": {
+        "x": 205.265625,
+        "y": 144,
+        "width": 681.734375,
+        "height": 69,
+        "clientHeight": 68,
+        "scrollHeight": 68
+      },
+      "terminal": {
+        "x": 205.265625,
+        "y": 213,
+        "width": 681.734375,
+        "height": 131,
+        "clientHeight": 131,
+        "scrollHeight": 131
+      },
+      "dock": {
+        "x": 205.265625,
+        "y": 344,
+        "width": 681.734375,
+        "height": 131,
+        "clientHeight": 130,
+        "scrollHeight": 130
+      },
+      "dockBody": {
+        "x": 205.265625,
+        "y": 379,
+        "width": 681.734375,
+        "height": 96,
+        "clientHeight": 96,
+        "scrollHeight": 115
+      },
+      "area": {
+        "x": 210.265625,
+        "y": 385,
+        "width": 671.734375,
+        "height": 46,
+        "clientHeight": 46,
+        "scrollHeight": 573
+      },
+      "actions": {
+        "x": 336.125,
+        "y": 431,
+        "width": 545.875,
+        "height": 37,
+        "clientHeight": 37,
+        "scrollHeight": 37
+      },
+      "foot": {
+        "x": 0,
+        "y": 504,
+        "width": 900,
+        "height": 56,
+        "clientHeight": 56,
+        "scrollHeight": 56
+      },
+      "dockButton": {
+        "x": 170.890625,
+        "y": 514,
+        "width": 82.296875,
+        "height": 36,
+        "clientHeight": 36,
+        "scrollHeight": 36
+      },
+      "status": {
+        "x": 205.265625,
+        "y": 475,
+        "width": 681.734375,
+        "height": 28,
+        "clientHeight": 27,
+        "scrollHeight": 27
+      }
+    }
+  ],
+  "checks": [
+    "Long draft survives resize, details/terminal switch, manual composer close/reopen, and Saved prompts; pooled terminal stays mounted; no agent writes.",
+    "New/Resume occur once in adminbar; per-project actions and Review/Details remain."
+  ],
+  "errors": []
+}

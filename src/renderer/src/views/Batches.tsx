@@ -266,6 +266,10 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
 
 /* ── builder ──────────────────────────────────────────────────────────── */
 
+const BATCH_STEPS = ['recipe', 'dataset', 'prompt', 'model'] as const;
+type BatchStep = typeof BATCH_STEPS[number];
+const BATCH_STEP_LABELS: Record<BatchStep,string> = {recipe:'Start',dataset:'Dataset',prompt:'Prompt',model:'Model'};
+
 function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onCancel }: {
   projects: Project[]; hasKey: boolean; onNeedKey: () => void;
   seed?: { projectId: string; root: string; paths: string[] } | null;
@@ -273,6 +277,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   onDone: (id: string) => void; onCancel: () => void;
 }) {
   const alive = useRef(false);
+  const composer = useRef<HTMLFieldSetElement>(null);
   const [changing, setChanging] = useState(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [presets, setPresets] = useState<Preset[]>([]);
@@ -294,7 +299,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
    * the blockers ask for them again before this run can be submitted.
    */
   const [cfg, setCfg] = useLiveViewMemory<RunConfig | null>('newRunCfg', null);
-  const [step, setStep] = useViewMemory<'recipe' | 'dataset' | 'prompt' | 'model'>('builder-step', 'recipe');
+  const [step, setStep] = useViewMemory<BatchStep>('builder-step', 'recipe');
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -567,29 +572,43 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
   const dryFailed = dry?.result && !dry.result.ok;
   const sourceTab: SourceTab = fromGolden ? 'golden' : cfg.source.kind;
-  const blockers: string[] = [];
-  if (!cfg.name.trim()) blockers.push('name the run');
+  const visit = (next: BatchStep, selector?: string) => {
+    setStep(next);
+    requestAnimationFrame(()=>{
+      const panel=composer.current?.querySelector<HTMLElement>(`[data-batch-step="${next}"]`);
+      const target=selector?composer.current?.querySelector<HTMLElement>(selector):panel?.querySelector<HTMLElement>('.field');
+      (target??panel)?.focus();(target??panel)?.scrollIntoView({block:'nearest'});
+    });
+  };
+  const stepIndex=BATCH_STEPS.indexOf(step);
+  const blockers: {label:string;step:BatchStep;selector?:string}[] = [];
+  if (!cfg.name.trim()) blockers.push({label:'Name the run',step:'recipe',selector:'#batch-run-name'});
   // "load the dataset" is true but unhelpful while the golden arm is empty:
   // there is nothing to load until a set is picked.
-  if (fromGolden && !goldenId) blockers.push('choose a pinned set');
-  if (!preview) blockers.push('load the dataset');
-  if (preview && !preview.rowCount) blockers.push('dataset is empty');
-  if (preview?.missingSlots?.length) blockers.push('fix unresolved slots');
-  if (!est) blockers.push('run the estimate');
-  if (dryFailed) blockers.push('dry run failed');
+  if (fromGolden && !goldenId) blockers.push({label:'Choose a pinned dataset',step:'dataset',selector:'.bx-golden select'});
+  else if (!preview) blockers.push({label:'Load the dataset',step:'dataset',selector:'#batch-load-dataset'});
+  if (preview && !preview.rowCount) blockers.push({label:'Add rows to the empty dataset',step:'dataset'});
+  if (preview?.missingSlots?.length) blockers.push({label:'Match prompt fields to dataset columns',step:'prompt',selector:'#batch-user-template'});
+  if (!est&&preview) blockers.push({label:'Review the cost estimate',step:'model',selector:'#batch-estimate'});
+  if (dryFailed) blockers.push({label:'Review the failed test request',step:'model',selector:'#batch-dry-result'});
 
   return (
     <div className="pane bx-workspace bx-builder">
       <PageHead title="Prepare a batch" lead="Shape the work together, then decide what to send."
         actions={<><button className="btn" disabled={submitting} onClick={leave}>Back to batches</button><button className="btn" disabled={submitting} onClick={() => { forget(); setPreview(null); invalidate(); onCancel(); }}>Discard draft</button></>} />
       {bootErr && <Note tone="error">Could not change the recipe. {bootErr}</Note>}
-      <fieldset className="bx-compose" disabled={submitting || changing || loadingPreview || estimating || drying || goldenBusy}>
+      <fieldset className="bx-compose" ref={composer} disabled={submitting || changing || loadingPreview || estimating || drying || goldenBusy}>
       <div className="bx-draft">
         <Segmented label="Batch preparation" value={step} onChange={setStep} options={[
           { value: 'recipe', label: '1 · Start' }, { value: 'dataset', label: '2 · Dataset' },
           { value: 'prompt', label: '3 · Prompt' }, { value: 'model', label: '4 · Model' },
         ]} />
-        <div className="bx-step" hidden={step !== 'recipe'}>
+        <nav className="bx-step-nav" aria-label="Preparation steps">
+          <span className="bx-copy faint">Step {stepIndex+1} of {BATCH_STEPS.length}</span>
+          <div>{stepIndex>0&&<button type="button" className="btn" onClick={()=>visit(BATCH_STEPS[stepIndex-1])}>Back to {BATCH_STEP_LABELS[BATCH_STEPS[stepIndex-1]].toLowerCase()}</button>}
+            <button type="button" className="btn" onClick={()=>stepIndex<BATCH_STEPS.length-1?visit(BATCH_STEPS[stepIndex+1]):visit('model','#batch-preflight-title')}>{stepIndex<BATCH_STEPS.length-1?`Next: ${BATCH_STEP_LABELS[BATCH_STEPS[stepIndex+1]]}`:'Review submission'}</button></div>
+        </nav>
+        <div className="bx-step" data-batch-step="recipe" tabIndex={-1} hidden={step !== 'recipe'}>
         <Section n={1} title="Recipe" hint="Presets are starting points — everything stays editable.">
           <div className="preset-grid">
             {presets.map((p) => (
@@ -602,7 +621,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div className="row2" style={{ marginTop: 14 }}>
             <div>
               <label className="label">Run name</label>
-              <input className="field" aria-label="Run name" style={{ marginTop: 4 }} value={cfg.name}
+              <input id="batch-run-name" className="field" aria-label="Run name" style={{ marginTop: 4 }} value={cfg.name}
                      placeholder="e.g. Normalise venue names — August export"
                      onChange={(e) => patch({ name: e.target.value })} />
             </div>
@@ -616,9 +635,9 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           </div>
         </Section>
 
-        </div><div className="bx-step" hidden={step !== 'dataset'}>
+        </div><div className="bx-step" data-batch-step="dataset" tabIndex={-1} hidden={step !== 'dataset'}>
         <Section n={2} title="Dataset" hint="One request per row. Load it first — every number below depends on it."
-                 right={<button className="btn" onClick={loadPreview} disabled={loadingPreview}>
+                 right={<button id="batch-load-dataset" className="btn" onClick={loadPreview} disabled={loadingPreview}>
                    {loadingPreview ? 'Loading…' : preview ? 'Reload' : 'Load dataset'}</button>}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 11, flexWrap: 'wrap' }}>
             {(cfg.source.kind === 'files' ? (['files'] as const) : (['csv', 'jsonl', 'glob', 'command', 'golden'] as const)).map((k) => (
@@ -660,7 +679,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           {(cfg.source.kind === 'glob' || cfg.source.kind === 'files') && <UploadCache />}
         </Section>
 
-        </div><div className="bx-step" hidden={step !== 'prompt'}>
+        </div><div className="bx-step" data-batch-step="prompt" tabIndex={-1} hidden={step !== 'prompt'}>
         <Section n={3} title="Prompt"
                  hint="Cached blocks must be byte-identical on every request — that is why shared context lives here, not in the per-row template.">
           {cfg.system.map((b, i) => (
@@ -683,7 +702,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             <span className="label">User template</span>
             <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>{'{{column}}'} binds to dataset columns</span>
           </div>
-          <textarea className="field mono" aria-label="User template" rows={5} value={cfg.userTemplate}
+          <textarea id="batch-user-template" className="field mono" aria-label="User template" rows={5} value={cfg.userTemplate}
                     onChange={(e) => { patch({ userTemplate: e.target.value }); invalidate(); }} />
           {preview && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 7 }}>
@@ -703,7 +722,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           ) : null}
         </Section>
 
-        </div><div className="bx-step" hidden={step !== 'model'}>
+        </div><div className="bx-step" data-batch-step="model" tabIndex={-1} hidden={step !== 'model'}>
         <Section n={4} title="Model and output"
                  right={<button className="btn" onClick={refreshCatalog} disabled={refreshingModels}>
                    {refreshingModels ? 'Refreshing…' : 'Refresh models'}</button>}>
@@ -813,16 +832,16 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           </details>
         </Section>
         </div>
-        <div className="bx-step-footer"><span className="bx-copy faint">Your draft stays here when you visit another page.</span>{step !== 'model' && <button className="btn" onClick={() => setStep(step === 'recipe' ? 'dataset' : step === 'dataset' ? 'prompt' : 'model')}>Continue to {step === 'recipe' ? 'dataset' : step === 'dataset' ? 'prompt' : 'model'}</button>}</div>
+        <div className="bx-step-footer"><span className="bx-copy faint">Your draft stays here when you visit another page.</span></div>
       </div>
 
       <aside className="bx-preflight">
         <div className="bx-preflight-content">
-          <h2>Ready when you are</h2>
+          <h2 id="batch-preflight-title" tabIndex={-1}>Review before submitting</h2>
           <p className="bx-copy faint">{preview ? `${num(preview.rowCount)} rows loaded` : 'Start by loading your dataset.'}</p>
           {!hasKey && <Note tone="warn">No API key yet — add one in Settings to estimate or submit.</Note>}
           <div style={{ display: 'flex', gap: 7 }}>
-            <button className="btn" style={{ flex: 1, justifyContent: 'center' }}
+            <button id="batch-estimate" className="btn" style={{ flex: 1, justifyContent: 'center' }}
                     onClick={() => runEstimate(est?.observedOutputTokens)} disabled={estimating || !preview}>
               {estimating ? 'Counting…' : 'Estimate'}
             </button>
@@ -872,12 +891,12 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                             onUseTtl={(ttl) => { patch({ cacheTtl: ttl }); invalidate(); }} />
           </details>
 
-          {dry?.result && (dry.result.ok
+          {dry?.result && <div id="batch-dry-result" tabIndex={-1}>{dry.result.ok
             ? <>
                 <Note tone="ok">Dry run passed — the request shape is valid.</Note>
                 <pre className="sunk mono scroll-y" style={{ padding: 10, maxHeight: 170 }}>{dry.result.text}</pre>
               </>
-            : <Note tone="error"><strong>Dry run failed.</strong> {dry.result.message}</Note>)}
+            : <Note tone="error"><strong>Dry run failed.</strong> {dry.result.message}</Note>}</div>}
 
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: 11 }}>
             <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
@@ -892,7 +911,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                 : 'Submit'}
             </button>
             {blockers.length > 0 && (
-              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, textAlign: 'center' }}>Still to do: {blockers.join(', ')}.</p>
+              <div className="bx-blockers"><p className="bx-copy faint">Still to do — choose an item to go there.</p><ul>{blockers.map(blocker=><li key={blocker.label}><button type="button" className="link" onClick={()=>visit(blocker.step,blocker.selector)}>{blocker.label}</button></li>)}</ul></div>
             )}
             {submitErr && <div style={{ marginTop: 8 }}><Note tone="error">{submitErr}</Note></div>}
           </div>

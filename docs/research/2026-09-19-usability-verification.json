@@ -1,0 +1,57 @@
+{
+  "date": "2026-09-19",
+  "baseCommit": "6fd50c7284717b629bb4df223604c14be0a7decc",
+  "node": "22.23.2",
+  "verification": {
+    "npm test": "passed all eight gates",
+    "sharedTests": 539,
+    "asyncCredentialScenarios": 6,
+    "smokeAssertions": 2341,
+    "uiCheckGroups": 33,
+    "failures": 0
+  },
+  "rendererIndexSha256": "c826f947f5fb7ba4c5d2a723f9f5baa917d00da33aea4eed69da128eb0059236",
+  "rendererAssets": {
+    "assets/index-BFivxhqe.css": "5b0dc558ce62ba88d228822312708561e84f491d6cae7f78964ce437ddace337",
+    "assets/index-i2TqYkVC.js": "348b142c4c35f57c1af33fa1a25cb45c1abfce914e1f30f9ac6dc50818a5972b",
+    "assets/runtime-DPC_1S4f.js": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+  },
+  "changedSourceSha256": {
+    "scripts/probe-automation-usability.mjs": "64fc25b9febe0c761f2a215bbd29fd2c430793e6ae8ff6a46c1d3f044b4254fa",
+    "scripts/probe-capability-clarity.mjs": "894017e54585d91ca3feb19ab1c91275b26c6e614ac50710fea6cac60025c4ea",
+    "scripts/probe-schedules-workspace.mjs": "e0e1c45a9a766593065899f29bcd1c8063970a3cbca47ce139fa622c0ff81525",
+    "scripts/probe-scout-workspace.mjs": "399b504cded7e20f164127dc10e0b3c9b27e060dc787f1b8d17735e0be4d0cd2",
+    "scripts/probe-skills-workspace.mjs": "699528d8e0e959ee8836f7ac81982bba06473728b4c702e536a28c41c913c60f",
+    "scripts/probe-workflow-usability.mjs": "aac105b3e4b7cb7f7f12ec9cebf4a0e52ad5a1e941128dafb8933b809eb600ad",
+    "scripts/renderer-harness.mjs": "f600d86d9295defee7980c820a0c2316741e86f11e215fa31bd85e6e88eaa483",
+    "src/main/skills.ts": "82b2ca9ba285ec9d26fecb48e897ce003e15c4cfc73cc3089f7b3ddc57527c36",
+    "src/main/smoke3.ts": "c3907b8c7bf8ef051b55074a192ef803541aa7ff583e47d2fad3dc2222178b98",
+    "src/preload/index.ts": "fc3274e56794d834a8759a5de275f2f0bb160b148e3aa01d2b620a4b20ebc031",
+    "src/renderer/src/components/HomeWork.tsx": "a64c2ed978767df3995fff0b7e0991fef4ab0b60c2f07ce719c9d7b4933a7543",
+    "src/renderer/src/styles/batches.css": "657cddf230633f2cae95d8fd1417166c85c33704abd20c50a61999a207a748ea",
+    "src/renderer/src/styles/fleet.css": "4e7961f4be69a1570c0e3a43c2373c4f915e8fd8c7dde1ac2ddc694cddb7b463",
+    "src/renderer/src/views/Batches.tsx": "b464ba04ad991c0e8d5439f616e4465894e4c2b79cdbdf9c23f61e9548233137",
+    "src/renderer/src/views/Context.tsx": "41de748777cfeefcbb6dc23613d54344d2b2177dac6d251d8aecbab68157bb0a",
+    "src/renderer/src/views/Extensions.tsx": "ee3443ad93feb79ad206d6edaf5973739e2131f78b8583c29e76f7208fe8234c",
+    "src/renderer/src/views/Fleet.tsx": "99169dd451a798a79cf4038a5815fdb43ac88367af57a42b21b150063023d408",
+    "src/renderer/src/views/ImprovementScout.tsx": "272c7bc27a76e541eda31e37d87465d7030e1edeb5b826c7b816665e862b7955",
+    "src/renderer/src/views/Insights.tsx": "d1fe50faf52a919d173c2e0735c0f86477462d0f8d0ab956fc91a3ce6384ce6f",
+    "src/renderer/src/views/Relay.tsx": "8a76e38473b7ed4afa1aa65dba2c6e5b4ed07910b3fc164b042325ce6289a84b",
+    "src/renderer/src/views/Schedules.tsx": "ee0281b03a155df750651bac0cc29c05f4341372cc727d44753797962dbd7a62",
+    "src/renderer/src/views/Skills.tsx": "08b27906a4f40ef63921dd3b9a21f6707d54bc7e5f96afd47ebd8a41ca1ffb67",
+    "src/renderer/src/views/registry.tsx": "203c82716e09f795dbf90b426867069bc34847621fb40c3b5344a70b21ee7e39",
+    "src/shared/schedule-timing.test.ts": "b34926ad7975d3ea4548efa7493496de376ad514595c17045a77d6a445cbebe2",
+    "src/shared/schedule-timing.ts": "9e75ae138d0e2d2cfa833630fd50c1ca4e3c45647a8c7b09d1c14757cbab6fc4",
+    "src/shared/skill-catalogue.test.ts": "a9454ae9a5a9e02fc36c5b83c1f725e2f95886636688fd0cd6c765402784e39e",
+    "src/shared/skill-catalogue.ts": "04758b84a8baf2e8d9fc31dfd29e2388757a6a3aba97e02b9edd6af744786cb1"
+  },
+  "evidenceSha256": {
+    "docs/visuals/usability-research-2026-09-19/skills/after/verification.json": "79c8d6e16924b57ab0c7a16e55e5efa69fac9a8d375cfaf1d173ec7d5eaf9c4a",
+    "docs/visuals/workflow-usability-2026-09-19/after/verification.json": "50bb238f32209671e4e7756b9b4c145374bfb44986423630291b716ccc4597e9",
+    "docs/visuals/usability-capability-clarity/after/report.json": "7d4622f6c11e55a4f8e39e339429770b1086301be8aa3cbf23bf5b7e846036af",
+    "docs/visuals/usability-2026-09-19/automation/after/verification.json": "14d0e98a559fcad7cb102d030833bf5fd6a5d8a20e645e656688fc419537db3b",
+    "docs/visuals/usability-2026-09-19/automation/after/schedule-regression.json": "c5286962b40ff2b3f883625dedb7d0ce6a4a42bbc4b0b4ef6edaa8e022175ec7",
+    "docs/visuals/usability-capability-clarity/scout-regression/verification.json": "f7685413b986102eea1a8d8ba21eacc913dcda8790b861d05168f08d7732ff68"
+  },
+  "limits": "UI fixtures are isolated and fictional. They do not prove real provider execution, billing, or measured usability improvement."
+}

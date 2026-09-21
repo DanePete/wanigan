@@ -166,8 +166,9 @@
 .fleet-entry-top > span, .fleet-entry-state { font-size: var(--t-small); color: var(--text-dim); }
 .fleet-entry-task { color: var(--text-dim); font-size: var(--t-body); overflow-wrap: anywhere; }
 .fleet-entry-state { font-variant-numeric: tabular-nums; }
-.fleet-inspector { min-width: 0; }
-.fleet-inspector .fleet-card { min-height: 100%; padding: var(--s-5); gap: var(--s-3); background: none; border: 0; border-radius: 0; }
+.fleet-inspector { min-width: 0; display: flex; flex-direction: column; }
+.fleet-inspector > .note { margin: var(--s-4) var(--s-4) 0; }
+.fleet-inspector .fleet-card { min-height: 0; flex: 1; padding: var(--s-5); gap: var(--s-3); background: none; border: 0; border-radius: 0; }
 .fleet-inspector .fleet-card:hover { background: none; }
 .fleet-task { font-size: var(--t-display); line-height: 1.15; overflow-wrap: anywhere; }
 .fleet-inspector .fleet-detail { display: block; font-size: var(--t-lead); min-height: 0; overflow-wrap: anywhere; }

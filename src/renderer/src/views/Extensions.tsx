@@ -12,6 +12,8 @@ import {
   Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading,
   SectionHead, Segmented, Stat, ago, num, type Tone,
 } from '../components/bits';
+import McpStore from './McpStore';
+import ExtensionCredentials from './ExtensionCredentials';
 
 /*
  * The extension store.
@@ -41,8 +43,8 @@ import {
  * number, a rating or a featured row, because there is no measurement behind one.
  */
 
-type Mode = 'browse' | 'installed';
-type Panel = 'none' | 'add' | 'save';
+type Mode = 'store' | 'browse' | 'installed';
+type Panel = 'none' | 'add' | 'save' | 'store';
 type Sort = 'updated' | 'name' | 'publisher';
 type Provide = ExtensionArtifactInfo['kind'];
 type StateFacet = 'enabled' | 'disabled' | 'needs-trust' | 'invalid' | 'update';
@@ -221,8 +223,10 @@ export default function Extensions() {
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [saved, setSaved] = useState<ExtensionInspection | null>(null);
+  const [justInstalled, setJustInstalled] = useState<ExtensionInfo | null>(null);
   const alive = useRef(true);
   const search = useRef<HTMLInputElement>(null);
+  const storePanel = useRef<HTMLElement>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -389,21 +393,42 @@ export default function Extensions() {
     });
   }
 
+  /**
+   * A store entry, reviewed. The main process fetches this exact version and
+   * writes it out as an extension directory; the inspection it returns is shown
+   * in the same consent panel, gated on the same review, as a folder picked by
+   * hand. Nothing here installs.
+   */
+  async function reviewFromStore(sourceKey: string, name: string, version: string) {
+    await act(`stage:${name}`, async () => {
+      const read = await window.wanigan.store.stage(sourceKey, name, version);
+      if (!alive.current) return;
+      setInspection(read);
+      setReviewedSha(null);
+      setPanel('store');
+      requestAnimationFrame(() => storePanel.current?.scrollIntoView({ block: 'start' }));
+    });
+  }
+
   async function install(target: ExtensionInspection) {
     // The digest travels exactly as it was handed over, so a manifest that
     // changed between the panel and the click is refused rather than installed
     // unseen. No digest means nothing was approvable in the first place.
     const sha = target.manifestSha256;
     if (!sha) return;
+    // Installed from the store, the operator goes back to the store to keep
+    // browsing; from a folder, to the list that now holds it.
+    const fromStore = panel === 'store';
     await act('install', async () => {
       const next = await window.wanigan.extensions.install(target.path, sha);
       if (!alive.current) return;
       setList(next);
+      setJustInstalled(fromStore ? next.find((x) => x.id === target.id) ?? null : null);
       setInspection(null);
       setSaved(null);
       setReviewedSha(null);
       setPanel('none');
-      setModeChoice('installed');
+      setModeChoice(fromStore ? 'store' : 'installed');
     });
   }
 
@@ -442,7 +467,7 @@ export default function Extensions() {
     <div className="pane ex-view">
       <PageHead
         title="Extensions"
-        lead="Bundles of declarations — MCP servers, skills, review gates, instructions — for the surfaces Wanigan already has."
+        lead="Add and manage reusable tools, skills, and checks for your workspace."
         actions={
           <>
             <button type="button" className="btn btn-primary" disabled={locked}
@@ -460,7 +485,8 @@ export default function Extensions() {
         }
       />
 
-      <Explainer id="extensions-what" title="What an extension is, and what Wanigan checks">
+      <Hint>These are Wanigan extensions. Claude Code plugins are managed separately in Plugins.</Hint>
+      <Explainer id="extensions-what" title="What an extension is, and what Wanigan checks" defaultHidden>
         <p>
           An extension is a bundle of declarations, never a place to load code. Nothing it ships runs
           inside Wanigan: anything that has to compute runs out of process behind a protocol Wanigan
@@ -512,6 +538,27 @@ export default function Extensions() {
               onInstall={() => void install(inspection)}
             />
           )}
+        </section>
+      )}
+
+      {panel === 'store' && inspection && (
+        <section className="ex-panel" aria-label="Review a server from the store" ref={storePanel}>
+          <SectionHead label="Review before installing" right={
+            <button type="button" className="btn btn-sm" onClick={() => setPanel('none')}>Close</button>
+          } />
+          <p className="ex-lead">
+            Wanigan fetched this exact version from the catalog and wrote it out as an extension, and has
+            installed nothing. Open what it declares below — the command it runs, the host it reaches, anything
+            it will ask you for — and press the button yourself if you want it. The registry verified who
+            published it; it did not review what it does.
+          </p>
+          <InspectionPanel
+            inspection={inspection}
+            reviewed={inspection.manifestSha256 !== null && inspection.manifestSha256 === reviewedSha}
+            busy={busy}
+            onReview={() => setReviewedSha(inspection.manifestSha256)}
+            onInstall={() => void install(inspection)}
+          />
         </section>
       )}
 
@@ -617,10 +664,12 @@ export default function Extensions() {
           value={mode}
           onChange={setModeChoice}
           options={[
+            { value: 'store', label: 'Store' },
             { value: 'browse', label: 'Browse' },
             { value: 'installed', label: `Installed${list ? ` (${num(rows.length)})` : ''}` },
           ]}
         />
+        {mode !== 'store' && (<>
         <div className="ex-search">
           <label className="label" htmlFor="ex-search">Search</label>
           <input
@@ -645,8 +694,19 @@ export default function Extensions() {
             { value: 'publisher', label: 'Publisher' },
           ]}
         />
+        </>)}
       </div>
 
+      {mode === 'store' ? (
+        <McpStore
+          installed={rows}
+          busy={busy}
+          justInstalled={justInstalled}
+          onDismissInstalled={() => setJustInstalled(null)}
+          onReview={(key, name, version) => void reviewFromStore(key, name, version)}
+          onExtensions={setList}
+        />
+      ) : (<>
       {list !== null && rows.length > 0 && (
         <div className="ex-facets">
           <div className="ex-facet-row">
@@ -784,18 +844,22 @@ export default function Extensions() {
                 onToggle={(enabled) => void setEnabled(x, enabled)}
                 onUninstall={() => uninstall(x)}
                 onReviewUpdate={() => setPanel('add')}
+                onCredentials={setList}
               />
             ))}
           </div>
         </>
       )}
+      </>)}
     </div>
   );
 }
 
 /** One store card. Identity, what it provides, its state, and what it held back. */
-function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel, onToggle, onUninstall, onReviewUpdate }: {
+function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel, onToggle, onUninstall, onReviewUpdate, onCredentials }: {
   x: ExtensionInfo;
+  /** A fresh list after a credential this extension declares is saved or removed. */
+  onCredentials: (list: ExtensionInfo[]) => void;
   dense: boolean;
   busy: string | null;
   update: { from: string; to: string } | null;
@@ -848,6 +912,12 @@ function ExtensionCard({ x, dense, busy, update, confirming, onConfirm, onCancel
       </div>
 
       <p className="ex-blurb">{status.blurb}</p>
+
+      {/* What it asks for. Before this, a declared credential could be named on
+          the consent screen and never given a value. */}
+      {x.status !== 'invalid' && x.credentials.length > 0 && (
+        <ExtensionCredentials extension={x} onChanged={onCredentials} />
+      )}
 
       {x.status === 'invalid' && x.errors.length > 0 && (
         <Note tone="error" role="none">

@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   HeadlessHeld, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
@@ -87,10 +88,11 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const [area, setArea] = useLiveViewMemory<'runs' | 'attempts'>('runArea', 'runs');
   const active = useRef(true), readSequence = useRef(0), actionLock = useRef(false);
   const composer = useRef<HTMLFieldSetElement>(null);
+  const runSearch = useRef<HTMLInputElement>(null);
   const reader = useRef<HTMLElement>(null);
   useEffect(() => { reader.current?.scrollTo({top: 0}); }, [selected]);
   useEffect(() => { active.current = true; return () => { active.current = false; readSequence.current++; }; }, []);
-  useEffect(() => { if (launching) composer.current?.querySelector<HTMLInputElement>('input')?.focus(); }, [launching]);
+  useEffect(() => { if (launching) composer.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus(); }, [launching]);
   const [rowsState, setRowsState] = useState<RowsState | null>(null);
   /** Bumped by the rows region's own retry, so a failed read can be asked again. */
   const [rowsNonce, setRowsNonce] = useState(0);
@@ -461,10 +463,16 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     : "reading this run's repositories";
 
   const filteredRuns = runs.filter(run => (!query.trim() || `${run.name} ${run.model}`.toLowerCase().includes(query.trim().toLowerCase())) && (filter === 'all' || filter === 'active' && run.open > 0 || filter === 'attention' && (run.awaiting > 0 || run.failed > 0 || run.blocked > 0 || run.status === 'failed')));
+  const additionalFields = (provider?.launchFields ?? []).filter(field => !['model', 'effort', 'permissionMode'].includes(field.id));
+  const clearFilters = () => {
+    setQuery(''); setFilter('all');
+    requestAnimationFrame(() => runSearch.current?.focus());
+  };
+  const prepareRun = () => { setLaunching(true); setErr(null); };
 
   const areaSwitch = (
     <Segmented label="Runs area" value={area} onChange={setArea}
-               options={[{ value: 'runs', label: 'Headless runs' }, { value: 'attempts', label: 'Attempts' }]} />
+               options={[{ value: 'runs', label: 'Repository runs' }, { value: 'attempts', label: 'Compare attempts' }]} />
   );
   // After every hook above, so switching areas never changes how many hooks a
   // render runs. Each attempt is still a headless run and still listed on the
@@ -479,11 +487,11 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
 
   return (
     <main className="pane wide hr-view">
-      <PageHead title="Runs" lead={launching ? 'One assignment. Each repository works independently.' : 'Unattended work, ready for your review.'} actions={<>
+      <PageHead title={launching ? 'New run' : 'Runs'} lead={launching ? 'One task, with a separate worker in each selected repository.' : 'Send one task to selected repositories, then review each result.'} actions={<>
         {launching ? <button className="btn" disabled={busy} onClick={() => setLaunching(false)}>Back to runs</button> : <>
           {areaSwitch}
           <button className="btn" onClick={reload}>Refresh runs</button>
-          <button className="btn btn-primary" disabled={!!merging || !!canceling} onClick={() => { setLaunching(true); setErr(null); }}>New run</button>
+          <button className="btn btn-primary" disabled={!!merging || !!canceling} onClick={prepareRun}>New run</button>
         </>}
       </>} />
       {err && <Note tone="error">{err}</Note>}
@@ -491,9 +499,12 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       {!launching && loaded && loadFailed && <Note tone="warn">Recent runs could not refresh: {loadFailed}. Showing the last readable records; refresh before canceling or merging.</Note>}
       {launching ? <fieldset className="hr-compose" ref={composer} disabled={busy}>
       <section className="hr-launch" aria-labelledby="headless-launch-title">
-        <SectionHead label="The assignment" />
-        <h2 id="headless-launch-title">Give the work some room.</h2>
-        <p className="hr-cue">Set one clear task. Choose the agent, then the repositories you want it to work in.</p>
+        <SectionHead label="The task" />
+        <h2 id="headless-launch-title">What should the agent do?</h2>
+        <div className="hr-field hr-prompt prompt-field-group"><label htmlFor="headless-task"><span className="label">Task for every repository</span></label><PromptField id="headless-task" scopeKey={`headless:${providerId}:${[...chosen].sort().join(',')}`} purpose="task for every repository" actionsDisabled={busy} className="field" aria-label="Task for every repository" value={prompt} onValueChange={setPrompt}
+                  placeholder="Audit this repository, make the requested change, run the relevant checks, and report what you verified." />
+          <span className="faint">Use one self-contained request. Each selected repository receives this task independently.</span></div>
+        <SectionHead label="Agent and run details" />
         {installed.length === 0 && <Note tone="warn">No installed provider has verified headless support. Configure a supported provider in Settings before starting a run.</Note>}
         <div className="hr-form-grid">
           <label className="hr-field"><span className="label">Run name <em>optional</em></span><input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nightly repository audit" /></label>
@@ -514,12 +525,10 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           ) : <input className="field" value={effort} onChange={(e) => setEffort(e.target.value)} placeholder={effortField?.label ?? 'Reasoning effort'} />}</label>}
 
         </div>
-        <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><textarea className="field" aria-label="Task for every repository" value={prompt} onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Audit this repository, make the requested change, run the relevant checks, and report what you verified." />
-          <span className="faint">Use one self-contained request. Each selected repository receives its own worker. Worktree isolation is controlled below.</span></label>
-        {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).length > 0 && (
+        {additionalFields.length > 0 && <details className="hr-agent-options" key={providerId} open={additionalFields.some(field => field.required)}>
+          <summary>Additional agent options{additionalFields.some(field => field.required) ? ' · includes required settings' : ''}</summary>
           <div className="hr-provider-fields" aria-label="Provider-specific options">
-            {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).map((field) => (
+            {additionalFields.map((field) => (
               <label key={field.id} className="hr-provider-field">
                 <span className="label">{field.label}{field.required ? ' · required' : ''}</span>
                 {field.description && <span className="faint">{field.description}</span>}
@@ -541,14 +550,14 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
               </label>
             ))}
           </div>
-        )}
+        </details>}
         {!budgetValid && <Note tone="warn">Enter a finite budget of 0 or more. Zero passes no cost ceiling to the CLI.</Note>}
         {missingRequired && <Note tone="warn">{missingRequired.label} is required by this provider profile.</Note>}
         {!provider?.capabilities.policy && provider && <Note tone="warn">{provider.label} is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.</Note>}
       </section>
         <aside className="hr-project-picker" aria-label="Select repositories for this run">
-          <SectionHead label="Where it goes" count={chosen.size} />
-          <h2>{chosen.size ? `${chosen.size} ${chosen.size === 1 ? 'repository' : 'repositories'}, one assignment.` : 'Choose its destination.'}</h2>
+          <SectionHead label="Repositories" count={chosen.size} />
+          <h2>{chosen.size ? `${chosen.size} ${chosen.size === 1 ? 'repository' : 'repositories'} selected` : 'Choose where to run'}</h2>
           <p className="hr-cue">Each selected repository receives the same task and its own timeout.</p>
           <button className="btn" onClick={() => { setDeclared(false); setChosen(allPicked ? new Set() : new Set(projects.map((p) => p.id))); }}>{allPicked ? 'Clear projects' : 'Select all projects'}</button>
           {!projects.length && <Note>Add a project before starting a run.</Note>}
@@ -607,26 +616,28 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           )}
           <div className="hr-submit-row"><span className="faint">{canStart ? 'Start launches real agents in the selected repositories.' : needsIntent ? 'Confirm every repository above, or narrow the selection.' : 'Add a task, choose repositories, and complete the agent settings.'}</span><button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>{busy ? 'Starting…' : `Run in ${chosen.size} repo${chosen.size === 1 ? '' : 's'}`}</button></div>
         </aside>
-      </fieldset> : <div className="hr-workspace">
+      </fieldset> : !loaded ? <div className="hr-history-state" aria-label="Run history">
+        {loadFailed === null ? <Reading what="recent runs" />
+          : <EmptyState posture="could-not-read" title="Could not read recent runs" cue={loadFailed}
+            action={<button className="btn" onClick={reload}>Try again</button>} />}
+      </div> : runs.length === 0 ? <div className="hr-history-state" aria-label="Run history">
+        <EmptyState posture="nothing-yet" title="Nothing has run yet"
+          cue="Prepare one task for selected repositories. Each worker’s outcome, output and reported cost will appear here."
+          action={<button className="btn btn-primary" onClick={prepareRun}>Prepare a run</button>} />
+        <p className="hr-empty-comparison">Trying the same task more than once? <button className="btn btn-sm" onClick={() => setArea('attempts')}>Compare attempts</button></p>
+      </div> : <div className="hr-workspace">
         <section className="hr-history" aria-label="Recent runs">
           {/* The count is a claim about the database, so it waits for the read
               too: a bare 0 beside "Recent runs" is indistinguishable from a
               history nobody has fetched. */}
-          <SectionHead label="Recent runs" count={loaded ? runs.length : undefined} />
-          <input className="field" type="search" aria-label="Search runs" placeholder="Find a run or model" value={query} onChange={event => setQuery(event.target.value)} />
+          <SectionHead label="Recent runs" count={runs.length} />
+          <input ref={runSearch} className="field" type="search" aria-label="Search runs" placeholder="Find a run or model" value={query} onChange={event => setQuery(event.target.value)} />
           <Segmented label="Run filter" value={filter} onChange={setFilter} options={[{value:'all',label:'All'},{value:'active',label:'Active'},{value:'attention',label:'Attention'}]} />
-          {(query || filter !== 'all') && <button className="btn btn-sm" onClick={() => { setQuery(''); setFilter('all'); }}>Clear filters</button>}
+          <div className="hr-filter-summary"><span>{filteredRuns.length} of {runs.length} recent runs</span>
+            {(query || filter !== 'all') && <button className="btn btn-sm" onClick={clearFilters}>Clear filters</button>}</div>
           <div className="hr-run-list">
-          {!loaded ? (
-            loadFailed === null
-              ? <Reading what="recent runs" />
-              : <EmptyState posture="could-not-read" title="Could not read recent runs"
-                            cue={loadFailed}
-                            action={<button className="btn" onClick={reload}>Try again</button>} />
-          ) : runs.length === 0 ? (
-            <EmptyState posture="nothing-yet" title="Nothing has run yet"
-                        cue="A completed fan-out stays here for review, with its cost and every repository's outcome." />
-          ) : filteredRuns.length === 0 ? <EmptyState posture="nothing-in-scope" title="No matching runs" cue="Try another name or clear the filters." /> : filteredRuns.map((r) => (
+          {filteredRuns.length === 0 ? <EmptyState posture="nothing-in-scope" title="No matching runs" cue="Try another name or clear the filters."
+            action={<button className="btn" onClick={clearFilters}>Show all runs</button>} /> : filteredRuns.map((r) => (
             <button key={r.id} className={`hr-run${r.id === selected ? ' on' : ''}`} data-run-id={r.id} onClick={() => setSelected(r.id)} aria-pressed={r.id === selected}>
               <strong>{r.name}</strong>
               <span>{r.awaiting > 0 && <strong>{r.awaiting} waiting for you · </strong>}{r.succeeded} succeeded · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
@@ -637,23 +648,13 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           </div>
         </section>
         <section className="hr-detail" aria-label="Selected run" ref={reader}>
-          {/* Nothing to inspect until a run exists: an inspector panel with no
-              subject is a card that can only say it is empty. Which of its two
-              empty sentences is the true one depends on the history read, so it
-              waits for that read instead of inviting a fan-out over a list that
-              may be full. */}
-          {!loaded ? (
-            loadFailed === null
-              ? <Reading what="the run history" />
-              : <EmptyState posture="could-not-read" title="No run to inspect"
-                            cue="The run history could not be read, so there is nothing here to select. Recent runs carries the error and a retry." />
-          ) : !current ? (
-            runs.length === 0
-              ? <EmptyState posture="nothing-yet" title="No run selected"
-                            cue="Create a run when you have an assignment ready. Its repository outcomes and output will appear here." action={<button className="btn btn-primary" onClick={() => setLaunching(true)}>Prepare a run</button>} />
-              : <EmptyState posture="nothing-in-scope" title="No run selected"
-                            cue="Choose a run on the left to inspect the repositories it touched." />
+          {!current ? (
+            <EmptyState posture="nothing-in-scope" title="No run selected"
+              cue="Choose a run on the left to inspect the repositories it touched." />
           ) : <div className="hr-reading" key={current.id}>
+            {!filteredRuns.some(run => run.id === current.id) && <Note tone="info" action={{ label: 'Clear filters', run: clearFilters }}>
+              This selected run is outside the current filter. Its recorded details remain open below.
+            </Note>}
             {/* Only the outcome line is announced. The panel below it is
                 replaced by a three-second poll, and a live region around all of
                 it would re-read every repository, its output and its cost on

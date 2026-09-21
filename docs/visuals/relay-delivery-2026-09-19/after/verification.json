@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "checks": [
+    "Seven recorded stages render; opening an approved Relay makes no commit or deployment call.",
+    "The project deployment command can be configured before committing; saving it performs neither delivery action.",
+    "The commit preview shows checkout, changed files and message; a separate explicit action sends the preview token and edited message.",
+    "Saving a project command does not run it; deployment shows the exact command and revision, starts explicitly, and remains cancellable.",
+    "Failure evidence and an explicit retry remain visible; completion is described as command execution with a recorded result.",
+    "Older relays keep five stages until explicitly extended, and a clean checkout offers a distinct existing-commit action.",
+    "A failed refresh disables delivery mutations; seven stages and the commit preview fit a narrow viewport.",
+    "Commit recovery reopens verification and review through one explicit request, keeps earlier evidence, and launches no agent.",
+    "New relays include explicit delivery stages by default; the composer can deliberately keep a review-only workflow."
+  ],
+  "errors": []
+}

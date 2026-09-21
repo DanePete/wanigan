@@ -1,0 +1,180 @@
+{
+  "fixture": true,
+  "before": false,
+  "checks": [
+    "Labeled admin-bar opener survives closed navigation, toggles it, and persists both desktop choices.",
+    "Dock Tools still opens the same sidebar; its close control returns focus to the admin bar.",
+    "Both openers and the shortcut work in compact windows; Escape restores focus without changing the desktop preference."
+  ],
+  "sizes": [
+    {
+      "width": 1440,
+      "height": 960,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 84,
+          "right": 598
+        },
+        {
+          "left": 614,
+          "right": 894
+        },
+        {
+          "left": 910,
+          "right": 1424
+        }
+      ],
+      "button": {
+        "left": 84,
+        "right": 169.40625,
+        "height": 32
+      }
+    },
+    {
+      "width": 1180,
+      "height": 800,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 84,
+          "right": 244.53125
+        },
+        {
+          "left": 256.53125,
+          "right": 658.65625
+        },
+        {
+          "left": 670.65625,
+          "right": 1164
+        }
+      ],
+      "button": {
+        "left": 84,
+        "right": 169.40625,
+        "height": 32
+      }
+    },
+    {
+      "width": 960,
+      "height": 800,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 84,
+          "right": 169.40625
+        },
+        {
+          "left": 181.40625,
+          "right": 462.65625
+        },
+        {
+          "left": 474.65625,
+          "right": 944
+        }
+      ],
+      "button": {
+        "left": 84,
+        "right": 169.40625,
+        "height": 32
+      }
+    },
+    {
+      "width": 900,
+      "height": 560,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 84,
+          "right": 169.40625
+        },
+        {
+          "left": 181.40625,
+          "right": 402.65625
+        },
+        {
+          "left": 414.65625,
+          "right": 884
+        }
+      ],
+      "button": {
+        "left": 84,
+        "right": 169.40625,
+        "height": 32
+      }
+    },
+    {
+      "width": 720,
+      "height": 560,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 76,
+          "right": 110
+        },
+        {
+          "left": 118,
+          "right": 408.65625
+        },
+        {
+          "left": 416.65625,
+          "right": 704
+        }
+      ],
+      "button": {
+        "left": 76,
+        "right": 110,
+        "height": 32
+      }
+    },
+    {
+      "width": 600,
+      "height": 640,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 76,
+          "right": 110
+        },
+        {
+          "left": 118,
+          "right": 304.65625
+        },
+        {
+          "left": 312.65625,
+          "right": 592
+        }
+      ],
+      "button": {
+        "left": 76,
+        "right": 110,
+        "height": 32
+      }
+    },
+    {
+      "width": 460,
+      "height": 640,
+      "overflow": false,
+      "groups": [
+        {
+          "left": 76,
+          "right": 110
+        },
+        {
+          "left": 118,
+          "right": 245.375
+        },
+        {
+          "left": 253.375,
+          "right": 452
+        }
+      ],
+      "button": {
+        "left": 76,
+        "right": 110,
+        "height": 32
+      }
+    }
+  ],
+  "errors": []
+}

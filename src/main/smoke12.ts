@@ -1,5 +1,8 @@
 import { db } from './db';
-import { companionFacts, completeCompanion, createCompanionService } from './companion';
+import { companionFacts, completeCompanion, createCompanionService } from './modules/companion';
+import { admittedFetch } from './modules/usage-paid-operations';
+import { directRequestConsumption, directRequestDaily } from './modules/usage-direct-requests';
+import { paidOperationAccountedFor, type PaidOperationEvidence } from './paid-operation-evidence';
 import Anthropic from '@anthropic-ai/sdk';
 import { companionUsage } from './companion-usage';
 import { companionPresence } from '../shared/companion-presence';
@@ -51,8 +54,12 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
     complete:async(model,messages,signal)=>{
       calls++;sent=JSON.stringify(messages);
       if(respond==='pending')return await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('cancelled')),{once:true}));
+      // The production transport wrapper against the real database, with only
+      // the socket replaced: a genuine receipt and response row precede the reply.
+      const requestId=`req_companion_${calls}`;
+      await admittedFetch(async()=>new Response('{}',{status:200,headers:{'request-id':requestId}}))('https://api.anthropic.com/v1/messages',{method:'POST'});
       return {text:JSON.stringify({answer:'This session needs permission.',sourceIds:[respond==='invalid-source'?'session:invented':`session:${session.id}`]}),
-        model:respond==='unpriced'?'unknown-model':model,input:100,output:25};
+        model:respond==='unpriced'?'unknown-model':model,input:100,output:25,requestId};
     }});
   const input={projectId:project.id,question:'What needs me?',model:snapshot.defaultModel};
   const reject=async(value:unknown)=>{try{await service.ask(value);return false;}catch{return true;}};
@@ -70,6 +77,28 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
     'one explicit send produces one persisted answer with a verified source');
   check(answer.inputTokens===100&&answer.outputTokens===25&&answer.costUsd!==null&&answer.costUsd>0,
     'reported tokens and a known rate are recorded');
+  const receiptOf=(turnId:string)=>db().prepare(`SELECT o.id,o.source,o.at,s.outcome,s.http_status,s.request_id,s.owner_table,s.owner_id,s.evidence_hash
+    FROM usage_paid_operations o JOIN usage_paid_settlements s ON s.receipt_id=o.id WHERE s.owner_table='companion_turns' AND s.owner_id=?`).get(turnId) as PaidOperationEvidence|undefined;
+  const accounted=receiptOf(answer.id);
+  check(accounted?.outcome==='metered'&&accounted.request_id==='req_companion_1'&&paidOperationAccountedFor(db(),accounted),
+    'a metered turn accounts for its own pre-submission receipt, by the provider request id, and Recovery can verify it');
+  db().prepare('UPDATE companion_turns SET output_tokens=output_tokens+1 WHERE id=?').run(answer.id);
+  check(!paidOperationAccountedFor(db(),receiptOf(answer.id)!),'a turn whose recorded meters later change no longer accounts for its receipt');
+  db().prepare('UPDATE companion_turns SET output_tokens=output_tokens-1 WHERE id=?').run(answer.id);
+  // Usage's own ledger for callers that keep none reaches the Usage screen.
+  const priced=snapshot.defaultModel,t0=Date.now();
+  const direct=db().prepare('INSERT INTO usage_direct_requests(id,at,source,model,input_tokens,output_tokens,request_id) VALUES (?,?,?,?,?,?,?)');
+  direct.run('direct-1',t0,'batch:dry-run',priced,1000,200,'req_d1');direct.run('direct-2',t0,'batch:dry-run',priced,500,100,'req_d2');
+  const dryRows=directRequestConsumption(t0-1).filter(row=>row.accountLabel==='Claude Platform · Dry run');
+  check(dryRows.length===1&&dryRows[0].requests===2&&dryRows[0].inTokens===1500&&dryRows[0].outTokens===300
+    &&dryRows[0].costUsd===0&&dryRows[0].costStatus==='unreported'&&(dryRows[0].estimatedCostUsd??0)>0,
+    'dry-run samples are totalled on the Usage screen as an estimate from recorded tokens, never as a reported bill');
+  direct.run('direct-3',t0,'batch:dry-run','unpriced-fixture-model',10,10,'req_d3');
+  const unpricedRow=directRequestConsumption(t0-1).find(row=>row.model==='unpriced-fixture-model');
+  check(!!unpricedRow&&unpricedRow.inTokens===10&&!('estimatedCostUsd' in unpricedRow),'an unpriced sample shows its tokens and no figure');
+  check(directRequestDaily(t0-1).filter(row=>row.accountLabel==='Claude Platform · Dry run').reduce((sum,row)=>sum+row.tokens,0)===1820
+    &&directRequestConsumption(t0+60_000).length===0,'the daily series totals the same tokens, and the cutoff is honoured');
+  db().prepare("DELETE FROM usage_direct_requests WHERE id LIKE 'direct-%'").run();
   check(!sent.includes('PRIVATE-'),'transport receives only bounded operational metadata');
   check(service.history(null).length===0&&service.history(project.id).some(t=>t.id===answer.id),
     'project conversation history stays in its own scope');

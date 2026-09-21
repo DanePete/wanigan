@@ -1,78 +1,18 @@
-import Database from 'better-sqlite3';
-import fs from 'node:fs';
+import type Database from 'better-sqlite3';
+import { openStorageConnection } from './modules/storage-connection';
+import { guardStorageMigration } from './storage-maintenance';
 import { randomBytes } from 'node:crypto';
-import path from 'node:path';
-import { app } from 'electron';
-import { migrateModules } from './module-registry';
+import { migrateModules, migrateRequiredModule } from './module-registry';
+import { controlModule } from './modules/control';
+import { sessionSchema, worktreeSchema, migrateCheckpoints } from './modules/session-storage';
+import { usageSchema } from './modules/usage-storage';
+import { headlessSchema, queueSchema } from './modules/execution-storage';
 
-let _db: Database.Database | null = null;
+export { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, ensurePrivateDir, ensurePrivateFile, dataDir, resultsDir } from './modules/storage-connection';
 
-/** App data holds prompts, transcript indexes, result payloads, and credentials.
- * Keep every Wanigan-owned directory private even when it already existed with a
- * permissive umask or was carried forward from an older install. */
-export const PRIVATE_DIR_MODE = 0o700;
-export const PRIVATE_FILE_MODE = 0o600;
-
-export function ensurePrivateDir(dir: string): string {
-  fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  // mkdir's mode applies only to a new leaf and is filtered by umask. Existing
-  // directories retain their previous mode, so correct both cases explicitly.
-  fs.chmodSync(dir, PRIVATE_DIR_MODE);
-  return dir;
-}
-
-export function ensurePrivateFile(file: string): string {
-  // writeFile/createWriteStream's mode only applies when creating a file. A
-  // rerun must not leave an older, wider file readable by another local user.
-  fs.chmodSync(file, PRIVATE_FILE_MODE);
-  return file;
-}
-
-export function dataDir(): string {
-  return app.getPath('userData');
-}
-export function resultsDir(): string {
-  return path.join(dataDir(), 'results');
-}
-
-/**
- * One database for the whole app. Projects are shared between the Sessions and
- * Batches views — an agent session and a batch run target the same repo, so
- * there is exactly one project list, not two.
- */
+/** Required Storage owns the connection; legacy table migration order stays here. */
 export function db(): Database.Database {
-  if (_db) return _db;
-  const root = ensurePrivateDir(dataDir());
-  ensurePrivateDir(resultsDir());
-  const file = path.join(root, 'wanigan.db');
-  let d: Database.Database;
-  try {
-    d = new Database(file);
-    ensurePrivateFile(file);
-  } catch (e) {
-    if ((e as { code?: string }).code === 'ERR_DLOPEN_FAILED') {
-      throw new Error(
-        'better-sqlite3 was built for a different Node/Electron ABI. Run "npm run rebuild".'
-      );
-    }
-    throw e;
-  }
-  // Wanigan's attended app, launchd scheduler and CLI can open the same file
-  // at the same time. Let a short schema/write lock settle instead of failing
-  // a whole process with SQLITE_BUSY on startup.
-  d.pragma('busy_timeout = 10000');
-  d.pragma('journal_mode = WAL');
-  d.pragma('foreign_keys = ON');
-  migrateSchema(d);
-  // SQLite's journal files carry the same rows as the primary database. The
-  // private userData root is the durable boundary; tightening sidecars too
-  // avoids relying on it if an older install had inherited broad permissions.
-  for (const suffix of ['', '-wal', '-shm']) {
-    const candidate = `${file}${suffix}`;
-    if (fs.existsSync(candidate)) ensurePrivateFile(candidate);
-  }
-  _db = d;
-  return d;
+  return openStorageConnection(migrateSchema);
 }
 
 /**
@@ -167,27 +107,9 @@ export function migrateSchema(d: Database.Database) {
       message TEXT NOT NULL
     );
 
-    -- Sessions are killed on quit (an orphaned agent burns tokens unseen), so
-    -- the record of them has to outlive the process to be resumable.
-    CREATE TABLE IF NOT EXISTS session_log (
-      id              TEXT PRIMARY KEY,
-      conversation_id TEXT,
-      provider_id     TEXT NOT NULL,
-      project_id      TEXT,
-      project_path    TEXT NOT NULL,
-      project_name    TEXT NOT NULL,
-      model           TEXT,
-      effort          TEXT,
-      permission_mode TEXT,
-      started_at      INTEGER NOT NULL,
-      ended_at        INTEGER,
-      exit_code       INTEGER,
-      resumed_from    TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_session_log_recent  ON session_log(started_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_session_log_project ON session_log(project_id, started_at DESC);
-
+    `);
+    sessionSchema.base(d);
+    d.exec(`
     CREATE INDEX IF NOT EXISTS idx_requests_run_status ON requests(run_id, status);
     CREATE INDEX IF NOT EXISTS idx_batches_run  ON batches(run_id);
     CREATE INDEX IF NOT EXISTS idx_batches_open ON batches(processing_status)
@@ -226,50 +148,8 @@ function addColumn(d: Database.Database, table: string, column: string, decl: st
  * contract, and it exists before any of them run.
  */
 function migratePhases(d: Database.Database) {
+  usageSchema.base(d);
   d.exec(`
-    -- P1 · telemetry ---------------------------------------------------
-    -- Counters arrive as deltas on a 10s interval; one row per session per
-    -- metric keeps the running total cheap to read.
-    CREATE TABLE IF NOT EXISTS session_metrics (
-      session_id TEXT NOT NULL,
-      metric     TEXT NOT NULL,
-      attrs      TEXT NOT NULL DEFAULT '',
-      value      REAL NOT NULL DEFAULT 0,
-      last_at    INTEGER NOT NULL,
-      PRIMARY KEY (session_id, metric, attrs)
-    );
-    -- Spend and cache totals sum one metric across every session. The primary
-    -- key leads with session_id, so a metric-only filter has nothing to seek on
-    -- and reads the whole table. Carrying attrs and value answers those sums
-    -- from the index alone, without a temp b-tree per group.
-    CREATE INDEX IF NOT EXISTS idx_session_metrics_metric
-      ON session_metrics(metric, attrs, value);
-
-    CREATE TABLE IF NOT EXISTS session_api_events (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id  TEXT NOT NULL,
-      at          INTEGER NOT NULL,
-      kind        TEXT NOT NULL,
-      model       TEXT,
-      cost_usd    REAL NOT NULL DEFAULT 0,
-      duration_ms INTEGER,
-      in_tokens   INTEGER NOT NULL DEFAULT 0,
-      out_tokens  INTEGER NOT NULL DEFAULT 0,
-      cache_read  INTEGER NOT NULL DEFAULT 0,
-      cache_write INTEGER NOT NULL DEFAULT 0,
-      effort      TEXT,
-      detail      TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_api_events_session ON session_api_events(session_id, at DESC);
-    CREATE INDEX IF NOT EXISTS idx_api_events_at      ON session_api_events(at DESC);
-    -- The effort breakdowns filter kind='request', with and without a time
-    -- window, and neither index above leads with kind. Carrying effort and
-    -- cost_usd is what makes this worth having: most rows in this table are
-    -- requests, so an index on kind alone still fetches nearly every row from
-    -- the table and measures slower than the scan it replaces.
-    CREATE INDEX IF NOT EXISTS idx_api_events_kind
-      ON session_api_events(kind, at DESC, effort, cost_usd);
-
     -- P2 · hook bus ----------------------------------------------------
     CREATE TABLE IF NOT EXISTS session_events (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -316,58 +196,11 @@ function migratePhases(d: Database.Database) {
       session_id UNINDEXED, role UNINDEXED, at UNINDEXED, text
     );
 
-    -- P9 · worktrees ---------------------------------------------------
-    CREATE TABLE IF NOT EXISTS worktrees (
-      path       TEXT PRIMARY KEY,
-      repo_root  TEXT NOT NULL,
-      branch     TEXT,
-      session_id TEXT,
-      created_at INTEGER NOT NULL,
-      removed_at INTEGER
-    );
-
-    -- P10 · headless fan-out -------------------------------------------
-    CREATE TABLE IF NOT EXISTS headless_rows (
-      run_id        TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      project_id    TEXT NOT NULL,
-      project_name  TEXT NOT NULL,
-      project_path  TEXT NOT NULL,
-      status        TEXT NOT NULL DEFAULT 'pending',
-      cost_usd      REAL NOT NULL DEFAULT 0,
-      duration_ms   INTEGER,
-      exit_code     INTEGER,
-      output        TEXT,
-      error         TEXT,
-      files_changed INTEGER NOT NULL DEFAULT 0,
-      worktree      TEXT,
-      started_at    INTEGER,
-      ended_at      INTEGER,
-      PRIMARY KEY (run_id, project_id)
-    );
-
-    -- P11 · dispatcher --------------------------------------------------
-    CREATE TABLE IF NOT EXISTS queue (
-      id             TEXT PRIMARY KEY,
-      kind           TEXT NOT NULL,
-      state          TEXT NOT NULL DEFAULT 'waiting',
-      priority       INTEGER NOT NULL DEFAULT 100,
-      label          TEXT NOT NULL,
-      payload_json   TEXT NOT NULL,
-      blocked_by     TEXT,
-      attempts       INTEGER NOT NULL DEFAULT 0,
-      next_attempt_at INTEGER,
-      created_at     INTEGER NOT NULL,
-      started_at     INTEGER,
-      ended_at       INTEGER,
-      error          TEXT,
-      -- A durable owner is essential because the UI and daemon are separate
-      -- processes.  A local in-memory map cannot tell a live daemon worker
-      -- from a crashed one.
-      lease_owner    TEXT,
-      lease_expires_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_queue_ready ON queue(state, priority, created_at);
-
+  `);
+  worktreeSchema.base(d);
+  headlessSchema.base(d);
+  queueSchema.base(d);
+  d.exec(`
     -- P12 · MCP ---------------------------------------------------------
     CREATE TABLE IF NOT EXISTS mcp_servers (
       id         TEXT PRIMARY KEY,
@@ -510,24 +343,6 @@ function migratePhases(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_config_pins_project ON config_pins(project_id, created_at DESC);
 
-    -- A review recipe is operator-owned commands plus the immutable evidence
-    -- from each execution. Agents may suggest commands; only this surface runs
-    -- the configured gate and records its result.
-    CREATE TABLE IF NOT EXISTS review_recipes (
-      project_id TEXT PRIMARY KEY,
-      commands_json TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS review_runs (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      ended_at INTEGER,
-      status TEXT NOT NULL,
-      results_json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_review_runs_project ON review_runs(project_id, started_at DESC);
-
     -- plugins · installable extensions ----------------------------------
     -- The manifest is stored whole, alongside the digest of the exact bytes it
     -- was read from. Both are needed and neither substitutes for the other: the
@@ -578,48 +393,18 @@ function migratePhases(d: Database.Database) {
   // and NULL on every row that existed before extensions did, which is the
   // honest reading — those were all added by hand and carry no environment.
   addColumn(d, 'mcp_servers', 'env', 'TEXT');
+  // Request headers an extension declared for an http server, as JSON, the way
+  // `env` holds a stdio server's environment. Added, never rewritten: a row from
+  // before it has NULL here and means what it always meant.
+  addColumn(d, 'mcp_servers', 'headers', 'TEXT');
 
   // Runs carry batches, headless fan-outs, evals and judge passes. One table,
   // so Insights and budgets never need a special case per surface.
   addColumn(d, 'runs', 'kind', "TEXT NOT NULL DEFAULT 'batch'");
   addColumn(d, 'runs', 'eval_pair_id', 'TEXT');
-  // Existing command results remain historical evidence with no invented identity.
-  addColumn(d, 'review_runs', 'session_id', 'TEXT');
-  addColumn(d, 'review_runs', 'evidence_json', 'TEXT');
   // A session can run in its own worktree; the code panel scopes to it.
-  addColumn(d, 'worktrees', 'linked_json', 'TEXT');
-  addColumn(d, 'session_log', 'worktree', 'TEXT');
-  addColumn(d, 'session_log', 'trust', 'TEXT');
-  // The binary that actually ran, resolved path and all. provider_id stopped
-  // being able to answer "which CLI produced this" the moment claude and glm
-  // became two ids on one program, and a reader six months from now has only
-  // this row: without it a glm transcript and a claude transcript are
-  // indistinguishable from a codex one that never wrote a file at all.
-  addColumn(d, 'session_log', 'bin', 'TEXT');
-  addColumn(d, 'session_log', 'capabilities_json', 'TEXT');
-  // Foreign sessions are observed, never recorded. Nothing writes a row with a
-  // non-default value yet — observed.ts inserts nothing at all — so this is a
-  // precondition rather than a dependency: the next person cannot write a row
-  // from outside Wanigan without declaring it foreign, and history, spend and
-  // resume exclude it by the shape of the query rather than by remembering.
-  addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
-  // Revert measures a session's work against the HEAD and dirty paths observed
-  // when it started. Keeping that baseline only in memory loses it at exactly
-  // the moment an operator reaches for undo — after a restart — and a revert
-  // without one cannot tell this agent's edits from work that was already there.
-  addColumn(d, 'session_log', 'baseline_head', 'TEXT');
-  addColumn(d, 'session_log', 'baseline_dirty_json', 'TEXT');
-  // What the operator actually asked for at launch. It seeds the briefing query
-  // and is typed into the PTY, and after that only the scrollback holds it — so
-  // a session's own row cannot say what the session was started to do, which is
-  // the first question anyone asks of a finished one. The writer must pass this
-  // through redactCredentials() from ./redact and bound its length before it
-  // lands: a launch prompt is exactly where a pasted key ends up, and this row
-  // outlives the terminal that showed it.
-  addColumn(d, 'session_log', 'initial_prompt', 'TEXT');
-  // The display name: derived from the redacted launch prompt when one was
-  // given, or set by a rename. Never derived from conversation content.
-  addColumn(d, 'session_log', 'title', 'TEXT');
+  worktreeSchema.links(d);
+  sessionSchema.details(d);
   // A fire and the run it dispatched were linked only by a prefix of the run's
   // name, which is a display string a rename breaks. headless.ts writes the
   // terminal outcome back onto the fire, and that write needs an id an operator
@@ -627,12 +412,7 @@ function migratePhases(d: Database.Database) {
   // creates no run row, and every row written before this column existed has no
   // answer to give.
   addColumn(d, 'schedule_runs', 'run_id', 'TEXT');
-  addColumn(d, 'queue', 'lease_owner', 'TEXT');
-  addColumn(d, 'queue', 'lease_expires_at', 'INTEGER');
-  // This must follow the additive columns above. `CREATE TABLE IF NOT
-  // EXISTS` leaves a pre-lease queue untouched, and attempting this index
-  // first makes SQLite abort the entire migration with "no such column".
-  d.exec('CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at)');
+  queueSchema.leases(d);
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
   // Ordered after the ALTER above for the same reason as the queue index. The
   // read is "which fire does this run answer for", once per run that finishes,
@@ -665,178 +445,24 @@ function migratePhases(d: Database.Database) {
     )
   `);
   migrateLearning(d);
-  migrateControl(d);
+  // Intake still extends Control's events in a legacy migration below. The
+  // required module owns its schema, but must run at this original position
+  // before that dependent ALTER and before runtime imports can open the DB.
+  migrateRequiredModule(controlModule, d);
   migrateAccounts(d);
   migrateCheckpoints(d);
-  migrateConversationFlags(d);
+  sessionSchema.conversationFlags(d);
   migrateClaudeUsage(d);
   migrateAttempts(d);
-  migrateWorktreeBootstrap(d);
-  migrateObservedTelemetry(d);
+  worktreeSchema.bootstrap(d);
+  usageSchema.observed(d);
   migrateCodexHooks(d);
   migrateIntake(d);
   // Every registered module's schema, last and in registration order — inside
   // this same transaction, so a module's tables land or nothing does. Scout's
   // migration used to be a named call above; it is the first thing that
   // registers itself instead of being wired here by hand.
-  migrateModules(d);
-}
-
-/**
- * What a new worktree is given beyond its tracked files, per project, and the
- * evidence of every setup and teardown that ran.
- *
- * All of it lives here and none of it in the repository: a setup command is a
- * choice the operator made on this machine, and writing it into the checkout
- * would hand it to every clone and every agent that can edit the file.
- */
-function migrateWorktreeBootstrap(d: Database.Database) {
-  d.exec(`
-    -- How gitignored dependency folders reach a new worktree: link, clone or
-    -- skip. The same shape as project_trust — one choice per project — with
-    -- the cascade project_accounts has, so a removed project leaves no row
-    -- behind for a re-added one to inherit.
-    CREATE TABLE IF NOT EXISTS project_worktree_deps (
-      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-      mode       TEXT NOT NULL,
-      set_at     INTEGER NOT NULL
-    );
-
-    -- Command text the operator approved in a native dialog, run through the
-    -- login shell in every worktree Wanigan makes for the project. The shape of
-    -- review_recipes, for the same kind of text.
-    CREATE TABLE IF NOT EXISTS worktree_commands (
-      project_id    TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-      setup_json    TEXT NOT NULL DEFAULT '[]',
-      teardown_json TEXT NOT NULL DEFAULT '[]',
-      updated_at    INTEGER NOT NULL
-    );
-
-    -- One row per phase that ran, written before its first command starts and
-    -- updated as each one finishes. No cascade: evidence of what ran in a
-    -- worktree outlives the project it ran for, as review_runs does.
-    CREATE TABLE IF NOT EXISTS worktree_command_runs (
-      id           TEXT PRIMARY KEY,
-      project_id   TEXT NOT NULL,
-      worktree     TEXT NOT NULL,
-      phase        TEXT NOT NULL,
-      started_at   INTEGER NOT NULL,
-      ended_at     INTEGER,
-      status       TEXT NOT NULL,
-      planned      INTEGER NOT NULL DEFAULT 0,
-      results_json TEXT NOT NULL DEFAULT '[]',
-      env_json     TEXT,
-      note         TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_tree
-      ON worktree_command_runs(worktree, phase, started_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_project
-      ON worktree_command_runs(project_id, started_at DESC);
-  `);
-  // The project a worktree was made for, so its teardown finds the same
-  // commands its setup ran even when the repository is registered under a
-  // path that is not its root.
-  addColumn(d, 'worktrees', 'project_id', 'TEXT');
-  // The first port of the worktree's ten-port block, fixed at creation. Setup,
-  // the launch and teardown must all see one block; probing again later would
-  // skip the block the worktree's own dev server is listening on.
-  addColumn(d, 'worktrees', 'port_base', 'INTEGER');
-  // What creation put in the worktree — dependency folders, include copies,
-  // the port block — as the JSON the Git view shows beside the branch.
-  addColumn(d, 'worktrees', 'bootstrap_json', 'TEXT');
-}
-
-/**
- * What the CLI reports about itself beyond cost and tool events: its status
- * line's limit and cache readings, its beta per-prompt trace spans, and the
- * attribution its cost and token metrics carry. Four new tables and nothing
- * altered, so an install that never runs these features has four empty tables
- * and every existing reader is untouched.
- */
-function migrateObservedTelemetry(d: Database.Database) {
-  d.exec(`
-    -- One row per distinct status line reading. A reading identical to the
-    -- session's previous one only moves last_seen_at, so an idle session that
-    -- refreshes its status line every few seconds writes no rows. A redraw is
-    -- not a new reading of the provider, so the forecast reads observed_at only.
-    CREATE TABLE IF NOT EXISTS status_observations (
-      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id            TEXT NOT NULL,
-      account_id            TEXT,
-      observed_at           INTEGER NOT NULL,
-      last_seen_at          INTEGER NOT NULL,
-      cli_version           TEXT,
-      reading_key           TEXT NOT NULL,
-      -- A window the CLI did not send is NULL in both columns, never 0.
-      five_hour_pct         REAL,
-      five_hour_resets_at   INTEGER,
-      seven_day_pct         REAL,
-      seven_day_resets_at   INTEGER,
-      spend_limit_pct       REAL,
-      spend_limit_resets_at INTEGER,
-      effort                TEXT,
-      pr_number             INTEGER,
-      pr_url                TEXT,
-      pr_review_state       TEXT,
-      prompt_id             TEXT,
-      cache_json            TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_status_obs_session ON status_observations(session_id, observed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_status_obs_account ON status_observations(account_id, observed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_status_obs_seen ON status_observations(last_seen_at);
-
-    -- Per-prompt trace spans, attributes already stripped of anything that is
-    -- conversation text. An exporter re-sends what it did not get a 2xx for, so
-    -- a span is its own identity and a retry is ignored rather than doubled.
-    CREATE TABLE IF NOT EXISTS session_spans (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id     TEXT NOT NULL,
-      trace_id       TEXT NOT NULL,
-      span_id        TEXT NOT NULL,
-      parent_span_id TEXT,
-      name           TEXT NOT NULL,
-      start_at       INTEGER NOT NULL,
-      end_at         INTEGER,
-      status         TEXT NOT NULL DEFAULT 'unset',
-      attrs_json     TEXT,
-      received_at    INTEGER NOT NULL,
-      UNIQUE (session_id, trace_id, span_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_session_spans ON session_spans(session_id, start_at);
-    -- Retention deletes by age; this keeps that a range scan.
-    CREATE INDEX IF NOT EXISTS idx_session_spans_start ON session_spans(start_at);
-
-    -- Sessions launched with the trace exporter on. A session that asked and
-    -- exported nothing for a turn is told apart from one that never asked.
-    CREATE TABLE IF NOT EXISTS session_trace_requests (
-      session_id   TEXT PRIMARY KEY,
-      requested_at INTEGER NOT NULL
-    );
-
-    -- Cost and token metrics by the attribution the CLI attaches to them,
-    -- bucketed by local day so a window is exact to the day. Kept beside
-    -- session_metrics rather than in it: adding these attributes to that
-    -- table's key would split every existing running total across new rows.
-    CREATE TABLE IF NOT EXISTS session_spend_sources (
-      session_id   TEXT NOT NULL,
-      day          TEXT NOT NULL,
-      metric       TEXT NOT NULL,
-      token_type   TEXT NOT NULL DEFAULT '',
-      query_source TEXT NOT NULL DEFAULT '',
-      agent_name   TEXT NOT NULL DEFAULT '',
-      skill_name   TEXT NOT NULL DEFAULT '',
-      plugin_name  TEXT NOT NULL DEFAULT '',
-      mcp_server   TEXT NOT NULL DEFAULT '',
-      effort       TEXT NOT NULL DEFAULT '',
-      speed        TEXT NOT NULL DEFAULT '',
-      model        TEXT NOT NULL DEFAULT '',
-      value        REAL NOT NULL DEFAULT 0,
-      last_at      INTEGER NOT NULL,
-      PRIMARY KEY (session_id, day, metric, token_type, query_source, agent_name, skill_name,
-                   plugin_name, mcp_server, effort, speed, model)
-    );
-    CREATE INDEX IF NOT EXISTS idx_spend_sources_day ON session_spend_sources(day);
-  `);
+  migrateModules(d, operation => guardStorageMigration(d, operation));
 }
 
 /**
@@ -869,7 +495,7 @@ function migrateCodexHooks(d: Database.Database) {
       PRIMARY KEY (bin, version, definition_sha256)
     );
   `);
-  addColumn(d, 'session_log', 'codex_hooks_json', 'TEXT');
+  sessionSchema.codexHooks(d);
 }
 
 /**
@@ -983,48 +609,6 @@ function migrateClaudeUsage(d: Database.Database) {
       byte_offset INTEGER NOT NULL DEFAULT 0,
       scanned_at  INTEGER NOT NULL
     );
-  `);
-}
-
-/**
- * Pin/settle lifecycle for Recent conversations, keyed by the same
- * harness-scoped conversation key Recent groups by. Forgetting stays the only
- * destructive act — these flags reorder and shelve, never delete.
- */
-function migrateConversationFlags(d: Database.Database) {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS conversation_flags (
-      key        TEXT PRIMARY KEY,
-      pinned_at  INTEGER,
-      settled_at INTEGER
-    );
-  `);
-}
-
-/**
- * Per-turn workspace checkpoints. Each row names a hidden git commit kept
- * alive by refs/wanigan/checkpoints/<session>; the table is the map from a
- * session's turns to those commits. Rows outlive the session so diffs and
- * reverts still work after a restart, and the migration is additive so
- * removing the feature can never cost existing history.
- */
-function migrateCheckpoints(d: Database.Database) {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS session_checkpoints (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id    TEXT NOT NULL,
-      turn          INTEGER NOT NULL,
-      kind          TEXT NOT NULL,
-      at            INTEGER NOT NULL,
-      repo_root     TEXT NOT NULL,
-      commit_hash   TEXT,
-      tree_hash     TEXT,
-      files_changed INTEGER,
-      status        TEXT NOT NULL DEFAULT 'ok',
-      detail        TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_session_checkpoints
-      ON session_checkpoints(session_id, turn, at);
   `);
 }
 
@@ -1308,14 +892,7 @@ function migrateLearning(d: Database.Database) {
     );
   `);
 
-  // A session keeps the exact profile it launched with. Provider packs can be
-  // disabled or upgraded while the PTY is alive without changing history's
-  // meaning or the resume path of an existing conversation.
-  addColumn(d, 'session_log', 'provider_pack_id', 'TEXT');
-  addColumn(d, 'session_log', 'provider_pack_version', 'TEXT');
-  addColumn(d, 'session_log', 'provider_profile_json', 'TEXT');
-  addColumn(d, 'session_log', 'backend_id', 'TEXT');
-  addColumn(d, 'session_log', 'harness_id', 'TEXT');
+  sessionSchema.providerIdentity(d);
   // The roots a projection was granted at preview time, so undo can verify the
   // same containment even after the provider profile or project is gone.
   // Reversibility must not depend on the thing being reversed still existing.
@@ -1385,34 +962,8 @@ function migrateAccounts(d: Database.Database) {
       PRIMARY KEY (project_id, harness)
     );
   `);
-  // Which account a session actually launched under. Without this, a restart
-  // leaves Wanigan reading the default account's directory for a transcript
-  // that was written into another one, and honestly reporting nothing.
-  addColumn(d, 'session_log', 'account_id', 'TEXT');
-  // The same fact for a fan-out row. headless.ts writes it when the row
-  // finishes; nothing reads it back — ROW_COLUMNS does not list it and no
-  // other query names it — so this is a recorded fact with no reader yet.
-  // It is not what matches a reported context window: transcripts.ts banks the
-  // per-model windows the CLI named into the `settings` table, keyed by model,
-  // backend and account, and looks them up again against the account frozen
-  // onto `session_log`.
-  addColumn(d, 'headless_rows', 'account_id', 'TEXT');
-  // Whether the CLI named a cost at all, which `cost_usd` alone cannot say: a
-  // run that reported nothing and a run that genuinely reported $0.00 both
-  // land as 0, and the Runs total claimed to be "CLI-reported; never
-  // estimated" over the sum of both. Nullable on purpose — a row written
-  // before this column existed reads as unknown, never as reported.
-  addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
-  // The call a row stopped on for a person's answer, and the answer: JSON,
-  // bounded and redacted before it is written (headless.ts). Null for every
-  // row that never held a call, including all rows from before the column.
-  addColumn(d, 'headless_rows', 'held_json', 'TEXT');
-  // The commit the agent started from, read in the directory it ran in after
-  // any worktree was cut. It was computed for the changed-file count and then
-  // thrown away, so a finished row could not say which tree produced it; an
-  // attempt pinned to a commit is refused when this is not that commit. Null
-  // for rows from before the column and rows that never reached a spawn.
-  addColumn(d, 'headless_rows', 'base_head', 'TEXT');
+  sessionSchema.accountIdentity(d);
+  headlessSchema.details(d);
 }
 
 /**
@@ -1494,312 +1045,6 @@ function migrateAttempts(d: Database.Database) {
   // Whether the set holds calls that need approval for the operator: copied to
   // every attempt's run, and shown on the set so a paused trial is explained.
   addColumn(d, 'attempt_sets', 'hold_for_approval', 'INTEGER NOT NULL DEFAULT 0');
-}
-
-/**
- * P30 · Durable agent control plane.
- *
- * A terminal is an execution detail, not the record of a piece of work. These
- * rows preserve the human contract (objective, acceptance, evidence and
- * decision) across a terminal exit, provider swap, app restart, or a handoff
- * to a second agent. Prompts and terminal output deliberately stay out of the
- * coordination tables; their owning session/transcript remains the source.
- */
-function migrateControl(d: Database.Database) {
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS work_dockets (
-      id              TEXT PRIMARY KEY,
-      project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      title           TEXT NOT NULL,
-      objective       TEXT NOT NULL,
-      acceptance_json TEXT NOT NULL DEFAULT '[]',
-      risk            TEXT NOT NULL DEFAULT 'elevated',
-      budget_usd      REAL,
-      base_commit     TEXT,
-      status          TEXT NOT NULL DEFAULT 'draft',
-      created_at      INTEGER NOT NULL,
-      updated_at      INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_dockets_project_updated
-      ON work_dockets(project_id, updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_work_dockets_status_updated
-      ON work_dockets(status, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS work_nodes (
-      id              TEXT PRIMARY KEY,
-      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      kind            TEXT NOT NULL,
-      title           TEXT NOT NULL,
-      instructions    TEXT NOT NULL,
-      depends_json    TEXT NOT NULL DEFAULT '[]',
-      status          TEXT NOT NULL DEFAULT 'pending',
-      provider_id     TEXT,
-      model           TEXT,
-      session_id      TEXT,
-      worktree        TEXT,
-      started_at      INTEGER,
-      ended_at        INTEGER,
-      detail          TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_nodes_docket ON work_nodes(docket_id, id);
-    CREATE INDEX IF NOT EXISTS idx_work_nodes_session ON work_nodes(session_id);
-
-    CREATE TABLE IF NOT EXISTS work_claims (
-      id          TEXT PRIMARY KEY,
-      docket_id   TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id     TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
-      path        TEXT NOT NULL,
-      created_at  INTEGER NOT NULL,
-      released_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_claims_open ON work_claims(path) WHERE released_at IS NULL;
-
-    CREATE TABLE IF NOT EXISTS work_proofs (
-      id           TEXT PRIMARY KEY,
-      docket_id    TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id      TEXT REFERENCES work_nodes(id) ON DELETE SET NULL,
-      kind         TEXT NOT NULL,
-      status       TEXT NOT NULL,
-      summary      TEXT NOT NULL,
-      detail_json  TEXT NOT NULL DEFAULT '{}',
-      created_at   INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_proofs_docket ON work_proofs(docket_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS work_checkpoints (
-      id              TEXT PRIMARY KEY,
-      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id         TEXT REFERENCES work_nodes(id) ON DELETE SET NULL,
-      session_id      TEXT,
-      conversation_id TEXT,
-      repo_commit     TEXT,
-      worktree        TEXT,
-      note            TEXT NOT NULL,
-      created_at      INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_checkpoints_docket ON work_checkpoints(docket_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS work_model_outcomes (
-      id            TEXT PRIMARY KEY,
-      docket_id     TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id       TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
-      provider_id   TEXT NOT NULL,
-      model         TEXT NOT NULL,
-      task_kind     TEXT NOT NULL,
-      accepted      INTEGER NOT NULL DEFAULT 0,
-      tests_passed  INTEGER NOT NULL DEFAULT 0,
-      cost_usd      REAL NOT NULL DEFAULT 0,
-      created_at    INTEGER NOT NULL,
-      UNIQUE(node_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_model_outcomes_route
-      ON work_model_outcomes(provider_id, model, task_kind, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS control_events (
-      id          TEXT PRIMARY KEY,
-      project_id  TEXT REFERENCES projects(id) ON DELETE SET NULL,
-      source      TEXT NOT NULL,
-      kind        TEXT NOT NULL,
-      summary     TEXT NOT NULL,
-      status      TEXT NOT NULL DEFAULT 'new',
-      docket_id   TEXT REFERENCES work_dockets(id) ON DELETE SET NULL,
-      created_at  INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_control_events_status ON control_events(status, created_at DESC);
-
-    -- This mirrors the safe, server-owned task lifecycle from the current MCP
-    -- Tasks extension. It is an adapter boundary, not a claim that Wanigan
-    -- implements every experimental wire version.
-    CREATE TABLE IF NOT EXISTS mcp_task_records (
-      id          TEXT PRIMARY KEY,
-      docket_id   TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id     TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
-      title       TEXT NOT NULL,
-      status      TEXT NOT NULL DEFAULT 'working',
-      created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL,
-      UNIQUE(node_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_mcp_task_records_status ON mcp_task_records(status, updated_at DESC);
-
-    -- Recovery facts identify the exact conversation and worktree a Goal task
-    -- owns. They exclude prompts and terminal output.
-    CREATE TABLE IF NOT EXISTS work_resume_receipts (
-      node_id         TEXT PRIMARY KEY REFERENCES work_nodes(id) ON DELETE CASCADE,
-      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      session_id      TEXT NOT NULL,
-      conversation_id TEXT,
-      provider_id     TEXT NOT NULL,
-      model           TEXT,
-      base_commit     TEXT,
-      worktree        TEXT,
-      created_at      INTEGER NOT NULL,
-      updated_at      INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_resume_receipts_docket ON work_resume_receipts(docket_id, updated_at DESC);
-
-    -- Provider-neutral, content-free operational evidence. The terminal and
-    -- provider retain any prompt or response content; Control records only
-    -- linkage, timing, spend, token totals and safe summaries.
-    CREATE TABLE IF NOT EXISTS work_trace_events (
-      id           TEXT PRIMARY KEY,
-      docket_id    TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      node_id      TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
-      session_id   TEXT NOT NULL,
-      source       TEXT NOT NULL,
-      kind         TEXT NOT NULL,
-      status       TEXT NOT NULL,
-      tool_name    TEXT,
-      summary      TEXT,
-      duration_ms  INTEGER,
-      cost_usd     REAL NOT NULL DEFAULT 0,
-      in_tokens    INTEGER NOT NULL DEFAULT 0,
-      out_tokens   INTEGER NOT NULL DEFAULT 0,
-      created_at   INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
-
-    -- The sessions a task ran under, kept past the life of the pointer on the
-    -- task row. work_nodes.session_id is a live pointer that retryNode nulls,
-    -- and a goal's spend against its cap is summed over the sessions it can
-    -- see, so without this table reopening a task handed the money it had
-    -- already spent back to the cap, and a goal whose tasks had all been
-    -- reopened reported that it had launched nothing. A row is written when a
-    -- dispatch claims the task, and again by retryNode before it nulls the
-    -- pointer — which covers a task dispatched before this table existed, but
-    -- not one already reopened by then. Append-only: nothing issues a DELETE
-    -- against it, and a row leaves only with the task or project it belongs to.
-    -- It holds the task, its goal, the session id and when the row was
-    -- written, and nothing else.
-    CREATE TABLE IF NOT EXISTS work_node_sessions (
-      node_id    TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
-      docket_id  TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
-      session_id TEXT NOT NULL,
-      at         INTEGER NOT NULL,
-      PRIMARY KEY (node_id, session_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_work_node_sessions_docket ON work_node_sessions(docket_id);
-  `);
-
-  // P31 · a docket is a graph, not a fixed four-step chain.
-  //
-  // `depends_json` always described an arbitrary DAG; nothing ever wrote one.
-  // Declaring the path a node intends to own is what makes fan-out safe to
-  // plan: two nodes that can run at the same time and want the same directory
-  // are a conflict the planner can be told about, instead of a merge the
-  // operator discovers later. Nullable, because a node that declares nothing
-  // simply takes no claim when it starts.
-  addColumn(d, 'work_nodes', 'claim_path', 'TEXT');
-
-  // Autopilot dispatch. The provider/model are frozen per docket at the moment
-  // consent is given, so a later default change cannot silently redirect work
-  // already running unattended.
-  addColumn(d, 'work_dockets', 'autopilot', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(d, 'work_dockets', 'autopilot_provider', 'TEXT');
-  addColumn(d, 'work_dockets', 'autopilot_model', 'TEXT');
-  // Marks a node the sweep has already handed to the queue. Without a durable
-  // marker the sweep re-enqueues the same node every tick until the runner
-  // wins the race, and the losers burn queue attempts on an error.
-  addColumn(d, 'work_nodes', 'dispatch_state', 'TEXT');
-  // Whether the CLI reported a cost for the session behind an outcome. The
-  // column used to hold 0 for both "reported nothing" and "reported zero", so
-  // the Outcome router totalled unmetered work as free and ranked it cheapest —
-  // the one thing CLAUDE.md says never to do with an unpriced call. Existing
-  // rows default to 0: they were written before the distinction was recorded,
-  // and claiming they were reported would be inventing evidence. `effort` joins
-  // them because a router that cannot say which effort produced a result cannot
-  // answer whether the expensive one was worth it.
-  addColumn(d, 'work_model_outcomes', 'cost_reported', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(d, 'work_model_outcomes', 'effort', 'TEXT');
-  // A ticket the operator parked until a date. Null is the normal case: work
-  // that is ready is ready. This is what lets the board hold a real backlog —
-  // "not now, but not never" — instead of forcing every known issue to be
-  // either in progress or forgotten.
-  addColumn(d, 'work_nodes', 'defer_until', 'INTEGER');
-  // When a task was last reopened. A gate proof written before it is evidence
-  // about a tree the reopened work has since replaced, so it must not complete
-  // the task a second time — hasPassedProof in control.ts and the phone's gate
-  // reading both count only proofs from after this moment.
-  addColumn(d, 'work_nodes', 'reopened_at', 'INTEGER');
-  // Verified done, opted into per goal. `gate_on_stop` runs the review gate
-  // each time an implementation or verification agent stops, and holds an
-  // implementation task until a gate has passed. `return_failures` types a
-  // failed gate's error lines back into that session, which starts another
-  // agent turn and so spends tokens: off unless chosen, and never on without
-  // the gate. `gate_returns` counts those per task run so the cap holds across
-  // a restart; starting or reopening the task resets it.
-  addColumn(d, 'work_dockets', 'gate_on_stop', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(d, 'work_dockets', 'return_failures', 'INTEGER NOT NULL DEFAULT 0');
-  addColumn(d, 'work_nodes', 'gate_returns', 'INTEGER NOT NULL DEFAULT 0');
-  // The interview that produced a goal, kept after it did.
-  //
-  // Durable rather than in memory because an interview is ten minutes of the
-  // operator's own answers, and losing that to a quit — or to the app crashing
-  // on question nine — costs them the work and the money already spent on it.
-  // The transcript stays after the goal is written: it is the record of why the
-  // acceptance checks say what they say, which is the question somebody asks
-  // three weeks later when one of them fails.
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS interviews (
-      id            TEXT PRIMARY KEY,
-      project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      seed          TEXT NOT NULL,
-      model         TEXT NOT NULL,
-      status        TEXT NOT NULL DEFAULT 'asking',
-      turns_json    TEXT NOT NULL DEFAULT '[]',
-      proposal_json TEXT,
-      docket_id     TEXT,
-      spend_usd     REAL NOT NULL DEFAULT 0,
-      budget_usd    REAL NOT NULL,
-      calls         INTEGER NOT NULL DEFAULT 0,
-      detail        TEXT,
-      created_at    INTEGER NOT NULL,
-      updated_at    INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_interviews_project ON interviews(project_id, updated_at DESC);
-  `);
-  // How hard the operator asked to be grilled. The dial used to be a dollar
-  // budget, which was the wrong thing to put in front of them: a whole
-  // interview costs between ten and thirty cents, so every option on that menu
-  // meant "yes". The budget still exists as a runaway guard and is derived from
-  // this. Rows written before it default to the standard length.
-  addColumn(d, 'interviews', 'max_questions', 'INTEGER NOT NULL DEFAULT 10');
-
-  // The third field of the same decision. `provider_id` and `model` are already
-  // on the node, and effort is what the two of them leave unsaid: the same
-  // provider and model at two efforts are two different runs with two different
-  // prices. A controlled experiment has to pin provider, model, effort and
-  // commit before a token-saving claim means anything, and a column that only
-  // records two of the four cannot support one. Nullable: rows written before
-  // this, and providers that expose no effort dial, genuinely have no value —
-  // defaulting them to a level nobody chose would be inventing evidence.
-  addColumn(d, 'work_nodes', 'effort', 'TEXT');
-  // Counts the automatic hand-backs a task has taken, so the cap on them holds
-  // across a restart. An in-memory counter resets when the app quits, and a
-  // hand-back loop that forgets how many it has already spent is a loop that
-  // spends tokens without end. Existing rows default to 0, which is the truth
-  // about them: nothing was handed back before this was counted.
-  addColumn(d, 'work_nodes', 'handbacks', 'INTEGER NOT NULL DEFAULT 0');
-  // What a stage launches as, beside the provider/model/effort already here.
-  // A phase is a session, so a phase should be able to pin what a session pins:
-  // a relay that could route the work but not say which account paid for it
-  // billed whichever account the project happened to default to, across five
-  // phases, with the estimate phase promising the operator knew the cost first.
-  // NULL keeps the old behaviour exactly — resolve() falls to the project's
-  // account and startNode to its per-kind default — so every existing row and
-  // every ordinary goal is unchanged.
-  addColumn(d, 'work_nodes', 'account_id', 'TEXT');
-  addColumn(d, 'work_nodes', 'permission_mode', 'TEXT');
-  d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
-  d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_defer ON work_nodes(defer_until) WHERE defer_until IS NOT NULL');
-  // Whether the docket was created as a relay (src/main/relay.ts). A relay
-  // hands a failed review back to its implementer on its own, up to a cap; an
-  // ordinary goal must not start doing that because it happens to share the
-  // table, so the flag is what the hand-back reads before it touches anything.
-  // Existing rows default to 0, which is true of every goal written before
-  // relays existed.
-  addColumn(d, 'work_dockets', 'relay', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {

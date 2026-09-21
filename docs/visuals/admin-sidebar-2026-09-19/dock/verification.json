@@ -1,0 +1,592 @@
+{
+  "provenance": "Production renderer in an isolated Electron profile with the explicitly fictional renderer-harness STUB. No provider requests, real records, PTYs, or model calls.",
+  "checks": [
+    "Dock is present with navigation hidden and returning to Monitor restores Usage.",
+    "Left/right, Home and End move keyboard focus through the dock.",
+    "All destinations reaches Extensions and the footer Settings control opens Settings.",
+    "Project picker filters by keyboard; global Monitor scope is explicit and has no misleading project filter.",
+    "Project-required Changes explains that All spaces opens Sessions; keyboard activation follows that route.",
+    "Adminbar Search opens the shared palette and Escape restores focus.",
+    {
+      "width": 1440,
+      "height": 1000,
+      "geometry": {
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "doc": {
+          "client": 1440,
+          "scroll": 1440
+        },
+        "dock": {
+          "x": 419.8984375,
+          "y": 945,
+          "right": 1020.1015625,
+          "bottom": 991,
+          "width": 600.203125,
+          "height": 46
+        },
+        "body": {
+          "x": 12,
+          "y": 112,
+          "right": 1428,
+          "bottom": 936,
+          "width": 1416,
+          "height": 824
+        },
+        "footer": {
+          "x": 0,
+          "y": 936,
+          "right": 1440,
+          "bottom": 1000,
+          "width": 1440,
+          "height": 64
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 84,
+            "right": 169.40625
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 907.1484375,
+            "right": 1043.3515625
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 1042.3515625,
+            "right": 1133.9140625
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 1141.9140625,
+            "right": 1251.546875
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 1280.546875,
+            "right": 1371.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 1379.484375,
+            "right": 1424
+          }
+        ]
+      }
+    },
+    {
+      "width": 1180,
+      "height": 800,
+      "geometry": {
+        "viewport": {
+          "width": 1180,
+          "height": 800
+        },
+        "doc": {
+          "client": 1180,
+          "scroll": 1180
+        },
+        "dock": {
+          "x": 289.8984375,
+          "y": 745,
+          "right": 890.1015625,
+          "bottom": 791,
+          "width": 600.203125,
+          "height": 46
+        },
+        "body": {
+          "x": 12,
+          "y": 112,
+          "right": 1168,
+          "bottom": 736,
+          "width": 1156,
+          "height": 624
+        },
+        "footer": {
+          "x": 0,
+          "y": 736,
+          "right": 1180,
+          "bottom": 800,
+          "width": 1180,
+          "height": 64
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 84,
+            "right": 169.40625
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 670.6875,
+            "right": 783.3515625
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 782.3515625,
+            "right": 873.9140625
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 881.9140625,
+            "right": 991.546875
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 1020.546875,
+            "right": 1111.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 1119.484375,
+            "right": 1164
+          }
+        ]
+      }
+    },
+    {
+      "width": 960,
+      "height": 560,
+      "geometry": {
+        "viewport": {
+          "width": 960,
+          "height": 560
+        },
+        "doc": {
+          "client": 960,
+          "scroll": 960
+        },
+        "dock": {
+          "x": 183.8984375,
+          "y": 509,
+          "right": 784.1015625,
+          "bottom": 555,
+          "width": 600.203125,
+          "height": 46
+        },
+        "body": {
+          "x": 12,
+          "y": 96,
+          "right": 948,
+          "bottom": 504,
+          "width": 936,
+          "height": 408
+        },
+        "footer": {
+          "x": 0,
+          "y": 504,
+          "right": 960,
+          "bottom": 560,
+          "width": 960,
+          "height": 56
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 84,
+            "right": 169.40625
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 474.6796875,
+            "right": 587.34375
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 586.34375,
+            "right": 677.90625
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 685.90625,
+            "right": 771.546875
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 800.546875,
+            "right": 891.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 899.484375,
+            "right": 944
+          }
+        ]
+      }
+    },
+    {
+      "width": 900,
+      "height": 700,
+      "geometry": {
+        "viewport": {
+          "width": 900,
+          "height": 700
+        },
+        "doc": {
+          "client": 900,
+          "scroll": 900
+        },
+        "dock": {
+          "x": 157.8984375,
+          "y": 645,
+          "right": 758.1015625,
+          "bottom": 691,
+          "width": 600.203125,
+          "height": 46
+        },
+        "body": {
+          "x": 12,
+          "y": 112,
+          "right": 888,
+          "bottom": 636,
+          "width": 876,
+          "height": 524
+        },
+        "footer": {
+          "x": 0,
+          "y": 636,
+          "right": 900,
+          "bottom": 700,
+          "width": 900,
+          "height": 64
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 84,
+            "right": 169.40625
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 414.6796875,
+            "right": 527.34375
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 526.34375,
+            "right": 617.90625
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 625.90625,
+            "right": 711.546875
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 740.546875,
+            "right": 831.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 839.484375,
+            "right": 884
+          }
+        ]
+      }
+    },
+    {
+      "width": 900,
+      "height": 560,
+      "geometry": {
+        "viewport": {
+          "width": 900,
+          "height": 560
+        },
+        "doc": {
+          "client": 900,
+          "scroll": 900
+        },
+        "dock": {
+          "x": 153.8984375,
+          "y": 509,
+          "right": 754.1015625,
+          "bottom": 555,
+          "width": 600.203125,
+          "height": 46
+        },
+        "body": {
+          "x": 12,
+          "y": 96,
+          "right": 888,
+          "bottom": 504,
+          "width": 876,
+          "height": 408
+        },
+        "footer": {
+          "x": 0,
+          "y": 504,
+          "right": 900,
+          "bottom": 560,
+          "width": 900,
+          "height": 56
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 84,
+            "right": 169.40625
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 414.6796875,
+            "right": 527.34375
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 526.34375,
+            "right": 617.90625
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 625.90625,
+            "right": 711.546875
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 740.546875,
+            "right": 831.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 839.484375,
+            "right": 884
+          }
+        ]
+      }
+    },
+    {
+      "width": 720,
+      "height": 560,
+      "geometry": {
+        "viewport": {
+          "width": 720,
+          "height": 560
+        },
+        "doc": {
+          "client": 720,
+          "scroll": 720
+        },
+        "dock": {
+          "x": 211.9140625,
+          "y": 509,
+          "right": 516.0859375,
+          "bottom": 555,
+          "width": 304.171875,
+          "height": 46
+        },
+        "body": {
+          "x": 8,
+          "y": 96,
+          "right": 712,
+          "bottom": 504,
+          "width": 704,
+          "height": 408
+        },
+        "footer": {
+          "x": 0,
+          "y": 504,
+          "right": 720,
+          "bottom": 560,
+          "width": 720,
+          "height": 56
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 76,
+            "right": 110
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 416.6640625,
+            "right": 529.328125
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 528.328125,
+            "right": 566.328125
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 574.328125,
+            "right": 612.328125
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 629.328125,
+            "right": 651.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 659.484375,
+            "right": 704
+          }
+        ]
+      }
+    },
+    {
+      "width": 600,
+      "height": 640,
+      "geometry": {
+        "viewport": {
+          "width": 600,
+          "height": 640
+        },
+        "doc": {
+          "client": 600,
+          "scroll": 600
+        },
+        "dock": {
+          "x": 151.9140625,
+          "y": 589,
+          "right": 456.0859375,
+          "bottom": 635,
+          "width": 304.171875,
+          "height": 46
+        },
+        "body": {
+          "x": 8,
+          "y": 96,
+          "right": 592,
+          "bottom": 584,
+          "width": 584,
+          "height": 488
+        },
+        "footer": {
+          "x": 0,
+          "y": 584,
+          "right": 600,
+          "bottom": 640,
+          "width": 600,
+          "height": 56
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 76,
+            "right": 110
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 312.6640625,
+            "right": 425.328125
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 424.328125,
+            "right": 462.328125
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 466.328125,
+            "right": 504.328125
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 517.328125,
+            "right": 539.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 547.484375,
+            "right": 592
+          }
+        ]
+      }
+    },
+    {
+      "width": 460,
+      "height": 640,
+      "geometry": {
+        "viewport": {
+          "width": 460,
+          "height": 640
+        },
+        "doc": {
+          "client": 460,
+          "scroll": 460
+        },
+        "dock": {
+          "x": 12,
+          "y": 589,
+          "right": 316.171875,
+          "bottom": 635,
+          "width": 304.171875,
+          "height": 46
+        },
+        "body": {
+          "x": 8,
+          "y": 96,
+          "right": 452,
+          "bottom": 584,
+          "width": 444,
+          "height": 488
+        },
+        "footer": {
+          "x": 0,
+          "y": 584,
+          "right": 460,
+          "bottom": 640,
+          "width": 460,
+          "height": 56
+        },
+        "controls": [
+          {
+            "label": "Show sidebar (Option Command S)",
+            "left": 76,
+            "right": 110
+          },
+          {
+            "label": "Start a new interactive agent session (Command T)",
+            "left": 253.3828125,
+            "right": 285.328125
+          },
+          {
+            "label": "Resume a saved conversation (Command Shift T)",
+            "left": 284.328125,
+            "right": 322.328125
+          },
+          {
+            "label": "Search views, projects, live sessions, settings and transcripts (Command K)",
+            "left": 326.328125,
+            "right": 364.328125
+          },
+          {
+            "label": "1 need you: 1 waiting on a permission prompt. Show who is waiting.",
+            "left": 377.328125,
+            "right": 399.484375
+          },
+          {
+            "label": "Halt: stop every agent, schedule and queue",
+            "left": 407.484375,
+            "right": 452
+          }
+        ]
+      }
+    },
+    "At 720px the temporary navigation dialog closes with Escape and returns focus to the dock trigger.",
+    "Halt first click only arms confirmation, expires after six seconds, and never calls halt.pull."
+  ],
+  "screenshots": [
+    "usage-dock-1440x1000-light.png",
+    "usage-dock-1440x1000-dark.png",
+    "usage-dock-1180x800-light.png",
+    "usage-dock-1180x800-dark.png",
+    "usage-dock-960x560-light.png",
+    "usage-dock-960x560-dark.png",
+    "usage-dock-900x700-light.png",
+    "usage-dock-900x700-dark.png",
+    "usage-dock-900x560-light.png",
+    "usage-dock-900x560-dark.png",
+    "usage-dock-720x560-light.png",
+    "usage-dock-720x560-dark.png",
+    "usage-dock-600x640-light.png",
+    "usage-dock-600x640-dark.png",
+    "usage-dock-460x640-light.png",
+    "usage-dock-460x640-dark.png"
+  ],
+  "errors": []
+}

@@ -1,3 +1,4 @@
+import type { SkillCatalogue, SkillInfo, SkillRootStatus } from '../shared/skill-catalogue';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -32,48 +33,32 @@ import type {
 
 export type { SkillSource } from '../shared/types';
 
-export type SkillInfo = {
-  /**
-   * What the command is keyed by. For personal and project skills that is the
-   * DIRECTORY name: the docs say a frontmatter `name` there "sets only the
-   * display label shown in skill listings, and the command still comes from
-   * the directory name" (docs/en/skills, read 2026-09-05 against CLI 2.1.261).
-   * For plugin skills it is the frontmatter name, directory as fallback, and
-   * the plugin prefix stays in place.
-   */
-  name: string;
-  /** The display label: frontmatter `name` when present, else `name`. */
-  label: string;
-  description: string;
-  source: SkillSource;
-  /** Whose loader reads the root this came from. */
-  harness: 'claude-code' | 'codex';
-  /** Absolute path to SKILL.md. */
-  path: string;
-  dir: string;
-  /**
-   * What you type to invoke it. Plugin skills are namespaced. Empty for the
-   * `.agents` family: Wanigan has not verified how Codex invokes one.
-   */
-  invoke: string;
-  plugin: string | null;
-  marketplace: string | null;
-  projectId: string | null;
-  allowedTools: string[];
-  /** Helper files shipped alongside the skill, which is a rough proxy for depth. */
-  extras: number;
-  bytes: number;
-  modified: number;
-  /** Predicted from SKILL.md frontmatter and skillOverrides; never a runtime fact. */
-  invocable: SkillInvocability;
-  /** Set when Wanigan's own compiler wrote this file — an applied or stale projection. */
-  projection: SkillProjectionLink | null;
-};
 
 const HOME = os.homedir();
 /** Where the CLI extracts bundled skills, per version. Incomplete by design. */
-const BUNDLED_ROOT = `/private/tmp/claude-${process.getuid?.() ?? 501}/bundled-skills`;
+/**
+ * Where the CLI extracts bundled skills, or null when this platform's answer is
+ * not known.
+ *
+ * `/private/tmp/claude-<uid>` is Claude Code's own choice on macOS, not
+ * `os.tmpdir()` — which on macOS is a per-session `/var/folders/...` path — so
+ * it cannot be derived, only stated. On Linux the same layout sits under /tmp.
+ *
+ * Windows returns null rather than a guess. A wrong path here is not a blank
+ * space: `scanBundledSeen` would read nothing from it and the Skills view would
+ * print "no built-in skills" under a POSIX path no Windows machine has, which
+ * is a claim about the operator's install rather than about Wanigan's
+ * knowledge. Saying nothing is the honest state until somebody reads the path
+ * off a real Windows install.
+ */
+function bundledRoot(): string | null {
+  if (process.platform === 'win32') return null;
+  const uid = process.getuid?.() ?? 501;
+  const tmp = process.platform === 'darwin' ? '/private/tmp' : '/tmp';
+  return path.join(tmp, `claude-${uid}`, 'bundled-skills');
+}
 const BUNDLED_NOTE = 'Claude Code extracts a bundled skill only once it has been used, so this shows the ones seen so far — not every built-in.';
+const BUNDLED_UNKNOWN_NOTE = 'Wanigan does not know where this platform’s Claude Code extracts bundled skills, so none are listed. That is Wanigan’s gap, not a statement that you have none.';
 const AGENTS_NOTE = 'Read by the Codex harness. Wanigan lists what is on disk and did not consult Codex’s loader, so a row here is not proof that a Codex session loads it.';
 
 /* ── roots, per harness ──────────────────────────────────────────────── */
@@ -110,7 +95,10 @@ export function skillRootsFor(
     const read: SkillRootSpec[] = [{ source: 'user', path: personal, note: null }];
     if (root) read.push({ source: 'project', path: path.join(root, '.claude', 'skills'), note: null });
     read.push({ source: 'plugin', path: path.join(base, 'plugins'), note: null });
-    read.push({ source: 'builtin', path: BUNDLED_ROOT, note: BUNDLED_NOTE });
+    const bundled = bundledRoot();
+    read.push(bundled
+      ? { source: 'builtin', path: bundled, note: BUNDLED_NOTE }
+      : { source: 'builtin', path: '—', note: BUNDLED_UNKNOWN_NOTE });
     return { harness, read, write: { personal, project: root ? path.join(root, '.claude', 'skills') : null } };
   }
   if (harness === 'codex') {
@@ -402,15 +390,17 @@ function scanPlugins(pluginRoot: string): Scanned[] {
 
 /** Built-ins the CLI has extracted so far. Never a complete list — see above. */
 function scanBundledSeen(): Scanned[] {
+  const root = bundledRoot();
+  if (!root) return [];
   let versions: string[];
-  try { versions = fs.readdirSync(BUNDLED_ROOT); } catch { return []; }
+  try { versions = fs.readdirSync(root); } catch { return []; }
   const newest = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   const seen = new Map<string, Scanned>();
   for (const v of newest) {
     let hashes: string[];
-    try { hashes = fs.readdirSync(path.join(BUNDLED_ROOT, v)); } catch { continue; }
+    try { hashes = fs.readdirSync(path.join(root, v)); } catch { continue; }
     for (const h of hashes) {
-      for (const s of scanSkillDir(path.join(BUNDLED_ROOT, v, h), 'builtin', 'frontmatter')) {
+      for (const s of scanSkillDir(path.join(root, v, h), 'builtin', 'frontmatter')) {
         if (!seen.has(s.skill.name)) seen.set(s.skill.name, s);
       }
     }
@@ -513,25 +503,6 @@ function projectionLinks(paths: string[]): Map<string, SkillProjectionLink> {
 
 /* ── the catalogue ───────────────────────────────────────────────────── */
 
-export type SkillRootStatus = { source: SkillSource; path: string; exists: boolean; note: string | null };
-
-export type SkillCatalogue = {
-  /** Claude Code's loader: what `/name` runs, one row per command. */
-  skills: SkillInfo[];
-  counts: Record<SkillSource, number>;
-  /** Where each Claude source was read from, so an empty section is explicable. */
-  roots: SkillRootStatus[];
-  /** Files present but not the one that runs for their command, and which file shadows them. */
-  shadowed: ShadowedSkill[];
-  /**
-   * The `.agents/skills` family, harness-labelled. Listed as found, in no
-   * precedence order: Codex's loader was not consulted, so which of two
-   * same-named directories it would prefer is not claimed.
-   */
-  agentSkills: SkillInfo[];
-  agentRoots: SkillRootStatus[];
-  scannedAt: number;
-};
 
 export type DiscoverOptions = {
   /** Test seam: the home the personal and plugin roots hang off. Production callers omit it. */
@@ -701,7 +672,13 @@ export function skillSendDecision(session: Session | null | undefined, invoke: s
 /** Every directory a skill is allowed to be read from, for every harness and every registered project. */
 function skillRoots(): string[] {
   const roots = new Set<string>();
-  const add = (r: SkillRoots) => { for (const spec of r.read) roots.add(spec.path); };
+  // A spec can name no directory at all when the platform's location is
+  // unknown (bundledRoot), and the renderer prints that as an em-dash. This
+  // list is a containment check rather than a display, so only a real absolute
+  // path belongs in it.
+  const add = (r: SkillRoots) => {
+    for (const spec of r.read) if (path.isAbsolute(spec.path)) roots.add(spec.path);
+  };
   add(skillRootsFor('claude-code', { homeDir: HOME }));
   add(skillRootsFor('codex', { homeDir: HOME }));
   try {

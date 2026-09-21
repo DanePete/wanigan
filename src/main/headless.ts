@@ -1,9 +1,10 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
-import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
 import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
+import { findOnPath, isExecutableFile, killProcessTree } from './platform';
 import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall, waniganCredentialDirs } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
@@ -15,10 +16,12 @@ import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } fr
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceHeld, announceRunEnded } from './notify';
 import { refuseIfHalted } from './halt';
+import { checkAccountEligibility } from './modules/account-eligibility';
 import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
 import { redactCredentials } from './redact';
+import { acquireCheckoutActivity } from './checkout-activity';
 import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
 import { DEFER_SINCE, cliSupportsDefer, heldCallSummary, readDeferredOutcome, type DeferredOutcome } from '../shared/deferred-approvals';
 import type {
@@ -86,8 +89,8 @@ const INTERNAL_LIMIT = 3;
 const KILL_GRACE_MS = 5_000;
 /** How long after the agent exits we still wait for its pipes to close. */
 const EXIT_FLUSH_MS = 2_000;
-/** Rows marked 'running' before this belong to a process that is no longer here. */
-const PROCESS_START = Date.now();
+/** Distinguishes this runtime from another app/daemon, including a reused PID. */
+const RUNTIME_OWNER = `headless-${process.pid}-${randomUUID()}`;
 
 /* ── the safety gate ───────────────────────────────────────────────────
    A headless agent has no human at the keyboard. It cannot be asked
@@ -213,7 +216,7 @@ const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
  * account's config directory after even those, because a pack is untrusted
  * data and must not be able to point a run's login at a directory it chose. */
 export function headlessEnv(
-  PATH: string, providerEnv: Record<string, string> = {}, accountEnv: Record<string, string> = {},
+  PATH: string, providerEnv: Record<string, string> = {}, account: AgentAccount | null = null,
   worktreeEnv: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
@@ -231,7 +234,15 @@ export function headlessEnv(
   }
   out.PATH = PATH;
   Object.assign(out, providerEnv);
-  Object.assign(out, accountEnv);
+  // This function copies process.env wholesale, and the platform-default account
+  // contributes no variable, so an inherited CLAUDE_CONFIG_DIR survived: a
+  // headless run and a model-assisted consolidation both executed against
+  // whichever login the operator's shell named while the record said
+  // otherwise. Taking the account rather than its environment is what lets the
+  // decision clear as well as set — a record cannot carry a deletion — and it
+  // is why the next caller of this function cannot forget, which is how five
+  // call sites came to share one defect.
+  accounts.applyLaunchEnv(out, account);
   Object.assign(out, worktreeEnv);
   // The same strip an attended launch applies, and this path needed it more.
   // It copies process.env wholesale, so a fan-out on any profile that redirects
@@ -267,27 +278,17 @@ export async function resolveBin(def: ProviderDef): Promise<string> {
   const key = binCacheKey(def);
   const cached = binCache.get(key);
   if (cached) {
-    try {
-      fs.accessSync(cached, fs.constants.X_OK);
-      return cached;
-    } catch {
-      binCache.delete(key);
-    }
+    if (isExecutableFile(cached)) return cached;
+    binCache.delete(key);
   }
 
-  const PATH = await shellPath();
-  const candidates = [
-    ...(path.isAbsolute(def.bin)
-      ? [def.bin]
-      : PATH.split(':').filter(Boolean).map((d) => path.join(d, def.bin))),
-    ...def.fallbacks(),
-  ];
-  for (const c of candidates) {
-    try {
-      fs.accessSync(c, fs.constants.X_OK);
-      binCache.set(key, c);
-      return c;
-    } catch { /* next candidate */ }
+  // findOnPath applies PATHEXT on Windows, where the CLI a profile calls
+  // `claude` is on disk as `claude.cmd`, and checks isFile() everywhere, where
+  // access(X_OK) alone would accept a *directory* named after the binary.
+  const resolved = findOnPath(def.bin, await shellPath(), def.fallbacks());
+  if (resolved) {
+    binCache.set(key, resolved);
+    return resolved;
   }
   throw new Error(
     `Could not find the ${def.label} CLI ("${def.bin}"). Install it, or open one interactive ` +
@@ -494,6 +495,7 @@ async function changedSet(dir: string, baseHead: string | null): Promise<Set<str
 /* ── run state ────────────────────────────────────────────────────────── */
 
 const liveChildren = new Map<string, ChildProcess>();
+const closedChildren = new WeakSet<ChildProcess>();
 /**
  * Rows this process has claimed and not yet finished, whether or not an agent
  * is up for them yet.
@@ -505,9 +507,21 @@ const liveChildren = new Map<string, ChildProcess>();
  * Quitting the window used to read the table globally, which cancelled the
  * daemon's rows in the database while its detached agents kept spending.
  */
-const ownedRows = new Map<string, { runId: string; projectId: string }>();
+type OwnedRow = {
+  runId: string; projectId: string; releases: (() => void)[];
+  child: ChildProcess | null; closed: boolean;
+};
+const ownedRows = new Map<string, OwnedRow>();
+/** Row completion includes usage banking and checkout release after child close. */
+const activeRepoRuns = new Set<Promise<void>>();
 /** Runs the human stopped. Checked on entry so a late dispatch never revives one. */
 const canceledRuns = new Set<string>();
+/** Quit is permanent for this runtime, including launches still in preflight. */
+let headlessStopping = false;
+
+function refuseIfStopping(): void {
+  if (headlessStopping) throw new Error('Wanigan is shutting down, so no headless agent was started.');
+}
 
 const rowKey = (runId: string, projectId: string) => `${runId}/${projectId}`;
 
@@ -541,57 +555,47 @@ const hookSessionId = (runId: string, projectId: string) => `h_${runId}__${proje
  * somebody else's process group.
  */
 function killTree(child: ChildProcess, sig: NodeJS.Signals): boolean {
-  const pid = child.pid;
-  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return false;
-  try {
-    process.kill(-pid, sig);
-    return true;
-  } catch {
-    // No group (spawn refused detach) or it is already gone; the direct pid is
-    // still worth a try before giving up.
-    try { return child.kill(sig); } catch { return false; }
-  }
+  return killProcessTree(child, sig);
 }
 
-let sweptInterrupted = false;
+/** Only a live runtime's child handle can establish closure; recovered PIDs cannot. */
+function processGroupStopped(child: ChildProcess): boolean {
+  if (!child.pid) return true; // Spawn failed before an OS process existed.
+  if (process.platform === 'win32') return false; // No job/tree extinction proof is available here.
+  try { process.kill(-child.pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+}
+
+function preserveUnknownExecution(runId: string, projectId: string): void {
+  db().prepare(`UPDATE headless_rows SET recovery_unresolved=1,status='errored',error=?
+    WHERE run_id=? AND project_id=? AND owner_id=?`).run(
+    'The agent finished or a stop was requested, but Wanigan could not confirm its process group stopped. Its process state remains unknown; checkout ownership was retained.',
+    runId, projectId, RUNTIME_OWNER);
+}
 
 /**
- * Rows left 'running' by a process that died. queue.recoverOrphans() puts the
- * queue item back to 'waiting', but nothing outside this module ever writes
- * headless_rows.status — so without this sweep the row stays 'running' forever,
- * runOneRepo returns immediately for it, the queue calls that a success, and the
- * run's open count never reaches zero: a fan-out that reports everything
- * finished while its run never ends.
- *
- * They are errored rather than requeued. Nobody watched the crash, the partial
- * worktree is still on disk to look at, and silently re-spawning agents that
- * spend money unattended is not a recovery anyone asked for.
+ * A missing owner is not evidence that its detached agent stopped. Preserve
+ * the running row and checkout exclusion until execution is reconciled. A
+ * still-present foreign owner is left alone; persisted PIDs are never signalled.
  */
 function sweepInterruptedRows(): void {
-  if (sweptInterrupted) return;
-  sweptInterrupted = true;
-
   const d = db();
-  // started_at, not liveChildren: a row this process marked 'running' moments
-  // ago from a concurrent runOneRepo must not be mistaken for an orphan.
   const rows = d.prepare(
-    "SELECT run_id, project_id, project_name FROM headless_rows WHERE status='running' AND COALESCE(started_at, 0) < ?"
-  ).all(PROCESS_START) as { run_id: string; project_id: string; project_name: string }[];
-  if (!rows.length) return;
-
+    "SELECT run_id, project_id, project_name, owner_id, owner_pid FROM headless_rows WHERE status='running' AND recovery_unresolved=0 AND (owner_id IS NULL OR owner_id<>?)"
+  ).all(RUNTIME_OWNER) as { run_id: string; project_id: string; project_name: string; owner_id: string | null; owner_pid: number | null }[];
   const stmt = d.prepare(
-    "UPDATE headless_rows SET status='errored', error=?, ended_at=? WHERE run_id=? AND project_id=? AND status='running'"
+    "UPDATE headless_rows SET recovery_unresolved=1, error=? WHERE run_id=? AND project_id=? AND status='running' AND recovery_unresolved=0 AND owner_id IS ?"
   );
-  const touched = new Set<string>();
   for (const r of rows) {
-    stmt.run(
-      'Wanigan stopped while this repo was mid-run, so its agent went with it. Nothing was resumed — start the fan-out again for this repository.',
-      Date.now(), r.run_id, r.project_id
-    );
-    logEvent(r.run_id, 'warn', `${r.project_name}: interrupted by a Wanigan restart and not resumed.`);
-    touched.add(r.run_id);
+    if (r.owner_id && r.owner_pid !== null && Number.isSafeInteger(r.owner_pid) && r.owner_pid > 0) {
+      try { process.kill(r.owner_pid, 0); continue; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue; }
+    }
+    const changed = stmt.run(
+      'The prior execution owner is unavailable or was not recorded. Its agent’s process state is unknown; this repository was not resumed. Reconcile the prior execution before starting it again.',
+      r.run_id, r.project_id, r.owner_id);
+    if (changed.changes) logEvent(r.run_id, 'warn', `${r.project_name}: prior process state is unknown; execution was not resumed.`);
   }
-  for (const id of touched) finalize(id);
 }
 
 export type HeadlessRunner = (runId: string, projectId: string) => void | Promise<unknown>;
@@ -745,6 +749,7 @@ export async function checkHeadlessStart(cfg: HeadlessStart): Promise<{ label: s
 }
 
 export async function startHeadlessRun(cfg: HeadlessStart, pin: HeadlessPin | null = null, scheduledFire?: ScheduleFire): Promise<{ runId: string; rows: number }> {
+  refuseIfStopping();
   // A pin is one attempt: one repository, one full commit. Anything else asking
   // for one is a caller bug, and a pinned fan-out would cut every repository's
   // worktree from a commit that exists in only one of them.
@@ -753,6 +758,7 @@ export async function startHeadlessRun(cfg: HeadlessStart, pin: HeadlessPin | nu
   }
   if (pin !== null && scheduledFire) throw new Error('A pinned attempt cannot claim a scheduled fire.');
   const { def, picked } = await vetHeadlessStart(cfg);
+  refuseIfStopping();
 
   /* ── who paid for this ──────────────────────────────────────────────
      A schedule spends a fire, records it as 'queued', and until now that was
@@ -889,9 +895,18 @@ async function driveInternally(runId: string, projectIds: string[]) {
 /* ── one repo ─────────────────────────────────────────────────────────── */
 
 export async function runOneRepo(runId: string, projectId: string): Promise<void> {
+  refuseIfStopping();
+  const pending = executeRepo(runId, projectId);
+  activeRepoRuns.add(pending);
+  try { await pending; }
+  finally { activeRepoRuns.delete(pending); }
+}
+
+async function executeRepo(runId: string, projectId: string): Promise<void> {
   const key = rowKey(runId, projectId);
+  let owned: OwnedRow | undefined;
   try {
-    await runRow(runId, projectId);
+    await runRow(runId, projectId, (claim) => { owned = claim; });
   } catch (error) {
     // A failure runRow anticipated is already on its row. One that escaped is
     // not, and the row it escaped from is still 'running' — left alone it stays
@@ -899,38 +914,45 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
     // nothing wrong while its run never ends. Only a row this process was
     // holding is closed out: the other way to arrive here is runRow refusing to
     // double-dispatch a row somebody else is running, and that row is theirs.
-    if (ownedRows.has(key)) {
+    if (owned) {
       failRow(runId, projectId,
         `Wanigan could not finish this repository: ${error instanceof Error ? error.message : String(error)}`);
     }
     throw error;
   } finally {
-    // Ownership is what scopes an attended quit to the agents this process
-    // actually started. A key left behind here would let a quit cancel a row
-    // the launchd scheduler is still running, so it is released on every exit
-    // including the ones nothing else expects.
-    ownedRows.delete(key);
+    // In-memory ownership scopes attended quit to this invocation. Its durable
+    // checkout claim can be released only after confirmed process-group closure.
+    if (owned) {
+      if (!owned.child || (owned.closed && processGroupStopped(owned.child))) {
+        db().prepare('UPDATE headless_rows SET recovery_unresolved=0 WHERE run_id=? AND project_id=? AND owner_id=?')
+          .run(runId, projectId, RUNTIME_OWNER);
+        for (const release of owned.releases.reverse()) release();
+      } else {
+        preserveUnknownExecution(runId, projectId);
+      }
+      ownedRows.delete(key);
+    }
   }
 }
 
-async function runRow(runId: string, projectId: string): Promise<void> {
+async function runRow(runId: string, projectId: string, onClaimed: (claim: OwnedRow) => void): Promise<void> {
   const d = db();
   const key = rowKey(runId, projectId);
-  // Before the row is read, and synchronously: after a restart the dispatcher
-  // hands back rows still marked 'running' by the dead process, and the guard
-  // below would return success for every one of them.
+  // Record uncertain prior execution before deciding whether this row can run.
   sweepInterruptedRows();
 
   const row = d.prepare(
-    'SELECT status, project_path, project_name, worktree, held_json FROM headless_rows WHERE run_id=? AND project_id=?'
+    'SELECT status, project_path, project_name, worktree, held_json, recovery_unresolved FROM headless_rows WHERE run_id=? AND project_id=?'
   ).get(runId, projectId) as {
-    status: string; project_path: string; project_name: string; worktree: string | null; held_json: string | null;
+    status: string; project_path: string; project_name: string; worktree: string | null; held_json: string | null; recovery_unresolved: number;
   } | undefined;
   if (!row) throw new Error(`No headless row for project ${projectId} in run ${runId}.`);
+  if (row.recovery_unresolved) throw new Error(
+    `${row.project_name} has an unreconciled prior execution with unknown process state, so no agent was started.`);
   // A dispatcher may retry, and a cancel may have landed while this sat queued.
   if (row.status !== 'pending') {
-    // After the sweep above, 'running' can only mean this process is already
-    // working the row — a second dispatch would put two agents in one worktree,
+    // A running row can belong to this process or another live owner. A second
+    // dispatch would put two agents in one worktree,
     // overwriting each other. Returning normally would let the queue mark that
     // duplicate 'done' and hide it, so it is raised instead.
     if (row.status === 'running') {
@@ -1030,8 +1052,9 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   }
 
   const startedAt = Date.now();
-  d.prepare("UPDATE headless_rows SET status='running', started_at=? WHERE run_id=? AND project_id=?")
-    .run(startedAt, runId, projectId);
+  const claimed = d.prepare("UPDATE headless_rows SET status='running', started_at=?, owner_id=?, owner_pid=? WHERE run_id=? AND project_id=? AND status='pending' AND recovery_unresolved=0")
+    .run(startedAt, RUNTIME_OWNER, process.pid, runId, projectId);
+  if (claimed.changes !== 1) throw new Error(`${row.project_name} was claimed or changed by another execution owner, so no agent was started.`);
   if (resume) {
     // Written before anything can fail, so no path back to 'pending' can spend
     // the same answer on a second resume.
@@ -1041,7 +1064,11 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // Claimed at the same moment the row is, not at spawn: everything between
   // here and the spawn is an await, and a row this process is holding open in
   // that window is still a row only this process may cancel.
-  ownedRows.set(key, { runId, projectId });
+  const owned: OwnedRow = { runId, projectId, releases: [], child: null, closed: false };
+  ownedRows.set(key, owned);
+  onClaimed(owned);
+  // Covers preparation too: worktree setup can write before the agent exists.
+  owned.releases.push(acquireCheckoutActivity(row.project_path, 'headless', key));
 
   // Before the worktree, so a CLI that has since been uninstalled fails without
   // leaving a whole checkout of the repo behind for nobody.
@@ -1065,6 +1092,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     }
     worktree = row.worktree;
     cwd = worktree;
+    owned.releases.push(acquireCheckoutActivity(cwd, 'headless', key));
   }
   try {
     // A read-only agent writes nothing, so a worktree for it would be the only
@@ -1080,6 +1108,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
         pin ? { startPoint: pin.commit } : {});
       worktree = created.path;
       cwd = worktree;
+      owned.releases.push(acquireCheckoutActivity(cwd, 'headless', key));
       d.prepare('UPDATE headless_rows SET worktree=? WHERE run_id=? AND project_id=?')
         .run(worktree, runId, projectId);
     }
@@ -1156,7 +1185,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // this, cancelling a fan-out still launches an agent afterwards and pays for a
   // whole run. Briefing retrieval below has its own second check because it is
   // the only remaining await before liveChildren.set.
-  if (canceledRuns.has(runId)) {
+  if (headlessStopping || canceledRuns.has(runId)) {
     markCanceled(runId, projectId);
     return;
   }
@@ -1279,9 +1308,27 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     } catch { /* learned context is an optimization, never a launch dependency */ }
   }
 
-  // Briefing freshness checks touch the filesystem asynchronously. A cancel can
-  // land while they run, so do not let a paid child slip out after cancellation.
-  if (canceledRuns.has(runId)) {
+  // Asked here because it awaits a read, and everything from the last trust
+  // refresh to the spawn below is synchronous on purpose. Nobody is present for
+  // a fan-out row, so evidence against the login stops it rather than spending
+  // an allowance no person confirmed. No other account is tried.
+  let eligibleAccountId: string | null;
+  try {
+    const candidate = accounts.resolve({
+      harness: def.harness, projectId,
+      appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(def.env?.() ?? {})),
+    }).account;
+    await checkAccountEligibility(candidate, { attended: false });
+    eligibleAccountId = candidate?.id ?? null;
+  } catch (error) {
+    releaseHooks();
+    failRow(runId, projectId, error instanceof Error ? error.message : String(error), startedAt);
+    return;
+  }
+
+  // Briefing freshness checks and the login read yield. A cancel can land while
+  // they run, so do not let a paid child slip out after cancellation.
+  if (headlessStopping || canceledRuns.has(runId)) {
     releaseHooks();
     markCanceled(runId, projectId);
     return;
@@ -1312,7 +1359,10 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       harness: def.harness, projectId,
       appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
     }).account;
-    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account), worktreeEnv);
+    if ((account?.id ?? null) !== eligibleAccountId) {
+      throw new Error('the account this repository launches as changed while it was being prepared, so its login was not the one checked');
+    }
+    env = headlessEnv(launchPath, providerEnvValues, account, worktreeEnv);
     args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule, resume ? { cliSessionId: resume.cliSessionId } : null);
   } catch (error) {
     releaseHooks();
@@ -1321,6 +1371,12 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       `Could not configure ${def.label} in ${row.project_name}: ${error instanceof Error ? error.message : String(error)}`,
       startedAt
     );
+    return;
+  }
+
+  if (headlessStopping || canceledRuns.has(runId)) {
+    releaseHooks();
+    markCanceled(runId, projectId);
     return;
   }
 
@@ -1336,6 +1392,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       // agent *and* whatever it started. Killing the CLI alone leaves a build or
       // a dev server behind holding this row's stdout pipe open.
       detached: true,
+      // On Windows detaching gives the child its own console window.
+      windowsHide: true,
     });
   } catch (e) {
     releaseHooks();
@@ -1348,6 +1406,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   }
 
   liveChildren.set(key, child);
+  owned.child = child;
+  child.once('close', () => { owned.closed = true; closedChildren.add(child); });
 
   // Delivery, not retrieval, is what buys a derived item another ninety days.
   // The cancel check and the fingerprint refresh above can both end this row
@@ -1408,6 +1468,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // process's event loop alive, which is the same hang one step further along.
   child.stdout?.destroy();
   child.stderr?.destroy();
+  const executionStopped = owned.closed && processGroupStopped(child);
+  if (!executionStopped) preserveUnknownExecution(runId, projectId);
 
   // Here rather than at the end of the function: the settings file carries this
   // app run's hook bearer token, and the git snapshots below take seconds. The
@@ -1434,7 +1496,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // The CLI stopped on a call Wanigan held for a person. Recorded only from the
   // result object's own fields, and only for a run that ended on its own.
   const said = reported.outcome;
-  const heldNow: HeldRecord | null = !timedOut && !canceledRuns.has(runId) && !outcome.spawnError
+  const heldNow: HeldRecord | null = executionStopped && !timedOut && !canceledRuns.has(runId) && !outcome.spawnError
     && said.terminalReason === 'tool_deferred' && said.deferred && said.sessionId
     ? {
         toolUseId: said.deferred.id,
@@ -1461,7 +1523,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // does a pinned row: its set gates and compares the tree each attempt left,
   // an attempt that changed nothing included, and removes worktrees only when
   // the operator asks it to.
-  if (worktree && filesChanged === 0 && !heldNow && !pin) {
+  if (executionStopped && worktree && filesChanged === 0 && !heldNow && !pin) {
     try {
       const removal = await removeWorktree(worktree, false);
       if (removal.removed) worktree = null;
@@ -1470,10 +1532,13 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   let status: HeadlessRow['status'];
   let error: string | null = null;
-  if (timedOut) {
+  if (!executionStopped) {
+    status = 'errored';
+    error = 'The agent ended, but its process group could not be confirmed stopped. Process state is unknown; checkout ownership was retained.';
+  } else if (timedOut) {
     status = 'timeout';
     error =
-      `${def.label} was still running after ${Math.round(cfg.timeoutMs / 1000)}s and was stopped. ` +
+      `${def.label} was still running after ${Math.round(cfg.timeoutMs / 1000)}s and was asked to stop. ` +
       `Raise the per-repo timeout, or narrow the prompt so one repo is less work.`;
   } else if (canceledRuns.has(runId)) {
     status = 'canceled';
@@ -1975,8 +2040,8 @@ export function cancelHeadless(runId: string): number {
   const d = db();
 
   const open = d.prepare(
-    "SELECT project_id FROM headless_rows WHERE run_id=? AND status IN ('pending','running','awaiting')"
-  ).all(runId) as { project_id: string }[];
+    "SELECT project_id,status FROM headless_rows WHERE run_id=? AND status IN ('pending','running','awaiting')"
+  ).all(runId) as { project_id: string; status: string }[];
   if (!open.length) return 0;
 
   d.prepare("UPDATE runs SET status='canceling' WHERE id=? AND status='in_progress'").run(runId);
@@ -2007,8 +2072,13 @@ export function cancelHeadless(runId: string): number {
     "UPDATE headless_rows SET status='canceled', ended_at=? WHERE run_id=? AND project_id=? AND status IN ('pending','running','awaiting')"
   );
   let marked = 0;
-  for (const { project_id } of open) {
+  for (const { project_id, status } of open) {
     if (liveChildren.has(rowKey(runId, project_id))) continue;
+    if (status === 'running' && !ownedRows.has(rowKey(runId, project_id))) {
+      d.prepare("UPDATE headless_rows SET recovery_unresolved=1,error=? WHERE run_id=? AND project_id=? AND status='running'")
+        .run('A stop was requested, but this process does not own the running agent. Its process state is unknown; no stop is confirmed.', runId, project_id);
+      continue;
+    }
     marked += stmt.run(now, runId, project_id).changes;
   }
 
@@ -2016,7 +2086,7 @@ export function cancelHeadless(runId: string): number {
   // repos whose agent had already exited, so reporting it as "stopped" told the
   // user that work had been killed which was never running in the first place.
   logEvent(runId, 'warn',
-    `Cancelled — ${signaled} running ${signaled === 1 ? 'agent' : 'agents'} stopped, ` +
+    `Stop requested — ${signaled} running ${signaled === 1 ? 'agent' : 'agents'} signalled, ` +
     `${marked} ${marked === 1 ? 'repository' : 'repositories'} dropped before starting.`);
   finalize(runId);
   return signaled + marked;
@@ -2032,7 +2102,7 @@ export function liveHeadlessCount(): number {
 }
 
 function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<void> {
-  const active = children.filter((child) => child.exitCode === null && child.signalCode === null);
+  const active = children.filter((child) => !closedChildren.has(child));
   if (!active.length) return Promise.resolve();
   return new Promise((resolve) => {
     let left = active.length;
@@ -2045,8 +2115,21 @@ function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<v
     };
     const timeout = setTimeout(resolve, timeoutMs);
     timeout.unref?.();
-    for (const child of active) child.once('exit', done);
+    for (const child of active) child.once('close', done);
   });
+}
+
+async function waitForRepoCompletion(pending: Promise<void>[], timeoutMs: number): Promise<void> {
+  if (!pending.length) return;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -2054,9 +2137,11 @@ function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<v
  * not stop it by accident. That is exactly why attended quit must stop it on
  * purpose: otherwise a no-window agent can continue spending with no way for
  * the user to see or cancel it. Pending rows are cancelled first to close the
- * pre-spawn race; TERM then bounded KILL reaches every live group.
+ * pre-spawn race; TERM then bounded KILL requests closure of owned live groups.
  */
 export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number> {
+  headlessStopping = true;
+  const completing = [...activeRepoRuns];
   const owned = [...ownedRows.values()];
   const runIds = [...new Set(owned.map((r) => r.runId))];
   // Entered before anything is signalled: a row inside runRow's pre-spawn
@@ -2090,10 +2175,21 @@ export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number>
   const stubborn = children.filter((child) => child.exitCode === null && child.signalCode === null);
   for (const child of stubborn) killTree(child, 'SIGKILL');
   await waitForChildren(stubborn, Math.min(2_000, Math.max(500, graceMs)));
+  // Child close precedes git snapshots, usage banking and release of checkout
+  // ownership. Give those finalizers a bounded chance before the DB closes.
+  await waitForRepoCompletion(completing, Math.min(2_000, Math.max(500, graceMs)));
 
   for (const id of runIds) {
     try {
-      logEvent(id, 'warn', 'Wanigan quit — the repositories this window was running were stopped.');
+      const unknown = owned.filter(row => row.runId === id && row.child
+        && (!row.closed || !processGroupStopped(row.child)));
+      const unfinished = owned.filter(row => row.runId === id && ownedRows.get(rowKey(row.runId, row.projectId)) === row);
+      for (const row of unknown) preserveUnknownExecution(row.runId, row.projectId);
+      logEvent(id, 'warn', unknown.length
+        ? `Wanigan quit requested a stop; ${unknown.length} repository process groups remain unconfirmed and retain checkout ownership.`
+        : unfinished.length
+          ? `Wanigan quit confirmed its agent process groups closed; ${unfinished.length} repository finalizations remain incomplete and retain checkout ownership.`
+          : 'Wanigan quit requested a stop; every agent process group owned by this window was confirmed closed.');
       finalize(id);
     } catch (error) {
       // Quit is already under way and the database may be closing under it.

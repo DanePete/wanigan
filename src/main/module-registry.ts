@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3';
-import type { QueueKind } from '../shared/types';
+import type { BrowserWindow } from 'electron';
+import type { ConsumptionPoint, EgressHost, ModelConsumption, QueueKind } from '../shared/types';
+import type { RecoveryAdapter } from './recovery-contract';
 
 /**
  * The main-process half of "everything is a module" (AGENTS.md).
@@ -31,7 +33,22 @@ import type { QueueKind } from '../shared/types';
  * envelope — passed in so a module registers a channel through it and cannot
  * reach `ipcMain` around it.
  */
+/** Guarded fire-and-forget traffic; the host retains sender/demo checks. */
+export type IpcOn = (channel: string, fn: (...args: never[]) => void) => void;
+
 export type IpcHandle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
+
+/** Runtime-owned capabilities a module may need without discovering globals. */
+export type ModuleIpcContext = {
+  /** The exact window owned by index.ts at the moment the handler runs. */
+  getWindow: () => BrowserWindow | null;
+  /** Reconcile app-wide power management after a module starts an agent. */
+  onAgentLaunched?: () => void;
+  /** Restart the host after Backup has replaced and closed its database. */
+  relaunchAfterRestore?: () => void;
+  /** Restart before services start; it does not authorize stopping live work. */
+  restartForRestore?: () => void;
+};
 
 /**
  * Recurring work, declared rather than wired.
@@ -56,6 +73,13 @@ export type ModuleSchedule = {
   sync: () => void;
 };
 
+/** Free module upkeep; separate from queue lanes that authorize paid work. */
+export type ModuleMaintenance = {
+  id: string;
+  intervalMs: number;
+  run: () => Promise<void>;
+};
+
 export type WaniganModule = {
   /** Namespaces every IPC channel the module owns: `${id}:…`. */
   id: string;
@@ -70,16 +94,35 @@ export type WaniganModule = {
    * Additive schema, the same contract as every `migrate*` in `db.ts`: CREATE
    * IF NOT EXISTS, ADD COLUMN guarded by a read, never DROP. Called inside
    * `db.ts`'s migration pass — inside its transaction, after the built-in
-   * migrations — in registration order.
+   * migrations — in registration order. Required schemas with legacy dependents
+   * may also bootstrap earlier through migrateRequiredModule.
    */
   migrate?: (d: Database.Database) => void;
+  /** Owner-declared inspection and exact evidence-backed reconciliation. */
+  recovery?: RecoveryAdapter;
   /**
    * IPC channels this module owns. Every channel MUST start with `${id}:`; the
    * registry refuses one that does not, because a channel outside a module's
    * namespace is a channel nobody can attribute.
    */
-  ipc?: (handle: IpcHandle) => void;
+  ipc?: (handle: IpcHandle, context: ModuleIpcContext) => void;
+  /** Fire-and-forget channels use the same module namespace and host trust boundary. */
+  events?: (on: IpcOn) => void;
+  /** Module-local IPC operations that require the app's services to be ready. */
+  requiresStartedServices?: readonly string[];
   schedules?: () => ModuleSchedule[];
+  /** Declared here; the runtime host owns starting and stopping these timers. */
+  maintenance?: () => ModuleMaintenance[];
+  /** Outbound destinations and their current conditions. Local reads only;
+   * include disabled capabilities with activeNow false, without probing them. */
+  egress?: () => EgressHost[];
+  /** Local recorded consumption outside agent sessions. Reads must never call
+   * a provider or infer a quota. `since` is the Usage ledger's clamped cutoff;
+   * the module owns its records and preserves estimates apart from billed cost. */
+  usage?: {
+    consumption: (since: number) => ModelConsumption[];
+    daily: (since: number) => ConsumptionPoint[];
+  };
 };
 
 const registry: WaniganModule[] = [];
@@ -101,6 +144,7 @@ const registry: WaniganModule[] = [];
  * cannot happen, because the table is created before registerModule returns.
  */
 let migratedOn: Database.Database | null = null;
+let migrationGuard: (operation: () => void) => void = operation => operation();
 
 export function registerModule(module: WaniganModule): void {
   if (!/^[a-z][a-z0-9-]*$/.test(module.id)) {
@@ -115,7 +159,7 @@ export function registerModule(module: WaniganModule): void {
   // name on it rather than at some later query with nobody's.
   if (migratedOn && module.migrate) {
     const d = migratedOn;
-    d.transaction(() => module.migrate!(d))();
+    migrationGuard(() => d.transaction(() => module.migrate!(d))());
   }
 }
 
@@ -123,14 +167,38 @@ export function modules(): readonly WaniganModule[] {
   return registry;
 }
 
+/** Startup policy is declared beside the operation, not restated in index.ts. */
+export function moduleNeedsStartedServices(channel: string): boolean {
+  return registry.some((module) => module.requiresStartedServices?.some(
+    (operation) => channel === `${module.id}:${operation}`,
+  ));
+}
+
+/**
+ * Bootstrap a required module at an existing legacy dependency boundary.
+ * Some built-in migrations still extend a required module's tables before
+ * runtime imports can finish registration. Keep that order explicit while
+ * the module remains the sole schema owner; the normal pass is idempotent.
+ */
+export function migrateRequiredModule(module: WaniganModule, d: Database.Database): void {
+  if (!module.required?.reason.trim()) {
+    throw new Error(`Module "${module.id}" must declare why it is required before its schema can bootstrap legacy dependencies.`);
+  }
+  module.migrate?.(d);
+}
+
 /** Called from `db.ts` after the built-in `migrate*` functions, inside their transaction. */
-export function migrateModules(d: Database.Database): void {
+export function migrateModules(d: Database.Database, guard: (operation: () => void) => void = operation => operation()): void {
   for (const module of registry) module.migrate?.(d);
   migratedOn = d;
+  migrationGuard = guard;
 }
 
 /** Called from `index.ts` once, inside `registerIpc()`, with its own `handle`. */
-export function registerModuleIpc(handle: IpcHandle): void {
+export function registerModuleIpc(
+  handle: IpcHandle,
+  context: ModuleIpcContext = { getWindow: () => null },
+): void {
   for (const module of registry) {
     const prefix = `${module.id}:`;
     const scoped: IpcHandle = (channel, fn) => {
@@ -139,11 +207,52 @@ export function registerModuleIpc(handle: IpcHandle): void {
       }
       handle(channel, fn);
     };
-    module.ipc?.(scoped);
+    module.ipc?.(scoped, context);
   }
 }
 
 /** Every module's recurring work, flattened for the scheduler in registration order. */
 export function moduleSchedules(): ModuleSchedule[] {
   return registry.flatMap((module) => module.schedules?.() ?? []);
+}
+
+/** Free upkeep is module-owned and never occupies or replaces a paid queue lane. */
+export function startModuleMaintenance(): () => void {
+  const jobs = registry.flatMap(module => module.maintenance?.() ?? []);
+  const ids = new Set<string>();
+  for (const job of jobs) {
+    if (!job.id || ids.has(job.id) || !Number.isSafeInteger(job.intervalMs) || job.intervalMs < 1_000) {
+      throw new Error(`Invalid or duplicate module maintenance job: ${job.id}`);
+    }
+    ids.add(job.id);
+  }
+  let active = true;
+  const timers = jobs.map(job => {
+    let running = false;
+    const run = async () => {
+      if (!active || running) return;
+      running = true;
+      try { await job.run(); }
+      catch (error) { console.warn(`[wanigan] ${job.id} maintenance failed:`, error); }
+      finally { running = false; }
+    };
+    const timer = setInterval(() => { void run(); }, job.intervalMs);
+    timer.unref?.();
+    void run();
+    return timer;
+  });
+  return () => { active = false; for (const timer of timers) clearInterval(timer); };
+}
+
+/** Register hot-path traffic through the host's guarded event wrapper. */
+export function registerModuleEvents(on: IpcOn): void {
+  for (const module of registry) {
+    const prefix = `${module.id}:`;
+    module.events?.((channel, fn) => {
+      if (!channel.startsWith(prefix)) {
+        throw new Error(`Module "${module.id}" tried to register IPC event "${channel}" outside its namespace "${prefix}".`);
+      }
+      on(channel, fn);
+    });
+  }
 }

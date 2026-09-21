@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -16,6 +16,9 @@ import {
   type DepOutcome, type DepsMode, type IncludeLimits, type IncludeOutcome, type PortBlock, type WorktreeBootstrap,
   type WorktreeCommandEnv, type WorktreeCommandRun, type WorktreeRunSummary, type WorktreeSetupConfig,
 } from '../shared/worktree-bootstrap';
+import { directoryLinkType } from '../shared/platform';
+import { hostPlatform } from './platform';
+import { acquireCheckoutActivity } from './checkout-activity';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -488,7 +491,7 @@ async function placeDependencies(repoRoot: string, worktree: string, mode: DepsM
       }
     }
     try {
-      fs.symlinkSync(src, dst, 'dir');
+      fs.symlinkSync(src, dst, directoryLinkType(hostPlatform()));
       linked.push({ path: rel, kind: 'dir', bytes: null });
       const unexcluded = await excludeLink(repoRoot, rel);
       record('linked', [fallback, unexcluded && `git will list the link as untracked because ${unexcluded}`].filter(Boolean).join('; ') || null);
@@ -517,6 +520,173 @@ async function placeDependencies(repoRoot: string, worktree: string, mode: DepsM
     } catch { /* a copy we cannot make is not worth failing the worktree over */ }
   }
   return { linked, deps };
+}
+
+/** A private dependency tree must not carry writable aliases out of its checkout. */
+async function privateDependencyProblem(folder: string, checkout: string): Promise<string | null> {
+  const pending = [folder];
+  const seen = new Set<string>();
+  let entries = 0;
+  const deadline = Date.now() + 30_000;
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (++entries > 500_000 || Date.now() > deadline) return 'the dependency isolation check exceeded its bounded scan';
+    if (entries % 512 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      const target = fs.realpathSync(current);
+      if (target !== checkout && !target.startsWith(checkout + path.sep)) {
+        return `${path.relative(checkout, current)} links outside this checkout`;
+      }
+      if (!seen.has(target)) pending.push(target);
+    } else if (stat.isDirectory()) {
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const name of fs.readdirSync(current)) pending.push(path.join(current, name));
+    } else if (stat.isFile() && stat.nlink > 1) {
+      return `${path.relative(checkout, current)} shares a hard-linked file`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Goal implementations may run package managers. A clone failure must stop the
+ * launch, never turn an isolated checkout back into a shared dependency link.
+ * Existing links are replaced only after a private copy has been completed.
+ */
+async function placePrivateDependencies(repoRoot: string, worktree: string): Promise<{ linked: LinkedPath[]; deps: DepOutcome[] }> {
+  const inside = canon(worktree);
+  const deps: DepOutcome[] = [];
+  for (const rel of LINK_DIRS) {
+    const src = path.join(repoRoot, rel);
+    const dst = path.join(inside, rel);
+    let temporary: string | null = null;
+    const started = Date.now();
+    const record = (result: DepOutcome['result'], detail: string | null = null) =>
+      deps.push({ path: rel, requested: 'clone', result, detail, durationMs: Date.now() - started });
+    try {
+      if (!landsInside(dst, inside)) throw new Error('its parent directory leads outside the checkout');
+      let existing: fs.Stats | null = null;
+      try { existing = fs.lstatSync(dst); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (existing && !existing.isSymbolicLink()) {
+        const problem = await privateDependencyProblem(dst, inside);
+        if (problem) throw new Error(problem);
+        record('skipped', 'The existing private dependency folder was verified; no copy was needed.');
+        continue;
+      }
+      // A safe in-checkout alias is already private. A link to another checkout
+      // is replaced only when it is the known source dependency, never an
+      // arbitrary directory a tracked symlink happens to name.
+      const oldLink = existing?.isSymbolicLink() ? fs.readlinkSync(dst) : null;
+      if (oldLink !== null) {
+        const target = fs.realpathSync(dst);
+        if (target === inside || target.startsWith(inside + path.sep)) {
+          const problem = await privateDependencyProblem(dst, inside);
+          if (problem) throw new Error(problem);
+          record('skipped', 'The dependency points inside this private checkout; no copy was needed.');
+          continue;
+        }
+        if (target !== fs.realpathSync(src)) throw new Error('the dependency link does not name the project dependency folder');
+      }
+      let source: fs.Stats;
+      try { source = fs.statSync(src); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !existing) continue;
+        throw error;
+      }
+      if (!source.isDirectory() || !(await isIgnored(repoRoot, rel))) {
+        if (existing) throw new Error('the shared dependency is not a gitignored project dependency folder');
+        continue;
+      }
+      const canonicalSource = fs.realpathSync(src);
+      if (!cloneable(canonicalSource, inside)) throw new Error('a private copy-on-write clone requires the same APFS volume on macOS');
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      temporary = fs.mkdtempSync(path.join(path.dirname(dst), '.wanigan-private-deps-'));
+      const staged = path.join(temporary, 'copy');
+      const copied = await cloneTree(canonicalSource, staged);
+      if (!copied.ok) throw new Error(copied.reason);
+      // Relative links inside the staged copy are tested against that copy;
+      // absolute aliases to the source do not become private merely by copying.
+      const problem = await privateDependencyProblem(staged, staged);
+      if (problem) throw new Error(problem);
+      if (oldLink !== null) {
+        const current = fs.lstatSync(dst);
+        if (!current.isSymbolicLink() || current.ino !== existing!.ino || fs.readlinkSync(dst) !== oldLink) {
+          throw new Error('the dependency link changed while its private copy was prepared');
+        }
+        fs.unlinkSync(dst);
+        try { fs.renameSync(staged, dst); } catch (error) {
+          // Restore only the link we just removed. The source was never changed.
+          if (!fs.existsSync(dst)) fs.symlinkSync(oldLink, dst, directoryLinkType(hostPlatform()));
+          throw error;
+        }
+      } else {
+        if (fs.existsSync(dst)) throw new Error('the dependency destination appeared while its copy was prepared');
+        fs.renameSync(staged, dst);
+      }
+      record('cloned', oldLink !== null ? 'Replaced the shared dependency link with a private copy.' : null);
+    } catch (error) {
+      record('failed', message(error));
+    } finally {
+      if (temporary) fs.rmSync(temporary, { recursive: true, force: true });
+    }
+  }
+  // Small configuration files keep their existing copy-only policy.
+  const { linked } = await placeDependencies(repoRoot, inside, 'skip');
+  return { linked, deps };
+}
+
+function requirePrivateSuccess(worktree: string, deps: DepOutcome[]): void {
+  const failed = deps.filter(value => value.result === 'failed');
+  if (failed.length) throw new Error(`Relay did not start: private dependencies could not be prepared (${failed.map(value => `${value.path}: ${value.detail}`).join('; ')}). No shared fallback was created. The checkout remains at ${worktree}; install private dependencies there before retrying.`);
+}
+
+function bootstrapRecord(row: Row): Record<string, unknown> {
+  if (!row.bootstrap_json) return {};
+  const value: unknown = JSON.parse(row.bootstrap_json);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('This checkout’s dependency record is unreadable.');
+  return value as Record<string, unknown>;
+}
+
+/** Persist ownership across a later Recent resume, handover or app restart. */
+export function retainWorktreeForReview(worktree: string): void {
+  const inside = canon(worktree);
+  const row = rowFor(inside);
+  if (!row) throw new Error('Wanigan cannot retain a goal checkout it has no record of.');
+  db().prepare('UPDATE worktrees SET bootstrap_json=? WHERE path=?')
+    .run(JSON.stringify({ ...bootstrapRecord(row), retainForReview: true }), inside);
+}
+
+/** Automatic session cleanup never consumes an explicitly retained goal tree. */
+export async function cleanupSessionWorktree(worktree: string): Promise<{ removed: boolean; detail: string }> {
+  const row = rowFor(canon(worktree));
+  if (row) {
+    try {
+      if (bootstrapRecord(row).retainForReview === true) {
+        return { removed: false, detail: 'Kept for goal review and retries. Remove this checkout explicitly when you are finished with it.' };
+      }
+    } catch {
+      return { removed: false, detail: 'Checkout ownership could not be read; automatic cleanup kept it.' };
+    }
+  }
+  return removeWorktree(worktree, false);
+}
+
+/** Main-only launch guard for an adopted retry/review checkout. */
+export async function ensurePrivateWorktreeDependencies(worktree: string): Promise<void> {
+  const inside = canon(worktree);
+  const row = rowFor(inside);
+  if (!row) throw new Error('Wanigan has no dependency record for this task checkout.');
+  const { deps } = await placePrivateDependencies(row.repo_root, inside);
+  const prior = bootstrapRecord(row);
+  const recorded = Array.isArray(prior.deps) ? prior.deps as DepOutcome[] : [];
+  const merged = [...recorded.filter(value => !deps.some(next => next.path === value.path)), ...deps.map(value =>
+    value.result === 'skipped' ? recorded.find(old => old.path === value.path && old.result === 'cloned') ?? value : value)];
+  db().prepare('UPDATE worktrees SET bootstrap_json=? WHERE path=?')
+    .run(JSON.stringify({ ...prior, privateDependencies: true, depsMode: 'clone', deps: merged }), inside);
+  requirePrivateSuccess(inside, deps);
 }
 
 /* ── .worktreeinclude ────────────────────────────────────────────────── */
@@ -818,7 +988,7 @@ function bootstrapFor(abs: string): WorktreeBootstrap | null {
  * fresh worktree is removed without force.
  */
 export async function createWorktree(
-  repoRoot: string, label: string, sessionId: string, opts: { startPoint?: string } = {},
+  repoRoot: string, label: string, sessionId: string, opts: { startPoint?: string; requirePrivateDependencies?: boolean } = {},
 ): Promise<WorktreeInfo> {
   const root = await repoRootFor(repoRoot);
   if (!root) {
@@ -933,8 +1103,10 @@ export async function createWorktree(
   // Placed before the caller launches an agent into it: a session that starts
   // without vendor/ fails its first hook and cannot autoload, and the error it
   // prints names a file rather than the directory that is really missing.
-  const depsMode = project ? depsModeFor(project.id) : DEFAULT_DEPS_MODE;
-  const { linked, deps } = await placeDependencies(root, abs, depsMode);
+  const depsMode = opts.requirePrivateDependencies ? 'clone' : project ? depsModeFor(project.id) : DEFAULT_DEPS_MODE;
+  const { linked, deps } = opts.requirePrivateDependencies
+    ? await placePrivateDependencies(root, abs)
+    : await placeDependencies(root, abs, depsMode);
   if (linked.length) {
     db().prepare('UPDATE worktrees SET linked_json = ? WHERE path = ?')
       .run(JSON.stringify(linked.map((l) => l.path)), abs);
@@ -948,10 +1120,12 @@ export async function createWorktree(
     include = { state: 'unreadable', detail: `copying stopped on an error (${message(e)}), and what was already copied stays` };
   }
   const ports = await worktreePortBlock(abs);
-  const recorded: Omit<WorktreeBootstrap, 'setup'> = { depsMode, deps, include, ports: { base: ports.base, count: ports.count } };
+  const recorded: Omit<WorktreeBootstrap, 'setup'> = { depsMode, deps, include, ports: { base: ports.base, count: ports.count },
+    ...(opts.requirePrivateDependencies ? { privateDependencies: true } : {}) };
   // Written before setup starts, so a Git view opened during a ten-minute
   // setup already shows what was placed, beside a setup that reads as running.
   db().prepare('UPDATE worktrees SET bootstrap_json = ? WHERE path = ?').run(JSON.stringify(recorded), abs);
+  if (opts.requirePrivateDependencies) requirePrivateSuccess(abs, deps);
 
   // Setup is last, once everything it might need is in place, and its result
   // never removes the worktree: see worktree-setup.ts. A failing command is a
@@ -971,6 +1145,8 @@ export async function createWorktree(
       };
     }
   }
+  // A user-approved setup command may itself create a shared dependency link.
+  if (opts.requirePrivateDependencies) await ensurePrivateWorktreeDependencies(abs);
 
   return {
     // For a pinned worktree, the HEAD read back above rather than the repo's.
@@ -985,9 +1161,17 @@ export async function createWorktree(
  * links whatever the project's dependency choice is — the name promises links.
  */
 export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]> {
-  const row = db().prepare('SELECT repo_root FROM worktrees WHERE path = ?').get(canon(worktreePath)) as
-    { repo_root: string } | undefined;
+  const row = rowFor(canon(worktreePath));
   if (!row) throw new Error(`Wanigan has no record of a worktree at ${worktreePath}.`);
+  try {
+    if ((JSON.parse(row.bootstrap_json ?? '{}') as { privateDependencies?: boolean }).privateDependencies) {
+      await ensurePrivateWorktreeDependencies(worktreePath);
+      return [];
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error('This checkout’s dependency record is unreadable; shared links were not created.');
+    throw error;
+  }
   return (await placeDependencies(row.repo_root, canon(worktreePath), 'link')).linked;
 }
 
@@ -1226,6 +1410,12 @@ async function runMerge(
 
 /* ── remove ──────────────────────────────────────────────────────────── */
 
+function unresolvedWorktreeCommands(worktree: string): boolean {
+  const rows = db().prepare("SELECT worktree FROM worktree_command_runs WHERE status='running' OR recovery_unresolved=1")
+    .all() as { worktree: string }[];
+  return rows.some(row => canon(row.worktree) === worktree);
+}
+
 /**
  * Removing is the one operation that destroys work, so the refusal is the
  * feature: uncommitted files in a worktree exist nowhere else, and a misclick
@@ -1246,6 +1436,13 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     };
   }
 
+  // Teardown and git removal mutate this checkout across awaits. They must
+  // exclude checkpoint restore even when no agent session owns the worktree.
+  const releaseActivity = acquireCheckoutActivity(abs, 'worktree', `remove-${randomUUID()}`);
+  try {
+  if (!force && unresolvedWorktreeCommands(abs)) {
+    return { removed: false, detail: 'Worktree commands may still be running. The checkout was kept because their ownership remains unresolved; reconcile them before automatic removal.' };
+  }
   const found = await inspect(abs);
   if (!found) {
     throw new Error(`${abs} is not a git worktree. Refusing to delete it — Wanigan only removes directories git says it created.`);
@@ -1275,6 +1472,9 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
   // teardown that could not stop a container is recorded and said below, not
   // turned into a checkout left on disk that exit cleanup would retry forever.
   const teardown = await teardownBefore(abs, info.repoRoot, row);
+  if (!force && unresolvedWorktreeCommands(abs)) {
+    return { removed: false, detail: 'Teardown left unresolved command ownership. Commands may still be running, so the checkout was kept instead of removing their working directory.' };
+  }
 
   const res = await git(info.repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), abs], 5 * 60_000);
   if (!res.ok) {
@@ -1292,6 +1492,7 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     ? ` Branch ${info.branch} is kept${info.ahead ? ` with ${plural(info.ahead, 'unmerged commit')}` : ''} — delete it yourself when you are sure.`
     : '';
   return { removed: true, detail: `Removed the worktree at ${abs}.${kept}${teardownSaid(teardown, true)}` };
+  } finally { releaseActivity(); }
 }
 
 /** The project a recorded worktree was made for: the row's own, or the one its repository is registered as. */

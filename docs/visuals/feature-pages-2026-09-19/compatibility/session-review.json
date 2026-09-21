@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-19T14:18:12.095Z",
+  "provenance": "Built renderer in isolated Electron, synthetic bridge; no real main, Git commands, agent calls, or user-data writes.",
+  "checks": [
+    "Session Review has code and recorded checks",
+    "Session history requests the recorded session scope",
+    "Run checks sends project and session IDs without renderer cwd",
+    "A stale result cannot retain a current-content success notice",
+    "A stale comparison preserves passed commands and the unsaved recipe",
+    "An unavailable comparison preserves evidence without a current badge",
+    "Historical runs remain visible without a current-content claim",
+    "Project ReviewGate remains available from Changes",
+    "Switching to project scope does not retain the session draft",
+    "Project checks retain their project-only API scope",
+    "A 1024px desktop wraps long checkout provenance without horizontal overflow"
+  ],
+  "failures": [],
+  "errors": []
+}

@@ -54,9 +54,10 @@ const RAY_LIFT = 0.15;
 export function mountFluid(
   canvas: HTMLCanvasElement,
   rig: RigLayout,
-  opts: Partial<Pick<SolverParams, 'spacing' | 'fill'>> = {},
+  opts: Partial<Pick<SolverParams, 'spacing' | 'fill'>> & { initialBasin?: number } = {},
 ): FluidMount | null {
-  const solver = new FluidSolver(rig, opts);
+  const { initialBasin = 0, ...params } = opts;
+  const solver = new FluidSolver(rig, params, initialBasin);
   const renderer = createFluidRenderer(canvas, solver.params.spacing);
   if (!renderer) return null;
 
@@ -74,6 +75,15 @@ export function mountFluid(
     }
     renderer.resize(w, h);
   };
+
+  // Targets are allocated on the first resize, so a renderer that builds fine
+  // can still fail here. Asking now means the caller gets the same `null` it
+  // already handles, rather than a mount that can only draw nothing.
+  fit();
+  if (renderer.failed()) {
+    renderer.dispose();
+    return null;
+  }
 
   return {
     setGate: (i, open) => solver.setGate(i, open),
@@ -106,6 +116,20 @@ export function mountFluid(
       // water runs slow, it does not later run fast to catch up.
       if (bank > FIXED_DT) bank = FIXED_DT;
       fit();
+      // A resize to a new size can fail where the first one did not. Stopping
+      // leaves the canvas cleared and the CSS rail beneath it visible, which
+      // is the honest picture; continuing would composite from targets that
+      // were never drawn into.
+      if (renderer.failed()) {
+        disposed = true;
+        renderer.dispose();
+        // The buffer of a lost context keeps its last pixels, and on this rail
+        // that is a block of colour sitting over the SVG. Hiding the canvas is
+        // what the CSS already does for every tier below this one, so the rail
+        // simply becomes the one a machine without the fluid would have had.
+        canvas.hidden = true;
+        return;
+      }
       const positions = solver.positions;
       renderer.draw(positions, positions.length / 3, rig, theme);
     },

@@ -54,12 +54,12 @@ export default function HomeWork({ sessions, attention, read, projects, projectI
           <div><dt>Workspace</dt><dd>{selected.session.worktree || selected.session.projectPath}</dd></div>
         </dl>
         <button className="btn btn-primary" onClick={() => onOpenSession(selected.session.id)}>
-          <Icon name={selected.attention.kind === 'finished' ? 'file-text' : 'terminal'} />
-          {selected.attention.kind === 'finished' ? 'Inspect session' : 'Open terminal'}
+          <Icon name="terminal" />
+          {selected.attention.kind === 'finished' ? 'Open session' : 'Open terminal'}
         </button>
         <p className="home-work-guidance">{selected.attention.kind === 'permission'
           ? 'Decide in the agent’s original permission prompt.'
-          : selected.attention.kind === 'finished' ? 'A finished turn still needs its changes and verification reviewed.'
+          : selected.attention.kind === 'finished' ? 'In the session, choose Review work to inspect its changes and verification.'
             : 'Read the recorded error and continue from the session.'}</p>
       </section>}
     </section> : read === 'ready' && scoped.length > 0 ? <div className="home-work-clear">

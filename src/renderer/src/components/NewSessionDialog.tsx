@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AccountResolution, AgentAccount, BudgetState, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
@@ -602,9 +603,9 @@ export default function NewSessionDialog({
           })()}
           <SectionHead label="What should the agent do?" right={initialPrompt ? <button className="btn btn-sm" type="button" onClick={() => setInitialPrompt('')}>Discard draft</button> : undefined} />
           <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
-          <textarea id="launch-first-message" data-initial-focus className="field launch-message" aria-label="First message" rows={3}
+          <PromptField scopeKey={`new-session:${projectId}:${providerId}`} purpose="first session message" actionsDisabled={busy} id="launch-first-message" data-initial-focus className="field launch-message" aria-label="First message" rows={3}
             placeholder="Describe the task and what a good result looks like."
-            value={initialPrompt} onChange={event => setInitialPrompt(event.target.value)} />
+            value={initialPrompt} onValueChange={setInitialPrompt} />
           <p className="launch-draft-note">{initialPrompt ? projectId ? 'Draft kept for this project when you close this window.' : 'Draft kept until you choose a project.' : 'Leave blank to start an interactive terminal.'}</p>
           <p className="launch-resolved">{provider?.label ?? 'Choose an agent'} · {project?.name ?? 'Choose a project'} · {isolate ? 'Isolated worktree' : 'Project checkout'}<br />Permissions: {permissionMode || 'CLI default'} · Account: {accountSummary}</p>
         </section>

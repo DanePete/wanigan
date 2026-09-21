@@ -1,0 +1,720 @@
+{
+  "fixture": true,
+  "before": true,
+  "measurements": [
+    {
+      "tab": "sessions",
+      "width": 1440,
+      "height": 960,
+      "heading": "platform",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "fleet",
+      "width": 1440,
+      "height": 960,
+      "heading": "Fleet",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "control",
+      "width": 1440,
+      "height": 960,
+      "heading": "Goals",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "batches",
+      "width": 1440,
+      "height": 960,
+      "heading": "Batches",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "insights",
+      "width": 1440,
+      "height": 960,
+      "heading": "Insights",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "learning",
+      "width": 1440,
+      "height": 960,
+      "heading": "Learning",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "plugins",
+      "width": 1440,
+      "height": 960,
+      "heading": "Plugins",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "schedules",
+      "width": 1440,
+      "height": 960,
+      "heading": "Schedules",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "git",
+      "width": 1440,
+      "height": 960,
+      "heading": "Changes",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "runs",
+      "width": 1440,
+      "height": 960,
+      "heading": "Runs",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "settings",
+      "width": 1440,
+      "height": 960,
+      "heading": "Settings",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "skills",
+      "width": 1440,
+      "height": 960,
+      "heading": "Skills",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "context",
+      "width": 1440,
+      "height": 960,
+      "heading": "Context",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "scout",
+      "width": 1440,
+      "height": 960,
+      "heading": "Scout",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "usage",
+      "width": 1440,
+      "height": 960,
+      "heading": "Usage",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "board",
+      "width": 1440,
+      "height": 960,
+      "heading": "Board",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "mission",
+      "width": 1440,
+      "height": 960,
+      "heading": "With Wanigan",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "extensions",
+      "width": 1440,
+      "height": 960,
+      "heading": "Extensions",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "relay",
+      "width": 1440,
+      "height": 960,
+      "heading": "Relay",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 1440,
+        "height": 908
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "mission",
+      "width": 960,
+      "height": 800,
+      "heading": "With Wanigan",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "sessions",
+      "width": 960,
+      "height": 800,
+      "heading": "platform",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "control",
+      "width": 960,
+      "height": 800,
+      "heading": "Goals",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "fleet",
+      "width": 960,
+      "height": 800,
+      "heading": "Fleet",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "usage",
+      "width": 960,
+      "height": 800,
+      "heading": "Usage",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "settings",
+      "width": 960,
+      "height": 800,
+      "heading": "Settings",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 748
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "sessions",
+      "width": 960,
+      "height": 560,
+      "heading": "platform",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "control",
+      "width": 960,
+      "height": 560,
+      "heading": "Goals",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "board",
+      "width": 960,
+      "height": 560,
+      "heading": "Board",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "settings",
+      "width": 960,
+      "height": 560,
+      "heading": "Settings",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "context",
+      "width": 960,
+      "height": 560,
+      "heading": "Context",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    },
+    {
+      "tab": "schedules",
+      "width": 960,
+      "height": 560,
+      "heading": "Schedules",
+      "documentOverflow": false,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 960,
+        "height": 52
+      },
+      "routes": null,
+      "body": {
+        "x": 0,
+        "y": 52,
+        "width": 960,
+        "height": 508
+      },
+      "dock": null,
+      "outside": [],
+      "errorBoundary": false
+    }
+  ],
+  "errors": []
+}

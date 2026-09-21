@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  curlConfig, FORECAST_MIN_SPAN_MS, forecastSentence, forecastWindow, limitJumps, MISS_CAUSE_LABELS, parseStatusLine, readingKey, shellQuote,
+  cmdQuote, curlConfig, FORECAST_MIN_SPAN_MS, forecastSentence, forecastWindow, limitJumps, MISS_CAUSE_LABELS, parseStatusLine, readingKey, shellQuote,
   statusLineCommand, summarizeWindow, windowEnvelope, type LimitSample,
 } from './status-line.ts';
 
@@ -238,6 +238,33 @@ test('the injected command quotes every path, carries the bound, and holds no to
     + `'/Users/a/Library/Application Support/wanigan/statusline/s_1.curl' `
     + `'/Users/a/Library/Application Support/wanigan/statusline/s_1.chain' 5`);
   assert.match(statusLineCommand({ relay: 'r', curl: 'c', config: 'k', chain: 'h', boundSeconds: 999 }), / 60$/);
+});
+
+test('the Windows command names an interpreter, because a .ps1 is not a program', () => {
+  const win = statusLineCommand({
+    relay: 'C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\relay.ps1',
+    curl: 'C:\\Windows\\System32\\curl.exe',
+    config: 'C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\s_1.curl',
+    chain: 'C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\s_1.chain',
+    platform: 'win32',
+  });
+  assert.equal(win,
+    'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '
+    + '"C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\relay.ps1" '
+    + '"C:\\Windows\\System32\\curl.exe" '
+    + '"C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\s_1.curl" '
+    + '"C:\\Users\\dane\\AppData\\Roaming\\wanigan\\statusline\\s_1.chain" 5');
+  // -File and not -Command: everything after -File is an argument rather than
+  // more script, which is the difference between a path and an injection point.
+  assert.ok(win.includes('-File'));
+  assert.ok(!win.includes('-Command'));
+  // Single quotes would be four arguments beginning with an apostrophe here.
+  assert.ok(!win.includes("'"));
+});
+
+test('a status line path that could break cmd.exe quoting is refused, not escaped', () => {
+  assert.equal(cmdQuote('C:\\Program Files\\Wanigan\\relay.ps1'), '"C:\\Program Files\\Wanigan\\relay.ps1"');
+  assert.throws(() => cmdQuote('C:\\od"d\\relay.ps1'), /double quote/);
 });
 
 test('the curl config carries the bearer as a header, refuses proxies, and cannot be split into a second directive', () => {

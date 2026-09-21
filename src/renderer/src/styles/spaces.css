@@ -32,40 +32,54 @@
 .space-switch-footer button:hover { background: var(--bg-sunk); }
 .space-switch-footer > span { font-size: var(--t-micro); color: var(--text-faint); }
 
-/* One context header and one stable destination rail. Content owns the height. */
-.workbench-shell.mission-shell .app-header { min-height: var(--topbar-h); border-bottom: 1px solid var(--line-soft); gap: var(--s-3); }
-.workbench-shell.mission-shell .workspace { padding: 0; }
-.workbench-shell.mission-shell .body { border: 0; border-radius: 0; }
+/* The inset workspace and bottom dock share the original Mission shell. */
+.workbench-shell.mission-shell .app-header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 280px) minmax(0, 1fr); min-height: var(--space-topbar); border-bottom-color: transparent; gap: var(--s-4); }
+.workbench-shell.mission-shell .workspace { padding: 0 var(--s-3); gap: var(--s-3); }
+.workbench-shell.mission-shell .body { border: 1px solid var(--line-soft); border-radius: var(--r-xl); }
 .workbench-shell.mission-shell .brand-lockup { display: flex; }
+.workbench-start { display: flex; align-items: center; gap: var(--s-4); min-width: 0; }
+.workbench-shell .app-header .hdr-toggle { width: auto; height: var(--control-h); min-width: var(--control-h); gap: var(--s-2); padding: 0 var(--s-2); border: 1px solid var(--line-soft); font-size: var(--t-small); }
+.workbench-shell .app-header .hdr-toggle[aria-expanded='true'] { background: var(--bg-selected); }
 .workbench-shell .brand-context { display: none; }
-.workbench-shell .hdr-toggle { display: none; }
-.workbench-context { display: flex; align-items: center; gap: var(--s-4); flex: 1; min-width: 0; }
-.workbench-location { color: var(--text); font-size: var(--t-small); white-space: nowrap; }
+.workbench-shell .space-foot { --companion-size: calc(var(--control-h) + var(--s-4)); min-height: calc(var(--space-foot-h) - var(--s-3)); }
+/* The unavailable message needs a wider word than the compact orb, without
+   restoring the larger footer height when WebGPU cannot draw it. */
+.workbench-shell .space-foot .wanigan-orb-small[data-physics='unavailable'] canvas,
+.workbench-shell .space-foot .orb-unavailable { width: calc(var(--control-h) + var(--s-6)); }
+.workbench-shell .space-dock button { min-height: calc(var(--control-h) + var(--s-1)); padding: var(--s-2) var(--s-3); }
+.workbench-shell .nav-resume-session .nav-shortcut { display: none; }
+.workbench-context { display: flex; align-items: center; justify-content: center; gap: var(--s-4); flex: 1; min-width: 0; }
+.workbench-status { display: flex; align-items: center; gap: var(--s-2); flex: none; margin-left: var(--s-2); padding-left: var(--s-3); border-left: 1px solid var(--line); }
+.workbench-header-attention { display: inline-flex; align-items: center; gap: var(--s-2); flex: none; min-height: var(--control-h-sm); padding: var(--s-1) var(--s-2); border-radius: var(--r-pill); color: var(--warning); font-size: var(--t-small); white-space: nowrap; }
+.workbench-header-attention:hover { background: var(--bg-sunk); }
 .workbench-scope { color: var(--text-faint); font-size: var(--t-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workbench-context .project-spaces { width: 240px; margin: 0; }
-.workbench-context .space-switch-trigger { background: var(--bg-soft); border-radius: var(--r-sm); box-shadow: none; min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); }
-.workbench-context .space-switch-count { display: none; }
-.workbench-navigation { display: flex; flex-direction: column; flex: none; width: var(--sidebar-w); min-height: 0; padding: var(--s-4) var(--s-2); background: var(--bg-chrome); border-right: 1px solid var(--line-soft); }
+.workbench-context .project-spaces { width: 280px; margin: 0; }
+.workbench-shell .space-settings { display: grid; place-items: center; min-width: var(--control-h); min-height: var(--control-h); border-radius: var(--r-pill); }
+.workbench-shell .space-settings:hover, .workbench-shell .space-settings[aria-current] { background: var(--glass-selected); color: var(--text); }
+.workbench-navigation { display: flex; flex-direction: column; flex: none; width: var(--sidebar-w); min-height: 0; padding: var(--s-4) var(--s-2); background: var(--bg-chrome); border: 1px solid var(--line-soft); border-radius: var(--r-xl); }
 .workbench-areas { display: flex; flex-direction: column; gap: var(--s-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .workbench-area { min-width: 0; }
-.workbench-area-button { display: flex; width: 100%; align-items: center; gap: var(--s-3); text-align: left; min-height: var(--control-h); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); }
+.workbench-area-heading { display: flex; align-items: center; border-radius: var(--r-sm); }
+.workbench-area-heading[data-current='true'] { background: var(--bg-selected); }
+.workbench-area-button { display: flex; flex: 1; min-width: 0; width: 100%; align-items: center; gap: var(--s-2); text-align: left; min-height: var(--control-h); padding: var(--s-2) var(--s-2); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); }
 .workbench-area-button > .icon { flex: none; color: var(--text-faint); }
 .workbench-area-button > span:first-of-type { flex: 1; }
+.workbench-area-label { display: grid; gap: var(--s-1); min-width: 0; }
+.workbench-area-label small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text-faint); font-size: var(--t-micro); font-weight: 400; line-height: 1.4; }
 .workbench-area-button:hover { background: var(--bg-sunk); color: var(--text); }
-.workbench-area-button[aria-current] { background: var(--bg-selected); color: var(--text); font-weight: 550; }
+.workbench-area-button[aria-current] { color: var(--text); font-weight: 550; }
 .workbench-area-button[aria-current] > .icon { color: var(--text); }
 .workbench-area-count { font-size: var(--t-micro); font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.workbench-area-disclosure { display: grid; place-items: center; align-self: stretch; flex: none; min-width: var(--control-h-sm); border-radius: var(--r-sm); color: var(--text-faint); }
+.workbench-area-disclosure:hover { background: var(--bg-sunk); color: var(--text); }
 .workbench-local-routes { display: grid; gap: var(--s-1); padding: var(--s-2) 0 var(--s-2) var(--s-4); }
+.workbench-local-routes[hidden] { display: none; }
 .workbench-local-routes > button { display: flex; align-items: center; gap: var(--s-2); text-align: left; color: var(--text-faint); border-radius: var(--r-sm); min-height: var(--control-h-sm); padding: var(--s-1) var(--s-3); font-size: var(--t-small); }
 .workbench-local-routes > button:hover { color: var(--text); background: var(--bg-sunk); }
 .workbench-local-routes > button[aria-current] { color: var(--accent); background: var(--accent-soft); }
 .workbench-local-routes .nav-tab-label { flex: 1; }
 .workbench-local-routes .nav-tab-chord { font-size: var(--t-micro); }
-/* An area you are not in keeps its views listed, a step quieter and tighter, so
-   seventeen destinations fit the rail without the current area losing its weight. */
-.workbench-local-routes[data-area-active='false'] { gap: 0; padding-block: 0 var(--s-1); }
-.workbench-local-routes[data-area-active='false'] > button { min-height: calc(var(--control-h-sm) - var(--s-1)); padding-block: calc(var(--s-1) / 2); }
-.workbench-local-routes[data-area-active='false'] .nav-tab-chord { opacity: .7; }
+.workbench-local-routes[data-area-active='false'] .nav-tab-chord { color: var(--text-faint); }
 .workbench-area-settings { margin-top: var(--s-3); border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
 .workbench-attention, .workbench-key { display: block; text-align: left; margin: var(--s-1) var(--s-3) var(--s-2); padding: var(--s-1) 0; font-size: var(--t-micro); color: var(--text-faint); }
 .workbench-attention { color: var(--warning); }
@@ -77,17 +91,32 @@
 .workbench-navigation-companion .companion-caption { display: grid; max-width: 110px; }
 .workbench-navigation-companion .wanigan-orb-small canvas { width: 40px; height: 40px; }
 .workbench-local-note { display: block; padding: var(--s-3); color: var(--text-faint); font-size: var(--t-micro); }
-.workbench-navigation-title { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-3) var(--s-4); color: var(--text-dim); font-size: var(--t-small); }
+.workbench-navigation-title { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex: none; padding: 0 var(--s-2) var(--s-2); color: var(--text-dim); font-size: var(--t-small); }
 .workbench-navigation-title button { display: grid; place-items: center; min-height: var(--control-h); min-width: var(--control-h); border-radius: var(--r-sm); }
 .workbench-navigation-title button:hover { background: var(--bg-sunk); }
+.workbench-search { display: flex; align-items: center; gap: var(--s-2); flex: none; min-height: var(--control-h); margin-bottom: var(--s-3); padding: var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-small); text-align: left; }
+.workbench-search:hover { background: var(--bg-sunk); color: var(--text); }
+.workbench-search > .icon { flex: none; }
+.workbench-search > span { flex: 1; }
+.workbench-search kbd { color: var(--text-faint); font: inherit; font-size: var(--t-micro); }
 .overlay-backdrop.workbench-navigation-backdrop { justify-content: flex-start; align-items: stretch; padding: var(--s-3); }
 .workbench-navigation-dialog { width: 240px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
+/* The temporary drawer spends its height on destinations. The desktop list
+   keeps descriptions and the companion; long expanded groups still scroll. */
+.workbench-navigation-dialog { padding-block: var(--s-2); }
+.workbench-navigation-dialog .workbench-area-label small,
+.workbench-navigation-dialog .workbench-navigation-companion { display: none; }
+.workbench-navigation-dialog .workbench-navigation-title { padding-bottom: var(--s-1); }
+.workbench-navigation-dialog .workbench-search { margin-bottom: var(--s-2); }
+.workbench-navigation-dialog .workbench-area-button { padding-block: var(--s-1); }
+.workbench-navigation-dialog .workbench-local-routes { gap: 0; padding-block: var(--s-1); }
+.workbench-navigation-dialog .workbench-area-settings { margin-top: var(--s-1); padding-top: var(--s-1); }
 @media (max-width: 1180px) {
+  .workbench-shell.mission-shell .app-header { grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s-3); }
   .workbench-shell.mission-shell .nav-new-session-label { display: inline; }
   .workbench-shell .nav-shortcut { display: none; }
 }
 @media (max-width: 980px) {
-  .workbench-shell .hdr-toggle { display: inline-flex; }
   .workbench-shell.mission-shell .brand-lockup { display: none; }
   .workbench-shell.mission-shell .nav-actions { margin-left: auto; }
   .workbench-context .project-spaces { width: 220px; }
@@ -95,10 +124,29 @@
 }
 @media (max-width: 720px) {
   .workbench-shell.mission-shell .app-header { gap: var(--s-2); }
+  .workbench-shell .app-header .hdr-toggle > span { display: none; }
   .workbench-shell.mission-shell .nav-new-session, .workbench-shell.mission-shell .nav-views { display: inline-flex; }
   .workbench-context { gap: var(--s-2); }
   .workbench-context .project-spaces { width: auto; flex: 1; }
-  .workbench-location { display: none; }
-  .workbench-shell .nav-new-session-label, .workbench-shell .nav-resume-session-label { display: none; }
+  .workbench-shell.mission-shell .workspace { padding: 0 var(--s-2); }
+  .workbench-header-attention > span:last-child { display: none; }
+  .workbench-shell.mission-shell .nav-resume-session-label { display: none; }
   .workbench-shell .nav-views-shortcut { display: none; }
+  .workbench-status { margin-left: 0; padding-left: var(--s-2); }
+  .workbench-shell .nav-views-button > span:not(.nav-views-shortcut) { display: none; }
+  .workbench-shell .nav-views-button { min-width: var(--control-h); }
+}
+@media (max-width: 460px) {
+  .workbench-shell.mission-shell .nav-new-session-label { display: none; }
+  .workbench-shell .space-foot { grid-template-columns: minmax(0, 1fr) auto; }
+  .workbench-shell .space-foot > .companion-presence, .workbench-shell .space-foot-note { display: none; }
+  .workbench-shell .space-dock { grid-column: 1; justify-self: start; max-width: 100%; overflow-x: auto; }
+  .workbench-shell .space-settings { grid-column: 2; }
+}
+@media (max-height: 650px) {
+  .workbench-shell.mission-shell .app-header { min-height: var(--topbar-h); }
+  .workbench-shell .space-foot { --companion-size: calc(var(--control-h) + var(--s-2)); min-height: calc(var(--control-h) + var(--s-5)); padding-block: var(--s-1); }
+}
+@media (pointer: coarse) {
+  .workbench-shell .app-header .hdr-toggle, .workbench-shell .space-dock button, .workbench-shell .space-settings { min-width: 44px; min-height: 44px; }
 }

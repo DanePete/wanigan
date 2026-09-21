@@ -1,19 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
-import { db, dataDir } from './db';
+import { db } from './db';
 import * as backup from './backup';
 import * as attachments from './attachments';
 import { copyVerifiedBackupFiles, snapshotBackupFiles, verifyBackupFiles } from './backup-files';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 
-/** Must run last: a successful real restore closes the main database connection. */
+/** Shared smoke keeps its unresolved fixtures; clean native restore runs separately. */
 export function runAuditBackupSmoke(check: Check, say: (text: string) => void): void {
   say('── audit repairs · artifact backup, restoration and manual retention');
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-backup-regression-'));
-  const root = dataDir();
   const sessionIds = ['audit-retention-unused', 'audit-retention-generated', 'audit-retention-referenced', 'audit-retention-live', 'audit-retention-changed'];
   const old = Date.now() - 90 * 86400000;
   const refused = (action: () => unknown): boolean => { try { action(); return false; } catch { return true; } };
@@ -86,22 +84,19 @@ export function runAuditBackupSmoke(check: Check, say: (text: string) => void): 
   db().prepare('INSERT INTO review_runs (id,project_id,started_at,ended_at,status,results_json) VALUES (?,?,?,?,?,?)')
     .run('audit-backup-review', projectId, clock, clock + 1, 'passed', '[]');
   check(backup.inspectBackup(made.dir).wouldDiscardNewer, 'standalone review evidence advances backup loss detection without a learning signal');
-  check(refused(() => backup.restoreBackup(made.dir, { confirm: true })), 'new review evidence requires explicit overwrite consent');
+  check(refused(() => backup.restoreBackup(made.dir, { confirm: true, previewToken: backup.previewBackupRestore(made.dir).token })), 'new review evidence requires explicit overwrite consent');
   db().prepare('DELETE FROM review_runs WHERE id=?').run('audit-backup-review');
   db().prepare('INSERT INTO review_recipes (project_id,commands_json,updated_at) VALUES (?,?,?) ON CONFLICT(project_id) DO UPDATE SET updated_at=excluded.updated_at')
     .run(projectId, '["true"]', clock + 2);
   check(backup.inspectBackup(made.dir).wouldDiscardNewer, 'recipe changes also advance backup loss detection');
 
   fs.writeFileSync(artifact, 'newer local output retained in replaced folder');
-  const restored = backup.restoreBackup(made.dir, { confirm: true, overwriteNewer: true });
-  check(fs.readFileSync(artifact, 'utf8') === 'only generated copy', 'real restore reinstates generated artifacts');
-  check(fs.readFileSync(path.join(restored.replacedDir, 'attachments', sessionIds[1], 'only-report.md'), 'utf8') === 'newer local output retained in replaced folder',
-    'real restore preserves replaced artifacts for recovery');
-  check(restored.relaunchRequired && fs.existsSync(path.join(root, 'wanigan.db')), 'artifact restore retains the database swap and relaunch contract');
-  const restoredDb = new Database(path.join(root, 'wanigan.db'), { readonly: true });
-  try {
-    const row = restoredDb.prepare('SELECT stored_path FROM attachments WHERE id=?').get(relocated.id) as { stored_path: string };
-    check(row.stored_path === relocated.storedPath, 'restore rebases structured attachment paths onto the destination machine');
-  } finally { restoredDb.close(); }
+  const preview = backup.previewBackupRestore(made.dir);
+  check(refused(() => backup.restoreBackup(made.dir, { confirm: true, overwriteNewer: true, previewToken: preview.token })),
+    'shared smoke unresolved execution/billing fixtures refuse database replacement even with overwrite consent');
+  check(fs.readFileSync(artifact, 'utf8') === 'newer local output retained in replaced folder',
+    'refused restore leaves live artifacts untouched');
+  check(db().prepare('SELECT stored_path FROM attachments WHERE id=?').get(relocated.id) !== undefined,
+    'refused restore leaves the current database open and its evidence available');
   fs.rmSync(temporary, { recursive: true, force: true });
 }

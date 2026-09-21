@@ -1,0 +1,758 @@
+{
+  "evidence": "unauthenticated public OpenRouter metadata; no inference or MCP calls",
+  "inferenceRequests": 0,
+  "accountAccessVerified": false,
+  "licenseOrOpenWeightsVerified": false,
+  "selection": "At most two newest-created tool-declaring text models per DeepSeek/Qwen family and one per Mistral/GLM family, not ranked by price or quality.",
+  "priorSandboxAttempt": {
+    "at": "2026-09-19T19:06:26.431923+00:00",
+    "url": "https://openrouter.ai/api/v1/models",
+    "error": "DNS resolution failed: nodename nor servname provided, or not known"
+  },
+  "requests": [
+    {
+      "url": "https://openrouter.ai/api/v1/models",
+      "method": "GET",
+      "requestedAt": "2026-09-19T19:08:34.265765+00:00",
+      "authorization": "none",
+      "redirects": "refused",
+      "httpStatus": 200,
+      "fetchedAt": "2026-09-19T19:08:34.500747+00:00",
+      "bytes": 739854,
+      "contentSha256": "ae9f6ed20306da1bc8b35bce6058ea0445ee149ea184798450ad19db526b088b",
+      "status": "ok"
+    },
+    {
+      "url": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+      "method": "GET",
+      "requestedAt": "2026-09-19T19:08:34.502605+00:00",
+      "authorization": "none",
+      "redirects": "refused",
+      "httpStatus": 200,
+      "fetchedAt": "2026-09-19T19:08:34.651972+00:00",
+      "bytes": 22546,
+      "contentSha256": "7fad5a61a6de47fdf82686c627a66b8f92be6cd6fe8363c9605b4808e35e5678",
+      "status": "ok"
+    },
+    {
+      "url": "https://openrouter.ai/api/v1/models/qwen/qwen3.8-max-0902/endpoints",
+      "method": "GET",
+      "requestedAt": "2026-09-19T19:08:34.652118+00:00",
+      "authorization": "none",
+      "redirects": "refused",
+      "httpStatus": 200,
+      "fetchedAt": "2026-09-19T19:08:34.796855+00:00",
+      "bytes": 1428,
+      "contentSha256": "3381595f812d626eb0d779cf823b161a3d5fe4a20256d9afb8fc4e2b4957cd12",
+      "status": "ok"
+    }
+  ],
+  "candidates": [
+    {
+      "familySelection": "DeepSeek",
+      "id": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek: DeepSeek V4.1 Flash",
+      "created": 1789021285,
+      "contextLength": 1048576,
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000006",
+        "input_cache_read": "0.000000003",
+        "overrides": [
+          {
+            "utc_days": [
+              "saturday",
+              "sunday"
+            ],
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003"
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 0,
+            "utc_end": 100,
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003"
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 100,
+            "utc_end": 400,
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.000000006"
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 400,
+            "utc_end": 600,
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003"
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 600,
+            "utc_end": 1000,
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.000000006"
+          },
+          {
+            "utc_days": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday"
+            ],
+            "utc_start": 1000,
+            "utc_end": 0,
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003"
+          }
+        ]
+      },
+      "topProvider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 384000,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "familySelection": "DeepSeek",
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "name": "DeepSeek: DeepSeek V4 Flash Vision Exp",
+      "created": 1787311563,
+      "contextLength": 1048576,
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.0000002156",
+        "completion": "0.0000006468",
+        "input_cache_read": "0.00000000686"
+      },
+      "topProvider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 262144,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "familySelection": "Qwen",
+      "id": "qwen/qwen3.8-max-0902",
+      "name": "Qwen: Qwen3.8 Max (0902)",
+      "created": 1788469704,
+      "contextLength": 1000000,
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logprobs",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.000006",
+        "input_cache_read": "0.00000025",
+        "input_cache_write": "0.0000025"
+      },
+      "topProvider": {
+        "context_length": 1000000,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "familySelection": "Qwen",
+      "id": "qwen/qwen3.8-flash",
+      "name": "Qwen: Qwen3.8 Flash",
+      "created": 1787773060,
+      "contextLength": 1000000,
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logprobs",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.00000047",
+        "input_cache_read": "0.000000016",
+        "input_cache_write": "0.0000002"
+      },
+      "topProvider": {
+        "context_length": 1000000,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "familySelection": "Mistral",
+      "id": "mistralai/mistral-medium-3-5",
+      "name": "Mistral: Mistral Medium 3.5",
+      "created": 1777570439,
+      "contextLength": 262144,
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "max_tokens",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.0000015",
+        "completion": "0.0000075"
+      },
+      "topProvider": {
+        "context_length": 262144,
+        "max_completion_tokens": 209715,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "familySelection": "GLM",
+      "id": "z-ai/glm-5.3-flashx",
+      "name": "Z.ai: GLM 5.3 FlashX",
+      "created": 1789744020,
+      "contextLength": 1048576,
+      "supportedParameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ],
+      "inputModalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "pricing": {
+        "prompt": "0.00000037",
+        "completion": "0.00000125",
+        "input_cache_read": "0.000000075"
+      },
+      "topProvider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "sourceUrl": "https://openrouter.ai/api/v1/models"
+    }
+  ],
+  "endpointSamples": [
+    {
+      "modelId": "deepseek/deepseek-v4.1-flash",
+      "sourceUrl": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v4.1-flash/endpoints",
+      "endpointCount": 22,
+      "retainedEndpoints": [
+        {
+          "name": "Relace | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "Relace",
+          "tag": "relace/fp4",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 943718,
+          "quantization": "fp4",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "stop",
+            "max_tokens",
+            "logit_bias",
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "tools",
+            "tool_choice",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.00000013",
+            "completion": "0.00000052",
+            "input_cache_read": "0.0000000026",
+            "discount": 0
+          }
+        },
+        {
+          "name": "Morph | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "Morph",
+          "tag": "morph",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 943718,
+          "quantization": "unknown",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "stop",
+            "top_p",
+            "top_k",
+            "min_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "seed",
+            "logit_bias",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.000000135",
+            "completion": "0.00000054",
+            "input_cache_read": "0.00000000405",
+            "discount": 0.55
+          }
+        },
+        {
+          "name": "DeepInfra | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "DeepInfra",
+          "tag": "deepinfra/fp8",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 131072,
+          "quantization": "fp8",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "repetition_penalty",
+            "top_k",
+            "seed",
+            "min_p",
+            "logit_bias",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "response_format",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.00000014",
+            "completion": "0.00000042",
+            "input_cache_read": "0.0000000042",
+            "discount": 0.3
+          }
+        },
+        {
+          "name": "Alibaba | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "Alibaba",
+          "tag": "alibaba",
+          "context_length": 1000000,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 393216,
+          "quantization": "unknown",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "presence_penalty",
+            "response_format",
+            "top_k",
+            "frequency_penalty",
+            "stop",
+            "tools",
+            "tool_choice",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000015",
+            "discount": 0,
+            "overrides": [
+              {
+                "utc_start": 0,
+                "utc_end": 1400,
+                "prompt": "0.0000003",
+                "completion": "0.0000012",
+                "input_cache_read": "0.00000003"
+              },
+              {
+                "utc_start": 1400,
+                "utc_end": 0,
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000015"
+              }
+            ]
+          }
+        },
+        {
+          "name": "DeepSeek | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "DeepSeek",
+          "tag": "deepseek",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 384000,
+          "quantization": "unknown",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "logprobs",
+            "top_logprobs",
+            "tools",
+            "tool_choice",
+            "response_format",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "input_cache_read": "0.000000003",
+            "discount": 0,
+            "overrides": [
+              {
+                "utc_days": [
+                  "saturday",
+                  "sunday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 0,
+                "utc_end": 100,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 100,
+                "utc_end": 400,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.0000003",
+                "completion": "0.0000012",
+                "input_cache_read": "0.000000006"
+              },
+              {
+                "utc_start": 400,
+                "utc_end": 600,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              },
+              {
+                "utc_start": 600,
+                "utc_end": 1000,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.0000003",
+                "completion": "0.0000012",
+                "input_cache_read": "0.000000006"
+              },
+              {
+                "utc_start": 1000,
+                "utc_end": 0,
+                "utc_days": [
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday"
+                ],
+                "prompt": "0.00000015",
+                "completion": "0.0000006",
+                "input_cache_read": "0.000000003"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Sail Research | deepseek/deepseek-v4.1-flash-20260910",
+          "provider_name": "Sail Research",
+          "tag": "sail-research/fp4",
+          "context_length": 1048576,
+          "max_prompt_tokens": null,
+          "max_completion_tokens": 384000,
+          "quantization": "fp4",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "frequency_penalty",
+            "max_tokens",
+            "presence_penalty",
+            "seed",
+            "stop",
+            "temperature",
+            "top_k",
+            "top_p",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "logprobs",
+            "top_logprobs",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000006",
+            "input_cache_read": "0.00000004",
+            "discount": 0
+          }
+        }
+      ],
+      "retainedAtMost": 6
+    },
+    {
+      "modelId": "qwen/qwen3.8-max-0902",
+      "sourceUrl": "https://openrouter.ai/api/v1/models/qwen/qwen3.8-max-0902/endpoints",
+      "endpointCount": 1,
+      "retainedEndpoints": [
+        {
+          "name": "Alibaba | qwen/qwen3.8-max-20260902",
+          "provider_name": "Alibaba",
+          "tag": "alibaba",
+          "context_length": 1000000,
+          "max_prompt_tokens": 983616,
+          "max_completion_tokens": 131072,
+          "quantization": "unknown",
+          "status": 0,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "presence_penalty",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "logprobs",
+            "top_logprobs",
+            "top_k",
+            "frequency_penalty",
+            "stop",
+            "reasoning_effort"
+          ],
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000006",
+            "input_cache_read": "0.00000025",
+            "input_cache_write": "0.0000025",
+            "discount": 0
+          }
+        }
+      ],
+      "retainedAtMost": 6
+    }
+  ],
+  "catalogRowCount": 447,
+  "reportedTotalCount": 447,
+  "reportedPaginationLinks": {
+    "next": null
+  },
+  "completedAt": "2026-09-19T19:08:34.796937+00:00"
+}

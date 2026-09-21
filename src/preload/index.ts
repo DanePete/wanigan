@@ -1,3 +1,10 @@
+import type { SkillCatalogue } from '../shared/skill-catalogue';
+import type { StoreSourceInfo, StoreUpdate } from '../shared/mcp-registry';
+import type { StoreDownloadsStatus, StoreQuery, StoreResults, StoreSyncResult } from '../shared/store-query';
+import type { RecoveryInspection, RecoveryPreview } from '../shared/recovery';
+import type { ModelEconomicsQuote, ModelEconomicsQuoteInput, ModelEconomicsSettings, ModelEconomicsStatus } from '../shared/model-economics';
+import type { OpenRouterConnectionStatus } from '../shared/openrouter-connection';
+import type { RelayDeliveryKind, RelayDeliveryPreview, RelayDeliveryRead } from '../shared/relay-delivery';
 import type { PermissionControlAction } from '../shared/session-permissions';
 import type { DemoPromptId, DemoState } from '../shared/demo';
 import type { SessionGoal } from '../shared/goal-journey';
@@ -6,6 +13,7 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+import type { PromptImproveRequest, PromptImproveResult, PromptImproveStatus } from '../shared/prompt-improve';
 import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
 import type { AssistedByPreview } from '../shared/assisted-by';
 import type { LedgerChainStatus } from '../shared/ledger-chain';
@@ -25,7 +33,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
-  RelayCreateInput, RelayForecast, RelayRead,
+  RelayCreateInput, RelayForecast, RelayPreview, RelayPreviewInput, RelayRead,
   BackupCheck, BackupRestoreSummary, BackupSummary, AttachmentReclaimPlan, AttachmentReclaimReport,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   BoardCard, CodexAgentsChain, HaltState, InAppAlert, MobileAlertChannels, Interview, InterviewProposal, InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
@@ -66,7 +74,29 @@ function listen(channel: string, handler: (...args: any[]) => void): void {
   if (!demoWindow || channel === 'window:visibility' || channel === 'menu:route') ipcRenderer.on(channel, handler);
 }
 
+/** What the routing suggester reports about itself. Never the key, only a fingerprint. */
+export type SuggestStatusShape = {
+  /** A credential that decrypts. A file that will not read is not a key. */
+  hasKey: boolean;
+  /** A stored credential this Mac cannot read — a different fact from having none. */
+  unreadable: boolean;
+  fingerprint: string | null;
+  /** In force: switched on and credentialed. */
+  enabled: string[];
+  /** As switched, whether or not a credential makes them count. */
+  stored: string[];
+  capabilities: { id: string; label: string; describe: string; withoutIt: string }[];
+  host: string;
+  estimatedUsdPerCall: number;
+};
+
 const api = {
+  promptImprove: {
+    status: () => call<PromptImproveStatus>('prompt-improve:status'),
+    setEnabled: (enabled: boolean) => call<PromptImproveStatus>('prompt-improve:setEnabled', enabled),
+    improve: (input: PromptImproveRequest) => call<PromptImproveResult>('prompt-improve:improve', input),
+    cancel: (requestId: string) => call<boolean>('prompt-improve:cancel', requestId),
+  },
   windowVisibility: {
     current:()=>call<boolean>('window:visible'),
     onChanged:(cb:(visible:boolean)=>void)=>{
@@ -142,6 +172,15 @@ const api = {
       call<ExtensionInfo[]>('extensions:setEnabled', extensionId, enabled),
     uninstall: (extensionId: string) => call<ExtensionRemoval>('extensions:uninstall', extensionId),
     /**
+     * Give an installed extension a credential it declares. The value goes to
+     * the OS keychain and is never returned; the list that comes back says only
+     * whether each credential is present.
+     */
+    setCredential: (extensionId: string, credentialId: string, value: string) =>
+      call<ExtensionInfo[]>('extensions:setCredential', extensionId, credentialId, value),
+    clearCredential: (extensionId: string, credentialId: string) =>
+      call<ExtensionInfo[]>('extensions:clearCredential', extensionId, credentialId),
+    /**
      * Write this Wanigan's own configuration out as an extension directory.
      * The destination is chosen in the main process's own folder picker, so
      * there is no path to pass and a dismissed picker answers null.
@@ -150,6 +189,30 @@ const api = {
       call<ExtensionInspection | null>('extensions:export', input),
     /** What "Save as extension" would offer to include, read from live configuration. */
     exportable: () => call<{ mcpServers: { id: string; name: string; detail: string }[] }>('extensions:exportable'),
+  },
+  /**
+   * The store: catalogs that installed extensions declare, browsed and staged.
+   *
+   * There is no install call here, and that is the design. `stage` makes the main
+   * process fetch one exact version and write it out as an extension directory;
+   * what it returns is an ordinary inspection, installed with `extensions.install`
+   * after the same review as a folder picked by hand. The renderer never holds a
+   * manifest it could alter before approval — only a name and a version.
+   */
+  store: {
+    sources: () => call<StoreSourceInfo[]>('store:sources'),
+    /** Bring the local index current: the whole catalog once, then only what changed. */
+    sync: (sourceKey: string) => call<StoreSyncResult>('store:sync', sourceKey),
+    /** Search, sort and filter the local index. Answered on this machine; nothing typed is sent. */
+    query: (sourceKey: string, query: Partial<StoreQuery>) => call<StoreResults>('store:query', sourceKey, query),
+    stage: (sourceKey: string, name: string, version: string) =>
+      call<ExtensionInspection>('store:stage', sourceKey, name, version),
+    /** Installed store extensions with a newer version in the local index. Reports only; never applies one. */
+    updates: () => call<StoreUpdate[]>('store:updates'),
+    /** Where reading npm's weekly download counts stands, and what a read would cost. */
+    downloads: () => call<StoreDownloadsStatus>('store:downloads'),
+    /** Start reading npm's weekly download counts. Returns at once; poll `downloads`. */
+    fetchDownloads: () => call<StoreDownloadsStatus>('store:fetchDownloads'),
   },
   projects: {
     list: () => call<Project[]>('projects:list'),
@@ -200,8 +263,8 @@ const api = {
       call<CheckpointDiff>('checkpoints:diff', sessionId, fromId, toId),
     revertPlan: (sessionId: string, checkpointId: number) =>
       call<CheckpointRevertPlan>('checkpoints:revertPlan', sessionId, checkpointId),
-    revert: (sessionId: string, checkpointId: number) =>
-      call<CheckpointRevertResult>('checkpoints:revert', sessionId, checkpointId),
+    revert: (sessionId: string, checkpointId: number, previewToken: string) =>
+      call<CheckpointRevertResult>('checkpoints:revert', sessionId, checkpointId, previewToken),
     removeRepo: (projectPath: string, apply: boolean) =>
       call<{ refs: number; rows: number; applied: boolean }>('checkpoints:removeRepo', projectPath, apply),
   },
@@ -272,6 +335,20 @@ const api = {
       call<{ present: boolean; fingerprint: string | null }>('key:setProvider', id, key),
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
     clear: () => call<boolean>('key:clear'),
+  },
+
+  /**
+   * The routing suggester. Off unless a key is stored and a capability is
+   * switched on, so most installs never call anything here but `status`.
+   * No channel returns the stored key; `status` carries a fingerprint.
+   */
+  suggest: {
+    status: () => call<SuggestStatusShape>('suggest:status'),
+    setEnabled: (ids: string[]) => call<SuggestStatusShape>('suggest:setEnabled', ids),
+    /** Makes one real, billed call. Only on an explicit press. */
+    verify: () => call<{ ok: boolean; detail: string }>('suggest:verify'),
+    setKey: (key: string) => call<{ ok: boolean; detail: string; fingerprint: string | null }>('suggest:setKey', key),
+    clearKey: () => call<boolean>('suggest:clearKey'),
   },
 
   // ── phase 1 · telemetry ──────────────────────────────────────────────
@@ -528,7 +605,7 @@ const api = {
   },
   // ── phase 22 · skills ────────────────────────────────────────────────
   skills: {
-    list: (projectId?: string) => call<any>('skills:list', projectId),
+    list: (projectId?: string) => call<SkillCatalogue>('skills:list', projectId),
     refresh: () => call<boolean>('skills:refresh'),
     body: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('skills:body', p),
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
@@ -614,9 +691,9 @@ const api = {
     history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
     preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
     tick: () => call<number>('schedule:tick'),
-    daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:daemon'),
-    installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:installDaemon'),
-    uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:uninstallDaemon'),
+    daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:daemon'),
+    installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:installDaemon'),
+    uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string; caveat: string }>('schedule:uninstallDaemon'),
   },
   // ── AI Improvement Scout ──────────────────────────────────────────
   // Source URLs never cross this bridge. The main process selects from its
@@ -703,15 +780,37 @@ const api = {
   //
   // A relay is a goal (control above) created from one intent with every
   // agent stage routed first. Its stages start through `control.start`; these
-  // calls create, read, price and list it. Nothing here launches an agent.
+  // calls create, read, price and list it. Delivery acts only after its own
+  // preview and explicit commit/deploy request; it never launches an agent.
+  openRouterConnection: {
+    status: () => call<OpenRouterConnectionStatus>('openrouter-connection:status'),
+    setKey: (key: string) => call<OpenRouterConnectionStatus>('openrouter-connection:setKey', key),
+    clearKey: () => call<OpenRouterConnectionStatus>('openrouter-connection:clearKey'),
+  },
+  modelEconomics: {
+    status: () => call<ModelEconomicsStatus>('model-economics:status'),
+    setSettings: (input: ModelEconomicsSettings) => call<ModelEconomicsStatus>('model-economics:setSettings', input),
+    refresh: (input?: { modelIds?: string[] }) => call<ModelEconomicsStatus>('model-economics:refresh', input),
+    quote: (input: ModelEconomicsQuoteInput) => call<ModelEconomicsQuote[]>('model-economics:quote', input),
+  },
   relay: {
+    setAutomation: (docketId: string, input: { budgetUsd: number } | null) => call<RelayRead>('relay:setAutomation', docketId, input),
     create: (input: RelayCreateInput) => call<RelayRead>('relay:create', input),
+    /** What the suggester would do with this intent. Makes real calls when it is on; nothing is created. */
+    preview: (input: RelayPreviewInput) => call<RelayPreview>('relay:preview', input),
     read: (docketId: string) => call<RelayRead>('relay:read', docketId),
     /** The forecast, recomputed now from this project's history. Local, free, and always an estimate. */
     forecast: (docketId: string) => call<RelayForecast>('relay:forecast', docketId),
     /** Run the estimate phase by hand when it is ready and did not run itself. */
     estimate: (docketId: string) => call<RelayRead>('relay:estimate', docketId),
     list: (projectId: string, limit?: number) => call<WorkDocket[]>('relay:list', projectId, limit),
+    enableDelivery: (docketId: string) => call<RelayDeliveryRead>('relay:enableDelivery', docketId),
+    reopenDeliveryReview: (docketId: string) => call<RelayDeliveryRead>('relay:reopenDeliveryReview', docketId),
+    saveDeployConfig: (docketId: string, input: { command: string; timeoutMs: number }) => call<RelayDeliveryRead>('relay:saveDeployConfig', docketId, input),
+    previewDelivery: (docketId: string, kind: RelayDeliveryKind) => call<RelayDeliveryPreview>('relay:previewDelivery', docketId, kind),
+    commitDelivery: (docketId: string, input: { token: string; message: string }) => call<RelayDeliveryRead>('relay:commitDelivery', docketId, input),
+    deployDelivery: (docketId: string, input: { token: string }) => call<RelayDeliveryRead>('relay:deployDelivery', docketId, input),
+    cancelDeploy: (docketId: string) => call<RelayDeliveryRead>('relay:cancelDeploy', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {
@@ -969,6 +1068,11 @@ const api = {
   // ── backup and restore ───────────────────────────────────────────────
   // The folder is always chosen in a native dialog, so no path crosses this
   // bridge in either direction; null means the dialog was cancelled.
+  recovery: {
+    inspect: () => call<RecoveryInspection>('recovery:inspect'),
+    preview: (key: string) => call<RecoveryPreview>('recovery:preview', key),
+    apply: (token: string) => call<{ id: string; decision: string }>('recovery:apply', token),
+  },
   backup: {
     create: () => call<BackupSummary | null>('backup:create'),
     /** Read-only. Verifies a backup and reports what restoring it would cost. */

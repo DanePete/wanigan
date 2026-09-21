@@ -122,11 +122,18 @@ built around that limit rather than around how many agents a machine can launch:
 
 ## Quick start
 
-**You need:** macOS, [nvm](https://github.com/nvm-sh/nvm) (or Node `22.23.2` from
-[`.nvmrc`](.nvmrc)), and at least one agent CLI you are already signed in to —
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
+**You need:** macOS or Windows, [nvm](https://github.com/nvm-sh/nvm) (or Node
+`22.23.2` from [`.nvmrc`](.nvmrc)), and at least one agent CLI you are already
+signed in to — [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
 [Codex](https://github.com/openai/codex). Wanigan finds them on your login shell's
-`PATH`, or inside their VS Code extensions if that is where they live.
+`PATH`, through `PATHEXT` on Windows, or inside their VS Code extensions if that
+is where they live.
+
+**On Windows**, read [docs/windows.md](docs/windows.md) first. You need the
+Visual Studio Build Tools before `npm ci` will get through compiling `node-pty`
+and `better-sqlite3`, and that page also lists what Windows does not have yet —
+durable scheduling, the status line relay and Codex hook forwarding are all
+macOS-shaped today, and say so on screen rather than failing quietly.
 
 ```bash
 git clone https://github.com/DanePete/wanigan.git
@@ -141,7 +148,7 @@ fictional demo workspace — the one in these screenshots.
 
 | Command | What it does |
 |---|---|
-| `npm run app` | Launch through `scripts/launch.sh` (use this from a VS Code terminal) |
+| `npm run app` | Launch through `scripts/launch.mjs` (use this from a VS Code terminal) |
 | `npm run dev` | Hot reload — but it skips the launcher, see [the caveat](docs/guide.md#running-it) |
 | `npm test` | All eight gates: types, shared tests, style, dead code, lint, packaging, smoke. No network, no spend |
 | `npm run cli -- help` | The command-line interface over the same database |
@@ -186,6 +193,7 @@ Vulnerability reports and the full trust boundary: [SECURITY.md](SECURITY.md).
 |---|---|
 | [In-depth guide](docs/guide.md) | Every surface, how it works, and what it refuses to do |
 | [Provider packs](docs/provider-packs.md) | Manifest fields, capabilities, environment, adapters |
+| [Windows](docs/windows.md) | Build tools, how a `.cmd` shim is started, and what is not there yet |
 | [Demo privacy](docs/demo-privacy.md) | How the demo workspace is kept fictional |
 | [Contributing](CONTRIBUTING.md) | Setup, the test gates, and UI change requirements |
 | [Security policy](SECURITY.md) | Reporting, scope and the remote-control boundary |

@@ -1,0 +1,477 @@
+{
+  "startedAt": "2026-09-19T18:56:24.554Z",
+  "sourceCommit": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "node": "v22.23.2",
+  "platform": "darwin",
+  "sourceHashes": {
+    "src/main/checkpoints.ts": "5c5673be822fe74efda71d809caf95b8dfb49b26ab7e971ebdaea4624f268206",
+    "src/main/review.ts": "ceb582afbcf828c104c248de0d13a6eea115c0e0ee80daece51b5329238b396b",
+    "src/main/queue.ts": "66676dbb134ab5bd79bd85cff8e4f4ad236b235826a1b19d843ed050cc242f38",
+    "src/main/worktrees.ts": "2a55828414f5b547e5e2e570ab2a3f479b672a5e750bb93235648c5717e5a355"
+  },
+  "scenarios": [
+    {
+      "id": "R01",
+      "preview": {
+        "ok": true,
+        "checkpointId": 1,
+        "commit": "873727b8da4006f6af6e466583cb843b0bb10d25",
+        "files": [
+          {
+            "path": "tracked.txt",
+            "action": "restore"
+          }
+        ],
+        "totalFiles": 1,
+        "detail": "Restores 1 file to turn 0's state and deletes 0 created since. A safety snapshot is taken first, so this is undoable."
+      },
+      "apply": {
+        "ok": true,
+        "reverted": 1,
+        "deleted": 1,
+        "failed": [],
+        "preRevertCheckpointId": 3,
+        "detail": "Restored 1 and deleted 1 file to reach turn 0's state."
+      },
+      "deletedUnreviewed": true,
+      "undo": {
+        "ok": true,
+        "reverted": 2,
+        "deleted": 0,
+        "failed": [],
+        "preRevertCheckpointId": 4,
+        "detail": "Restored 2 and deleted 0 files to reach turn 0's state."
+      },
+      "restoredPostPreviewBytes": "created after preview\n",
+      "headUnchanged": true,
+      "indexUnchanged": true
+    },
+    {
+      "id": "R02",
+      "writerPid": 32871,
+      "preview": {
+        "ok": true,
+        "checkpointId": 1,
+        "commit": "851126df971eaf7f53d9a3104a6483eaff403f40",
+        "files": [
+          {
+            "path": "live.txt",
+            "action": "delete"
+          },
+          {
+            "path": "tracked.txt",
+            "action": "restore"
+          }
+        ],
+        "totalFiles": 2,
+        "detail": "Restores 1 file to turn 0's state and deletes 1 created since. A safety snapshot is taken first, so this is undoable."
+      },
+      "apply": {
+        "ok": true,
+        "reverted": 1,
+        "deleted": 1,
+        "failed": [],
+        "preRevertCheckpointId": 3,
+        "detail": "Restored 1 and deleted 1 file to reach turn 0's state."
+      },
+      "writerAliveAtApply": true,
+      "fileExistsAgain": true,
+      "subsequentBytes": 24
+    },
+    {
+      "id": "R03",
+      "injectedBoundary": "runGit(add) returns failure; no real disk failure",
+      "apply": {
+        "ok": false,
+        "reverted": 0,
+        "deleted": 0,
+        "failed": [],
+        "preRevertCheckpointId": null,
+        "detail": "The safety snapshot failed, so the revert did not start. Nothing was changed."
+      },
+      "unchangedBytes": "keep after failed safety\n"
+    },
+    {
+      "id": "R04",
+      "apply": {
+        "ok": true,
+        "reverted": 1,
+        "deleted": 0,
+        "failed": [],
+        "preRevertCheckpointId": 2,
+        "detail": "Restored 1 and deleted 0 files to reach turn 0's state."
+      },
+      "outsideUnchanged": true,
+      "finalPathIsSymlink": false,
+      "finalPathBytes": "baseline\n"
+    },
+    {
+      "id": "R05",
+      "apply": {
+        "ok": false,
+        "reverted": 0,
+        "deleted": 0,
+        "failed": [],
+        "preRevertCheckpointId": null,
+        "detail": "The checkout this checkpoint was captured in no longer exists. Wanigan will not restore it into a different directory. Nothing was changed."
+      }
+    },
+    {
+      "id": "R06",
+      "evidence": "production registration + actual child edit immediately after return; hooksCapable is fixture only",
+      "row": {
+        "id": 1,
+        "sessionId": "instant",
+        "turn": 0,
+        "kind": "session-start",
+        "at": 1789844186743,
+        "repoRoot": "$LAB/runtime/checkpoint-instant-edit/repo",
+        "commitHash": "1f6cda5a2d7a59ee047c720e87d8fa865d751914",
+        "treeHash": "9fa449dfac387b1108fcbf1482b13c2074732e31",
+        "filesChanged": null,
+        "status": "ok",
+        "detail": null
+      },
+      "capturedBytes": "agent first edit"
+    },
+    {
+      "id": "W-private-copy",
+      "outcome": "prepared",
+      "error": null,
+      "privateCopy": true,
+      "relinkPrivate": true,
+      "parentUnchanged": true,
+      "sourceLinkCount": 1,
+      "targetLinkCount": 1,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "cloned",
+            "detail": null,
+            "durationMs": 12
+          }
+        ]
+      },
+      "injectedBoundary": null
+    },
+    {
+      "id": "W-root-external",
+      "outcome": "refused",
+      "error": "Relay did not start: private dependencies could not be prepared (node_modules: the dependency link does not name the project dependency folder). No shared fallback was created. The checkout remains at $LAB/runtime/deps-root-external/checkout; install private dependencies there before retrying.",
+      "privateCopy": null,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 1,
+      "targetLinkCount": null,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "failed",
+            "detail": "the dependency link does not name the project dependency folder",
+            "durationMs": 1
+          }
+        ]
+      },
+      "injectedBoundary": null
+    },
+    {
+      "id": "W-nested-external",
+      "outcome": "refused",
+      "error": "Relay did not start: private dependencies could not be prepared (node_modules: package links outside this checkout). No shared fallback was created. The checkout remains at $LAB/runtime/deps-nested-external/checkout; install private dependencies there before retrying.",
+      "privateCopy": null,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 1,
+      "targetLinkCount": null,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "failed",
+            "detail": "package links outside this checkout",
+            "durationMs": 15
+          }
+        ]
+      },
+      "injectedBoundary": null
+    },
+    {
+      "id": "W-hardlink-existing",
+      "outcome": "refused",
+      "error": "Relay did not start: private dependencies could not be prepared (node_modules: node_modules/shared.txt shares a hard-linked file). No shared fallback was created. The checkout remains at $LAB/runtime/deps-hardlink-existing/checkout; install private dependencies there before retrying.",
+      "privateCopy": null,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 2,
+      "targetLinkCount": null,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "failed",
+            "detail": "node_modules/shared.txt shares a hard-linked file",
+            "durationMs": 0
+          }
+        ]
+      },
+      "injectedBoundary": null
+    },
+    {
+      "id": "W-hardlink-source",
+      "outcome": "prepared",
+      "error": null,
+      "privateCopy": true,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 2,
+      "targetLinkCount": 1,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "cloned",
+            "detail": null,
+            "durationMs": 13
+          }
+        ]
+      },
+      "injectedBoundary": null
+    },
+    {
+      "id": "W-clone-failure",
+      "outcome": "refused",
+      "error": "Relay did not start: private dependencies could not be prepared (node_modules: cp -c exited 1 (fixture clone failure)). No shared fallback was created. The checkout remains at $LAB/runtime/deps-clone-failure/checkout; install private dependencies there before retrying.",
+      "privateCopy": null,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 1,
+      "targetLinkCount": null,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "failed",
+            "detail": "cp -c exited 1 (fixture clone failure)",
+            "durationMs": 10
+          }
+        ]
+      },
+      "injectedBoundary": "cp close=1 and stderr fixture; actual volume not exhausted"
+    },
+    {
+      "id": "W-disk-full",
+      "outcome": "refused",
+      "error": "Relay did not start: private dependencies could not be prepared (node_modules: cp -c exited 1 (No space left on device)). No shared fallback was created. The checkout remains at $LAB/runtime/deps-disk-full/checkout; install private dependencies there before retrying.",
+      "privateCopy": null,
+      "relinkPrivate": null,
+      "parentUnchanged": true,
+      "sourceLinkCount": 1,
+      "targetLinkCount": null,
+      "bootstrap": {
+        "privateDependencies": true,
+        "depsMode": "clone",
+        "deps": [
+          {
+            "path": "node_modules",
+            "requested": "clone",
+            "result": "failed",
+            "detail": "cp -c exited 1 (No space left on device)",
+            "durationMs": 10
+          }
+        ]
+      },
+      "injectedBoundary": "cp close=1 and stderr fixture; actual volume not exhausted"
+    },
+    {
+      "id": "R07",
+      "kind": "crash",
+      "ownerPid": 35612,
+      "groupPid": 35633,
+      "writerPid": 35636,
+      "writerAliveAfterOwnerExit": true,
+      "beforeBytes": 6,
+      "afterBytes": 60,
+      "writesContinued": true,
+      "sweepClosed": 1,
+      "history": [
+        {
+          "id": "rev_a61ba7f2-ab4",
+          "projectId": "fixture",
+          "startedAt": 1789844188130,
+          "endedAt": 1789844188715,
+          "status": "failed",
+          "results": [
+            {
+              "command": "[Wanigan review gate]",
+              "exitCode": null,
+              "output": "Wanigan stopped while this gate was running, so the commands went with it. Whatever had already finished is recorded above; a command still in flight left no output, and nothing after it ran. Run the gate again for a complete result.",
+              "durationMs": 0
+            }
+          ],
+          "evidence": {
+            "version": 1,
+            "sessionId": null,
+            "recipeHash": "4eab96ad14d1f7b94f0841b819984dd10fcd528c8ff48d3d0222e94012d56177",
+            "commands": [
+              "'$NODE22' '$WORKSPACE/docs/research/relay-audit-2026-09-19/runtime/runtime-fixtures.cjs' writer '$LAB/runtime/review-crash/writes.log' '$LAB/runtime/review-crash/descendant.pid' & wait"
+            ],
+            "before": {
+              "cwd": "$LAB/runtime/review-crash/repo",
+              "head": "3be7ce72ca8813056602aead805b9d74f1fdb075",
+              "fingerprint": "951f4525bde36fb8602e38eaad84b750542e5178c68868c1c98405360dc89260",
+              "unavailableReason": null
+            },
+            "after": null
+          },
+          "freshness": {
+            "state": "unavailable",
+            "reason": "Current checkout has not been compared.",
+            "checkedAt": 1789844188716
+          }
+        }
+      ],
+      "limitation": "production review in Node owner; actual SIGKILL and DB reopen, no Electron window"
+    },
+    {
+      "id": "R08",
+      "kind": "graceful-owner",
+      "ownerPid": 35650,
+      "groupPid": 35671,
+      "writerPid": 35674,
+      "writerAliveAfterOwnerExit": true,
+      "beforeBytes": 6,
+      "afterBytes": 54,
+      "writesContinued": true,
+      "sweepClosed": 1,
+      "history": [
+        {
+          "id": "rev_cc06f504-49c",
+          "projectId": "fixture",
+          "startedAt": 1789844189022,
+          "endedAt": 1789844189592,
+          "status": "failed",
+          "results": [
+            {
+              "command": "[Wanigan review gate]",
+              "exitCode": null,
+              "output": "Wanigan stopped while this gate was running, so the commands went with it. Whatever had already finished is recorded above; a command still in flight left no output, and nothing after it ran. Run the gate again for a complete result.",
+              "durationMs": 0
+            }
+          ],
+          "evidence": {
+            "version": 1,
+            "sessionId": null,
+            "recipeHash": "9f23feb9e0ec5437b15b44f06d4229870a69427912c100bfd63902ee4f7fe6cd",
+            "commands": [
+              "'$NODE22' '$WORKSPACE/docs/research/relay-audit-2026-09-19/runtime/runtime-fixtures.cjs' writer '$LAB/runtime/review-graceful-owner/writes.log' '$LAB/runtime/review-graceful-owner/descendant.pid' & wait"
+            ],
+            "before": {
+              "cwd": "$LAB/runtime/review-graceful-owner/repo",
+              "head": "c351dce09e737ad36250fb10a8450143da6b5b26",
+              "fingerprint": "ff230fbdc0f173340ab784937084dfbc173c80d2ab12f3bb29df486b0332f48b",
+              "unavailableReason": null
+            },
+            "after": null
+          },
+          "freshness": {
+            "state": "unavailable",
+            "reason": "Current checkout has not been compared.",
+            "checkedAt": 1789844189593
+          }
+        }
+      ],
+      "limitation": "Node owner SIGTERM handler calls process.exit(0); not Electron before-quit/stopServices execution"
+    },
+    {
+      "id": "R09",
+      "initialCurrent": true,
+      "mutatedCurrent": false,
+      "concurrentError": "Checks are already running in this checkout.",
+      "immediateReceiptStatus": "running",
+      "completeStatus": "passed",
+      "noisyStatus": "passed",
+      "noisyOutputLength": 131173,
+      "truncationNote": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n[Wanigan kept the first 128KB of this command's output; the rest was discarded, not produced empty.]",
+      "failedStatus": "failed"
+    },
+    {
+      "id": "R10",
+      "itemId": "q_b8cfdb42",
+      "beforeDeathStarts": 1,
+      "starts": [
+        {
+          "at": 1789844185231,
+          "owner": "a",
+          "ownerPid": 32013,
+          "writerPid": 32305
+        },
+        {
+          "at": 1789844305700,
+          "owner": "b",
+          "ownerPid": 32338,
+          "writerPid": 89181
+        }
+      ],
+      "beforeDeath": {
+        "id": "q_b8cfdb42",
+        "kind": "headless",
+        "state": "running",
+        "priority": 100,
+        "label": "audit detached fixture",
+        "payload_json": "{\"fixture\":true}",
+        "blocked_by": null,
+        "attempts": 0,
+        "next_attempt_at": null,
+        "created_at": 1789844184990,
+        "started_at": 1789844185229,
+        "ended_at": null,
+        "error": null,
+        "lease_owner": "queue-32013-f6a15497-0ee5-420f-851f-e34c5aa06ef8",
+        "lease_expires_at": 1789844305634
+      },
+      "afterRecovery": {
+        "id": "q_b8cfdb42",
+        "kind": "headless",
+        "state": "running",
+        "priority": 100,
+        "label": "audit detached fixture",
+        "payload_json": "{\"fixture\":true}",
+        "blocked_by": null,
+        "attempts": 1,
+        "next_attempt_at": null,
+        "created_at": 1789844184990,
+        "started_at": 1789844305695,
+        "ended_at": null,
+        "error": null,
+        "lease_owner": "queue-32338-9f3d8088-4db1-4828-8292-1fae5aa9b061",
+        "lease_expires_at": 1789844425895
+      },
+      "waitedRealLeaseMs": 120469,
+      "oldWriterAliveAfterRecovery": true,
+      "newWriterAlive": true,
+      "bothWriting": true,
+      "limitation": "registered queue runner launches detached sentinel, not production headless or PTY runner"
+    }
+  ],
+  "finishedAt": "2026-09-19T18:58:25.903Z"
+}

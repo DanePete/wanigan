@@ -1,0 +1,25 @@
+{
+  "observedAt": "2026-09-19T19:00:12.617Z",
+  "installedApp": "/Applications/Wanigan.app",
+  "installedVersion": "0.1.0",
+  "files": [
+    {
+      "file": "out/main/index.js",
+      "installedSha256": "52d2db026c8735490703b8c1e0459f4224025de0aa7c22e7e9f25977eddd14b7",
+      "auditBuildSha256": "52d2db026c8735490703b8c1e0459f4224025de0aa7c22e7e9f25977eddd14b7",
+      "identical": true
+    },
+    {
+      "file": "out/preload/index.js",
+      "installedSha256": "722d62da12a0d5c2867830c9418a9f8fcc847a509626c457da3a635d3fb509bb",
+      "auditBuildSha256": "722d62da12a0d5c2867830c9418a9f8fcc847a509626c457da3a635d3fb509bb",
+      "identical": true
+    },
+    {
+      "file": "out/renderer/index.html",
+      "installedSha256": "16beb43bdcd8595596049096a36b06a6b6fe8ac5bd45df2585b4ac1b40e557a9",
+      "auditBuildSha256": "16beb43bdcd8595596049096a36b06a6b6fe8ac5bd45df2585b4ac1b40e557a9",
+      "identical": true
+    }
+  ]
+}

@@ -8,7 +8,8 @@ import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retired
 import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
-import { ProjectSpaces, WorkspaceNavigation } from './components/SpaceNavigation';
+import { ProjectSpaces, SpaceDock, SpaceRoutes, WorkspaceNavigation, WorkspaceNavigationToggle } from './components/SpaceNavigation';
+import { useWorkspaceNavigation } from './components/workspaceNavigation';
 import SessionChatter from './components/SessionChatter';
 import { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import { VIEW_RENDERERS, type ViewContext } from './views/registry';
@@ -25,7 +26,7 @@ import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './co
 import { useThemePreference } from './theme';
 import { claudeContextStatus, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
-import { areaFor, areaDestination, rememberDestination, projectScopeFor, type AreaMemory, type SpaceAreaId } from '@shared/spaces';
+import { areaFor, areaDestination, projectDestination, rememberDestination, projectScopeFor, type AreaMemory, type SpaceAreaId } from '@shared/spaces';
 import { sessionName } from '@shared/session-name';
 import './styles/spaces.css';
 
@@ -251,11 +252,10 @@ export default function App() {
   const [demoOn, setDemoOn] = useState(false);
   const [demoPrompt, setDemoPrompt] = useState<{ next: boolean } | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
-  // Compact navigation opens only on request; the desktop rail stays visible.
-  // Rendering closed
-  // until then would flash the shell narrow for everyone who never hid it.
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [compactNavigation, setCompactNavigation] = useState(() => window.matchMedia('(max-width: 980px)').matches);
+  const { sidebarOpen, closeSidebar, closeDrawer, compactNavigation, toggleSidebar } = useWorkspaceNavigation(message => setError({ message }));
+  useEffect(() => {
+    setNeedAnchor(anchor => anchor?.isConnected ? anchor : null);
+  }, [sidebarOpen, compactNavigation]);
   const areaMemory = useRef<AreaMemory>(rememberDestination({}, tab));
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
@@ -362,21 +362,6 @@ export default function App() {
   }, []);
 
   useEffect(() => { void loadMotion(); }, [loadMotion, tab]);
-
-  // The desktop rail stays put. Narrow windows use the shared dialog lifecycle.
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 980px)');
-    const changed = () => { setCompactNavigation(media.matches); setSidebarOpen(false); };
-    media.addEventListener('change', changed);
-    return () => media.removeEventListener('change', changed);
-  }, []);
-  const toggleSidebar = useCallback(() => {
-    if (!window.matchMedia('(max-width: 980px)').matches) {
-      document.querySelector<HTMLElement>('.workbench-area-button[aria-current]')?.focus();
-      return;
-    }
-    setSidebarOpen(open => !open);
-  }, []);
 
   useEffect(() => {
     const again = () => void loadMotion();
@@ -572,7 +557,7 @@ export default function App() {
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
     areaMemory.current = rememberDestination(areaMemory.current, next);
-    setSidebarOpen(false);
+    closeDrawer();
     if (next === tabRef.current) return;
     const swap = () => setTab(next);
     const doc = document as ViewTransitionDoc;
@@ -587,7 +572,7 @@ export default function App() {
     void transition.finished.catch((cause: unknown) => {
       announceError(`Could not open this view: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
-  }, [announceError]);
+  }, [announceError, closeDrawer]);
 
   const goArea = useCallback((area: SpaceAreaId) => go(areaDestination(area, areaMemory.current)), [go]);
 
@@ -640,7 +625,11 @@ export default function App() {
     setPaletteHits([]);
     if (!restoreFocus) return;
     const opener = paletteOpenerRef.current;
-    requestAnimationFrame(() => opener?.focus());
+    requestAnimationFrame(() => {
+      const target = opener?.isConnected && opener.getClientRects().length > 0
+        ? opener : document.querySelector<HTMLElement>('.hdr-toggle');
+      target?.focus();
+    });
   }, []);
 
   const openSession = useCallback((id: string) => {
@@ -927,6 +916,15 @@ export default function App() {
       haystack: 'resume session history restore continue reopen past recent conversation transcript',
       run: requestResumeSession,
     }, {
+      key: 'action:sidebar',
+      title: sidebarOpen ? 'Hide navigation' : 'Show navigation',
+      hint: sidebarOpen ? 'Give the current workspace more room' : 'Browse workspaces and all tools',
+      meta: chordLabels(keymap, 'sidebar').glyphs,
+      group: 'Actions',
+      staysPut: !compactNavigation,
+      haystack: 'sidebar side bar navigation menu rail panel collapse expand hide show focus',
+      run: toggleSidebar,
+    }, {
       key: 'action:shortcuts',
       title: 'Keyboard shortcuts',
       hint: 'Every binding, grouped by where it works',
@@ -948,6 +946,7 @@ export default function App() {
         hint: value === 'system' ? `Follow the Mac's appearance (${themeResolved} right now)` : `Use the ${word.toLowerCase()} theme everywhere`,
         meta: 'Setting',
         group: 'Actions',
+        searchOnly: true,
         staysPut: true,
         mark: themePreference === value ? { glyph: '●', word: 'current' } : undefined,
         haystack: `appearance theme ${value} light dark system colour color`,
@@ -993,7 +992,7 @@ export default function App() {
         mark: active ? { glyph: '●', word: 'selected' } : undefined,
         meta: 'Project', group: 'Projects',
         haystack: `${p.name} ${p.path} ${p.branch ?? ''} project repository folder`,
-        run: () => { choose(p.id); go(areaDestination('work', areaMemory.current)); },
+        run: () => { choose(p.id); go(projectDestination(areaMemory.current)); },
       });
     }
     for (const entry of SETTINGS_INDEX) {
@@ -1003,6 +1002,7 @@ export default function App() {
         hint: `Settings › ${entry.tabLabel} — ${entry.hint}`,
         meta: 'Setting',
         group: 'Settings',
+        searchOnly: true,
         haystack: `${entry.section} ${entry.keywords} settings ${entry.tabLabel}`,
         run: () => jumpToSettings({ tab: entry.tab, section: entry.section }),
       });
@@ -1021,7 +1021,7 @@ export default function App() {
     });
     return items;
   }, [attention, choose, go, jumpToSettings, keymap, openSession, paletteHits, paletteQuery, spaceId, projects,
-    reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved]);
+    reportError, requestNewSession, requestResumeSession, sessions, setTheme, themePreference, themeResolved, sidebarOpen, toggleSidebar, compactNavigation]);
 
   // The shell state each view renderer reads, under the shell's own names.
   // A plain object rather than a memo: the branches it replaced read these
@@ -1081,46 +1081,25 @@ export default function App() {
           </button>
         </section>
       )}
-      {/* One row, not two. The title bar and the tab strip were 52px + 48px of
-          permanent chrome above every view; the destinations moved to the side,
-          so the second row is gone and the terminal is 48px taller. The row
-          keeps its left inset for the traffic lights. */}
+      {/* Session actions and project scope occupy the title bar. Area-local
+          routes sit above the content; the dock remains visible below it. */}
       <header className="app-header">
-          <button className="hdr-toggle" type="button" onClick={toggleSidebar}
-                  aria-expanded={sidebarOpen} aria-controls={compactNavigation && !sidebarOpen ? undefined : "wanigan-sidebar"}
-                  aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
-                  title={`${compactNavigation ? 'Open navigation' : 'Focus navigation'} (${chordLabels(keymap, 'sidebar').glyphs})`}
-                  aria-label={`${compactNavigation ? 'Open navigation' : 'Focus navigation'} (${chordLabels(keymap, 'sidebar').spoken})`}>
-            <Icon name="panel" />
-          </button>
+        <div className="workbench-start">
+          <WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />
           <div className="brand-lockup">
             <span className="brand">Wanigan</span>
-            {/* The view on screen, not a tagline. A sidebar row is filled to
-                show where you are, but the row can be hidden and the window can
-                be behind another; the header should still answer "what am I
-                looking at" without a second glance. */}
-            <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
+        </div>
 
         <div className="workbench-context">
-          <span className="workbench-location">{labelForTab(tab)}</span>
           {projectScopeFor(tab) !== 'workspace'
             ? <ProjectSpaces projects={projects} selected={spaceId ?? (projectScopeFor(tab) === 'required' ? projectId ?? null : null)} ready={projectsRead} onAdd={addProject}
+                allSpacesDetail={projectScopeFor(tab) === 'required' ? 'Open Sessions across all projects' : undefined}
                 onSelect={(id) => { setSpaceId(id); if (id) choose(id);
                   else if (projectScopeFor(tab) === 'required') go('sessions'); }} />
             : <span className="workbench-scope">{areaFor(tab).id === 'fleet' || tab === 'control' ? 'Across all projects' : tab === 'settings' ? 'Application settings' : 'Workspace tools'}</span>}
         </div>
           <div className="nav-actions">
-            {/* The Learning view owns its scope control now — a nav-level
-                project select that only sometimes rendered was the invisible
-                scope that let two surfaces state contradictory counts. */}
-
-            {/* The emergency stop lives in the header rather than on a page,
-                because the moment you want it you do not want to navigate
-                first. It is a small, quiet control until it is pulled — an
-                always-red button in permanent chrome is one you stop seeing. */}
-            <HaltControl halt={halt} onChange={setHalt} />
-
             {/* Start and continue are one decision — "what am I working on
                 next" — so they sit as one joined control. Resume opens history
                 to read first; it never launches on its own. */}
@@ -1166,11 +1145,24 @@ export default function App() {
                         ? `Search views, projects, live sessions, settings and transcripts (${chordLabels(keymap, 'palette').spoken})`
                         : `${labelForTab(tab)} is the view on screen. Search every view, project and live session (${chordLabels(keymap, 'palette').spoken})`}
                       onClick={() => (palette ? closePalette() : openPalette())}>
+                <Icon name="search" size={14} />
                 {railHasActiveTab
                   ? <span>Search</span>
                   : <span><span aria-hidden="true">✓ </span>{labelForTab(tab)}</span>}
                 <span className="nav-views-shortcut" aria-hidden="true">{chordLabels(keymap, 'palette').glyphs}</span>
               </button>
+            </div>
+
+            {/* Global status stays apart from session creation. The stop
+                remains reachable on every view and still requires two clicks. */}
+            <div className="workbench-status" role="group" aria-label="Workspace status and controls">
+              {mark && <button className={`workbench-header-attention tone-${mark.tone}`} type="button"
+                aria-haspopup="dialog" aria-expanded={needAnchor !== null}
+                aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
+                onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
+                <span aria-hidden="true">{mark.glyph}</span><span>{needs.total} need you</span>
+              </button>}
+              <HaltControl halt={halt} onChange={setHalt} />
             </div>
 
             {/* Two controls and one status, not four. The "+ Headless runs ⌘0"
@@ -1181,18 +1173,10 @@ export default function App() {
                 "Appearance: …" actions so the change stays two keystrokes
                 away — the setting is not hidden, it is no longer the widest
                 thing in the toolbar. */}
-            {activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
+            {tab === 'sessions' && activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
           </div>
       </header>
 
-      {/* Destinations left the horizontal axis. Thirteen text tabs needed a
-          second 48px header row and still overflowed at 960px with Runs and
-          Settings off-screen behind a 5px scrollbar — the rail's own rationale
-          (index.css) failed at the width it was written for. A vertical list
-          holds all fifteen with room for an icon, the marks and the chord, and
-          the window gets those 48px back for the terminal. ⌘1–9, ⌘0, ⌘, and
-          every ⌘⇧ chord are unchanged; the palette is still the complete
-          index. */}
       {/* Above the workspace, not inside it. A halted fleet is a fact about the
           whole app rather than about whichever tab is on screen, so it belongs
           in the same band as the recovery strip and the demo banner — and it
@@ -1204,22 +1188,14 @@ export default function App() {
           it becomes a third column that stretches to the full height of the
           window. */}
       {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
+      <SpaceRoutes tab={tab} go={go} />
       <div className="workspace">
         <WorkspaceNavigation tab={tab} go={go} goArea={goArea} compact={compactNavigation}
-          open={sidebarOpen} onClose={() => setSidebarOpen(false)} needs={needs.total} running={running}
+          open={sidebarOpen} onClose={closeSidebar} onSearch={() => { closeDrawer(); openPalette(); }} needs={needs.total} running={running}
           runsInFlight={runsInFlight} batchWork={batchWork}
-          attentionAction={mark ? <button className={`workbench-attention tone-${mark.tone}`} type="button"
-            aria-haspopup="dialog" aria-expanded={needAnchor !== null}
-            aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
-            onClick={event => setNeedAnchor(cur => cur ? null : event.currentTarget)}>
-            <span aria-hidden="true">{mark.glyph}</span> {needs.total} need you
-          </button> : undefined}
           batchAction={!hasKey ? <button className="workbench-key" type="button"
             aria-label="Batch submission needs an API key. Open Settings, Agents, Claude Platform API key."
-            onClick={() => { setSidebarOpen(false); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined}
-          companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
-            expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
-            onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
+            onClick={() => { closeDrawer(); jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' }); }}>Batches: add API key</button> : undefined} />
 
       {/* The boundary sits here and not around the shell: a view that cannot
           render must not take the header, the rail or ⌘K with it. `view={tab}`
@@ -1241,6 +1217,11 @@ export default function App() {
         </ErrorBoundary>
       </div>
       </div>
+
+      <SpaceDock tab={tab} go={go} goArea={goArea} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
+        companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
+          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
+          onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
 
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
@@ -1768,18 +1749,26 @@ function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun 
     const rows: PaletteItem[] = [];
     for (const key of recent) {
       const item = byKey.get(key);
-      if (item) rows.push({ ...item, group: 'Recent', primary: false });
+      if (item) rows.push({ ...item, group: 'Recent', primary: false, searchOnly: false });
     }
     if (rows.length === 0) return items;
     const actions = items.filter((item) => item.group === 'Actions');
-    const rest = items.filter((item) => item.group !== 'Actions');
+    const recentKeys = new Set(rows.map(item => item.key));
+    const rest = items.filter((item) => item.group !== 'Actions' && !recentKeys.has(item.key));
     return [...actions, ...rows, ...rest];
   }, [items, normalizedQuery, recent]);
   const [scope, setScope] = useState('All');
-  const matching = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
-  const shown = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
-    || (scope === 'Settings' && item.key.startsWith('action:appearance:'))), [matching, scope]);
-  const groups = useMemo(() => groupPalette(shown), [shown]);
+  const matching = useMemo(() => filterPalette(scope === 'Settings'
+    ? withRecent.map(item => ({ ...item, searchOnly: false })) : withRecent, query), [withRecent, query, scope]);
+  const scoped = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
+    || (scope === 'Settings' && (item.key.startsWith('action:appearance:') || item.key.startsWith('setting:')))
+    || (scope === 'Views' && item.key.startsWith('view:'))
+    || (scope === 'Projects' && item.key.startsWith('project:'))
+    || (scope === 'Live sessions' && item.key.startsWith('session:'))), [matching, scope]);
+  const groups = useMemo(() => groupPalette(scoped), [scoped]);
+  // Keyboard indices and rendered indices must agree after ranked results
+  // from different categories are regrouped for display.
+  const shown = useMemo(() => groups.flatMap(group => group.items), [groups]);
   const run = (item: PaletteItem) => { rememberRecent(item.key); onRun(item); };
   // Reaching the third result used to take three Tabs. One highlighted row,
   // moved with the arrow keys and taken with Enter, is what every palette on

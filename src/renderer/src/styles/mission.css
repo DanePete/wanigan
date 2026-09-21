@@ -45,7 +45,8 @@
 .companion-presence[data-signal="finished"] .companion-caption > span { color: var(--good); }
 .companion-presence[data-signal="working"] .companion-caption > span { color: var(--accent); }
 .companion-presence .orb-unavailable { position: absolute; inset: 0 auto 0 0; display: grid; place-content: center; width: var(--companion-size); font-size: var(--t-micro); text-align: center; }
-.mission-shell .pane:not(.mission-room) { padding: var(--s-6) var(--page-gutter); }
+/* Document panes own their gutters and sticky title spacing. Overriding their
+   padding here defeated compact.css and doubled the space above page heads. */
 .mission-shell .pane-head h1 { letter-spacing: -.035em; font-weight: 550; }
 .mission-shell .label-stencil { font-family: var(--font-ui); letter-spacing: 0; text-transform: none; font-weight: 500; }
 .mission-shell .btn { border-radius: var(--r-sm); }

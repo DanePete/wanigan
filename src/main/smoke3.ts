@@ -33,7 +33,7 @@ import * as policy from './policy';
 import * as control from './control';
 import * as halt from './halt';
 import * as codexSessions from './codex-sessions';
-import * as interview from './interview';
+import * as interview from './modules/interview';
 import * as pricing from './batch/pricing';
 import * as sessionsModule from './sessions';
 import * as headless from './headless';
@@ -59,9 +59,12 @@ import * as mobile from './mobile';
 import * as tailnet from './tailnet';
 import {
   __test as sessionsTest,
-  createSession, forgetPastSession, goalCapsuleText, killSession, listSessions, pastSessions,
-  reconcileAbandonedSessions, resumeAccountFor, scanCodexNotifications, sessionBaseline, setSessionTuning,
+  createSession, goalCapsuleText, killSession, listSessions,
+  resumeAccountFor, scanCodexNotifications, setSessionTuning,
 } from './sessions';
+import {
+  forgetPastSession, pastSessions, reconcileAbandonedSessions, sessionBaseline,
+} from './session-history';
 import {
   backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads, validateExactCodexThread,
 } from './codex-sessions';
@@ -69,6 +72,7 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject, removeProject } from './store';
+import { registerModuleIpc, type IpcHandle } from './module-registry';
 import { forecastCollisions } from './collisions';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
@@ -3668,7 +3672,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-sonnet-5',
         content: [reply], stop_reason: 'tool_use',
         ...(usageReported ? { usage: usageReported } : {}),
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }), { status: 200, headers: { 'content-type': 'application/json', 'request-id': `req_smoke_interview_${seen.length}` } });
     }) as typeof fetch;
 
     const ask = (question: string) => ({ type: 'tool_use', id: 't1', name: 'ask_one_question', input: { question, why: 'it changes the plan' } });
@@ -3710,6 +3714,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
         'the interview opens with one question and no answer', iv.turns[0]?.question);
       check(iv.spendUsd > 0 && iv.calls === 1,
         'the first question is priced from what the API reported, not estimated', iv.spendUsd);
+      // The interview row keeps only totals, so this is its one per-request
+      // record — written through the shipped transport, not a test seam.
+      const ivRecords = () => db().prepare(`SELECT r.model,r.input_tokens,r.output_tokens,r.request_id,s.outcome
+        FROM usage_direct_requests r LEFT JOIN usage_paid_settlements s ON s.owner_table='usage_direct_requests' AND s.owner_id=r.id
+        WHERE r.source='interview' AND r.subject_id=?`).all(iv.id) as { model: string; input_tokens: number; output_tokens: number; request_id: string | null; outcome: string | null }[];
+      check(ivRecords().length === iv.calls && ivRecords()[0].input_tokens === 4_000 && ivRecords()[0].output_tokens === 600
+        && ivRecords()[0].model === 'claude-sonnet-5' && /^req_smoke_interview_\d+$/.test(ivRecords()[0].request_id ?? '') && ivRecords()[0].outcome === 'metered',
+      'each metered interview request leaves one per-request record naming its interview, with the tokens the API reported, and that record accounts for its receipt', ivRecords());
 
       // Synchronous rates, not batch. The pricing table is batch pricing and
       // says so; charging an interview at it would report half of what it cost.
@@ -3838,6 +3850,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       check(unpriced.spendUsd === 0 && /lower than the real one/.test(unpriced.detail ?? ''),
         'a call the API priced nothing for is reported as unpriced rather than counted as free',
         unpriced.detail);
+      // It counted a call and has no record for it, which is exactly the
+      // interview Recovery must keep open: calls exceed per-request records.
+      const unpricedRecords = (db().prepare("SELECT COUNT(*) AS n FROM usage_direct_requests WHERE source='interview' AND subject_id=?")
+        .get(unpriced.id) as { n: number }).n;
+      check(unpriced.calls === 1 && unpricedRecords === 0,
+        'a reply with no reported usage writes no per-request record, so its interview stays uncovered', { calls: unpriced.calls, unpricedRecords });
 
       // And it keeps saying so. The warning is cumulative — it says "at least
       // one call" — but it was written to `detail` on every step, so the next
@@ -3878,9 +3896,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const before = halt.haltState();
     check(before.halted === false, 'the suite starts unhalted', before);
 
-    // Registered here rather than relying on startup: the smoke path returns
-    // before startServices() runs, so the real registrations are unreachable.
-    // These stand in for them and let the ordering contract be asserted.
+    // Registered here rather than relying on startServices(), which smoke
+    // skips. Extensions may already register their own stoppers on import;
+    // these named fixtures assert the core ordering without excluding them.
     const stopOrder: string[] = [];
     for (const name of ['schedules', 'queue', 'autopilots', 'sessions']) {
       halt.registerHaltStopper({
@@ -3895,7 +3913,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(stopOrder.join(',') === 'schedules,queue,autopilots,sessions',
       'the stop pass runs dispatchers before the processes they would otherwise relaunch',
       stopOrder.join(','));
-    check(pulled.stopped.length === 4 && pulled.stopped.some((entry) => entry.stopped === 2),
+    check(['schedules', 'queue', 'autopilots', 'sessions'].every(name =>
+      pulled.stopped.find(entry => entry.name === name)?.stopped === (name === 'sessions' ? 2 : 1)),
       'each subsystem reports its own count rather than the latch inventing one', pulled.stopped);
 
     // The latch is durable. A restart is not a decision to resume, and the one
@@ -4992,6 +5011,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(observed.parsePsStart('PID STARTED') === null && observed.parsePsStart('   ') === null,
       'and a line with no pid on it is not a process at all, which is a third answer rather than a pid of NaN');
 
+    // The Windows probe is PowerShell rather than ps, and it is shaped to this
+    // same parser: `<pid> <ISO-8601>`. The 'o' round-trip format carries seven
+    // fractional digits where ISO usually carries three, so this is the case
+    // that would have silently returned NaN and dated every Windows process to
+    // never. Its access-denied branch prints an unparseable stamp on purpose —
+    // "running, start unknown" is the middle answer above, not the absent one.
+    const psWindows = observed.parsePsStart('54186 2026-09-06T01:14:20.7890000Z');
+    check(psWindows !== null && psWindows.pid === 54186 && psWindows.at === Date.parse('2026-09-06T01:14:20.789Z'),
+      'a PowerShell ISO-8601 line with seven fractional digits yields its pid and the same instant',
+      JSON.stringify(psWindows));
+    const psDenied = observed.parsePsStart('54186 unknown');
+    check(psDenied !== null && psDenied.pid === 54186 && psDenied.at === null,
+      'a process this account may not inspect is still listed, with no start time rather than no row',
+      JSON.stringify(psDenied));
+
     fs.rmSync(path.join(obsReg, `${process.pid}.json`));
     writeEntry('999999', { pid: 999999, sessionId: 'smoke-dead', cwd: tmp, startedAt: Date.now() });
     check((await observed.listObserved()).length === 0, 'a pid that is not alive is dropped');
@@ -5186,6 +5220,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check((await review.saveRecipeWithConsent(null, controlProject.id, ['true'])).commands.join('\n') === 'true',
       're-saving the exact set already stored asks nothing and needs no window, because dropping or reordering commands grants a gate nothing it could not already run and a prompt there would train people to click through the one that matters',
       review.recipe(controlProject.id).commands);
+    const noContextHandlers = new Map<string, (...args: never[]) => unknown>();
+    registerModuleIpc(((channel, handler) => { noContextHandlers.set(channel, handler); }) as IpcHandle);
+    const noContextSave = noContextHandlers.get('review:saveRecipe');
+    let noContextRefusal = '';
+    try {
+      await noContextSave?.(controlProject.id as never, ['true', 'printf no-context'] as never);
+    } catch (error) { noContextRefusal = error instanceof Error ? error.message : String(error); }
+    check(!!noContextSave && noContextRefusal.includes('needs the Wanigan window open')
+      && review.recipe(controlProject.id).commands.join('\n') === 'true',
+      'module IPC registration without a window context stays compatible and fails review consent closed');
     review.saveRecipe(controlProject.id, ['echo changed-during-verification >> README.md']);
     const changedDuringProof = await control.runProof(verifyNode.id);
     check(changedDuringProof.status === 'recorded' && /Current checkout not verified/.test(changedDuringProof.summary),
@@ -5432,6 +5476,55 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const defaultDirAccount = { ...work, configDir: path.join(os.homedir(), '.claude') };
     check(Object.keys(accounts.launchEnv(defaultDirAccount)).length === 0,
       'the account that is the platform default sets no variable, because setting it to the default breaks the login it names');
+
+    // Contributing nothing and clearing what was inherited are different acts,
+    // and for the default account only the second one is the account decision.
+    // A Wanigan started from a shell that exports CLAUDE_CONFIG_DIR handed that
+    // directory to every session pinned to the default account: they resumed
+    // into "No conversation found" and new ones used another login's
+    // credentials while the UI named the pinned account.
+    const inherited: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login', KEEP: '1' };
+    accounts.applyLaunchEnv(inherited, defaultDirAccount);
+    check(!('CLAUDE_CONFIG_DIR' in inherited) && inherited.KEEP === '1',
+      'the default account removes an inherited config directory rather than leaving it standing: contributing no variable has to mean the child has none, and nothing else on the environment is touched',
+      inherited);
+    const pinnedOver: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login' };
+    accounts.applyLaunchEnv(pinnedOver, work);
+    check(pinnedOver.CLAUDE_CONFIG_DIR === workDir,
+      'a named account still beats an inherited one, which is the half that already worked', pinnedOver);
+    const noDecision: Record<string, string> = { CLAUDE_CONFIG_DIR: '/tmp/another-login' };
+    accounts.applyLaunchEnv(noDecision, null);
+    check(noDecision.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+      'with no account resolved there is no decision to enforce, so the operator’s own shell is left exactly as it was',
+      noDecision);
+
+    // The environment a PTY would actually receive, not only the helper.
+    const prevAmbientDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/another-login';
+    try {
+      const { __test: sessionsEnvTest } = await import('./sessions');
+      const asDefault = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_default', {}, defaultDirAccount);
+      const asWork = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_work', {}, work);
+      const asNone = sessionsEnvTest.agentEnv('/usr/bin', 's_acct_none');
+      check(asDefault.CLAUDE_CONFIG_DIR === undefined && asWork.CLAUDE_CONFIG_DIR === workDir
+        && asNone.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+        'the account shown at launch is the one the spawned session actually uses: the default account reaches the PTY with no config directory at all, a named one with its own, and an unpinned launch inherits the shell',
+        { asDefault: asDefault.CLAUDE_CONFIG_DIR, asWork: asWork.CLAUDE_CONFIG_DIR, asNone: asNone.CLAUDE_CONFIG_DIR });
+
+      // The headless path copies process.env wholesale too, and it is the one
+      // that spends money without a terminal in front of anyone.
+      const { headlessEnv: headlessEnvUnderTest } = await import('./headless');
+      const runAsDefault = headlessEnvUnderTest('/usr/bin', {}, defaultDirAccount);
+      const runAsWork = headlessEnvUnderTest('/usr/bin', {}, work);
+      const runAsNone = headlessEnvUnderTest('/usr/bin');
+      check(runAsDefault.CLAUDE_CONFIG_DIR === undefined && runAsWork.CLAUDE_CONFIG_DIR === workDir
+        && runAsNone.CLAUDE_CONFIG_DIR === '/tmp/another-login',
+        'a headless run and a model-assisted call answer to the same account decision as an attended session: the default account reaches them with no config directory, a named one with its own, and only an unpinned launch inherits the shell',
+        { runAsDefault: runAsDefault.CLAUDE_CONFIG_DIR, runAsWork: runAsWork.CLAUDE_CONFIG_DIR, runAsNone: runAsNone.CLAUDE_CONFIG_DIR });
+    } finally {
+      if (prevAmbientDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevAmbientDir;
+    }
 
     // Seeding: authored configuration is a convenience, a login is not, and a
     // transcript of everything said is not either.
@@ -5805,8 +5898,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(nextYear !== null && nextYear > new Date(2026, 11, 28).getTime(),
       'a reset date the provider printed without a year rolls into next year when this year would be far past');
     const onTheHour = claudeLimits.__test.parseResetAt('Sep 6 at 9pm (America/Chicago)', new Date(2026, 8, 4).getTime());
-    check(onTheHour !== null && new Date(onTheHour).getHours() === 21 && new Date(onTheHour).getMinutes() === 0,
+    const chicagoHour = (at: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hourCycle: 'h23', hour: 'numeric', minute: 'numeric' }).format(at);
+    check(onTheHour !== null && chicagoHour(onTheHour) === '21:00',
       'a reset printed on the hour as "9pm", with no minutes, still parses — a runtime probe caught this returning null');
+    // The zone the provider printed decides the instant, not this machine's.
+    const tokyo = claudeLimits.__test.parseResetAt('Sep 20 at 9pm (Asia/Tokyo)', new Date(Date.UTC(2026, 8, 19)).getTime());
+    check(tokyo === Date.UTC(2026, 8, 20, 12, 0, 0)
+      && claudeLimits.__test.parseResetAt('Sep 20 at 9pm', new Date(Date.UTC(2026, 8, 19)).getTime()) === null
+      && claudeLimits.__test.parseResetAt('Sep 20 at 9pm (Nowhere/Invented)', new Date(Date.UTC(2026, 8, 19)).getTime()) === null
+      // 1:30am happens twice on the US fall-back date; an ambiguous wall time still resolves to one of them.
+      && claudeLimits.__test.parseResetAt('Nov 1 at 1:30am (America/Chicago)', new Date(Date.UTC(2026, 9, 30)).getTime()) !== null,
+      'a reset is resolved in the zone the provider printed, and one with no zone or an unknown zone gets no countdown rather than a local-time guess');
+    const aged = claudeLimits.__test.parseUsage('Showing last-known usage (50 minutes ago)\nCurrent session: 32% used\n');
+    check(aged.providerAge === 'Showing last-known usage (50 minutes ago)' && aged.windows.length === 1
+      && claudeLimits.__test.parseUsage('Current session: 32% used\n').providerAge === null,
+      'the provider saying its figures are last-known is kept in its own words beside the windows, and absent when it did not say so');
     check(claudeLimits.__test.parseResetAt('whenever it feels like it') === null,
       'an unparseable reset time is null, and the verbatim text carries the answer instead');
 
@@ -5993,7 +6099,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     db().prepare("UPDATE work_nodes SET status='failed',session_id='sess_p8_quiet' WHERE id=?").run(spentNode.id);
     control.retryNode(spentNode.id);
     const spendMixed = control.docket(spent.id).autopilot;
-    check(spendMixed.spendStatus === 'reported' && Math.abs(spendMixed.spendUsd - 4.2) < 1e-6,
+    check(spendMixed.spendStatus === 'partial' && Math.abs(spendMixed.spendUsd - 4.2) < 1e-6,
       'a second recorded session that named no cost is still counted as a member of the set the status is decided over, so spendUsd and spendStatus can never be computed from different populations',
       spendMixed);
 
@@ -6129,6 +6235,55 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const receipt = control.resumeReceipts(docket.id).find((row) => row.nodeId === planNode.id);
     check(receipt?.state === 'exact' && receipt.conversationId === receiptConversation,
       'a Goal recovery receipt refreshes the exact durable conversation before offering resume', receipt);
+
+    // Codex above reports its thread id only after its first prompt, so a null
+    // id was the whole signal. Wanigan chooses the Claude CLI's id itself and
+    // passes it as --session-id, so the id is never null and the signal could
+    // not fire: a session that exited before taking a turn was offered as an
+    // exact resume, and `claude --resume` answered "No conversation found with
+    // session ID" and exited 1. The id below is the one that did it.
+    const mintedGoal = control.createDocket({ projectId: controlProject.id, title: 'Minted but never turned',
+      objective: 'A conversation id recorded for a session that took no turn.',
+      acceptance: ['The receipt refuses to call it exact.'] });
+    const mintedNode = mintedGoal.nodes.find((node) => node.kind === 'plan')!;
+    const mintedSession = `s_minted_${Date.now().toString(36)}`;
+    const mintedConversation = 'fb80c14b-3698-4846-807c-4f43ffe7de60';
+    db().prepare(`INSERT INTO session_log
+      (id,conversation_id,provider_id,harness_id,project_id,project_path,project_name,worktree,started_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(mintedSession, mintedConversation, 'claude', 'claude-code', controlProject.id, controlRepo,
+        'control', controlRepo, Date.now());
+    db().prepare('UPDATE work_nodes SET session_id=? WHERE id=?').run(mintedSession, mintedNode.id);
+    db().prepare(`INSERT INTO work_resume_receipts
+      (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(mintedNode.id, mintedGoal.id, mintedSession, mintedConversation, 'claude', 'opus',
+        mintedGoal.baseCommit, controlRepo, Date.now(), Date.now());
+    const mintedReceipt = control.resumeReceipts(mintedGoal.id).find((row) => row.nodeId === mintedNode.id);
+    check(mintedReceipt?.state === 'identity_pending'
+      && mintedReceipt.conversationId === mintedConversation
+      && /never created the conversation/.test(mintedReceipt.detail),
+      'a Claude conversation id Wanigan minted at launch is not an exact resume until a transcript proves the conversation exists: the receipt keeps the id it recorded, reports identity_pending like the Codex row that has none yet, and says the session ended before it took a turn rather than offering a resume that answers "No conversation found"',
+      mintedReceipt);
+
+    const mintedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-resume-'));
+    const prevMintedDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = mintedHome;
+    try {
+      const mintedSlug = path.resolve(controlRepo).replace(/[^a-zA-Z0-9]/g, '-');
+      fs.mkdirSync(path.join(mintedHome, 'projects', mintedSlug), { recursive: true });
+      fs.writeFileSync(path.join(mintedHome, 'projects', mintedSlug, `${mintedConversation}.jsonl`),
+        JSON.stringify({ type: 'user', message: { role: 'user', content: 'the turn that created it' },
+          timestamp: new Date().toISOString() }) + '\n');
+      const turned = control.resumeReceipts(mintedGoal.id).find((row) => row.nodeId === mintedNode.id);
+      check(turned?.state === 'exact',
+        'the same receipt becomes exact once the harness has written the transcript the CLI would reopen — the proof is the file, not the id, and it is looked up by exact name rather than by taking the newest file in the directory',
+        turned);
+    } finally {
+      if (prevMintedDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevMintedDir;
+      fs.rmSync(mintedHome, { recursive: true, force: true });
+    }
     recordGoalTrace({ sessionId: receiptSession, source: 'hook', kind: 'PostToolUse', status: 'recorded', toolName: 'Read',
       summary: 'README.md', durationMs: 12, costUsd: 0, inTokens: 0, outTokens: 0 });
     check(listGoalTrace(docket.id).some((trace) => trace.sessionId === receiptSession && trace.toolName === 'Read'),
@@ -6676,6 +6831,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Wanigan runs one Codex model probe rather than two — the private four-second copy in index.ts is gone and the ten-minute cached app-server read in codex-status.ts is the only one left — and the catalogue reaches the window through a typed preload binding rather than a renderer-side guess',
     mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES'));
   const mainSrc = sourceOf('src/main/index.ts');
+  const sessionsModuleSrc = sourceOf('src/main/modules/sessions.ts');
+  const worktreesModuleSrc = sourceOf('src/main/modules/worktrees.ts');
 
   // The quit dialog offers reopening, and reopening is armed where it is safe.
   // This sat at two buttons — keep, or quit — and the answer people actually
@@ -6684,13 +6841,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // which is enough friction to leave an update uninstalled. The relaunch must
   // be queued at the END of the drain: armed at the click, a new Wanigan would
   // race the old one for the database and the loopback ports.
-  const quitBlock = mainSrc.slice(mainSrc.indexOf("app.on('before-quit'"));
-  const relaunchAt = quitBlock.indexOf('app.relaunch()');
+  const quitStart = mainSrc.indexOf("app.on('before-quit'");
+  const quitBlock = mainSrc.slice(quitStart, mainSrc.indexOf('\n});', quitStart) + 5);
+  const relaunchAt = quitBlock.indexOf('app.relaunch(');
   const shutdownAt = quitBlock.indexOf('shutdownAll()');
+  const drainFinallyAt = quitBlock.indexOf(']).finally(() => {', shutdownAt);
+  const finalQuitAt = quitBlock.indexOf('app.quit();', relaunchAt);
   check(quitBlock.includes("'Stop agents and reopen'") && quitBlock.includes("'Stop agents and quit'")
     && quitBlock.includes("if (choice === 0) return;"),
   'the quit dialog offers keeping, quitting and reopening, and only the first one cancels');
-  check(relaunchAt > shutdownAt && shutdownAt > 0,
+  check(shutdownAt > 0 && drainFinallyAt > shutdownAt && relaunchAt > drainFinallyAt && finalQuitAt > relaunchAt,
     'the relaunch is queued after the PTY drain, so a new instance cannot race the old one for the database');
   check(/reopening starts Wanigan again with none of them running/.test(quitBlock),
     'and the dialog says reopening costs the agents exactly what quitting costs them, rather than implying it is the gentler button');
@@ -6821,7 +6981,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const providerSrc = sourceOf('src/main/providers.ts');
   const daemonSrc = sourceOf('src/main/daemon.ts');
   const reviewSrc = sourceOf('src/main/review.ts');
+  const reviewModuleSrc = sourceOf('src/main/modules/review.ts');
+  const moduleRegistrySrc = sourceOf('src/main/module-registry.ts');
+  const moduleRegisterSrc = sourceOf('src/main/modules/register.ts');
+  const dbSrc = sourceOf('src/main/db.ts');
   const controlSrc = sourceOf('src/main/control.ts');
+  const controlModuleSrc = sourceOf('src/main/modules/control.ts');
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
   // The cancel notice has to be written from the receipt, after the call. act
   // evaluates its third argument before the work runs, and the node status the
@@ -7033,18 +7198,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // "Recent runs", "Nothing has run yet", and the inspector's invitation to
   // start a fan-out. A failed read shows the error and a retry instead.
   const runsViewSrc = sourceOf('src/renderer/src/views/HeadlessRuns.tsx');
-  const runsGate = runsViewSrc.indexOf('{!loaded ? (');
+  const runsGate = runsViewSrc.indexOf(': !loaded ? <div className="hr-history-state"');
   const runsNothingYet = runsViewSrc.indexOf('title="Nothing has run yet"');
   const runsNoSelection = runsViewSrc.indexOf('title="No run selected"');
-  const runsDetailReading = runsViewSrc.indexOf('<Reading what="the run history" />');
+  const runsHistoryReading = runsViewSrc.indexOf('<Reading what="recent runs" />');
+  const runsWorkspace = runsViewSrc.indexOf(': <div className="hr-workspace">');
   check(runsViewSrc.includes('const [loaded, setLoaded] = useState(false)')
     && runsViewSrc.includes('setLoaded(true);')
     && runsGate > 0
     && runsNothingYet > runsGate
     && runsNoSelection > runsGate
-    && runsDetailReading > 0 && runsDetailReading < runsNoSelection
-    && /\{loaded \? runs\.length/.test(runsViewSrc)
-    && runsViewSrc.includes('<Reading what="recent runs" />')
+    && runsHistoryReading > runsGate && runsHistoryReading < runsNothingYet
+    && runsWorkspace > runsNothingYet
+    && runsViewSrc.indexOf('<SectionHead label="Recent runs" count={runs.length}') > runsWorkspace
     && runsViewSrc.includes('posture="could-not-read" title="Could not read recent runs"')
     && runsViewSrc.includes('cue={loadFailed}')
     && /Try again<\/button>/.test(runsViewSrc),
@@ -7285,16 +7451,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Unreported and zero were the same stored value, so the router totalled
   // unmetered work as free and ranked it cheapest.
   check(controlMainSrc.includes('cost_reported')
-    && controlMainSrc.includes('reported ? usage!.costUsd : 0')
+    && controlMainSrc.includes('recordOutcomeReview(candidate, proof.id,')
     && controlMainSrc.includes('reported_samples')
     && !/ORDER BY accepted DESC,tests_passed DESC,samples DESC/.test(controlMainSrc),
-  'the outcome router records whether a cost was reported beside the figure, totals only the reported rows, and ranks by acceptance rate rather than by whichever profile happened to run most');
+  'Control records review observations and totals only reported outcome costs, ordered by acceptance rate');
 
   // The handler answered true unconditionally, so Fleet said a session "was
   // ended" for one that had already exited and could never render its own
   // "had no live process to stop" sentence.
   check(sessionsMainAudit.includes('export function killSession(sessionId: string): boolean')
-    && mainIndexSrc.includes("handle('sessions:kill', (id: string) => killSession(id));")
+    && sessionsModuleSrc.includes("handle('sessions:kill', (id: string) => killSession(id));")
     && fleetViewSrc.includes('Stop sent to')
     && !fleetViewSrc.includes('was ended.'),
   'stopping a session reports whether a live process was actually signalled, and the surface says the stop was sent rather than claiming an end it has not observed');
@@ -7387,7 +7553,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     "the 'batch' queue kind has a runner — without one every batch schedule blocks on 'no runner registered' forever");
   check(/typeof p\.prompt === 'string'/.test(mainSrc),
     'the headless runner handles a schedule-shaped payload as well as a fan-out one');
-  check(/handle\(\s*'worktrees:merge'/.test(mainSrc) && /merge:\s*\(/.test(preloadSrc),
+  check(/handle\(\s*'worktrees:merge'/.test(worktreesModuleSrc) && /merge:\s*\(/.test(preloadSrc),
     'worktrees:merge is registered and bound, so a fleet run can be landed from inside the app');
   check(!/mergeFn/.test(sessionsSrc),
     'and the probe that stood in for the missing channel is gone rather than left as a fallback');
@@ -7469,7 +7635,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !learningSrc.includes('ImprovementScout')
     && scoutViewSrc.includes("allowNetwork: true")
     && scoutViewSrc.includes("mode === 'manual'")
-    && scoutViewSrc.includes('Preview locally')
+    && scoutViewSrc.includes('Check local inventory')
+    && scoutViewSrc.includes('Check official sources online')
     && scoutViewSrc.includes('Create linked Goal')
     && scoutViewSrc.includes('target="_blank" rel="noreferrer"')
     && scoutViewSrc.includes('networkEnabled') && scoutViewSrc.includes('weeklyEnabled')
@@ -7513,15 +7680,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // Opener restoration is explicit now rather than incidental: closing has to
     // hand focus back to the control that opened it, not drop it on the body.
     && appSrc.includes('const opener = paletteOpenerRef.current')
-    && appSrc.includes('opener?.focus()')
+    && appSrc.includes('opener?.isConnected && opener.getClientRects().length > 0')
+    && appSrc.includes("? opener : document.querySelector<HTMLElement>('.hdr-toggle')")
+    && appSrc.includes('target?.focus()')
     // Reaching the third result used to cost three Tabs. The highlight moves on
     // arrow keys and is published to assistive tech, while focus stays in the
     // field so typing never stops mid-search.
     && appSrc.includes("if (e.key === 'ArrowDown')")
     && appSrc.includes('aria-activedescendant={active >= 0')
-    // The persistent area rail is a roving tab stop. Its component now owns
-    // the focus order while the palette owns its announced highlight.
-    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('tabIndex={active ? 0 : -1}')
+    // The rail owns its visible focus order; collapsed groups are skipped.
+    // The palette owns its separate announced highlight.
+    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('tabIndex={0}')
+    && sourceOf('src/renderer/src/components/SpaceNavigation.tsx').includes('.filter(button => button.getClientRects().length > 0)')
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
     // Off-list views are reachable and are labelled with a real shortcut where
     // one exists rather than a blank column. Nothing is off the list any more,
@@ -7575,18 +7745,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !composerCssSrc.includes('.composer-sr {'),
   'the composer announces its skill menu: textbox-legal aria-controls and aria-activedescendant over a list that is always in the DOM, options owned directly by the listbox with focus kept in the textarea, and a live region for the count and the changed meaning of Enter');
 
-  // Two accounts is the whole point of the accounts feature, and an exhausted
-  // window on one of them is exactly when it pays off. The page holds both live
-  // readings; it must compare like with like — same window kind, same model
-  // scope — and say nothing unless one really is at 100% and another really has
-  // room.
-  check(usageViewSrc.includes('const relief = useMemo(')
-    && usageViewSrc.includes("const key = (w: LimitWindow) => `${w.kind}:${w.scope ?? 'all'}`")
-    && usageViewSrc.includes('if (window.usedPercent < 100) continue;')
-    && usageViewSrc.includes('.filter((w) => key(w) === key(window) && w.usedPercent < 100)')
-    && usageViewSrc.includes('if (alternatives.length === 0) continue;')
-    && usageViewSrc.includes('{relief.length > 0 && ('),
-  'an exhausted limit window names the other account that still has room on the same window, and says nothing when there is none');
+  // Configuration entries are not proof of separate provider accounts. The
+  // comparison must keep every reading visible, scope local records by account
+  // ID, and label shared logins only from main-process identity evidence. The
+  // renderer probe exercises equal quotas on distinct accounts and matching
+  // saved logins; this check pins those contracts to the displayed surface.
+  check(usageViewSrc.includes('const limits = snap?.limits ?? [];')
+    && usageViewSrc.includes('const consumption = (snap?.consumption ?? []).filter(matches);')
+    && usageViewSrc.includes('row.accountId === selected.id')
+    && usageViewSrc.includes('limits.identityEvidence?.sharedWith ?? []')
+    && usageViewSrc.includes("account.basis === 'saved-login'")
+    && usageViewSrc.includes('Same saved login as ')
+    && usageViewSrc.includes('selected={selected?.id === limit.accountId}')
+    && !usageViewSrc.includes('const relief = useMemo('),
+  'Usage compares every account, keeps local consumption keyed by account ID, and uses identity evidence rather than quota percentages to label shared logins');
 
   // The Usage page opened on a 14-day window while its picker offered 7, 30 and
   // 90. A <select> whose value matches no <option> renders with nothing
@@ -7789,6 +7961,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // sees every chunk whatever tab is on screen and is told which session that
   // is, so it owns both halves now.
   const sessionsMainSrc = sourceOf('src/main/sessions.ts');
+  const sessionHistorySrc = sourceOf('src/main/session-history.ts');
   check(sessionsMainSrc.includes('.run(live.meta.endedAt, live.meta.exitCode, id)')
     && sessionsMainSrc.includes("broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode })"),
   'durable session history and exit broadcasts both retain the normalized signal exit code');
@@ -7852,6 +8025,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // with the project for the same reason: a sentence drafted about one
   // repository's changes must not be waiting in the box over another's tree.
   const gitViewSrc = sourceOf('src/renderer/src/views/Git.tsx');
+  // The shared project switcher supplies selectedProjectId. Reset at the scope
+  // effect rather than in a removed view-local <select> handler, preserving a
+  // draft when this same repository is reopened but clearing it for another.
+  const gitScopeEffect = /useEffect\(\(\) => \{\s*if \(!project\) return;([\s\S]*?)\}, \[project, projectId, rememberedProjectId, rememberProjectId, setProjectId, setSel, setMsg\]\);/.exec(gitViewSrc)?.[1] ?? '';
+  const gitScopeResetsDraft = gitViewSrc.includes('const projectId = selectedProjectId ?? rememberedProjectId;')
+    && gitScopeEffect.includes('const changed = rememberedProjectId !== project.id;')
+    && gitScopeEffect.includes('if (changed) rememberProjectId(project.id);')
+    && gitScopeEffect.includes("if (changed) { setSel(null); setDetail(null); setMsg(''); }");
 
   // The compact heading names the work and its project. The browser labels
   // expose the repository destinations; the command palette still searches
@@ -7868,7 +8049,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(gitViewSrc.length > 500
     && gitViewSrc.includes('await syncSelection(await load())')
     && gitViewSrc.includes('function findFile(status: Status, path: string)')
-    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+    && gitScopeResetsDraft,
   'the Git detail pane is re-resolved against the status each action returns, and a commit message does not follow you into another project');
 
   // Git is a view you leave in order to look at something else: open the
@@ -7891,7 +8072,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // Remembered per return, not per repository: changing the project still
     // clears the draft, because a message about one tree's changes waiting
     // over another's is a worse outcome than losing it.
-    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+    && gitScopeResetsDraft,
   'Git comes back on the repository, pane, commit filter, selected row and half-typed commit message the operator left it on, rather than resetting to the first project with an empty message box');
 
   // A remembered selection with nothing under it is worse than no selection at
@@ -8140,7 +8321,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // codex-status.ts already read Codex's windows per account; nothing joined
   // them, so a Codex login simply did not appear on the page whose whole
   // subject is what is left.
-  const limitsSrc = sourceOf('src/main/limits.ts');
+  const limitsSrc = sourceOf('src/main/modules/usage-limits.ts');
   const usageSrc = sourceOf('src/main/usage.ts');
   check(usageSrc.includes("import { allAccountLimits } from './limits'")
     && !usageSrc.includes("from './claude-limits'")
@@ -8272,7 +8453,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const workspaceNavSrc = sourceOf('src/renderer/src/components/SpaceNavigation.tsx');
   const workspaceCssSrc = sourceOf('src/renderer/src/styles/spaces.css');
   check(workspaceNavSrc.includes('SPACE_AREAS.map(area =>')
-    && workspaceNavSrc.includes('<Icon name={area.icon} /><span>{area.label}</span>')
+    && workspaceNavSrc.includes('<Icon name={area.icon} /><span className="workbench-area-label"><span>{area.label}</span>')
     && workspaceNavSrc.includes('const keymap = useKeymap().map')
     && workspaceNavSrc.includes('chordLabels(keymap, `view:${id}`).aria')
     && workspaceNavSrc.includes('chordLabels(keymap, `view:${id}`).keys'),
@@ -8285,17 +8466,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && workspaceNavSrc.includes('data-initial-focus={active ? true : undefined}')
     && workspaceCssSrc.includes('.workbench-navigation-dialog')
     && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')"),
-    'the pinned area rail remembers its last destination; compact navigation uses the shared focus and Escape dialog lifecycle');
-  check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
-    && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={active ? 0 : -1}')
+    'the workspace rail remembers its last destination; compact navigation uses the shared focus and Escape dialog lifecycle');
+  check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][aria-current][tabindex="0"]')`)
+    && workspaceNavSrc.includes('data-nav-tab={active ? tab : area.tabs[0]} tabIndex={0}')
     && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
     && useDialogSrc.includes('restoreFocus(opener);'),
-    'dialog teardown returns to its opener, a visible current navigation destination, or the compact header toggle');
+    'dialog teardown returns to its opener, a visible navigation destination, or the header Sidebar toggle');
   check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
     && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs')
-    && appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('<WorkspaceNavigation')
-    && (appSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
-    'the header navigation opener remains outside the compact dialog and no obsolete horizontal-rail selector is used for focus');
+    && appSrc.indexOf('<SpaceDock ') > appSrc.indexOf('</ErrorBoundary>')
+    && appSrc.includes('expanded={sidebarOpen} onMore={toggleSidebar}')
+    && appSrc.includes('<WorkspaceNavigationToggle open={sidebarOpen} onToggle={toggleSidebar} />')
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') > appSrc.indexOf('<header className="app-header">')
+    && appSrc.indexOf('<WorkspaceNavigationToggle ') < appSrc.indexOf('<div className="workbench-context">')
+    && (workspaceNavSrc.match(/className="hdr-toggle"/g) ?? []).length === 1,
+    'the header keeps its Sidebar opener alongside dock Tools, sharing navigation state outside the view and compact dialog');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
     && workspaceNavSrc.includes('<progress className="workbench-batch-progress"')
     && workspaceNavSrc.includes('value={batchWork.done} max={batchWork.total}'),
@@ -8427,21 +8612,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   say('── Recent conversations · the ninth row is reachable, and what is hidden is counted');
 
-  check(sessionsSrc.includes('activePast.slice(0, activeShown)')
+  check(sessionsSrc.includes('activePast.slice(0, searchingPicker ? undefined : activeShown)')
+    && sessionsSrc.includes('settledPast.slice(0, searchingPicker ? undefined : settledShown)')
+    && sessionsSrc.includes('!searchingPicker && activePast.length > activeShown')
+    && sessionsSrc.includes('!searchingPicker && settledOpen && settledPast.length > settledShown')
     && !sessionsSrc.includes('activePast.slice(0, 8)')
     && sessionsSrc.includes('{activePast.length - activeShown} not shown')
     && sessionsSrc.includes('{settledPast.length - settledShown} not shown')
     && sessionsSrc.split('rail-more').length - 1 >= 2
     && /'views\/Sessions\.tsx': 125,/.test(styleGateSrc),
-  'both bands of Recent conversations page rather than truncate, each control states the rows still hidden as a subtraction over the array that render already holds rather than as an estimate or a bare button, the two controls share one class instead of two inline style objects that could drift apart, and the inline-style debt that paydown settled was recorded in the gate rather than left as headroom for the next regression',
+  'both bands of Recent conversations page rather than truncate when browsing, search reveals every loaded match, each paging control states the rows still hidden as a subtraction over the array that render already holds, the two controls share one class, and the inline-style debt that paydown settled stays recorded in the gate',
   sessionsSrc.split('rail-more').length - 1);
 
   // Three files have to agree about one number, and only one of them defines
   // it. Raising main's cap without touching the view fails here rather than
   // printing a stale forty at the operator.
   check(sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;')
-    && sessionsMainSrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
-    && mainSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
+    && sessionHistorySrc.includes('export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {')
+    && sessionsModuleSrc.includes('return pastSessions(40, projectId as string | null | undefined);')
     && sessionsSrc.includes('does not report how many are older')
     && !/Wanigan lists (?:all|every)/.test(sessionsSrc),
   'the cap the renderer prints is the number main actually defaults to and the number the IPC handler actually passes, and the sentence names that cap while explicitly declining to count what sits behind it — a PastSession[] of forty cannot say whether forty-one were recorded, so the renderer states the limit rather than inventing a total',
@@ -8574,7 +8762,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
     && /recordProviderEvent/.test(sessionManagerSrc),
   'Codex interactive turns expose approval and completion transitions without editing global config');
-  check(/handle\(\s*'sessions:recoverExactCodex'/.test(mainSrc)
+  check(/handle\(\s*'sessions:recoverExactCodex'/.test(sessionsModuleSrc)
     && /recoverExactCodex:\s*\(/.test(preloadSrc)
     && sessionsSrc.includes('Recover exact Codex UUID…')
     && sessionManagerSrc.includes('recoverExactCodexThread')
@@ -8625,11 +8813,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // String() wrappers on the worktree pair were noise that turned a symbol into
   // a TypeError naming nothing; browse:reveal keeps its coercion because
   // assertOpenablePath is still typed (target: string).
-  check(mainSrc.includes("worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository'))")
-    && mainSrc.includes("worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree'))")
+  check(worktreesModuleSrc.includes("worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository'))")
+    && worktreesModuleSrc.includes("worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree'))")
     && mainSrc.includes("browse.revealInFinder(assertOpenablePath(String(p)))")
     && mainSrc.includes("plugins.details(pluginId(name))")
-    && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(mainSrc)
+    && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(worktreesModuleSrc)
     && !/handle\('browse:reveal', \(p: string\) => browse\.revealInFinder\(p\)\)/.test(mainSrc),
   'reading a worktree, revealing a path in the Finder and asking about a plugin all validate the renderer’s argument, like every other handler beside them');
   // The plugin file reader was a hand-rolled backdrop inside the pane: it
@@ -8665,8 +8853,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/capabilitiesFor/.test(providerSrc) && /--help/.test(providerSrc),
     'provider capabilities are probed from the installed CLI rather than inferred only from a static table');
   check(/isDaemonInvocation/.test(mainSrc) && /LaunchAgents/.test(daemonSrc),
-    'the optional macOS scheduler is a windowless app daemon, not a timer that dies with the window');
-  check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
+    'the optional background scheduler is a windowless app daemon, not a timer that dies with the window');
+  // Two real backends rather than one plus an adapter shaped around it. A
+  // capability only the built-in can reach is an extension point that does not
+  // exist (AGENTS.md), and the platform branch this replaced had no seam at all.
+  check(/schtasks/.test(daemonSrc) && /launchctl/.test(daemonSrc) && /function backend\(/.test(daemonSrc),
+    'the background scheduler picks a backend rather than branching on the platform, and ships launchd and Task Scheduler behind it');
+  check(/caveat/.test(daemonSrc) && !/This Mac must be awake/.test(sourceOf('src/renderer/src/views/Schedules.tsx')),
+    'what is true while the scheduler is installed comes from the backend that installed it, not from a sentence about macOS hardcoded in the view');
+  check(/handle\(\s*'review:run'/.test(reviewModuleSrc) && /review_runs/.test(reviewSrc),
     'review gates keep command evidence in a durable record, not only in a terminal scrollback');
   const browseSrc = sourceOf('src/main/browse.ts');
   const attachmentsSrc = sourceOf('src/main/attachments.ts');
@@ -8676,13 +8871,27 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && attachmentsSrc.includes('if (!isPickedPath(abs)) {'),
     'the record attach:add checks is written only by the two calls that put a native dialog in front of a person, never by browse.browse(), whose unconfined readdir would hand back exactly what the check refuses',
     (browseSrc.match(/rememberPicked\(/g) ?? []).length);
-  check(/review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc)
-    && !/review\.saveRecipe\(projectId, commands\)/.test(mainSrc)
+  check(/saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc)
+    && /registerModuleIpc\(handle,\s*\{\s*getWindow: \(\) => win,\s*onAgentLaunched: syncAwake[,\s]/.test(mainSrc)
+    && moduleRegistrySrc.includes('getWindow: () => BrowserWindow | null')
+    && moduleRegistrySrc.includes('context: ModuleIpcContext = { getWindow: () => null }')
+    && !/saveRecipe\(projectId, commands\)/.test(reviewModuleSrc)
     && reviewSrc.indexOf('dialog.showMessageBox') > 0
     && reviewSrc.indexOf('dialog.showMessageBox') < reviewSrc.indexOf('export async function runAt'),
     'saving a review recipe asks the person and running one does not, because the stored text is written once and run many times from both review:run and a goal’s verify task, so the consent sits where the capability is made rather than on each use of it',
-    /review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc));
-  check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
+    /saveRecipeWithConsent\(context\.getWindow\(\), projectId, commands\)/.test(reviewModuleSrc));
+  check(reviewModuleSrc.includes('required: {')
+    && reviewModuleSrc.includes('used to decide whether work is verified')
+    && reviewModuleSrc.includes("handle('review:recipe'")
+    && reviewModuleSrc.includes("handle('review:saveRecipe'")
+    && reviewModuleSrc.includes("handle('review:history'")
+    && reviewModuleSrc.includes("handle('review:run'")
+    && reviewModuleSrc.includes("import('../learning-service')")
+    && moduleRegisterSrc.includes('registerModule(reviewModule);')
+    && !dbSrc.includes('CREATE TABLE IF NOT EXISTS review_recipes')
+    && !mainSrc.includes("handle('review:recipe'"),
+    'the required Review module owns its schema and all four IPC channels while preserving consent and the learning observer');
+  check(/handle\(\s*'control:create'/.test(controlModuleSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(registrySrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
   // control.ts kept its own DEFAULT_PLAN and NODE_KINDS until the renderer
@@ -8908,7 +9117,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && controlViewSrc.includes('>Arm autopilot<')
     && controlViewSrc.includes('>Disarm autopilot<')
     && preloadSrc.includes("call<DocketDetail>('control:setAutopilot'")
-    && mainSrc.includes("handle('control:setAutopilot'")
+    && controlModuleSrc.includes("handle('control:setAutopilot'")
     && controlSrc.includes('export function setAutopilot('),
     'Control can arm and disarm goal autopilot, so the sweep, the node queue runner and the halt behind control.setAutopilot have a caller instead of being a finished lane no screen could enter');
 
@@ -8927,7 +9136,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && planningViewSrc.includes("import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';")
     && planningViewSrc.includes('plan:planRowsFromDefault()') && controlViewSrc.includes('<Interview projects={projects}')
     && planningViewSrc.includes('plan:toPlanNodes(draft.plan)')
-    && planningViewSrc.includes('<PlanEditor rows={draft.plan} onChange={plan => edit({plan})} />')
+    && /<PlanEditor\b[^\n]*rows=\{draft\.plan\} onChange=\{plan => edit\(\{plan\}\)\}/.test(planningViewSrc)
     && planEditorSrc.includes('return DEFAULT_DOCKET_PLAN.map((node) => ({')
     && preloadSrc.includes('plan?: DocketPlanNode[]')
     && controlSrc.includes('const planned = buildPlan(input.plan?.length ? input.plan : DEFAULT_PLAN);'),
@@ -9069,8 +9278,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('A schedule keeps its next fire and catches up')
     && settingsSrc.includes('repository that was mid-run is not resumed')
     && settingsSrc.includes('An interactive session is a live terminal process')
-    && sourceOf('src/main/headless.ts').includes('Nothing was resumed — start the fan-out again for this repository.'),
-    "the 'Before you leave' restart paragraph names both what survives a restart (a queued job, a schedule's next fire) and what does not (a headless repository that was mid-run, an interactive session), and its headless claim still matches the sweep that errors those rows");
+    && sourceOf('src/main/headless.ts').includes('process state is unknown; this repository was not resumed.'),
+    "the 'Before you leave' restart paragraph names both what survives a restart (a queued job, a schedule's next fire) and what does not (a headless repository that was mid-run, an interactive session), and its headless claim matches the sweep that preserves unknown ownership");
 
   // 'Before you leave' answers whether the lid can close, so a row that could
   // not be read must never render as a pass. Three things hold that up, and a
@@ -9215,10 +9424,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     `th ${(mcpFn.match(/<th\b/g) ?? []).length}, colSpan7 ${(mcpFn.match(/colSpan=\{7\}/g) ?? []).length}`);
 
   // The Dispatcher row that caps a lane names the surface that arms it.
-  check(settingsSrc.includes('armed per goal in Review')
+  check(settingsSrc.includes('armed per goal in Goals')
     && !settingsSrc.includes('Tasks a goal dispatches on its own, unattended.'),
     'the Dispatcher row that limits goal autopilot names the surface that switches it on, instead of describing a lane with no stated way in',
-    String(settingsSrc.includes('armed per goal in Review')));
+    String(settingsSrc.includes('armed per goal in Goals')));
 
   // Settings now uses shared buttons for its section index. The removed
   // .set-jump reset has no remaining callers; the renderer probe exercises

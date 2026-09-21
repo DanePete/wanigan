@@ -1,0 +1,38 @@
+{
+  "mode": "after",
+  "capturedAt": "2026-09-19T14:37:53.507Z",
+  "renderer": {
+    "root": "/Users/dane/Projects/drupal/wanigan/out/renderer",
+    "sha256": "8ece239ff1b5777040d23cf8b7c0cc5fb30382417136d81a687da4bb74213052",
+    "assets": [
+      {
+        "path": "assets/index-BFivxhqe.css",
+        "sha256": "5b0dc558ce62ba88d228822312708561e84f491d6cae7f78964ce437ddace337"
+      },
+      {
+        "path": "assets/index-i2TqYkVC.js",
+        "sha256": "348b142c4c35f57c1af33fa1a25cb45c1abfce914e1f30f9ac6dc50818a5972b"
+      },
+      {
+        "path": "assets/runtime-DPC_1S4f.js",
+        "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+      },
+      {
+        "path": "index.html",
+        "sha256": "c826f947f5fb7ba4c5d2a723f9f5baa917d00da33aea4eed69da128eb0059236"
+      }
+    ]
+  },
+  "sourcePaths": [
+    "src/renderer/src/views/Context.tsx",
+    "src/renderer/src/views/ImprovementScout.tsx",
+    "src/renderer/src/views/Extensions.tsx"
+  ],
+  "fixtureOnly": true,
+  "checks": [
+    "Context capability limits are visible while the reading guide is closed.",
+    "Scout labels distinguish local and online calls; each sends its existing explicit mode without changing watch or network settings.",
+    "Extension inspection retains the visible safety limitation, consent review gate, and deliberate install action. No fixture install was requested."
+  ],
+  "errors": []
+}

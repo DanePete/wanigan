@@ -1,6 +1,8 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project, ProviderInfo } from '@shared/types';
 import { executionForSchedule, SCHEDULED_BUDGET_USD, SCHEDULED_TIMEOUT_MS } from '@shared/scheduled-execution';
+import { cronForScheduleTiming, readScheduleTiming, type ScheduleTiming } from '@shared/schedule-timing';
 import { Chip, ConfirmNote, EmptyState, Explainer, Note, PageHead, Pill, Reading, SectionHead, Segmented, ago, num, usd } from '../components/bits';
 import { useLiveViewMemory } from '../components/planningMemory';
 import { useViewMemory } from '../components/viewMemory';
@@ -107,7 +109,7 @@ const namesOf = (projects: Project[], cap = 6): string =>
 type Draft = { name:string; cron:string; kind:Kind; projectId:string; prompt:string; allProjects:boolean; rerunId:string; providerId:string; providerProfileFingerprint:string };
 type Fire = { at:number; status:string; detail:string|null };
 type Preview = { cron:string; fires:number[]; describe:string };
-type Daemon = { supported:boolean; installed:boolean; detail:string };
+type Daemon = { supported:boolean; installed:boolean; detail:string; caveat:string };
 const errorText = (cause:unknown) => cause instanceof Error ? cause.message : String(cause);
 const promptOf = (row:Schedule) => row.payload && typeof row.payload === 'object' && 'prompt' in row.payload && typeof row.payload.prompt === 'string' ? row.payload.prompt : '';
 const newDraft = (projectId:string):Draft => ({name:'',cron:'3 3 * * *',kind:'headless',projectId,prompt:'',allProjects:false,rerunId:'',providerId:'',providerProfileFingerprint:''});
@@ -265,7 +267,7 @@ export default function Schedules({ projects }: { projects:Project[] }) {
     {readError&&<div className="sc-read-error"><Note tone="error">{readError}{list.length>0?' Showing the last readable records. Refresh before making changes.':''}</Note></div>}
     {!editor&&actionError&&<Note tone="error">{actionError}</Note>}
     {notice&&<Note>{notice}</Note>}
-    <div className="sc-availability" role="status"><span>{daemonError?'Background scheduler status unavailable':!daemon?'Checking background scheduling…':daemon.installed?'Background scheduler installed':'Runs while Wanigan is open'}<small>{daemon?.installed?'This Mac must be awake. A closed window does not pause schedules.':'Missed work is checked when Wanigan next opens.'}</small></span><button className="btn btn-sm" type="button" onClick={openSchedulerSettings}>Scheduler settings</button></div>
+    <div className="sc-availability" role="status"><span>{daemonError?'Background scheduler status unavailable':!daemon?'Checking background scheduling…':daemon.installed?'Background scheduler installed':'Runs while Wanigan is open'}<small>{daemon?.installed?(daemon.caveat||'A closed window does not pause schedules.'):'Missed work is checked when Wanigan next opens.'}</small></span><button className="btn btn-sm" type="button" onClick={openSchedulerSettings}>Scheduler settings</button></div>
     <div className="sc-workspace">
       <aside className="sc-agenda" aria-label="Schedule agenda">
         <SectionHead label="Up next" count={list.length} />
@@ -351,6 +353,35 @@ function ExecutionSummary({payload,providers,onReview,disabled=false}:{payload:u
 
 const providerChoice=(providerId:string,fingerprint:string)=>JSON.stringify([providerId,fingerprint]);
 
+function ScheduleTimingEditor({cron,onChange}:{cron:string;onChange:(cron:string)=>void}) {
+  const initial=readScheduleTiming(cron);
+  const [mode,setMode]=useState<ScheduleTiming['repeat']|'custom'>(initial?.repeat??'custom');
+  const [time,setTime]=useState(initial?.time??'09:00');
+  const [weekday,setWeekday]=useState(initial?.weekday??1);
+  const weekdays=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const changeTiming=(repeat:ScheduleTiming['repeat'],nextTime=time,nextWeekday=weekday)=>{
+    onChange(cronForScheduleTiming({repeat,time:nextTime,weekday:nextWeekday})??'');
+  };
+  return <>
+    <div className="sc-fields-row">
+      <label>Repeat<select className="field" aria-label="Schedule repeat" value={mode} onChange={event=>{
+        const next=event.target.value as typeof mode;setMode(next);
+        if(next!=='custom'){
+          const current=readScheduleTiming(cron),nextTime=current?.time??time,nextWeekday=current?.weekday??weekday;
+          setTime(nextTime);setWeekday(nextWeekday);changeTiming(next,nextTime,nextWeekday);
+        }
+      }}><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Every week</option><option value="custom">Custom cron</option></select></label>
+      {mode!=='custom'&&<label>Time<input className="field" type="time" aria-label="Schedule time" value={time} onChange={event=>{setTime(event.target.value);changeTiming(mode,event.target.value);}} /></label>}
+      {mode==='weekly'&&<label>Day<select className="field" aria-label="Schedule weekday" value={weekday} onChange={event=>{const day=Number(event.target.value);setWeekday(day);changeTiming(mode,time,day);}}>{weekdays.map((day,index)=><option key={day} value={index}>{day}</option>)}</select></label>}
+    </div>
+    <p className="sc-fine">Times use this Mac’s local time ({Intl.DateTimeFormat().resolvedOptions().timeZone}).</p>
+    {mode==='custom'?<>
+      <label>Cron expression<input className="field mono" aria-label="Cron expression" value={cron} onChange={event=>onChange(event.target.value)} /></label>
+      <div className="sc-presets">{PRESETS.map(preset=><Chip key={preset.cron} pressed={cron===preset.cron} onToggle={()=>onChange(preset.cron)}>{preset.label}</Chip>)}</div>
+    </>:<p className="sc-fine">{mode==='weekdays'?'Monday through Friday. ':''}Choose Custom cron for other patterns.</p>}
+  </>;
+}
+
 function ScheduleEditor({draft,setDraft,projects,providers,providersBusy,providerError,onRefreshProviders,runs,runsError,cap,existing,creating,busy,disabled,error,onSave,onCancel}:{draft:Draft;setDraft:(draft:Draft)=>void;projects:Project[];providers:ProviderInfo[]|null;providersBusy:boolean;providerError:string|null;onRefreshProviders:()=>void;runs:RunOption[];runsError:string|null;cap:number|null;existing:Schedule|null;creating:boolean;busy:boolean;disabled:boolean;error:string|null;onSave:()=>void;onCancel:()=>void}) {
   const [validCron,setValidCron]=useState(false);
   const [checkedCron,setCheckedCron]=useState('');
@@ -383,8 +414,8 @@ function ScheduleEditor({draft,setDraft,projects,providers,providersBusy,provide
           {!!draft.providerProfileFingerprint&&<ExecutionSummary payload={{...draft,executionVersion:1}} providers={providers} />}
           {!draft.providerProfileFingerprint&&<p className="sc-fine">Choose the agent that will receive this prompt and project context. Its profile is saved with the schedule; a changed or unavailable profile blocks the run.</p>}
         </section>
-        <label>What should the agent do?<textarea className="field" aria-label="Prompt" value={draft.prompt} placeholder="Review the checkout changes and report risks. Make no changes." onChange={event=>patch({prompt:event.target.value})} /></label>
-        <p className="sc-fine">Each occurrence starts the selected agent with this prompt and the project's current instructions. No sign-in or model call runs while you edit.</p>
+        <div className="prompt-field-group"><label htmlFor="schedule-task">What should the agent do?</label><PromptField id="schedule-task" scopeKey={`schedule:${existing?.id ?? 'new'}:${draft.projectId}:${draft.providerId}`} purpose="scheduled task" actionsDisabled={busy} className="field" aria-label="Prompt" value={draft.prompt} placeholder="Review the checkout changes and report risks. Make no changes." onValueChange={prompt=>patch({prompt})} /></div>
+        <p className="sc-fine">Each occurrence starts the selected agent with this prompt and the project's current instructions. Typing makes no model call. Generating a prompt suggestion uses the API shown in its preview.</p>
         {unpinned&&<div className="sc-scope"><label className="sc-check"><input type="checkbox" checked={draft.allProjects} onChange={event=>patch({allProjects:event.target.checked})} /><span><strong>Run in every registered repository.</strong> New projects will be included automatically.</span></label><p>{projects.length?`${namesOf(projects)}. ${projects.length} repositories today.${selectedProvider?.capabilities.headlessBudget?` Their combined agent spending limits are ${usd(projects.length*SCHEDULED_BUDGET_USD)} per occurrence.`:selectedProvider?' This agent has no dollar spending limit.':''}`:'No repositories are registered. Add one before creating a schedule.'}</p>{!draft.allProjects&&<p>Choose a single project or explicitly allow every registered repository before saving.</p>}</div>}
       </>:<>
         <label>Run to re-submit<select className="field" aria-label="Run to re-submit" value={draft.rerunId} onChange={event=>patch({rerunId:event.target.value})}><option value="">Choose a saved batch…</option>{draft.rerunId&&!chosen&&<option value={draft.rerunId}>Saved run unavailable</option>}{runs.map(row=><option key={row.id} value={row.id}>{row.name} · {num(row.total_requests)} requests</option>)}</select></label>
@@ -392,7 +423,7 @@ function ScheduleEditor({draft,setDraft,projects,providers,providersBusy,provide
         <p className="sc-fine">{chosen?`${chosen.name} is submitted again from its saved configuration. ${chosen.cost_usd>0?`Last recorded cost: ${usd(chosen.cost_usd)}.`:`No settled cost; previous estimate: ${usd(chosen.est_cost_usd)}.`}`:'Choose a batch whose results you have already reviewed.'} File and command sources read the disk again at run time; pasted data keeps the same rows. The project selection is a label here; the batch uses its saved configuration.</p>
         {chosen&&cap!==null&&cap>0&&chosen.cost_usd>cap&&<Note tone="warn">The previous run cost {usd(chosen.cost_usd)}, above the current {usd(cap)} per-run cap. A fresh estimate must fit that cap before submission.</Note>}
       </>}
-      <section className="sc-section"><SectionHead label="When it returns" /><div className="sc-presets">{PRESETS.map(preset=><Chip key={preset.cron} pressed={draft.cron===preset.cron} onToggle={()=>patch({cron:preset.cron})}>{preset.label}</Chip>)}</div><label>Cron expression<input className="field mono" aria-label="Cron expression" value={draft.cron} onChange={event=>patch({cron:event.target.value})} /></label>
+      <section className="sc-section"><SectionHead label="When it returns" /><ScheduleTimingEditor cron={draft.cron} onChange={cron=>patch({cron})} />
         <SchedulePreview cron={draft.cron} onReady={valid=>{setValidCron(valid);setCheckedCron(draft.cron);}} /></section>
     </fieldset>
     {!creating&&!existing&&<Note tone="error">This schedule was removed. Your draft is still here, but it cannot be saved to the removed schedule.</Note>}

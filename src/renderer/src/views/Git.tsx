@@ -359,7 +359,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   // repository, but projectId kept the dead id: the picker matched no option
   // of its own and named one repository while everything below it read
   // another. Rewriting the id puts the two back in agreement. The draft and
-  // the selection go with it for the reason the picker's own onChange gives —
+  // the selection go with it when the shared project switcher changes scope —
   // a message written about the removed repository's changes must not be left
   // waiting over a different tree.
   useEffect(() => {
@@ -687,15 +687,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
 
   const bar = (
     <div className="gt-bar">
-      <select className="field" aria-label="Repository" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
-              onChange={(e) => {
-                // The message box is a draft about this repository's changes;
-                // carrying it to another project offers to commit the wrong
-                // sentence against the wrong tree.
-                setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');
-              }}>
-        {options.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
+      <span className="dim" title={root}>{project?.name}</span>
       {st?.isRepo && (
         <>
           <span className="gt-branch">{st.detached ? 'HEAD (detached)' : st.branch ?? '—'}</span>

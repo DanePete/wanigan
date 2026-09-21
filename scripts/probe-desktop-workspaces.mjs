@@ -11,7 +11,9 @@ const require = createRequire(import.meta.url);
 const { _electron } = require('playwright-core');
 const root = path.resolve(import.meta.dirname, '..');
 const before = process.argv.includes('--before');
-const out = path.join(root, 'docs/visuals/desktop-workspaces', before ? 'before' : 'after');
+const scopeOnly = process.argv.includes('--git-scope-only');
+const out = scopeOnly ? path.join(root, 'docs/visuals/git-scope-2026-09-19')
+  : path.join(root, 'docs/visuals/desktop-workspaces', before ? 'before' : 'after');
 mkdirSync(out, { recursive: true });
 const dir = mkdtempSync(path.join(tmpdir(), 'wanigan-workspaces-'));
 writeFileSync(path.join(dir, 'main.cjs'), `const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>{const w=new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});w.loadURL('about:blank');});`);
@@ -21,6 +23,7 @@ const app = await _electron.launch({ executablePath: path.join(root, 'node_modul
 const errors = [], checks = [], dimensions = {};
 try {
   const page = await app.firstWindow();
+  page.setDefaultTimeout(15000);
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(STUB);
   await page.addInitScript(() => {
@@ -43,7 +46,8 @@ try {
         write:async(...args)=>{window.__workspaceCalls.push(['write',...args]);},
       },
       review:{recipe:async()=>({commands:['npm test']}),history:async()=>[]},
-      worktrees:{list:async()=>[],status:async()=>({branch:'feature/workspace',base:'main',dirty:2,ahead:1,behind:0,exists:true,path:'/example/platform-worktree'})},
+      worktrees:{list:async()=>[],status:async()=>({branch:'feature/workspace',base:'main',dirty:2,ahead:1,behind:0,exists:true,path:'/example/platform-worktree'}),
+        setup:async projectId=>({projectId,depsMode:'skip',setup:[],teardown:[],updatedAt:null,include:{state:'absent'}}),commandRuns:async()=>[]},
       attachments:{list:async()=>[],sent:async()=>0},
     };
     window.wanigan = new Proxy(original, {get(target,key){ if(!(key in overrides)) return target[key]; return new Proxy(target[key],{get(service,method){return overrides[key][method] ?? service[method];}}); }});
@@ -52,7 +56,38 @@ try {
   await page.waitForSelector('.mission-room');
   await page.evaluate(()=>document.documentElement.dataset.motion='off');
   const go = async key => { await page.locator('.space-dock button').first().focus(); await page.keyboard.press(key); };
-  for (const theme of ['dark','light']) {
+  if (scopeOnly) {
+    const selectProject = async name => {
+      await page.getByRole('button',{name:/^Switch project space:/}).click();
+      await page.getByRole('combobox',{name:'Search project spaces',exact:true}).fill(name);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(name => document.querySelector('.space-switch-name')?.textContent === name, name);
+      await page.locator('.gt-file').first().waitFor();
+    };
+    await go('Meta+9'); await page.locator('.gt-file').first().waitFor();
+    await selectProject('storefront');
+    const draft = page.getByRole('textbox',{name:'Commit message',exact:true});
+    await page.locator('.gt-file').filter({hasText:'src/Checkout.tsx'}).first().click();
+    await page.locator('.gt-diff').waitFor();
+    await draft.fill('A draft about storefront only');
+    await go('Meta+Shift+H'); await page.locator('.mission-room').waitFor();
+    await go('Meta+9'); await page.locator('.gt-diff').waitFor();
+    assert.equal(await draft.inputValue(), 'A draft about storefront only');
+    assert.equal(await page.locator('.gt-file.on').count(), 1);
+    checks.push('Leaving Changes and returning within storefront preserves its draft, selected file and refetched diff.');
+    await selectProject('platform');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Commit message"]')?.value === '');
+    assert.equal(await page.locator('.gt-file.on').count(), 0);
+    assert.equal(await page.locator('.gt-diff').count(), 0);
+    checks.push('The shared project switcher clears storefront draft, selection and detail when switching to platform.');
+    await draft.fill('A draft about platform only');
+    await selectProject('storefront');
+    assert.equal(await draft.inputValue(), '');
+    assert.equal(await page.locator('.gt-file.on').count(), 0);
+    assert.deepEqual(await page.evaluate(() => window.__workspaceCalls), []);
+    checks.push('Switching back does not revive a draft for another tree; no repository or session writes.');
+  }
+  for (const theme of scopeOnly ? [] : ['dark','light']) {
     await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
     await go('Meta+1'); await page.waitForSelector('.sessions-view');
     await page.locator('.session-item').filter({hasText:'Workspace redesign'}).click();
@@ -65,7 +100,7 @@ try {
     await page.waitForSelector('.gt-diff');
     await page.screenshot({path:path.join(out,`changes-${theme}.png`),scale:'css'});
   }
-  if (!before) {
+  if (!before && !scopeOnly) {
     await page.getByRole('textbox',{name:'Commit message',exact:true}).fill('Keep this draft while reviewing');
     await page.getByRole('group',{name:'Repository views'}).getByRole('button',{name:'History',exact:true}).click();
     await page.locator('.gt-row').first().click();
@@ -105,14 +140,19 @@ try {
     await page.getByRole('button',{name:'Cancel',exact:true}).click();
     checks.push('gate drafts persist across disclosure; push still requires explicit confirmation');
     await page.evaluate(()=>window.__workspaceGitFailure=true);
-    const repositoryPicker = page.getByRole('combobox',{name:'Repository',exact:true});
-    await repositoryPicker.selectOption((await repositoryPicker.inputValue()) === 'p2' ? 'p1' : 'p2');
+    const switchRepository = async () => {
+      const name = await page.locator('.space-switch-name').innerText();
+      await page.getByRole('button',{name:/^Switch project space:/}).click();
+      await page.getByRole('combobox',{name:'Search project spaces',exact:true}).fill(name === 'platform' ? 'storefront' : 'platform');
+      await page.keyboard.press('Enter');
+    };
+    await switchRepository();
     await page.getByText('Fixture repository unavailable',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Push 1',exact:true}).count(),0);
     assert.equal(await page.getByRole('textbox',{name:'Commit message',exact:true}).count(),0);
     checks.push('failed project switch cannot act on the previous repository');
     await page.evaluate(()=>window.__workspaceGitFailure=false);
-    await repositoryPicker.selectOption((await repositoryPicker.inputValue()) === 'p2' ? 'p1' : 'p2');
+    await switchRepository();
     await page.locator('.gt-file').first().waitFor();
     await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(820,960));
     await page.waitForFunction(()=>window.innerWidth===820);

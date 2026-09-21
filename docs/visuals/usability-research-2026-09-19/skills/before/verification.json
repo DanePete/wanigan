@@ -1,0 +1,8 @@
+{
+  "provenance": "Production renderer in isolated Electron with fictional bridge records. No real providers, user data, network checks or model calls.",
+  "baseline": true,
+  "checks": [],
+  "errors": [],
+  "dimensions": [],
+  "rendererIndexSha256": "263b6bc2c0142eabca0c30e54eb754155087f3275a5189555a5cf0b450a75263"
+}

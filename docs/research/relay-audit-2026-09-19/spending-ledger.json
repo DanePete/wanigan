@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "audit": "relay-2026-09-19",
+  "currency": "USD",
+  "ceiling": 50,
+  "plannedNewWorkCeiling": 40,
+  "reserve": 10,
+  "coordinator": "root",
+  "updatedAt": "2026-09-19T19:10:43.639363+00:00",
+  "entries": [],
+  "confirmedAuditCharges": 0,
+  "unsettledLiability": 0,
+  "activeReservations": 0,
+  "remainingAuthorized": 50,
+  "notes": [
+    "No audit inference call admitted. Included subscription usage is separate; missing bills are not zero.",
+    "Allocations: conformance 5, pilot 25, targeted reproductions 10, reserve 10 USD.",
+    "Historical and concurrent non-audit charges are outside this audit ledger.",
+    "Read-only native account/model/quota/auth/configuration probes were executed; none created a model turn, inference request, or billable MCP call. No paid trials or human-accepted task outcomes exist for this audit.",
+    "Public OpenRouter catalog and endpoint metadata GETs also completed without credentials or inference; no trial admissions changed."
+  ],
+  "state": "closed-with-live-lanes-blocked",
+  "admissionDecisions": [
+    {
+      "lane": "JEV conformance",
+      "admitted": false,
+      "reason": "Ambiguous request failures lack durable liability records; dedicated hard bound and provider reconciliation not established."
+    },
+    {
+      "lane": "Relay coding pilot and paid review",
+      "admitted": false,
+      "reason": "CR-01 incomplete spend coverage plus RT-01/02/03 safety findings; no complete supported bounded dollar-metered lane established."
+    },
+    {
+      "lane": "OpenRouter manual conformance",
+      "admitted": false,
+      "reason": "No key configured; generic manual/unpriced profile lacks complete billing attribution and hard per-trajectory bound."
+    },
+    {
+      "lane": "Official OpenRouter MCP",
+      "admitted": false,
+      "reason": "No existing connection in inspected native Codex/Wanigan registries or callable session tools; no verified Wanigan OAuth/readiness path."
+    }
+  ]
+}

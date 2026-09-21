@@ -23,7 +23,7 @@ checkout are not captured. This is not a reproducible environment or an atomic
 filesystem snapshot. The reader makes two content passes and checks metadata for
 detected concurrent edits. Only fingerprints are retained, not source copies.
 
-The bounded reader supports at most 20,000 files, 512 MiB total content,
+The bounded reader supports at most 20,000 files, 1 GiB total content,
 16 MiB per file, 8 MiB of Git metadata per command and 15 seconds per snapshot.
 Non-Git projects, symlinks, submodules, unsupported paths, read failures and
 exhausted bounds leave a run unverified. Commands may still run and retain their
@@ -47,8 +47,9 @@ SQLite migration adds nullable session and evidence columns. Existing runs and
 proofs remain readable, but cannot acquire provenance retroactively: rerun their
 checks to establish a current comparison.
 
-Regression coverage is in `src/main/smoke-review.ts` and the Control section of
-`src/main/smoke3.ts`, using real temporary repositories, worktrees and shell
-commands. `scripts/probe-review-checkout.mjs` checks the renderer with clearly
-labeled synthetic data. Before/after captures in both themes are under
+Regression coverage is in `src/main/smoke-review.ts`,
+`src/main/smoke-audit-integrations.ts` and the Control section of
+`src/main/smoke3.ts`, using real temporary repositories, worktrees, sparse
+large-checkout fixtures and shell commands. `scripts/probe-review-checkout.mjs`
+checks the renderer with clearly labeled synthetic data. Before/after captures in both themes are under
 [`docs/visuals/review-checkout-2026-09-15`](visuals/review-checkout-2026-09-15).

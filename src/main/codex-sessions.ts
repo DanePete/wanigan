@@ -188,6 +188,19 @@ export function assertCodexThreadWriterUnlocked(threadId: unknown): void {
     .map((root) => path.join(root, 'thread-writer-locks', `${id}.lock`))
     .find((candidate) => fs.existsSync(candidate));
   if (!lock) return;
+  // No lsof on Windows, and no drop-in equivalent: `openfiles` needs the system
+  // to have been put into a tracking mode and an elevated token to read, and
+  // asking whether a handle is open is not a question a normal process gets to
+  // ask. So this stays fail-closed there, but says which lock and why — the
+  // previous sentence sent somebody looking for a Wanigan fault when the answer
+  // is a zero-byte file they can delete.
+  if (process.platform === 'win32') {
+    throw new Error(
+      'Codex leaves a lock file behind when a writer exits, and verifying whether one is still held '
+      + 'needs lsof, which Windows does not have. Wanigan did not start a second writer. If no Codex '
+      + `session is using this conversation, delete ${lock} and try again.`,
+    );
+  }
   const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof';
   if (!fs.existsSync(lsof)) {
     throw new Error('Wanigan could not verify Codex’s writer lock, so it did not start a second writer.');

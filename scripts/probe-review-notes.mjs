@@ -65,7 +65,7 @@ try {
   await page.keyboard.press('Meta+1');
   await page.locator('.sessions-view').waitFor();
   await page.locator('.terminal-host:visible').waitFor();
-  await page.getByRole('button', { name: 'Code', exact: true }).click();
+  await (before ? page : page.getByRole('group', { name: 'Session details', exact: true })).getByRole('button', { name: before ? 'Code' : 'Changes', exact: true }).click();
   await page.locator('.code-file').filter({ hasText: 'src/checkout.ts' }).click();
   await page.locator('pre.diff').waitFor();
 

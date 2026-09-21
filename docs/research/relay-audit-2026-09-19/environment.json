@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-09-19T18:52:23.568283+00:00",
+  "sourceRoot": "/Users/dane/Projects/drupal/wanigan",
+  "commit": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "branch": "feat/routing-suggester",
+  "initialStatus": [
+    "?? docs/research/2026-09-19-relay-audit-capability-discovery.md",
+    "?? docs/research/2026-09-19-relay-audit-cost-coverage.md",
+    "?? docs/research/2026-09-19-relay-audit-routing-coverage.md",
+    "?? docs/research/2026-09-19-relay-audit-runtime-coverage.md",
+    "?? docs/superpowers/plans/2026-09-19-relay-deep-audit.md"
+  ],
+  "labRoot": "/private/tmp/wanigan-relay-audit-vxcyorcv",
+  "labRepo": "/private/tmp/wanigan-relay-audit-vxcyorcv/repo",
+  "userData": "/private/tmp/wanigan-relay-audit-vxcyorcv/user-data",
+  "providerPacks": "/private/tmp/wanigan-relay-audit-vxcyorcv/provider-packs",
+  "dependencies": "APFS copy-on-write clone, independent inode; no shared node_modules symlink",
+  "inferenceCalls": 0,
+  "dependencyExample": {
+    "relativePath": "node_modules/typescript/lib/typescript.js",
+    "sourceInode": 27580181,
+    "labInode": 27793034
+  },
+  "node": "22.23.2",
+  "electron": "44.3.0",
+  "codexCli": "0.155.1",
+  "claudeCli": "2.1.278",
+  "platform": "26.5.2",
+  "baseline": {
+    "npmTestFirstSevenStages": "passed",
+    "initialSmoke": "SIGABRT before main suite in sandbox; macOS _RegisterApplication",
+    "nativeSmokeExitCode": 0,
+    "nativeSmokeAssertions": 2620,
+    "terminalProbeExitCode": 0,
+    "rendererOriginalProbe": "failed: obsolete selector",
+    "rendererAuditCopy": "four label-only selector replacements; exit 0, zero renderer errors, both themes",
+    "trackedSourceChanged": false
+  },
+  "auditProbeCorrection": "Claude default account must leave CLAUDE_CONFIG_DIR unset per accounts.applyLaunchEnv; initial explicit-default false status was superseded by correct native status"
+}

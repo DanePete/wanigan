@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+/** DOM fixture regression for live Relay changes. Never launches a provider.
+ * --phase before|after --out DIR [--renderer DIR] [--agent-label TEXT]
+ * --composer additionally captures real Electron IPC from fresh userData,
+ * with WANIGAN_MOCK=1 discovery and no create/preview/start action.
+ */
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
+import { tmpdir } from 'node:os';
+const root='/Users/dane/Projects/drupal/wanigan';
+const arg=(name,fallback)=>{const i=process.argv.indexOf(name);return i<0?fallback:process.argv[i+1];};
+const phase=arg('--phase','after');assert(['before','after'].includes(phase));
+const out=path.resolve(arg('--out',`/private/tmp/wanigan-live-relay-ui-${phase}`));mkdirSync(out,{recursive:true});
+let renderer=arg('--renderer',null);
+if(!renderer){renderer=path.join(out,'renderer');cpSync(path.join(root,'out/renderer'),renderer,{recursive:true});}
+process.env.WANIGAN_RENDERER_ROOT=path.resolve(renderer);
+const hash=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+const files=(dir,prefix='')=>readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name),path.join(prefix,e.name)):[{path:path.join(prefix,e.name),sha256:hash(path.join(dir,e.name))}]);
+const report={phase,at:new Date().toISOString(),renderer:path.resolve(renderer),rendererFiles:files(renderer),runnerSha256:hash(import.meta.filename),checks:[],errors:[],screenshots:[],provenance:{review:'Chromium built production renderer; deliberately synthetic RelayRead rows and recorded preload calls. No main-process state, IPC, provider, PTY, persistence, quality or cost claim.',composer:'Not requested.'}};
+const record=s=>{report.checks.push(s);console.log(s);};
+const oldProbe=readFileSync(path.join(root,'scripts/probe-relay-workspace.mjs'),'utf8');
+const begin=oldProbe.indexOf('const fixture =');const end=oldProbe.indexOf('async function setTheme',begin);
+assert(begin>=0&&end>begin);const fixture=runInNewContext(oldProbe.slice(begin,end)+';fixture');
+const instrument=fixture()+String.raw`
+(() => {
+ const template=structuredClone(window.__relayRows.find(r=>r.docket.id==='review'));
+ const rows=['ready','running','blocked','pending','failed','canceled','queued','checking','rejected','changes'].map(id=>{
+  const row=structuredClone(template);row.docket.id=id;row.docket.title='Review fixture: '+id;row.forecast=null;
+  for(const n of row.docket.nodes){n.id=id+'-'+n.kind;n.docketId=id;n.dependsOn=n.dependsOn.map(v=>v.replace(/^review-/,id+'-'));}
+  for(const n of row.nodes){n.nodeId=n.nodeId.replace(/^review-/,id+'-');if(n.route)n.route.proofId='route-'+n.nodeId;}
+  for(const proof of row.docket.proofs){proof.id=id+'-'+proof.id;proof.nodeId=proof.nodeId.replace(/^review-/,id+'-');proof.docketId=id;}
+  const n=row.docket.nodes.find(n=>n.kind==='review');n.status=['queued','checking'].includes(id)?'ready':['rejected','changes'].includes(id)?'failed':id;n.sessionId=id==='running'?'s1':null;n.startedAt=id==='running'?Date.now()-300000:null;
+  n.queued=id==='queued';n.gateRunningSince=id==='checking'?Date.now():null;
+  if(id!=='running'){const rec=row.nodes.find(r=>r.nodeId===n.id);rec.completed=0;rec.completions=[];}
+  if(id==='rejected')row.docket.status='rejected';
+  if(['rejected','changes'].includes(id))row.docket.proofs.push({id:id+'-decision',docketId:id,nodeId:n.id,kind:'decision',status:'passed',summary:'Human decision: '+(id==='changes'?'requested changes':'reject')+'.',createdAt:Date.now()});
+  return row;
+ });
+ window.__relayRows=rows;window.__relayCalls=[];
+ // Keep action fixtures stationary, so each button can be tested independently.
+ // Do not simulate transition/gate correctness: those belong to main-process tests.
+ const base=window.wanigan;
+ window.wanigan=new Proxy(base,{get(api,service){if(service==='control')return new Proxy(api.control,{get(old,method){if(['start','complete','retry','runProof'].includes(method))return async(...args)=>{window.__relayCalls.push([method,...structuredClone(args)]);if(window.__relayActionHold===method)await new Promise(resolve=>window.__relayActionRelease=resolve);return {};};return old[method];}});return api[service];}});
+})();`;
+const {openRenderer}=await import(path.join(root,'scripts/renderer-harness.mjs'));
+const setTheme=async(page,theme)=>{await page.evaluate(t=>{document.documentElement.dataset.theme=t;document.documentElement.dataset.themePreference=t;document.documentElement.style.colorScheme=t;window.dispatchEvent(new CustomEvent('wanigan:theme-changed',{detail:{preference:t,resolved:t}}));},theme);await page.waitForTimeout(180);};
+const capture=async(page,name,provenance)=>{await page.evaluate(()=>document.activeElement?.blur());for(const theme of ['dark','light']){await setTheme(page,theme);const filename=`${name}-${theme}.png`;await page.screenshot({path:path.join(out,filename),scale:'css',fullPage:true});report.screenshots.push({file:filename,theme,provenance});}};
+let activePage;
+try{
+ const {page,close}=await openRenderer({theme:'dark',width:1440,height:1000,instrument,onError:m=>{if(!/WebGPU/.test(m))report.errors.push(m);}});activePage=page;page.setDefaultTimeout(15000);
+ try{
+  await page.locator('.app-header').waitFor();await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('Meta+Shift+R');await page.getByRole('heading',{name:'Relay',exact:true}).waitFor();
+  const choose=async id=>{await page.getByRole('combobox',{name:'Choose a relay'}).selectOption(id);await page.waitForFunction(id=>document.querySelector('.rl-summary h2')?.textContent==='Review fixture: '+id,id);await page.waitForTimeout(120);};
+  // The current action is a named section. Older builds do not expose a region
+  // in Chromium's role tree; the class selector is the same production section.
+  const action=page.locator('.rl-next');
+  const button=name=>action.getByRole('button',{name,exact:true});
+  const calls=()=>page.evaluate(()=>window.__relayCalls);
+  const clear=()=>page.evaluate(()=>window.__relayCalls=[]);
+  const decisionLabels=['Approve','Request changes','Reject'];
+  const decisions=['approve','request_changes','reject'];
+  await choose('ready');assert.deepEqual(await calls(),[]);await capture(page,'fixture-review-ready','mock Relay records and preload calls');
+  if(phase==='before'){
+   for(const name of decisionLabels)assert.equal(await button(name).count(),0);
+   assert(await button('Start review').isVisible());record('BEFORE: ready review offers Start review and no direct human decision.');
+  }else{
+   for(let i=0;i<decisionLabels.length;i++){await clear();await button(decisionLabels[i]).click();await page.waitForFunction(()=>window.__relayCalls.length===1);assert.deepEqual(await calls(),[['complete','ready-review',{decision:decisions[i]}]]);await page.waitForFunction(()=>!document.querySelector('.rl-next button')?.disabled);}
+   record('AFTER: each ready review decision invokes exactly control.complete(reviewId,{decision}); no control.start.');
+   const agentLabel=arg('--agent-label','Start review agent (optional)');
+   const agentButton=button(agentLabel);assert(await agentButton.isVisible());
+   await clear();await agentButton.click();await page.waitForFunction(()=>window.__relayCalls.length===1);const start=await calls();assert.equal(start[0][0],'start');assert.equal(start[0][1],'ready-review');assert.equal(start[0][2].providerId,'claude');assert.equal(start[0][2].model,'claude-sonnet-5');assert.equal(start[0][2].effort,'high');
+   record('AFTER: optional agent review invokes only control.start with the recorded route.');
+   await page.waitForFunction(()=>!document.querySelector('.rl-next button')?.disabled);
+   await clear();await page.evaluate(()=>window.__relayActionHold='complete');await button('Approve').click();await page.waitForFunction(()=>typeof window.__relayActionRelease==='function');
+   for(const name of decisionLabels)assert(await button(name).isDisabled());assert(await agentButton.isDisabled());assert.equal((await calls()).length,1);
+   await capture(page,'fixture-review-saving','mock Relay records and held preload promise');
+   await page.evaluate(()=>{window.__relayActionHold=null;window.__relayActionRelease();});await page.waitForFunction(()=>!document.querySelector('.rl-next button')?.disabled);
+   record('AFTER: a pending decision disables every decision and optional agent review.');
+  }
+  await choose('running');await capture(page,'fixture-review-running','mock Relay records and preload calls');assert(await button('Open live session').isVisible());
+  for(let i=0;i<decisionLabels.length;i++){await clear();await button(decisionLabels[i]).click();await page.waitForFunction(()=>window.__relayCalls.length===1);assert.deepEqual(await calls(),[['complete','running-review',{decision:decisions[i]}]]);await page.waitForFunction(()=>!document.querySelector('.rl-next button[disabled]'));}
+  record('Running review preserves Open live session and all three decision dispatches.');
+  await clear();await page.evaluate(()=>{window.__relayReadFailure='running';document.dispatchEvent(new Event('visibilitychange'));});
+  await page.getByText(/Fixture relay read failed/).waitFor();for(const name of decisionLabels)assert(await button(name).isDisabled());assert.deepEqual(await calls(),[]);
+  await page.evaluate(()=>window.__relayReadFailure=null);await page.getByRole('button',{name:'Retry refresh',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.rl-next button[disabled]'));
+  record('A failed refresh disables decisions on the stale running review until a successful reread.');
+  for(const id of ['blocked','pending','failed','canceled','queued','checking','rejected','changes']){
+   await choose(id);await clear();for(const name of decisionLabels)assert.equal(await button(name).count(),0,`${id}: no ${name} bypass`);
+   assert.equal(await action.getByRole('button',{name:/Start review|Ask.*agent.*review|Ask.*AI.*review/i}).count(),0,`${id}: no review launch bypass`);
+   if(['blocked','failed','rejected','changes'].includes(id))await capture(page,`fixture-review-${id}`,'mock Relay records and preload calls');
+   assert.deepEqual(await calls(),[]);
+  }
+  record('Blocked, pending, failed, canceled, queued, checking, rejected and changes-requested states expose no decision or review launch bypass.');
+  if(phase==='after'){
+   await page.getByRole('button',{name:'New relay',exact:true}).click();await page.getByRole('textbox',{name:'What should this relay accomplish',exact:true}).fill('Fix checkout retries without creating duplicate orders.');
+   await page.getByRole('combobox',{name:'Coding assistant',exact:true}).waitFor();const mode=page.getByRole('combobox',{name:'Choose models',exact:true});
+   assert.deepEqual(await mode.locator('option').allTextContents(),['Choose for me','I’ll choose']);assert(await page.getByRole('combobox',{name:'What matters most?',exact:true}).isVisible());assert(await page.getByRole('button',{name:'Suggest models',exact:true}).isVisible());
+   await clear();await mode.selectOption('manual');assert(await page.getByRole('button',{name:'Preview my choices',exact:true}).isVisible());assert.equal(await page.getByRole('combobox',{name:'What matters most?',exact:true}).count(),0);
+   await page.getByRole('button',{name:'Preview my choices',exact:true}).click();await page.waitForFunction(()=>window.__relayCalls.length===1);const c=await calls();assert.equal(c[0][0],'preview');assert.equal(c[0][1].routing.mode,'manual');
+   record('Plain-language composer labels preserve the manual preview payload and hide automatic preferences in manual mode.');
+  }
+  assert.deepEqual(report.errors,[],'renderer errors');
+ }finally{await close();activePage=null;}
+ if(process.argv.includes('--composer')){
+  const require=createRequire(path.join(root,'package.json'));const {launchWanigan}=await import(path.join(root,'scripts/electron-harness.mjs'));
+  const userData=mkdtempSync(path.join(tmpdir(),'wanigan-live-relay-composer-'));const env={...process.env,WANIGAN_MOCK:'1'};delete env.ELECTRON_RUN_AS_NODE;for(const key of Object.keys(env))if(key.startsWith('VSCODE_'))delete env[key];
+  let app;
+  try{const opened=await launchWanigan(require('playwright-core')._electron,{root,userData,env});app=opened.app;const page=opened.page;activePage=page;page.setDefaultTimeout(15000);
+   await page.waitForSelector('.mission-room',{timeout:30000});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000));
+   await page.evaluate(async repo=>{await window.wanigan.projects.add(repo);},root);await page.reload();await page.waitForSelector('.mission-room');await page.keyboard.press('Meta+Shift+R');await page.waitForSelector('.rl-composer:not([hidden])');
+   const assistantName=phase==='before'?'Profile for this relay':'Coding assistant';await page.waitForFunction(name=>document.querySelector('select[aria-label="'+name+'"]')?.options.length>0,assistantName);
+   await page.getByText('No project',{exact:true}).waitFor({state:'hidden'});await page.getByRole('textbox',{name:'What should this relay accomplish',exact:true}).fill('Fix checkout retries so one payment creates one order. Pass the existing tests and review the change.');
+   await capture(page,'electron-composer','isolated Electron real IPC; mock discovery; no model or Relay mutation');
+   const mode=page.getByRole('combobox',{name:phase==='before'?'Relay routing mode':'Choose models',exact:true});await mode.selectOption('manual');await capture(page,'electron-composer-manual','isolated Electron real IPC; mock discovery; local form change only');
+   report.provenance.composer='Real Electron main/preload IPC in freshly created and removed userData, WANIGAN_MOCK=1 discovery. Added local project path to isolated DB and edited form only. No preview/create/start, paid call or live user profile access.';
+   record('Composer auto/manual captured in dark/light via isolated real Electron IPC; no Relay/provider action.');
+  }finally{if(app)await app.close();activePage=null;rmSync(userData,{recursive:true,force:true});}
+ }
+ report.passed=true;
+}catch(error){report.passed=false;report.failure=error.stack;console.error(error);if(activePage)await activePage.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});process.exitCode=1;}
+finally{writeFileSync(path.join(out,'verification.json'),JSON.stringify(report,null,2)+'\n');console.log('Evidence: '+out);}

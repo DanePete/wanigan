@@ -1,0 +1,54 @@
+{
+  "startedAt": "2026-09-19T18:58:54.484Z",
+  "sourceCommit": "324bca7f137198a78583ec9b8cb07cfd1c667c71",
+  "node": "v22.23.2",
+  "platform": "darwin",
+  "sourceHashes": {
+    "src/main/checkpoints.ts": "5c5673be822fe74efda71d809caf95b8dfb49b26ab7e971ebdaea4624f268206",
+    "src/main/review.ts": "ceb582afbcf828c104c248de0d13a6eea115c0e0ee80daece51b5329238b396b",
+    "src/main/queue.ts": "66676dbb134ab5bd79bd85cff8e4f4ad236b235826a1b19d843ed050cc242f38",
+    "src/main/worktrees.ts": "2a55828414f5b547e5e2e570ab2a3f479b672a5e750bb93235648c5717e5a355"
+  },
+  "scenarios": [
+    {
+      "id": "R12",
+      "ignoredMutationStillCurrent": true,
+      "sameRecipe": true,
+      "newerStatus": "failed",
+      "olderPassAfterNewerFailure": false,
+      "symlink": {
+        "status": "passed",
+        "freshness": {
+          "state": "unavailable",
+          "reason": "Checkout fingerprints do not follow symbolic links.",
+          "checkedAt": 1789844335455
+        },
+        "canVerify": false
+      },
+      "overLimit": {
+        "status": "passed",
+        "freshness": {
+          "state": "unavailable",
+          "reason": "A checkout file exceeds the 16 MiB fingerprint limit.",
+          "checkedAt": 1789844335576
+        },
+        "canVerify": false
+      },
+      "randomAssets": {
+        "bytes": 67108864,
+        "files": 8,
+        "elapsedMs": 188.62870799999996,
+        "snapshot": {
+          "cwd": "$LAB/runtime-verification/review-edges/repo",
+          "head": "987a5c332867ba2fa4fec54f1507f0180d51d684",
+          "fingerprint": "eb3a6d874dbe4d4bbebdc254e47dc2b8a53bc4a3a7bab949861782dff516c3d5",
+          "unavailableReason": null
+        },
+        "headUnchanged": true,
+        "indexUnchanged": true,
+        "note": "64 MiB real random bytes, warm filesystem; not cold production assets"
+      }
+    }
+  ],
+  "finishedAt": "2026-09-19T18:58:55.866Z"
+}

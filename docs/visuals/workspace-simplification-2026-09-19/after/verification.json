@@ -1,0 +1,604 @@
+{
+  "phase": "after",
+  "provenance": "Production renderer, isolated Electron profile, explicitly fictional STUB bridge. No real providers, PTYs, user-data reads, repository writes or model calls. Proves renderer layout only.",
+  "fixtureNote": "SessionReview Changes uses an explicit fictional modified Markdown file and fictional diff. No filesystem change or review command is executed.",
+  "screenshots": [
+    {
+      "file": "mission-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 32,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nLocal workspace\nWith Wanigan\n\nAn optional conversation about your recorded workspace.\n\nBack to work\nNew session\nWanigan\nPlay\n\nDrag to stir. Double-click to spin.\nWater & mist · S spins when he has focus\n\nAcross your spaces\nTwo spaces, together.\nOne session needs you.\n\nAsk about your agents or the recorded overview of your projects.\n\n↑\nClaude API\nSonnet 5\nWhat I can see\nWhat needs me?\nWhich projects are active?\nFrom local records · Updated 0s ago"
+    },
+    {
+      "file": "mission-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 32,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nLocal workspace\nWith Wanigan\n\nAn optional conversation about your recorded workspace.\n\nBack to work\nNew session\nWanigan\nPlay\n\nDrag to stir. Double-click to spin.\nWater & mist · S spins when he has focus\n\nAcross your spaces\nTwo spaces, together.\nOne session needs you.\n\nAsk about your agents or the recorded overview of your projects.\n\n↑\nClaude API\nSonnet 5\nWhat I can see\nWhat needs me?\nWhich projects are active?\nFrom local records · Updated 0s ago"
+    },
+    {
+      "file": "sessions-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 20,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 20,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "learning-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 24,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nLearning\n\nKnowledge with a source. Ready for the next task.\n\nEverything\nPersonal only\nstorefront\nplatform\nRefresh\nTeach Wanigan\nLearning\nOverview\nWhat is happening\nInbox\nProposals to review\nKnowledge\nThe knowledge library\nContext budget\nBriefings and controls\nIn this scope\nplatform + personal\n\nKnowledge includes personal items. Signals and briefings concern this project.\n\nGlossary\nNothing recorded yet\nWhat fills this page\n\nEvery number here is a count over stored rows, so the page stays empty until something has been recorded. Three actions produce data, and any one is enough:\n\n· Run a session. Tool activity records bounded signals — Claude Code sessions record per-tool events via hooks; Codex sessions record turn-complete and approval events.\n· Teach Wanigan directly. The button above creates a cited Inbox proposal from your own words.\n· Run a review gate. Gate passes and failures are recorded as signals with their citations.\n\nRepeated observations across independent tasks are consolidated into proposals every 5 minutes while Wanigan is open.\n\nShow: How learning works, in full"
+    },
+    {
+      "file": "learning-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 24,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nLearning\n\nKnowledge with a source. Ready for the next task.\n\nEverything\nPersonal only\nstorefront\nplatform\nRefresh\nTeach Wanigan\nLearning\nOverview\nWhat is happening\nInbox\nProposals to review\nKnowledge\nThe knowledge library\nContext budget\nBriefings and controls\nIn this scope\nplatform + personal\n\nKnowledge includes personal items. Signals and briefings concern this project.\n\nGlossary\nNothing recorded yet\nWhat fills this page\n\nEvery number here is a count over stored rows, so the page stays empty until something has been recorded. Three actions produce data, and any one is enough:\n\n· Run a session. Tool activity records bounded signals — Claude Code sessions record per-tool events via hooks; Codex sessions record turn-complete and approval events.\n· Teach Wanigan directly. The button above creates a cited Inbox proposal from your own words.\n· Run a review gate. Gate passes and failures are recorded as signals with their citations.\n\nRepeated observations across independent tasks are consolidated into proposals every 5 minutes while Wanigan is open.\n\nShow: How learning works, in full"
+    },
+    {
+      "file": "runs-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 27,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nRuns\n\nUnattended work, ready for your review.\n\nHeadless runs\nAttempts\nRefresh runs\nNew run\nRecent runs\n0\nAll\nActive\nAttention\n○\nNothing has run yet\n\nA completed fan-out stays here for review, with its cost and every repository's outcome.\n\n○\nNo run selected\n\nCreate a run when you have an assignment ready. Its repository outcomes and output will appear here.\n\nPrepare a run"
+    },
+    {
+      "file": "runs-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 27,
+      "bodyText": "Wanigan\nAutomation\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nRuns\n\nUnattended work, ready for your review.\n\nHeadless runs\nAttempts\nRefresh runs\nNew run\nRecent runs\n0\nAll\nActive\nAttention\n○\nNothing has run yet\n\nA completed fan-out stays here for review, with its cost and every repository's outcome.\n\n○\nNo run selected\n\nCreate a run when you have an assignment ready. Its repository outcomes and output will appear here.\n\nPrepare a run"
+    },
+    {
+      "file": "settings-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nManage\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nApplication settings\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nSettings\n\nMake Wanigan work your way.\n\nAgents\nAccounts & runtime\nProjects & safety\nRepositories & guardrails\nAutomation\nCost & capacity\nConnections\nTools & remote access\nPrivacy & data\nObservation & retention\nBackup\nCopy & recovery\nApp\nAppearance & sharing\n\nShow: Saving your changes\n\nAgents & providers\n\nYour installed agents, signed-in accounts and the providers they can use.\n\nHow changes apply\nInstalled agent runtimes\nAccounts\nProvider packs\nClaude Platform API key\nGLM Coding Plan\nDeepSeek\nGrok · xAI\nInstalled agent runtimes\n\nResolved from your login shell's PATH, then from editor extension directories.\n\nClaude Code\n1.0.0\n/usr/local/bin/claude\nCodex\n1.0.0\n/usr/local/bin/codex\nHook events\n?\ncould not read\nFictional UI fixture; runtime capability checks are not performed.\nThese hooks only report what a Codex session did. They print nothing and decide nothing, so the trust gate does not cover Codex.\nAccounts\n\nRun a work login and a personal login side by side, on any agent that keeps its configuration in a directory. Each account is its own directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at once.\n\nA session picks its account from the launcher, then the project’s saved account, then the default. An ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in Wanigan’s environment outranks every stored sign-in; the launcher says so when one is set.\n\nProvider packs\n\nA pack is a manifest of launch profiles. Trusted and enabled are separate: trusting a digest grants nothing, and enabling one only affects sessions started afterwards.\n\nRe-read from disk\n⚠ The pack registry answered, and it is empty — not even the built-in manifests, which ship inside the app and should always be listed. Re-read from disk; if they are still missing, this install is incomplete and no session can start.\n\nA profile only becomes launchable when its pack is enabled and Wanigan finds the CLI it names. Installed agent runtimes above is that second half: 2 of 2 detected.\n\nClaude Platform API key\n\nNeeded for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.\n\nANTHROPIC_API_KEY is set in the environment and takes precedence over anything stored here.\nkey installed\nVerify\nRemove\nReplace key\nSave\nWorkspace ID — required for identity-linked keys\n\nConsole → Settings → Workspaces. Sent as the anthropic-workspace-id header on every request. Plain API keys ignore it, so leaving it set is harmless.\n\nThis is not your Claude Code subscription. The Batches API bills per token against a Claude Platform account with its own credit balance. Get a key at console.anthropic.com/settings/keys. A Claude Code OAuth token is rejected.\n\nKey storage and workspace IDs\nGLM Coding Plan\n\nRuns GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.\n\nWANIGAN_GLM_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nCoding Plan key installed\nVerify live catalogue\nRemove\nReplace Z.ai key\nSave & verify\n\nThe key is verified against api.z.ai/api/coding/paas/v4/models before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.\n\nDeepSeek\n\nRuns DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.\n\nWANIGAN_DEEPSEEK_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nDeepSeek key installed\nVerify live catalogue\nRemove\nReplace DeepSeek key\nSave & verify\n\nWanigan verifies the key against api.deepseek.com/models, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.\n\nGrok · xAI\n\nRuns Grok through the installed Claude Code runtime using xAI’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude, GLM and DeepSeek.\n\nWANIGAN_XAI_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nxAI key installed\nVerify live catalogue\nRemove\nReplace xAI key\nSave & verify\n\nWanigan verifies the key against api.x.ai/v1/models, then stores it encrypted in your macOS Keychain. This is a pay-as-you-go key from console.x.ai; a Grok Pro or SuperGrok subscription does not carry API credit, and its consumption cannot be read the way a Claude or Codex plan's can — so Grok appears under what you spend, never under what is left."
+    },
+    {
+      "file": "settings-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nManage\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nApplication settings\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nSettings\n\nMake Wanigan work your way.\n\nAgents\nAccounts & runtime\nProjects & safety\nRepositories & guardrails\nAutomation\nCost & capacity\nConnections\nTools & remote access\nPrivacy & data\nObservation & retention\nBackup\nCopy & recovery\nApp\nAppearance & sharing\n\nShow: Saving your changes\n\nAgents & providers\n\nYour installed agents, signed-in accounts and the providers they can use.\n\nHow changes apply\nInstalled agent runtimes\nAccounts\nProvider packs\nClaude Platform API key\nGLM Coding Plan\nDeepSeek\nGrok · xAI\nInstalled agent runtimes\n\nResolved from your login shell's PATH, then from editor extension directories.\n\nClaude Code\n1.0.0\n/usr/local/bin/claude\nCodex\n1.0.0\n/usr/local/bin/codex\nHook events\n?\ncould not read\nFictional UI fixture; runtime capability checks are not performed.\nThese hooks only report what a Codex session did. They print nothing and decide nothing, so the trust gate does not cover Codex.\nAccounts\n\nRun a work login and a personal login side by side, on any agent that keeps its configuration in a directory. Each account is its own directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at once.\n\nA session picks its account from the launcher, then the project’s saved account, then the default. An ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in Wanigan’s environment outranks every stored sign-in; the launcher says so when one is set.\n\nProvider packs\n\nA pack is a manifest of launch profiles. Trusted and enabled are separate: trusting a digest grants nothing, and enabling one only affects sessions started afterwards.\n\nRe-read from disk\n⚠ The pack registry answered, and it is empty — not even the built-in manifests, which ship inside the app and should always be listed. Re-read from disk; if they are still missing, this install is incomplete and no session can start.\n\nA profile only becomes launchable when its pack is enabled and Wanigan finds the CLI it names. Installed agent runtimes above is that second half: 2 of 2 detected.\n\nClaude Platform API key\n\nNeeded for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.\n\nANTHROPIC_API_KEY is set in the environment and takes precedence over anything stored here.\nkey installed\nVerify\nRemove\nReplace key\nSave\nWorkspace ID — required for identity-linked keys\n\nConsole → Settings → Workspaces. Sent as the anthropic-workspace-id header on every request. Plain API keys ignore it, so leaving it set is harmless.\n\nThis is not your Claude Code subscription. The Batches API bills per token against a Claude Platform account with its own credit balance. Get a key at console.anthropic.com/settings/keys. A Claude Code OAuth token is rejected.\n\nKey storage and workspace IDs\nGLM Coding Plan\n\nRuns GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.\n\nWANIGAN_GLM_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nCoding Plan key installed\nVerify live catalogue\nRemove\nReplace Z.ai key\nSave & verify\n\nThe key is verified against api.z.ai/api/coding/paas/v4/models before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.\n\nDeepSeek\n\nRuns DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.\n\nWANIGAN_DEEPSEEK_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nDeepSeek key installed\nVerify live catalogue\nRemove\nReplace DeepSeek key\nSave & verify\n\nWanigan verifies the key against api.deepseek.com/models, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.\n\nGrok · xAI\n\nRuns Grok through the installed Claude Code runtime using xAI’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude, GLM and DeepSeek.\n\nWANIGAN_XAI_KEY is set in the environment and takes precedence over anything stored here — the fingerprint below is that key, and Verify reports on it. A stored key also exists; Remove clears that one, and sessions keep using the environment.\nxAI key installed\nVerify live catalogue\nRemove\nReplace xAI key\nSave & verify\n\nWanigan verifies the key against api.x.ai/v1/models, then stores it encrypted in your macOS Keychain. This is a pay-as-you-go key from console.x.ai; a Grok Pro or SuperGrok subscription does not carry API credit, and its consumption cannot be read the way a Claude or Codex plan's can — so Grok appears under what you spend, never under what is left."
+    },
+    {
+      "file": "control-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\n0\nEvery project\nstorefront\nplatform\n\nNo goals yet. Add an objective and its acceptance checks to start tracking work here.\n\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "control-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAcross all projects\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nGoals\n\nThe work. The proof. Your call.\n\nRefresh\nNew goal\nGoals\n0\nEvery project\nstorefront\nplatform\n\nNo goals yet. Add an objective and its acceptance checks to start tracking work here.\n\n○\nMake room for your next decision.\n\nKeep an objective, its tasks, and the proof of what changed together.\n\nCreate your first goal\nEvents & model evidence\n0 new events"
+    },
+    {
+      "file": "board-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nBoard\n\nTasks across your goals. A clear place for what comes next.\n\nPlan a goal\nEvery project\nstorefront\nplatform\nRefresh\nAll tasks\n0\nReady\n0\nIn progress\n0\nWaiting\n0\nBlocked\n0\nParked\n0\nClosed\n0\n○\nYour next goal starts here.\n\nPlan a goal to turn an idea into tasks you can follow and review.\n\nPlan a goal\n0 of 0 tasks · 0 goals\nUpdates every 5 seconds\n\nShow: How tasks move"
+    },
+    {
+      "file": "board-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nBoard\n\nTasks across your goals. A clear place for what comes next.\n\nPlan a goal\nEvery project\nstorefront\nplatform\nRefresh\nAll tasks\n0\nReady\n0\nIn progress\n0\nWaiting\n0\nBlocked\n0\nParked\n0\nClosed\n0\n○\nYour next goal starts here.\n\nPlan a goal to turn an idea into tasks you can follow and review.\n\nPlan a goal\n0 of 0 tasks · 0 goals\nUpdates every 5 seconds\n\nShow: How tasks move"
+    },
+    {
+      "file": "relay-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nplatform\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nplatform\nRelay\n\nSay what you want done. Wanigan plans it, prices it from this project's own history, and waits for you before building anything.\n\nThe sluice\nEvery value, no movement\nPLAN\nESTIMATE\nIMPLEMENT\nVERIFY\nREVIEW\n1\nStart a relay\n\nNothing runs until you press Start.\n\nWhat should this relay accomplish?\nProfile\nClaude Code\nCodex\n\nThis profile’s harness has no configuration directory Wanigan can switch, so every phase runs on the credential it already has.\n\nSuggest routes\n\nSay what the relay should accomplish first, and Suggest routes will ask which model fits each phase.\n\nShow: Choose the model for a stage yourself\n\nStart relay\n3\nNow\n\nWhat the rail is waiting on, and the one decision that is yours.\n\n4\nForecast\n\nMedian duration and cost of this project's recorded phases at each route. An estimate, with its evidence beside it.\n\nNot enough recorded history to price this relay yet. A number from one sample would be invented progress wearing a currency symbol."
+    },
+    {
+      "file": "relay-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nplatform\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nplatform\nRelay\n\nSay what you want done. Wanigan plans it, prices it from this project's own history, and waits for you before building anything.\n\nThe sluice\nEvery value, no movement\nPLAN\nESTIMATE\nIMPLEMENT\nVERIFY\nREVIEW\n1\nStart a relay\n\nNothing runs until you press Start.\n\nWhat should this relay accomplish?\nProfile\nClaude Code\nCodex\n\nThis profile’s harness has no configuration directory Wanigan can switch, so every phase runs on the credential it already has.\n\nSuggest routes\n\nSay what the relay should accomplish first, and Suggest routes will ask which model fits each phase.\n\nShow: Choose the model for a stage yourself\n\nStart relay\n3\nNow\n\nWhat the rail is waiting on, and the one decision that is yours.\n\n4\nForecast\n\nMedian duration and cost of this project's recorded phases at each route. An estimate, with its evidence beside it.\n\nNot enough recorded history to price this relay yet. A number from one sample would be invented progress wearing a currency symbol."
+    },
+    {
+      "file": "learning-context-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nLearning\n\nKnowledge with a source. Ready for the next task.\n\nEverything\nPersonal only\nstorefront\nplatform\nRefresh\nTeach Wanigan\nLearning\nOverview\nWhat is happening\nInbox\nProposals to review\nKnowledge\nThe knowledge library\nContext budget\nBriefings and controls\nIn this scope\nplatform + personal\n\nKnowledge includes personal items. Signals and briefings concern this project.\n\nGlossary\nBriefing inspector\nPreview a launch briefing\n\nThis is the same retrieval a session launch runs, using your text as the task. Token counts are the bytes÷4 heuristic — always estimates.\n\nPreviewing never changes an item’s status; only a real launch quarantines stale items. Knowledge shows the same retrieval as the literal text a session receives.\n\nClaude Code\nCodex\nPreview a prompt-less launch\n\nLeaving the box empty previews what a session launched with no initial prompt receives: only standing artifacts are eligible, so it is a different retrieval, not a smaller one.\n\nMaster switch\nLearning\n✓ active — recording and briefing\nRecord signals, consolidate, and inject briefings\n\nPausing stops recording, consolidation, and injection; nothing is deleted.\n\nAdaptive context router\nLoad less, later\n\nStructured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.\n\nBriefing ceiling · tokens\nConsolidate while Wanigan or its daemon is active\nLearning budget governor\nDeterministic only\n\nClassification, hashing, routing and diagnostics always run locally without a model call. Model assistance does one job: it phrases the repeated patterns no template claims, which today reach the inbox as unauthored nominations. It never promotes, never auto-applies, and never sees a transcript.\n\nNo installed profile declares a non-interactive protocol, so there is nothing to route a phrasing call through.\n\nModel-assisted phrasing of patterns no template claims\n\nNo provider has been approved for model-assisted phrasing.\n\nMonthly ceiling · USD\n\n$0.00 recorded this month across 0 calls read back. Only a call the harness actually priced counts here; an unpriced one is recorded as unpriced rather than estimated.\n\nContext Budget Doctor · Cache Guardian · Garbage Collector\n0 findings\ndiagnosis only\n◇\nNo context debt detected\n\nDuplicate, contradictory, expired, oversized, drifting, or volatile artifacts will appear here.\n\nscope: platform + personal · all time\n\nThese numbers are estimated until a controlled Context A/B experiment proves a causal saving. Wanigan does not call fewer tokens “better” unless the same evaluation still passes."
+    },
+    {
+      "file": "learning-context-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nLearning\n\nKnowledge with a source. Ready for the next task.\n\nEverything\nPersonal only\nstorefront\nplatform\nRefresh\nTeach Wanigan\nLearning\nOverview\nWhat is happening\nInbox\nProposals to review\nKnowledge\nThe knowledge library\nContext budget\nBriefings and controls\nIn this scope\nplatform + personal\n\nKnowledge includes personal items. Signals and briefings concern this project.\n\nGlossary\nBriefing inspector\nPreview a launch briefing\n\nThis is the same retrieval a session launch runs, using your text as the task. Token counts are the bytes÷4 heuristic — always estimates.\n\nPreviewing never changes an item’s status; only a real launch quarantines stale items. Knowledge shows the same retrieval as the literal text a session receives.\n\nClaude Code\nCodex\nPreview a prompt-less launch\n\nLeaving the box empty previews what a session launched with no initial prompt receives: only standing artifacts are eligible, so it is a different retrieval, not a smaller one.\n\nMaster switch\nLearning\n✓ active — recording and briefing\nRecord signals, consolidate, and inject briefings\n\nPausing stops recording, consolidation, and injection; nothing is deleted.\n\nAdaptive context router\nLoad less, later\n\nStructured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.\n\nBriefing ceiling · tokens\nConsolidate while Wanigan or its daemon is active\nLearning budget governor\nDeterministic only\n\nClassification, hashing, routing and diagnostics always run locally without a model call. Model assistance does one job: it phrases the repeated patterns no template claims, which today reach the inbox as unauthored nominations. It never promotes, never auto-applies, and never sees a transcript.\n\nNo installed profile declares a non-interactive protocol, so there is nothing to route a phrasing call through.\n\nModel-assisted phrasing of patterns no template claims\n\nNo provider has been approved for model-assisted phrasing.\n\nMonthly ceiling · USD\n\n$0.00 recorded this month across 0 calls read back. Only a call the harness actually priced counts here; an unpriced one is recorded as unpriced rather than estimated.\n\nContext Budget Doctor · Cache Guardian · Garbage Collector\n0 findings\ndiagnosis only\n◇\nNo context debt detected\n\nDuplicate, contradictory, expired, oversized, drifting, or volatile artifacts will appear here.\n\nscope: platform + personal · all time\n\nThese numbers are estimated until a controlled Context A/B experiment proves a causal saving. Wanigan does not call fewer tokens “better” unless the same evaluation still passes."
+    },
+    {
+      "file": "session-review-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional review text. This file does not exist.\n "
+    },
+    {
+      "file": "session-review-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional review text. This file does not exist.\n "
+    },
+    {
+      "file": "session-review-checks-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nCommands run in this session’s checkout. Results record the commands and Git-visible content tested; they do not prove that all requested work is complete.\nCommands\nSaved recipe\n\nRun these in this session’s checkout. The recipe is shared by this project; results belong to the selected checkout.\n\nOne command per line. Runs stop at the first failure.\n\nSave recipe\nRun checks\nRecent results\n0\nRefresh results\n\nCompared 0s ago. Content comparisons exclude ignored files, installed tools and environment settings.\n\nNo recorded runs yet. Save your commands, then run the checks when the work is ready."
+    },
+    {
+      "file": "session-review-checks-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nCommands run in this session’s checkout. Results record the commands and Git-visible content tested; they do not prove that all requested work is complete.\nCommands\nSaved recipe\n\nRun these in this session’s checkout. The recipe is shared by this project; results belong to the selected checkout.\n\nOne command per line. Runs stop at the first failure.\n\nSave recipe\nRun checks\nRecent results\n0\nRefresh results\n\nCompared 0s ago. Content comparisons exclude ignored files, installed tools and environment settings.\n\nNo recorded runs yet. Save your commands, then run the checks when the work is ready."
+    },
+    {
+      "file": "session-review-checks-960x560-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nCommands run in this session’s checkout. Results record the commands and Git-visible content tested; they do not prove that all requested work is complete.\nCommands\nUnsaved changes\n\nRun these in this session’s checkout. The recipe is shared by this project; results belong to the selected checkout.\n\nOne command per line. Runs stop at the first failure.\n\nSave recipe\nSave & run checks\nRecent results\n0\nRefresh results\n\nCompared 0s ago. Content comparisons exclude ignored files, installed tools and environment settings.\n\nNo recorded runs yet. Save your commands, then run the checks when the work is ready."
+    },
+    {
+      "file": "session-review-checks-960x560-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nCommands run in this session’s checkout. Results record the commands and Git-visible content tested; they do not prove that all requested work is complete.\nCommands\nUnsaved changes\n\nRun these in this session’s checkout. The recipe is shared by this project; results belong to the selected checkout.\n\nOne command per line. Runs stop at the first failure.\n\nSave recipe\nSave & run checks\nRecent results\n0\nRefresh results\n\nCompared 0s ago. Content comparisons exclude ignored files, installed tools and environment settings.\n\nNo recorded runs yet. Save your commands, then run the checks when the work is ready."
+    },
+    {
+      "file": "session-review-changes-960x560-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional review text. This file does not exist.\n "
+    },
+    {
+      "file": "session-review-changes-960x560-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nREVIEW WORK\ncodex · platform\n\nInspect changes and recorded command results before deciding what to keep.\n\nBack to session\nChanges\nChecks & evidence\n\nfix/rail\n\nChanges (1)\nFiles\nTurns\n◉ following\nActions\nRead code\n\nChanges since launch · Updated 0s ago\n\nM\nFICTIONAL-UI-FIXTURE.md\nagainst abc123\nRevert this file…\ndiff --git a/FICTIONAL-UI-FIXTURE.md b/FICTIONAL-UI-FIXTURE.md\n--- a/FICTIONAL-UI-FIXTURE.md\n+++ b/FICTIONAL-UI-FIXTURE.md\n@@ -1 +1 @@\nComment on this hunk\n-Fictional previous text.\n+Fictional review text. This file does not exist.\n "
+    },
+    {
+      "file": "command-palette-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nActions · 4\nNew session\nStart an interactive agent\n⌘T\nResume a session\nBrowse, search and read saved conversations, then continue one exactly\n⌘⇧T\nHide navigation\nGive the current workspace more room\n⌥⌘S\nKeyboard shortcuts\nEvery binding, grouped by where it works\n?\nRecent · 3\nSettings\nManage · Keys, provider packs, projects, privacy and backup\n⌘,\nRuns\nAutomation · Headless runs — no terminal, output recorded\n⌘0\nLearning\nKnowledge · Knowledge items, the review inbox, and what agents get\n⌘6\nViews · 16\nSessions\nWork · Start and drive live agent terminals\n⌘1\nFleet\nMonitor · Every session at once, and which ones need you\n⌘2\nGoals\nWork · Goals — a contract, a task graph, evidence and your decision\n⌘3\nBatches\nAutomation · Fan one prompt across many inputs on the Batches API\n⌘4\nInsights\nMonitor · Recorded spend and token usage\n⌘5\nPlugins\nManage · Claude Code’s own plugins and marketplaces, read from this machine\n⌘7\nSchedules\nAutomation · Recurring headless and batch runs\n⌘8\nChanges\nWork · History, working tree, branches, stashes and the review gate for one repository\n⌘9\nSkills\nKnowledge · Browse every SKILL.md on this machine, or write one\n⌘⇧S\nContext\nKnowledge · Instructions, memory and configuration, per project\n⌘⇧C\nScout\nKnowledge · Improvement proposals built from public sources you allow\n⌘⇧I\nUsage\nMonitor · What is left on each account, and what you actually spent\n⌘⇧U\nBoard\nWork · Every ticket across every goal, in columns, to start, retry or park\n⌘⇧B\nHome\nHome · Your companion and a briefing across project spaces\n⌘⇧H\nExtensions\nManage · Install MCP servers and skills as one bundle, or package your own\n⌘⇧E\nRelay\nWork · One intent, five phases, and the handoffs between them\n⌘⇧R\nLive sessions · 2\n?\nAskingCheckout review · fictional fixture\nrunning · storefront\nSession\n◦\nIdlecodex · platform\nrunning · platform\nSession\nProjects · 2\nstorefront\nOpen project work · main\nProject\nplatform\nOpen project work · feature/rail\nProject\nActions\nNew session\n\nStart an interactive agent\n\n↵\nOpen selection\n↑\n↓\nmove\n↵\nopen\n27 results shown"
+    },
+    {
+      "file": "command-palette-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 30,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings and integrations\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7\nWanigan\nPermission needed\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nActions · 4\nNew session\nStart an interactive agent\n⌘T\nResume a session\nBrowse, search and read saved conversations, then continue one exactly\n⌘⇧T\nHide navigation\nGive the current workspace more room\n⌥⌘S\nKeyboard shortcuts\nEvery binding, grouped by where it works\n?\nRecent · 3\nSettings\nManage · Keys, provider packs, projects, privacy and backup\n⌘,\nRuns\nAutomation · Headless runs — no terminal, output recorded\n⌘0\nLearning\nKnowledge · Knowledge items, the review inbox, and what agents get\n⌘6\nViews · 16\nSessions\nWork · Start and drive live agent terminals\n⌘1\nFleet\nMonitor · Every session at once, and which ones need you\n⌘2\nGoals\nWork · Goals — a contract, a task graph, evidence and your decision\n⌘3\nBatches\nAutomation · Fan one prompt across many inputs on the Batches API\n⌘4\nInsights\nMonitor · Recorded spend and token usage\n⌘5\nPlugins\nManage · Claude Code’s own plugins and marketplaces, read from this machine\n⌘7\nSchedules\nAutomation · Recurring headless and batch runs\n⌘8\nChanges\nWork · History, working tree, branches, stashes and the review gate for one repository\n⌘9\nSkills\nKnowledge · Browse every SKILL.md on this machine, or write one\n⌘⇧S\nContext\nKnowledge · Instructions, memory and configuration, per project\n⌘⇧C\nScout\nKnowledge · Improvement proposals built from public sources you allow\n⌘⇧I\nUsage\nMonitor · What is left on each account, and what you actually spent\n⌘⇧U\nBoard\nWork · Every ticket across every goal, in columns, to start, retry or park\n⌘⇧B\nHome\nHome · Your companion and a briefing across project spaces\n⌘⇧H\nExtensions\nManage · Install MCP servers and skills as one bundle, or package your own\n⌘⇧E\nRelay\nWork · One intent, five phases, and the handoffs between them\n⌘⇧R\nLive sessions · 2\n?\nAskingCheckout review · fictional fixture\nrunning · storefront\nSession\n◦\nIdlecodex · platform\nrunning · platform\nSession\nProjects · 2\nstorefront\nOpen project work · main\nProject\nplatform\nOpen project work · feature/rail\nProject\nActions\nNew session\n\nStart an interactive agent\n\n↵\nOpen selection\n↑\n↓\nmove\n↵\nopen\n27 results shown"
+    },
+    {
+      "file": "sessions-960x560-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-960x560-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "navigation-960x560-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 29,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nWorkspace\nSearch all tools\n⌘K\nHome\nWork\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\n1\n? 1 need you\nKnowledge\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7"
+    },
+    {
+      "file": "navigation-960x560-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 960,
+        "height": 560
+      },
+      "scrollWidth": 960,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 29,
+      "bodyText": "Home\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\nHalt\n+\nNew session\nResume\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nWorkspace\nSearch all tools\n⌘K\nHome\nWork\n2\nSessions\n⌘1\nBoard\n⌘⇧B\nGoals\n⌘3\nRelay\n⌘⇧R\nChanges\n⌘9\nMonitor\n1\n? 1 need you\nKnowledge\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\n2\nRuns\n⌘0\nSchedules\n⌘8\nBatches\n⌘4\n1400 / 2000 batch requests\nManage\nSettings\n⌘,\nExtensions\n⌘⇧E\nPlugins\n⌘7"
+    },
+    {
+      "file": "sessions-navigation-hidden-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-navigation-hidden-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "hidden-navigation-attention-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nA quick look together.\n\n1 session needs you. Permissions first, then problems and finished turns.\n\n?\nAsking\nCheckout review · fictional fixture\nstorefront · Edit src/Checkout.php\nOpen the permission prompt ↗\n4m ago"
+    },
+    {
+      "file": "hidden-navigation-attention-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "Wanigan\nWork\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nAll spaces\n⌄\n?\n1 need you\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nstorefront\nmain\n+\nCheckout review · fictional fixture\nClaude Code · pid 4021\n3\n✎\nplatform\nfeature/rail\n+\nCodex ⑂\npid 4088\n✎\nClaude Code\nexited 0\n✎\n+ Add projectRecover exact Codex UUID…\nplatform\n\nCodex/Isolated worktree/Running\n\nReview work\nResume\nNew session\nDetails\n⑂\nWorktree\nnothing uncommitted · no commits yet\nMerge\nDiscard…\nSession controlsModel, effort & permissions\nFictional UI fixture. No live terminal.\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nReady to send\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\nSaved\nSend\n/example/platform\n·\npid 4088\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session\nA quick look together.\n\n1 session needs you. Permissions first, then problems and finished turns.\n\n?\nAsking\nCheckout review · fictional fixture\nstorefront · Edit src/Checkout.php\nOpen the permission prompt ↗\n4m ago"
+    },
+    {
+      "file": "command-palette-settings-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nSkills\n\nFind the right workflow. Keep the craft close.\n\nNo repository\nstorefront\nplatform\nRescan disk\nWrite a skill\nLibrary\nWrite\nSources\n\n0 Claude Code skills · scanned 20716d ago\n\nYour workflows\n0\n◆\nuser\n0\n■\nproject\n0\n▲\nplugin\n0\n○\nbuilt-in\n0\nNames first, then descriptions. Matched letters are highlighted.\n○\nNo Claude Code skills found\n\nWrite a skill, or check Sources to see which directories were scanned.\n\nWrite a skill\n\nProject files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.\n\n◦\nA workflow, in full\n\nChoose a skill to read its instructions, source, and invocation here.\n\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nActions · 3\nAppearance: System\nFollow the Mac's appearance (dark right now)\nSetting\nAppearance: Light\nUse the light theme everywhere\nSetting\n●\ncurrentAppearance: Dark\nUse the dark theme everywhere\nSetting\nSettings · 30\nInstalled agent runtimes\nSettings › Agents — Which CLIs Wanigan found, and where\nSetting\nAccounts\nSettings › Agents — Work and personal logins, and which is default\nSetting\nProvider packs\nSettings › Agents — Packs, profiles, trust and enablement\nSetting\nClaude Platform API key\nSettings › Agents — Batches API key, workspace id\nSetting\nGLM Coding Plan\nSettings › Agents — Z.ai key for GLM sessions\nSetting\nDeepSeek\nSettings › Agents — DeepSeek key for sessions\nSetting\nGrok · xAI\nSettings › Agents — xAI key for Grok sessions\nSetting\nProjects\nSettings › Projects & safety — Add and remove repositories\nSetting\nWorktrees\nSettings › Projects & safety — Isolated worktrees and cleanup\nSetting\nTrust and the policy ledger\nSettings › Projects & safety — Trust levels, decisions, export\nSetting\nCommit attribution\nSettings › Projects & safety — Assisted-by trailers on Git view commits\nSetting\nBatch submission limit\nSettings › Automation — Cap the estimated cost per batch submission\nSetting\nDispatcher\nSettings › Automation — Concurrency limits and the queue\nSetting\nPhone monitor\nSettings › Connections — iPad/phone monitor, alerts, remote\nSetting\nBefore you leave\nSettings › Connections — Can this Mac be left alone and still answer\nSetting\nMCP servers\nSettings › Connections — Tool servers agents may use\nSetting\nRouting suggester\nSettings › Connections — Optional model that proposes which model and which stages a relay runs\nSetting\nGitHub intake\nSettings › Connections — Check GitHub for issues and failed CI on a timer\nSetting\nObservation\nSettings › Privacy & data — Telemetry, hooks, status line, traces, checkpoints, archive\nSetting\nSearch transcripts\nSettings › Privacy & data — Full-text search of the archive\nSetting\nWhat leaves this machine\nSettings › Privacy & data — The egress report, host by host\nSetting\nStorage\nSettings › Privacy & data — Retention and locally kept data\nSetting\nBack up Wanigan’s record\nSettings › Backup — Write a verified copy\nSetting\nCheck a backup\nSettings › Backup — Verify a copy you already have\nSetting\nRestore a backup\nSettings › Backup — Put a copy back in place\nSetting\nAppearance\nSettings › App — Theme: system, light, dark\nSetting\nMotion\nSettings › App — Animation comfort\nSetting\nFluid\nSettings › App — The Relay rail’s water: real fluid or the CSS fallback\nSetting\nKeyboard\nSettings › App — Change or reset a keyboard shortcut\nSetting\nDemo mode\nSettings › App — Fictional workspace and demo prompts\nSetting\nActions\nAppearance: System\n\nFollow the Mac's appearance (dark right now)\n\n↵\nApply selection\n↑\n↓\nmove\n↵\nopen\n33 results shown"
+    },
+    {
+      "file": "command-palette-settings-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nSkills\n\nFind the right workflow. Keep the craft close.\n\nNo repository\nstorefront\nplatform\nRescan disk\nWrite a skill\nLibrary\nWrite\nSources\n\n0 Claude Code skills · scanned 20716d ago\n\nYour workflows\n0\n◆\nuser\n0\n■\nproject\n0\n▲\nplugin\n0\n○\nbuilt-in\n0\nNames first, then descriptions. Matched letters are highlighted.\n○\nNo Claude Code skills found\n\nWrite a skill, or check Sources to see which directories were scanned.\n\nWrite a skill\n\nProject files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.\n\n◦\nA workflow, in full\n\nChoose a skill to read its instructions, source, and invocation here.\n\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nActions · 3\nAppearance: System\nFollow the Mac's appearance (dark right now)\nSetting\nAppearance: Light\nUse the light theme everywhere\nSetting\n●\ncurrentAppearance: Dark\nUse the dark theme everywhere\nSetting\nSettings · 30\nInstalled agent runtimes\nSettings › Agents — Which CLIs Wanigan found, and where\nSetting\nAccounts\nSettings › Agents — Work and personal logins, and which is default\nSetting\nProvider packs\nSettings › Agents — Packs, profiles, trust and enablement\nSetting\nClaude Platform API key\nSettings › Agents — Batches API key, workspace id\nSetting\nGLM Coding Plan\nSettings › Agents — Z.ai key for GLM sessions\nSetting\nDeepSeek\nSettings › Agents — DeepSeek key for sessions\nSetting\nGrok · xAI\nSettings › Agents — xAI key for Grok sessions\nSetting\nProjects\nSettings › Projects & safety — Add and remove repositories\nSetting\nWorktrees\nSettings › Projects & safety — Isolated worktrees and cleanup\nSetting\nTrust and the policy ledger\nSettings › Projects & safety — Trust levels, decisions, export\nSetting\nCommit attribution\nSettings › Projects & safety — Assisted-by trailers on Git view commits\nSetting\nBatch submission limit\nSettings › Automation — Cap the estimated cost per batch submission\nSetting\nDispatcher\nSettings › Automation — Concurrency limits and the queue\nSetting\nPhone monitor\nSettings › Connections — iPad/phone monitor, alerts, remote\nSetting\nBefore you leave\nSettings › Connections — Can this Mac be left alone and still answer\nSetting\nMCP servers\nSettings › Connections — Tool servers agents may use\nSetting\nRouting suggester\nSettings › Connections — Optional model that proposes which model and which stages a relay runs\nSetting\nGitHub intake\nSettings › Connections — Check GitHub for issues and failed CI on a timer\nSetting\nObservation\nSettings › Privacy & data — Telemetry, hooks, status line, traces, checkpoints, archive\nSetting\nSearch transcripts\nSettings › Privacy & data — Full-text search of the archive\nSetting\nWhat leaves this machine\nSettings › Privacy & data — The egress report, host by host\nSetting\nStorage\nSettings › Privacy & data — Retention and locally kept data\nSetting\nBack up Wanigan’s record\nSettings › Backup — Write a verified copy\nSetting\nCheck a backup\nSettings › Backup — Verify a copy you already have\nSetting\nRestore a backup\nSettings › Backup — Put a copy back in place\nSetting\nAppearance\nSettings › App — Theme: system, light, dark\nSetting\nMotion\nSettings › App — Animation comfort\nSetting\nFluid\nSettings › App — The Relay rail’s water: real fluid or the CSS fallback\nSetting\nKeyboard\nSettings › App — Change or reset a keyboard shortcut\nSetting\nDemo mode\nSettings › App — Fictional workspace and demo prompts\nSetting\nActions\nAppearance: System\n\nFollow the Mac's appearance (dark right now)\n\n↵\nApply selection\n↑\n↓\nmove\n↵\nopen\n33 results shown"
+    },
+    {
+      "file": "command-palette-multiword-1440x1000-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nSkills\n\nFind the right workflow. Keep the craft close.\n\nNo repository\nstorefront\nplatform\nRescan disk\nWrite a skill\nLibrary\nWrite\nSources\n\n0 Claude Code skills · scanned 20716d ago\n\nYour workflows\n0\n◆\nuser\n0\n■\nproject\n0\n▲\nplugin\n0\n○\nbuilt-in\n0\nNames first, then descriptions. Matched letters are highlighted.\n○\nNo Claude Code skills found\n\nWrite a skill, or check Sources to see which directories were scanned.\n\nWrite a skill\n\nProject files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.\n\n◦\nA workflow, in full\n\nChoose a skill to read its instructions, source, and invocation here.\n\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nViews · 1\nChanges\nWork · History, working tree, branches, stashes and the review gate for one repository\n⌘9\nViews\nChanges\n\nWork · History, working tree, branches, stashes and the review gate for one repository\n\n↵\nOpen selection\n↑\n↓\nmove\n↵\nopen\nSearching transcripts…"
+    },
+    {
+      "file": "command-palette-multiword-1440x1000-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "scrollWidth": 1440,
+      "navigationButtons": 33,
+      "visibleNavigationButtons": 19,
+      "bodyText": "Wanigan\nKnowledge\n/\nHome\nSessions\nBoard\nGoals\nRelay\nChanges\nFleet\nUsage\nInsights\nLearning\nSkills\nContext\nScout\nRuns\nSchedules\nBatches\nSettings\nExtensions\nPlugins\nWorkspace tools\nHalt\n+\nNew session\n⌘T\nResume\n⌘⇧T\nSearch\n⌘K\nWorkspace\nSearch all tools\n⌘K\nHome\nYour work at a glance\nWork\nSessions, goals and changes\n2\nMonitor\nActivity, limits and spend\n1\n? 1 need you\nKnowledge\nMemory, skills and context\nLearning\n⌘6\nSkills\n⌘⇧S\nContext\n⌘⇧C\nScout\n⌘⇧I\nAutomation\nRuns, schedules and batches\n2\n1400 / 2000 batch requests\nManage\nSettings and integrations\nWanigan\nPermission needed\nSkills\n\nFind the right workflow. Keep the craft close.\n\nNo repository\nstorefront\nplatform\nRescan disk\nWrite a skill\nLibrary\nWrite\nSources\n\n0 Claude Code skills · scanned 20716d ago\n\nYour workflows\n0\n◆\nuser\n0\n■\nproject\n0\n▲\nplugin\n0\n○\nbuilt-in\n0\nNames first, then descriptions. Matched letters are highlighted.\n○\nNo Claude Code skills found\n\nWrite a skill, or check Sources to see which directories were scanned.\n\nWrite a skill\n\nProject files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.\n\n◦\nA workflow, in full\n\nChoose a skill to read its instructions, source, and invocation here.\n\nAll\nViews\nProjects\nSessions\nSettings\nTranscripts\nViews · 1\nChanges\nWork · History, working tree, branches, stashes and the review gate for one repository\n⌘9\nViews\nChanges\n\nWork · History, working tree, branches, stashes and the review gate for one repository\n\n↵\nOpen selection\n↑\n↓\nmove\n↵\nopen\nSearching transcripts…"
+    },
+    {
+      "file": "sessions-720x560-dark.png",
+      "theme": "dark",
+      "bodyColor": "rgb(23, 30, 36)",
+      "viewport": {
+        "width": 720,
+        "height": 560
+      },
+      "scrollWidth": 720,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "storefront\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nCheckout review · fictional fixture\n\nClaude Code/storefront/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\nSession controlsModel, effort & permissions\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nQueues until idle\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\n/compact\nSaved\nQueue\nThe agent is waiting on a permission prompt — queued text must not answer it.\n/example/storefront\n·\npid 4021\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    },
+    {
+      "file": "sessions-720x560-light.png",
+      "theme": "light",
+      "bodyColor": "rgb(244, 246, 248)",
+      "viewport": {
+        "width": 720,
+        "height": 560
+      },
+      "scrollWidth": 720,
+      "navigationButtons": 0,
+      "visibleNavigationButtons": 0,
+      "bodyText": "storefront\n⌄\n?\nHalt\n+\nNew session\nSearch\nAttention\n1 asking · 1 hidden\n?\nAsking\n4m ago\nstorefront · Edit\nEdit src/Checkout.php\n✕\n+ idle, working & ended\n1\nCheckout review · fictional fixture\n\nClaude Code/storefront/Running\n\nReview work\nSessions\nResume\nNew session\nDetails\nSession controlsModel, effort & permissions\n \nComposer\n⌘E\nAttachments: none staged\n+ Add files\nName again\n\nShow: How attachments work\n\nMessage the agent\nQueues until idle\n\n↵\nsend\n⇧↵\nnew line\n$\nskill\n/compact\nSaved\nQueue\nThe agent is waiting on a permission prompt — queued text must not answer it.\n/example/storefront\n·\npid 4021\nopen folder\n◇ teach Wanigan\n⎋ interrupt\nend session"
+    }
+  ],
+  "errors": [],
+  "checks": [
+    "Session review switches between Changes and Checks & evidence without unmounting or losing unsaved commands; switching makes no save or run request. Both sections captured at desktop and compact widths.",
+    "Narrow drawer focuses the current area; arrows only move focus; Escape restores the opener without changing desktop preferences.",
+    "Desktop hide/show preserves the draft and pooled xterm; terminal width increases from 984px to 1192px. Hidden navigation retains an actionable attention control.",
+    "Area disclosure does not navigate. Every 19 registered destination is searchable with all groups folded; choosing Skills reveals its selected route.",
+    "Empty Settings search scope exposes indexed sections. Unordered multiword queries “backup privacy” and “review git” find Settings and Changes.",
+    "Desktop open and closed choices survive reload through the recorded prefs bridge. Resizing and selecting a narrow-drawer destination preserve desktop preference and restore opener focus.",
+    "Rail search → Hide navigation restores focus to the surviving header toggle. Compact header search → Show navigation leaves focus inside the drawer. The hidden-rail view picker lists all routes and opens Goals.",
+    "Opening storefront from project search after Goals selects Sessions and storefront scope, instead of reusing workspace-wide Goals.",
+    "At 720px, the page has no horizontal overflow and every visible header button/select stays within the viewport.",
+    "A rejected preference save reports the failure and retains chosen visibility across focus/preferences refresh. Later successful toggles save and survive reload."
+  ],
+  "buildIndexSha256": "9d7ba06afff5408e2638afecef434cbfb6b3b6e36e8924aef7954f8849594192",
+  "preferenceFailures": [
+    {
+      "key": "nav_sidebar",
+      "value": "open"
+    }
+  ],
+  "preferenceWrites": [
+    {
+      "key": "nav_sidebar",
+      "value": "closed"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "open"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "closed"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "open"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "closed"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "closed"
+    },
+    {
+      "key": "nav_sidebar",
+      "value": "open"
+    }
+  ],
+  "result": "pass"
+}

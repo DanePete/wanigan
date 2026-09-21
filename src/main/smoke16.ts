@@ -250,9 +250,9 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     const inheritedPort = process.env.WANIGAN_PORT;
     process.env.WANIGAN_PORT = '1';
     try {
-      const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const attended = sessionsTest.agentEnv('/usr/bin', 's_wtboot_env', { WANIGAN_PORT: '9' }, null, launchEnv);
       const outside = sessionsTest.agentEnv('/usr/bin', 's_wtboot_outside');
-      const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, {}, launchEnv);
+      const headless = headlessEnv('/usr/bin', { WANIGAN_PORT: '9' }, null, launchEnv);
       const headlessOutside = headlessEnv('/usr/bin');
       check(attended.WANIGAN_PORT === launchEnv.WANIGAN_PORT && attended.WANIGAN_PORT_COUNT === launchEnv.WANIGAN_PORT_COUNT
         && attended.WANIGAN_WORKTREE === sw.path && headless.WANIGAN_PORT === launchEnv.WANIGAN_PORT && headless.WANIGAN_WORKTREE === sw.path
@@ -264,8 +264,11 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     }
     const launchRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
     const launchSrc = (file: string) => { try { return fs.readFileSync(path.join(launchRoot, 'src', 'main', file), 'utf8'); } catch { return ''; } };
-    check(/worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('sessions.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('sessions.ts'))
-      && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /accounts\.launchEnv\(account\), worktreeEnv\)/.test(launchSrc('headless.ts')),
+    // Both paths hand their env builder the account itself rather than its
+    // environment, because an account that contributes no variable still has to
+    // clear an inherited one and a record cannot carry a deletion.
+    check(/worktreeEnv = await worktreeLaunchEnv\(cwd\)/.test(launchSrc('sessions.ts')) && /agentEnv\(PATH, id, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('sessions.ts'))
+      && /worktreeEnv = await worktreeLaunchEnv\(worktree\)/.test(launchSrc('headless.ts')) && /headlessEnv\(launchPath, providerEnvValues, account, worktreeEnv\)/.test(launchSrc('headless.ts')),
     'both launch paths hand the worktree environment to the process they spawn, so the variables are reachable and not only buildable');
 
     const dirtyTree = await create(cmds.dir, 'kept for its files', 's_wtboot_dirty');
@@ -409,10 +412,10 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
       'a list longer than the limit is refused whole rather than saved short', tooMany);
     const appRoot = fs.existsSync(path.join(app.getAppPath(), 'src', 'main')) ? app.getAppPath() : process.cwd();
     let indexSrc = '';
-    try { indexSrc = fs.readFileSync(path.join(appRoot, 'src', 'main', 'index.ts'), 'utf8'); } catch { /* asserted below */ }
+    try { indexSrc = fs.readFileSync(path.join(appRoot, 'src', 'main', 'modules', 'worktrees.ts'), 'utf8'); } catch { /* asserted below */ }
     const handler = /handle\('worktrees:saveCommands'[\s\S]{0,200}?\)\);/.exec(indexSrc)?.[0] ?? '';
-    check(handler.includes('saveWorktreeCommandsWithConsent(win,') && !/saveWorktreeCommands\(/.test(indexSrc),
-      'IPC reaches worktree commands only through the consent wrapper, never the unguarded save', handler || 'handler not found in src/main/index.ts');
+    check(handler.includes('saveWorktreeCommandsWithConsent(context.getWindow(),') && !/saveWorktreeCommands\(/.test(indexSrc),
+      'IPC reaches worktree commands only through the consent wrapper, never the unguarded save', handler || 'handler not found in src/main/modules/worktrees.ts');
 
     removeProject(cmdProject.id);
     projectIds.splice(projectIds.indexOf(cmdProject.id), 1);

@@ -98,6 +98,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing repository review diff commit review gate' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Routing suggester', hint: 'Optional model that proposes which model and which stages a relay runs', keywords: 'typesafe jev suggester routing relay system one model choice effort stages pipeline credential api key' },
   { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, status line, traces, checkpoints, archive', keywords: 'telemetry hooks status line limits prompt cache traces waterfall beta checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -168,7 +169,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   {
     id: 'backup', label: 'Backup', eyebrow: 'Copy & recovery', title: 'Backup & restore',
     detail: 'Write a verified copy of Wanigan’s database and transcript archive, check a copy you already have, and put one back.',
-    help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restoring replaces the database in place and relaunches Wanigan, so it refuses while any agent is still running.',
+    help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restore requires closed database participants and no unresolved execution or billing claims, then restarts into read-only inspection.',
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
@@ -318,7 +319,7 @@ function Callout({ level = 'warning', title, children }: {
       <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700, lineHeight: 1.4 }}>{m.glyph}</span>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: m.fg, fontWeight: 650, fontSize: 'var(--t-small)', lineHeight: 1.45 }}>{title}</div>
-        {children ? <div className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
+        {children ? <div className="dim settings-callout-body" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
       </div>
     </div>
   );
@@ -1120,6 +1121,7 @@ export default function Settings({
             <PhoneMonitor prefs={prefs} pending={pending} setFlag={setFlag} />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
             <GitHubIntakeTimer />
+            <RoutingSuggester />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
@@ -1207,6 +1209,8 @@ function manifestConsentText(inspected: ProviderManifestInspection): string {
           return `${field.label} (${field.id}/${field.kind}) ${templates || '(no argv)'}`;
         }).join('; ')}`
       : '';
+    const initialPrompt = command.initialPromptArgv.length
+      ? `\n  initial prompt argv: [${command.initialPromptArgv.join(', ')}]` : '';
     const resume = command.resume
       ? `\n  resume argv: conversation=[${command.resume.conversationArgs.join(', ')}]; continue=[${command.resume.continueArgs.join(', ')}]`
       : '\n  resume argv: (none)';
@@ -1230,7 +1234,7 @@ function manifestConsentText(inspected: ProviderManifestInspection): string {
       ? command.backendId
       : `${command.backendId} (declared ${command.declaredBackendId}; isolated by pack)`;
     return `${command.profileLabel} (${command.harness}/${command.headless} → ${backend})`
-      + `\n  launch: ${launch}${probes}${fields}${resume}${fallbacks}${extensions}${env}`;
+      + `\n  launch: ${launch}${probes}${fields}${initialPrompt}${resume}${fallbacks}${extensions}${env}`;
   }).join('\n\n');
 
   const adapter = inspected.adapter
@@ -3887,7 +3891,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
   {
-    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Review.',
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Goals.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
 ];
@@ -4611,7 +4615,7 @@ function RecallProjects({ projects, serverOn, archiving }: { projects: Project[]
    ════════════════════════════════════════════════════════════════════════ */
 
 /**
- * The opt-in half of GitHub intake. Review's event inbox reads GitHub whenever
+ * The opt-in half of GitHub intake. The Goals event inbox reads GitHub whenever
  * the operator presses; this decides whether Wanigan also asks on its own while
  * it is running. Off until turned on, because it reads with the operator's gh
  * credentials on a clock they did not start. The interval is checked in main,
@@ -4636,7 +4640,7 @@ function GitHubIntakeTimer() {
       setDraft(null);
       setResult({ tone: 'ok', text: saved.enabled
         ? `GitHub is checked every ${saved.intervalMinutes} minutes while Wanigan is running. The first check comes within a minute.`
-        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Review.` });
+        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Goals.` });
     } catch (e) {
       setResult({ tone: 'error', text: `Nothing was saved. ${msg(e)}` });
     } finally {
@@ -4645,7 +4649,7 @@ function GitHubIntakeTimer() {
   }
 
   return (
-    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into Review’s event inbox.">
+    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into the Goals event inbox.">
       <Frame v={timer.v} what="the GitHub intake timer" onRetry={timer.reload}>{(loaded) => {
         const saved = stored ?? loaded;
         const typed = draft ?? String(saved.intervalMinutes);
@@ -4653,7 +4657,7 @@ function GitHubIntakeTimer() {
           <Toggle on={saved.enabled} title="Check GitHub on a timer" busy={busy}
                   onChange={(on) => void save({ enabled: on, intervalMinutes: saved.intervalMinutes })}>
             While Wanigan is running, read each GitHub project’s opened, labelled and commented issues and its failed runs
-            every {saved.intervalMinutes} minutes, and add what is new to Review’s event inbox for you to triage. Nothing is
+            every {saved.intervalMinutes} minutes, and add what is new to the Goals event inbox for you to triage. Nothing is
             written to GitHub. Nothing watches while Wanigan is closed or this Mac sleeps, and the next check says for how long.
           </Toggle>
           <label className="label" htmlFor="intake-interval">Minutes between checks (at least {INTAKE_MIN_INTERVAL_MINUTES})</label>
@@ -4664,7 +4668,7 @@ function GitHubIntakeTimer() {
                     onClick={() => void save({ enabled: saved.enabled, intervalMinutes: Number(typed) })}>Save interval</button>
           </div>
           <p className="set-caption">
-            Each check is three reads per repository. A press in Review checks one project at any time, whether this is on or off.
+            Each check is three reads per repository. A press in Goals checks one project at any time, whether this is on or off.
           </p>
           <Result r={result} />
         </>;
@@ -4680,6 +4684,26 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
+  /*
+   * URGENT-FIX ESCAPE (AGENTS.md, "The urgent-fix escape"): fixed in place on an
+   * unconverted surface because a user was blocked. "+ Add server" sits in this
+   * Section's header, but the form it opens renders below Wanigan's own server
+   * and the recall list — measured 175 px below the fold of a 1440x900 window.
+   * Clicking it hid the button and showed nothing, which read as a broken button
+   * and stopped an operator adding a server at all. Recorded in
+   * unconverted-fixes.json; this surface may not take the escape again.
+   *
+   * Opening the form (to add or to edit) now brings it into view and puts the
+   * cursor in its first field. Keyed on which draft is open, not on the draft
+   * itself, so typing does not scroll.
+   */
+  const draftForm = useRef<HTMLDivElement>(null);
+  const openDraft = draft === null ? null : (draft.id ?? 'new');
+  useEffect(() => {
+    if (openDraft === null) return;
+    draftForm.current?.scrollIntoView({ block: 'nearest' });
+    draftForm.current?.querySelector<HTMLInputElement>('#mcp-name')?.focus({ preventScroll: true });
+  }, [openDraft]);
   // Which server's command line is open for reading. Enabling a stdio server is
   // a standing grant to execute that line at every launch, so the line is put
   // on screen before the click that grants it, never in a tooltip afterwards.
@@ -4902,7 +4926,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
 
       <div className="set-sub">Servers given to agents</div>
       {draft && (
-        <div className="sunk" style={{ padding: '12px 13px', marginBottom: 11 }}>
+        <div className="sunk" style={{ padding: '12px 13px', marginBottom: 11 }} ref={draftForm}>
           <div className="label" style={{ marginBottom: 8 }}>{draft.id ? 'Edit server' : 'New server'}</div>
           <div className="row2">
             <div>
@@ -5956,26 +5980,37 @@ function Backup() {
       </Section>
 
       <Section title="Restore a backup"
-               hint="Replaces the database, transcript archive and included session files, then relaunches Wanigan.">
-        <Callout level="critical" title="Read this before you start: a restore relaunches Wanigan, and it is refused while any agent is live.">
+               hint="Replaces the database, transcript archive and included session files, then restarts into inspection.">
+        <Callout level="critical" title="Restore requires settled execution and billing evidence, then restarts Wanigan.">
           <p>
-            <strong>Every running agent must be stopped first.</strong> A restore swaps the database
-            file out from under this process, and anything still writing to it — a terminal recording
-            events, a headless row banking a cost — would start failing against a file that has moved.
-            Wanigan counts the live interactive and headless agents and refuses, naming the number,
-            rather than starting and hoping.
+            <strong>Stop running work separately before restoring.</strong> Unknown checkout ownership,
+            unfinished commands and unresolved remote charges block a restore. An expired lease or a
+            missing process does not prove completion. Recovery explains each recorded claim. The one
+            exception is a paid request nothing has accounted for: its record is carried into the restored
+            database, still unresolved, rather than blocking the restore.
           </p>
-          <p style={{ marginTop: 6 }}>
-            <strong>Wanigan restarts immediately afterwards.</strong> The database connection this
-            window holds is closed to make the swap, so the app cannot keep running against it. A
-            live terminal cannot survive that: saved projects, transcripts and settings are a
-            different thing from a running PTY.
+          <p>
+            <strong>Begin with a maintenance restart.</strong> The restore button first offers to
+            reopen Wanigan without credentials or background services. Return here after restart to
+            choose the backup. Quitting and reopening normally leaves preparation mode; a completed
+            restore keeps its inspection holds.
           </p>
-          <p style={{ marginTop: 6 }}>
-            <strong>Nothing is deleted.</strong> The replaced database, transcripts and session files are moved into
-            a dated folder inside Wanigan’s data directory, and the restore names it. Your API
-            credential and your provider-pack and MCP approvals are <em>not</em> restored — those are
-            granted on one machine, for one machine.
+          <p>
+            <strong>Every database participant must close its handle.</strong> Another app, scheduler
+            or CLI process blocks the swap until it acknowledges closure. The final check runs after
+            confirmation; changed work or changed backup files require a fresh preview.
+          </p>
+          <p>
+            <strong>Restored history opens for read-only inspection.</strong> Archived jobs, schedules
+            and automatic actions remain held. Older spending totals cannot authorize paid work.
+            This phase has no action that resets these holds; acknowledging a warning cannot reconcile
+            execution or a bill. Live terminals cannot survive the required restart.
+          </p>
+          <p>
+            <strong>Replaced originals are retained.</strong> The current database, transcripts and
+            included session files move into a dated folder named in the result. API credentials and
+            provider-pack and MCP approvals are not restored. An interrupted swap retains its external
+            journal and refuses normal startup until storage recovery is established.
           </p>
         </Callout>
 
@@ -5985,17 +6020,18 @@ function Backup() {
             {busy === 'restore' ? 'Restoring…' : 'Choose a backup to restore'}
           </button>
           <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 440 }}>
-            After you pick a folder, Wanigan verifies it and then asks once more — naming the backup’s
+            In maintenance, picking a folder verifies it and asks once more — naming the backup’s
             date, its transcript count, both evidence clocks and where the replaced files will be
-            moved. Nothing is replaced until you answer that.
+            moved. Approval applies once to that exact preview. A changed database or backup requires
+            another review.
           </span>
         </div>
 
         {restored && (
           <div style={{ marginTop: 12 }}>
-            <Callout level="warning" title="Restored. Wanigan is restarting to open the restored database.">
-              This window is already running against a closed connection, so its other panels will
-              fail until the app comes back.
+            <Callout level="warning" title="Restored. Wanigan is restarting into read-only inspection.">
+              Archived execution and paid admission remain held. Retained originals and the storage
+              journal preserve the replaced generation for inspection.
             </Callout>
             <div className="set-scroll" style={{ marginTop: 9 }}>
               <table className="grid">
@@ -6012,6 +6048,13 @@ function Backup() {
                       ? 'Yes — the database in place held work recorded after this backup.'
                       : 'No — the database in place held nothing newer.'}</td>
                   </tr>
+                  {restored.carriedPaidReceipts > 0 && (
+                    <tr>
+                      <td>Paid requests carried over</td>
+                      <td>{plural(restored.carriedPaidReceipts, 'record')} of a paid request nothing had accounted for. Restoring does not
+                        erase what they may have cost, so they were written into this database and are still unresolved in Recovery.</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -6090,4 +6133,149 @@ export function DemoPanel() {
       </div>
     </div>
   </Section>;
+}
+
+/**
+ * The routing suggester: an optional connection to a System One model that
+ * proposes which declared model a relay stage should run on, and whether work
+ * this well-specified needs a planning stage at all.
+ *
+ * It lives under Connections rather than Agents because it is not something a
+ * session runs on. No agent ever talks to it — Wanigan does, on its own behalf,
+ * about the words you typed and the model names your own profile already
+ * declares. Nothing else is sent, and the panel says so where a person is
+ * deciding whether to switch it on rather than in a document they will not read.
+ *
+ * Off is the default and the common case, so the panel reads as an offer rather
+ * than as something broken: no key is a plain state, not a warning.
+ */
+function RoutingSuggester() {
+  type Status = Awaited<ReturnType<typeof window.wanigan.suggest.status>>;
+  const loaded = useLoad(() => window.wanigan.suggest.status(), []);
+  const [live, setLive] = useState<Status | null>(null);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function run(fn: () => Promise<{ tone: 'ok' | 'error'; text: string } | null>) {
+    setBusy(true); setResult(null);
+    try {
+      setResult(await fn());
+      setLive(await window.wanigan.suggest.status());
+    } catch (e) {
+      setResult({ tone: 'error', text: `Nothing was changed. ${msg(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const save = () => run(async () => {
+    const saved = await window.wanigan.suggest.setKey(key);
+    if (!saved.ok) return { tone: 'error' as const, text: `Nothing was stored. ${saved.detail}` };
+    setKey('');
+    return { tone: 'ok' as const, text: `Key verified and stored. ${saved.detail}` };
+  });
+
+  const check = () => run(async () => {
+    const answer = await window.wanigan.suggest.verify();
+    return { tone: answer.ok ? 'ok' as const : 'error' as const, text: answer.detail };
+  });
+
+  const forget = () => run(async () => {
+    await window.wanigan.suggest.clearKey();
+    return { tone: 'ok' as const, text: 'The key is removed. Your switches are kept, and take effect again if you add a key.' };
+  });
+
+  const toggle = (id: string, on: boolean, current: readonly string[]) => run(async () => {
+    const next = on ? [...new Set([...current, id])] : current.filter((entry) => entry !== id);
+    await window.wanigan.suggest.setEnabled(next);
+    return null;
+  });
+
+  return (
+    <Section title="Routing suggester"
+             hint="An optional model that proposes which of your declared models a relay stage should run on, and whether well-specified work still needs a planning stage. It proposes; it never decides.">
+      <Frame v={loaded.v} what="the routing suggester" onRetry={loaded.reload}>{(first) => {
+        const shown = live ?? first;
+        const idle = !shown.hasKey && shown.stored.length === 0;
+        return <>
+          {idle && (
+            <Note tone="info">
+              Nothing is switched on and no key is stored, which is how Wanigan ships. Every relay stage runs on
+              its profile’s own default model and effort, and no request leaves this Mac.
+            </Note>
+          )}
+
+          {shown.unreadable && (
+            <Note tone="error">
+              A TypeSafe key is stored and this Mac can no longer read it — most often a Keychain entry that was
+              removed or denied. Nothing is being asked and nothing is being spent. Paste the key again to replace it.
+            </Note>
+          )}
+
+          {shown.hasKey ? (
+            <div className="set-key-status">
+              <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>TypeSafe key installed</span>
+              <span className="mono faint">{shown.fingerprint}</span>
+              <button className="btn" onClick={() => void check()} disabled={busy}>Verify</button>
+              <button className="btn btn-danger" onClick={() => void forget()} disabled={busy}>Remove</button>
+            </div>
+          ) : null}
+
+          <label className="label" htmlFor="suggest-api-key">{shown.hasKey ? 'Replace TypeSafe key' : 'TypeSafe API key'}</label>
+          <div className="set-field-action">
+            <input id="suggest-api-key" className="field mono" type="password" placeholder="TypeSafe API key"
+                   value={key} autoComplete="off" spellCheck={false}
+                   onChange={(e) => setKey(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) void save(); }} />
+            <button className="btn btn-primary" onClick={() => void save()} disabled={busy || !key.trim()}>
+              {busy ? 'Checking…' : 'Save & verify'}
+            </button>
+          </div>
+
+          {/* Each switch states what turning it off costs, from the module's own
+              declaration rather than a sentence written twice. */}
+          {shown.capabilities.map((capability) => (
+            <Toggle key={capability.id} title={capability.label} busy={busy}
+                    on={shown.stored.includes(capability.id)}
+                    onChange={(on) => void toggle(capability.id, on, shown.stored)}>
+              {capability.describe} Without it: {capability.withoutIt}
+            </Toggle>
+          ))}
+
+          {/* A switch a person turned on that is not actually running is the one
+              state this panel must never draw as "off". */}
+          {!shown.hasKey && shown.stored.length > 0 && (
+            <Note tone="warn">
+              These switches are saved, but nothing is asked and nothing is spent until a TypeSafe key is stored.
+              Relay stages run on their profile defaults in the meantime.
+            </Note>
+          )}
+
+          {result && <Note tone={result.tone === 'ok' ? 'ok' : 'error'}>{result.text}</Note>}
+
+          <Explainer id="suggest-egress" title="What is sent, and what it costs" compact defaultHidden>
+            <p>
+              Requests go to <span className="mono">{shown.host}</span>. What leaves this Mac is the stage name, the words you
+              typed describing the work, and the labels of the models your own profile declares. Project files, diffs,
+              paths, prompts, transcripts and agent output do not, and there is no setting that would add them — the model
+              is not hardened against text written to steer it, so repository content is kept out by construction.
+            </p>
+            <p>
+              A typical call is about ${shown.estimatedUsdPerCall.toFixed(5)} of input, priced from a local rate table.
+              That is Wanigan’s own arithmetic, not a reported cost: output is free and the vendor says early pricing may be
+              subsidised, so there is no invoice line to reconcile it against. A rate-limited or unreachable call is not
+              retried; the stage runs on its profile default instead.
+            </p>
+            <p>
+              A suggestion is a guess, shown as a guess, and overridable. It can never move a stage to a model or an effort
+              your profile does not declare, and it can never remove the stages that check the work. You see the guess in
+              Relay, beside the fields it would fill, before you start anything.
+            </p>
+          </Explainer>
+
+        </>;
+      }}</Frame>
+    </Section>
+  );
 }

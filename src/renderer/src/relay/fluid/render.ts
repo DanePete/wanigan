@@ -38,6 +38,15 @@ export type FluidRenderer = {
   resize(width: number, height: number): void;
   /** `positions` is xyz interleaved, world units; `n` particles are drawn. */
   draw(positions: Float32Array, n: number, rig: RigLayout, theme: FluidTheme): void;
+  /**
+   * True once a render target could not be allocated completely.
+   *
+   * A renderer can fail after it was built: targets are made on the first
+   * resize, which happens once the canvas has a size. A caller that sees this
+   * should dispose and fall back rather than keep calling `draw`, because
+   * there is nothing this can usefully put on screen.
+   */
+  failed(): boolean;
   dispose(): void;
 };
 
@@ -51,9 +60,40 @@ const THICKNESS_SPRITE_SCALE = 1.3;
 const BLUR_PASSES = 2;
 
 /** True when this context can run the renderer at all. */
+/**
+ * Whether this machine can run the fluid, asked by doing the thing.
+ *
+ * The extension being present is necessary and not sufficient: it says the
+ * driver advertises float colour buffers, not that RGBA16F attaches to a
+ * framebuffer completely on this GPU. Drivers exist where it does not, and the
+ * failure is silent — every draw into an incomplete framebuffer no-ops, the
+ * textures keep whatever was in that memory, and the composite pass turns that
+ * into a full-canvas block of colour. In a dark theme, where the tint is
+ * (1, 1, 1), that block is white.
+ *
+ * So the probe allocates the exact attachment the renderer uses and asks
+ * whether it is complete. A machine that cannot do it reports `false` and gets
+ * the CSS rail, which is the fallback that already exists and looks right.
+ */
 export function fluidAvailableIn(canvas: HTMLCanvasElement): boolean {
   const gl = canvas.getContext('webgl2');
-  return !!gl && !!gl.getExtension('EXT_color_buffer_float');
+  if (!gl || !gl.getExtension('EXT_color_buffer_float')) return false;
+  const texture = gl.createTexture();
+  const framebuffer = gl.createFramebuffer();
+  if (!texture || !framebuffer) return false;
+  try {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, 2, 2, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    return gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+  } catch {
+    return false;
+  } finally {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(framebuffer);
+    gl.deleteTexture(texture);
+  }
 }
 
 export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number): FluidRenderer | null {
@@ -115,11 +155,32 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   let targets: { a: Target; b: Target; thick: Target } | null = null;
   const uploaded = new Float32Array(0);
   let staging = uploaded;
+  /** Set once this renderer can no longer draw: a bad target, or a lost context. */
+  let broken = false;
 
-  const makeTarget = (): Target => {
+  /**
+   * A lost context is silent, and this app invites one.
+   *
+   * Every GL call on a lost context succeeds and does nothing, so without this
+   * the fluid keeps ticking into a dead context for the life of the window
+   * while the canvas holds whatever pixels were in its buffer when the context
+   * went. Wanigan runs the companion orb on WebGPU and a renderer per terminal
+   * besides this one, and a machine under that much context pressure evicts
+   * the one it thinks is least busy. That is why this fails after working
+   * rather than instead of working, and why nothing about the GPU's
+   * capabilities predicts it.
+   *
+   * `preventDefault` is deliberately not called: it asks the browser to
+   * prepare a restore, and a half-restored simulation that resumes mid-frame
+   * is a worse picture than the CSS rail. The mount drops to that instead.
+   */
+  const onLost = (event: Event) => { event.stopPropagation(); broken = true; };
+  canvas.addEventListener('webglcontextlost', onLost);
+
+  const makeTarget = (): Target | null => {
     const texture = gl.createTexture();
     const framebuffer = gl.createFramebuffer();
-    if (!texture || !framebuffer) throw new Error('WebGL2 could not allocate a render target.');
+    if (!texture || !framebuffer) return null;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.HALF_FLOAT, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -128,6 +189,14 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    // Unchecked, an incomplete attachment is silent: every draw into it is
+    // dropped, the texture keeps whatever was in that memory, and the
+    // composite pass reads it as if it were water. Asking costs one call.
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.deleteFramebuffer(framebuffer);
+      gl.deleteTexture(texture);
+      return null;
+    }
     return { texture, framebuffer };
   };
   const dropTargets = () => {
@@ -140,11 +209,23 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   };
 
   const resize = (w: number, h: number) => {
+    if (broken) return;
     if (w === width && h === height && targets) return;
     width = Math.max(2, w | 0);
     height = Math.max(2, h | 0);
     dropTargets();
-    targets = { a: makeTarget(), b: makeTarget(), thick: makeTarget() };
+    const a = makeTarget(), b = makeTarget(), thick = makeTarget();
+    if (!a || !b || !thick) {
+      for (const t of [a, b, thick]) {
+        if (!t) continue;
+        gl.deleteFramebuffer(t.framebuffer);
+        gl.deleteTexture(t.texture);
+      }
+      broken = true;
+      targets = null;
+      return;
+    }
+    targets = { a, b, thick };
     gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
     gl.bindFramebuffer(gl.FRAMEBUFFER, targets.a.framebuffer);
@@ -155,7 +236,8 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   const u = (program: WebGLProgram, name: string) => gl.getUniformLocation(program, name);
 
   const draw = (positions: Float32Array, n: number, rig: RigLayout, theme: FluidTheme) => {
-    if (!targets || n <= 0) return;
+    if (!broken && gl.isContextLost()) broken = true;
+    if (broken || !targets || n <= 0) return;
     const halfW = rig.width / 2, halfH = rig.height / 2, halfD = rig.depth / 2;
 
     // Centre the world on the origin for the orthographic projection.
@@ -254,6 +336,7 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
   };
 
   const dispose = () => {
+    canvas.removeEventListener('webglcontextlost', onLost);
     dropTargets();
     gl.deleteRenderbuffer(depthBuffer);
     gl.deleteVertexArray(particleVao);
@@ -265,5 +348,5 @@ export function createFluidRenderer(canvas: HTMLCanvasElement, spacing: number):
     lose?.loseContext();
   };
 
-  return { resize, draw, dispose };
+  return { resize, draw, failed: () => broken, dispose };
 }

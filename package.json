@@ -24,7 +24,7 @@
     "dist:mac": "electron-vite build && { electron-builder --mac; c=$?; npm run rebuild; exit $c; }",
     "install:mac:arm64": "node scripts/install-local-macos.cjs",
     "dist:mac:arm64:install": "npm run dist:mac:arm64 && npm run install:mac:arm64",
-    "test:shared": "node --test src/shared/*.test.ts && node scripts/test-async-credentials.cjs",
+    "test:shared": "node --test src/shared/*.test.ts && node scripts/test-async-credentials.cjs && node scripts/test-control-dispatch.cjs && node scripts/test-session-modules.cjs && node scripts/test-backup-module.cjs && node scripts/test-storage-runtime.cjs && node scripts/test-usage-paid-operations.cjs && node scripts/test-backend-catalog-cache.cjs && node scripts/test-account-eligibility.cjs && node scripts/test-session-reliability.cjs && node scripts/test-usage-accounts.cjs",
     "test:renderer-style": "node scripts/check-renderer-style.cjs",
     "test:dead-code": "knip --exclude exports,types,nsExports,nsTypes,enumMembers,classMembers,duplicates",
     "shots": "node scripts/shots.mjs",
@@ -36,9 +36,10 @@
     "probe:recent": "node scripts/probe-recent-names.mjs",
     "test:package-hooks": "node scripts/test-package-hooks.cjs",
     "test:local-install": "node scripts/test-local-macos-install.cjs",
-    "app": "./scripts/launch.sh",
-    "cli": "./scripts/cli.sh",
-    "smoke": "./scripts/smoke.sh",
+    "app": "node scripts/launch.mjs",
+    "cli": "node scripts/cli.mjs",
+    "test:execution-recovery": "node scripts/test-review-recovery.cjs && node scripts/test-queue-recovery.cjs && node scripts/test-worktree-recovery.cjs && node scripts/test-recovery-inspection.cjs && node scripts/test-storage-maintenance.cjs && node scripts/test-backup-recovery.cjs && node scripts/test-learning-recovery.cjs",
+    "smoke": "node scripts/smoke.mjs && npm run test:execution-recovery",
     "test": "npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:dead-code && npm run test:lint && npm run test:package-hooks && npm run test:local-install && npm run smoke",
     "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }",
     "dead-code:all": "knip",
@@ -46,7 +47,8 @@
     "lint:fix": "eslint . --fix",
     "lint:prune": "eslint . --prune-suppressions",
     "lint:debt": "node scripts/lint-debt.cjs",
-    "test:lint": "eslint ."
+    "test:lint": "eslint .",
+    "dist:win": "electron-vite build && electron-builder --win --x64"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

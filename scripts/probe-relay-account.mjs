@@ -15,6 +15,7 @@ import { openRenderer } from './renderer-harness.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
+const BEFORE = args.includes('--before');
 const outArg = args.indexOf('--out');
 const OUT = path.resolve(REPO, outArg >= 0 ? args[outArg + 1] : 'docs/visuals/relay-account');
 mkdirSync(OUT, { recursive: true });
@@ -36,6 +37,7 @@ const INSTRUMENT = `
     { id: 'acct_personal', harness: 'claude-code', label: 'Personal', configDir: '/example/personal', adopted: false, isDefault: false, present: true },
   ];
   window.__relaySent = null;
+  let created = null;
   const accounts = new Proxy({}, {
     get(_t, prop) {
       if (prop === 'listForProvider') return async () => accountsRows;
@@ -47,16 +49,34 @@ const INSTRUMENT = `
       if (prop === 'create') {
         return async (input) => {
           window.__relaySent = JSON.parse(JSON.stringify(input));
-          return { docket: { id: 'dk_new', nodes: [] }, nodes: [], forecast: null };
+          created = { docket: { id: 'dk_new', title: input.intent, objective: input.intent, projectId: input.projectId, projectName: 'storefront', status: 'draft', nodes: [], proofs: [], reviewCommands: 0 }, relay: true, nodes: [], forecast: null, pipeline: null, handbackLimit: 3 };
+          return created;
         };
       }
-      if (prop === 'list') return async () => [];
-      if (prop === 'read') return async () => null;
+      if (prop === 'list') return async () => created ? [created.docket] : [];
+      if (prop === 'read') return async () => created;
       return base.relay[prop];
     },
   });
+  // What a visit to Usage already established. The composer never starts a
+  // probe of its own, so this is the only thing it can know about a login.
+  const reading = (accountId, accountLabel, detail) => ({ accountId, accountLabel, harness: 'claude-code', identity: null,
+    // The structured verdict is what the form reads. The sentence alone is not evidence.
+    state: 'ok', detail, ordinaryUsageAllowed: detail ? false : null, fetchedAt: Date.now() - 4 * 60_000, plan: 'max', factors: [],
+    windows: [{ kind: 'session', scope: null, usedPercent: 100, resetsAtText: null, resetsAt: null }] });
+  window.__knownReads = 0;
+  const usage = new Proxy({}, {
+    get(_t, prop) {
+      if (prop === 'known') return async () => { window.__knownReads += 1; return { at: Date.now() - 4 * 60_000, limits: [
+        reading('acct_work', 'Work', null),
+        reading('acct_personal', 'Personal', 'Codex reports that ordinary included usage is not currently allowed for this account.'),
+      ] }; };
+      if (prop === 'snapshot') return async () => { window.__probed = true; return base.usage.snapshot(); };
+      return base.usage[prop];
+    },
+  });
   window.wanigan = new Proxy(base, {
-    get: (t, p) => (p === 'accounts' ? accounts : p === 'relay' ? relay : t[p]),
+    get: (t, p) => (p === 'accounts' ? accounts : p === 'relay' ? relay : p === 'usage' ? usage : t[p]),
   });
 })();
 `;
@@ -72,9 +92,8 @@ async function setTheme(page, theme) {
 }
 
 async function toRelay(page) {
-  await page.locator('.hdr-toggle').first().click().catch(() => {});
-  await page.waitForTimeout(250);
-  await page.locator('[data-nav-tab="relay"]').first().click().catch(() => {});
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Meta+Shift+R');
   await page.waitForTimeout(800);
 }
 
@@ -98,6 +117,7 @@ for (const theme of ['dark', 'light']) {
   check(/This project’s account, then the default/.test(optionText) && /Work/.test(optionText) && /Personal/.test(optionText),
     'it offers the ordinary resolution first, then the accounts this profile can actually use', optionText);
 
+  await page.getByRole('button', { name: 'Show: Choose the model and effort for a stage yourself', exact: true }).click();
   const perStage = page.locator('select[aria-label="Implement account override"]');
   check(await perStage.count() === 1, 'each agent stage can override the account');
   check(await page.locator('select[aria-label="Estimate account override"]').count() === 0,
@@ -109,11 +129,26 @@ for (const theme of ['dark', 'light']) {
   const stageOptions = (await perStage.locator('option').allInnerTexts()).join(' | ');
   check(/Same as the relay/.test(stageOptions) && /Not the relay’s/.test(stageOptions),
     'once a relay account is pinned, a stage can say "same as the relay" or step out of it deliberately', stageOptions);
+  if (!BEFORE) {
+    const note = page.locator('.rl-account-reading');
+    check(await note.count() === 1 && /ordinary included usage is not currently allowed/.test(await note.innerText())
+      && /automatic phases/i.test(await note.innerText()) && /4m ago|4 min/.test(await note.innerText()),
+      'the chosen account says what its provider last reported, how old that is, and what it means for phases nobody is watching', await note.allInnerTexts());
+    check(await page.evaluate(() => window.__probed) !== true, 'and saying so started no account probe: it repeats what a visit to Usage established');
+    await account.selectOption('acct_work');
+    await page.waitForTimeout(150);
+    check(await page.locator('.rl-account-reading').count() === 0, 'an account with nothing reported against it says nothing');
+    await account.selectOption('');
+    await page.waitForTimeout(150);
+    check(await page.locator('.rl-account-reading').count() === 0, 'and the ordinary resolution, which names no account yet, claims nothing about one');
+    await account.selectOption('acct_personal');
+    await page.waitForTimeout(150);
+  }
   await shot(page, `${theme}-form`);
 
   await perStage.selectOption('acct_work');
   await page.locator('select[aria-label="Review account override"]').selectOption({ index: 1 });
-  await page.locator('.btn-primary', { hasText: 'Start relay' }).click();
+  await page.locator('.btn-primary', { hasText: 'Create relay' }).click();
   await page.waitForTimeout(500);
 
   const sent = await page.evaluate(() => window.__relaySent);

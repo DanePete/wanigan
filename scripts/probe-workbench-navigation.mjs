@@ -11,7 +11,9 @@ import assert from 'node:assert/strict';
 const root = path.resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
 const { _electron } = require('playwright-core');
-const out = path.join(root, 'docs/visuals/workbench-2026-09-15/navigation');
+const outAt = process.argv.indexOf('--out');
+if (outAt >= 0 && (!process.argv[outAt + 1] || process.argv[outAt + 1].startsWith('--'))) throw new Error('--out requires a directory.');
+const out = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : path.join(root, 'docs/visuals/workspace-simplification-2026-09-19/navigation-regression');
 mkdirSync(out, { recursive: true });
 const baselinePath = path.join(root, 'docs/visuals/ux-audit-2026-09-15/probes/verification.json');
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
@@ -46,6 +48,7 @@ try {
   await page.addInitScript(STUB + `
     (() => {
       localStorage.setItem('wanigan.composer', '1');
+      localStorage.setItem('wanigan.navigation.visible', 'open');
       window.__navSessionName = 'AuroraQuantumFox';
       window.__navWrites = [];
       const base = window.wanigan;
@@ -65,14 +68,15 @@ try {
         worktrees: proxy(base.worktrees, { setup: async projectId => ({projectId,depsMode:'link',setup:[],teardown:[],updatedAt:null,include:{state:'absent'}}), commandRuns: async () => [] }),
         transcripts: proxy(base.transcripts, { search: async () => [] }),
         handoff: proxy(base.handoff, { plan: async () => ({ targets: [] }) }),
-        prefs: proxy(base.prefs, { all: async () => ({ ...(await base.prefs.all()), motion: 'off', navSidebar: 'closed' }) }),
+        prefs: proxy(base.prefs, { all: async () => ({ ...(await base.prefs.all()), motion: 'off', navSidebar: 'open' }) }),
       });
     })();
   `);
   await page.goto(rendererURL);
   await page.locator('.home-room').waitFor();
   const nav = () => page.getByRole('navigation', { name: 'Workspace navigation', exact: true });
-  const route = () => page.locator('.workbench-location').textContent();
+  const route = () => page.locator('.space-routes button[aria-current="page"], .space-dock button[aria-current="page"], .space-settings[aria-current="page"]').first()
+    .evaluate(button => button.getAttribute('aria-label') ?? button.textContent.trim());
   const go = async key => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); };
   const capture = async name => {
     for (const theme of ['dark', 'light']) {
@@ -93,26 +97,26 @@ try {
 
   await page.getByRole('button', { name: /^Switch project space:/ }).click();
   await page.getByRole('option').filter({ hasText: 'storefront' }).click();
-  await nav().getByRole('button', { name: 'Projects', exact: true }).click();
+  await nav().getByRole('button', { name: 'Work', exact: true }).click();
   await page.locator('.sessions-view').waitFor();
-  await page.getByRole('navigation', { name: 'Projects views', exact: true }).getByRole('button', { name: 'Changes', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Work views', exact: true }).getByRole('button', { name: 'Changes', exact: true }).click();
   await page.getByRole('heading', { name: 'Changes', exact: true }).waitFor();
-  await nav().getByRole('button', { name: 'Fleet', exact: true }).click();
+  await nav().getByRole('button', { name: 'Monitor', exact: true }).click();
   assert.equal(await page.locator('.workbench-scope').textContent(), 'Across all projects');
   assert.equal(await page.getByRole('button', { name: /^Switch project space:/ }).count(), 0);
-  await nav().getByRole('button', { name: 'Projects', exact: true }).click();
+  await nav().getByRole('button', { name: 'Work', exact: true }).click();
   await page.getByRole('heading', { name: 'Changes', exact: true }).waitFor();
   assert.equal(await route(), 'Changes');
   assert.match(await page.locator('.space-switch-trigger').textContent(), /storefront/);
-  checks.push('Changes → Fleet → Projects restores Changes and storefront; Fleet labels global scope explicitly');
+  checks.push('Changes → Monitor → Work restores Changes and storefront; Fleet labels global scope explicitly');
 
-  await page.getByRole('navigation', { name: 'Projects views', exact: true }).getByRole('button', { name: 'Sessions', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Work views', exact: true }).getByRole('button', { name: 'Sessions', exact: true }).click();
   await page.locator('.terminal-host:visible .xterm').waitFor();
   const terminal = await page.locator('.terminal-host:visible .xterm').elementHandle();
   const composer = page.getByRole('textbox', { name: 'Message the agent', exact: true });
   await composer.fill('Navigation fixture draft, never sent.');
-  await nav().getByRole('button', { name: 'Fleet', exact: true }).click();
-  await nav().getByRole('button', { name: 'Projects', exact: true }).click();
+  await nav().getByRole('button', { name: 'Monitor', exact: true }).click();
+  await nav().getByRole('button', { name: 'Work', exact: true }).click();
   await composer.waitFor();
   assert.equal(await composer.inputValue(), 'Navigation fixture draft, never sent.');
   assert.equal(await terminal.evaluate(element => element.isConnected), true);
@@ -137,8 +141,8 @@ try {
 
   await page.getByRole('button', { name: /^Switch project space:/ }).click();
   await page.getByRole('option').filter({ hasText: 'The view across your projects' }).click();
-  await nav().getByRole('button', { name: 'Fleet', exact: true }).click();
-  await nav().getByRole('button', { name: 'Projects', exact: true }).click();
+  await nav().getByRole('button', { name: 'Monitor', exact: true }).click();
+  await nav().getByRole('button', { name: 'Work', exact: true }).click();
   assert.match(await page.locator('.space-switch-trigger').textContent(), /All (spaces|projects)/);
   checks.push('Explicit all-projects selection survives a global-area visit separately from remembered project identity');
 
@@ -148,7 +152,7 @@ try {
     assert.equal(await page.locator('.workbench-navigation').isVisible(), width > 980);
     await capture(`sessions-${width}x${height}`);
   }
-  const opener = page.getByRole('button', { name: 'Open navigation (Option Command S)', exact: true });
+  const opener = page.getByRole('button', { name: 'All destinations', exact: true });
   await opener.click();
   const dialog = page.getByRole('dialog', { name: 'Workspace navigation', exact: true });
   await dialog.waitFor();

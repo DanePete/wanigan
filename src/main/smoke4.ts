@@ -2058,7 +2058,10 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       check(mergedEnv.WANIGAN_PROVIDER_ENV_SMOKE === 'from-provider'
         && mergedEnv.NO_COLOR === '1' && mergedEnv.TERM === 'dumb',
       'headless provider environment is merged while JSON-safe terminal controls remain enforced');
-      const accountEnv = headlessEnv('/smoke/path', { CLAUDE_CONFIG_DIR: '/pack/chosen' }, { CLAUDE_CONFIG_DIR: '/account/chosen' });
+      const accountEnv = headlessEnv('/smoke/path', { CLAUDE_CONFIG_DIR: '/pack/chosen' }, {
+        id: 'acct_smoke_headless', harness: 'claude-code', label: 'Chosen', configDir: '/account/chosen',
+        adopted: false, isDefault: false, present: true, signedIn: 'unknown', createdAt: 0, updatedAt: 0,
+      });
       check(accountEnv.CLAUDE_CONFIG_DIR === '/account/chosen',
         'the account’s config directory is applied after the provider pack, so a manifest cannot redirect a run’s login');
       // The CLI's own statement of each model's window travels out of the

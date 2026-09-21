@@ -1,0 +1,28 @@
+from pathlib import Path
+import subprocess,sqlite3,os,json,datetime,urllib.parse
+out=Path('/Users/dane/Projects/drupal/wanigan/docs/research/relay-audit-2026-09-19')
+db=sqlite3.connect('file:'+str(Path.home()/'Library/Application Support/wanigan/wanigan.db')+'?mode=ro',uri=True)
+rows=db.execute('SELECT id,harness,label,config_dir FROM agent_accounts').fetchall();db.close()
+records=[]
+for aid,harness,label,config in rows:
+ env={k:v for k,v in os.environ.items() if k in ['PATH','HOME','USER','LOGNAME','TMPDIR','LANG','LC_ALL','SHELL','HTTPS_PROXY','https_proxy','HTTP_PROXY','http_proxy','SSL_CERT_FILE','SSL_CERT_DIR']}
+ config_key='CLAUDE_CONFIG_DIR' if harness=='claude-code' else 'CODEX_HOME'
+ default_dir=Path.home()/('.claude' if harness=='claude-code' else '.codex')
+ if Path(config)!=default_dir: env[config_key]=config
+ cmd=['/Users/dane/.local/bin/claude','auth','status','--json'] if harness=='claude-code' else ['/opt/homebrew/bin/codex','mcp','list','--json']
+ rec={'id':aid,'label':label,'harness':harness,'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'command':cmd[1:]}
+ try:
+  p=subprocess.run(cmd,env=env,cwd='/private/tmp/wanigan-relay-audit-vxcyorcv',stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=15,text=True)
+  rec['exitCode']=p.returncode
+  try: data=json.loads(p.stdout)
+  except Exception: data=None;rec['error']='non-JSON response; raw output not retained'
+  if harness=='claude-code' and isinstance(data,dict): rec['status']={k:data[k] for k in ['loggedIn','authMethod','apiProvider','subscriptionType'] if k in data}
+  elif isinstance(data,list):
+   rec['configuredServers']=[]
+   for x in data:
+    transport=x.get('transport') or {}
+    if isinstance(transport,str): transport={'type':transport}
+    rec['configuredServers'].append({'name':x.get('name'),'enabled':x.get('enabled'),'authStatus':x.get('auth_status'),'transport':transport.get('type'),'host':urllib.parse.urlparse(transport.get('url') or '').hostname,'commandBasename':Path(transport['command']).name if transport.get('command') else None})
+ except subprocess.TimeoutExpired: rec['error']='status timeout after 15 seconds'
+ records.append(rec);print(json.dumps(rec),flush=True)
+ (out/'auth-and-mcp.json').write_text(json.dumps({'scope':'native CLI stored auth/configuration status, not tool handshake or execution','inferenceCalls':0,'records':records},indent=2)+'\n')

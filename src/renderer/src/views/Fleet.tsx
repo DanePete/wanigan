@@ -45,11 +45,13 @@ type Mark = { glyph: string; word: string; fg: string; bg: string };
 const MARK: Record<AttentionKind, Mark> = {
   permission: { glyph: '?', word: 'Asking',  fg: 'var(--critical)', bg: 'var(--critical-soft)' },
   error:      { glyph: '✕', word: 'Failed',  fg: 'var(--serious)',  bg: 'var(--serious-soft)' },
-  finished:   { glyph: '✓', word: 'Done',    fg: 'var(--good)',     bg: 'var(--good-soft)' },
+  finished:   { glyph: '◇', word: 'Ready to inspect', fg: 'var(--warning)', bg: 'var(--warning-soft)' },
   idle:       { glyph: '◦', word: 'Idle',    fg: 'var(--text-dim)', bg: 'var(--bg-sunk)' },
   working:    { glyph: '▶', word: 'Working', fg: 'var(--accent)',   bg: 'var(--accent-soft)' },
 };
 const UNKNOWN: Mark = { glyph: '·', word: 'Unknown', fg: 'var(--text-faint)', bg: 'var(--bg-sunk)' };
+const attentionWord = (attention: Attention | undefined, mark: Mark) =>
+  attention?.kind === 'finished' && attention.label === 'Done' ? mark.word : attention?.label || mark.word;
 
 
 type SortKey = 'attention' | 'spend' | 'age';
@@ -412,8 +414,10 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     });
   }, [sessions, attention, only, sort, usageOf]);
 
-  // A live sort may move a row, but never changes the session under inspection.
-  const selected = shown.find((s) => s.id === selectedId) ?? shown[0];
+  // A live status change can remove a row from this filter without removing
+  // the session. Keep the action target until the session itself disappears.
+  const selected = sessions.find((s) => s.id === selectedId) ?? shown[0] ?? sessions[0];
+  const selectedOutsideFilter = selected && !shown.some((s) => s.id === selected.id);
   useEffect(() => {
     if (selected && selected.id !== selectedId) setSelectedId(selected.id);
   }, [selected, selectedId, setSelectedId]);
@@ -584,7 +588,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
       <div className="fleet-toolbar">
         <div className="fleet-chips" role="group" aria-label="Filter by status">
           <Chip pressed={only === 'all'} count={sessions.length} onToggle={() => setOnly('all')}>All</Chip>
-          {ATTENTION_ORDER.filter((k) => counts[k]).map((k) => (
+          {ATTENTION_ORDER.filter((k) => counts[k] || only === k).map((k) => (
             <Chip key={k} pressed={only === k} count={counts[k]} onToggle={() => setOnly(k)}>
               {MARK[k].glyph} {MARK[k].word}
             </Chip>
@@ -594,21 +598,11 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
                    options={SORTS.map((s) => ({ value: s.key, label: s.label, title: s.hint }))} />
       </div>
 
-      {shown.length === 0 ? (
-        <div className="card fleet-blank">
-          <h2>No session is {MARK[only as AttentionKind]?.word.toLowerCase() ?? 'matching'} right now</h2>
-          <p className="dim">
-            The filter excluded all {num(sessions.length)} sessions — none of them is in that state
-            at the moment. That is usually the good outcome.
-          </p>
-          <button className="btn fleet-retry" onClick={() => setOnly('all')}>
-            Show all {num(sessions.length)} sessions
-          </button>
-        </div>
-      ) : (
         <div className="fleet-workspace">
           <section className="fleet-roster" aria-label="Session roster" ref={rosterRef}>
             <SectionHead label="Sessions" count={shown.length} />
+            {shown.length === 0 && <EmptyState posture="nothing-in-scope" title="No sessions match this filter"
+              cue="Your selected session remains open." />}
             {shown.map((s) => {
               const att = attention[s.id];
               const mark = MARK[att?.kind ?? 'idle'] ?? UNKNOWN;
@@ -619,7 +613,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
                   <span className="fleet-entry-top"><strong>{s.projectName}</strong><span>{providerName(s.providerId)}</span></span>
                   <span className="fleet-entry-task">{s.displayTitle || s.title || 'Untitled session'}</span>
                   <span className="fleet-entry-state">
-                    <span>{mark.glyph} {att?.label || mark.word}</span>
+                    <span>{mark.glyph} {attentionWord(att, mark)}</span>
                     <span>{dur(Date.now() - (att?.since ?? s.createdAt))}</span>
                   </span>
                 </button>
@@ -627,13 +621,15 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
             })}
           </section>
           <section id="fleet-inspector" className="fleet-inspector" aria-label="Selected session">
+            {selectedOutsideFilter && <Note tone="info" action={{ label: 'Show all sessions', run: () => setOnly('all') }}>
+              This session is outside the current status filter. It stays selected so you can finish inspecting it.
+            </Note>}
             {selected && <Card key={selected.id} session={selected} att={attention[selected.id]}
               usage={usageOf(selected.id)} spark={spark[selected.id] ?? []}
               branch={branchOf.get(selected.projectId) ?? null} trust={selected.trust ?? defaultTrust}
               onOpen={() => onOpenSession(selected.id)} onControl={control} />}
           </section>
         </div>
-      )}
 
       <details className="fleet-ledger">
         <summary>Compare session metrics <span className="faint">· {num(shown.length)} sessions</span></summary>
@@ -659,7 +655,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
 }) {
   const kind = att?.kind ?? 'idle';
   const m = MARK[kind] ?? UNKNOWN;
-  const word = att?.label || m.word;
+  const word = attentionWord(att, m);
   const urgent = kind === 'permission';
   const model = s.model || u.models[0] || null;
   const tokens = u.inTokens + u.outTokens;
@@ -967,7 +963,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                   </td>
                   <td style={{ color: m.fg, whiteSpace: 'nowrap' }}>
                     <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 5 }}>{m.glyph}</span>
-                    {a?.label || m.word}
+                    {attentionWord(a, m)}
                   </td>
                   <td className="r">{dur(Date.now() - (a?.since ?? s.createdAt))}</td>
                   <td className="mono trunc">{s.model || u.models[0] || 'default'}</td>

@@ -1,0 +1,212 @@
+{
+  "phase": "after",
+  "passed": true,
+  "rendererRoot": "/Users/dane/Projects/drupal/wanigan/out/renderer",
+  "indexSha256": "c826f947f5fb7ba4c5d2a723f9f5baa917d00da33aea4eed69da128eb0059236",
+  "provenance": "Isolated production renderer with explicit fictional records and refused mutations. No real provider, PTY, user-data, budget, or repository operation. Before captures record the old behavior; after assertions verify the listed changes.",
+  "checks": [
+    "Fleet preserves the selected session when its live status leaves a filter, retains an empty-filter inspector, and replaces a truly removed record.",
+    "Empty Insights exposes all four reports, opens budget creation deliberately, and retains an unsaved budget across report changes.",
+    "An unpriced recorded request is activity, not an empty ledger.",
+    "Stale Relay reads block decisions, launch, completion, forecast, verification and reopening; evidence/session doors remain usable and retry restores actions.",
+    "Home names its actual Open session destination and explains the Review work step."
+  ],
+  "errors": [],
+  "environmentNotes": [
+    "Headless Chromium has no WebGPU adapter; the existing orb fallback is shown."
+  ],
+  "screenshots": [
+    {
+      "file": "fleet-selected-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-selected-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-status-changed-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-status-changed-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-empty-filter-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "fleet-empty-filter-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "fleet-finished-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "fleet-finished-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-budget-draft-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-budget-draft-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "insights-empty-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "insights-empty-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "relay-review-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-review-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "relay-stale-review-compact-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "relay-stale-review-compact-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 900,
+        "height": 760
+      }
+    },
+    {
+      "file": "home-finished-dark.png",
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "home-finished-light.png",
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    }
+  ]
+}

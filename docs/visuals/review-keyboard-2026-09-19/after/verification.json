@@ -1,0 +1,44 @@
+{
+  "fixture": true,
+  "before": false,
+  "geometry": [
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    },
+    {
+      "tag": "BUTTON",
+      "height": 18,
+      "lineHeight": 18
+    }
+  ],
+  "checks": [
+    "Tab reaches individual diff lines.",
+    "Enter selects one removed line; Escape cancels.",
+    "Space selects an added line; Shift+Enter extends to exactly three added lines.",
+    "Shift+Space extends the same anchor through context lines; Shift+Enter contracts it.",
+    "Keyboard note is anchored to lines 1–3; row layout unchanged; no terminal writes."
+  ],
+  "errors": []
+}

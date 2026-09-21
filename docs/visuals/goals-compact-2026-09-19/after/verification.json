@@ -1,0 +1,54 @@
+{
+  "fixture": true,
+  "before": false,
+  "geometry": [
+    {
+      "view": "goals",
+      "width": 960,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 466,
+      "supportHeight": 31,
+      "summaryHeight": 31
+    },
+    {
+      "view": "board",
+      "width": 960,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 508
+    },
+    {
+      "view": "board",
+      "width": 960,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 651
+    },
+    {
+      "view": "goals",
+      "width": 900,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 466,
+      "supportHeight": 31,
+      "summaryHeight": 31
+    },
+    {
+      "view": "board",
+      "width": 900,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 508
+    },
+    {
+      "view": "board",
+      "width": 900,
+      "overflow": "auto",
+      "paneHeight": 406,
+      "paneScrollHeight": 651
+    }
+  ],
+  "errors": [],
+  "failures": []
+}

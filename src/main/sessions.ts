@@ -1,4 +1,7 @@
 import { permissionInputFor } from '../shared/session-permissions';
+import { codexPromptOutput, type CodexPromptState } from '../shared/codex-prompt';
+import { commandLine, spawnPlan } from '../shared/platform';
+import { hostPlatform } from './platform';
 import { attentionOf } from './attention';
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
@@ -11,13 +14,13 @@ import {
 import { projectById } from './store';
 import { db } from './db';
 import { refuseIfHalted } from './halt';
+import { checkAccountEligibility } from './modules/account-eligibility';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
+import type { AgentAccount, Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
 import { readableFromAccount } from './handoff';
@@ -25,9 +28,16 @@ import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { codexHookDelivered, forgetCodexHookSession, prepareCodexHookLaunch } from './codex-hooks';
 import { CODEX_HOOK_HEADERS_ENV, CODEX_HOOK_URL_ENV } from '../shared/codex-hooks';
-import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
-import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
-import { createWorktree, removeWorktree, repoRootFor, worktreeLaunchEnv, worktreeStatus } from './worktrees';
+import { cancelSessionCheckpointLaunch, finalizeSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
+import { acquireCheckoutActivity } from './checkout-activity';
+import { archiveSession } from './transcripts';
+import {
+  archiveInterruptedTranscripts, deriveSessionTitle, reconcileAbandonedSessions, setLiveSessions,
+} from './session-history';
+import {
+  cleanupSessionWorktree, createWorktree, ensurePrivateWorktreeDependencies, removeWorktree,
+  repoRootFor, retainWorktreeForReview, worktreeLaunchEnv, worktreeStatus,
+} from './worktrees';
 import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
 import { trustFor, waniganCredentialDirs } from './policy';
 import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
@@ -43,7 +53,7 @@ import { settingsBreadcrumb } from '../shared/settings-doors';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
-  codexRolloutFiles, codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId,
+  codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId,
   validateExactCodexThread,
 } from './codex-sessions';
 
@@ -256,7 +266,7 @@ export function stripAmbientAnthropicCredentials(
  */
 function agentEnv(
   PATH: string, sessionId: string, providerEnv: Record<string, string> = {},
-  accountEnv: Record<string, string> = {}, worktreeEnv: Record<string, string> = {},
+  account: AgentAccount | null = null, worktreeEnv: Record<string, string> = {},
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -291,7 +301,18 @@ function agentEnv(
   // operator's by naming theirs. Wanigan's account decision wins, and it also
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
-  Object.assign(out, accountEnv);
+  //
+  // Account application sets or clears the inherited directory, so a default
+  // account cannot accidentally retain the parent shell's credentials.
+  //
+  // This reaches Codex as well as Claude Code, and deliberately: a session
+  // pinned to the default CODEX_HOME had the same hole. The retention note
+  // above still holds — CODEX_HOME survives the strip, because it is the
+  // operator's chosen location and not a parent-session marker — and what
+  // happens here is later and narrower. It is an account decision or nothing,
+  // and Codex was probed as reading ~/.codex identically whether the variable
+  // is unset or set to it, so clearing and naming it are the same answer.
+  accounts.applyLaunchEnv(out, account);
   // The worktree's own port block and path, after the pack for the same reason
   // as the account: a manifest must not be able to name them.
   Object.assign(out, worktreeEnv);
@@ -308,6 +329,8 @@ type Live = {
   pendingTimer: ReturnType<typeof setTimeout> | null;
   /** Most recent PTY output; used to avoid typing an initial Codex prompt into a redraw. */
   lastDataAt: number;
+  codexPrompt: CodexPromptState;
+  initialPromptPending: boolean;
   /** Last moment this session's output was reported to the attention queue. */
   notedAt: number;
   /** Incomplete OSC 9 control sequence split across PTY chunks. */
@@ -328,12 +351,37 @@ type Live = {
     rejectReady: (error: Error) => void;
     timer: ReturnType<typeof setTimeout> | null;
   };
-  /** Settles only after node-pty reports the child gone. */
-  exited: Promise<void>;
-  resolveExit: () => void;
+  /** Final snapshot and checkout ownership bookkeeping, separate from PTY exit. */
+  cleanupSettled: Promise<void>;
+  resolveCleanup: () => void;
 };
 
 const sessions = new Map<string, Live>();
+const openingSessions = new Set<Promise<Session>>();
+let sessionsStopping = false;
+
+/**
+ * The three questions Recent asks about running sessions, answered here where
+ * the map is. Registered as this module loads rather than in initSessions: a
+ * read of Recent that happens before a window exists — a phone request, a
+ * startup reconcile — must still be told which conversations have a writer,
+ * and being told "none" would offer a live conversation for a second resume.
+ */
+setLiveSessions({
+  ids: () => new Set(
+    [...sessions.values()]
+      .filter((value) => value.meta.status !== 'exited')
+      .map((value) => value.meta.id)
+  ),
+  setDisplayTitle: (id, title) => {
+    const live = sessions.get(id);
+    if (!live) return false;
+    live.meta.displayTitle = title;
+    broadcast('session:list', sessionListEntries());
+    return true;
+  },
+  baseline: (id) => sessions.get(id)?.meta.baseline ?? null,
+});
 /** Covers the synchronous spawn boundary before the new Live row is visible. */
 const resumingConversations = new Set<string>();
 let broadcast: (channel: string, payload: unknown) => void = () => {};
@@ -350,6 +398,14 @@ type ExactCodexRecovery = {
 
 type CreateSessionInternal = {
   exactCodexRecovery?: ExactCodexRecovery;
+  /** Goal work remains available for review/retry until explicit cleanup. */
+  retainWorktree?: boolean;
+  /** Mutating goal work cannot share writable dependencies with its parent. */
+  requirePrivateDependencies?: boolean;
+  /** Main-owned authorization is rechecked after asynchronous preparation. */
+  beforeSpawn?: () => void;
+  /** Nobody is present to read a warning, so evidence against the login refuses the launch. */
+  unattended?: boolean;
   /**
    * An existing worktree this session must run in, instead of cutting a fresh
    * one. Main-process callers only, and only Control uses it: a verification
@@ -450,33 +506,37 @@ function captureCodexIdentityAfterPrompt(live: Live, cwd: string): void {
 }
 
 /**
- * Codex redraws its welcome screen while its MCP servers are booting. Sending
- * text and Enter as one early PTY write can leave the text in the composer and
- * lose the submit key. Wait for its visible prompt to settle, then type and
- * submit in separate writes. Manual typing already crosses this boundary.
+ * Native prompt argv handles new Codex sessions and exact resumes. A legacy
+ * profile or native picker still needs this conservative fallback: only the
+ * latest readable prompt may authorize typing, and an intervening modal must
+ * never receive Enter. Manual input cancels the pending automatic submission.
  */
 function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void {
   const deadline = Date.now() + 20_000;
   let sawPromptAt = 0;
   const trySubmit = () => {
-    if (live.meta.status === 'exited') return;
+    if (live.meta.status === 'exited' || !live.initialPromptPending) return;
     const now = Date.now();
-    if (live.buffer.includes('Ask Codex to do anything')) {
+    if (live.codexPrompt.ready) {
       if (!sawPromptAt) sawPromptAt = now;
       if (now - sawPromptAt >= 750 && now - live.lastDataAt >= 400) {
         try {
           live.proc.write(prompt);
           setTimeout(() => {
-            if (live.meta.status === 'exited') return;
+            if (live.meta.status === 'exited' || !live.initialPromptPending) return;
+            // A modal/redraw arriving after the paste cannot receive an Enter
+            // intended for the composer. Leave the typed task for the person.
+            if (!live.codexPrompt.ready) return;
             try {
               live.proc.write('\r');
+              live.initialPromptPending = false;
               captureCodexIdentityAfterPrompt(live, cwd);
             } catch { /* exited between the paired writes */ }
           }, 150);
         } catch { /* exited already */ }
         return;
       }
-    }
+    } else sawPromptAt = 0;
     if (now < deadline) {
       setTimeout(trySubmit, 150);
       return;
@@ -491,6 +551,7 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
     // that would carry it out.
     queueSessionData(live, notice);
     flushSessionData(live);
+    live.initialPromptPending = false;
   };
   setTimeout(trySubmit, 150);
 }
@@ -1024,7 +1085,15 @@ function assertProviderCredentials(def: { id: ProviderId; label: string }): void
   );
 }
 
-export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+export function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+  if (sessionsStopping) return Promise.reject(new Error('Wanigan is shutting down; no new session was started.'));
+  const opening = createSessionPrepared(opts, internal);
+  openingSessions.add(opening);
+  void opening.finally(() => openingSessions.delete(opening)).catch(() => {});
+  return opening;
+}
+
+async function createSessionPrepared(opts: LaunchOptions, internal: CreateSessionInternal): Promise<Session> {
   // First, before provider probing, worktree creation or any injected file
   // exists to roll back. Every attended session in the app comes through here —
   // the renderer, the phone, an autopilot node, the MCP server — so one guard
@@ -1079,6 +1148,17 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   const pinnedAccount = savedResume
     ? resumeAccountFor(savedResume.sessionId, def.harness, opts.accountId ?? null)
     : null;
+  // The login is asked about here for the same reason: it awaits a read, and
+  // nothing from the last trust check to the spawn may. A person launching is
+  // told what the provider reported and decides; a main-owned automatic caller
+  // has nobody to ask and is refused on evidence. The account is resolved again
+  // in the synchronous stretch below and must be this one.
+  const checkedAccount = accounts.resolve({
+    harness: def.harness, projectId: project.id,
+    explicitAccountId: pinnedAccount?.accountId ?? opts.accountId ?? null,
+    appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(def.env?.() ?? {})),
+  }).account;
+  const eligibilityNotes = await checkAccountEligibility(checkedAccount, { attended: !internal.unattended });
   let conversationId = exactRecovery?.conversationId ?? savedResume?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
   if (exactRecovery) {
@@ -1141,7 +1221,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   }
   if (!worktree && (opts.isolate || resumeTree.needsFreshIsolation)) {
     try {
-      const wt = await createWorktree(project.path, project.name, id0);
+      const wt = await createWorktree(project.path, project.name, id0, {
+        requirePrivateDependencies: internal.requirePrivateDependencies === true,
+      });
       worktree = wt.path;
       createdWorktree = true;
     } catch (e) {
@@ -1151,31 +1233,58 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       );
     }
   }
-  const cwd = worktree ?? project.path;
+  const launchRoot = worktree ?? project.path;
+  const cwd = fs.realpathSync.native(launchRoot);
+  const directoryIdentity = fs.statSync(cwd, { bigint: true });
+  const checkoutStillOwned = () => {
+    try {
+      if (fs.realpathSync.native(launchRoot) !== cwd) return false;
+      const current = fs.statSync(cwd, { bigint: true });
+      return current.dev === directoryIdentity.dev && current.ino === directoryIdentity.ino;
+    } catch { return false; }
+  };
+  const releaseCheckout = acquireCheckoutActivity(cwd, 'session', id0);
+  let childStarted = false;
+  let mcpFile: string | null = null;
+  let rollback: Promise<void> | null = null;
+  let acquiredResumeKey: string | null = null;
+
+  // Every pre-spawn failure follows this path, including account selection or
+  // provider environment errors. A claim for a process that never started is
+  // releasable; a launched writer remains unresolved until its exit is known.
+  const rollbackLaunch = (): Promise<void> => {
+    rollback ??= (async () => {
+      await cancelSessionCheckpointLaunch(id);
+      if (childStarted) return;
+      if (acquiredResumeKey) resumingConversations.delete(acquiredResumeKey);
+      try { cleanupMcpConfig(mcpFile, id); } catch { /* no MCP config was written */ }
+      try { cleanupHookSettings(id); } catch { /* no hook file was written */ }
+      try { cleanupSessionAttachments(id); } catch { /* no attachment dir was written */ }
+      // A directory or alias replaced during preparation is no longer ours to
+      // remove, even when this launch originally created a worktree there.
+      if (createdWorktree && worktree && checkoutStillOwned()) {
+        try { await removeWorktree(cwd, false); }
+        catch { /* git refused a non-clean tree; preserve work over disk tidiness */ }
+      }
+      releaseCheckout();
+    })();
+    return rollback;
+  };
+
+  try {
+  if (internal.requirePrivateDependencies) {
+    if (!worktree) throw new Error('Mutating Relay work requires an isolated checkout with private dependencies.');
+    if (!createdWorktree) await ensurePrivateWorktreeDependencies(cwd);
+  }
+  if (internal.retainWorktree && worktree) retainWorktreeForReview(cwd);
   // Setup ran with the worktree's port block; the agent it was set up for gets
   // the same one, so its dev server stays off the next worktree's ports. A
   // block that cannot be assigned costs the agent the variables, not the launch.
   let worktreeEnv: Record<string, string> = {};
   if (worktree) {
-    try { worktreeEnv = await worktreeLaunchEnv(worktree); }
+    try { worktreeEnv = await worktreeLaunchEnv(cwd); }
     catch (error) { console.warn('[wanigan] this worktree has no port block for its agent:', error); }
   }
-  let mcpFile: string | null = null;
-
-  // A launch has several filesystem side effects before the PTY exists. Keep
-  // their rollback in one place so a provider change, duplicate-resume guard,
-  // spawn failure or database failure cannot strand a clean worktree or a live
-  // hook credential. A reused historical worktree is never removed here: it
-  // may contain the only copy of prior work.
-  const rollbackLaunch = async () => {
-    try { cleanupMcpConfig(mcpFile, id); } catch { /* no MCP config was written */ }
-    try { cleanupHookSettings(id); } catch { /* no hook file was written */ }
-    try { cleanupSessionAttachments(id); } catch { /* no attachment dir was written */ }
-    if (createdWorktree && worktree) {
-      try { await removeWorktree(worktree, false); }
-      catch { /* git refused a non-clean tree; preserve work over disk tidiness */ }
-    }
-  };
 
   // The repository's own executable configuration — hooks, MCP servers,
   // helpers, env overrides, git hooks — checked against what was last let
@@ -1361,6 +1470,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // the values the operator selected; only a durable Codex conversation owns
   // its own resume-time settings.
   const resumeCodex = isResuming && def.harness === 'codex';
+  // A picker without an exact id treats a positional prompt as its session
+  // selector. New launches and exact `resume <id> <prompt>` have unambiguous
+  // grammars. Generic profiles use only their explicitly declared template.
+  const promptViaArgs = Boolean(def.initialPromptArgs) && (!resumeCodex || Boolean(conversationId));
   let args: string[];
   try {
     args = [
@@ -1371,16 +1484,30 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         effort: resumeCodex ? undefined : def.supports.effort ? opts.effort || undefined : undefined,
         permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
       }),
+      ...(promptViaArgs ? def.initialPromptArgs!(opts.initialPrompt?.trim() ?? '') : []),
     ];
   } catch (error) {
     await rollbackLaunch();
     throw error;
   }
   const baseline = await captureBaseline(cwd);
+  try {
+    // The checkpoint must settle before argv can execute the agent's first
+    // prompt. No new awaits are inserted after final launch revalidation.
+    await registerSessionCheckpoints({ sessionId: id, cwd,
+      hooksCapable: injected.includes('--settings'), gitHead: baseline.head });
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
 
   // No await occurs between this digest/trust revalidation and pty.spawn.
   // A provider disabled or modified while project/worktree setup was running
   // must never launch through the stale definition captured above.
+  if (sessionsStopping) {
+    await rollbackLaunch();
+    throw new Error('Wanigan is shutting down; no new session was started.');
+  }
   refreshProviderPacks();
   const finalDef = providerById(opts.providerId);
   if (!finalDef || finalDef.profileFingerprint !== def.profileFingerprint) {
@@ -1414,7 +1541,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       await rollbackLaunch();
       throw new Error('That conversation is already opening or open in Wanigan. Use its existing tab.');
     }
-    if (!ownsPreclaim) resumingConversations.add(resumeKey);
+    if (!ownsPreclaim) {
+      resumingConversations.add(resumeKey);
+      acquiredResumeKey = resumeKey;
+    }
   }
 
   const meta: Session = {
@@ -1508,14 +1638,57 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // session as an account it never authenticated with.
   meta.accountId = account?.id ?? null;
   meta.accountLabel = account?.label ?? null;
-  meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  const sameAccountAsChecked = (account?.id ?? null) === (checkedAccount?.id ?? null);
+  meta.accountNote = [
+    account && pinnedAccount?.note ? pinnedAccount.note : null,
+    ...(sameAccountAsChecked ? eligibilityNotes : ['The account changed while this session was being prepared, so its login was not checked before launch.']),
+  ].filter(Boolean).join(' ') || null;
   meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
   if (codexHooks) meta.codexHooks = codexHooks.delivery;
 
+  // On Windows the CLI that resolved is usually an npm `.cmd` shim rather than
+  // a program, and a shim is not something CreateProcess — which is what
+  // node-pty's ConPTY path ultimately calls — will start. It refuses with
+  // ENOENT naming a file that plainly exists on disk, so the shim runs only as
+  // an argument to cmd.exe. spawnPlan builds that command line and refuses
+  // outright the arguments cmd.exe would act on rather than pass through; off
+  // Windows it is the identity and `args` reaches the PTY unchanged.
+  //
+  // Synchronous on purpose. The digest and trust revalidation above holds only
+  // while nothing awaits before the spawn, and this must not become the await
+  // that opens that window. The refusal below does await, and may: it throws.
+  const plan = spawnPlan(resolvedBin, args, hostPlatform());
+  if (plan.kind === 'refused') {
+    if (resumeKey) resumingConversations.delete(resumeKey);
+    await rollbackLaunch();
+    // Not wrapped in "is it installed and on your PATH?" like the catch below.
+    // It is installed, it is on PATH, and saying otherwise would send somebody
+    // to reinstall a CLI that is working.
+    throw new Error(plan.reason);
+  }
+
+  // node-pty takes args as an array or a string, and on Windows the two are not
+  // equivalent: the array path runs argsToCommandLine, which escapes every `"`
+  // as `\"` and would rewrite the cmd.exe quoting into a single argument full
+  // of backslashes. The string path is appended verbatim, which is what an
+  // already-quoted command line needs.
+  const ptyArgs = plan.kind === 'interpreter' ? commandLine(plan) : plan.args;
+
+  try {
+    if (!checkoutStillOwned()) throw new Error('The session checkout changed while launch was preparing. Refresh and launch again.');
+    if (internal.unattended && !sameAccountAsChecked) {
+      throw new Error('The account this task launches as changed while it was being prepared, so its login was not the one checked. Unattended work was not started.');
+    }
+    internal.beforeSpawn?.();
+  } catch (error) {
+    if (resumeKey) resumingConversations.delete(resumeKey);
+    await rollbackLaunch();
+    throw error;
+  }
   let proc: IPty;
   try {
-    proc = pty.spawn(resolvedBin, args, {
+    proc = pty.spawn(plan.file, ptyArgs, {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,
@@ -1523,7 +1696,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       // The hook URL and headers path last, for this PTY only: nothing
       // inherited or declared by a pack can point this session's events at
       // another listener. Neither value is the bearer.
-      env: { ...agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account), worktreeEnv), ...(codexHooks?.env ?? {}) },
+      env: { ...agentEnv(PATH, id, providerEnvValues, account, worktreeEnv), ...(codexHooks?.env ?? {}) },
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1534,6 +1707,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     );
   }
 
+  childStarted = true;
   meta.pid = proc.pid;
   meta.status = 'running';
   meta.baseline = baseline;
@@ -1619,20 +1793,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }
       await rollbackLaunch();
       const detail = e instanceof Error ? e.message : String(e);
-      throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
+      throw new Error(`The agent started, but Wanigan could not record its session (${detail}). Termination was requested; checkout ownership remains unresolved.`);
     }
   }
-  // The launch snapshot is taken before the agent's first action. Gated on
-  // hooks actually being injected: without turn boundaries the chain would be
-  // one orphan commit pretending to be a feature.
-  registerSessionCheckpoints({
-    sessionId: id,
-    cwd,
-    hooksCapable: injected.includes('--settings'),
-    gitHead: baseline.head,
-  });
-  let resolveExit = () => {};
-  const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+  let resolveCleanup = () => {};
+  const cleanupSettled = new Promise<void>((resolve) => { resolveCleanup = resolve; });
   let resolveExactRecovery = () => {};
   let rejectExactRecovery = (_error: Error) => {};
   const exactRecoveryReady = exactRecovery
@@ -1652,6 +1817,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     pending: '',
     pendingTimer: null,
     lastDataAt: Date.now(),
+    codexPrompt: { ready: false, partial: '' },
+    initialPromptPending: !promptViaArgs && Boolean(opts.initialPrompt?.trim()),
     notedAt: 0,
     providerControl: '',
     providerAwaitingApproval: false,
@@ -1667,8 +1834,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       rejectReady: rejectExactRecovery,
       timer: null,
     } : undefined,
-    exited,
-    resolveExit,
+    cleanupSettled,
+    resolveCleanup,
   };
   sessions.set(id, live);
   if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1699,6 +1866,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   proc.onData((data) => {
     live.buffer += data;
     live.lastDataAt = Date.now();
+    live.codexPrompt = codexPromptOutput(live.codexPrompt, data);
     if (live.buffer.length > SCROLLBACK_BYTES) {
       live.buffer = live.buffer.slice(-SCROLLBACK_BYTES);
     }
@@ -1775,9 +1943,6 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // is still queued before anything else runs, so a pending flush timer
     // cannot lose it to the teardown below.
     flushSessionData(live);
-    // The OS process is gone at this point even if later archival/notification
-    // bookkeeping throws, so shutdown must be allowed to finish.
-    live.resolveExit();
     live.meta.status = 'exited';
     // node-pty reports exitCode 0 when a process dies by SIGNAL and carries the
     // number separately, so an agent that was killed or crashed was recorded —
@@ -1849,31 +2014,39 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       try { exitObserver?.(live.meta); } catch { /* notification policy cannot fail PTY cleanup */ }
     }
 
-    // An isolated worktree with no changes is disk cost and nothing else. The
+    // Goal checkouts remain available even when clean: the next review or
+    // retry still needs their path. The operator removes them explicitly.
+    // An ordinary isolated worktree with no changes can be removed. The
     // session-end checkpoint is captured first — removal must never race the
     // snapshot that makes this session's last state recoverable.
-    if (worktree) {
-      // finalizeSessionCheckpoints swallows its own failures today, but its
-      // type does not promise to, and .finally() re-raises whatever it is
-      // chained onto.
-      void checkpointsSettled.catch(() => {}).finally(() => {
-        void removeWorktree(worktree, false).catch(() => {
-          /* dirty worktrees are kept on purpose — the human reviews and merges */
-        });
-      });
-    }
+    void checkpointsSettled.catch(() => {}).then(async () => {
+      // The terminal owner exited. A surviving group still owns possible
+      // writers: preserve both the checkout and claim until absence is proven.
+      // Windows has no equivalent group observation here and stays unresolved.
+      if (process.platform === 'win32') return;
+      try { process.kill(-proc.pid, 0); return; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return; }
+      if (!checkoutStillOwned()) return;
+      if (worktree && !internal.retainWorktree) {
+        await cleanupSessionWorktree(cwd).catch(() => { /* preserve dirty work */ });
+      }
+      releaseCheckout();
+    }).catch(error => console.warn('[wanigan] session checkout ownership remains unresolved:', error))
+      .finally(live.resolveCleanup);
 
     broadcast('session:exit', { sessionId: id, exitCode: live.meta.exitCode });
     broadcast('session:list', sessionListEntries());
   });
 
-  if (opts.initialPrompt?.trim()) {
+  if (opts.initialPrompt?.trim() && !promptViaArgs) {
     const prompt = opts.initialPrompt.trim();
     if (def.harness === 'codex') {
       submitInitialCodexPrompt(live, cwd, prompt);
     } else {
       // Non-Codex TUIs do not redraw their composer during startup.
       setTimeout(() => {
+        if (!live.initialPromptPending || live.meta.status === 'exited') return;
+        live.initialPromptPending = false;
         try { proc.write(prompt + '\r'); } catch { /* exited already */ }
       }, 1500);
     }
@@ -1881,423 +2054,12 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
 
   broadcast('session:list', sessionListEntries());
   return meta;
-}
-
-type SessionLogRow = Record<string, string | number | null>;
-
-function savedConversationId(row: SessionLogRow): string | null {
-  const id = row.conversation_id;
-  return typeof id === 'string' && id.trim() ? id : null;
-}
-
-/**
- * Conversation IDs belong to harnesses, not presentation profiles. This keeps
- * a thread from appearing twice after a provider-pack rename or migration.
- */
-function harnessOf(row: SessionLogRow): string {
-  const stored = typeof row.harness_id === 'string' && row.harness_id.trim()
-    ? row.harness_id
-    : null;
-  // `harness_id` was added after Wanigan had already saved Codex/Claude
-  // records. Their built-in provider IDs are reliable migration aliases; a
-  // generic/third-party profile remains scoped to its own opaque provider ID.
-  const legacy = String(row.provider_id);
-  return stored
-    ?? (legacy === 'codex' ? 'codex' : legacy === 'claude' || legacy === 'glm' ? 'claude-code' : `provider:${legacy}`);
-}
-
-function conversationKey(row: SessionLogRow, conversationId: string): string {
-  return `${harnessOf(row)}:conversation:${conversationId}`;
-}
-
-/**
- * A process cannot survive a deliberate Wanigan quit, but a hard app crash can
- * leave its execution row looking live forever. There is no live PTY map on a
- * new main-process boot, so close those old execution records before Recent is
- * calculated. A durable conversation ID remains resumable; only its last
- * execution receives the interrupted (-1) outcome.
- */
-export function reconcileAbandonedSessions(now = Date.now()): number {
-  try {
-    return db().prepare(`
-      UPDATE session_log
-         SET ended_at = ?, exit_code = -1
-       WHERE origin = 'wanigan' AND ended_at IS NULL
-    `).run(now).changes;
-  } catch {
-    return 0;
+  } catch (error) {
+    if (!childStarted) await rollbackLaunch();
+    throw error;
   }
 }
 
-/** How far back an interrupted execution is still looked at on launch. */
-const INTERRUPTED_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60_000;
-/** Archive attempts per launch: each is a file copy and a parse. */
-const INTERRUPTED_ARCHIVE_MAX = 25;
-
-/**
- * Transcripts of executions that ended without Wanigan seeing them end.
- *
- * Archiving runs in the PTY's exit handler, and three endings never reach it:
- * an app crash, a force quit, and a quit whose SIGKILL escalation outran
- * node-pty. The row is closed with -1 (reconcileAbandonedSessions, or killAll),
- * and the conversation's only copy stays in Claude Code's folder, where an
- * upgrade or a cleanup can remove it. A session that crashed was never
- * archived, so the one conversation most worth reading afterwards was the one
- * most likely to be lost.
- *
- * Exact files only. An interrupted row's ended_at is when Wanigan noticed, not
- * when the agent stopped — possibly days later — so the lifetime window the
- * exit path guesses inside could reach a transcript someone else wrote since.
- * And only the newest execution of a conversation: a later resume's archive
- * already holds everything an earlier one would copy, and copying the file now
- * would file the later turns under the earlier session.
- */
-export function archiveInterruptedTranscripts(now = Date.now()): { archived: number; notFound: number } {
-  const result = { archived: 0, notFound: 0 };
-  if (!flags().archiveTranscripts) return result;
-  let rows: Array<{ id: string; project_path: string; conversation_id: string }>;
-  try {
-    rows = db().prepare(`
-      SELECT s.id, s.project_path, s.conversation_id
-        FROM session_log s
-       WHERE s.origin = 'wanigan' AND s.exit_code = -1 AND s.conversation_id IS NOT NULL
-         AND s.started_at >= ?
-         AND NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = s.id)
-         AND NOT EXISTS (SELECT 1 FROM session_log later
-                          WHERE later.conversation_id = s.conversation_id AND later.started_at > s.started_at)
-       ORDER BY s.started_at DESC
-    `).all(now - INTERRUPTED_ARCHIVE_WINDOW_MS) as typeof rows;
-  } catch {
-    return result;
-  }
-  let attempts = 0;
-  for (const row of rows) {
-    if (attempts >= INTERRUPTED_ARCHIVE_MAX) break;
-    let outcome: ReturnType<typeof archiveSession>;
-    try { outcome = archiveSession(row.id, row.project_path, row.conversation_id, { exactOnly: true }); }
-    catch { continue; }
-    // A harness that writes no transcript costs a row read and no attempt, so a
-    // run of Codex sessions cannot use up the Claude ones' turn.
-    if (outcome.unsupported) continue;
-    attempts++;
-    if (outcome.ok) result.archived++;
-    else result.notFound++;
-  }
-  return result;
-}
-
-/**
- * Is there a Codex execution whose identity the repair pass could still fix?
- *
- * The repair used to run on every Recent read, and Recent is read on mount and
- * after every start, close, rename and forget. Each run opened Codex's own
- * state_5.sqlite read-only per Codex home and rebuilt the lineage graph, even
- * when every row already carried its UUID and the pass could not change a
- * single one. This asks the cheap question first, over one column: a row the
- * repair would treat as unidentified is one whose stored id is not already the
- * normalized form, so an absent, malformed or unnormalized id still runs the
- * full pass and nothing repairable is skipped.
- */
-function codexIdentityRepairPending(): boolean {
-  const rows = db().prepare(`
-    SELECT conversation_id FROM session_log
-     WHERE origin = 'wanigan' AND (harness_id = 'codex' OR provider_id = 'codex')
-  `).all() as Array<{ conversation_id: string | null }>;
-  return rows.some((row) => normalizeCodexThreadId(row.conversation_id) !== row.conversation_id);
-}
-
-/**
- * One entry per durable, exact-resume conversation. Historical rows that never
- * received a conversation ID are kept for telemetry and archives, but are not
- * offered as Recent: opening Codex's broad picker cannot safely identify which
- * conversation the row meant and was the source of duplicate/wrong resumes.
- */
-export function pastSessions(limit = 40, projectId?: string | null): PastSession[] {
-  try { if (codexIdentityRepairPending()) backfillCodexThreadIds(); }
-  catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
-  // Exited tabs can remain open for inspection, but they have no writer. Hiding
-  // them from Recent made a completed conversation disappear until the person
-  // manually closed its tab, despite being perfectly safe to resume.
-  const openIds = new Set(
-    [...sessions.values()]
-      .filter((value) => value.meta.status !== 'exited')
-      .map((value) => value.meta.id)
-  );
-  // The fifteen columns Recent reads, not `SELECT *`: a row also carries the
-  // initial prompt and three JSON blobs (capabilities, baseline dirty set,
-  // provider profile) that nothing below touches, and this reads every
-  // execution ever recorded.
-  //
-  // The row set stays unbounded on purpose. The cap further down is per
-  // section and pins deliberately survive it, and `continuationCount` is the
-  // number the Forget tooltip promises to delete — a SQL LIMIT or a date
-  // window would drop the pinned conversation the pin exists for and turn a
-  // stated count into an estimate.
-  const rows = db().prepare(`
-    SELECT id, conversation_id, provider_id, harness_id, project_id, project_path, project_name,
-           worktree, model, effort, permission_mode, started_at, ended_at, exit_code, title
-      FROM session_log
-     WHERE origin = 'wanigan'
-     ORDER BY started_at DESC
-  `).all() as SessionLogRow[];
-  const newest = new Map<string, SessionLogRow>();
-  const counts = new Map<string, number>();
-  const openLineages = new Set<string>();
-  for (const row of rows) {
-    const conversationId = savedConversationId(row);
-    if (!conversationId) continue;
-    const key = conversationKey(row, conversationId);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-    if (!newest.has(key)) newest.set(key, row); // query is newest first
-    if (openIds.has(String(row.id))) openLineages.add(key);
-  }
-
-  // Lifecycle flags are presentation state; a broken read costs ordering,
-  // never the list itself.
-  const flags = new Map<string, { pinnedAt: number | null; settledAt: number | null }>();
-  try {
-    const flagRows = db().prepare('SELECT key, pinned_at, settled_at FROM conversation_flags')
-      .all() as Array<{ key: string; pinned_at: number | null; settled_at: number | null }>;
-    for (const f of flagRows) {
-      flags.set(String(f.key), {
-        pinnedAt: f.pinned_at == null ? null : Number(f.pinned_at),
-        settledAt: f.settled_at == null ? null : Number(f.settled_at),
-      });
-    }
-  } catch { /* pre-migration database during quit */ }
-  const flagsOf = (key: string) => flags.get(key) ?? { pinnedAt: null, settledAt: null };
-
-  const entries = [...newest.entries()]
-    // A failed duplicate launch can be newer than the still-running writer.
-    // Exclude a conversation whenever any execution of it is currently live.
-    .filter(([key, row]) => !openLineages.has(key) && (projectId == null || row.project_id === projectId));
-  // Pins survive the cap — a pinned conversation that ages past forty newer
-  // ones is exactly the one the pin exists to keep. The other sections are
-  // capped separately so the settled shelf cannot crowd out active rows.
-  const pinned = entries.filter(([key]) => flagsOf(key).pinnedAt != null);
-  const active = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null).slice(0, limit);
-  const settled = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt != null).slice(0, limit);
-
-  const shown = [...pinned, ...active, ...settled];
-  // Deliberately after the cap: this is the only part of Recent that touches
-  // the filesystem per row, and reading a name for all 154 conversations ever
-  // recorded to show forty of them would be work nobody sees.
-  const read = readTitles(shown);
-
-  return shown
-    .map(([key, r]) => ({
-      id: String(r.id),
-      conversationId: savedConversationId(r),
-      providerId: String(r.provider_id) as PastSession['providerId'],
-      projectId: r.project_id ? String(r.project_id) : null,
-      projectPath: String(r.project_path),
-      projectName: String(r.project_name),
-      worktree: r.worktree ? String(r.worktree) : null,
-      model: r.model ? String(r.model) : null,
-      effort: r.effort ? String(r.effort) : null,
-      permissionMode: r.permission_mode ? String(r.permission_mode) : null,
-      startedAt: Number(r.started_at),
-      endedAt: r.ended_at ? Number(r.ended_at) : null,
-      exitCode: r.exit_code === null ? null : Number(r.exit_code),
-      continuationCount: counts.get(key) ?? 1,
-      live: fs.existsSync(String(r.project_path)),
-      pinnedAt: flagsOf(key).pinnedAt,
-      settledAt: flagsOf(key).settledAt,
-      title: r.title ? String(r.title) : read.get(String(r.id))?.title ?? null,
-      titleSource: r.title ? 'named' : read.get(String(r.id))?.source ?? null,
-    }));
-}
-
-/**
- * A name for each conversation about to be shown, from the agent's own record.
- *
- * Neither harness is asked for anything and no model is paid: Claude Code
- * already writes an `ai-title` into its transcript, and both record the prompt
- * the person typed. This only reads what is there, so a conversation that kept
- * no such record keeps its null and renders exactly as it did before.
- *
- * Codex ids are resolved in one batch, because the fallback when Codex's state
- * index cannot answer is a walk of its sessions tree, and asking once per row
- * would walk that same tree once per row. A row already renamed by hand is
- * skipped entirely — that name wins, so reading a second one is wasted work.
- *
- * Every read is guarded. A name is presentation; a transcript that has been
- * deleted, truncated or is being written to right now costs this row its title
- * and never the list.
- */
-function readTitles(shown: Array<[string, SessionLogRow]>): Map<string, NonNullable<ReadTitle>> {
-  const out = new Map<string, NonNullable<ReadTitle>>();
-  const codex = new Map<string, string>(); // thread id → session_log row id
-  for (const [, r] of shown) {
-    if (r.title) continue;
-    const conversationId = savedConversationId(r);
-    if (!conversationId) continue;
-    if (harnessOf(r) === 'codex') {
-      codex.set(conversationId.toLowerCase(), String(r.id));
-      continue;
-    }
-    try {
-      const found = conversationTitle(String(r.project_path), conversationId,
-        typeof r.worktree === 'string' && r.worktree ? r.worktree : null);
-      if (found) out.set(String(r.id), found);
-    } catch { /* unnamed is the honest fallback */ }
-  }
-  if (codex.size) {
-    try {
-      const paths = codexRolloutFiles([...codex.keys()]);
-      for (const [threadId, rowId] of codex) {
-        const file = paths.get(threadId);
-        const found = file ? titleFromTranscript(file) : null;
-        if (found) out.set(rowId, found);
-      }
-    } catch { /* Codex's index is optional, and so is a name */ }
-  }
-  return out;
-}
-
-/**
- * The name a session wears, from the launch prompt it was started with. First
- * line only, whitespace collapsed — a sentence is a name, a pasted diff is
- * not. The prompt was redacted before it was stored, so the title is too.
- */
-export function deriveSessionTitle(initialPrompt: string | null): string | null {
-  if (!initialPrompt) return null;
-  const line = initialPrompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-  const compact = line.replace(/\s+/g, ' ').trim();
-  if (!compact) return null;
-  return compact.length > 80 ? `${compact.slice(0, 79)}…` : compact;
-}
-
-/** Renaming is durable: it writes the row, not a per-machine label. */
-export function renameSession(id: string, rawTitle: unknown): boolean {
-  if (typeof rawTitle !== 'string') throw new Error('A session name must be text.');
-  const title = rawTitle.replace(/\s+/g, ' ').trim().slice(0, 120) || null;
-  const res = db().prepare("UPDATE session_log SET title = ? WHERE id = ? AND origin = 'wanigan'").run(title, id);
-  const live = sessions.get(id);
-  if (live) live.meta.displayTitle = title;
-  if (!res.changes && !live) {
-    throw new Error('That session is no longer recorded, so it cannot be renamed.');
-  }
-  if (live) broadcast('session:list', sessionListEntries());
-  return true;
-}
-
-/**
- * Pin keeps a conversation above the fold; settle parks it in the shelf.
- * The two are exclusive by rule — "done" beats "keep on top" — so setting one
- * clears the other, and clearing both deletes the row rather than leaving a
- * flag that says nothing.
- */
-export function setConversationFlag(id: string, flag: 'pin' | 'settle', on: boolean): PastSession[] {
-  const row = db().prepare(`
-    SELECT id, conversation_id, provider_id, harness_id
-      FROM session_log
-     WHERE id = ? AND origin = 'wanigan'
-  `).get(id) as { conversation_id: string | null; provider_id: string; harness_id: string | null } | undefined;
-  if (!row) throw new Error('That conversation is no longer recorded, so it cannot be pinned or settled.');
-  const conversationId = typeof row.conversation_id === 'string' && row.conversation_id.trim()
-    ? row.conversation_id
-    : null;
-  if (!conversationId) throw new Error('Only a resumable conversation can be pinned or settled.');
-  const key = conversationKey(row, conversationId);
-
-  const existing = db().prepare('SELECT pinned_at, settled_at FROM conversation_flags WHERE key = ?')
-    .get(key) as { pinned_at: number | null; settled_at: number | null } | undefined;
-  let pinnedAt = existing?.pinned_at ?? null;
-  let settledAt = existing?.settled_at ?? null;
-  const now = Date.now();
-  if (flag === 'pin') {
-    pinnedAt = on ? now : null;
-    if (on) settledAt = null;
-  } else {
-    settledAt = on ? now : null;
-    if (on) pinnedAt = null;
-  }
-  if (pinnedAt === null && settledAt === null) {
-    db().prepare('DELETE FROM conversation_flags WHERE key = ?').run(key);
-  } else {
-    db().prepare(`
-      INSERT INTO conversation_flags (key, pinned_at, settled_at) VALUES (?,?,?)
-      ON CONFLICT(key) DO UPDATE SET pinned_at = excluded.pinned_at, settled_at = excluded.settled_at
-    `).run(key, pinnedAt, settledAt);
-  }
-  return pastSessions();
-}
-
-export function forgetPastSession(id: string) {
-  const row = db().prepare(`
-    SELECT id, conversation_id, provider_id, harness_id
-      FROM session_log
-     WHERE id = ? AND origin = 'wanigan'
-  `).get(id) as {
-    conversation_id: string | null;
-    provider_id: string;
-    harness_id: string | null;
-  } | undefined;
-  if (!row) return;
-  const conversationId = typeof row.conversation_id === 'string' && row.conversation_id.trim()
-    ? row.conversation_id
-    : null;
-  if (!conversationId) {
-    db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
-    forgetSessionCheckpoints(id);
-    return;
-  }
-  // Reuse the exact grouping rule from Recent. In particular, an old Codex
-  // root has no `harness_id` while its later continuations do; SQL predicates
-  // that only inspect one spelling leave a ghost card behind after Forget.
-  const key = conversationKey(row, conversationId);
-  const candidates = db().prepare(`
-    SELECT id, conversation_id, provider_id, harness_id
-      FROM session_log
-     WHERE origin = 'wanigan' AND conversation_id = ?
-  `).all(conversationId) as SessionLogRow[];
-  const ids = candidates
-    .filter((candidate) => conversationKey(candidate, conversationId) === key)
-    .map((candidate) => String(candidate.id));
-  if (!ids.length) return;
-  const remove = db().prepare('DELETE FROM session_log WHERE id = ?');
-  db().transaction(() => {
-    for (const candidateId of ids) remove.run(candidateId);
-  })();
-  // Forgetting a conversation forgets its evidence chain too: rows and the
-  // hidden ref for every execution record that just left Recent — and its
-  // lifecycle flag, which would otherwise sit keyed to nothing forever.
-  for (const candidateId of ids) forgetSessionCheckpoints(candidateId);
-  try { db().prepare('DELETE FROM conversation_flags WHERE key = ?').run(key); } catch { /* flag rows are advisory */ }
-}
-
-/**
- * The launch snapshot for a session, live or historical.
- *
- * The in-memory copy is the fast path, but a baseline that exists only in this
- * process answers "undo what this agent did" with "this session has no baseline
- * commit" after every restart — and loses the dirty list, which is what keeps
- * edits the operator had already made from being offered as the agent's work.
- */
-export function sessionBaseline(sessionId: string): Baseline | null {
-  const live = sessions.get(sessionId)?.meta.baseline;
-  if (live) return live;
-  let row: { baseline_head: string | null; baseline_dirty_json: string | null; started_at: number } | undefined;
-  try {
-    row = db().prepare(
-      'SELECT baseline_head, baseline_dirty_json, started_at FROM session_log WHERE id = ?'
-    ).get(sessionId) as typeof row;
-  } catch { return null; /* the database is closing during quit */ }
-  if (!row) return null;
-  // A row written before these columns existed captured nothing. Answering it
-  // with an empty dirty list would claim every pre-existing edit for the agent,
-  // so an absent capture stays absent rather than becoming a confident zero.
-  if (row.baseline_head === null && row.baseline_dirty_json === null) return null;
-  let dirty: string[] = [];
-  try {
-    const parsed: unknown = JSON.parse(row.baseline_dirty_json ?? '[]');
-    if (Array.isArray(parsed)) dirty = parsed.filter((value): value is string => typeof value === 'string');
-  } catch { /* a corrupt list costs attribution, not the head commit a revert needs */ }
-  // `started_at` is the launch stamp rather than the capture stamp; they are
-  // milliseconds apart and no reader distinguishes them.
-  return { head: row.baseline_head, dirty, at: row.started_at };
-}
 
 /** Scrollback for a pane that is being mounted or re-mounted. */
 export function scrollback(sessionId: string): string {
@@ -2311,26 +2073,34 @@ export function scrollback(sessionId: string): string {
   return s.buffer;
 }
 
-export function writeSession(sessionId: string, data: string): boolean {
+export function writeSession(sessionId: string, data: string, internal: { bracketedPaste?: boolean } = {}): boolean {
   if (!acceptsPtyInput(sessionId, data)) return false;
   const s = sessions.get(sessionId);
   if (!s || s.meta.status === 'exited') return false;
+  // User input wins over a pending automatic first prompt.
+  s.initialPromptPending = false;
   s.proc.write(data);
+  // Main-owned automatic hand-back sends a complete bracketed paste and then
+  // a separately guarded Enter. Its interior newlines are content, so they
+  // must not invent a submitted turn before that Enter is authorized. Renderer
+  // input keeps the ordinary two-argument path and cannot set this option.
+  const submitted = !(internal.bracketedPaste && data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~'))
+    && /[\r\n]/.test(data);
   // A submitted line carries whatever was already typed, so any attachment
   // named in that prompt has now gone to the agent. Staged-but-unnamed files
   // are untouched: pressing Enter on an unrelated message does not send them.
-  if (/[\r\n]/.test(data)) {
+  if (submitted) {
     try { markSessionAttachmentsSent(sessionId); }
     catch { /* the keystroke matters more than the bookkeeping */ }
   }
-  if (s.meta.harnessId === 'codex' && /[\r\n]/.test(data)) {
+  if (s.meta.harnessId === 'codex' && submitted) {
     captureCodexIdentityAfterPrompt(s, s.meta.worktree ?? s.meta.projectPath);
   }
   // Codex's lifecycle channel announces the blocking/finished state but not the
   // operator's subsequent keystroke. Enter records only that the operator
   // responded; it must not invent a successful PostToolUse before the provider
   // has actually run anything. No typed content is retained.
-  if (s.meta.harnessId === 'codex' && /[\r\n]/.test(data)) {
+  if (s.meta.harnessId === 'codex' && submitted) {
     if (s.providerAwaitingApproval) {
       s.providerAwaitingApproval = false;
       recordProviderEvent(sessionId, 'PermissionResponse');
@@ -2563,11 +2333,15 @@ export function killAll(): number {
  * and flush the rollout before the parent process disappears.
  */
 export async function shutdownAll(graceMs = 2000): Promise<void> {
+  sessionsStopping = true;
+  const known = [...sessions.values()];
   const active = [...sessions.values()].filter((value) => value.meta.status !== 'exited');
-  if (!active.length) return;
 
   killAll();
-  const settled = Promise.all(active.map((value) => value.exited));
+  const settled = Promise.allSettled([
+    ...known.map((value) => value.cleanupSettled),
+    ...openingSessions,
+  ]);
   let timer: NodeJS.Timeout | null = null;
   const graceful = await Promise.race([
     settled.then(() => true),
@@ -2584,4 +2358,9 @@ export async function shutdownAll(graceMs = 2000): Promise<void> {
     settled,
     new Promise<void>((resolve) => setTimeout(resolve, 500)),
   ]);
+}
+
+/** Every session that has not exited — what reconcileWorktrees calls an owner. */
+export function liveSessionIds(): ReadonlySet<string> {
+  return new Set(listSessions().filter((s) => s.status !== 'exited').map((s) => s.id));
 }

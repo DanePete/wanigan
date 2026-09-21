@@ -86,7 +86,7 @@ const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 for (const key of Object.keys(env)) if (key.startsWith('VSCODE_')) delete env[key];
 
-const run = spawnSync(ELECTRON, [path.join(dir, 'main.cjs'), `--user-data-dir=${path.join(dir, 'profile')}`],
+const run = spawnSync(ELECTRON, [path.join(dir, 'main.cjs'), `--user-data-dir=${path.join(dir, 'profile')}`, '--use-mock-keychain'],
   { env, encoding: 'utf8', timeout: 90_000 });
 rmSync(dir, { recursive: true, force: true });
 

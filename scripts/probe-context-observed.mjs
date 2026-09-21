@@ -117,7 +117,9 @@ try {
     await heading.waitFor();
     await heading.evaluate((el) => el.scrollIntoView({ block: 'start' }));
     const calls = await page.evaluate(() => window.__observedCalls);
-    const shown = await page.getByRole('combobox', { name: 'Context project' }).inputValue();
+    const selectedName = await page.locator('.space-switch-name').innerText();
+    const shown = (await page.evaluate(() => window.wanigan.projects.list())).find(project => project.name === selectedName)?.id;
+    assert(shown, 'the shared project switcher names the inspected project');
     assert(calls.length >= 1 && calls.every((args) => args.length === 1 && args[0] === shown),
       `the channel is asked with the selected project's id alone (${shown}): ` + JSON.stringify(calls));
     record('the report is requested with the project id alone; main resolves the path');

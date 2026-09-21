@@ -1,4 +1,5 @@
 import { db } from './db';
+import { modules } from './module-registry';
 import * as accounts from './accounts';
 import { allAccountLimits } from './limits';
 import { burnRate as claudeBurnRate, type BurnRate as ClaudeBurnRate } from './claude-usage';
@@ -7,9 +8,10 @@ import type { AccountLimits, ConsumptionPoint, ModelConsumption, UsageSnapshot }
 /**
  * What was actually spent, per account and model.
  *
- * This is Wanigan's own record — the API events it already collects, joined to
- * the account each session launched under — so it needs no probe and is exact
- * about what happened. It is deliberately kept apart from the limit windows in
+ * Session API events are joined to the account each session launched under;
+ * modules contribute local ledgers for service calls outside sessions. No
+ * consumption read probes a provider. Estimates travel separately from reported
+ * costs. This is deliberately kept apart from the limit windows in
  * claude-limits.ts, because spent and remaining are different facts and neither
  * can be derived from the other: compaction and cached input mean a token
  * counter cannot tell you what a plan has left.
@@ -62,7 +64,7 @@ export function consumption(days = DEFAULT_DAYS): ModelConsumption[] {
     ORDER BY out_tokens DESC
   `).all(since) as Row[];
 
-  return rows.map((row) => ({
+  const sessions: ModelConsumption[] = rows.map((row) => ({
     accountId: row.account_id,
     accountLabel: labelFor(row.account_id),
     harness: harnessFor(row.account_id),
@@ -76,6 +78,8 @@ export function consumption(days = DEFAULT_DAYS): ModelConsumption[] {
     // treats it as zero is a number pretending to be a bill.
     costStatus: row.priced === row.requests ? 'reported' : row.priced === 0 ? 'unreported' : 'partial',
   }));
+  return sessions.concat(modules().flatMap((module) => module.usage?.consumption(since) ?? []))
+    .sort((a, b) => b.outTokens - a.outTokens);
 }
 
 export function daily(days = DEFAULT_DAYS): ConsumptionPoint[] {
@@ -94,7 +98,7 @@ export function daily(days = DEFAULT_DAYS): ConsumptionPoint[] {
     ORDER BY day
   `).all(since) as { day: string; account_id: string | null; model_name: string; tokens: number; cost_usd: number }[];
 
-  return rows.map((row) => ({
+  const sessions: ConsumptionPoint[] = rows.map((row) => ({
     day: row.day,
     accountId: row.account_id,
     accountLabel: labelFor(row.account_id),
@@ -103,6 +107,8 @@ export function daily(days = DEFAULT_DAYS): ConsumptionPoint[] {
     tokens: row.tokens ?? 0,
     costUsd: row.cost_usd ?? 0,
   }));
+  return sessions.concat(modules().flatMap((module) => module.usage?.daily(since) ?? []))
+    .sort((a, b) => a.day.localeCompare(b.day));
 }
 
 /**

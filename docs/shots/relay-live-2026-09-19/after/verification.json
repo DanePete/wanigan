@@ -1,0 +1,140 @@
+{
+  "phase": "after",
+  "at": "2026-09-19T16:36:30.131Z",
+  "renderer": "/private/tmp/wanigan-live-relay-ui-after/renderer",
+  "rendererFiles": [
+    {
+      "path": "assets/index-BNe3sAIj.css",
+      "sha256": "e3bce4f0c4bfa32f99b4d632259df909fd58ecff9d7a079c57e35bfb9e899e19"
+    },
+    {
+      "path": "assets/index-DO3k-mP8.js",
+      "sha256": "73b49746356e0c86a5b3dd82590ab1f2b45d83ee0fc014eb83d33801e6b7e927"
+    },
+    {
+      "path": "assets/mission-studio-Zt8j2igs.png",
+      "sha256": "84202a2bd73bf833a9a508b57241da7cd8c8f2cd1912106014cfb8068f41320d"
+    },
+    {
+      "path": "assets/runtime-DPC_1S4f.js",
+      "sha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    },
+    {
+      "path": "assets/studio_small_04_1k-Beh5sjOa.hdr",
+      "sha256": "dd0ca972513d35f55f55f79daf945315a6f25f8ccc7a797816b4945b201f293c"
+    },
+    {
+      "path": "index.html",
+      "sha256": "49fb142774c1b079595a96570a29785505696e98a4d301de8244e057e42dcde8"
+    }
+  ],
+  "runnerSha256": "122e00ef07c1aa4c528d4b07e76e2be4510aefd619b9b3fcae41aa66e45d617c",
+  "checks": [
+    "AFTER: each ready review decision invokes exactly control.complete(reviewId,{decision}); no control.start.",
+    "AFTER: optional agent review invokes only control.start with the recorded route.",
+    "AFTER: a pending decision disables every decision and optional agent review.",
+    "Running review preserves Open live session and all three decision dispatches.",
+    "A failed refresh disables decisions on the stale running review until a successful reread.",
+    "Blocked, pending, failed, canceled, queued, checking, rejected and changes-requested states expose no decision or review launch bypass.",
+    "Plain-language composer labels preserve the manual preview payload and hide automatic preferences in manual mode.",
+    "Composer auto/manual captured in dark/light via isolated real Electron IPC; no Relay/provider action."
+  ],
+  "errors": [],
+  "screenshots": [
+    {
+      "file": "fixture-review-ready-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-ready-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-saving-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and held preload promise"
+    },
+    {
+      "file": "fixture-review-saving-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and held preload promise"
+    },
+    {
+      "file": "fixture-review-running-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-running-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-blocked-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-blocked-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-failed-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-failed-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-rejected-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-rejected-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-changes-dark.png",
+      "theme": "dark",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "fixture-review-changes-light.png",
+      "theme": "light",
+      "provenance": "mock Relay records and preload calls"
+    },
+    {
+      "file": "electron-composer-dark.png",
+      "theme": "dark",
+      "provenance": "isolated Electron real IPC; mock discovery; no model or Relay mutation"
+    },
+    {
+      "file": "electron-composer-light.png",
+      "theme": "light",
+      "provenance": "isolated Electron real IPC; mock discovery; no model or Relay mutation"
+    },
+    {
+      "file": "electron-composer-manual-dark.png",
+      "theme": "dark",
+      "provenance": "isolated Electron real IPC; mock discovery; local form change only"
+    },
+    {
+      "file": "electron-composer-manual-light.png",
+      "theme": "light",
+      "provenance": "isolated Electron real IPC; mock discovery; local form change only"
+    }
+  ],
+  "provenance": {
+    "review": "Chromium built production renderer; deliberately synthetic RelayRead rows and recorded preload calls. No main-process state, IPC, provider, PTY, persistence, quality or cost claim.",
+    "composer": "Real Electron main/preload IPC in freshly created and removed userData, WANIGAN_MOCK=1 discovery. Added local project path to isolated DB and edited form only. No preview/create/start, paid call or live user profile access."
+  },
+  "passed": true
+}

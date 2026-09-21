@@ -21,11 +21,12 @@ export async function runAuditIntegrationsSmoke(check: Check, say: (text: string
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-audit-integrations-'));
   const repo = path.join(dir, 'project');
   fs.mkdirSync(repo);
-  const git = async (...args: string[]) => {
-    const result = await runGit(repo, ['-c', 'core.hooksPath=/dev/null', ...args], { timeout: 15_000 });
+  const gitIn = async (root: string, ...args: string[]) => {
+    const result = await runGit(root, ['-c', 'core.hooksPath=/dev/null', ...args], { timeout: 15_000 });
     if (!result.ok) throw new Error(result.err);
     return result.out;
   };
+  const git = (...args: string[]) => gitIn(repo, ...args);
   try {
     await git('init');
     fs.writeFileSync(path.join(repo, 'tracked.txt'), 'baseline\n');
@@ -52,6 +53,41 @@ export async function runAuditIntegrationsSmoke(check: Check, say: (text: string
     check(commitReadingDigest(reading, { ...first, fingerprint: null, unavailableReason: 'Unavailable fixture' }) === null
       && repoDigest(reading) !== firstToken,
     'unavailable comparisons and old status-only digests cannot authorize a mobile commit');
+
+    const largeRepo = path.join(dir, 'large-checkout');
+    const archive = path.join(largeRepo, 'archive');
+    const sparseBytes = 15 * 1024 * 1024;
+    fs.mkdirSync(archive, { recursive: true });
+    await gitIn(largeRepo, 'init');
+    const image = (index: number) => path.join(archive, `screenshot-${String(index).padStart(2, '0')}.png`);
+    for (let index = 0; index < 40; index++) {
+      fs.closeSync(fs.openSync(image(index), 'w'));
+      fs.truncateSync(image(index), sparseBytes);
+    }
+    fs.writeFileSync(path.join(largeRepo, '.gitignore'), 'archive/*.png\n');
+    await gitIn(largeRepo, 'add', '.gitignore');
+    await gitIn(largeRepo, 'add', '-f', 'archive');
+    await gitIn(largeRepo, '-c', 'user.name=Smoke', '-c', 'user.email=smoke@localhost', 'commit', '-m', 'tracked archive');
+    const largeFirst = await checkoutSnapshot(largeRepo);
+    const largeRepeated = await checkoutSnapshot(largeRepo);
+    check(largeFirst.fingerprint !== null && largeFirst.fingerprint === largeRepeated.fingerprint,
+      'a checkout over 512 MiB receives a stable fingerprint without dropping tracked images ignored by current config',
+      largeFirst.unavailableReason ?? largeRepeated.unavailableReason);
+    const changedImage = fs.openSync(image(39), 'r+');
+    try { fs.writeSync(changedImage, Buffer.from([1]), 0, 1, 0); }
+    finally { fs.closeSync(changedImage); }
+    const largeChanged = await checkoutSnapshot(largeRepo);
+    check(largeChanged.fingerprint !== null && largeChanged.fingerprint !== largeFirst.fingerprint,
+      'content changes beyond the former 512 MiB boundary invalidate the checkout fingerprint',
+      largeChanged.unavailableReason);
+    for (let index = 40; index < 69; index++) {
+      fs.closeSync(fs.openSync(image(index), 'w'));
+      fs.truncateSync(image(index), sparseBytes);
+    }
+    await gitIn(largeRepo, 'add', '-f', 'archive');
+    const oversized = await checkoutSnapshot(largeRepo);
+    check(oversized.fingerprint === null && oversized.unavailableReason === 'Checkout content exceeds the 1 GiB fingerprint limit.',
+      'the checkout fingerprint keeps a bounded 1 GiB aggregate maximum', oversized.unavailableReason);
 
     const project = await addProject(repo);
     saveRecipe(project.id, ['true']);

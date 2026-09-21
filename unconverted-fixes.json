@@ -8,5 +8,11 @@
     "emergency; two is a plan, and a plan does not need an escape hatch.",
     "Each row: the surface, the date, what was urgent, and which file carries the comment at the site."
   ],
-  "surfaces": {}
+  "surfaces": {
+    "settings/connections/mcp-servers": {
+      "date": "2026-09-21",
+      "urgent": "A user was blocked: \"+ Add server\" opened its form 175 px below the fold with no scroll or focus, so clicking it only hid the button and no MCP server could be added by hand.",
+      "site": "src/renderer/src/views/Settings.tsx (Mcp component, the draftForm effect)"
+    }
+  }
 }

@@ -151,6 +151,7 @@ export type ProviderManifestInspection = {
     backendId: string;
     bin: string;
     baseArgs: string[];
+    initialPromptArgv: string[];
     versionArgs: string[];
     helpArgs: string[];
     launchFields: Array<{
@@ -183,6 +184,16 @@ export type LaunchModelRow = {
   label: string;
   description: string | null;
   efforts: string[] | null;
+  /**
+   * True for a row Wanigan has merely *seen* run, as opposed to one this
+   * backend offers.
+   *
+   * Both launch. The difference matters to anything that has to choose between
+   * them: an observed id usually resolves to the same model as the alias above
+   * it, so presenting the two as rival answers makes them split a vote against
+   * themselves. A picker shows both; a chooser is offered only what is offered.
+   */
+  observed?: boolean;
 };
 
 /**
@@ -782,6 +793,8 @@ export type CheckpointRevertAction = { path: string; action: 'restore' | 'delete
 export type CheckpointRevertPlan = {
   ok: boolean;
   checkpointId: number;
+  /** Opaque, one-use approval identity for this exact preview; expires on restart. */
+  previewToken: string | null;
   commit: string | null;
   files: CheckpointRevertAction[];
   totalFiles: number;
@@ -1739,6 +1752,14 @@ export type RelayRouteInput = Partial<Record<DocketNodeKind, {
 
 export type RelayCreateInput = {
   projectId: string;
+  /** Opaque main-owned preview; changed/expired receipts refuse without a new suggestion call. */
+  previewReceipt?: string;
+  /** Explicit allowance for automatic progress; omitted leaves all starts manual. */
+  automation?: { budgetUsd: number };
+  /** Explicit routing mode and Auto preference; omitted keeps Auto / Lower cost. */
+  routing?: import('./relay-routing.ts').RelayRoutingSettings;
+  /** New relays include deliberate commit/deploy stages unless explicitly disabled. */
+  delivery?: boolean;
   /** The outcome in the operator's words. Becomes the docket's objective. */
   intent: string;
   /** The profile every stage runs on unless `routes` names another for it. */
@@ -1824,11 +1845,77 @@ export type RelayNodeRead = {
   route: { proofId: string; createdAt: number; providerId: string | null; route: RelayStageRoute } | null;
 };
 
+/**
+ * What `relay-start` hands the running Wanigan through the single-instance
+ * lock, so the PTY is spawned by the process that will still be alive when the
+ * phase finishes.
+ *
+ * It is a request and not an instruction: it names the node and the provider
+ * the CLI read off the row, and the window re-reads both before it starts
+ * anything. Anyone can pass argv to a running app, so nothing here is trusted
+ * further than an id.
+ */
+export type RelayStartRequest = {
+  wanigan: 'relay-start';
+  nodeId: string;
+  providerId: string;
+};
+
+/** How a docket came to run the stages it runs: every declared one, or a suggester's narrowing. */
+export type RelayPipelineRead = {
+  pipeline: string;
+  phases: DocketNodeKind[];
+  confidence: number;
+  reason: string;
+};
+
+/** What the suggester would do with this intent, without creating anything. */
+export type RelayPreviewInput = {
+  intent: string; providerId: string; routes?: RelayRouteInput;
+  automaticProgress?: boolean;
+  routing?: import('./relay-routing.ts').RelayRoutingSettings;
+};
+
+export type RelayPreviewRoute = {
+  route: { model: string | null; effort: string | null; source: 'profile-default' | 'suggested' | 'operator'; confidence: number | null; reason: string };
+  /**
+   * What the suggester proposed, whether or not the router took it.
+   *
+   * Separate from `route` on purpose: a proposal that fell short of its gate is
+   * the most informative thing a preview can show, and reporting only what was
+   * taken would demonstrate the threshold instead of the model.
+   */
+  suggested: { model: string | null; effort: string | null; confidence: number } | null;
+  /** Task-demand evidence, if asked. Model-specific effort is chosen separately. */
+  deliberation: { score: number; confidence: number } | null;
+};
+
+export type RelayPreview = {
+  receipt: string;
+  expiresAt: number;
+  routing: import('./relay-routing.ts').RelayRoutingSettings;
+  /** Whether a suggestion was requested. Manual uses only overrides and profile defaults. */
+  asked: boolean;
+  /** Which stages would run. Every declared one unless a confident pipeline answer narrowed the front. */
+  phases: DocketNodeKind[];
+  pipeline: { pipeline: string; confidence: number } | null;
+  routes: Partial<Record<DocketNodeKind, RelayPreviewRoute>>;
+  /** Wanigan's arithmetic for the calls this preview made. Never a reported cost. */
+  estimatedUsd: number | null;
+};
+
 export type RelayRead = {
+  automaticProgress: boolean;
   docket: DocketDetail;
+  /** Null for goals created before routing preferences were recorded. */
+  routing: import('./relay-routing.ts').RelayRoutingSettings | null;
+  /** Relay-owned delivery stages; null for older relays until explicitly added. */
+  delivery: import('./relay-delivery.ts').RelayDeliveryRead | null;
   /** Whether this docket was created as a relay; ordinary goals read here too, but only relays hand back on their own. */
   relay: boolean;
   nodes: RelayNodeRead[];
+  /** Recorded when a suggester narrowed the stages at creation; null when every declared stage runs. */
+  pipeline: RelayPipelineRead | null;
   /** The latest recorded estimate, or null until the estimate phase has run. */
   forecast: RelayForecast | null;
   /** The cap on automatic hand-backs, so the counter can be drawn against it. */
@@ -2115,7 +2202,14 @@ export type AccountLimits = {
   harness: string;
   /** null when the agent could not be asked, or reported nobody signed in. */
   identity: AccountIdentity | null;
+  /** Matching saved configuration is evidence of a shared login, not a live authentication check. */
+  identityEvidence?: {
+    sharedWith: { accountId: string; accountLabel: string; basis: 'saved-login' | 'configuration-directory' }[];
+  };
   state: 'ok' | 'signed-out' | 'unreadable' | 'unsupported' | 'stale';
+  /** The provider's own verdict on ordinary included usage, where it gives one.
+   * null or absent is unavailable, and is never read as allowed. */
+  ordinaryUsageAllowed?: boolean | null;
   /** Why, when state is not 'ok'. */
   detail: string | null;
   fetchedAt: number | null;
@@ -2128,6 +2222,8 @@ export type AccountLimits = {
 export type ModelConsumption = {
   accountId: string | null;
   accountLabel: string;
+  /** API services have no CLI harness or session account. Older rows are sessions. */
+  source?: 'session' | 'service';
   /** The agent this account signs into; two accounts can share a label. */
   harness: string | null;
   model: string;
@@ -2138,6 +2234,10 @@ export type ModelConsumption = {
   costUsd: number;
   /** 'reported' only when every row carried a provider cost. */
   costStatus: 'reported' | 'partial' | 'unreported';
+  /** Arithmetic saved when the call ran, never included in reported costUsd. */
+  estimatedCostUsd?: number;
+  /** Requests missing valid input or output meters; token totals cover known counts only. */
+  unmeteredRequests?: number;
 };
 
 export type ConsumptionPoint = {
@@ -2153,6 +2253,7 @@ export type ConsumptionPoint = {
    */
   accountId: string | null;
   accountLabel: string;
+  source?: 'session' | 'service';
   harness: string | null;
   model: string;
   tokens: number;
@@ -2217,6 +2318,12 @@ export type McpServerConfig = {
    * holds one.
    */
   env?: string;
+  /**
+   * Request headers an extension declared for an http server, as JSON: header
+   * names and where each value comes from, never a secret. Same convention as
+   * `env` — undefined leaves what is stored, '' clears it.
+   */
+  headers?: string;
   /** The extension that created this row, or absent for one a person added. */
   owner?: string;
 };
@@ -2428,7 +2535,16 @@ export type ExtensionInfo = {
   updatedAt: number;
   artifacts: ExtensionArtifactInfo[];
   consent: ExtensionConsentLine[];
+  /** What it asks the operator for, and which have been given. Empty for an invalid manifest. */
+  credentials: ExtensionCredentialState[];
 };
+
+/**
+ * A credential an extension declares, and whether it has a value. Never the
+ * value: it lives in the OS keychain and is read only when a session's MCP
+ * config is written.
+ */
+export type ExtensionCredentialState = { id: string; label: string; help: string | null; present: boolean };
 
 /** A directory read as an extension, before anything is installed from it. */
 export type ExtensionInspection = {
@@ -2792,7 +2908,7 @@ export type WaniganSettings = {
   motion: MotionSetting;
   /** Whether the Relay rail renders the real fluid module or its CSS fallback. */
   fluid: FluidSetting;
-  /** Whether the destination sidebar is showing. Persisted, not per-window. */
+  /** Persisted desktop sidebar preference. Compact navigation is a temporary per-window drawer. */
   navSidebar: 'open' | 'closed';
   theme: ThemeSetting;
   telemetry: boolean;
@@ -3975,6 +4091,8 @@ export type BackupRestoreSummary = {
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
+  /** Unaccounted paid-request records carried into the restored database, still unresolved. */
+  carriedPaidReceipts: number;
   /** Always true: the swap closed this process's database connection. */
   relaunchRequired: true;
 };

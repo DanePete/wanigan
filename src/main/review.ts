@@ -9,6 +9,10 @@ import { projectById } from './store';
 import { checkoutSnapshot } from './review-checkout';
 import { repoRootFor } from './worktrees';
 import type { ReviewCheckoutSnapshot, ReviewEvidence, ReviewFreshness, ReviewRecipe, ReviewRun } from '../shared/types';
+import { shellCommand } from '../shared/platform';
+import { hostPlatform, killProcessTree } from './platform';
+import { acquireCheckoutActivity } from './checkout-activity';
+import { recordReviewNeverSpawned, reviewRecoveryStarted, reviewRecoveryFinished } from './review-recovery';
 
 const OUTPUT_LIMIT = 128 * 1024;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
@@ -174,50 +178,66 @@ async function sessionRoot(projectId: string, sessionId: string): Promise<string
   return canonical;
 }
 
-const PROCESS_START = Date.now();
-let swept = false;
+const OWNER_ID = randomUUID();
+const OWNER_LEASE_MS = 30_000;
+const OWNER_HEARTBEAT_MS = 5_000;
+type CheckoutOwner = { cwd: string; run_id: string; owner_id: string; owner_pid: number | null; lease_expires_at: number; state: string };
+
+function ownerAbsent(pid: number | null): boolean {
+  if (!pid || !Number.isSafeInteger(pid) || pid < 1) return false;
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+}
 
 /**
  * Runs left 'running' by a process that died mid-gate.
  *
- * Nothing outside this module writes review_runs.status, and the row is only
- * flipped by the UPDATE at the end of runAt — so a crash, a force quit or an
- * update strands the row for ever and history() keeps reporting an in-flight
- * gate that is not running anywhere. They are closed as failed rather than
- * re-run: nobody watched the crash, and silently re-executing a project's
- * build commands is not a recovery anyone asked for. 'failed' is the honest
- * status the stored shape has; the appended note says what actually happened.
- *
- * started_at, not a process-local set: a row this process marked 'running'
- * moments ago must not be mistaken for an orphan. A second Wanigan process
- * that began a gate before this one started is the one case this closes early,
- * which is the same trade the headless sweep makes.
+ * A live lease belongs to its recorded owner, including a second app process.
+ * An absent owner or expired lease proves no result, and says nothing about
+ * its detached commands. Keep that checkout claimed as unresolved. We never
+ * send a recovery signal to a persisted PID (which may have been reused).
+ * Legacy running receipts have no ownership proof and are held the same way.
  */
 export function sweepInterruptedRuns(): number {
-  if (swept) return 0;
-  swept = true;
-
   const d = db();
-  const rows = d.prepare("SELECT id, results_json FROM review_runs WHERE status='running' AND started_at < ?")
-    .all(PROCESS_START) as { id: string; results_json: string }[];
-  if (!rows.length) return 0;
+  return d.transaction(() => {
+    const rows = d.prepare("SELECT * FROM review_runs WHERE status='running'").all() as RunRow[];
+    const now = Date.now(); let closed = 0;
+    for (const row of rows) {
+      const owner = d.prepare('SELECT * FROM review_checkout_owners WHERE run_id=?').get(row.id) as CheckoutOwner | undefined;
+      if (owner?.state === 'active' && owner.lease_expires_at > now && !ownerAbsent(owner.owner_pid)) continue;
+      const root = owner?.cwd ?? readEvidence(row.evidence_json)?.before.cwd ?? projectById(row.project_id)?.path;
+      if (root) {
+        let canonical: string;
+        try { canonical = realpathSync(root); } catch { canonical = path.resolve(root); }
+        d.prepare(`INSERT OR IGNORE INTO review_checkout_owners(cwd,run_id,owner_id,owner_pid,lease_expires_at,state)
+          VALUES (?,?,?,?,?,'unresolved')`).run(canonical, row.id, 'legacy-unknown', null, 0);
+      }
+      d.prepare("UPDATE review_checkout_owners SET state='unresolved' WHERE run_id=?").run(row.id);
+      let results: ReviewRun['results'] = [];
+      try { results = JSON.parse(row.results_json) as ReviewRun['results']; } catch { results = []; }
+      if (!Array.isArray(results)) results = [];
+      results.push({
+        command: '[Wanigan review gate]',
+        exitCode: null,
+        output: 'Wanigan lost this gate owner before a complete result was recorded. Command process state is unknown: commands may still be running. This checkout remains blocked from further checks until that unresolved ownership is reconciled. Completed command results are retained above; no automatic retry was started.',
+        durationMs: 0,
+      });
+      closed += d.prepare("UPDATE review_runs SET ended_at=?, status='failed', results_json=? WHERE id=? AND status='running'")
+        .run(now, JSON.stringify(results), row.id).changes;
+    }
+    return closed;
+  }).immediate();
+}
 
-  const stmt = d.prepare("UPDATE review_runs SET ended_at=?, status='failed', results_json=? WHERE id=? AND status='running'");
-  const now = Date.now();
-  let closed = 0;
-  for (const row of rows) {
-    let results: ReviewRun['results'] = [];
-    try { results = JSON.parse(row.results_json) as ReviewRun['results']; } catch { results = []; }
-    if (!Array.isArray(results)) results = [];
-    results.push({
-      command: '[Wanigan review gate]',
-      exitCode: null,
-      output: 'Wanigan stopped while this gate was running, so the commands went with it. Whatever had already finished is recorded above; a command still in flight left no output, and nothing after it ran. Run the gate again for a complete result.',
-      durationMs: 0,
-    });
-    closed += stmt.run(now, JSON.stringify(results), row.id).changes;
-  }
-  return closed;
+/** Refuses both live commands and unresolved command ownership. */
+export function assertCheckoutIdle(cwd: string): void {
+  let canonical: string;
+  try { canonical = realpathSync(cwd); } catch { canonical = path.resolve(cwd); }
+  const owner = db().prepare('SELECT state FROM review_checkout_owners WHERE cwd=?').get(canonical) as { state: string } | undefined;
+  if (owner) throw new Error(owner.state === 'unresolved'
+    ? 'This checkout has unresolved review command ownership. Commands may still be running; reconcile them before starting more checks.'
+    : 'Checks are already running in this checkout.');
 }
 
 export function history(projectId: string, limit = 12, sessionId?: string): ReviewRun[] {
@@ -258,7 +278,7 @@ export function assertPassNotSuperseded(runId: string, projectId: string, cwd: s
   let canonical: string;
   try { canonical = realpathSync(cwd); }
   catch { throw new Error('The verification checkout is unavailable. Restore it and rerun the checks.'); }
-  if (activeRoots.has(canonical)) throw new Error('Checks are running in a verification checkout. Wait for the new result before deciding.');
+  assertCheckoutIdle(canonical);
   type IdentityRow = { ordinal: number; status: string; evidence_json: string | null };
   const recorded = db().prepare('SELECT rowid AS ordinal,status,evidence_json FROM review_runs WHERE id=? AND project_id=?')
     .get(runId, projectId) as IdentityRow | undefined;
@@ -283,15 +303,37 @@ export function assertPassNotSuperseded(runId: string, projectId: string, cwd: s
   }
 }
 
-async function runCommand(command: string, cwd: string): Promise<ReviewRun['results'][number]> {
+type ActiveRun = { controller: AbortController; done: Promise<void>; finish: () => void; unresolved: boolean; spawnAttempted: boolean };
+const activeRuns = new Map<string, ActiveRun>();
+let stopping = false;
+
+/** Stops only child handles created by this runtime, then awaits durable results. */
+export async function stopReviewChecks(): Promise<void> {
+  stopping = true;
+  const runs = [...activeRuns.values()];
+  for (const run of runs) run.controller.abort('Wanigan shutdown interrupted this review gate.');
+  await Promise.all(runs.map(run => run.done));
+}
+
+async function runCommand(command: string, cwd: string, run: ActiveRun): Promise<ReviewRun['results'][number]> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const shell = process.env.SHELL || '/bin/zsh';
+    const { file: shell, args: shellArgs } = shellCommand(command, hostPlatform(), process.env);
     let out = ''; let timedOut = false;
     // Its own process group: the spawned thing is a shell, and signalling the
     // shell alone leaves the `npm test` underneath it running after the gate
-    // has given up on it.
-    const child = spawn(shell, ['-lc', command], { cwd, env: { ...process.env, NO_COLOR: '1', TERM: 'dumb' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    // has given up on it. Windows has no process groups and detaching there
+    // gives the child its own console, so windowsHide keeps that window from
+    // flashing over whatever the operator is doing; killProcessTree uses
+    // taskkill /T rather than a negative pid.
+    run.spawnAttempted = true;
+    const child = spawn(shell, shellArgs, {
+      cwd,
+      env: { ...process.env, NO_COLOR: '1', TERM: 'dumb' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      windowsHide: true,
+    });
     // Stored evidence that stops mid-sentence has to say so. A 128KB cap is
     // fine; a capped record that reads as the whole run is a false record.
     let truncated = false;
@@ -303,35 +345,62 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
       else out += text;
     };
     child.stdout?.on('data', add); child.stderr?.on('data', add);
-    const stop = (signal: NodeJS.Signals) => {
-      try { if (child.pid) process.kill(-child.pid, signal); }
-      catch { try { child.kill(signal); } catch { /* already exited */ } }
-    };
+    const stop = (signal: NodeJS.Signals) => { killProcessTree(child, signal); };
     let killer: NodeJS.Timeout | null = null;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    let abandoned: NodeJS.Timeout | null = null;
+    let settled = false;
+    let interruptStarted = false;
+    const interrupt = () => {
+      if (interruptStarted || settled) return;
+      interruptStarted = true;
       stop('SIGTERM');
       // A command that blocks or ignores SIGTERM would otherwise never close,
       // leaving this promise unresolved and its run row 'running' forever.
       killer = setTimeout(() => stop('SIGKILL'), KILL_GRACE_MS);
-    }, COMMAND_TIMEOUT_MS);
+      abandoned = setTimeout(() => {
+        // A daemon can escape its original group or retain pipes after its
+        // shell exits. Closing a UI must stay bounded without claiming it died.
+        run.unresolved = true;
+        child.stdout?.destroy(); child.stderr?.destroy(); child.unref();
+        done({ command, exitCode: null, output: `${out}\n[Wanigan could not confirm that this command stopped. Process state is unknown; the checkout remains blocked.]`, durationMs: Date.now() - started });
+      }, KILL_GRACE_MS + 1_000);
+    };
+    const timer = setTimeout(() => { timedOut = true; interrupt(); }, COMMAND_TIMEOUT_MS);
+    run.controller.signal.addEventListener('abort', interrupt, { once: true });
     const done = (result: ReviewRun['results'][number]) => {
-      clearTimeout(timer); if (killer) clearTimeout(killer);
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); if (killer) clearTimeout(killer); if (abandoned) clearTimeout(abandoned);
+      run.controller.signal.removeEventListener('abort', interrupt);
       resolve(result);
     };
     child.once('close', (code) => {
+      if (settled) return;
+      // A shell can exit successfully after backgrounding a command with its
+      // output redirected. Detect a surviving POSIX group without signalling
+      // it: even a reused identifier must only cause a conservative hold.
+      if (child.pid && hostPlatform() !== 'win32') {
+        try { process.kill(-child.pid, 0); run.unresolved = true; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') run.unresolved = true; }
+      }
+      if (child.pid && hostPlatform() === 'win32') run.unresolved = true;
       const notes = [
         truncated ? `[Wanigan kept the first ${Math.round(OUTPUT_LIMIT / 1024)}KB of this command's output; the rest was discarded, not produced empty.]` : null,
-        timedOut ? '[Wanigan stopped this command after 10 minutes.]' : null,
+        timedOut ? '[Wanigan interrupted this command after 10 minutes.]' : null,
+        run.controller.signal.aborted ? `[${String(run.controller.signal.reason)}]` : null,
+        run.unresolved ? '[Command process state is unknown; background commands may still be running. The checkout remains blocked.]' : null,
       ].filter(Boolean);
       done({
         command,
-        exitCode: timedOut ? null : code,
+        exitCode: timedOut || run.controller.signal.aborted || run.unresolved ? null : code,
         output: notes.length ? `${out}\n${notes.join('\n')}` : out,
         durationMs: Date.now() - started,
       });
     });
-    child.once('error', (e) => done({ command, exitCode: null, output: e.message, durationMs: Date.now() - started }));
+    child.once('error', (e) => {
+      if (child.pid && child.exitCode === null && child.signalCode === null) run.unresolved = true;
+      done({ command, exitCode: null, output: `${e.message}${run.unresolved ? '\nCommand process state is unknown; the checkout remains blocked.' : ''}`, durationMs: Date.now() - started });
+    });
   });
 }
 
@@ -350,6 +419,7 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
 const activeRoots = new Set<string>();
 
 export async function runAt(projectId: string, cwd?: string, sessionId?: string): Promise<ReviewRun> {
+  if (stopping) throw new Error('Wanigan is shutting down; no new review commands can start.');
   const project = projectById(projectId);
   if (!project) throw new Error('Project not found.');
   const root = cwd ?? project.path;
@@ -369,11 +439,33 @@ export async function runAt(projectId: string, cwd?: string, sessionId?: string)
   // before any asynchronous snapshot, and always close it even on read failure.
   let evidence: ReviewEvidence = { version: 1, sessionId: sessionId ?? null, recipeHash: recipeHash(commands), commands,
     before: { cwd: activeKey, head: null, fingerprint: null, unavailableReason: 'The initial checkout comparison did not finish.' }, after: null };
-  db().prepare('INSERT INTO review_runs (id, project_id, session_id, started_at, status, results_json, evidence_json) VALUES (?,?,?,?,?,?,?)')
-    .run(id, projectId, sessionId ?? null, startedAt, 'running', '[]', JSON.stringify(evidence));
+  const releaseActivity = acquireCheckoutActivity(activeKey, 'review', id);
+  try {
+    db().transaction(() => {
+      assertCheckoutIdle(activeKey);
+      db().prepare(`INSERT INTO review_checkout_owners(cwd,run_id,owner_id,owner_pid,lease_expires_at,state) VALUES (?,?,?,?,?,'active')`)
+        .run(activeKey, id, OWNER_ID, process.pid, startedAt + OWNER_LEASE_MS);
+      db().prepare('INSERT INTO review_runs (id, project_id, session_id, started_at, status, results_json, evidence_json) VALUES (?,?,?,?,?,?,?)')
+        .run(id, projectId, sessionId ?? null, startedAt, 'running', '[]', JSON.stringify(evidence));
+    }).immediate();
+  } catch (error) { releaseActivity(); throw error; }
   activeRoots.add(activeKey);
+  let finish!: () => void;
+  const active: ActiveRun = { controller: new AbortController(), done: new Promise(resolve => { finish = resolve; }), finish: () => finish(), unresolved: false, spawnAttempted: false };
+  activeRuns.set(id, active);
+  reviewRecoveryStarted(id);
+  const heartbeat = setInterval(() => {
+    try {
+      const changed = db().prepare("UPDATE review_checkout_owners SET lease_expires_at=? WHERE run_id=? AND owner_id=? AND state='active'")
+        .run(Date.now() + OWNER_LEASE_MS, id, OWNER_ID).changes;
+      if (!changed) { active.unresolved = true; active.controller.abort('Review command ownership became unresolved.'); }
+    } catch {
+      active.unresolved = true; active.controller.abort('Review command ownership could not be renewed.');
+    }
+  }, OWNER_HEARTBEAT_MS);
+  heartbeat.unref();
   const results: ReviewRun['results'] = [];
-  const record = db().prepare('UPDATE review_runs SET results_json=? WHERE id=?');
+  const record = db().prepare("UPDATE review_runs SET results_json=? WHERE id=? AND status='running'");
   try {
     const canonical = await fs.realpath(root);
     if (canonical !== activeKey) throw new Error('The checkout location changed while checks were starting. Refresh and run them again.');
@@ -382,26 +474,49 @@ export async function runAt(projectId: string, cwd?: string, sessionId?: string)
       before: await checkoutSnapshot(canonical), after: null };
     db().prepare('UPDATE review_runs SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence), id);
     for (const command of commands) {
-      const result = await runCommand(command, canonical); results.push(result);
+      // Preparation awaits Git/filesystem work. A peer may quarantine this
+      // owner during that wait; a heartbeat is too late to authorize a spawn.
+      const owner = db().prepare('SELECT state,owner_id FROM review_checkout_owners WHERE run_id=?').get(id) as CheckoutOwner | undefined;
+      if (!owner || owner.owner_id !== OWNER_ID || owner.state !== 'active') {
+        active.unresolved = true;
+        active.controller.abort('Review command ownership became unresolved before launch.');
+      }
+      if (active.controller.signal.aborted) throw new Error(String(active.controller.signal.reason));
+      const result = await runCommand(command, canonical, active); results.push(result);
       // Persist each completed command, even if the process later stops.
       record.run(JSON.stringify(results), id);
       if (result.exitCode !== 0) break;
     }
-    evidence.after = await checkoutSnapshot(canonical);
+    if (!active.controller.signal.aborted) evidence.after = await checkoutSnapshot(canonical);
   } catch (error) {
     results.push({ command: '[Wanigan review gate]', exitCode: null,
       output: error instanceof Error ? error.message : String(error), durationMs: 0 });
   } finally {
+    clearInterval(heartbeat);
     activeRoots.delete(activeKey);
   }
-  const status: ReviewRun['status'] = results.length === commands.length && results.every((r) => r.exitCode === 0) ? 'passed' : 'failed';
+  const status: ReviewRun['status'] = !active.controller.signal.aborted && !active.unresolved
+    && results.length === commands.length && results.every((r) => r.exitCode === 0) ? 'passed' : 'failed';
   const endedAt = Date.now();
-  db().prepare('UPDATE review_runs SET ended_at=?, status=?, results_json=?, evidence_json=? WHERE id=?')
-    .run(endedAt, status, JSON.stringify(results), JSON.stringify(evidence), id);
-  const run: ReviewRun = { id, projectId, startedAt, endedAt, status, results, evidence,
-    freshness: { state: 'unavailable', reason: 'Checkout comparison unavailable.', checkedAt: endedAt } };
-  if (evidence?.after) run.freshness = compareCheckoutEvidence(run, evidence.after, recipe(projectId).commands);
-  return run;
+  try {
+    db().transaction(() => {
+      // An unavailable fingerprint can be a bounded timeout while its Git
+      // subprocess is still finishing. No reviewed command starting does not
+      // prove that preparation finished; retain uncertainty in that case.
+      if (!active.spawnAttempted && (!evidence.before.fingerprint || evidence.before.unavailableReason !== null)) active.unresolved = true;
+      const owner = db().prepare('SELECT state,owner_id FROM review_checkout_owners WHERE run_id=?').get(id) as CheckoutOwner | undefined;
+      if (!owner || owner.owner_id !== OWNER_ID || owner.state !== 'active') active.unresolved = true;
+      db().prepare("UPDATE review_runs SET ended_at=?, status=?, results_json=?, evidence_json=? WHERE id=? AND status='running'")
+        .run(endedAt, active.unresolved ? 'failed' : status, JSON.stringify(results), JSON.stringify(evidence), id);
+      if (active.unresolved) db().prepare("UPDATE review_checkout_owners SET state='unresolved' WHERE run_id=? AND owner_id=?").run(id, OWNER_ID);
+      else db().prepare("DELETE FROM review_checkout_owners WHERE run_id=? AND owner_id=? AND state='active'").run(id, OWNER_ID);
+      if (active.unresolved && !active.spawnAttempted) recordReviewNeverSpawned(db(), id, OWNER_ID);
+    }).immediate();
+    if (!active.unresolved) releaseActivity();
+    const run = map(db().prepare('SELECT * FROM review_runs WHERE id=?').get(id) as RunRow);
+    if (evidence?.after) run.freshness = compareCheckoutEvidence(run, evidence.after, recipe(projectId).commands);
+    return run;
+  } finally { activeRuns.delete(id); reviewRecoveryFinished(id); active.finish(); }
 }
 
 export async function run(projectId: string, sessionId?: string): Promise<ReviewRun> {

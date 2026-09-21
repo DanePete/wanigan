@@ -8,6 +8,7 @@ import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
 import { launchFieldChoices } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import { applyUnreadCounts } from '@shared/unread';
+import { matchesConversation } from '@shared/resume-history';
 import SessionHandoff from '../components/SessionHandoff';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer, { hasDraft, useQueuedCount } from '../components/Composer';
@@ -22,7 +23,7 @@ import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import PastSessionEvidence from '../components/PastSessionEvidence';
 import Pet from '../components/Pet';
-import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, SectionHead, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, SectionHead, Segmented, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen, useChord } from '../bindings';
@@ -229,6 +230,8 @@ export default function Sessions({
    * heading that was then false about which read had failed.
    */
   const [pastErr, setPastErr] = useState<string | null>(null);
+  const [pastReadScope, setPastReadScope] = useState<string | null | undefined>(undefined);
+  const pastReady = pastReadScope === selectedProjectId;
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
   const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
@@ -236,15 +239,19 @@ export default function Sessions({
   // later. Starting expanded would flash two rails into a view that has no room
   // for them, which is the exact failure this measurement exists to prevent.
   const [compactLayout, setCompactLayout] = useState(true);
-  const [compactDetails, setCompactDetails] = useState(false);
+  // Full-width reading is temporary; it never changes the saved side-rail preference.
+  // The same reading survives a resize instead of hiding the focused control.
+  const [detailFocus, setDetailFocus] = useState(false);
   const detailReader = useRef<HTMLDivElement>(null);
-  useEffect(() => { setCompactDetails(false); }, [activeId, compactLayout]);
+  useEffect(() => { setDetailFocus(false); }, [activeId]);
   useEffect(() => {
-    if (compactLayout && compactDetails) detailReader.current?.querySelector<HTMLButtonElement>('button')?.focus();
-  }, [compactLayout, compactDetails]);
-  const returnToTerminal = () => { setCompactDetails(false); focusVisibleSessionTerminal(); };
+    if (detailFocus) detailReader.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [detailFocus]);
+  const returnToTerminal = () => { setDetailFocus(false); focusVisibleSessionTerminal(); };
   const [sessionPickerCompact, setSessionPickerCompact] = useState(true);
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const pickerSearch = useRef<HTMLInputElement>(null);
   const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
   // Collapsing is remembered per machine, like the code rail.
   const [composerOpen, setComposerOpen] = useState(readComposerShown);
@@ -257,11 +264,13 @@ export default function Sessions({
    */
   const showComposer = useCallback((show: boolean, focus: boolean) => {
     const inDock = !!document.activeElement?.closest('.session-dock-body');
+    if (focus) setDetailFocus(false);
     writeComposerShown(show);
     setComposerOpen(show);
     if (show && focus) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
+    else if (!show && focus && detailFocus) focusVisibleSessionTerminal();
     else if (!show && inDock) requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.session-dock-toggle')?.focus());
-  }, []);
+  }, [detailFocus]);
   useEffect(() => {
     const onMenu = (e: Event) => showComposer((e as CustomEvent<{ show: boolean }>).detail.show, true);
     window.addEventListener(COMPOSER_MENU_EVENT, onMenu);
@@ -347,6 +356,7 @@ export default function Sessions({
       const rows = await window.wanigan.sessions.past(selectedProjectId);
       if (request !== pastRead.current) return;
       setPast(rows);
+      setPastReadScope(selectedProjectId);
       setPastErr(null);
     } catch (e) {
       if (request === pastRead.current) setPastErr(msg(e));
@@ -405,6 +415,7 @@ export default function Sessions({
       sessionPickerRef.current?.querySelector<HTMLElement>('[data-session-picker-initial]')?.focus();
     });
     const onKeyDown = (event: KeyboardEvent) => {
+      if (modalOpen()) return;
       if (event.key !== 'Escape') return;
       event.preventDefault();
       setSessionPickerOpen(false);
@@ -524,14 +535,16 @@ export default function Sessions({
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
       if (e.key === 'b') {
         e.preventDefault();
-        if (compactLayout) {
-          if (compactDetails) returnToTerminal(); else setCompactDetails(true);
-        } else setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
+        if (detailFocus) returnToTerminal();
+        else if (compactLayout) setDetailFocus(true);
+        else {
+          if (showRail && detailReader.current?.contains(document.activeElement)) focusVisibleSessionTerminal();
+          setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
+        }
         return;
       }
       if (e.key === 'e') {
         e.preventDefault();
-        if (compactDetails) setCompactDetails(false);
         showComposer(!composerOpen, true);
         return;
       }
@@ -600,11 +613,23 @@ export default function Sessions({
     select(s.id);
   }
 
+  const searchingPicker = pickerQuery.trim().length > 0;
+  const matchingSessions = useMemo(() => scopedSessions.filter((session) => matchesConversation(
+    { ...session, title: session.displayTitle ?? session.title, model: session.model ?? null, effort: session.effort ?? null },
+    [session.providerProfile?.label ?? providers.find((provider) => provider.id === session.providerId)?.label ?? session.providerId,
+      session.accountLabel].filter(Boolean).join(' '), pickerQuery,
+  )), [scopedSessions, providers, pickerQuery]);
+  const matchingPast = useMemo(() => past.filter((conversation) => matchesConversation(conversation,
+    providers.find((provider) => provider.id === conversation.providerId)?.label ?? conversation.providerId, pickerQuery,
+  )), [past, providers, pickerQuery]);
+  const pickerResultSummary = listErr || pastErr ? 'Some conversations could not be read'
+    : !ready || !pastReady ? 'Reading conversations…'
+    : `${matchingSessions.length} open · ${matchingPast.length} recent matches`;
   const byProject = useMemo(() => {
     const m = new Map<string, Session[]>();
-    for (const s of sessions) m.set(s.projectId, [...(m.get(s.projectId) ?? []), s]);
+    for (const s of matchingSessions) m.set(s.projectId, [...(m.get(s.projectId) ?? []), s]);
     return m;
-  }, [sessions]);
+  }, [matchingSessions]);
 
   const active = scopedSessions.find((s) => s.id === activeId) ?? null;
 
@@ -631,8 +656,8 @@ export default function Sessions({
     [providers],
   );
   const pane = (active && railPane[active.id]) || 'code';
-  const railOpen = showRail && !compactLayout;
-  const detailsVisible = railOpen || (compactLayout && compactDetails);
+  const railOpen = showRail && !compactLayout && !detailFocus;
+  const detailsVisible = railOpen || detailFocus;
 
   const setPane = useCallback((sessionId: string, next: RailPane) => {
     const merged = { ...railPane, [sessionId]: next };
@@ -677,10 +702,6 @@ export default function Sessions({
 
   return (
     <div className="pane sessions-view">
-      {/* P3 · who is blocked, worst wait first. Above everything, because the
-          answer to "where do I go next" outranks the rail and the terminal. */}
-      <AttentionQueue onJump={select} />
-
       <div ref={sessionsBoxRef}
            className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`}
            style={{ flex: 1, minHeight: 0 }}>
@@ -696,7 +717,7 @@ export default function Sessions({
                   : `${scopedSessions.length} open session${scopedSessions.length === 1 ? '' : 's'}`}
               </span>
             </div>
-            <FocusBtn className="session-picker-close" data-session-picker-initial
+            <FocusBtn className="session-picker-close"
                       title="Close session switcher" aria-label="Close session switcher"
                       onClick={() => {
                         setSessionPickerOpen(false);
@@ -705,7 +726,31 @@ export default function Sessions({
               ×
             </FocusBtn>
           </div>
+          {/* Waiting agents belong beside the conversations they open. The
+              global attention control remains available with this picker shut. */}
+          <AttentionQueue onJump={select} />
+          <div className="session-picker-search">
+            <label className="label" htmlFor="session-picker-query">Find a conversation</label>
+            <div className="session-picker-search-field">
+              <input ref={pickerSearch} id="session-picker-query" className="field" type="search"
+                data-session-picker-initial value={pickerQuery} placeholder="Name, project or agent…"
+                aria-describedby="session-picker-search-scope" onChange={(event) => setPickerQuery(event.target.value)} />
+              {searchingPicker && <button type="button" className="btn btn-sm" aria-label="Clear conversation search"
+                onClick={() => { setPickerQuery(''); pickerSearch.current?.focus(); }}>Clear</button>}
+            </div>
+            <span id="session-picker-search-scope" className="faint" role="status">
+              {searchingPicker
+                ? pickerResultSummary
+                : selectedProjectId ? `Open and recent in ${projects[0]?.name ?? 'this project'}` : 'Open and recent across projects'}
+            </span>
+          </div>
           <div className="rail-scroll">
+            {searchingPicker && ready && pastReady && !listErr && !pastErr && matchingSessions.length === 0 && matchingPast.length === 0 && (
+              <div className="session-picker-no-match">
+                <strong>No matching conversations here</strong>
+                <p className="faint">Search saved history to look through older conversations and their messages.</p>
+              </div>
+            )}
             {projects.length === 0 && (
               <p className="faint" style={{ padding: '10px 6px', lineHeight: 1.5 }}>
                 No projects yet. Add a folder to run agents in it.
@@ -713,6 +758,7 @@ export default function Sessions({
             )}
             {projects.map((p) => {
               const list = byProject.get(p.id) ?? [];
+              if (searchingPicker && list.length === 0) return null;
               return (
                 <div key={p.id}>
                   <div className="group-title">
@@ -795,15 +841,15 @@ export default function Sessions({
                 running has changed.
               </Note>
             )}
-            {past.length > 0 && (() => {
+            {matchingPast.length > 0 && (() => {
               // Pins float (newest pin first), settled sinks into its shelf,
               // and a missing project folder sinks within its own section —
               // stable sorts keep newest-first inside each band.
-              const pinnedPast = [...past.filter((p) => p.pinnedAt != null)]
+              const pinnedPast = [...matchingPast.filter((p) => p.pinnedAt != null)]
                 .sort((a, b) => Number(b.live) - Number(a.live) || (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
-              const activePast = [...past.filter((p) => p.pinnedAt == null && p.settledAt == null)]
+              const activePast = [...matchingPast.filter((p) => p.pinnedAt == null && p.settledAt == null)]
                 .sort((a, b) => Number(b.live) - Number(a.live));
-              const settledPast = [...past.filter((p) => p.settledAt != null)]
+              const settledPast = [...matchingPast.filter((p) => p.settledAt != null && p.pinnedAt == null)]
                 .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0));
               const setPastFlag = (p: PastSession, flag: 'pin' | 'settle', on: boolean) => {
                 window.wanigan.sessions.setConversationFlag(p.id, flag, on)
@@ -911,10 +957,10 @@ export default function Sessions({
                     </FocusBtn>
                   </div>
                   {pinnedPast.map(renderPast)}
-                  {activePast.slice(0, activeShown).map(renderPast)}
+                  {activePast.slice(0, searchingPicker ? undefined : activeShown).map(renderPast)}
                   {/* The count is read off the array this render already holds,
                       so it is what is hidden, not an estimate of it. */}
-                  {activePast.length > activeShown && (
+                  {!searchingPicker && activePast.length > activeShown && (
                     <FocusBtn className="faint rail-more"
                               onClick={() => setActiveShown((n) => n + 8)}>
                       Show {Math.min(8, activePast.length - activeShown)} more — {activePast.length - activeShown} not shown
@@ -923,7 +969,7 @@ export default function Sessions({
                   {/* Only once nothing the renderer holds is still hidden. Past
                       this point the number withheld is main's, and main did not
                       send it — so this names the cap and refuses to count. */}
-                  {activeShown >= activePast.length && activePast.length >= PAST_ACTIVE_CAP && (
+                  {!searchingPicker && activeShown >= activePast.length && activePast.length >= PAST_ACTIVE_CAP && (
                     <p className="faint rail-cap-note">
                       All {activePast.length} unsettled conversations Wanigan sent are shown. Its Recent read
                       returns at most {PAST_ACTIVE_CAP} of them and does not report how many are older, so this
@@ -934,16 +980,17 @@ export default function Sessions({
                   )}
                   {settledPast.length > 0 && (
                     <>
-                      <FocusBtn className="group-title" aria-expanded={settledOpen}
+                      <FocusBtn className="group-title" aria-expanded={searchingPicker || settledOpen}
                                 style={{ width: '100%', marginTop: 8, cursor: 'pointer' }}
+                                disabled={searchingPicker}
                                 onClick={() => setSettledOpen((o) => !o)}>
                         <span className="label">Settled ({settledPast.length})</span>
                         <span className="faint" style={{ marginLeft: 'auto' }} aria-hidden="true">
-                          {settledOpen ? '▾' : '▸'}
+                          {searchingPicker || settledOpen ? '▾' : '▸'}
                         </span>
                       </FocusBtn>
-                      {settledOpen && settledPast.slice(0, settledShown).map(renderPast)}
-                      {settledOpen && settledPast.length > settledShown && (
+                      {(searchingPicker || settledOpen) && settledPast.slice(0, searchingPicker ? undefined : settledShown).map(renderPast)}
+                      {!searchingPicker && settledOpen && settledPast.length > settledShown && (
                         <FocusBtn className="faint rail-more"
                                   onClick={() => setSettledShown((n) => n + 8)}>
                           Show {Math.min(8, settledPast.length - settledShown)} more settled — {settledPast.length - settledShown} not shown
@@ -954,6 +1001,11 @@ export default function Sessions({
                 </div>
               );
             })()}
+
+            {searchingPicker && <button type="button" className="btn session-picker-history-search"
+              onClick={() => setHistory({ initial: { sessionId: null, query: pickerQuery.trim(), nonce: Date.now() } })}>
+              <Icon name="history" /> Search saved history
+            </button>}
 
             <FocusBtn className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                       onClick={onAddProject}>+ Add project</FocusBtn>
@@ -1005,21 +1057,17 @@ export default function Sessions({
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
-                {/* Resume sits against New session, as it does in the header:
-                    continuing a thread and starting one are the same decision. */}
-                <FocusBtn className="btn session-resume-button" aria-keyshortcuts={resumeChord.aria}
-                  aria-label={`Resume a saved conversation (${resumeChord.spoken})`}
-                  onClick={() => setHistory({ initial: null })}><Icon name="history" /> Resume</FocusBtn>
-                <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
-                  title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
+                {/* New and Resume live in the shared adminbar. The per-project
+                    + stays in the picker because it selects a specific root. */}
                 <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}
                   title={compactLayout ? 'Read session details at full width (⌘B)' : 'Toggle the side panel (⌘B)'}
                   disabled={!active}
                   onClick={() => {
-                    if (compactLayout) { if (compactDetails) returnToTerminal(); else setCompactDetails(true); }
+                    if (detailFocus) returnToTerminal();
+                    else if (compactLayout) setDetailFocus(true);
                     else setShowRail((value) => { localStorage.setItem('wanigan.code', value ? '0' : '1'); return !value; });
                   }}>
-                  <Icon name="panel" /> {compactLayout && compactDetails ? 'Terminal' : railOpen ? 'Hide details' : 'Details'}
+                  <Icon name="panel" /> {detailFocus ? 'Terminal' : railOpen ? 'Hide details' : 'Details'}
                 </FocusBtn>
               </>} />
           </div>
@@ -1121,7 +1169,7 @@ export default function Sessions({
               )}
             </div>
           ) : (
-            <div className={railOpen && active ? 'term-split' : 'term-full'} data-detail-focus={compactLayout && compactDetails || undefined}>
+            <div className={railOpen && active ? 'term-split' : 'term-full'} data-detail-focus={detailFocus || undefined}>
               <div className="term-col">
                 {/* P21 · the terminal is the drop target: the file is for the
                     agent you are looking at, so it lands where you are looking. */}
@@ -1165,18 +1213,18 @@ export default function Sessions({
 
               {(detailsVisible || (showRail && compactLayout)) && active && (
                 <div className="session-detail-reader" ref={detailReader} hidden={!detailsVisible}>
-                  {compactLayout && <div className="session-detail-return"><button className="btn" type="button" onClick={returnToTerminal}><Icon name="terminal" /> Back to terminal</button><span>{active.projectName}</span></div>}
-                  {/* P8 · one rail, two readings of the same session: what the
-                      repo looks like now, and what the agent actually did. */}
-                  <div className="code-head" style={{ borderLeft: '1px solid var(--line)' }} role="group"
-                       aria-label="Side panel">
-                    <Seg on={pane === 'code'} onClick={() => setPane(active.id, 'code')}
-                         title="Files this session changed">Code</Seg>
-                    <Seg on={pane === 'timeline'} onClick={() => setPane(active.id, 'timeline')}
-                         title="Every tool call the agent made, and how long it took">Timeline</Seg>
-                    <Seg on={pane === 'learning'} onClick={() => setPane(active.id, 'learning')}
-                         title="What this session was told at launch, and what it recorded — stored facts only">Learning</Seg>
-                    <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)' }}>⌘B</span>
+                  {detailFocus && <div className="session-detail-return"><button className="btn" type="button" onClick={returnToTerminal}><Icon name="terminal" /> Back to terminal</button><span>{active.projectName}</span></div>}
+                  <div className="session-detail-tools">
+                    <Segmented label="Session details" value={pane} onChange={(next) => setPane(active.id, next)}
+                      options={[
+                        { value: 'code', label: 'Changes', title: 'Files this session changed' },
+                        { value: 'timeline', label: 'Activity', title: 'Recorded tool calls and turn timings' },
+                        { value: 'learning', label: 'Context', title: 'What this session was told at launch and what it recorded' },
+                      ]} />
+                    {!compactLayout && !detailFocus && <button type="button" className="btn btn-sm"
+                      onClick={() => setDetailFocus(true)} title="Read details at full width while keeping your terminal and draft">
+                      Expand details
+                    </button>}
                   </div>
                   <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'grid',
                                 borderLeft: pane === 'timeline' ? '1px solid var(--line)' : undefined }}>
@@ -1411,17 +1459,6 @@ function SessionTeachModal({ session, onClose, onError }: {
 }
 
 /* ── the rail's segmented control ─────────────────────────────────────── */
-
-function Seg({ on, onClick, title, children }: {
-  on: boolean; onClick: () => void; title: string; children: React.ReactNode;
-}) {
-  return (
-    <FocusBtn className={`code-tab${on ? ' on' : ''}`} aria-pressed={on} title={title}
-              onClick={onClick} style={{ fontVariantNumeric: 'tabular-nums' }}>
-      {children}
-    </FocusBtn>
-  );
-}
 
 const PANE_KEY = 'wanigan.rail.pane';
 
@@ -2433,6 +2470,7 @@ function SessionDock({ session, att, open, onToggle, children }: {
 
       {/* Always mounted, so the toggle's aria-controls resolves while shut. */}
       <div id="session-dock-body" className="session-dock-body" hidden={!open}>
+        {open && children}
         {open && att.phase === 'ready' && (att.items.length === 0 ? (
           // Three lines of teaching, permanently, under the terminal on the view
           // an operator spends the day in — and it is a lesson learned once. The
@@ -2454,7 +2492,6 @@ function SessionDock({ session, att, open, onToggle, children }: {
             ))}
           </div>
         ))}
-        {open && children}
       </div>
     </section>
   );

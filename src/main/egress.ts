@@ -7,9 +7,12 @@ import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
 import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
+import { enabledStoreSources } from './extensions/store';
+import { SUGGEST_HOST, SUGGEST_PATH, enabled as suggesterEnabled } from './modules/suggest';
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 import { catalogUrl } from '../shared/backend-catalog';
+import { modules } from './module-registry';
 
 /**
  * What leaves this machine, assembled where it is actually knowable.
@@ -284,6 +287,11 @@ function hosts(): EgressHost[] {
   // which is the one failure mode worse than an incomplete list.
   let pushHosts: string[] = [];
   try { pushHosts = pushEndpointHosts(); } catch { pushHosts = []; }
+  // Reading this decrypts a credential file and touches settings, either of
+  // which can fail on its own. A privacy panel that threw would show no hosts
+  // at all, which is the one failure worse than an incomplete list.
+  let suggesterOn = false;
+  try { suggesterOn = suggesterEnabled().length > 0; } catch { suggesterOn = false; }
   const scout = improvementScoutSettings();
   const scoutHosts: EgressHost[] = listSources().map((source) => {
     let host = source.url;
@@ -316,6 +324,46 @@ function hosts(): EgressHost[] {
       overrideEnv: null,
     };
   });
+
+  // The store's catalogs, read from the same list the store itself reads
+  // (extensions/mcp-store.ts). A third party's extension can declare a catalog,
+  // so this is derived rather than typed in: a catalog the store contacts and
+  // this table does not print would be the overclaim the table exists to stop.
+  const storeHosts: EgressHost[] = enabledStoreSources().map(({ source }) => {
+    let host = source.url;
+    let pathname = '/';
+    try {
+      const parsed = new URL(source.url);
+      host = parsed.hostname;
+      pathname = parsed.pathname || '/';
+    } catch {
+      // Declared by an installed extension, whose installer refused anything but
+      // https; an unparseable url is a row edited after install, printed as is.
+    }
+    return {
+      host,
+      paths: [pathname, `${pathname.replace(/\/+$/, '')}/<name>/versions/<version>`],
+      by: 'wanigan' as const,
+      purpose: `Browsing the extension catalog “${source.label}” from ${source.publisher}, and fetching the exact entry you open to review.`,
+      when: 'Only when you open the store in Extensions: the first time it reads the whole catalog (one request per hundred servers — a few hundred for the official registry), and after that only what changed since the last read. Reviewing an entry fetches that one version. Searching, sorting and filtering happen on this machine, so nothing you type is sent. GET-only, credential-free, HTTPS-only, bounded, and redirects are refused; what leaves is the names of entries you open — never project files, prompts, paths or terminal content.',
+      // Every request is a click: there is no schedule, so nothing is durably on.
+      activeNow: false,
+      overrideEnv: null,
+    };
+  });
+
+  // npm's download counts, the store's one popularity signal. Listed whenever a
+  // store catalog is on, because that is when the store can offer to read them;
+  // it reads nothing until the operator chooses "Most downloaded" and approves.
+  const storeDownloadHosts: EgressHost[] = storeHosts.length ? [{
+    host: 'api.npmjs.org',
+    paths: ['/downloads/point/last-week/<package names>'],
+    by: 'wanigan',
+    purpose: 'Reading npm\u2019s weekly download counts for the store\u2019s \u201cMost downloaded\u201d sort.',
+    when: 'Only after you choose Most downloaded in the store and approve the read, which states its cost first; then at most once a week. One request per 128 unscoped packages and one per scoped package — a few thousand for the official registry — paced to about forty-five a minute, the rate npm allows one machine. GET-only, credential-free, HTTPS-only, bounded, redirects refused. What leaves is npm package names, which are already public in the catalog.',
+    activeNow: false,
+    overrideEnv: null,
+  }] : [];
 
   const enumerated: EgressHost[] = [
     {
@@ -391,6 +439,17 @@ function hosts(): EgressHost[] {
       activeNow: xai, overrideEnv: 'WANIGAN_XAI_BASE_URL',
     },
     {
+      host: SUGGEST_HOST,
+      paths: [SUGGEST_PATH],
+      by: 'wanigan',
+      purpose: 'Asking a System One model which of the models your profile declares best fits a relay stage, and whether work this well-specified still needs a planning stage before it is written.',
+      when: 'Only while a TypeSafe credential is stored and one of its capabilities is switched on, and only when a stage is routed or a docket created. What leaves this machine is the stage name, the words you typed describing the work, and the labels of the models your own profile declares. Project files, diffs, paths, prompts, transcripts and agent output do not, and there is no setting that would add them.',
+      activeNow: suggesterOn,
+      // The endpoint is the only route this service has, and it is a literal
+      // in the module. No base-url override applies.
+      overrideEnv: null,
+    },
+    {
       host: hostOf(phone.pushServer, 'ntfy.sh'),
       paths: ['/'],
       by: 'wanigan',
@@ -455,11 +514,13 @@ function hosts(): EgressHost[] {
       overrideEnv: null,
     },
     ...scoutHosts,
+    ...storeHosts,
+    ...storeDownloadHosts,
   ];
 
   // Appended last: an installed pack can add destinations to this table, and
   // the rows above stay the ones with the stronger claim behind them.
-  return [...enumerated, ...packBackendHosts()];
+  return [...enumerated, ...modules().flatMap((module) => module.egress?.() ?? []), ...packBackendHosts()];
 }
 
 /* ── pinned variables ────────────────────────────────────────────────── */
@@ -579,8 +640,8 @@ const UNENUMERATED = [
 ];
 
 const PROVENANCE =
-  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the official-source registry the Scout's installed extensions declare — " +
-  'with one derived exception: model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
+  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process, the official-source registry the Scout's installed extensions declare, and the store catalogs installed extensions declare — " +
+  'with module-owned destinations contributed by the registered modules themselves. Model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
   'The rows marked “agent” are where each CLI sends your prompts, which Wanigan supplies for GLM, DeepSeek and Grok and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
   'An “agent” row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';

@@ -165,7 +165,7 @@ export function basinOf(rig: RigLayout, y: number): number | null {
 
 /**
  * The initial fluid lattice: a block of particles spaced `d` apart, filling
- * basin 0 from its drain up to `fill` above the funnel's deepest point, kept
+ * the selected basin from its drain up to `fill` above the funnel's deepest point, kept
  * clear of the sloped floor by one particle radius.
  *
  * Returned as one flat, interleaved `[x0,y0,z0, x1,y1,z1, ...]` array rather
@@ -174,14 +174,20 @@ export function basinOf(rig: RigLayout, y: number): number | null {
  * hand to a `Float32Array` view wins over the shape the solver computes with
  * internally.
  */
-export function seedWater(rig: RigLayout, d: number, fill: number): Float32Array {
+export function seedWater(rig: RigLayout, d: number, fill: number, initialBasin = 0): Float32Array {
+  if (!Number.isInteger(initialBasin) || initialBasin < 0 || initialBasin >= rig.basinCount) {
+    throw new RangeError(`The initial basin must belong to this rig, got ${String(initialBasin)}`);
+  }
   const r = d / 2;
   const drain0 = rig.basins[0].drain;
+  // Translate the same lattice instead of replaying completed stages when a
+  // view opens. Keeping its sampling origin preserves the particle count.
+  const shift = rig.basins[initialBasin].drain - drain0;
   const points: number[] = [];
   for (let x = r + d / 2; x < rig.width - r; x += d) {
     for (let z = r; z < rig.depth - r + EPS; z += d) {
       for (let y = drain0 + r; y < drain0 + rig.funnelDrop + fill; y += d) {
-        if (y >= floorY(rig, 0, x) + r) points.push(x, y, z);
+        if (y >= floorY(rig, 0, x) + r) points.push(x, y + shift, z);
       }
     }
   }

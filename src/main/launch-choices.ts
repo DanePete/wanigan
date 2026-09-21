@@ -2,9 +2,9 @@ import type { LaunchModelCatalogue, LaunchModelRow, ProviderInfo } from '../shar
 import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fields';
 import { db } from './db';
 import * as codexStatus from './codex-status';
-import { backendModels } from './backend-catalog';
+import { backendModels, credentialRevisionOf } from './backend-catalog';
 import { getProviderKey } from './keys';
-import { providerPackRegistry } from './providers';
+import { effectiveProviderBackendId, providerPackRegistry } from './providers';
 
 /**
  * One question, asked in the main process, for every backend: what models can
@@ -77,7 +77,7 @@ function observedBackendModels(backendId: string, published: LaunchModelRow[]): 
       const value = r.model.trim();
       if (already.has(value.toLowerCase())) continue;
       already.add(value.toLowerCase());
-      out.push({ value, label: value, description: 'seen on this backend', efforts: null });
+      out.push({ value, label: value, description: 'seen on this backend', efforts: null, observed: true });
       if (out.length >= MAX_OBSERVED_MODELS) break;
     }
     return out;
@@ -162,7 +162,7 @@ export function declaredBackendCatalogue(backendId: string): (() => Promise<Laun
   try {
     for (const profile of providerPackRegistry.listProfiles({ includeDisabled: false })) {
       const catalog = catalogOf(profile);
-      if (!catalog || profile.backend.id !== backendId) continue;
+      if (!catalog || effectiveProviderBackendId(profile) !== backendId) continue;
       declared = { label: profile.backend.label, catalog };
       break;
     }
@@ -182,6 +182,8 @@ export function declaredBackendCatalogue(backendId: string): (() => Promise<Laun
       // its published list with a note saying so, which is the reader's own
       // rule rather than a branch here.
       credential: () => (catalog.auth?.source === 'credential' ? getProviderKey(catalog.auth.id) : null),
+      // An in-memory read, so a cache hit still opens no keychain.
+      credentialRevision: () => credentialRevisionOf(catalog.auth?.source === 'credential' ? getProviderKey(catalog.auth.id) : null),
     });
     return {
       rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),

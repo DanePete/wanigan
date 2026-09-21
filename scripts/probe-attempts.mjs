@@ -199,12 +199,12 @@ try {
     await shoot('runs');
     record('before: Runs lists headless fan-outs only; there is no way to run one task several times from one commit or compare the results');
   } else {
-    assert.equal(await areaSwitch.getByRole('button', { name: 'Headless runs', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await areaSwitch.getByRole('button', { name: 'Repository runs', exact: true }).getAttribute('aria-pressed'), 'true');
     await shoot('runs');
     record('Runs opens on headless runs as before, with a switch to Attempts beside New run');
 
     /* ── best of N ─────────────────────────────────────────────────── */
-    await areaSwitch.getByRole('button', { name: 'Attempts', exact: true }).click();
+    await areaSwitch.getByRole('button', { name: 'Compare attempts', exact: true }).click();
     const history = page.locator('.at-history');
     await history.locator(`[data-set-id="${fixtures.bestId}"]`).waitFor();
     assert.equal(await history.locator('.at-set').count(), 2);
@@ -309,7 +309,7 @@ try {
     /* ── reads that fail ───────────────────────────────────────────── */
     await page.addInitScript(() => { window.__failSets = true; });
     await openRuns();
-    await page.getByRole('group', { name: 'Runs area' }).getByRole('button', { name: 'Attempts', exact: true }).click();
+    await page.getByRole('group', { name: 'Runs area' }).getByRole('button', { name: 'Compare attempts', exact: true }).click();
     await page.locator('.at-history .empty.could-not-read').waitFor();
     assert.match(await page.locator('.at-history').innerText(), /Could not read attempt sets\s+database is locked/);
     assert.doesNotMatch(await page.locator('.at-history').innerText(), /No attempt sets yet/);

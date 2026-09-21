@@ -150,10 +150,10 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       resource: { attributes: [{ key: 'wanigan.session.id', value: { stringValue: SID } }] },
       scopeMetrics: [{
         metrics: [
-          { name: 'claude_code.cost.usage', sum: { dataPoints: [
+          { name: 'claude_code.cost.usage', sum: { aggregationTemporality: 1, dataPoints: [
             { asDouble: 0.25, timeUnixNano: nowNs, attributes: [{ key: 'model', value: { stringValue: 'claude-opus-5' } }] },
           ] } },
-          { name: 'claude_code.token.usage', sum: { dataPoints: [
+          { name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [
             { asInt: '1200', timeUnixNano: nowNs, attributes: [{ key: 'type', value: { stringValue: 'input' } }] },
             { asInt: '340', timeUnixNano: nowNs, attributes: [{ key: 'type', value: { stringValue: 'output' } }] },
           ] } },
@@ -185,6 +185,9 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
 
   // Deltas must add, not replace — a counter that overwrites under-reports
   // every session that exports more than once.
+  for (const metric of metricPayload.resourceMetrics[0].scopeMetrics[0].metrics) {
+    for (const point of metric.sum.dataPoints) point.timeUnixNano = String(BigInt(nowNs) + 1_000_000_000n);
+  }
   await post(JSON.stringify(metricPayload));
   check(Math.abs(otel.usageFor(SID).costUsd - (usage.costUsd + 0.25)) < 1e-6,
     'a second export accumulates rather than replaces', otel.usageFor(SID).costUsd);
@@ -557,7 +560,7 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
 
   // The app window and scheduled service have separate in-memory maps but one
   // SQLite queue.  A fresh process must leave a live foreign worker alone,
-  // while an expired worker must become safely dispatchable again.
+  // while an expired worker remains quarantined until its writer is reconciled.
   const leaseDb = db();
   const leaseNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const liveLeaseId = `q_smoke_live_lease_${leaseNonce}`;
@@ -581,8 +584,7 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       null, leaseNow, leaseNow, null, null, 'foreign-crashed-worker', leaseNow - 1,
     );
 
-    // Keep the recovered row waiting long enough to inspect its durable state;
-    // a registered runner in a future smoke setup must not consume it first.
+    // Inspect lease recovery independently of dispatch capacity.
     setSetting('slots', JSON.stringify({ session: 0, headless: 0, batch: 0 }));
     await queue.tick();
 
@@ -603,9 +605,9 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       'a non-expired foreign queue lease is never reclaimed', JSON.stringify(live),
     );
     check(
-      expired?.state === 'waiting' && expired.started_at === null &&
-        expired.lease_owner === null && expired.lease_expires_at === null,
-      'an expired foreign queue lease is requeued with its stale ownership cleared', JSON.stringify(expired),
+      expired?.state === 'failed' && expired.started_at !== null &&
+        expired.lease_owner === 'foreign-crashed-worker' && expired.lease_expires_at !== null,
+      'an expired foreign queue lease is quarantined with its original ownership retained', JSON.stringify(expired),
     );
   } finally {
     leaseDb.prepare('DELETE FROM queue WHERE id IN (?, ?)').run(liveLeaseId, expiredLeaseId);

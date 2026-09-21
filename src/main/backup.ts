@@ -1,12 +1,19 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { app } from 'electron';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import { transcriptsDir } from './transcripts';
 import { snapshotBackupFiles, verifyBackupFiles, copyVerifiedBackupFiles } from './backup-files';
+import { beginStorageRestore, storageStatus } from './storage-maintenance';
+import { assertRestoreSafe, restoreCarry, type RestoreCarry } from './recovery';
+import { installRestoreCarry } from './modules/usage-paid-operations';
+import { assertStorageRuntimeRestoreReady } from './modules/storage-runtime';
+
+/** Restarting for restore must not become consent to stop an unrelated owner. */
+export function assertBackupRestartSafe(): void { assertRestoreSafe(db()); }
 
 /**
  * Backup and restore for the source of truth.
@@ -117,6 +124,12 @@ export type RestoreReport = {
   /** Where the replaced database and transcripts were moved. Never deleted. */
   replacedDir: string;
   discardedNewer: boolean;
+  /**
+   * Paid requests the replaced database had recorded and nothing had accounted
+   * for. They were written into the restored database rather than left behind,
+   * and remain unresolved there.
+   */
+  carriedPaidReceipts: number;
   /**
    * Always true. The database connection this process held was closed to swap
    * the file underneath it; every later db() call in this process will throw
@@ -522,6 +535,83 @@ export function inspectBackup(dir: string): BackupInspection {
   };
 }
 
+/** A native confirmation reviews this exact source and live storage revision once. */
+export type BackupRestorePreview = { inspection: BackupInspection; token: string };
+type RestoreReceipt = {
+  sourceIdentity: string;
+  manifestDigest: string;
+  generation: string;
+  revision: ReturnType<typeof storageStatus>['revision'];
+  expiresAt: number;
+};
+const restoreReceipts = new Map<string, RestoreReceipt>();
+const RESTORE_PREVIEW_TTL_MS = 5 * 60_000;
+
+function backupSourceIdentity(dir: string): string {
+  const requested = path.resolve(String(dir).trim());
+  const canonical = fs.realpathSync(requested);
+  const stat = fs.statSync(canonical);
+  if (!stat.isDirectory()) throw new Error('The selected backup is no longer a directory. Preview it again.');
+  return JSON.stringify([requested, canonical, stat.dev, stat.ino]);
+}
+
+function restoreManifestDigest(dir: string): string {
+  const file = path.join(path.resolve(String(dir).trim()), MANIFEST_NAME);
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) {
+    throw new Error('The selected backup manifest is not a bounded regular file.');
+  }
+  return digestFile(file).sha256;
+}
+
+/** Verify first; a folder name or overwrite boolean is never a restore receipt. */
+export function previewBackupRestore(dir: string): BackupRestorePreview {
+  // Open through the Storage module before reading its generation/revision.
+  db();
+  const before = storageStatus();
+  const sourceIdentity = backupSourceIdentity(dir);
+  const manifestDigest = restoreManifestDigest(dir);
+  const inspection = inspectBackup(dir);
+  if (inspection.problems.length) {
+    throw new Error(`This backup did not verify, so nothing was changed:\n- ${inspection.problems.map(p => p.detail).join('\n- ')}`);
+  }
+  const after = storageStatus();
+  if (before.generation !== after.generation || before.revision !== after.revision
+    || sourceIdentity !== backupSourceIdentity(dir)
+    || manifestDigest !== restoreManifestDigest(inspection.dir)) {
+    throw new Error('The backup or current database changed during inspection. Preview the restore again.');
+  }
+  const now = Date.now();
+  for (const [token, receipt] of restoreReceipts) if (receipt.expiresAt <= now) restoreReceipts.delete(token);
+  // Native dialogs cannot reasonably have hundreds of outstanding confirmations.
+  if (restoreReceipts.size >= 100) restoreReceipts.clear();
+  const token = randomUUID();
+  restoreReceipts.set(token, { sourceIdentity, manifestDigest, generation: after.generation,
+    revision: after.revision, expiresAt: now + RESTORE_PREVIEW_TTL_MS });
+  return { inspection, token };
+}
+
+function consumeRestoreReceipt(dir: string, token: unknown): RestoreReceipt {
+  const receipt = typeof token === 'string' ? restoreReceipts.get(token) : undefined;
+  if (typeof token === 'string') restoreReceipts.delete(token);
+  if (!receipt || receipt.expiresAt <= Date.now()) {
+    throw new Error('Preview the restore again: its confirmation is missing, expired or already used.');
+  }
+  validateRestoreSource(dir, receipt);
+  const current = storageStatus();
+  if (current.generation !== receipt.generation || current.revision !== receipt.revision) {
+    throw new Error('The current database changed after the restore preview. Review a fresh preview before replacing it.');
+  }
+  return receipt;
+}
+
+function validateRestoreSource(dir: string, receipt: RestoreReceipt): void {
+  if (backupSourceIdentity(dir) !== receipt.sourceIdentity
+    || restoreManifestDigest(dir) !== receipt.manifestDigest) {
+    throw new Error('The selected backup changed after the restore preview. Nothing was replaced; preview it again.');
+  }
+}
+
 /* ── putting a backup back ───────────────────────────────────────────── */
 
 function stamp(): string {
@@ -545,7 +635,7 @@ function undo(moves: { from: string; to: string }[]): string[] {
 /**
  * Replace the live database and transcripts with a verified backup.
  *
- * Three deliberate refusals. It will not run without `confirm`, because this
+ * It will not run without `confirm` and a one-use preview receipt, because this
  * discards data and nothing here should be reachable by a stray call. It will
  * not run on a backup with any problem, because a restore that half-verifies is
  * a second way to lose everything. And it will not silently overwrite a
@@ -563,12 +653,13 @@ function undo(moves: { from: string; to: string }[]): string[] {
  */
 export function restoreBackup(
   dir: string,
-  opts: { confirm: boolean; overwriteNewer?: boolean }
+  opts: { confirm: boolean; overwriteNewer?: boolean; previewToken?: string }
 ): RestoreReport {
   if (!opts?.confirm) {
     throw new Error('Restoring replaces the database in place. Confirm it explicitly before calling this.');
   }
 
+  const receipt = consumeRestoreReceipt(dir, opts.previewToken);
   const inspection = inspectBackup(dir);
   if (inspection.problems.length) {
     throw new Error(
@@ -607,6 +698,10 @@ export function restoreBackup(
   const replaced = path.join(root, `replaced-${stamp()}`);
   const moves: { from: string; to: string }[] = [];
   const installed: string[] = [];
+  let maintenance: ReturnType<typeof beginStorageRestore> | null = null;
+  let closeAttempted = false;
+  let carry: RestoreCarry = { receipts: [], settlements: [] };
+  let carriedPaidReceipts = 0;
 
   try {
     const stagedDb = path.join(staging, DB_NAME);
@@ -626,12 +721,35 @@ export function restoreBackup(
       copyVerifiedBackupFiles(path.join(source, ATTACHMENTS_NAME), stagedAttachments, manifest.attachments.entries);
     }
 
+    // Freeze participation after verified staging. Final admission reads the
+    // current record under the same fence that blocks later opens and writes.
+    maintenance = beginStorageRestore({
+      expectedGeneration: receipt.generation,
+      expectedRevision: receipt.revision,
+      source,
+      manifestDigest: receipt.manifestDigest,
+      stagingDir: staging,
+      replacedDir: replaced,
+      validateCurrent: () => {
+        assertStorageRuntimeRestoreReady();
+        validateRestoreSource(dir, receipt);
+        assertRestoreSafe(db());
+        // Read here, under the fence and from the database about to be
+        // replaced, so nothing can be recorded between this read and the swap.
+        carry = restoreCarry(db(), receipt.generation);
+      },
+    });
+
     // Stored archive paths belong to the destination machine. Rewrite only
     // structured references backed by a manifested file; raw conversation
     // text and external provider/project paths remain original evidence.
     const restoredDb = new Database(stagedDb);
     try {
       restoredDb.transaction(() => {
+        maintenance!.prepareRestoredDatabase(restoredDb);
+        // A restore must not erase financial uncertainty. For a paid request
+        // nothing has accounted for, that means taking its receipt along.
+        carriedPaidReceipts = installRestoreCarry(restoredDb, carry);
         if (hasColumn(restoredDb, 'transcripts', 'stored_path')) {
           const names = new Set(manifest.transcripts.entries.map(entry => entry.name));
           const rows = restoredDb.prepare('SELECT session_id, stored_path FROM transcripts').all() as { session_id: string; stored_path: string }[];
@@ -653,20 +771,11 @@ export function restoreBackup(
     } finally { restoredDb.close(); }
     stagedDigest = digestFile(stagedDb);
 
-    // Past this point the live files move. Close the connection first: renaming
-    // a WAL database out from under an open handle leaves SQLite writing to an
-    // inode nobody will read again, and can damage the file that replaces it.
-    try {
-      const live = db();
-      if (live.open) {
-        live.pragma('wal_checkpoint(TRUNCATE)');
-        live.close();
-      }
-    } catch (error) {
-      throw new Error(
-        `Wanigan could not close its database before restoring, so nothing was replaced (${error instanceof Error ? error.message : String(error)}).`
-      );
-    }
+    // The coordinator closes the local old-generation handle and refuses a
+    // swap unless every registered peer has explicitly closed its own handle.
+    closeAttempted = true;
+    maintenance.closeCurrent();
+    maintenance.beforeSwap();
 
     ensurePrivateDir(replaced);
     // -wal and -shm carry committed pages that are not in the main file yet.
@@ -699,6 +808,7 @@ export function restoreBackup(
       installed.push(liveAttachments);
     }
     fs.rmSync(staging, { recursive: true, force: true });
+    maintenance.publish();
 
     return {
       restoredFrom: source,
@@ -708,6 +818,7 @@ export function restoreBackup(
       attachments: inspection.attachments,
       replacedDir: replaced,
       discardedNewer: inspection.wouldDiscardNewer,
+      carriedPaidReceipts,
       relaunchRequired: true,
     };
   } catch (error) {
@@ -719,7 +830,17 @@ export function restoreBackup(
     const stuck = [...installFailures, ...undo(moves)];
     try { fs.rmSync(staging, { recursive: true, force: true }); }
     catch { /* the staged copy is inert; the message below matters more */ }
-    const detail = error instanceof Error ? error.message : String(error);
+    let detail = error instanceof Error ? error.message : String(error);
+    if (maintenance) {
+      // A closed handle or attempted swap is a restart/recovery state even if
+      // all filesystem moves were undone. Never unlock an ambiguous journal.
+      try {
+        if (closeAttempted || stuck.length) maintenance.fail(detail);
+        else maintenance.cancel();
+      } catch (journalError) {
+        detail += `\nThe storage journal could not record recovery: ${String(journalError)}. Retained files: ${replaced}.`;
+      }
+    }
     if (stuck.length) {
       // The one case that cannot be papered over: say exactly where the
       // originals are rather than letting a half-swap look like a clean failure.

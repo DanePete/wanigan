@@ -4,12 +4,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { app } from 'electron';
 import { db } from '../db';
 import { removeServer, setServerEnabled, upsertServer } from '../mcp/registry';
+import { clearProviderKey, hasProviderKey, setProviderKey } from '../keys';
 import {
   EXTENSION_MANIFEST_FILE, declaredArtifacts, extensionConsent, extensionOwner,
   mcpFingerprint, ownerExtensionId, scoutFingerprint, validateExtensionManifest,
 } from '../../shared/extension-manifest';
 import type {
-  ExtensionManifest, ExtensionMcpServer, ExtensionScoutSource, ExtensionScoutSourceKind,
+  ExtensionManifest, ExtensionMcpServer, ExtensionScoutSource, ExtensionScoutSourceKind, ExtensionStoreSource,
 } from '../../shared/extension-manifest';
 import type {
   ExtensionArtifactInfo, ExtensionInfo, ExtensionInspection, ExtensionOrigin,
@@ -101,7 +102,7 @@ type PluginRow = {
 type ServerRow = {
   id: string; project_id: string | null; name: string; transport: string;
   command: string | null; args: string | null; url: string | null;
-  enabled: number; env: string | null; owner: string | null;
+  enabled: number; env: string | null; headers: string | null; owner: string | null;
 };
 
 type ArtifactRow = {
@@ -225,6 +226,24 @@ function parseServerEnv(raw: string | null): { env: ExtensionMcpServer['env']; c
   return { env: Object.keys(env).length ? env : undefined, complete };
 }
 
+/** The headers column, read back into the manifest's shape so a fingerprint can compare them. */
+function parseServerHeaders(raw: string | null): ExtensionMcpServer['headers'] {
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const headers: NonNullable<ExtensionMcpServer['headers']> = {};
+  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const entry = value as { source?: unknown; id?: unknown; value?: unknown; prefix?: unknown } | null;
+    if (entry && entry.source === 'credential' && typeof entry.id === 'string') {
+      headers[name] = { source: 'credential', id: entry.id, ...(typeof entry.prefix === 'string' && entry.prefix ? { prefix: entry.prefix } : {}) };
+    } else if (entry && entry.source === 'literal' && typeof entry.value === 'string') {
+      headers[name] = { source: 'literal', value: entry.value };
+    }
+  }
+  return Object.keys(headers).length ? headers : undefined;
+}
+
 /**
  * The declared shape of a server as it stands in the database right now.
  *
@@ -235,6 +254,7 @@ function parseServerEnv(raw: string | null): { env: ExtensionMcpServer['env']; c
  */
 function shapeOf(row: ServerRow): ExtensionMcpServer {
   const { env } = parseServerEnv(row.env);
+  const headers = parseServerHeaders(row.headers);
   return {
     name: row.name,
     transport: row.transport === 'http' ? 'http' : 'stdio',
@@ -243,6 +263,7 @@ function shapeOf(row: ServerRow): ExtensionMcpServer {
     ...(row.url ? { url: row.url } : {}),
     scope: row.project_id ? 'project' : 'global',
     ...(env ? { env } : {}),
+    ...(headers ? { headers } : {}),
   };
 }
 
@@ -515,10 +536,7 @@ function artifactState(manifest: ExtensionManifest, builtin = false): ExtensionA
         projectId: mine.project_id,
         detail: describeServer(mine),
         applied: true,
-        note: mine.enabled === 1
-          ? null
-          : 'Registered and switched off. An enabled stdio server is a command the agent’s CLI runs at every ' +
-            'launch, so trust its exact command in Settings → Connections → MCP servers, then enable it.',
+        note: mine.enabled === 1 ? null : switchedOffNote(mine.transport),
       };
     }
 
@@ -535,14 +553,36 @@ function artifactState(manifest: ExtensionManifest, builtin = false): ExtensionA
       };
     }
 
+    // Not installed yet and nothing in the way: installing will register it, so
+    // the review panel says "will be applied". Reported as false, the panel
+    // printed "declared, will not be applied" above a note saying it would be.
     return {
       ...info,
-      applied: false,
+      applied: !installed,
       note: installed
         ? `No MCP server called "${info.ref}" is registered any more. It was removed after this extension was installed.`
-        : 'Installing this extension registers it, switched off, for you to trust and enable.',
+        : server.transport === 'http'
+          ? 'Installing this extension registers it, switched off, for you to enable.'
+          : 'Installing this extension registers it, switched off, for you to trust and enable.',
     };
   });
+}
+
+/*
+ * What to do about a server the installer registered switched off. It never
+ * switches one on, whatever the transport; what differs is the step between.
+ * A stdio server has a command, and the registry refuses to enable one whose
+ * exact command line was not approved. An http server has no command to approve
+ * — telling someone to trust one sends them looking for a step that does not
+ * exist — but switching it on is still a standing grant: every session that
+ * uses it sends its tool calls to that host.
+ */
+function switchedOffNote(transport: string): string {
+  return transport === 'http'
+    ? 'Registered and switched off. An enabled http server receives the tool calls of every session that ' +
+      'uses it, so switch it on in Settings → Connections → MCP servers when you want sessions to reach it.'
+    : 'Registered and switched off. An enabled stdio server is a command the agent’s CLI runs at every ' +
+      'launch, so trust its exact command in Settings → Connections → MCP servers, then enable it.';
 }
 
 /**
@@ -596,9 +636,10 @@ function sourceState(
         'reads each page once, so this declaration was left out: drop it, or point it at a different page.',
     };
   }
+  // As for an MCP server above: not installed and unobstructed means installing applies it.
   return {
     ...info,
-    applied: false,
+    applied: !installed,
     note: installed
       ? `No Scout source "${source.id}" is registered any more. It was removed after this extension was installed.`
       : 'Installing this extension adds it to Improvement Scout’s weekly read, switched on.',
@@ -648,12 +689,97 @@ function toInfo(row: PluginRow): ExtensionInfo {
     updatedAt: row.updated_at,
     artifacts: manifest ? artifactState(manifest, row.origin === 'builtin') : [],
     consent: manifest ? extensionConsent(manifest) : [],
+    credentials: manifest
+      ? (manifest.credentials ?? []).map((c) => ({ id: c.id, label: c.label, help: c.help ?? null, present: hasProviderKey(c.id) }))
+      : [],
   };
 }
 
 export function listExtensions(): ExtensionInfo[] {
   const rows = db().prepare('SELECT * FROM plugins ORDER BY label').all() as PluginRow[];
   return rows.map(toInfo);
+}
+
+/* ── credentials ─────────────────────────────────────────────────────── */
+
+/*
+ * An extension could always declare a credential — the consent screen named it,
+ * and its server's env referenced it — but nothing could ever give it a value:
+ * key:setProvider accepts only ids a provider pack declares. So every declared
+ * credential resolved to nothing and the server launched without it. These set
+ * one, under the rules that make it this extension's alone.
+ */
+const MAX_CREDENTIAL_CHARS = 16_384;
+
+function declaredCredential(extensionId: unknown, credentialId: unknown, providerOwned: ReadonlySet<string>): void {
+  if (typeof extensionId !== 'string' || !extensionId || extensionId.length > 200) throw new Error('An extension id is required.');
+  if (typeof credentialId !== 'string' || !credentialId || credentialId.length > 200) throw new Error('A credential id is required.');
+  const row = pluginRow(extensionId);
+  if (!row) throw new Error('That extension is not installed.');
+  if (row.trusted_sha256 !== row.manifest_sha256) throw new Error('Approve this extension before giving it a credential.');
+  let manifest: ExtensionManifest | null = null;
+  try {
+    const result = validateExtensionManifest(JSON.parse(row.manifest_json) as unknown, { appVersion: appVersion() });
+    manifest = result.ok ? result.manifest : null;
+  } catch { manifest = null; }
+  if (!manifest) throw new Error('This extension cannot be read, so it cannot be given a credential.');
+  // The manifest validator already refuses a credential named outside the
+  // extension's own id; this is the same check made at the moment of writing.
+  if (!(manifest.credentials ?? []).some((c) => c.id === credentialId)) {
+    throw new Error(`"${extensionId}" does not ask for a credential called "${credentialId}".`);
+  }
+  // Provider keys and extension credentials share one keychain namespace. An id
+  // a provider pack owns is that pack's key, and no extension may overwrite it.
+  if (providerOwned.has(credentialId)) throw new Error('That id is a provider pack\u2019s key, which an extension may not set.');
+}
+
+export async function setExtensionCredential(
+  extensionId: unknown, credentialId: unknown, value: unknown, providerOwned: ReadonlySet<string>,
+): Promise<ExtensionInfo[]> {
+  declaredCredential(extensionId, credentialId, providerOwned);
+  if (typeof value !== 'string') throw new Error('Paste the value to store.');
+  const text = value.trim();
+  if (!text) throw new Error('That value is empty.');
+  if (text.length > MAX_CREDENTIAL_CHARS) throw new Error('That value is longer than Wanigan will store for a credential.');
+  // It ends up in an environment variable or an HTTP header. A line break in a
+  // header is how one request becomes two, so it is refused, not stripped.
+  if (/[\r\n\u0000]/.test(text)) throw new Error('A credential cannot contain a line break.');
+  await setProviderKey(credentialId as string, text);
+  return listExtensions();
+}
+
+export function clearExtensionCredential(
+  extensionId: unknown, credentialId: unknown, providerOwned: ReadonlySet<string>,
+): ExtensionInfo[] {
+  declaredCredential(extensionId, credentialId, providerOwned);
+  clearProviderKey(credentialId as string);
+  return listExtensions();
+}
+
+/**
+ * The catalogs the store may read, each keyed `<extension id>:<source id>`.
+ *
+ * Only an extension that is enabled and whose exact manifest bytes were approved
+ * contributes one — the same condition under which its MCP servers reach a
+ * session — so switching the declaring extension off is how an operator stops
+ * Wanigan contacting that catalog at all. The manifest is revalidated here, as
+ * `toInfo` does, rather than trusted from the row.
+ */
+export function enabledStoreSources(): { key: string; extensionId: string; source: ExtensionStoreSource }[] {
+  const rows = db().prepare('SELECT * FROM plugins WHERE enabled = 1 ORDER BY label').all() as PluginRow[];
+  const out: { key: string; extensionId: string; source: ExtensionStoreSource }[] = [];
+  for (const row of rows) {
+    if (row.trusted_sha256 !== row.manifest_sha256) continue;
+    let manifest: ExtensionManifest | null = null;
+    try {
+      const result = validateExtensionManifest(JSON.parse(row.manifest_json) as unknown, { appVersion: appVersion() });
+      manifest = result.ok ? result.manifest : null;
+    } catch { manifest = null; }
+    for (const source of manifest?.provides.storeSources ?? []) {
+      out.push({ key: `${row.id}:${source.id}`, extensionId: row.id, source });
+    }
+  }
+  return out;
 }
 
 /* ── inspect ─────────────────────────────────────────────────────────── */
@@ -834,6 +960,9 @@ function applyMcpServers(manifest: ExtensionManifest, owner: string): void {
       // there", which on an update that dropped a variable would keep handing
       // the old credential to a server that no longer asks for it.
       env: server.env && Object.keys(server.env).length ? JSON.stringify(server.env) : '',
+      // Stated either way, for env's reason: an update that dropped a header must
+      // stop sending it, not keep handing the old credential to the host.
+      headers: server.headers && Object.keys(server.headers).length ? JSON.stringify(server.headers) : '',
       // The attribution uninstall reads. Without it, removing an extension is
       // a guess at which rows were its.
       owner,

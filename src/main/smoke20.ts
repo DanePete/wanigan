@@ -72,7 +72,7 @@ export async function runTranscriptPlacementSmoke(check: Check, say: Say): Promi
   const { db } = await import('./db');
   try {
     const transcripts = await import('./transcripts');
-    const sessions = await import('./sessions');
+    const sessionHistory = await import('./session-history');
     const { claudeProjectSlug } = await import('../shared/claude-slug');
 
     const folderFor = (dir: string) => path.join(claudeHome, 'projects', claudeProjectSlug(fs.realpathSync.native(dir)));
@@ -153,7 +153,7 @@ export async function runTranscriptPlacementSmoke(check: Check, say: Say): Promi
 
     row('s_place_codex', { conv: 'place-thread-codex-0001', project: repo, exit: -1, provider: 'codex', harness: 'codex' });
 
-    const swept = sessions.archiveInterruptedTranscripts(now);
+    const swept = sessionHistory.archiveInterruptedTranscripts(now);
     check(archivedSource('s_place_crashed') === crashedFile,
       'a session that was interrupted is archived on the next launch, from its exact conversation file', swept);
     check(archivedSource('s_place_vanished') === null,

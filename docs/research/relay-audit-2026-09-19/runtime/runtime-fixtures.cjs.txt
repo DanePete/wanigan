@@ -1,0 +1,321 @@
+// Audit-only harness. Production TypeScript is transpiled without rewriting it.
+// Database, project/settings/root policy, and Electron paths are isolated fixtures.
+// Git, filesystem, SQLite, shell commands and subprocesses are real.
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const cp = require('node:child_process');
+const crypto = require('node:crypto');
+const { DatabaseSync } = require('node:sqlite');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const source = process.env.RUNTIME_AUDIT_SOURCE;
+const base = process.env.RUNTIME_AUDIT_BASE;
+if (!source || !base || !base.startsWith('/private/tmp/')) throw new Error('Set isolated source/base');
+const ts = require(path.join(source, 'node_modules/typescript'));
+const noop = () => {};
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+const safeEnv = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: base, SHELL: '/bin/sh', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', WANIGAN_PROVIDER_PACKS_DIR: path.join(base, 'provider-packs'), RUNTIME_AUDIT_SOURCE: source, RUNTIME_AUDIT_BASE: base };
+Object.assign(process.env, safeEnv);
+function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
+function stop(pid, group = false) { try { process.kill(group ? -pid : pid, 'SIGKILL'); } catch {} }
+function size(file) { try { return fs.statSync(file).size; } catch { return 0; } }
+async function until(fn, timeout = 12000) { const end = Date.now()+timeout; while (!fn()) { if (Date.now()>end) throw new Error('fixture wait timeout'); await sleep(20); } }
+function fixture(name, reopen = false, opts = {}) {
+  const dir = path.join(base, name), repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const native = new DatabaseSync(path.join(dir, 'evidence.sqlite'));
+  native.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000;');
+  const database = { prepare: sql => native.prepare(sql), exec: sql => native.exec(sql), transaction: fn => Object.assign((...args) => fn(...args), { immediate: (...args) => fn(...args) }) };
+  const project = { id: 'fixture', name: 'Fixture', path: repo };
+  const cache = new Map(), observations = [], mutable = { failSafety: false };
+  const overrides = {
+    './db': { db: () => database, dataDir: () => dir },
+    './store': { projectById: () => project, listProjects: () => [project] },
+    './settings': { getSetting: (_k, fallback) => fallback, setSetting: noop, eventRetentionDays: () => 7 },
+    './roots': { assertManagedRoot: value => { assert(value === repo || value.startsWith(dir + path.sep)); } },
+    './hooks': { onHookEvent: noop, pruneEvents: () => 0 },
+    './halt': { halted: () => false },
+    './otel': { pruneSpans: () => 0 }, './statusline': { pruneStatusObservations: () => 0 },
+    './worktree-setup': { depsModeFor: () => 'link', latestWorktreeRun: () => null, projectForDirectory: () => project,
+      worktreeCommands: () => ({ setup: [], teardown: [] }), runWorktreePhase: async () => { observations.push('setup'); return null; } },
+  };
+  function load(relative) {
+    const absolute = path.resolve(source, relative);
+    if (cache.has(absolute)) return cache.get(absolute).exports;
+    const mod = { exports: {} }; cache.set(absolute, mod);
+    const text = ts.transpileModule(fs.readFileSync(absolute, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    function localRequire(name) {
+      if (name === 'electron') return { app: { getPath: () => dir }, dialog: {} };
+      if (name === './checkpoints' && absolute.endsWith('/queue.ts')) return { pruneCheckpoints: () => 0 };
+      if (name === './worktrees' && absolute.endsWith('/review.ts')) return { repoRootFor: async () => repo };
+      if (name === 'node:child_process' && absolute.endsWith('/worktrees.ts') && opts.cloneFailure) {
+        return { ...cp, spawn: (file, args) => {
+          assert.equal(file, '/bin/cp'); observations.push({ cloneFailure: opts.cloneFailure, file, args });
+          const child = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = noop;
+          setImmediate(() => { child.stderr.emit('data', Buffer.from(opts.cloneFailure)); child.emit('close', 1, null); });
+          return child;
+        } };
+      }
+      if (name === './git' && absolute.endsWith('/checkpoints.ts')) {
+        const real = load('src/main/git.ts');
+        return { ...real, runGit: async (cwd, args, options) => {
+          if (mutable.failSafety && args[0] === 'add') return { ok: false, out: '', err: 'audit-injected safety snapshot failure', code: 1, killed: false };
+          return real.runGit(cwd, args, options);
+        } };
+      }
+      if (Object.hasOwn(overrides, name)) return overrides[name];
+      if (name.startsWith('.')) return load(path.resolve(path.dirname(absolute), name + '.ts'));
+      if (name.startsWith('node:')) return require(name);
+      throw new Error(`Unexpected import ${name} in ${absolute}`);
+    }
+    vm.runInThisContext(`(function(require,module,exports){${text}\n})`, { filename: absolute })(localRequire, mod, mod.exports);
+    return mod.exports;
+  }
+  function git(args) {
+    const result = cp.spawnSync('git', ['-C', repo, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], { encoding: 'utf8', env: safeEnv });
+    if (result.status !== 0) throw new Error(`git ${args[0]}: ${result.stderr}`);
+    return result.stdout.trim();
+  }
+  if (!reopen) {
+    git(['init', '--initial-branch=main']);
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules/\n');
+    fs.writeFileSync(path.join(repo, 'tracked.txt'), 'baseline\n');
+    git(['add', '.']); git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'audit fixture']);
+    native.exec('CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES (\'fixture\');');
+  }
+  const schema = load('src/main/modules/session-storage.ts');
+  schema.migrateCheckpoints(database); schema.migrateWorktrees(database);
+  load('src/main/modules/review.ts').reviewModule.migrate(database);
+  native.exec(`CREATE TABLE IF NOT EXISTS queue(id TEXT PRIMARY KEY,kind TEXT,state TEXT DEFAULT 'waiting',priority INTEGER DEFAULT 100,label TEXT,payload_json TEXT,blocked_by TEXT,attempts INTEGER DEFAULT 0,next_attempt_at INTEGER,created_at INTEGER,started_at INTEGER,ended_at INTEGER,error TEXT,lease_owner TEXT,lease_expires_at INTEGER);`);
+  return { dir, repo, native, load, git, observations, mutable, close: () => native.close() };
+}
+async function checkpointFixture(name) {
+  const f = fixture(name), module = f.load('src/main/checkpoints.ts');
+  const session = 'audit-' + name;
+  module.registerSessionCheckpoints({ sessionId: session, cwd: f.repo, hooksCapable: true, gitHead: f.git(['rev-parse', 'HEAD']) });
+  await module.__test.awaitIdle(session);
+  const target = module.listCheckpoints(session)[0]; assert.equal(target.status, 'ok');
+  return { ...f, module, session, target };
+}
+async function runCheckpoints() {
+  const results = [];
+  const f = await checkpointFixture('restore-preview');
+  const originalHead = f.git(['rev-parse', 'HEAD']), originalIndex = sha(fs.readFileSync(path.join(f.repo, '.git/index')));
+  fs.writeFileSync(path.join(f.repo, 'tracked.txt'), 'reviewed changed bytes\n');
+  const preview = await f.module.checkpointRevertPlan(f.session, f.target.id);
+  fs.writeFileSync(path.join(f.repo, 'unreviewed.txt'), 'created after preview\n');
+  const apply = await f.module.applyCheckpointRevert(f.session, f.target.id);
+  const deletedUnreviewed = !fs.existsSync(path.join(f.repo, 'unreviewed.txt'));
+  const undo = await f.module.applyCheckpointRevert(f.session, apply.preRevertCheckpointId);
+  results.push({ id: 'R01', preview, apply, deletedUnreviewed, undo, restoredPostPreviewBytes: fs.readFileSync(path.join(f.repo, 'unreviewed.txt'), 'utf8'), headUnchanged: originalHead === f.git(['rev-parse', 'HEAD']), indexUnchanged: originalIndex === sha(fs.readFileSync(path.join(f.repo, '.git/index'))) });
+  await f.module.finalizeSessionCheckpoints(f.session); f.close();
+  const live = await checkpointFixture('restore-live-writer');
+  fs.writeFileSync(path.join(live.repo, 'tracked.txt'), 'live changed bytes\n');
+  const writer = cp.spawn(process.execPath, [__filename, 'writer', path.join(live.repo, 'live.txt'), path.join(live.dir, 'writer.pid')], { env: safeEnv, stdio: 'ignore' });
+  try {
+    await until(() => size(path.join(live.repo, 'live.txt')) > 0);
+    const previewLive = await live.module.checkpointRevertPlan(live.session, live.target.id);
+    const applyLive = await live.module.applyCheckpointRevert(live.session, live.target.id);
+    const atApply = alive(writer.pid); await sleep(150);
+    results.push({ id: 'R02', writerPid: writer.pid, preview: previewLive, apply: applyLive, writerAliveAtApply: atApply, fileExistsAgain: fs.existsSync(path.join(live.repo, 'live.txt')), subsequentBytes: size(path.join(live.repo, 'live.txt')) });
+  } finally { stop(writer.pid); await live.module.finalizeSessionCheckpoints(live.session); live.close(); }
+  const safety = await checkpointFixture('restore-safety-failure');
+  fs.writeFileSync(path.join(safety.repo, 'tracked.txt'), 'keep after failed safety\n');
+  safety.mutable.failSafety = true;
+  results.push({ id: 'R03', injectedBoundary: 'runGit(add) returns failure; no real disk failure', apply: await safety.module.applyCheckpointRevert(safety.session, safety.target.id), unchangedBytes: fs.readFileSync(path.join(safety.repo, 'tracked.txt'), 'utf8') });
+  safety.mutable.failSafety = false; await safety.module.finalizeSessionCheckpoints(safety.session); safety.close();
+  const link = await checkpointFixture('restore-symlink');
+  const outside = path.join(link.dir, 'outside.txt'); fs.writeFileSync(outside, 'outside survives\n');
+  fs.unlinkSync(path.join(link.repo, 'tracked.txt')); fs.symlinkSync(outside, path.join(link.repo, 'tracked.txt'));
+  const applyLink = await link.module.applyCheckpointRevert(link.session, link.target.id);
+  results.push({ id: 'R04', apply: applyLink, outsideUnchanged: fs.readFileSync(outside, 'utf8') === 'outside survives\n', finalPathIsSymlink: fs.lstatSync(path.join(link.repo, 'tracked.txt')).isSymbolicLink(), finalPathBytes: fs.readFileSync(path.join(link.repo, 'tracked.txt'), 'utf8') });
+  await link.module.finalizeSessionCheckpoints(link.session);
+  fs.renameSync(link.repo, link.repo + '-removed');
+  results.push({ id: 'R05', apply: await link.module.applyCheckpointRevert(link.session, link.target.id) }); link.close();
+  const instant = fixture('checkpoint-instant-edit'), checkpoints = instant.load('src/main/checkpoints.ts');
+  fs.writeFileSync(path.join(instant.repo, 'tracked.txt'), 'pre-agent dirty bytes\n');
+  checkpoints.registerSessionCheckpoints({ sessionId: 'instant', cwd: instant.repo, hooksCapable: true, gitHead: instant.git(['rev-parse', 'HEAD']) });
+  const edited = cp.spawnSync(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], "agent first edit\\n")', path.join(instant.repo, 'tracked.txt')], { env: safeEnv }); assert.equal(edited.status, 0);
+  await checkpoints.__test.awaitIdle('instant');
+  const row = checkpoints.listCheckpoints('instant')[0];
+  results.push({ id: 'R06', evidence: 'production registration + actual child edit immediately after return; hooksCapable is fixture only', row, capturedBytes: instant.git(['show', row.commitHash + ':tracked.txt']) });
+  await checkpoints.finalizeSessionCheckpoints('instant'); instant.close();
+  return results;
+}
+async function runWorktrees() {
+  const results = [];
+  for (const kind of ['private-copy', 'root-external', 'nested-external', 'hardlink-existing', 'hardlink-source', 'clone-failure', 'disk-full']) {
+    const f = fixture('deps-' + kind, false, { cloneFailure: kind === 'clone-failure' ? 'fixture clone failure' : kind === 'disk-full' ? 'No space left on device' : null });
+    const tree = path.join(f.dir, 'checkout'); f.git(['worktree', 'add', '-b', 'audit-private', tree]);
+    f.native.prepare('INSERT INTO worktrees(path,repo_root,branch,session_id,created_at) VALUES (?,?,?,?,?)').run(tree, f.repo, 'audit-private', 'audit-private', Date.now());
+    const parent = path.join(f.repo, 'node_modules'); fs.mkdirSync(parent); fs.writeFileSync(path.join(parent, 'sentinel.txt'), 'parent dependency\n');
+    const dest = path.join(tree, 'node_modules');
+    const external = path.join(f.dir, 'external'); fs.mkdirSync(external); fs.writeFileSync(path.join(external, 'outside.txt'), 'external dependency\n');
+    if (kind === 'root-external') fs.symlinkSync(external, dest);
+    else if (kind === 'nested-external') fs.symlinkSync(external, path.join(parent, 'package'));
+    else if (kind === 'hardlink-existing') { fs.mkdirSync(dest); fs.linkSync(path.join(parent, 'sentinel.txt'), path.join(dest, 'shared.txt')); }
+    else if (kind === 'hardlink-source') fs.linkSync(path.join(parent, 'sentinel.txt'), path.join(parent, 'linked.txt'));
+    const before = sha(fs.readFileSync(path.join(parent, 'sentinel.txt'))), worktrees = f.load('src/main/worktrees.ts');
+    let outcome = 'prepared', error = null, privateCopy = null, relinkPrivate = null;
+    try {
+      await worktrees.ensurePrivateWorktreeDependencies(tree);
+      privateCopy = !fs.lstatSync(dest).isSymbolicLink();
+      if (kind === 'private-copy') { fs.rmSync(dest, { recursive: true }); await worktrees.relinkWorktree(tree); relinkPrivate = !fs.lstatSync(dest).isSymbolicLink(); }
+    } catch (e) { outcome = 'refused'; error = e.message; }
+    const row = f.native.prepare('SELECT bootstrap_json FROM worktrees WHERE path=?').get(tree);
+    results.push({ id: 'W-' + kind, outcome, error, privateCopy, relinkPrivate, parentUnchanged: before === sha(fs.readFileSync(path.join(parent, 'sentinel.txt'))), sourceLinkCount: fs.statSync(path.join(parent, 'sentinel.txt')).nlink, targetLinkCount: fs.existsSync(path.join(dest, 'sentinel.txt')) ? fs.statSync(path.join(dest, 'sentinel.txt')).nlink : null, bootstrap: JSON.parse(row.bootstrap_json || '{}'), injectedBoundary: kind === 'clone-failure' || kind === 'disk-full' ? 'cp close=1 and stderr fixture; actual volume not exhausted' : null });
+    f.close();
+  }
+  return results;
+}
+async function runReviewProcess(kind) {
+  const name = 'review-' + kind, f = fixture(name), review = f.load('src/main/review.ts');
+  const signal = path.join(f.dir, 'writes.log'), pidFile = path.join(f.dir, 'descendant.pid'), receipt = path.join(f.dir, 'command-group.json');
+  const command = `${shellQuote(process.execPath)} ${shellQuote(__filename)} writer ${shellQuote(signal)} ${shellQuote(pidFile)} & wait`;
+  review.saveRecipe('fixture', [command]);
+  const runner = cp.spawn(process.execPath, [__filename, 'review-owner', name, receipt], { env: safeEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await until(() => fs.existsSync(pidFile) && fs.existsSync(receipt) && size(signal) > 0);
+    const writerPid = Number(fs.readFileSync(pidFile, 'utf8')), group = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    const before = size(signal);
+    if (kind === 'crash') runner.kill('SIGKILL'); else runner.kill('SIGTERM');
+    await until(() => !alive(runner.pid)); await sleep(250);
+    const after = size(signal);
+    const recovery = fixture(name, true), recoveringReview = recovery.load('src/main/review.ts');
+    const closed = recoveringReview.sweepInterruptedRuns(), history = recoveringReview.history('fixture');
+    const result = { id: kind === 'crash' ? 'R07' : 'R08', kind, ownerPid: runner.pid, groupPid: group.pid, writerPid, writerAliveAfterOwnerExit: alive(writerPid), beforeBytes: before, afterBytes: after, writesContinued: after > before, sweepClosed: closed, history, limitation: kind === 'graceful-owner' ? 'Node owner SIGTERM handler calls process.exit(0); not Electron before-quit/stopServices execution' : 'production review in Node owner; actual SIGKILL and DB reopen, no Electron window' };
+    stop(group.pid, true); stop(writerPid); recovery.close(); return result;
+  } finally { stop(runner.pid); if (fs.existsSync(receipt)) stop(JSON.parse(fs.readFileSync(receipt, 'utf8')).pid, true); f.close(); }
+}
+async function runReviewVerification() {
+  const f = fixture('review-verification'), review = f.load('src/main/review.ts');
+  review.saveRecipe('fixture', ['printf passed']);
+  const pass = await review.runAt('fixture'), initialCurrent = await review.isCurrentPass(pass.id, 'fixture', f.repo);
+  const file = path.join(f.repo, 'tracked.txt'), times = fs.statSync(file); fs.writeFileSync(file, 'mutation\n'); fs.utimesSync(file, times.atime, times.mtime);
+  const mutatedCurrent = await review.isCurrentPass(pass.id, 'fixture', f.repo);
+  fs.writeFileSync(file, 'baseline\n'); review.saveRecipe('fixture', ['sleep 0.3; printf done']);
+  const running = review.runAt('fixture'); let concurrentError = null;
+  try { await review.runAt('fixture'); } catch (e) { concurrentError = e.message; }
+  const receipt = f.native.prepare("SELECT status,evidence_json FROM review_runs ORDER BY rowid DESC LIMIT 1").get();
+  const complete = await running;
+  review.saveRecipe('fixture', [`${shellQuote(process.execPath)} -e 'process.stdout.write("x".repeat(180000))'`]);
+  const noisy = await review.runAt('fixture');
+  review.saveRecipe('fixture', ['exit 1']); const failed = await review.runAt('fixture');
+  const result = { id: 'R09', initialCurrent, mutatedCurrent, concurrentError, immediateReceiptStatus: receipt.status, completeStatus: complete.status, noisyStatus: noisy.status, noisyOutputLength: noisy.results[0].output.length, truncationNote: noisy.results[0].output.slice(-150), failedStatus: failed.status };
+  f.close(); return result;
+}
+async function runConcurrentReview() {
+  const name = 'review-two-owners', f = fixture(name), review = f.load('src/main/review.ts');
+  const writes = path.join(f.dir, 'writes.log'), pidFile = path.join(f.dir, 'writer.pid');
+  review.saveRecipe('fixture', [`${shellQuote(process.execPath)} ${shellQuote(__filename)} writer ${shellQuote(writes)} ${shellQuote(pidFile)} & wait`]);
+  const owners = [], groups = [], writerPids = [];
+  try {
+    for (const label of ['a', 'b']) {
+      const receipt = path.join(f.dir, `group-${label}.json`);
+      const owner = cp.spawn(process.execPath, [__filename, 'review-owner', name, receipt], { env: safeEnv, stdio: 'ignore' }); owners.push(owner);
+      await until(() => fs.existsSync(receipt) && fs.existsSync(pidFile) && !writerPids.includes(Number(fs.readFileSync(pidFile, 'utf8'))));
+      groups.push(JSON.parse(fs.readFileSync(receipt, 'utf8')).pid); writerPids.push(Number(fs.readFileSync(pidFile, 'utf8')));
+    }
+    const before = size(writes); await sleep(150);
+    return { id: 'R11', ownerPids: owners.map(child => child.pid), groupPids: groups, writerPids, bothOwnersAlive: owners.every(child => alive(child.pid)), bothWritersAlive: writerPids.every(alive), writesContinued: size(writes) > before, rows: f.native.prepare('SELECT id,status,results_json FROM review_runs ORDER BY rowid').all(), limitation: 'two real Node owners import production review.ts against one SQLite database; no Electron instance startup lock exercised' };
+  } finally { for (const owner of owners) stop(owner.pid); for (const group of groups) stop(group, true); for (const pid of writerPids) stop(pid); f.close(); }
+}
+async function runVerificationEdges() {
+  const f = fixture('review-edges'), review = f.load('src/main/review.ts');
+  const externalGate = path.join(f.dir, 'gate-ok'); fs.writeFileSync(externalGate, 'ok');
+  review.saveRecipe('fixture', [`test -f ${shellQuote(externalGate)}`]);
+  const passed = await review.runAt('fixture');
+  fs.mkdirSync(path.join(f.repo, 'node_modules')); fs.writeFileSync(path.join(f.repo, 'node_modules', 'ignored.txt'), 'dependency changed');
+  const ignoredMutationStillCurrent = await review.isCurrentPass(passed.id, 'fixture', f.repo);
+  fs.unlinkSync(externalGate); const failed = await review.runAt('fixture');
+  const olderPassAfterNewerFailure = await review.isCurrentPass(passed.id, 'fixture', f.repo);
+  const sameRecipe = passed.evidence.recipeHash === failed.evidence.recipeHash;
+  fs.writeFileSync(externalGate, 'ok');
+  fs.symlinkSync(externalGate, path.join(f.repo, 'symlink'));
+  const symlink = await review.runAt('fixture'), symlinkCanVerify = await review.isCurrentPass(symlink.id, 'fixture', f.repo);
+  fs.unlinkSync(path.join(f.repo, 'symlink'));
+  fs.writeFileSync(path.join(f.repo, 'too-large.bin'), Buffer.alloc(17 * 1024 * 1024, 127));
+  const overLimit = await review.runAt('fixture'), overLimitCanVerify = await review.isCurrentPass(overLimit.id, 'fixture', f.repo);
+  fs.unlinkSync(path.join(f.repo, 'too-large.bin'));
+  for (let n=0; n<8; n++) fs.writeFileSync(path.join(f.repo, `asset-${n}.bin`), crypto.randomBytes(8*1024*1024));
+  const indexBefore = sha(fs.readFileSync(path.join(f.repo,'.git/index'))), headBefore = f.git(['rev-parse', 'HEAD']);
+  const start = performance.now(), snapshot = await f.load('src/main/review-checkout.ts').checkoutSnapshot(f.repo), elapsedMs = performance.now()-start;
+  const result = { id: 'R12', ignoredMutationStillCurrent, sameRecipe, newerStatus: failed.status, olderPassAfterNewerFailure,
+    symlink: { status: symlink.status, freshness: symlink.freshness, canVerify: symlinkCanVerify },
+    overLimit: { status: overLimit.status, freshness: overLimit.freshness, canVerify: overLimitCanVerify },
+    randomAssets: { bytes: 64*1024*1024, files: 8, elapsedMs, snapshot, headUnchanged: headBefore === f.git(['rev-parse', 'HEAD']), indexUnchanged: indexBefore === sha(fs.readFileSync(path.join(f.repo,'.git/index'))), note: '64 MiB real random bytes, warm filesystem; not cold production assets' } };
+  f.close(); return result;
+}
+async function runQueue() {
+  const name = 'queue-owners', f = fixture(name), queue = f.load('src/main/queue.ts');
+  const item = queue.enqueue('headless', 'audit detached fixture', { fixture: true });
+  const ownerA = cp.spawn(process.execPath, [__filename, 'queue-owner', name, 'a'], { env: safeEnv, stdio: 'ignore' });
+  const events = path.join(f.dir, 'starts.jsonl');
+  let ownerB;
+  try {
+    await until(() => fs.existsSync(events));
+    const first = JSON.parse(fs.readFileSync(events, 'utf8').trim().split('\n')[0]);
+    ownerB = cp.spawn(process.execPath, [__filename, 'queue-owner', name, 'b'], { env: safeEnv, stdio: 'ignore' });
+    await sleep(400);
+    const beforeDeathStarts = fs.readFileSync(events, 'utf8').trim().split('\n').length;
+    const beforeDeath = f.native.prepare('SELECT * FROM queue WHERE id=?').get(item.id);
+    ownerA.kill('SIGKILL'); await until(() => !alive(ownerA.pid));
+    const waitingUntil = beforeDeath.lease_expires_at;
+    process.stdout.write(JSON.stringify({ progress: 'waiting actual queue lease', ownerPid: ownerA.pid, survivorPid: first.writerPid, expiry: waitingUntil })+'\n');
+    await until(() => fs.readFileSync(events, 'utf8').trim().split('\n').length > 1, 135000);
+    const starts = fs.readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse), second = starts[1];
+    const aBefore = size(path.join(f.dir, 'writer-a.log')), bBefore = size(path.join(f.dir, 'writer-b.log')); await sleep(200);
+    const result = { id: 'R10', itemId: item.id, beforeDeathStarts, starts, beforeDeath, afterRecovery: f.native.prepare('SELECT * FROM queue WHERE id=?').get(item.id), waitedRealLeaseMs: second.at-first.at, oldWriterAliveAfterRecovery: alive(first.writerPid), newWriterAlive: alive(second.writerPid), bothWriting: size(path.join(f.dir, 'writer-a.log')) > aBefore && size(path.join(f.dir, 'writer-b.log')) > bBefore, limitation: 'registered queue runner launches detached sentinel, not production headless or PTY runner' };
+    return result;
+  } finally {
+    stop(ownerA.pid); if (ownerB) stop(ownerB.pid);
+    if (fs.existsSync(events)) for (const row of fs.readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse)) stop(row.writerPid, true);
+    f.close();
+  }
+}
+async function main() {
+  const mode = process.argv[2];
+  if (mode === 'writer') { fs.writeFileSync(process.argv[4], String(process.pid)); setInterval(() => fs.appendFileSync(process.argv[3], 'write\n'), 30); return; }
+  if (mode === 'review-owner') {
+    const f = fixture(process.argv[3], true), review = f.load('src/main/review.ts');
+    const original = cp.spawn;
+    cp.spawn = (...args) => { const child = original(...args); if (args[2]?.detached) fs.writeFileSync(process.argv[4], JSON.stringify({ pid: child.pid })); return child; };
+    process.on('SIGTERM', () => process.exit(0));
+    await review.runAt('fixture'); return;
+  }
+  if (mode === 'queue-owner') {
+    const f = fixture(process.argv[3], true), queue = f.load('src/main/queue.ts'), label = process.argv[4];
+    queue.registerRunner('headless', async () => {
+      const writer = cp.spawn(process.execPath, [__filename, 'writer', path.join(f.dir, `writer-${label}.log`), path.join(f.dir, `writer-${label}.pid`)], { detached: true, stdio: 'ignore', env: safeEnv }); writer.unref();
+      fs.appendFileSync(path.join(f.dir, 'starts.jsonl'), JSON.stringify({ at: Date.now(), owner: label, ownerPid: process.pid, writerPid: writer.pid })+'\n');
+      await new Promise(noop);
+    });
+    await queue.tick(); setInterval(() => { void queue.tick(); }, 200); return;
+  }
+  const result = { startedAt: new Date().toISOString(), sourceCommit: cp.execFileSync('git', ['-C', source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), node: process.version, platform: process.platform, sourceHashes: {}, scenarios: [] };
+  for (const file of ['src/main/checkpoints.ts','src/main/review.ts','src/main/queue.ts','src/main/worktrees.ts']) result.sourceHashes[file] = sha(fs.readFileSync(path.join(source,file)));
+  const output = path.join(base, 'results.json');
+  const persist = () => fs.writeFileSync(output, JSON.stringify(result, null, 2)+'\n');
+  try {
+    if (mode === 'extended') {
+      result.scenarios.push(await runConcurrentReview()); result.finishedAt = new Date().toISOString(); persist();
+      console.log(JSON.stringify({ output, scenarios: result.scenarios.length })); return;
+    }
+    if (mode === 'verification-edges') {
+      result.scenarios.push(await runVerificationEdges()); result.finishedAt = new Date().toISOString(); persist();
+      console.log(JSON.stringify({ output, scenarios: result.scenarios.length })); return;
+    }
+    const queueTask = runQueue();
+    result.scenarios.push(...await runCheckpoints()); persist();
+    result.scenarios.push(...await runWorktrees()); persist();
+    result.scenarios.push(await runReviewProcess('crash')); persist();
+    result.scenarios.push(await runReviewProcess('graceful-owner')); persist();
+    result.scenarios.push(await runReviewVerification()); persist();
+    result.scenarios.push(await queueTask); result.finishedAt = new Date().toISOString(); persist();
+  } catch (error) { result.error = error.stack; persist(); throw error; }
+  console.log(JSON.stringify({ output, scenarios: result.scenarios.length }));
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

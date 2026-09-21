@@ -8,7 +8,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 const require=createRequire(import.meta.url),{_electron}=require('playwright-core');
 const root=path.resolve(import.meta.dirname,'..'),before=process.argv.includes('--before');
-const out=path.join(root,'docs/visuals/schedules-workspace',before?'before':'after');mkdirSync(out,{recursive:true});
+const outputAt=process.argv.indexOf('--out');
+const out=outputAt>=0?path.resolve(process.argv[outputAt+1]):path.join(root,'docs/visuals/schedules-workspace',before?'before':'after');mkdirSync(out,{recursive:true});
 const dir=mkdtempSync(path.join(tmpdir(),'wanigan-schedules-'));
 writeFileSync(path.join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({width:1440,height:1000,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}}).loadURL('about:blank'));`);
 const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;for(const key of Object.keys(env))if(key.startsWith('VSCODE_'))delete env[key];
@@ -50,11 +51,12 @@ try{
  await go('Meta+8');await page.getByRole('heading',{name:'Schedules',exact:true}).waitFor();
  const capture=async name=>{
   if(!before)await page.waitForFunction(()=>![...document.querySelectorAll('.sc-inspector')].some(el=>el.innerText.includes('Reading next occurrences…')));
-  await page.waitForFunction(()=>document.querySelector('.wanigan-orb-small')?.dataset.physics==='ready'&&Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>0);
+  const orbVisible=await page.locator('.wanigan-orb-small').first().isVisible();
+  if(orbVisible)await page.waitForFunction(()=>document.querySelector('.wanigan-orb-small')?.dataset.physics==='ready'&&Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>0);
   for(const theme of ['dark','light']){
-   const frame=Number(await page.locator('.wanigan-orb-small canvas').getAttribute('data-frames'));
+   const frame=orbVisible?Number(await page.locator('.wanigan-orb-small canvas').getAttribute('data-frames')):null;
    await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);
-   await page.waitForFunction(frame=>Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>frame,frame);
+   if(frame!==null)await page.waitForFunction(frame=>Number(document.querySelector('.wanigan-orb-small canvas')?.dataset.frames)>frame,frame);
    await page.screenshot({path:path.join(out,`${name}-${theme}.png`),scale:'css',animations:'disabled'});
   }
  };
@@ -81,6 +83,7 @@ try{
   await page.evaluate(()=>{window.__holdScheduleAction=null;window.__releaseScheduleAction();});await detail.getByRole('button',{name:'Resume',exact:true}).waitFor();assert.equal((await calls()).filter(call=>call[0]==='setEnabled').length,1);
   record('Search, selection and edit drafts survive navigation; removing a project pin requires explicit fan-out intent, deletion stays confirmed, and a pending pause cannot repeat.');
   await view.getByRole('button',{name:'New schedule',exact:true}).click();await form.getByLabel('Schedule name',{exact:true}).fill('Read the release notes');await form.getByLabel('Scheduled agent').selectOption(JSON.stringify(['claude','fixture-claude']));await form.getByLabel('Prompt',{exact:true}).fill('Read the release notes and report anything missing.');await capture('create');
+  await form.getByLabel('Schedule repeat').selectOption('custom');
   await page.evaluate(()=>window.__holdPreview='4 4 * * *');await form.getByLabel('Cron expression',{exact:true}).fill('4 4 * * *');await page.waitForFunction(()=>typeof window.__releasePreview==='function');
   await form.getByLabel('Cron expression',{exact:true}).fill('broken');await form.getByText('A cron expression needs five fields.',{exact:true}).waitFor();await page.evaluate(async()=>{window.__holdPreview=null;window.__releasePreview();await Promise.resolve();});assert(await form.getByRole('button',{name:'Create schedule',exact:true}).isDisabled());
   await form.getByLabel('Cron expression',{exact:true}).fill('7 8 * * 1');await page.waitForFunction(()=>!document.querySelector('.sc-editor button[type=submit]')?.disabled);
@@ -98,6 +101,20 @@ try{
   record('History and list failures have explicit recovery; stale records disable mutations. Scheduler ticks and background setup occur only on their named actions.');
   for(const width of [960,720]){await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,1000),width);await page.waitForFunction(width=>innerWidth===width,width);const size=await view.evaluate(el=>({width:innerWidth,client:el.clientWidth,scroll:el.scrollWidth}));dimensions.push(size);assert(size.scroll<=size.client+1);await capture('agenda-'+width);}
   await page.evaluate(()=>{document.documentElement.dataset.motion='off';});assert.equal(await detail.locator('.sc-reading').evaluate(el=>getComputedStyle(el).animationDuration),'0s');
+  for(const width of [960,900]){
+   await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setContentSize(width,560),width);
+   await page.waitForFunction(width=>innerWidth===width&&innerHeight===560,width);
+   await choose('s8');await detail.getByRole('heading',{name:'An unfinished batch schedule',exact:true}).waitFor();
+   await detail.getByRole('button',{name:'Refresh history',exact:true}).click();
+   await view.getByRole('button',{name:'Scheduler settings',exact:true}).click();
+   await view.getByRole('button',{name:'Run anything due now',exact:true}).scrollIntoViewIfNeeded();
+   const compact=await view.evaluate(el=>({width:innerWidth,height:innerHeight,outerScroll:scrollY,client:el.clientWidth,scroll:el.scrollWidth}));
+   assert.equal(compact.outerScroll,0);assert(compact.scroll<=compact.client+1);dimensions.push(compact);
+   await capture('settings-'+width+'-short');await view.locator('.sc-support summary').click();
+   await choose('s1');await detail.getByRole('heading',{name:'Keep checkout honest',exact:true}).waitFor();
+   await capture('agenda-'+width+'-short');
+  }
+  record('Populated schedule selection, history and background controls remain reachable at 960×560 and 900×560.');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000));await page.waitForFunction(()=>innerWidth===1440);
   await page.evaluate(()=>{window.__schedules=[];});await view.getByRole('button',{name:'Refresh schedules',exact:true}).click();await view.getByRole('heading',{name:'Give the work a rhythm.',exact:true}).waitFor();await capture('empty');
   await page.evaluate(()=>window.__scheduleReadFailure=true);await view.getByRole('button',{name:'Refresh schedules',exact:true}).click();await view.getByRole('heading',{name:'Schedule details unavailable',exact:true}).waitFor();assert.equal(await view.getByRole('heading',{name:'Give the work a rhythm.',exact:true}).count(),0);await capture('read-error');

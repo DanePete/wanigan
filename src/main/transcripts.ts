@@ -7,6 +7,7 @@ import { getSetting, setSetting } from './settings';
 import { redactCredentials } from './redact';
 import { titleFromTranscriptText, type ReadTitle } from '../shared/session-title';
 import { claudeProjectSlug } from '../shared/claude-slug';
+import type { ConversationEvidence } from '../shared/resumable';
 // Markers wrapped around the matched term in a hit snippet; one copy, shared
 // with the renderers that swap them for markup.
 import { HIT_CLOSE, HIT_OPEN } from '../shared/resume-history';
@@ -139,6 +140,75 @@ export function transcriptPathFor(launchDir: string, conversationId: string | nu
     if (exact) return exact;
   }
   return newestIn(dirs)?.path ?? null;
+}
+
+/** A conversation id is a UUID; nothing else is ever looked up as a file name. */
+const CONVERSATION_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+/**
+ * The transcript for exactly this conversation, or null.
+ *
+ * `transcriptPathFor` above falls back to the newest file filed under the
+ * launch directory, which is the right answer for a title or a context reading
+ * and the wrong one for resumability: a neighbouring conversation proves
+ * nothing about this id. This lookup is exact or nothing.
+ *
+ * It also looks wider than the launch directory, because `--resume` is not
+ * scoped to the working directory — the CLI finds a conversation from an
+ * unrelated cwd. A session whose isolated worktree has since been removed is
+ * still resumable, and reporting otherwise would hide real work. The launch
+ * directory's own slugs are tried first because that is where the file almost
+ * always is; the sweep behind it reads directory names, never file contents.
+ */
+export function exactTranscriptPath(conversationId: string | null, launchDir?: string | null): string | null {
+  const id = conversationId?.trim();
+  // A separator or traversal segment in a recorded id would reach outside the
+  // projects directory. Ids are UUIDs, so this costs nothing real.
+  if (!id || !CONVERSATION_ID.test(id)) return null;
+  const near = exactIn(claudeProjectDirs(launchDir), id);
+  if (near) return near;
+  for (const root of accounts.readRoots('claude-code')) {
+    const projects = path.join(root, 'projects');
+    let names: string[];
+    // A root with no projects directory is the normal case for a fresh account.
+    try { names = fs.readdirSync(projects); } catch { continue; }
+    const found = exactIn(names.map((name) => path.join(projects, name)), id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * What `conversationProof` needs about one recorded session, read from the
+ * durable row and from disk.
+ *
+ * Returns null when no row names that session: a caller holding an id Wanigan
+ * has no record of is a different refusal, and one the caller already makes.
+ */
+export function conversationEvidenceFor(sessionId: string): ConversationEvidence | null {
+  const row = db().prepare(`
+    SELECT conversation_id, harness_id, provider_id, project_path, worktree
+      FROM session_log
+     WHERE id = ?
+  `).get(sessionId) as {
+    conversation_id: string | null; harness_id: string | null; provider_id: string;
+    project_path: string; worktree: string | null;
+  } | undefined;
+  if (!row) return null;
+  // `harness_id` was added after Wanigan had already recorded Claude and Codex
+  // sessions; their built-in provider ids are the migration aliases, exactly as
+  // `harnessOf` in sessions.ts reads them for the same rows.
+  const harness = row.harness_id?.trim()
+    ?? (row.provider_id === 'codex' ? 'codex'
+      : row.provider_id === 'claude' || row.provider_id === 'glm' ? 'claude-code'
+        : `provider:${row.provider_id}`);
+  const archived = db().prepare('SELECT 1 FROM transcripts WHERE session_id = ?').get(sessionId);
+  return {
+    harness,
+    conversationId: row.conversation_id,
+    transcriptOnDisk: !!exactTranscriptPath(row.conversation_id, row.worktree ?? row.project_path),
+    transcriptArchived: !!archived,
+  };
 }
 
 /* ── defensive parsing ───────────────────────────────────────────────── */
@@ -414,7 +484,7 @@ function locate(
  * raised error would take down something far more important than an index.
  *
  * `exactOnly` is for a session whose exit Wanigan never saw: see
- * archiveInterruptedTranscripts in sessions.ts.
+ * archiveInterruptedTranscripts in session-history.ts.
  */
 export function archiveSession(
   sessionId: string,

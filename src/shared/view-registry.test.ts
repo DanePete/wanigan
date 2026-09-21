@@ -14,7 +14,7 @@
  * nothing to catch it — the checks `validateViewModules` runs — plus the
  * handful of findings that are true properties of this data rather than
  * artifacts of how it used to be duplicated. Two are cross-file: the sidebar's
- * own order genuinely differs from registry order in four areas, and
+ * own order differs from registry order, and
  * `MOBILE_VIEWS[].narrows` is hand-written on purpose and has to keep
  * agreeing with `VIEWS`'s `phone.narrowedBy` field by content, not by import.
  */
@@ -89,14 +89,13 @@ test('areaTabs reaches the same destinations per area as VIEW_AREAS, but not in 
   // FINDING, pinned rather than sorted away: `areaTabs` derives order from
   // registry declaration order, which is `TABS` order because `routeRows` must
   // reproduce the palette. The sidebar's order within an area is a *different*
-  // order — Projects lists Sessions, Board, Changes, Context while `VIEWS`
-  // reaches them first, ninth, thirteenth and sixteenth — so four of the seven
-  // areas come back correct in membership and wrong in sequence. One array
+  // order — Work lists Sessions, Board and Goals while `VIEWS` reaches Goals
+  // before Board. Areas can have the right membership in the wrong sequence. One array
   // cannot be in two orders, so the sidebar keeps reading `VIEW_AREAS[].tabs`.
   const reordered = VIEW_AREAS
     .filter((area) => JSON.stringify(areaTabs(VIEWS, area.id)) !== JSON.stringify([...area.tabs]))
     .map((area) => area.id);
-  assert.deepEqual(reordered, ['work', 'fleet', 'knowledge', 'automation']);
+  assert.deepEqual(reordered, ['work', 'fleet', 'automation', 'settings']);
 });
 
 test('every phone screen narrows exactly the desktop views that name it, in whatever order MOBILE_VIEWS was written', () => {

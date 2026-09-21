@@ -58,7 +58,7 @@
 
 /* A model column per day makes this table wider than the pane on a long
    window; it scrolls inside itself rather than pushing the page sideways. */
-.u-scroll { overflow-x: auto; }
+.u-scroll { position: relative; overflow-x: auto; }
 
 /* .viz-table th in index.css is (0,1,1) and aligns left, so a bare .u-th-r
    would lose to it. Two classes and the element beat it — the same reason
@@ -79,46 +79,104 @@
    harness — so the row says which one this is. */
 .u-row-harness { display: block; font-size: var(--t-micro); }
 
-/* An account is the unit of work; quota and recorded consumption keep their own provenance. */
-.usage-view { max-width: var(--page-wide); }
-.u-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); }
-.u-actions .field { width: auto; }
-.u-workspace { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: var(--s-5); }
-.u-accounts { position: sticky; top: calc(var(--s-6) * 3); align-self: start; border-right: 1px solid var(--line-soft); padding-right: var(--s-4); }
-.u-account { width: 100%; display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-3); text-align: left; border: 1px solid transparent; border-radius: var(--r-md); margin-bottom: var(--s-1); }
-.u-account strong { font-size: var(--t-body); overflow-wrap: anywhere; }
-.u-account > span { font-size: var(--t-small); color: var(--text-dim); }
-.u-account:hover { background: var(--glass-fill); }
-.u-account[aria-current='true'] { background: var(--glass-selected); border-color: var(--glass-line); }
-.u-account:focus-visible, .u-factors > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.u-account-content { min-width: 0; }
-.u-account-title { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: var(--s-3); padding-bottom: var(--s-5); }
-.u-account-title h2 { font-size: var(--t-display); }
-.u-account-title p { margin-top: var(--s-1); }
-.u-account-title > span { font-size: var(--t-small); }
-.u-readings { display: grid; grid-template-columns: minmax(220px, .36fr) minmax(0, .64fr); gap: var(--s-5); }
-.u-capacity, .u-consumption { min-width: 0; }
-.u-provenance { color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; min-height: 3em; margin-bottom: var(--s-4); }
-.u-limit { padding: var(--s-4); display: grid; gap: var(--s-3); min-width: 0; background: var(--glass-fill); border: 1px solid var(--glass-line); border-radius: var(--r-lg); margin-bottom: var(--s-3); }
-.u-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-block: 1px solid var(--line-soft); padding-block: var(--s-3); gap: var(--s-3); margin-bottom: var(--s-5); }
-.u-totals .stat-tile { border: 0; box-shadow: none; background: none; padding: 0; }
-.u-daily { margin-bottom: var(--s-5); }
-.u-daily h3 { font-size: var(--t-body); margin-bottom: var(--s-3); }
-.u-factors { margin-top: var(--s-5); }
-.u-factors > summary { cursor: pointer; padding-block: var(--s-3); }
-@media (max-width: 1120px) {
-  .u-workspace { grid-template-columns: 160px minmax(0, 1fr); gap: var(--s-4); }
-  .u-readings { grid-template-columns: 1fr; }
-  .u-provenance { min-height: 0; }
-}
-@media (max-width: 700px) {
-  .u-workspace { grid-template-columns: 1fr; }
-  .u-accounts { position: static; display: flex; flex-wrap: wrap; gap: var(--s-1); padding: 0; border: 0; }
-  .u-accounts > .sec-head { flex-basis: 100%; }
-  .u-account { width: auto; }
-}
-
+/* Compare provider quotas across the full pane before looking at local work.
+   Soft grouping, generous rows, and tabular values make repeated readings easy
+   to inspect without treating matching percentages as a matching identity. */
+.pane.usage-view { max-width: none; gap: var(--s-5); }
 .pane.usage-view > * { flex-shrink: 0; }
+.u-capacity, .u-consumption { min-width: 0; }
+.u-capacity > .sec-head, .u-consumption > .sec-head { flex-wrap: wrap; row-gap: var(--s-3); }
+.u-capacity > .sec-head .label, .u-consumption > .sec-head .label { font-size: var(--t-lead); font-weight: 650; text-transform: none; letter-spacing: 0; }
+.u-section-aside { color: var(--text-faint); font-size: var(--t-small); }
+.u-provenance { color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 85ch; margin: var(--s-2) 0 var(--s-4); }
+.u-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); }
+.u-actions .field { width: auto; max-width: 100%; }
+
+.u-comparison-wrap { border: 1px solid var(--glass-line); border-radius: var(--r-lg); overflow: hidden; background: var(--glass-fill); }
+.u-comparison { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.u-comparison > thead th { text-align: left; font-size: var(--t-small); font-weight: 500; color: var(--text-faint); padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--line-soft); }
+.u-comparison > thead th:first-child { width: 27%; }
+.u-comparison > thead th:last-child { width: 148px; }
+.u-comparison > tbody > tr + tr { border-top: 1px solid var(--line-soft); }
+.u-comparison > tbody > tr > th, .u-comparison > tbody > tr > td { padding: var(--s-4) var(--s-5); vertical-align: top; text-align: left; }
+.u-comparison .u-selected { background: var(--glass-selected); }
+.u-account-cell { font-weight: 400; }
+.u-account-select { display: flex; width: 100%; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--s-1) var(--s-2); text-align: left; color: var(--text); border-radius: var(--r-xs); }
+.u-account-select strong { font-size: var(--t-lead); font-weight: 650; overflow-wrap: anywhere; }
+.u-select-cue { font-size: var(--t-micro); color: var(--accent); font-weight: 500; }
+.u-account-select:hover .u-select-cue { text-decoration: underline; }
+.u-account-select:focus-visible, .u-details > summary:focus-visible, .u-days > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: var(--s-1); }
+.u-account-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); margin-top: var(--s-2); font-size: var(--t-small); color: var(--text-dim); }
+.u-identity { font-size: var(--t-small); line-height: 1.5; color: var(--text-dim); margin-top: var(--s-1); overflow-wrap: anywhere; }
+.u-identity > span { display: block; }
+.u-identity-evidence { margin-top: var(--s-1); font-size: var(--t-micro); line-height: 1.5; color: var(--warning); }
+.u-windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--s-5); }
+.u-meter { min-width: 0; display: grid; align-content: start; gap: var(--s-1); }
+.u-window-name { color: var(--text-dim); font-size: var(--t-small); font-weight: 500; }
+.u-window-value { display: flex; align-items: baseline; gap: var(--s-1); font-variant-numeric: tabular-nums; }
+.u-window-value strong { font-size: var(--t-title); font-weight: 600; letter-spacing: -.02em; }
+.u-window-value > span { font-size: var(--t-micro); color: var(--text-faint); }
+.u-meter.is-critical .u-window-value, .u-meter.is-critical .u-window-value > span { color: var(--critical); }
+.u-meter.is-warning .u-window-value { color: var(--warning); }
+.u-meter-track { display: block; width: 100%; height: var(--s-1); }
+.u-meter-empty { fill: var(--line-soft); }
+.u-meter-fill { fill: var(--series-1); }
+.u-meter.is-warning .u-meter-fill { fill: var(--warning); }
+.u-meter.is-critical .u-meter-fill { fill: var(--critical); }
+.u-reset { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+.u-reading-empty { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; max-width: 70ch; }
+.u-reading-detail { margin: var(--s-3) 0 0; color: var(--warning); font-size: var(--t-small); line-height: 1.5; }
+.u-freshness > span, .u-freshness > time { display: block; }
+.u-freshness > .pill { display: inline-flex; }
+.u-freshness > span:not(.pill) { margin-top: var(--s-2); font-size: var(--t-small); }
+.u-freshness > time { margin-top: var(--s-1); color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
+
+.u-consumption { padding-top: var(--s-3); scroll-margin-top: calc(var(--s-6) * 3); }
+.u-consumption:focus { outline: none; }
+.u-totals { display: grid; grid-template-columns: minmax(140px, .5fr) minmax(140px, .5fr) minmax(240px, 1fr); align-items: center; border-block: 1px solid var(--line-soft); padding-block: var(--s-4); gap: var(--s-5); margin-bottom: var(--s-5); }
+.u-totals .stat-tile { border: 0; box-shadow: none; background: none; padding: 0; }
+.u-cost-note { color: var(--text-faint); font-size: var(--t-small); line-height: 1.6; max-width: 44ch; justify-self: end; }
+.u-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: var(--s-5); }
+.u-daily { min-width: 0; margin-bottom: var(--s-5); }
+.u-daily h3 { font-size: var(--t-body); margin-bottom: var(--s-3); }
+.u-consumption-table { border-collapse: collapse; width: 100%; min-width: 600px; font-size: var(--t-small); }
+.u-consumption-table th { color: var(--text-faint); font-weight: 500; }
+.u-consumption-table th, .u-consumption-table td { padding: var(--s-3); text-align: right; font-variant-numeric: tabular-nums; }
+.u-consumption-table th:first-child, .u-consumption-table td:first-child { padding-left: 0; }
+.u-consumption-table th:nth-child(-n+2), .u-consumption-table td:nth-child(-n+2) { text-align: left; }
+.u-consumption-table tbody > tr { border-top: 1px solid var(--line-soft); }
+
+.u-details { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.u-details > summary { cursor: pointer; padding-block: var(--s-2); font-size: var(--t-small); color: var(--text-dim); }
+.u-observations { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--s-4); }
+.u-observations h3 { font-size: var(--t-body); margin: 0 0 var(--s-2); }
+.u-factors { margin-top: var(--s-4); }
+.u-factor-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--s-3); }
+.u-factor { padding: var(--s-4); }
+.u-factor h3 { font-size: var(--t-small); }
+.u-factor > p { font-size: var(--t-micro); margin: var(--s-1) 0 var(--s-2); }
+.u-factor ul { margin: 0; padding-left: var(--s-4); display: grid; gap: var(--s-1); font-size: var(--t-small); color: var(--text-dim); line-height: 1.5; }
+
+@media (max-width: 980px) {
+  .u-comparison > thead th, .u-comparison > tbody > tr > th, .u-comparison > tbody > tr > td { padding: var(--s-4); }
+  .u-comparison > thead th:first-child { width: 30%; }
+  .u-comparison > thead th:last-child { width: 125px; }
+  .u-windows { gap: var(--s-4); }
+  .u-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .u-cost-note { grid-column: 1 / -1; justify-self: start; max-width: none; }
+}
+@media (max-width: 720px) {
+  .u-capacity > .sec-head .sec-right, .u-consumption > .sec-head .sec-right { width: 100%; margin-left: 0; }
+  .u-comparison > thead { display: none; }
+  .u-comparison, .u-comparison > tbody { display: block; }
+  .u-comparison > tbody > tr { display: grid; grid-template-columns: minmax(0, 1fr) 116px; }
+  .u-comparison > tbody > tr > .u-account-cell { grid-column: 1; grid-row: 1; }
+  .u-comparison > tbody > tr > .u-windows-cell { grid-column: 1 / -1; grid-row: 2; padding-top: 0; }
+  .u-comparison > tbody > tr > .u-freshness { grid-column: 2; grid-row: 1; padding-left: 0; }
+  .u-account-select { justify-content: flex-start; }
+  .u-windows { grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); }
+  .u-axis { flex-wrap: wrap; gap: var(--s-1); }
+}
 
 /* Observed limits: what sessions' status lines reported, set under the probe
    card it sits beside and drawn lighter than it, because it is a second

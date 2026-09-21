@@ -106,6 +106,11 @@
 .bx-step .row2 > div, .bx-step .row3 > div { min-width: 0; }
 .bx-step textarea { line-height: 1.65; resize: vertical; }
 .bx-step-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-4); padding-top: var(--s-4); border-top: 1px solid var(--line-soft); }
+.bx-step-nav { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--s-3); }
+.bx-step-nav > div { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.bx-blockers { display: grid; gap: var(--s-2); margin-top: var(--s-3); }
+.bx-blockers ul { display: grid; gap: var(--s-2); margin: 0; padding-left: var(--s-4); }
+.bx-blockers .link { text-align: left; }
 .bx-preflight { overflow-y: auto; min-width: 0; padding: var(--s-2) var(--s-3) var(--s-5) var(--s-5); border-left: 1px solid var(--line-soft); scrollbar-gutter: stable; }
 .bx-preflight-content { display: flex; flex-direction: column; gap: var(--s-4); }
 .bx-preflight h2 { margin: 0; font-size: var(--t-title); font-weight: 450; line-height: 1.3; letter-spacing: -.025em; }

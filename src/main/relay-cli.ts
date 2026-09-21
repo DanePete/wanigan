@@ -1,17 +1,20 @@
 import * as relay from './relay';
+import { app } from 'electron';
 import { listProjects } from './store';
 import { detectProviders } from './providers';
-import type { RelayCreateInput, RelayRead } from '../shared/types';
+import type { RelayCreateInput, RelayRead, RelayStartRequest } from '../shared/types';
 
 /**
  * Relays from a terminal — the two halves that spend nothing.
  *
  * `relay-create` writes the docket and its route proofs, and `relay-show`
  * prints the plan and the forecast. Neither starts an agent: every phase lands
- * `pending`, and starting one is still a deliberate act in the app, where the
- * consent and the spend live. That split is the point of having this at all —
- * it makes the free half scriptable and testable without putting a paid launch
- * behind a flag somebody could pass by accident.
+ * `pending`, and the free half is scriptable and testable on its own.
+ *
+ * `relay-start` is the one command that spends, and it keeps that split rather
+ * than erasing it. It requires `--spend`, and it does not launch the agent —
+ * it asks the running window to, because that is the process the session has
+ * to outlive this command in.
  *
  * The estimate phase is free in the same sense: it is a query over this
  * project's own completed phases, with no provider call, so `relay-show` can
@@ -25,11 +28,15 @@ const FAILED = 1;
 const USAGE = 2;
 
 export const RELAY_CLI_HELP = `  relay-create <project> <intent…> [--provider ID] [--account ID] [--model M] [--effort E]
-                               plan a relay: a docket, five phases and one
-                               route proof each. Starts no agent and spends
-                               nothing; phases are started in the app
+                               plan routed work plus explicit commit and
+                               deploy stages. Starts no agent; a configured
+                               routing suggester may spend
   relay-show <docketId>        the phases, their routes, and the forecast —
-                               which is history, not a promise`;
+                               which is history, not a promise
+  relay-start <docketId> <kind> --spend
+                               ask the running Wanigan to start one ready
+                               phase. This launches a real agent and spends
+                               real money, so --spend is required`;
 
 /** A project by id, or by a unique case-insensitive name fragment. */
 function resolveProject(token: string): { id: string; name: string } {
@@ -72,13 +79,19 @@ function words(rest: string[]): string {
 
 function printRead(read: RelayRead, say: Say): void {
   say(`${read.docket.title}`);
-  say(`  ${read.docket.id} · ${read.docket.nodes.length} phases`);
+  say(`  ${read.docket.id} · ${read.docket.nodes.length + (read.delivery ? 2 : 0)} phases`);
   for (const node of read.docket.nodes) {
     const route = node.kind === 'estimate'
       ? 'Wanigan itself — no agent, no provider call'
       : [node.providerId, node.model, node.effort, node.accountId ? `account ${node.accountId}` : null]
         .filter(Boolean).join(' · ') || 'profile default';
     say(`  ${node.status.padEnd(9)} ${node.kind.padEnd(10)} ${route}`);
+  }
+  if (read.delivery) {
+    for (const kind of ['commit', 'deploy'] as const) {
+      const stage = read.delivery[kind];
+      say(`  ${stage.status.padEnd(9)} ${kind.padEnd(10)} ${stage.receipt?.commitHash ?? stage.detail ?? 'Explicit action in Relay'}`);
+    }
   }
 }
 
@@ -115,8 +128,8 @@ export async function cmdRelayCreate(rest: string[], say: Say): Promise<number> 
   say(`Planned a relay on ${project.name}.`);
   printRead(read, say);
   say('');
-  say('Nothing has started and nothing has been spent. Open Relay in Wanigan to start the plan');
-  say(`phase, or read the forecast first with:  npm run cli -- relay-show ${read.docket.id}`);
+  say('No agent or delivery action has started. Open Relay in Wanigan to start the first');
+  say(`phase, or read the forecast with:  npm run cli -- relay-show ${read.docket.id}`);
   return OK;
 }
 
@@ -148,4 +161,84 @@ export function cmdRelayShow(rest: string[], say: Say): number {
     ? 'No total: a total of some phases is not the cost of the relay, so none is offered.'
     : `Total of the priced phases: $${forecast.totalUsd.toFixed(2)} — an estimate from past runs, never a quote.`);
   return OK;
+}
+
+/**
+ * Start one ready phase — the paid boundary, and the only command here that
+ * crosses it.
+ *
+ * It does not start the agent. It asks the running Wanigan to, and that is the
+ * whole design: a PTY belongs to the process that spawned it, so a session
+ * started from a terminal dies when the terminal does. `phone-start` gets away
+ * with it because it is a six-second probe that kills what it started; a relay
+ * phase runs for minutes and must outlive this command by hours. Started here,
+ * a shell timeout would leave the node marked `running` behind a process that
+ * no longer exists — a lie in the database, which is the one thing the evidence
+ * record cannot afford.
+ *
+ * The single-instance lock is the channel. Failing to take it *is* the signal
+ * that a Wanigan is up, and Electron hands that instance our payload on its
+ * way past. No socket, no port, no second way in.
+ *
+ * `--spend` is required and does nothing but be required. Delivery has its own
+ * preview in the app, and a command that launched an agent on the strength of a
+ * docket id alone would make "relay-create then relay-start" look like one
+ * motion rather than two decisions. The flag is not a safety net against a
+ * mistyped id; it is the deliberate act, written down.
+ */
+export async function cmdRelayStart(rest: string[], say: Say): Promise<number> {
+  const [docketId, kind] = rest;
+  if (!docketId || !kind) { say('usage: relay-start <docketId> <kind> --spend'); return USAGE; }
+  if (kind === 'commit' || kind === 'deploy') {
+    say(`Open this Relay in Wanigan to preview and explicitly run its ${kind} stage. relay-start launches agent stages only.`);
+    return FAILED;
+  }
+  if (!rest.includes('--spend')) {
+    say('Starting a phase launches a real agent and spends real money.');
+    say('Re-run with --spend once that is what you mean.');
+    return USAGE;
+  }
+  // Read first, so an unstartable phase is refused here rather than waking the
+  // window to refuse it there.
+  const read = relay.readRelay(docketId);
+  const node = read.docket.nodes.find((entry) => entry.kind === kind);
+  if (!node) {
+    say(`This relay has no ${kind} phase. It holds: ${read.docket.nodes.map((entry) => entry.kind).join(', ')}.`);
+    return FAILED;
+  }
+  if (node.kind === 'estimate') {
+    say('The estimate phase is Wanigan’s own arithmetic over this project’s history. It starts no agent and costs nothing; it runs when the plan before it completes.');
+    return FAILED;
+  }
+  if (node.status !== 'ready') {
+    say(`The ${kind} phase is ${node.status}, not ready. A phase runs once the phases it depends on have finished.`);
+    return FAILED;
+  }
+  if (!node.providerId) { say(`The ${kind} phase has no routed provider, so there is nothing to start it on.`); return FAILED; }
+
+  const payload: RelayStartRequest = { wanigan: 'relay-start', nodeId: node.id, providerId: node.providerId };
+  const gotLock = app.requestSingleInstanceLock(payload);
+  if (gotLock) {
+    // Nothing was listening, so nothing was asked. Release immediately: held,
+    // this lock is what makes the next Wanigan launch exit without a window.
+    app.releaseSingleInstanceLock();
+    say('Wanigan is not running, so there is no process to own the session.');
+    say('Open Wanigan and run this again. Nothing was started and nothing was spent.');
+    return FAILED;
+  }
+
+  say(`Asked Wanigan to start ${kind} on ${node.providerId}${node.model ? ` · ${node.model}` : ''}…`);
+  // The window answers by moving the row, which is the only acknowledgement
+  // worth having: it is the same record the app and the rail read.
+  for (let waited = 0; waited < 20_000; waited += 500) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const now = relay.readRelay(docketId).docket.nodes.find((entry) => entry.id === node.id);
+    if (now && now.status !== 'ready') {
+      say(`${kind} is ${now.status}. Watch it in Wanigan; the phase completes when the agent finishes its turn.`);
+      return OK;
+    }
+  }
+  say(`${kind} is still ready after 20 seconds, so the running Wanigan did not take it.`);
+  say('Check the Relay view — the refusal, if there was one, is reported there.');
+  return FAILED;
 }

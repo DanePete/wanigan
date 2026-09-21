@@ -331,6 +331,10 @@ export type WorktreeRunSummary = {
 
 /** What Wanigan put into a worktree when it made it, and the newest setup run there. */
 export type WorktreeBootstrap = {
+  /** Main requires private copies for mutable goal work; relink honors it. */
+  privateDependencies?: boolean;
+  /** Goal checkouts survive automatic session cleanup, including later resumes. */
+  retainForReview?: boolean;
   depsMode: DepsMode;
   deps: DepOutcome[];
   include: IncludeOutcome;

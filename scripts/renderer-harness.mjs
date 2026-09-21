@@ -276,6 +276,15 @@ export const STUB = `
     // card, and a sweep that only counts screenshots still wrote a PNG. A
     // harness that renders 13 of 15 views is a harness that reviews 13.
     'policy.defaultTrust': 'project',
+    // A real empty ledger has no signing fingerprint. The shape-agnostic
+    // fallback is truthy and its slice() returns an array, which crashes the
+    // Settings trust panel when it formats the fingerprint with match().
+    'policy.chain': {
+      total: 0, unchainedBefore: 0, chained: 0, verifiedThrough: 0,
+      lastVerifiedId: null, firstBreak: null, head: null, watched: null,
+      signature: { state: 'unsigned', reason: 'Nothing is chained yet, so there is no head to sign.' },
+      keyFingerprint: null, checkedAt: now,
+    },
     'mobile.status': {
       config: { dashboardEnabled: false, remoteControlEnabled: false, port: 47831,
                 dashboardUrl: '', pushEnabled: false, pushServer: 'https://ntfy.sh', pushTopic: '' },
@@ -391,7 +400,10 @@ export const STUB = `
 // and on a file:// origin 'self' is opaque, so the module script never runs and
 // the page paints an empty #root. A one-file static server is the whole fix.
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const ROOT = path.join(REPO, 'out/renderer');
+// A frozen build lets a before/after probe use identical fixtures without
+// replacing the working renderer while another audit is running.
+const ROOT = process.env.WANIGAN_RENDERER_ROOT
+  ? path.resolve(process.env.WANIGAN_RENDERER_ROOT) : path.join(REPO, 'out/renderer');
 const server = http.createServer((req, res) => {
   const rel = decodeURIComponent((req.url ?? '/').split('?')[0]);
   const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);

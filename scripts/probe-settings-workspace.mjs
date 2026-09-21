@@ -28,6 +28,26 @@ try {
     const original = window.wanigan;
     window.__settingsCalls = [];
     let prefs;
+    // The routing suggester is off and uncredentialed here, which is how
+    // Wanigan ships and therefore what this tab should be photographed in.
+    const SUGGEST_CAPS = [
+      { id: 'route', label: 'Suggest a model for each stage',
+        describe: 'Asks which of the models this profile declares best fits the stage, and how much deliberation the work needs.',
+        withoutIt: 'Every stage runs on the profile\u2019s own default model and effort.' },
+      { id: 'pipeline', label: 'Suggest which stages to run',
+        describe: 'Asks whether work this well-specified still needs a planning or estimating stage before it is written.',
+        withoutIt: 'Every stage the docket declares is run.' },
+    ];
+    const suggestState = { hasKey: false, stored: [] };
+    const suggestStatus = () => ({
+      hasKey: suggestState.hasKey,
+      fingerprint: suggestState.hasKey ? 'ts-\u2026-4f91' : null,
+      enabled: suggestState.hasKey ? suggestState.stored : [],
+      stored: suggestState.stored,
+      capabilities: SUGGEST_CAPS,
+      host: 'api.typesafe.ai',
+      estimatedUsdPerCall: 0.0000336,
+    });
     const record = (service, method, args) => window.__settingsCalls.push([service, method, ...args]);
     const overrides = {
       prefs: {
@@ -54,6 +74,17 @@ try {
       accounts: { list: async () => [] },
       settings: { get: async () => ({spendCapUsd:25}), setSpendCap: async value => { record('settings', 'setSpendCap', [value]); return value; } },
       demo: { state: async () => ({ on: false, source: 'live' }), set: async on => { record('demo', 'set', [on]); return { on, source: on ? 'fictional' : 'live' }; } },
+      suggest: {
+        status: async () => suggestStatus(),
+        setEnabled: async ids => {
+          record('suggest', 'setEnabled', [ids]);
+          suggestState.stored = ids.filter(id => SUGGEST_CAPS.some(c => c.id === id));
+          return suggestStatus();
+        },
+        verify: async () => ({ ok: true, detail: 'Answered in 96ms.' }),
+        setKey: async () => { record('suggest', 'setKey', ['(redacted)']); suggestState.hasKey = true; return { ok: true, detail: 'Answered in 96ms.', fingerprint: 'ts-\u2026-4f91' }; },
+        clearKey: async () => { suggestState.hasKey = false; return true; },
+      },
     };
     window.wanigan = new Proxy(original, { get(target, service) {
       if (!(service in overrides)) return target[service];

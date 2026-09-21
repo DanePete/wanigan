@@ -409,7 +409,7 @@ export async function runAttemptsSmoke(check: Check, say: Say): Promise<void> {
       && /const HELD_KINDS[^\n]*'headless'/.test(gateSrc),
     'every attempt starts through startHeadlessRun, whose runner enqueues it as kind headless, the kind the monthly budget gate holds; the launcher has no spawn and no queue path of its own');
     check(headlessSrc.includes('pin ? { startPoint: pin.commit } : {}')
-      && headlessSrc.includes('if (worktree && filesChanged === 0 && !heldNow && !pin) {')
+      && headlessSrc.includes('if (executionStopped && worktree && filesChanged === 0 && !heldNow && !pin) {')
       && headlessSrc.includes('pinned: pin ?? undefined,')
       && headlessSrc.includes('const scheduleFire = scheduledFire ? claimFireForRun(')
       && headlessSrc.includes('fire: scheduledFire')

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { shellPath } from './providers';
 import type { TailnetStatus } from '../shared/types';
+import { findOnPath } from './platform';
 
 const exec = promisify(execFile);
 
@@ -37,11 +38,19 @@ const exec = promisify(execFile);
  * app executable, which is exactly why the list is ordered rather than scored:
  * any entry that answers is the CLI.
  */
-const CANDIDATES = [
-  '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
-  '/usr/local/bin/tailscale',
-  '/opt/homebrew/bin/tailscale',
-];
+const CANDIDATES = process.platform === 'win32'
+  // The Windows installer puts the CLI beside the GUI under Program Files and
+  // does not add it to PATH, so the PATH sweep below finds nothing on a machine
+  // where `tailscale` plainly works from the Start menu.
+  ? [
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe'),
+  ]
+  : [
+    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+    '/usr/local/bin/tailscale',
+    '/opt/homebrew/bin/tailscale',
+  ];
 
 /** Local IPC to a running daemon; when it is slow, something is already wrong. */
 const PROBE_TIMEOUT_MS = 8_000;
@@ -98,8 +107,7 @@ async function resolveTailscale(): Promise<string | null> {
   // A GUI app inherits launchd's PATH rather than the shell's, which is why
   // providers.ts resolves CLIs through the login shell's PATH; an unusual
   // install location is invisible without it.
-  const PATH = await shellPath();
-  return firstExecutable(PATH.split(':').filter(Boolean).map((d) => path.join(d, 'tailscale')));
+  return findOnPath('tailscale', await shellPath());
 }
 
 function firstLine(text: string): string {

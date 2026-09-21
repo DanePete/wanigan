@@ -266,10 +266,10 @@ function ScopedCodePanel({ projectPath, projectName, sessionId, checkpointsSuppo
   }
 
   async function doTurnRevert() {
-    if (!sessionId || !cpPlan?.ok) return;
+    if (!sessionId || !cpPlan?.ok || !cpPlan.previewToken) return;
     setCpBusy(true);
     try {
-      const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId);
+      const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId, cpPlan.previewToken);
       setCpResult(res);
       setCpPlan(null);
       setErr(null);
@@ -893,9 +893,9 @@ function Diff({ text }: { text: string }) {
 }
 
 /**
- * The same diff, with lines a reader can comment on. Click a line to select it
- * and shift-click to extend within the file; each hunk header also carries a
- * button that selects the whole hunk, which is the keyboard route. A note is
+ * The same diff, with lines a reader can comment on. Click or activate a line
+ * to select it, holding Shift to extend within the file; each hunk header also
+ * carries a button that selects the whole hunk. A note is
  * refused rather than guessed when the selection spans two files or holds no
  * line of code.
  */
@@ -969,7 +969,12 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
           const inRange = range !== null && i >= range.from && i <= range.to && commentable(row);
           const cls = `dl ${row.kind}${inRange ? ' review-sel' : ''}${noted.has(i) ? ' review-noted' : ''}`;
           return commentable(row)
-            ? <div key={i} className={cls} onClick={(e) => pick(i, e.shiftKey)}>{row.text || ' '}</div>
+            ? <button key={i} type="button" className={cls} aria-pressed={inRange}
+                aria-label={`Comment on ${row.file}, ${row.newLine === null ? `old line ${row.oldLine}` : `line ${row.newLine}`}: ${row.text}`}
+                aria-keyshortcuts="Enter Space Shift+Enter Shift+Space"
+                onClick={(e) => pick(i, e.shiftKey)} onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(i, e.shiftKey); }
+                }}>{row.text || ' '}</button>
             : <div key={i} className={cls}>{row.text || ' '}</div>;
         })}
         {rows.length > DIFF_LINES && (
@@ -993,7 +998,7 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd }: {
           <div className="review-compose-actions">
             <button className="btn btn-primary" type="button" disabled={!body.trim()} onClick={add}>Add note</button>
             <button className="btn" type="button" onClick={() => { setRange(null); setBody(''); setWhy(null); }}>Cancel</button>
-            <span className="faint">⌘↩ adds · shift-click a line to extend</span>
+            <span className="faint">⌘↩ adds · shift-click or shift-enter extends</span>
           </div>
         </div>
       )}

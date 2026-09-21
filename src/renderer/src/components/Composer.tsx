@@ -1,3 +1,4 @@
+import { PromptField } from '../prompt-actions/PromptField';
 import { Icon } from './bits';
 import { bindingMatches, useChord } from '../bindings';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -533,7 +534,9 @@ export default function Composer({ session, onError }: {
       <div className="composer-identity"><span>Message the agent</span><span>{session.status === 'starting' ? 'Session starting' : state.mode === 'queue' ? 'Queues until idle' : state.mode === 'blocked' ? 'Session ended' : 'Ready to send'}</span></div>
       <div className="composer-row">
         <div className="composer-field">
-          <textarea
+          <PromptField
+            scopeKey={`session:${sessionId}`} purpose="session message"
+            onValueChange={value => { setDraft(value.slice(0, COMPOSER_MAX_CHARS + 1_000)); setMenu(null); }}
             ref={areaRef}
             className="composer-area"
             rows={Math.min(6, Math.max(2, draft.split('\n').length))}

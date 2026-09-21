@@ -68,7 +68,7 @@ const TABS: { id: LearningTab; label: string; hint: string }[] = [
   { id: 'overview', label: 'Overview', hint: 'What has this actually done?' },
   { id: 'inbox', label: 'Inbox', hint: 'What needs my decision?' },
   { id: 'knowledge', label: 'Knowledge', hint: 'What is stored, and what goes into my agent\u2019s prompt?' },
-  { id: 'context', label: 'Context', hint: 'What is my context costing me?' },
+  { id: 'context', label: 'Context budget', hint: 'What is my context costing me?' },
 ];
 
 /** Appended only while `learning_experiments` holds at least one row. The table
@@ -647,7 +647,7 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, read, windowDays, onN
       go: () => onNavigate('knowledge'),
       title: 'Open Knowledge — projections are listed on each item. Only an instruction, rule or skill writes a file; a memory is delivered as a briefing and needs none.' },
     { key: 'briefed', label: 'Briefed', value: flow(pipeline?.briefingsServed), sub: `served · last ${windowDays}d`,
-      go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
+      go: () => onNavigate('context'), title: 'Open Context budget — the briefing inspector previews one' },
   ];
   return (
     <div className="pipeline-spine" role="group" aria-label="Learning pipeline">
@@ -868,11 +868,11 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
       ],
     },
     {
-      tab: 'context', label: 'Context',
+      tab: 'context', label: 'Context budget',
       body: <>At launch, retrieval assembles a token-bounded, cited <strong>briefing</strong> from the
         items that ranked for that task and hands it to the CLI. Nothing is stored inside the agent.</>,
       stats: [
-        { n: p.briefingsServed, text: `briefings served · ${w}`, go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
+        { n: p.briefingsServed, text: `briefings served · ${w}`, go: () => onNavigate('context'), title: 'Open Context budget — the briefing inspector previews one' },
       ],
     },
   ];
@@ -1183,7 +1183,7 @@ function RetrievalCard({ settings, pipeline, windowDays, candidates, onNavigate 
           {estTokens(pendingEst)} across {pending.length} pending proposal{pl(pending.length)} (bytes÷4 heuristic) — decided in the Inbox.
         </p>
       )}
-      <button className="btn" onClick={() => onNavigate('context')}>Inspect a briefing in Context</button>
+      <button className="btn" onClick={() => onNavigate('context')}>Inspect a briefing in Context budget</button>
     </article>
   );
 }
@@ -1213,10 +1213,10 @@ function NeedsAttention({ overview, settings, candidates, onNavigate }: {
           text: 'Nothing waits for a decision.', tab: 'inbox', action: 'Open Inbox' },
     settings.enabled
       ? { key: 'e', ok: true, word: 'learning on',
-          text: 'Signals are recorded and briefings are served at session launch.', tab: 'context', action: 'Open Context' }
+          text: 'Signals are recorded and briefings are served at session launch.', tab: 'context', action: 'Open Context budget' }
       : { key: 'e', ok: false, word: 'learning paused',
           text: 'No new signals are recorded and no briefings are served while learning is off.',
-          tab: 'context', action: 'Open Context' },
+          tab: 'context', action: 'Open Context budget' },
   ];
   return (
     <section className="card learning-card">
@@ -1889,7 +1889,7 @@ function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate
   const nothingBecause = !result || result.entries.length > 0 ? null
     : learningRan === false
       ? { title: 'Nothing would be injected — learning is switched off',
-          body: 'Retrieval did not run, so every counter here is 0 because nothing was asked, not because nothing matched. This says nothing about what the store holds. Switch learning on in Context to compose a real briefing.' }
+          body: 'Retrieval did not run, so every counter here is 0 because nothing was asked, not because nothing matched. This says nothing about what the store holds. Switch learning on in Context budget to compose a real briefing.' }
       : storeEmpty
         ? { title: 'Nothing would be injected — this scope stores no active knowledge item',
             body: 'Retrieval had nothing to rank. Approve a proposal in the Inbox to create the first item.' }
@@ -1977,7 +1977,7 @@ function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate
       <p className="faint">
         Previewing changes nothing: only a real launch quarantines a stale-cited item.{' '}
         <button className="learning-link" onClick={() => onNavigate('context')}>
-          Open Context
+          Open Context budget
         </button>{' '}
         for the per-entry cost and the token ceiling that shaped this.
       </p>

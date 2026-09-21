@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { db } from './db';
-import { deriveSessionTitle, forgetPastSession, pastSessions, renameSession, setConversationFlag } from './sessions';
+import { deriveSessionTitle, forgetPastSession, pastSessions, renameSession, setConversationFlag } from './session-history';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;

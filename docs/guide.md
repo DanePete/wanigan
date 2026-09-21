@@ -9,7 +9,7 @@ repo, one prompt fanned across ten thousand rows, and the gap between them, one
 prompt across every repo you own. Sessions, headless runs and batches share one
 project list, one database and one dispatcher for that reason.
 
-**Contents:** [Running it](#running-it) · [Sessions](#sessions) ·
+**Contents:** [Running it](#running-it) · [Finding your way](#finding-your-way) · [Sessions](#sessions) ·
 [What Wanigan knows about a running session](#what-wanigan-knows-about-a-running-session) ·
 [Sessions Wanigan did not start](#sessions-wanigan-did-not-start) · [Trust](#trust) ·
 [The third speed](#the-third-speed) · [The CLI](#the-cli) · [Reviewing code](#reviewing-code) ·
@@ -22,16 +22,21 @@ project list, one database and one dispatcher for that reason.
 
 ## Running it
 
+> On Windows, read [windows.md](windows.md) first: it covers the build tools
+> `npm ci` needs, how a `claude.cmd` shim is resolved and started, and which
+> features are not there yet.
+
+
 ```bash
 nvm use          # Node 22.23.2 (see .nvmrc) — not optional, see below
 npm install      # rebuilds node-pty and better-sqlite3 for Electron's ABI
-npm run app      # through scripts/launch.sh
+npm run app      # through scripts/launch.mjs
 npm run dev      # hot reload — but read the warning under this block first
 npm test         # typecheck, style gate, two packaging suites, smoke: no network, no spend
 npm run cli      # the same database from a terminal
 ```
 
-**`npm run dev` does not go through `scripts/launch.sh`.** It is
+**`npm run dev` does not go through `scripts/launch.mjs`.** It is
 `electron-vite dev` directly, so it never unsets `ELECTRON_RUN_AS_NODE` — which
 is exactly the variable that makes an Electron app die at startup with
 `Cannot read properties of undefined (reading 'whenReady')`. Run it from a VS
@@ -77,11 +82,53 @@ launched by your signed-in session, never by the privileged helper. To install
 a separately built verified bundle, pass
 `npm run install:mac:arm64 -- --source "/path/to/Wanigan.app"`.
 
+## Finding your way
+
+The bottom dock groups tools by the job they support. Buttons above the
+workspace switch between the tools in the current group:
+
+| Group | Tools |
+| --- | --- |
+| Home | Companion and workspace overview |
+| Work | Sessions, Board, Goals, Relay, Changes |
+| Monitor | Fleet, Usage, Insights |
+| Knowledge | Learning, Skills, Context, Scout |
+| Automation | Runs, Schedules, Batches |
+| Manage | Settings, Extensions, Plugins, Recovery |
+
+Clicking a dock group returns to the view you last used there. **Sidebar** in
+the upper-left admin bar and **Tools** in the dock open all destinations in the
+optional sidebar, where a group's chevron expands or collapses its tools
+without leaving your current view. Showing or hiding the sidebar remembers
+that desktop preference. Narrow windows use a temporary navigation
+drawer. **Settings** sits beside the dock, and Search reaches every tool.
+
+Search accepts words in any order: “review git” finds Changes, and
+“backup restore” finds the restore settings. Detailed settings appear when
+searched or when you select the Settings search category. Existing shortcuts
+keep their destinations, including ⌘3 for Goals, formerly named Review.
+
+Within a session, **Review work** opens Changes and Checks & evidence. They
+share the session's checkout identity, and switching sections preserves your
+selected file and unsaved check commands. Checks run only when requested.
+
+Goals keeps project and status filters under **Filters**, with the current
+scope always visible. Search accepts words in any order. Filtering the list
+keeps the inspected goal open and says when it falls outside that filter.
+On narrow windows, **Browse goals** opens the list and selecting a goal
+returns the space to its tasks and evidence.
+
 ## Sessions
 
 Each session is a real pseudo-terminal running the actual agent CLI. Nothing is
 proxied or re-implemented, so the full TUI, permission prompts, slash commands
 and resume flows behave exactly as they do in your shell.
+
+**Find a conversation** filters open sessions and the recent conversations
+already loaded for the selected project space. Search by name, project,
+agent or model; settled matches appear automatically. The active terminal
+keeps running while you search. **Search saved history** carries the query
+into the history reader to look through older conversations and messages.
 
 Adding a provider is one object in `src/main/providers.ts` — the session manager
 and the UI both read from it.
@@ -288,6 +335,12 @@ provider, timeout, budget and isolation, then inspect every row's output, cost,
 worktree and changed-file count. A row is never silently landed; worktrees can
 be squash-merged from the review surface once you have read the result.
 
+**Repository runs** shows those runs; **Compare attempts** opens repeated
+attempts at one task. A new run starts with the task, then the agent and
+repositories. Additional agent options fold away unless the profile declares
+required settings. Timeout, budget, isolation and the declaration for running
+across every project stay visible. Browsing or preparing a run starts nothing.
+
 A headless agent has no human at the keyboard, so it cannot escalate a
 permission prompt. A repo whose trust level does not permit what the run asks
 for is marked blocked and never spawned, and the run that does start is handed
@@ -349,16 +402,18 @@ npm run cli -- queue headless "audit" '{"projectId":"prj_…","prompt":"…"}'  
 
 ## Reviewing code
 
-The Sessions **Code** rail is intentionally a compact live reading surface: it
-shows what changed and what the agent touched most recently. Select a file and
-use **Pop out** when the review needs more room. The inspector has its own
+Session **Details** groups **Changes**, recorded **Activity**, and launch
+**Context**. **Expand details** gives the reader the available width while
+keeping the terminal and composer mounted; **Back to terminal** returns to
+the conversation. The expanded reading stays open when the window resizes.
+Select a file and use **Pop out** for a separate diff reader. The inspector has its own
 full-height scroll region, line numbers, find, wrapping, top/bottom controls
 and an external-editor handoff, so a long file is never trapped in the rail.
 
 `⌘K` opens the view palette. It is the keyboard route to every surface when the
 header is narrower than the tab strip; `⌘0` opens Runs directly.
 
-**Verified done** is a goal's choice under Review › Execution & spending. An
+**Verified done** is a goal's choice under Goals › Execution & spending. An
 agent ending its turn is a claim that the work is done. With **Run the gate**,
 each Stop from an implementation or verification session runs the project's
 review gate in that task's tree, records which tree it ran on, and skips the run
@@ -386,6 +441,11 @@ validation errors are not reported until the whole batch ends, results come back
 unordered in a `.jsonl` that can be hundreds of megabytes, and anything
 unfinished at 24 hours is gone. The Batches view is the surface that makes that
 survivable.
+
+The batch editor keeps four preparation steps visible. **Back** and **Next**
+move between them without sending work. The **Still to do** buttons beside
+Submit take you to a missing answer or the relevant preflight control. Cost
+estimation, a paid test request, and submission still require their own actions.
 
 | Failure mode | What Wanigan does |
 |---|---|
@@ -417,6 +477,13 @@ vary mid-run, so a comparison where both the model and the effort moved is
 uninterpretable. Every score records the judge's own model and effort, because a
 judgement with no attribution is unfalsifiable.
 
+**Schedules** can repeat an unattended repository task or a saved batch. For
+ordinary timing, choose **Every day**, **Weekdays**, or **Every week**, then
+the local time and (for weekly work) the day. **Custom cron** retains advanced
+patterns. Check the displayed timezone and upcoming occurrences before saving.
+Creating a schedule enables it; the agent, project scope, and execution limits
+remain explicit in the form.
+
 ## Model capabilities come from the API
 
 The model list is `GET /v1/models`, not a hardcoded table. The API returns
@@ -433,17 +500,21 @@ invalidate the cached prefix.
 
 ## Skills and Context
 
-**Skills** is a searchable catalogue of the skills actually on your machine —
-your own, a project's checked-in ones, and everything plugins have installed —
-read from disk with their real descriptions. Selecting one types it into a
-running session, so it is a launcher rather than a reference. Built-in skills
+**Skills** is a searchable catalogue of Claude Code and Codex skill files found
+on your machine. Filter by agent or source, then select a workflow to read it.
+Claude Code entries offer **Copy command**; **Type into session** is available
+for a live Claude Code session in the same project when manual invocation is
+allowed. Typing does not press Enter. Codex entries offer **Copy name** and
+file reading; Wanigan has not verified their loading order or invocation.
+**Sources** lists the directories scanned for both agents. Built-in skills
 are reported as *seen so far* and labelled that way, because Claude Code extracts
 a bundled skill to a temp directory only once it has been used, and scanning that
 directory would report "the skills you happened to invoke recently" while looking
 exactly like a complete inventory.
 
-**Context** answers "what will my agent actually know when it starts?" — the
-resolved CLAUDE.md chain in load order including every ancestor directory,
+**Context** predicts Claude Code's instruction loading from local files; it
+does not predict Codex's launch order. It shows the resolved CLAUDE.md chain
+in load order including every ancestor directory,
 imports to the real four-hop limit with cycles and external imports flagged,
 `.claude/rules/` split into loads-at-launch and loads-on-demand with how many
 files each path-scoped rule currently matches, the auto-memory directory, the
@@ -517,9 +588,9 @@ Use it in this order:
 
 1. Choose the official sources you want to follow. Source URLs are fixed in
    Wanigan; the dashboard only lets you include or exclude them.
-2. Use **Preview locally** to refresh the capability inventory without opening
+2. Use **Check local inventory** to refresh the capability inventory without opening
    a network connection.
-3. Use **Run scout now** for one visible, credential-free check of the enabled
+3. Use **Check official sources online** for one visible, credential-free check of the enabled
    sources. This does not turn on recurring research.
 4. To enable a weekly check, separately allow unattended official-source
    checks, pick a local day/time, then turn on **Weekly watch**. On macOS it
@@ -660,8 +731,9 @@ never a fallback from the run key.
 
 **Node 16 will not build this.** `npm run build` under an old Node dies with
 `crypto$2.getRandomValues is not a function`, which reads like a Vite bug and is
-not. `scripts/launch.sh` and `scripts/smoke.sh` prepend the `.nvmrc` version to
-PATH; a bare `npm run build` does not.
+not. `scripts/launch.mjs`, `scripts/cli.mjs` and `scripts/smoke.mjs` refuse to
+run under a Node older than `.nvmrc` and say which version they got; a bare
+`npm run build` does not check.
 
 **Agent CLIs are not on your PATH.** Claude Code and Codex ship *inside* their
 editor extensions under versioned directories:
@@ -760,11 +832,11 @@ The terminal owns its keystrokes: while it has focus, only `⌘.` gets through.
 | `⌘K` | command palette: views, projects, live sessions, settings, transcripts |
 | `⌘T` | new session |
 | `⌘⇧H` | Mission room |
-| `⌘1` · `⌘2` · `⌘3` | Sessions · Fleet · Review |
-| `⌘4`–`⌘9` | Batches · Insights · Learning · Plugins · Schedules · Git |
+| `⌘1` · `⌘2` · `⌘3` | Sessions · Fleet · Goals |
+| `⌘4`–`⌘9` | Batches · Insights · Learning · Plugins · Schedules · Changes |
 | `⌘0` · `⌘,` | Runs · Settings |
 | `⌘⇧S` · `⌘⇧C` · `⌘⇧U` · `⌘⇧I` · `⌘⇧B` | Skills · Context · Usage · Scout · Board |
-| `⌘B` | toggle the side panel (Code / Timeline / Learning) |
+| `⌘B` | toggle session details (Changes / Activity / Context), or return from expanded details |
 | `⌘E` | show the composer and attachments, or hide them for more terminal |
 | `⌥⌘←` · `⌥⌘→` | previous · next session |
 | `⌘.` | interrupt the running agent, even from inside the terminal |

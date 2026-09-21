@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { runGit } from './git';
 import { onHookEvent } from './hooks';
 import { assertManagedRoot } from './roots';
 import { getSetting } from './settings';
+import { acquireCheckoutActivity, assertCheckoutAvailable } from './checkout-activity';
 import type {
   CheckpointDiff, CheckpointKind, CheckpointRevertAction, CheckpointRevertPlan,
   CheckpointRevertResult, SessionCheckpoint,
@@ -92,10 +94,11 @@ export function initCheckpoints(): void {
  * dirty work restorable — the baseline records that it existed, this records
  * what it said.
  */
-export function registerSessionCheckpoints(info: CheckpointLaunchInfo): void {
+export async function registerSessionCheckpoints(info: CheckpointLaunchInfo): Promise<void> {
   if (!checkpointsEnabled()) return;
   if (!info.hooksCapable || !info.gitHead) return;
-  if (live.has(info.sessionId)) return;
+  const existing = live.get(info.sessionId);
+  if (existing) { await existing.chain; return; }
   const state: LiveState = {
     root: '', turn: 0, chain: Promise.resolve(),
     lastTree: null, lastCommit: null, consecutiveFailures: 0, disabled: false,
@@ -108,15 +111,29 @@ export function registerSessionCheckpoints(info: CheckpointLaunchInfo): void {
       state.disabled = true;
       record(info.sessionId, 0, 'session-start', info.cwd, null, null, null, 'failed',
         `This directory is not a git work tree, so no checkpoints will be captured: ${clip(top.err, 200)}`);
-      return;
+      throw new Error('The initial checkpoint could not resolve this checkout. The agent was not started.');
     }
     state.root = root;
     // A fresh id starts at 0; MAX(turn) only matters if a crash re-registers.
     const row = db().prepare('SELECT MAX(turn) AS t FROM session_checkpoints WHERE session_id = ?')
       .get(info.sessionId) as { t: number | null } | undefined;
     if (row?.t != null) state.turn = row.t;
-    await capture(info.sessionId, state, 'session-start', 0);
-  })().catch(() => { /* recorded by capture; a failed launch snapshot must not throw */ });
+    const id = await capture(info.sessionId, state, 'session-start', 0);
+    const captured = id === null ? null : checkpointRow(info.sessionId, id);
+    if (!captured?.commitHash) {
+      state.disabled = true;
+      throw new Error('The initial checkpoint could not preserve the pre-agent work. The agent was not started.');
+    }
+  })();
+  await state.chain;
+}
+
+/** Cancel preparation for a launch that never obtained a live agent. No invented session-end snapshot. */
+export async function cancelSessionCheckpointLaunch(sessionId: string): Promise<void> {
+  const state = live.get(sessionId);
+  if (state) await state.chain.catch(() => {});
+  live.delete(sessionId);
+  try { fs.rmSync(indexFileFor(sessionId), { force: true }); } catch { /* scratch file only */ }
 }
 
 /**
@@ -305,6 +322,84 @@ export async function checkpointDiff(sessionId: string, fromId: number, toId: nu
 
 /* ── revert ──────────────────────────────────────────────────────────── */
 
+type CheckoutIdentity = { root: string; directory: string; head: string; index: string };
+type RevertReceipt = {
+  sessionId: string; checkpointId: number; commit: string; tree: string;
+  identity: CheckoutIdentity; expiresAt: number;
+};
+const revertReceipts = new Map<string, RevertReceipt>();
+const REVERT_PREVIEW_TTL_MS = 10 * 60_000;
+const MAX_REVERT_RECEIPTS = 100;
+
+function directoryIdentity(root: string): string {
+  if (fs.realpathSync(root) !== root) throw new Error('The checkout location changed. Preview the restore again.');
+  const stat = fs.statSync(root, { bigint: true });
+  if (!stat.isDirectory()) throw new Error('The checkpoint checkout is no longer a directory.');
+  return `${stat.dev}:${stat.ino}`;
+}
+
+/** HEAD and the real index are approval inputs even though restore never writes them. */
+async function checkoutIdentity(root: string): Promise<CheckoutIdentity> {
+  const canonical = fs.realpathSync(root);
+  const directory = directoryIdentity(canonical);
+  const head = await runGit(canonical, ['rev-parse', '--verify', 'HEAD'], { timeout: 8_000 });
+  const indexPath = await runGit(canonical, ['rev-parse', '--git-path', 'index'], { timeout: 8_000 });
+  if (!head.ok || !indexPath.ok || !indexPath.out.trim()) throw new Error('The checkout HEAD or index could not be read. Preview the restore again.');
+  const file = path.resolve(canonical, indexPath.out.trim());
+  // One descriptor for the check and the read, so the file that was measured
+  // is the file that is hashed. A stat followed by a read by name could hash a
+  // file swapped in between the two.
+  let index = 'absent';
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error('The checkout index exceeds the restore comparison limit.');
+    index = createHash('sha256').update(fs.readFileSync(fd)).digest('hex');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  if (directoryIdentity(canonical) !== directory) throw new Error('The checkout directory changed while it was being compared.');
+  return { root: canonical, directory, head: head.out.trim(), index };
+}
+
+function sameCheckout(a: CheckoutIdentity, b: CheckoutIdentity): boolean {
+  return a.root === b.root && a.directory === b.directory && a.head === b.head && a.index === b.index;
+}
+
+/** A fresh scratch index avoids treating a cached filesystem stat as content evidence. */
+async function currentTree(root: string, seed: string): Promise<string> {
+  const scratch = indexFileFor(`restore-${randomUUID()}`);
+  const opts = { timeout: CAPTURE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, env: { GIT_INDEX_FILE: scratch } };
+  try {
+    for (const args of [['read-tree', seed], ['add', '-A', '.']]) {
+      const result = await runGit(root, args, opts);
+      if (!result.ok) throw new Error(`The restored checkout could not be compared: ${clip(result.err, 200)}`);
+    }
+    const result = await runGit(root, ['write-tree'], opts);
+    if (!result.ok || !result.out.trim()) throw new Error('The restored checkout tree could not be read.');
+    return result.out.trim();
+  } finally {
+    fs.rmSync(scratch, { force: true });
+    fs.rmSync(`${scratch}.lock`, { force: true });
+  }
+}
+
+function keepReceipt(receipt: RevertReceipt): string {
+  for (const [token, value] of revertReceipts) {
+    if (value.expiresAt <= Date.now() || value.sessionId === receipt.sessionId) revertReceipts.delete(token);
+  }
+  while (revertReceipts.size >= MAX_REVERT_RECEIPTS) {
+    const oldest = revertReceipts.keys().next().value;
+    if (oldest) revertReceipts.delete(oldest);
+  }
+  const token = randomUUID();
+  revertReceipts.set(token, receipt);
+  return token;
+}
+
 /**
  * A snapshot of right now, whether or not the session still runs. The live
  * queue is reused when there is one so a revert cannot interleave with a
@@ -329,14 +424,14 @@ async function captureNow(sessionId: string, root: string, kind: CheckpointKind)
 }
 
 async function revertActions(root: string, targetCommit: string, currentCommit: string): Promise<CheckpointRevertAction[]> {
-  const dt = await runGit(root, ['diff-tree', '-r', '--name-status', '--no-renames', targetCommit, currentCommit],
+  const dt = await runGit(root, ['diff-tree', '-r', '--name-status', '-z', '--no-renames', targetCommit, currentCommit],
     { timeout: CAPTURE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
   if (!dt.ok) throw new Error(`git could not compare the checkpoint with the current state: ${clip(dt.err, 300)}`);
   const actions: CheckpointRevertAction[] = [];
-  for (const line of dt.out.split('\n')) {
-    if (!line) continue;
-    const [status, ...rest] = line.split('\t');
-    const p = rest.join('\t');
+  const fields = dt.out.split('\0');
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i];
+    const p = fields[i + 1];
     if (!p) continue;
     // Statuses read target→current: added since the checkpoint means delete
     // now; deleted or modified since means restore from the checkpoint.
@@ -359,92 +454,130 @@ function revertPreconditions(sessionId: string, checkpointId: number):
 }
 
 export async function checkpointRevertPlan(sessionId: string, checkpointId: number): Promise<CheckpointRevertPlan> {
+  const refused = (detail: string, commit: string | null = null): CheckpointRevertPlan =>
+    ({ ok: false, checkpointId, previewToken: null, commit, files: [], totalFiles: 0, detail });
   const pre = revertPreconditions(sessionId, checkpointId);
-  if ('refusal' in pre) return { ok: false, checkpointId, commit: null, files: [], totalFiles: 0, detail: pre.refusal };
+  if ('refusal' in pre) return refused(pre.refusal);
   const { row, root, commit } = pre;
-
-  // The plan compares against a snapshot of now, not `git status`: only a tree
-  // sees the untracked files a revert would have to delete.
-  const nowId = await captureNow(sessionId, root, 'pre-revert');
-  const nowRow = nowId == null ? null : checkpointRow(sessionId, nowId);
-  if (!nowRow?.commitHash) {
-    return { ok: false, checkpointId, commit, files: [], totalFiles: 0,
-      detail: 'Wanigan could not snapshot the current state, so it cannot say exactly what a revert would do. Nothing was changed.' };
-  }
-
-  const actions = await revertActions(root, commit, nowRow.commitHash);
-  const restores = actions.filter((a) => a.action === 'restore').length;
-  const deletes = actions.length - restores;
-  return {
-    ok: true,
-    checkpointId,
-    commit,
-    files: actions.slice(0, MAX_PLAN_FILES),
-    totalFiles: actions.length,
-    detail: actions.length === 0
-      ? 'The working tree already matches this checkpoint. Nothing to do.'
-      : `Restores ${restores} file${restores === 1 ? '' : 's'} to turn ${row.turn}'s state and deletes ${deletes} created since. A safety snapshot is taken first, so this is undoable.`,
-  };
+  try {
+    assertCheckoutAvailable(root, 'restore');
+    const identity = await checkoutIdentity(root);
+    // The plan compares against a snapshot of now, not `git status`: only a
+    // tree sees the untracked files a restore would have to delete.
+    const nowId = await captureNow(sessionId, root, 'pre-revert');
+    const nowRow = nowId == null ? null : checkpointRow(sessionId, nowId);
+    if (!nowRow?.commitHash || !nowRow.treeHash) {
+      return refused('Wanigan could not snapshot the current state, so it cannot say exactly what a restore would do. Nothing was changed.', commit);
+    }
+    const actions = await revertActions(root, commit, nowRow.commitHash);
+    assertCheckoutAvailable(root, 'restore');
+    if (!sameCheckout(identity, await checkoutIdentity(root)) || await currentTree(root, nowRow.commitHash) !== nowRow.treeHash) {
+      return refused('The checkout changed while the preview was being prepared. Stop other writers and preview it again. Nothing was changed.', commit);
+    }
+    const restores = actions.filter((a) => a.action === 'restore').length;
+    const deletes = actions.length - restores;
+    return {
+      ok: true,
+      checkpointId,
+      previewToken: keepReceipt({ sessionId, checkpointId, commit, tree: nowRow.treeHash, identity,
+        expiresAt: Date.now() + REVERT_PREVIEW_TTL_MS }),
+      commit,
+      files: actions.slice(0, MAX_PLAN_FILES),
+      totalFiles: actions.length,
+      detail: actions.length === 0
+        ? 'The working tree already matches this checkpoint. Nothing to do.'
+        : `Restores ${restores} file${restores === 1 ? '' : 's'} to turn ${row.turn}'s state and deletes ${deletes} created since. A safety snapshot is taken first, so this is undoable.`,
+    };
+  } catch (error) { return refused(message(error), commit); }
 }
 
-export async function applyCheckpointRevert(sessionId: string, checkpointId: number): Promise<CheckpointRevertResult> {
+export async function applyCheckpointRevert(sessionId: string, checkpointId: number, previewToken?: string): Promise<CheckpointRevertResult> {
+  const refused = (detail: string, preRevertCheckpointId: number | null = null): CheckpointRevertResult =>
+    ({ ok: false, reverted: 0, deleted: 0, failed: [], preRevertCheckpointId, detail });
+  const receipt = typeof previewToken === 'string' ? revertReceipts.get(previewToken) : undefined;
+  // Consume before the first await: an approval cannot authorize two applies.
+  if (previewToken) revertReceipts.delete(previewToken);
+  if (!receipt || receipt.expiresAt <= Date.now() || receipt.sessionId !== sessionId || receipt.checkpointId !== checkpointId) {
+    return refused('This restore has no current preview approval. Preview the checkpoint again. Nothing was changed.');
+  }
   const pre = revertPreconditions(sessionId, checkpointId);
-  if ('refusal' in pre) return { ok: false, reverted: 0, deleted: 0, failed: [], preRevertCheckpointId: null, detail: pre.refusal };
+  if ('refusal' in pre) return refused(pre.refusal);
   const { row, root, commit } = pre;
-
-  const preId = await captureNow(sessionId, root, 'pre-revert');
-  const preRow = preId == null ? null : checkpointRow(sessionId, preId);
-  if (!preRow?.commitHash) {
-    return { ok: false, reverted: 0, deleted: 0, failed: [], preRevertCheckpointId: null,
-      detail: 'The safety snapshot failed, so the revert did not start. Nothing was changed.' };
-  }
-
-  const actions = await revertActions(root, commit, preRow.commitHash);
-  const toRestore = actions.filter((a) => a.action === 'restore').map((a) => a.path);
-  const toDelete = actions.filter((a) => a.action === 'delete').map((a) => a.path);
-  const failures: { path: string; detail: string }[] = [];
-
+  let release: (() => void) | null = null;
+  let preId: number | null = null;
   let restored = 0;
-  for (let i = 0; i < toRestore.length; i += RESTORE_CHUNK) {
-    const chunk = toRestore.slice(i, i + RESTORE_CHUNK);
-    const res = await runGit(root, ['restore', '--source', commit, '--worktree', '--', ...chunk],
-      { timeout: CAPTURE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
-    if (res.ok) { restored += chunk.length; continue; }
-    // Retry singly so one bad path costs itself, not its whole chunk.
-    for (const p of chunk) {
-      const one = await runGit(root, ['restore', '--source', commit, '--worktree', '--', p],
-        { timeout: CAPTURE_TIMEOUT_MS });
-      if (one.ok) restored += 1;
-      else failures.push({ path: p, detail: clip(one.err, 200) || 'git restore failed' });
-    }
-  }
-
   let deleted = 0;
-  for (const p of toDelete) {
-    const abs = containedPath(root, p);
-    if (!abs) { failures.push({ path: p, detail: 'resolves outside the repository, so it was not touched' }); continue; }
-    try {
-      const st = fs.lstatSync(abs, { throwIfNoEntry: false });
-      if (!st) { deleted += 1; continue; }
-      if (st.isDirectory()) { failures.push({ path: p, detail: 'is a directory now; expected a file' }); continue; }
-      fs.rmSync(abs);
-      deleted += 1;
-    } catch (e) {
-      failures.push({ path: p, detail: clip(message(e), 200) });
+  let mutationStarted = false;
+  const failures: { path: string; detail: string }[] = [];
+  try {
+    release = acquireCheckoutActivity(root, 'restore', `checkpoint:${randomUUID()}`);
+    if (receipt.commit !== commit || !sameCheckout(receipt.identity, await checkoutIdentity(root))) {
+      return refused('The checkout identity, HEAD or index changed after this preview. Preview it again. Nothing was changed.');
     }
-  }
+    preId = await captureNow(sessionId, root, 'pre-revert');
+    const preRow = preId == null ? null : checkpointRow(sessionId, preId);
+    if (!preRow?.commitHash || !preRow.treeHash) {
+      return refused('The safety snapshot failed, so the restore did not start. Nothing was changed.');
+    }
+    if (preRow.treeHash !== receipt.tree || !sameCheckout(receipt.identity, await checkoutIdentity(root))
+      || await currentTree(root, preRow.commitHash) !== receipt.tree) {
+      return refused('The checkout changed after this preview. Preview it again to review the current files. Nothing was changed.', preId);
+    }
+    const actions = await revertActions(root, commit, preRow.commitHash);
+    const toRestore = actions.filter((a) => a.action === 'restore').map((a) => a.path);
+    const toDelete = actions.filter((a) => a.action === 'delete').map((a) => a.path);
 
-  const ok = failures.length === 0;
-  return {
-    ok,
-    reverted: restored,
-    deleted,
-    failed: failures,
-    preRevertCheckpointId: preId,
-    detail: actions.length === 0
-      ? 'The working tree already matched this checkpoint. Nothing was changed.'
-      : `Restored ${restored} and deleted ${deleted} file${deleted === 1 ? '' : 's'} to reach turn ${row.turn}'s state.${ok ? '' : ` ${failures.length} could not be changed.`}`,
-  };
+    mutationStarted = actions.length > 0;
+    for (let i = 0; i < toRestore.length; i += RESTORE_CHUNK) {
+      const chunk = toRestore.slice(i, i + RESTORE_CHUNK);
+      const res = await runGit(root, ['restore', '--source', commit, '--worktree', '--', ...chunk],
+        { timeout: CAPTURE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
+      if (res.ok) { restored += chunk.length; continue; }
+      // Retry singly so one bad path costs itself, not its whole chunk.
+      for (const p of chunk) {
+        const one = await runGit(root, ['restore', '--source', commit, '--worktree', '--', p],
+          { timeout: CAPTURE_TIMEOUT_MS });
+        if (one.ok) restored += 1;
+        else failures.push({ path: p, detail: clip(one.err, 200) || 'git restore failed' });
+      }
+    }
+
+    for (const p of toDelete) {
+      const abs = containedPath(root, p);
+      if (!abs) { failures.push({ path: p, detail: 'resolves outside the repository, so it was not touched' }); continue; }
+      try {
+        const st = fs.lstatSync(abs, { throwIfNoEntry: false });
+        if (!st) { deleted += 1; continue; }
+        if (st.isDirectory()) { failures.push({ path: p, detail: 'is a directory now; expected a file' }); continue; }
+        fs.rmSync(abs);
+        deleted += 1;
+      } catch (e) {
+        failures.push({ path: p, detail: clip(message(e), 200) });
+      }
+    }
+
+    // Matching reads detect ordinary external edits, not an atomic filesystem
+    // snapshot or a promise that an unrelated process cannot write afterward.
+    const targetTree = row.treeHash;
+    if (!targetTree || await currentTree(root, preRow.commitHash) !== targetTree
+      || await currentTree(root, preRow.commitHash) !== targetTree
+      || !sameCheckout(receipt.identity, await checkoutIdentity(root))) {
+      failures.push({ path: '.', detail: 'The checkout did not remain at the checkpoint during verification. Stop other writers and inspect it; the safety snapshot is available.' });
+    }
+    const ok = failures.length === 0;
+    return {
+      ok, reverted: restored, deleted, failed: failures, preRevertCheckpointId: preId,
+      detail: ok
+        ? actions.length === 0 ? 'The working tree already matched this checkpoint. Nothing was changed.'
+          : `Restored ${restored} and deleted ${deleted} file${deleted === 1 ? '' : 's'} to reach turn ${row.turn}'s state. Git-visible content matched the checkpoint at completion.`
+        : `Restore could not be verified. ${failures.length} problem${failures.length === 1 ? '' : 's'} need inspection; the safety snapshot is available.`,
+    };
+  } catch (error) {
+    return { ok: false, reverted: restored, deleted, failed: [...failures, { path: '.', detail: message(error) }],
+      preRevertCheckpointId: preId,
+      detail: mutationStarted ? 'The restore did not finish. Inspect the checkout; the safety snapshot is available.'
+        : `${message(error)} Nothing was changed.` };
+  } finally { release?.(); }
 }
 
 /* ── cleanup ─────────────────────────────────────────────────────────── */

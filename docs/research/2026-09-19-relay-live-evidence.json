@@ -1,0 +1,285 @@
+{
+  "capturedAt": "2026-09-19T16:56:10.631658+00:00",
+  "provenance": "Real isolated Electron app; real Relay IPC, JEV request and Codex CLI sessions. No human approval simulated. Unknown Codex dollar costs stay unknown.",
+  "suggestions": [
+    {
+      "model": "jev-1.13.0",
+      "input_tokens": 7092,
+      "output_tokens": 1582,
+      "estimated_cost_usd": 0.000297864
+    }
+  ],
+  "trials": [
+    {
+      "title": "Plain-language choices",
+      "docketId": "doc_5b1791de-5ad",
+      "nodes": [
+        {
+          "id": "node_d83f7beb-c7e",
+          "kind": "estimate",
+          "provider_id": null,
+          "model": null,
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_9346c76c-862",
+          "kind": "implement",
+          "provider_id": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": "low",
+          "session_id": "s_mu8le4sy_2454",
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_82fc80a9-124",
+          "kind": "verify",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_92ed4214-ceb",
+          "kind": "review",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "pending",
+          "status": "ready"
+        }
+      ],
+      "attempts": [
+        {
+          "node_id": "node_9346c76c-862",
+          "session_id": "s_mu8le4sy_2454"
+        }
+      ],
+      "testProofs": [
+        {
+          "id": "proof_44e15936-c7a",
+          "node_id": "node_82fc80a9-124",
+          "kind": "test",
+          "status": "recorded",
+          "summary": "1 review command(s) passed in the worktree from \u201cImplement in an isolated worktree\u201d. Current checkout not verified: Checkout content exceeds the 512 MiB fingerprint limit."
+        },
+        {
+          "id": "proof_108ccbbc-7a7",
+          "node_id": "node_82fc80a9-124",
+          "kind": "test",
+          "status": "passed",
+          "summary": "1 review command(s) passed in the worktree from \u201cImplement in an isolated worktree\u201d."
+        }
+      ],
+      "docketStatus": "review"
+    },
+    {
+      "title": "Direct human review",
+      "docketId": "doc_0ed6398f-2d0",
+      "nodes": [
+        {
+          "id": "node_ea12667d-6fb",
+          "kind": "plan",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_321c1833-a3e",
+          "kind": "estimate",
+          "provider_id": null,
+          "model": null,
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_53262696-17e",
+          "kind": "implement",
+          "provider_id": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": "medium",
+          "session_id": "s_mu8lpous_7ab7",
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_6ad8a0a3-38f",
+          "kind": "verify",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_c597d833-6da",
+          "kind": "review",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "pending",
+          "status": "ready"
+        }
+      ],
+      "attempts": [
+        {
+          "node_id": "node_53262696-17e",
+          "session_id": "s_mu8ln46m_0ebc"
+        },
+        {
+          "node_id": "node_53262696-17e",
+          "session_id": "s_mu8lpous_7ab7"
+        }
+      ],
+      "testProofs": [
+        {
+          "id": "proof_c574c9b3-fb5",
+          "node_id": "node_6ad8a0a3-38f",
+          "kind": "test",
+          "status": "passed",
+          "summary": "1 review command(s) passed in the worktree from \u201cImplement in an isolated worktree\u201d."
+        }
+      ],
+      "docketStatus": "review"
+    },
+    {
+      "title": "Full-checkout verification",
+      "docketId": "doc_b91e767b-ab3",
+      "nodes": [
+        {
+          "id": "node_a7a9075c-92c",
+          "kind": "plan",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_c57a3816-1f0",
+          "kind": "estimate",
+          "provider_id": null,
+          "model": null,
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_00d12898-69b",
+          "kind": "implement",
+          "provider_id": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "session_id": "s_mu8lx25v_1cf4",
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_2074c735-c39",
+          "kind": "verify",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "completed",
+          "status": "completed"
+        },
+        {
+          "id": "node_51a30217-97b",
+          "kind": "review",
+          "provider_id": "codex",
+          "model": "gpt-6-astra",
+          "effort": null,
+          "session_id": null,
+          "storedStatus": "pending",
+          "status": "ready"
+        }
+      ],
+      "attempts": [
+        {
+          "node_id": "node_00d12898-69b",
+          "session_id": "s_mu8lx25v_1cf4"
+        }
+      ],
+      "testProofs": [
+        {
+          "id": "proof_2ceef5ac-d8c",
+          "node_id": "node_2074c735-c39",
+          "kind": "test",
+          "status": "passed",
+          "summary": "1 review command(s) passed in the worktree from \u201cImplement in an isolated worktree\u201d."
+        }
+      ],
+      "docketStatus": "review"
+    }
+  ],
+  "reviewRuns": [
+    {
+      "id": "rev_4396c64f-b69",
+      "commandStatus": "passed",
+      "durationMs": 138026,
+      "commandExitCodes": [
+        0
+      ],
+      "fingerprintsMatch": false,
+      "beforeUnavailable": "Checkout content exceeds the 512 MiB fingerprint limit.",
+      "afterUnavailable": "Checkout content exceeds the 512 MiB fingerprint limit."
+    },
+    {
+      "id": "rev_7001171c-aca",
+      "commandStatus": "passed",
+      "durationMs": 152481,
+      "commandExitCodes": [
+        0
+      ],
+      "fingerprintsMatch": true,
+      "beforeUnavailable": null,
+      "afterUnavailable": null
+    },
+    {
+      "id": "rev_164f6411-40a",
+      "commandStatus": "passed",
+      "durationMs": 156568,
+      "commandExitCodes": [
+        0
+      ],
+      "fingerprintsMatch": true,
+      "beforeUnavailable": null,
+      "afterUnavailable": null
+    },
+    {
+      "id": "rev_240484d8-b40",
+      "commandStatus": "passed",
+      "durationMs": 156178,
+      "commandExitCodes": [
+        0
+      ],
+      "fingerprintsMatch": true,
+      "beforeUnavailable": null,
+      "afterUnavailable": null
+    }
+  ],
+  "integratedChecks": {
+    "sharedTests": 549,
+    "dispatchGroups": 6,
+    "smokePassed": 2538,
+    "smokeFailed": 0,
+    "npmTestExitCode": 0
+  },
+  "remaining": "Final human review decisions pending; startup update-menu and clean-worktree retention limitations documented separately."
+}

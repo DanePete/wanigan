@@ -21,8 +21,9 @@ npm install      # postinstall rebuilds node-pty and better-sqlite3 for Electron
 
 Older Node is not a soft requirement. Node 16 fails `npm run build` with
 `crypto$2.getRandomValues is not a function`, which reads like a Vite bug and is
-not. `scripts/launch.sh`, `scripts/cli.sh` and `scripts/smoke.sh` prepend the
-`.nvmrc` version to `PATH`; a bare `npm run build` does not.
+not. `scripts/launch.mjs`, `scripts/cli.mjs` and `scripts/smoke.mjs` refuse to run
+under a Node older than `.nvmrc`, naming the version they wanted and the one
+they got; a bare `npm run build` does not check.
 
 ## What `npm test` runs
 
@@ -41,7 +42,7 @@ Eight steps, in order, and all eight must pass before a change is handed off:
 
 The two packaging suites build no bundle, sign nothing and never read or write
 `/Applications`. The smoke suite makes no network call, needs no API key and
-spends nothing: `scripts/smoke.sh` sets `WANIGAN_MOCK=1` and hands Electron a
+spends nothing: `scripts/smoke.mjs` sets `WANIGAN_MOCK=1` and hands Electron a
 throwaway `--user-data-dir`.
 
 `eslint-suppressions.json` is the lint baseline, and obeys the same rule as

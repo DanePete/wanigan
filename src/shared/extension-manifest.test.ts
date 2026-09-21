@@ -23,7 +23,7 @@ import {
   EXTENSION_SCHEMA_VERSION,
   declaredArtifacts, extensionConsent, extensionOwner, mcpFingerprint,
   ownerExtensionId, scoutFingerprint, validateExtensionManifest,
-  type ExtensionManifest, type ExtensionMcpServer, type ExtensionScoutSource,
+  type ExtensionManifest, type ExtensionMcpServer, type ExtensionScoutSource, type ExtensionStoreSource,
 } from './extension-manifest.ts';
 
 /** A manifest that passes, so every test below changes exactly one thing. */
@@ -64,6 +64,16 @@ const source = (over: Partial<Record<keyof ExtensionScoutSource, unknown>> = {})
 });
 
 const scout = (...sources: Record<string, unknown>[]) => ({ provides: { scoutSources: sources } });
+const catalog = (over: Partial<Record<keyof ExtensionStoreSource, unknown>> = {}): Record<string, unknown> => ({
+  id: 'acme-catalog',
+  label: 'Acme catalog',
+  description: 'Extensions published by Acme.',
+  url: 'https://acme.example/wanigan/index.json',
+  publisher: 'Acme',
+  format: 'mcp-registry',
+  ...over,
+});
+const store = (...sources: Record<string, unknown>[]) => ({ provides: { storeSources: sources } });
 
 test('an extension cannot name another extension\'s credential', () => {
   // The credential store is one flat id space. Without the namespace rule this
@@ -496,3 +506,132 @@ test('an owner string round-trips, and nothing else reads as one', () => {
     assert.equal(ownerExtensionId(owner), null, String(owner));
   }
 });
+
+test('a store source is a whole extension, and the only way a catalog is reached', () => {
+  // A catalog is a complete thing to ship on its own: Wanigan's default is
+  // exactly this, a built-in that declares one store source and nothing else.
+  const result = validateExtensionManifest(raw(store(catalog())));
+  assert.deepEqual(result.errors, [], result.errors.join(' | '));
+  assert.deepEqual(result.manifest!.provides.storeSources, [catalog()]);
+  // `provides` still cannot be empty just because a new block exists.
+  const empty = errorsFor({ provides: { storeSources: [] } });
+  assert.ok(empty.some((e) => /at least one MCP server.*store source/.test(e)), empty.join(' | '));
+
+  // The store lists the description beside the catalog's name. A catalog with
+  // none is a stranger's address the operator is asked to browse blind.
+  const missing = errorsFor(store(catalog({ description: undefined })));
+  assert.ok(missing.some((e) => /storeSources\[0\]\.description must be a non-empty string/.test(e)), missing.join(' | '));
+  assert.ok(errorsFor(store(catalog({ publisher: undefined }))).some((e) => /storeSources\[0\]\.publisher must be a non-empty string/.test(e)));
+  assert.ok(errorsFor(store(catalog({ label: 'x'.repeat(81) }))).some((e) => /label is longer than 80/.test(e)));
+  // A format the store cannot read is an index it would misread as a list of
+  // entries, so it is refused rather than guessed at.
+  const format = errorsFor(store(catalog({ format: 'rss' })));
+  assert.ok(format.some((e) => /storeSources\[0\]\.format must be "mcp-registry"/.test(e)), format.join(' | '));
+  assert.ok(errorsFor(store(catalog({ format: undefined }))).some((e) => /format must be "mcp-registry"/.test(e)));
+
+  // The id is how the store keys a catalog's entries. Two with one id are one
+  // key for two indexes, and an entry would claim whichever was read last.
+  const duplicated = errorsFor(store(catalog(), catalog({ url: 'https://acme.example/other.json' })));
+  assert.ok(duplicated.some((e) => /storeSources declares "acme-catalog" twice/.test(e)), duplicated.join(' | '));
+  assert.ok(errorsFor(store(catalog({ id: 'Acme Catalog' }))).some((e) => /storeSources\[0\]\.id is not in the required format/.test(e)));
+  assert.ok(errorsFor(store(...Array.from({ length: 11 }, (_, i) => catalog({ id: `acme-${i}` }))))
+    .some((e) => /storeSources has more than 10/.test(e)));
+});
+
+test('a store source is an https index and carries no secret', () => {
+  const url = (value: string) => validateExtensionManifest(raw(store(catalog({ url: value }))));
+  // The index decides which bundles the operator is shown. Over plain http a
+  // network attacker rewrites the list, and the consent screen then faithfully
+  // describes whatever they substituted.
+  const http = url('http://acme.example/wanigan/index.json');
+  assert.equal(http.ok, false);
+  assert.ok(http.errors.some((e) => /storeSources\[0\]\.url must use https/.test(e)), http.errors.join(' | '));
+  // A credential in the url is shown on the consent screen and in every log
+  // line that names the fetch, so it is refused rather than redacted.
+  const secret = url('https://user:hunter2@acme.example/wanigan/index.json');
+  assert.equal(secret.ok, false);
+  assert.ok(secret.errors.some((e) => /username or password/.test(e)), secret.errors.join(' | '));
+  assert.ok(url('not a url').errors.some((e) => /storeSources\[0\]\.url must be a valid URL/.test(e)));
+});
+
+test('browsing a catalog is disclosed before anything is installed', () => {
+  // Opening the store already sends a request to the catalog's host. The
+  // consent line has to say so at install time, and has to say *when*: a
+  // store is fetched on browse, which is not Scout's unattended schedule.
+  const lines = extensionConsent(valid(store(catalog())));
+  const host = lines.filter((line) => line.kind === 'host');
+  assert.equal(host.length, 1, JSON.stringify(lines));
+  assert.match(host[0]!.text, /acme\.example/);
+  assert.match(host[0]!.text, /when you browse the store/);
+  assert.match(host[0]!.text, /Acme catalog/);
+  // The hostname only: the path is where a long url hides which machine it reaches.
+  assert.doesNotMatch(host[0]!.text, /index\.json/);
+});
+
+/** An http server asking for a key it sends as a header, as a store entry would. */
+const hosted = (headers: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  credentials: [{ id: 'acme.search.key', label: 'Acme API key', help: 'From your Acme dashboard.' }],
+  provides: { mcpServers: [{ name: 'acme-search', transport: 'http', url: 'https://mcp.acme.example/v1', headers }] },
+  ...extra,
+});
+
+test('an http server can send a declared credential as a header, with a literal prefix', () => {
+  const m = valid(hosted({
+    Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' },
+    Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+  }));
+  assert.deepEqual(m.provides.mcpServers![0]!.headers, {
+    Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' },
+    Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+  });
+  // Read only by a header, the credential still counts as read.
+  assert.deepEqual(validateExtensionManifest(raw(hosted({ 'X-API-Key': { source: 'credential', id: 'acme.search.key' } }))).warnings, []);
+});
+
+test('a header may only read a credential the manifest declares', () => {
+  const e = errorsFor(hosted({ Authorization: { source: 'credential', id: 'someone.else.key' } }));
+  assert.ok(e.some((x) => /does not declare in credentials/.test(x)), e.join(' | '));
+});
+
+test('headers are refused where they would change how a request is framed or routed', () => {
+  for (const name of ['Host', 'Content-Length', 'transfer-encoding', 'Connection', 'Proxy-Authorization']) {
+    assert.ok(errorsFor(hosted({ [name]: { source: 'literal', value: 'x' } })).some((x) => /transport sets itself/.test(x)), name);
+  }
+  // A line break in a value is how one request becomes two.
+  assert.ok(errorsFor(hosted({ Accept: { source: 'literal', value: 'a\r\nX-Evil: 1' } })).some((x) => /without line breaks/.test(x)));
+  assert.ok(errorsFor(hosted({ Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer\r\n' } }))
+    .some((x) => /prefix must be/.test(x)));
+  assert.ok(errorsFor(hosted({ 'Bad Name': { source: 'literal', value: 'x' } })).some((x) => /not a valid HTTP header name/.test(x)));
+  // Field names are case-insensitive, so two spellings are one header declared twice.
+  assert.ok(errorsFor(hosted({ 'X-API-Key': { source: 'literal', value: 'a' }, 'x-api-key': { source: 'literal', value: 'b' } }))
+    .some((x) => /twice/.test(x)));
+});
+
+test('a stdio server takes no headers', () => {
+  const e = errorsFor({
+    credentials: [{ id: 'acme.search.key', label: 'k' }],
+    provides: { mcpServers: [{ name: 'acme-search', transport: 'stdio', command: 'npx', args: ['x'],
+      headers: { Authorization: { source: 'credential', id: 'acme.search.key' } } }] },
+  });
+  assert.ok(e.some((x) => /headers is only valid for an http server/.test(x)), e.join(' | '));
+});
+
+test('the consent screen says which host a header secret is sent to', () => {
+  const lines = extensionConsent(valid(hosted({ Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' } })));
+  const line = lines.find((l) => l.kind === 'credential')!;
+  assert.match(line.text, /Acme API key/);
+  assert.match(line.text, /Authorization header after "Bearer "/);
+  assert.match(line.text, /sent to mcp\.acme\.example/);
+});
+
+test('adding headers does not change the fingerprint of a server that has none', () => {
+  const plain = server();
+  // The shape recorded for every server installed before headers existed.
+  assert.ok(!mcpFingerprint(plain).includes('headers'));
+  const withHeaders = server({ transport: 'http', command: undefined, args: undefined, url: 'https://a.example',
+    headers: { Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' } } });
+  const other = server({ transport: 'http', command: undefined, args: undefined, url: 'https://a.example',
+    headers: { Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Token ' } } });
+  assert.notEqual(mcpFingerprint(withHeaders), mcpFingerprint(other));
+});
+

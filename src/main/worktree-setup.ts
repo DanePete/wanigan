@@ -6,6 +6,9 @@ import path from 'node:path';
 import { db } from './db';
 import { listProjects, projectById } from './store';
 import type { Project } from '../shared/types';
+import { shellCommand } from '../shared/platform';
+import { hostPlatform, killProcessTree } from './platform';
+import { acquireCheckoutActivity } from './checkout-activity';
 import {
   DEFAULT_DEPS_MODE, WORKTREE_PHASE_BUDGET_MS, asDepsMode, durationText, newCommands, parseCommandInput,
   type DepsMode, type WorktreeCommandEnv, type WorktreeCommandLists, type WorktreeCommandResult,
@@ -189,10 +192,12 @@ const KILL_GRACE_MS = 5_000;
  * the pipe after this is a process the command left running.
  */
 const LINGER_MS = 1_500;
+const OWNER_ID = randomUUID();
 
 type RunRow = {
   id: string; project_id: string; worktree: string; phase: string; started_at: number; ended_at: number | null;
   status: string; planned: number; results_json: string; env_json: string | null; note: string | null;
+  owner_pid: number | null;
 };
 
 function toRun(row: RunRow): WorktreeCommandRun {
@@ -234,21 +239,25 @@ function limitText(ms: number): string {
  * command started keeps running — its later output is read and dropped, so a
  * full pipe never blocks it.
  */
-function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs: number, stopNote: string): Promise<WorktreeCommandResult> {
+function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs: number, stopNote: string): Promise<{ result: WorktreeCommandResult; quiescent: boolean }> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const shell = process.env.SHELL || '/bin/zsh';
+    const { file: shell, args: shellArgs } = shellCommand(command, hostPlatform(), process.env);
     let out = '';
     let truncated = false;
     let timedOut = false;
     let settled = false;
     let killer: NodeJS.Timeout | null = null;
     let linger: NodeJS.Timeout | null = null;
-    const child = spawn(shell, ['-lc', command], {
+    let closed = false;
+    const child = spawn(shell, shellArgs, {
       cwd,
       env: { ...process.env, NO_COLOR: '1', TERM: 'dumb', ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      // On Windows detaching gives the child its own console window, which
+      // would flash over whatever the operator is doing on every command.
+      windowsHide: true,
     });
     // Recorded output that stops mid-sentence has to say so: a capped record
     // that reads as the whole run is a false record.
@@ -261,11 +270,7 @@ function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs
     };
     child.stdout?.on('data', add);
     child.stderr?.on('data', add);
-    const stop = (signal: NodeJS.Signals) => {
-      try { if (child.pid) process.kill(-child.pid, signal); } catch {
-        try { child.kill(signal); } catch { /* already exited */ }
-      }
-    };
+    const stop = (signal: NodeJS.Signals) => { killProcessTree(child, signal); };
     const timer = setTimeout(() => {
       timedOut = true;
       stop('SIGTERM');
@@ -273,34 +278,40 @@ function runOne(command: string, cwd: string, env: WorktreeCommandEnv, timeoutMs
       // its run row 'running' and a launch waiting on it for good.
       killer = setTimeout(() => stop('SIGKILL'), KILL_GRACE_MS);
     }, Math.max(1, timeoutMs));
-    const done = (result: WorktreeCommandResult) => {
+    const done = (result: WorktreeCommandResult, quiescent: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (killer) clearTimeout(killer);
       if (linger) clearTimeout(linger);
-      resolve(result);
+      resolve({ result, quiescent });
     };
     const conclude = (code: number | null, lingered: boolean) => {
+      let quiescent = false;
+      if (closed && child.pid && hostPlatform() !== 'win32') {
+        try { process.kill(-child.pid, 0); }
+        catch (error) { quiescent = (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+      }
       const notes = [
         truncated ? `[Wanigan kept the first ${Math.round(OUTPUT_LIMIT / 1024)}KB of this command's output; the rest was discarded, not produced empty.]` : null,
         timedOut ? stopNote : null,
         lingered && !timedOut
           ? '[The command exited, but something it started still holds its output open. Wanigan recorded what arrived by then, moved on, and left that process running.]'
           : null,
+        !quiescent ? '[Command ownership remains unresolved: processes may still be running, so checkpoint restore remains blocked.]' : null,
       ].filter(Boolean);
       done({
         command,
         exitCode: timedOut ? null : code,
         output: notes.length ? `${out}\n${notes.join('\n')}` : out,
         durationMs: Date.now() - started,
-      });
+      }, quiescent);
     };
     child.once('exit', (code) => {
       linger = setTimeout(() => conclude(code, true), LINGER_MS);
     });
-    child.once('close', (code) => conclude(code, false));
-    child.once('error', (e) => done({ command, exitCode: null, output: e.message, durationMs: Date.now() - started }));
+    child.once('close', (code) => { closed = true; conclude(code, false); });
+    child.once('error', (e) => done({ command, exitCode: null, output: e.message, durationMs: Date.now() - started }, child.pid === undefined));
   });
 }
 
@@ -335,33 +346,53 @@ export async function runWorktreePhase(
   const id = `wtr_${randomUUID().slice(0, 12)}`;
   const startedAt = Date.now();
   const d = db();
-  d.prepare(`INSERT INTO worktree_command_runs (id, project_id, worktree, phase, started_at, status, planned, results_json, env_json)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(id, ctx.projectId, ctx.worktree, phase, startedAt, 'running', commands.length, '[]', JSON.stringify(ctx.env));
+  const cwd = canon(ctx.worktree);
+  const identity = !note ? fs.statSync(cwd, { bigint: true }) : null;
+  const release = !note ? acquireCheckoutActivity(cwd, 'worktree', id) : null;
+  let unresolved = false;
+  try {
+  d.prepare(`INSERT INTO worktree_command_runs (id, project_id, worktree, phase, started_at, status, planned, results_json, env_json,owner_id,owner_pid,recovery_unresolved)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, ctx.projectId, cwd, phase, startedAt, 'running', commands.length, '[]', JSON.stringify(ctx.env), OWNER_ID, process.pid, note ? 0 : 1);
   const finish = (status: WorktreeCommandRun['status'], results: WorktreeCommandResult[], why: string | null): WorktreeCommandRun => {
     const endedAt = Date.now();
-    d.prepare('UPDATE worktree_command_runs SET ended_at = ?, status = ?, results_json = ?, note = ? WHERE id = ?')
-      .run(endedAt, status, JSON.stringify(results), why, id);
-    return { id, projectId: ctx.projectId, worktree: ctx.worktree, phase, startedAt, endedAt, status, planned: commands.length, results, env: ctx.env, note: why };
+    const detail = [why, unresolved ? 'Command ownership remains unresolved; processes may still be running. Checkpoint restore remains blocked.' : null].filter(Boolean).join(' ') || null;
+    d.prepare('UPDATE worktree_command_runs SET ended_at = ?, status = ?, results_json = ?, note = ?, recovery_unresolved=? WHERE id = ?')
+      .run(endedAt, status, JSON.stringify(results), detail, unresolved ? 1 : 0, id);
+    return { id, projectId: ctx.projectId, worktree: cwd, phase, startedAt, endedAt, status, planned: commands.length, results, env: ctx.env, note: detail };
   };
   if (note) return finish('failed', [], note);
 
   const results: WorktreeCommandResult[] = [];
   const record = d.prepare('UPDATE worktree_command_runs SET results_json = ? WHERE id = ?');
-  const stopNote = `[Wanigan stopped this command when the ${phase}'s ${limitText(budget)} limit ran out.]`;
+  const stopNote = `[Wanigan requested termination when the ${phase}'s ${limitText(budget)} limit ran out.]`;
   let why: string | null = null;
+  try {
   for (const command of commands) {
     const remaining = budget - (Date.now() - startedAt);
     if (remaining <= 0) {
       why = `The ${phase}'s ${limitText(budget)} limit ran out before the next command could start.`;
       break;
     }
-    const result = await runOne(command, ctx.worktree, ctx.env, remaining, stopNote);
+    const current = fs.statSync(cwd, { bigint: true });
+    if (canon(ctx.worktree) !== cwd || current.dev !== identity!.dev || current.ino !== identity!.ino) {
+      why = 'The worktree directory changed during command preparation. No further commands were started.';
+      break;
+    }
+    // Unknown before submission: a crash or failed evidence write cannot make
+    // a spawned command appear safe to overlap with a restore.
+    const priorUnresolved: boolean = unresolved;
+    unresolved = true;
+    const observed = await runOne(command, cwd, ctx.env, remaining, stopNote);
+    unresolved = priorUnresolved || !observed.quiescent;
+    const result = observed.result;
     results.push(result);
     record.run(JSON.stringify(results), id);
     if (result.exitCode !== 0) break;
   }
   const passed = !why && results.length === commands.length && results.every((r) => r.exitCode === 0);
   return finish(passed ? 'passed' : 'failed', results, why);
+  } catch (error) { return finish('failed', results, message(error)); }
+  } finally { if (!unresolved) release?.(); }
 }
 
 export function worktreeCommandRuns(projectId: unknown, limit?: unknown): WorktreeCommandRun[] {
@@ -382,9 +413,6 @@ export function latestWorktreeRun(worktree: string, phase: WorktreePhase): Workt
   return row ? toRun(row) : null;
 }
 
-const PROCESS_START = Date.now();
-let swept = false;
-
 /**
  * Runs left 'running' by a process that died part-way through, closed as
  * failed with a note saying so. Not re-run: nobody watched the crash, and
@@ -393,14 +421,21 @@ let swept = false;
  * ended_at stays empty. review.ts stamps the sweep's own time there, which a
  * duration then reads as a setup that ran for as long as Wanigan was closed;
  * nobody knows when this one stopped, and the row says only what is known.
- * started_at rather than a process-local set, so a row this process began a
- * moment ago is never mistaken for an orphan.
+ * A recorded live owner is left alone even when it belongs to a different
+ * runtime. Missing legacy ownership cannot establish that commands stopped.
  */
 export function sweepInterruptedWorktreeRuns(): number {
-  if (swept) return 0;
-  swept = true;
-  return db().prepare(`UPDATE worktree_command_runs SET status = 'failed', note = ?
-    WHERE status = 'running' AND started_at < ?`)
-    .run('Wanigan stopped while this was running. Commands that finished are recorded; one still in flight left no result, and nothing after it ran.', PROCESS_START)
-    .changes;
+  const d = db();
+  const rows = d.prepare("SELECT id,owner_pid FROM worktree_command_runs WHERE status='running'").all() as Pick<RunRow, 'id' | 'owner_pid'>[];
+  let changed = 0;
+  for (const row of rows) {
+    if (row.owner_pid) {
+      try { process.kill(row.owner_pid, 0); continue; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue; }
+    }
+    changed += d.prepare(`UPDATE worktree_command_runs SET status='failed',recovery_unresolved=1,note=?
+      WHERE id=? AND status='running'`)
+      .run('The command owner is unavailable and command process state is unknown. Processes may still be running; restore remains blocked. Completed command results are retained; nothing was automatically rerun.', row.id).changes;
+  }
+  return changed;
 }

@@ -1,0 +1,8 @@
+{
+  "synthetic": true,
+  "before": true,
+  "checks": [
+    "The baseline fixture has no TypeSafe account or Jev consumption record."
+  ],
+  "errors": []
+}
