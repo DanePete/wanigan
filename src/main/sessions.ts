@@ -211,6 +211,24 @@ export function redirectsAnthropicApiFor(def: { env?: () => Record<string, strin
 }
 
 /**
+ * The accounts a profile may launch as, or none.
+ *
+ * Asked by every picker that offers an account for a profile — the new-session
+ * dialog, a relay stage — and answered by the same rule the launch applies:
+ * `accounts.appliesTo`, which says no for a Claude profile pointed elsewhere
+ * (GLM, DeepSeek, xAI, a local endpoint) and leaves any other harness to its
+ * own directory variable. The pickers used to ask a Claude-only question, so a
+ * Codex stage was told it had no accounts while five sat in Settings and the
+ * launch would have honoured any of them.
+ */
+export function accountsForProvider(providerId: string): AgentAccount[] {
+  const def = providerById(providerId);
+  if (!def || !accounts.supportsAccounts(def.harness)) return [];
+  if (accounts.appliesTo(def, redirectsAnthropicApiFor(def)) === false) return [];
+  return accounts.list(def.harness);
+}
+
+/**
  * Drops the operator's own ambient Anthropic credential from an environment a
  * provider profile has aimed at some other host.
  *
