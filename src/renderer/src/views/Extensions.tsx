@@ -12,6 +12,7 @@ import {
   Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading,
   SectionHead, Segmented, Stat, ago, num, type Tone,
 } from '../components/bits';
+import McpStore from './McpStore';
 
 /*
  * The extension store.
@@ -41,8 +42,8 @@ import {
  * number, a rating or a featured row, because there is no measurement behind one.
  */
 
-type Mode = 'browse' | 'installed';
-type Panel = 'none' | 'add' | 'save';
+type Mode = 'store' | 'browse' | 'installed';
+type Panel = 'none' | 'add' | 'save' | 'store';
 type Sort = 'updated' | 'name' | 'publisher';
 type Provide = ExtensionArtifactInfo['kind'];
 type StateFacet = 'enabled' | 'disabled' | 'needs-trust' | 'invalid' | 'update';
@@ -221,8 +222,10 @@ export default function Extensions() {
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [saved, setSaved] = useState<ExtensionInspection | null>(null);
+  const [justInstalled, setJustInstalled] = useState<ExtensionInfo | null>(null);
   const alive = useRef(true);
   const search = useRef<HTMLInputElement>(null);
+  const storePanel = useRef<HTMLElement>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -389,21 +392,42 @@ export default function Extensions() {
     });
   }
 
+  /**
+   * A store entry, reviewed. The main process fetches this exact version and
+   * writes it out as an extension directory; the inspection it returns is shown
+   * in the same consent panel, gated on the same review, as a folder picked by
+   * hand. Nothing here installs.
+   */
+  async function reviewFromStore(sourceKey: string, name: string, version: string) {
+    await act(`stage:${name}`, async () => {
+      const read = await window.wanigan.store.stage(sourceKey, name, version);
+      if (!alive.current) return;
+      setInspection(read);
+      setReviewedSha(null);
+      setPanel('store');
+      requestAnimationFrame(() => storePanel.current?.scrollIntoView({ block: 'start' }));
+    });
+  }
+
   async function install(target: ExtensionInspection) {
     // The digest travels exactly as it was handed over, so a manifest that
     // changed between the panel and the click is refused rather than installed
     // unseen. No digest means nothing was approvable in the first place.
     const sha = target.manifestSha256;
     if (!sha) return;
+    // Installed from the store, the operator goes back to the store to keep
+    // browsing; from a folder, to the list that now holds it.
+    const fromStore = panel === 'store';
     await act('install', async () => {
       const next = await window.wanigan.extensions.install(target.path, sha);
       if (!alive.current) return;
       setList(next);
+      setJustInstalled(fromStore ? next.find((x) => x.id === target.id) ?? null : null);
       setInspection(null);
       setSaved(null);
       setReviewedSha(null);
       setPanel('none');
-      setModeChoice('installed');
+      setModeChoice(fromStore ? 'store' : 'installed');
     });
   }
 
@@ -516,6 +540,27 @@ export default function Extensions() {
         </section>
       )}
 
+      {panel === 'store' && inspection && (
+        <section className="ex-panel" aria-label="Review a server from the store" ref={storePanel}>
+          <SectionHead label="Review before installing" right={
+            <button type="button" className="btn btn-sm" onClick={() => setPanel('none')}>Close</button>
+          } />
+          <p className="ex-lead">
+            Wanigan fetched this exact version from the catalog and wrote it out as an extension, and has
+            installed nothing. Open what it declares below — the command it runs, the host it reaches, anything
+            it will ask you for — and press the button yourself if you want it. The registry verified who
+            published it; it did not review what it does.
+          </p>
+          <InspectionPanel
+            inspection={inspection}
+            reviewed={inspection.manifestSha256 !== null && inspection.manifestSha256 === reviewedSha}
+            busy={busy}
+            onReview={() => setReviewedSha(inspection.manifestSha256)}
+            onInstall={() => void install(inspection)}
+          />
+        </section>
+      )}
+
       {panel === 'save' && (
         <section className="ex-panel" aria-label="Save as extension">
           <SectionHead label="Save as extension" right={
@@ -618,10 +663,12 @@ export default function Extensions() {
           value={mode}
           onChange={setModeChoice}
           options={[
+            { value: 'store', label: 'Store' },
             { value: 'browse', label: 'Browse' },
             { value: 'installed', label: `Installed${list ? ` (${num(rows.length)})` : ''}` },
           ]}
         />
+        {mode !== 'store' && (<>
         <div className="ex-search">
           <label className="label" htmlFor="ex-search">Search</label>
           <input
@@ -646,8 +693,18 @@ export default function Extensions() {
             { value: 'publisher', label: 'Publisher' },
           ]}
         />
+        </>)}
       </div>
 
+      {mode === 'store' ? (
+        <McpStore
+          installed={rows}
+          busy={busy}
+          justInstalled={justInstalled}
+          onDismissInstalled={() => setJustInstalled(null)}
+          onReview={(key, name, version) => void reviewFromStore(key, name, version)}
+        />
+      ) : (<>
       {list !== null && rows.length > 0 && (
         <div className="ex-facets">
           <div className="ex-facet-row">
@@ -790,6 +847,7 @@ export default function Extensions() {
           </div>
         </>
       )}
+      </>)}
     </div>
   );
 }
