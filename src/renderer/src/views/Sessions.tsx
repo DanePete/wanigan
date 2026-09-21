@@ -1572,7 +1572,7 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider, onOpened, o
             <div className="session-permissions" role="group" aria-label="Session account">
               <span className="label">Account</span>
               <span>{session.accountLabel}</span>
-              <SessionHandoff session={session} onOpened={onOpened} onError={onError} placement="down" />
+              <SessionHandoff session={session} onOpened={onOpened} onError={onError} inline />
               <span className="faint" role="status">
                 {session.status === 'running'
                   ? 'Switching ends this session and continues the conversation under the account you pick. Accounts come from Settings › Accounts.'

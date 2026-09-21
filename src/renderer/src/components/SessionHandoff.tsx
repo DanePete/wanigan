@@ -22,12 +22,15 @@ import type { HandoffPlan } from '@shared/handoff';
  * account added or removed under Settings is offered or withdrawn without a
  * restart.
  */
-export default function SessionHandoff({ session, onOpened, onError, placement = 'up' }: {
+export default function SessionHandoff({ session, onOpened, onError, inline = false }: {
   session: Session;
   onOpened: (id: string, projectId?: string) => void;
   onError: (message: string) => void;
-  /** Which way the menu opens: up from a status bar, down from a row inside a panel. */
-  placement?: 'up' | 'down';
+  /**
+   * Inline: one button per account laid into the row, for a panel that clips
+   * anything positioned outside it. The default is a popover from a status bar.
+   */
+  inline?: boolean;
 }) {
   const [plan, setPlan] = useState<HandoffPlan | null>(null);
   const [open, setOpen] = useState(false);
@@ -88,6 +91,34 @@ export default function SessionHandoff({ session, onOpened, onError, placement =
   if (!plan || targets.length === 0) return null;
   const fork = plan.method === 'fork';
 
+  const whyFor = (target: HandoffPlan['targets'][number]) =>
+    busy === target.accountId
+      ? (running ? 'Ending this session, then resuming…' : fork ? 'Branching and resuming…' : 'Linking and resuming…')
+      : confirming === target.accountId
+        ? 'Press again to end this session and continue there'
+      : fork
+        ? 'Branches this conversation under that account, then resumes it'
+      : target.alreadyThere
+        ? 'Already readable there — resumes straight away'
+        : 'Links this conversation into that account, then resumes it';
+
+  if (inline) {
+    // No popover: a <details> panel clips what is positioned outside it, and
+    // a menu that shows its first account and hides the rest is a list that
+    // lies about how many accounts there are.
+    return (
+      <>
+        {targets.map((target) => (
+          <button key={target.accountId} type="button" className="btn" disabled={busy !== null}
+                  aria-description={whyFor(target)}
+                  onClick={() => void move(target.accountId)}>
+            {busy === target.accountId ? 'Continuing on ' : confirming === target.accountId ? 'Press again: ' : 'Continue on '}{target.label}
+          </button>
+        ))}
+      </>
+    );
+  }
+
   return (
     <span className="session-handoff">
       <button className="faint session-status-action session-handoff-open" type="button"
@@ -96,23 +127,13 @@ export default function SessionHandoff({ session, onOpened, onError, placement =
         ⇄ continue on…
       </button>
       {open && (
-        <span className={placement === 'down' ? 'session-handoff-menu down' : 'session-handoff-menu'} role="menu">
+        <span className="session-handoff-menu" role="menu">
           {targets.map((target) => (
             <button key={target.accountId} type="button" role="menuitem"
                     className="session-handoff-item" disabled={busy !== null}
                     onClick={() => void move(target.accountId)}>
               <span className="session-handoff-label">{target.label}</span>
-              <span className="session-handoff-why">
-                {busy === target.accountId
-                  ? (running ? 'Ending this session, then resuming…' : fork ? 'Branching and resuming…' : 'Linking and resuming…')
-                  : confirming === target.accountId
-                    ? 'Press again to end this session and continue there'
-                  : fork
-                    ? 'Branches this conversation under that account, then resumes it'
-                  : target.alreadyThere
-                    ? 'Already readable there — resumes straight away'
-                    : 'Links this conversation into that account, then resumes it'}
-              </span>
+              <span className="session-handoff-why">{whyFor(target)}</span>
             </button>
           ))}
           {/* The source is never moved or removed, and that is the point: the

@@ -443,7 +443,6 @@
 .session-handoff { position: relative; display: inline-flex; }
 .session-handoff-open { color: var(--accent); border-radius: var(--r-sm); font-size: var(--t-small); }
 .session-handoff-menu { position: absolute; bottom: 100%; left: 0; z-index: 60; display: grid; gap: var(--s-1); min-width: 17rem; margin-bottom: var(--s-1); padding: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
-.session-handoff-menu.down { top: 100%; bottom: auto; margin-top: var(--s-1); margin-bottom: 0; }
 .session-handoff-item { display: grid; gap: var(--s-1); justify-items: start; text-align: left; padding: var(--s-2); border-radius: var(--r-sm); }
 .session-handoff-item:hover:not(:disabled) { background: var(--bg-sunk); }
 .session-handoff-label { font-size: var(--t-small); font-weight: 550; color: var(--text); }
