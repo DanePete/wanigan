@@ -97,6 +97,9 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
     const unrefined = await relay.createRelay({ projectId: project.id, intent: 'Tidy the retry path, plainly.', providerId });
     check(kindsOf(unrefined) === 'plan,estimate,implement,verify,review',
       'with no clean-up route the relay is exactly the five stages it always was');
+    // Taken back out: the checks below count this project's relays, and these
+    // two were made to prove a shape, not to be listed.
+    for (const id of [refined.docket.id, unrefined.docket.id]) db().prepare('DELETE FROM work_dockets WHERE id=?').run(id);
     check(created.routing?.mode === 'auto' && created.routing.preference === 'cost'
       && created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId === null).length === 1,
     'an omitted routing setting records Auto and Lower cost once, separately from the four stage decisions', created.routing);
