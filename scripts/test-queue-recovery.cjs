@@ -53,7 +53,7 @@ function fixture(directory) {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
     }).outputText;
     const localRequire = name => stubs[name] || (name.startsWith('.')
-      ? load(path.relative(root, path.resolve(path.dirname(file), `${name}.ts`))) : require(name));
+      ? load(path.relative(root, path.resolve(path.dirname(file), `${name}.ts`)).split(path.sep).join('/')) : require(name));
     vm.runInThisContext(`(function(require,module,exports){${code}\n})`, { filename: file })(localRequire, mod, mod.exports);
     return mod.exports;
   }

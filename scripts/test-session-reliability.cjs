@@ -140,16 +140,20 @@ function fixture({ nativePrompt = true, harness = 'generic-cli', cloneFailure = 
   class Clock extends Date { static now() { return clock; } }
   function load(file) {
     const absolute = path.resolve(root, file);
+    // Compared with '/' whatever the host spells: on Windows path.resolve
+    // answers with '\\', every endsWith below missed, no double applied, and
+    // the real sessions.ts reached for better-sqlite3.
+    const posix = absolute.split(path.sep).join('/');
     if (cache.has(absolute)) return cache.get(absolute).exports;
     const mod = { exports: {} }; cache.set(absolute, mod);
     const code = ts.transpileModule(fs.readFileSync(absolute, 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
     }).outputText;
-    const sessionFile = absolute.endsWith('/src/main/sessions.ts');
-    const worktreeFile = absolute.endsWith('/src/main/worktrees.ts');
+    const sessionFile = posix.endsWith('/src/main/sessions.ts');
+    const worktreeFile = posix.endsWith('/src/main/worktrees.ts');
     function localRequire(name) {
-      if (absolute.endsWith('/src/main/attention.ts') && ['./hooks', './settings'].includes(name)) return doubles[name];
-      if (absolute.endsWith('/src/main/goal-gate.ts') && name in goalGateDoubles) return goalGateDoubles[name];
+      if (posix.endsWith('/src/main/attention.ts') && ['./hooks', './settings'].includes(name)) return doubles[name];
+      if (posix.endsWith('/src/main/goal-gate.ts') && name in goalGateDoubles) return goalGateDoubles[name];
       if (name === 'electron') return { BrowserWindow: { getAllWindows: () => [] } };
       if (name === 'node-pty') return { spawn: (file, args, options) => { launches.push({ file, args, options }); return proc; } };
       if (name === 'node:child_process' && sessionFile) return { execFile };
