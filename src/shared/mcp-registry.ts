@@ -1,6 +1,6 @@
 import { validateExtensionManifest } from './extension-manifest.ts';
 import type {
-  ExtensionCredentialRequest, ExtensionEnvValue, ExtensionManifest, ExtensionMcpServer,
+  ExtensionCredentialRequest, ExtensionEnvValue, ExtensionHeaderValue, ExtensionManifest, ExtensionMcpServer,
 } from './extension-manifest.ts';
 
 /**
@@ -127,6 +127,15 @@ const OCI_REF_RE = /^((?:[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?\/)?[a-z0-9][a
  * a server named "mcp" is a tool id (`mcp__mcp__run`) nobody can read, and the
  * first of many that would collide on it.
  */
+/** Must match HEADER_NAME_RE and FORBIDDEN_HEADERS in extension-manifest.ts; the validator is the backstop. */
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+const FORBIDDEN_HEADERS = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'upgrade',
+  'te', 'trailer', 'proxy-connection', 'proxy-authorization', 'expect',
+]);
+/** `Bearer {api_key}`: a literal prefix and one variable at the end. The shape nearly every templated header takes. */
+const PREFIX_TEMPLATE_RE = /^([^{}]*)\{([A-Za-z0-9_.-]{1,64})\}$/;
+
 const GENERIC_LEAVES = new Set(['mcp', 'server', 'mcp-server', 'mcpserver', 'api', 'remote', 'main', 'app']);
 
 /* ── reading untrusted JSON ───────────────────────────────────────────── */
@@ -424,6 +433,10 @@ function planPackage(pkg: Record<string, unknown>, server: Server, serverName: s
     return { ok: false, reason: `It ships as a ${typeof type === 'string' ? type : 'kind of'} package, which Wanigan does not run yet.` };
   }
   if (argv.length > 50) return { ok: false, reason: 'It needs more arguments than an extension can carry.' };
+  // The installer stores argv as one string and cannot carry a double quote back
+  // out unchanged, so it refuses such a server rather than register a different
+  // command. Refused here too, so the store never offers what would not install.
+  if (argv.some((a) => a.includes('"'))) return { ok: false, reason: 'An argument contains a double quote, which Wanigan cannot store unchanged.' };
 
   return {
     ok: true,
@@ -449,23 +462,75 @@ function planRemote(remote: Record<string, unknown>, server: Server, serverName:
   if (type !== 'streamable-http') return { ok: false, reason: 'Its hosted endpoint uses the older SSE transport, which Wanigan does not speak.' };
   const url = httpsUrl(own(remote, 'url'));
   if (!url || url.includes('{')) return { ok: false, reason: 'Its hosted endpoint is not a fixed https address.' };
-  const headers = own(remote, 'headers');
-  if (Array.isArray(headers) && headers.some((h) => isObject(h) && (own(h, 'isRequired') === true || own(h, 'isSecret') === true))) {
-    return { ok: false, reason: 'Its hosted endpoint needs a request header, which Wanigan cannot set for a store install yet.' };
-  }
+  const planned = planHeaders(own(remote, 'headers'), extensionIdFor(server.name));
+  if (!planned.ok) return planned;
   return {
     ok: true,
     install: { kind: 'remote', url },
-    asks: [],
-    credentials: [],
+    asks: planned.asks,
+    credentials: planned.credentials,
     server: {
       name: serverName,
       transport: 'http',
       url,
       description: `${server.name} ${server.version}, from the official MCP Registry.`,
       scope: 'global',
+      ...(Object.keys(planned.headers).length ? { headers: planned.headers } : {}),
     },
   };
+}
+
+/**
+ * The request headers a hosted endpoint needs. A required header becomes a
+ * credential the operator is asked for: the whole value when the registry gives
+ * none (`Authorization`, whose description says what to paste), or the variable
+ * in a `Bearer {api_key}` template with the literal part kept as a prefix. A
+ * fixed value is sent as given. An optional header is left off — the server
+ * works without it, and asking for a key it does not need is noise.
+ */
+function planHeaders(raw: unknown, extensionId: string): {
+  ok: true; headers: Record<string, ExtensionHeaderValue>; credentials: ExtensionCredentialRequest[]; asks: string[];
+} | { ok: false; reason: string } {
+  const headers: Record<string, ExtensionHeaderValue> = {};
+  const credentials: ExtensionCredentialRequest[] = [];
+  const asks: string[] = [];
+  const taken = new Set<string>();
+  const seen = new Set<string>();
+  const list = Array.isArray(raw) ? raw.filter(isObject).slice(0, 20) : [];
+  for (const header of list) {
+    if (own(header, 'isRequired') !== true) continue;
+    const name = field(own(header, 'name'), 100);
+    if (!name || !HEADER_NAME_RE.test(name)) return { ok: false, reason: 'Its hosted endpoint needs a header whose name is not a valid HTTP header.' };
+    if (FORBIDDEN_HEADERS.has(name.toLowerCase())) return { ok: false, reason: `Its hosted endpoint wants to set ${name}, which only the transport may set.` };
+    if (seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const value = typeof own(header, 'value') === 'string' ? (own(header, 'value') as string) : null;
+    const help = prose(own(header, 'description'), 500) || undefined;
+    if (value !== null && !value.includes('{')) {
+      if (/[\r\n\u0000]/.test(value) || value.length > 2_000) return { ok: false, reason: `Its ${name} header has a value Wanigan cannot send.` };
+      headers[name] = { source: 'literal', value };
+      continue;
+    }
+    let prefix = '';
+    let label = name;
+    let credentialHelp = help;
+    if (value !== null) {
+      const template = PREFIX_TEMPLATE_RE.exec(value);
+      if (!template || /[\r\n\u0000]/.test(template[1]!) || template[1]!.length > 64) {
+        return { ok: false, reason: `Its ${name} header is built from several values, which Wanigan cannot ask for yet.` };
+      }
+      prefix = template[1]!;
+      label = template[2]!;
+      const variables = own(header, 'variables');
+      const variable = isObject(variables) ? own(variables, template[2]!) : undefined;
+      credentialHelp = (isObject(variable) ? prose(own(variable, 'description'), 500) : '') || help;
+    }
+    const id = credentialIdFor(label, extensionId, taken);
+    credentials.push({ id, label: label.slice(0, 80), ...(credentialHelp ? { help: credentialHelp } : {}) });
+    headers[name] = { source: 'credential', id, ...(prefix ? { prefix } : {}) };
+    asks.push(label);
+  }
+  return { ok: true, headers, credentials, asks };
 }
 
 /**

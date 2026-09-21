@@ -131,7 +131,10 @@ test('a local package is preferred over a hosted endpoint when both are publishe
 test('what cannot be installed honestly is refused with a reason, not guessed at', () => {
   refused(row({ remotes: [{ type: 'sse', url: 'https://mcp.acme.example/sse' }] }), /SSE/);
   refused(row({ remotes: [{ type: 'streamable-http', url: 'https://mcp.acme.example/v1',
-    headers: [{ name: 'Authorization', isSecret: true, isRequired: true }] }] }), /header/);
+    headers: [{ name: 'Authorization', isRequired: true, value: '{scheme} {token}' }] }] }), /several values/);
+  refused(row({ remotes: [{ type: 'streamable-http', url: 'https://mcp.acme.example/v1',
+    headers: [{ name: 'Host', isRequired: true, value: 'evil.example' }] }] }), /only the transport may set/);
+  refused(row({ packages: [npm({ packageArguments: [{ type: 'positional', value: 'say "hi"' }] })] }), /double quote/);
   refused(row({ remotes: [{ type: 'streamable-http', url: 'http://mcp.acme.example/v1' }] }), /fixed https/);
   refused(row({ remotes: [{ type: 'streamable-http', url: 'https://{tenant}.acme.example/v1' }] }), /fixed https/);
   refused(row({ packages: [npm({ version: undefined })] }), /pin a version/);
@@ -255,3 +258,30 @@ test('a long id still leaves every credential valid and distinct', () => {
     assert.ok(id.startsWith(`${manifest.id}.`), id);
   }
 });
+
+test('a hosted endpoint that needs a header asks for it, in the three shapes the registry uses', () => {
+  const { manifest, entry } = ok(row({ remotes: [{ type: 'streamable-http', url: 'https://mcp.acme.example/v1', headers: [
+    // The whole value is the secret; the description says what to paste.
+    { name: 'X-API-Key', isRequired: true, isSecret: true, description: 'Your Acme key.' },
+    // A template with a literal prefix and one variable.
+    { name: 'Authorization', isRequired: true, value: 'Bearer {api_key}',
+      variables: { api_key: { description: 'From the Acme dashboard.', isSecret: true } } },
+    // A fixed value, sent as given.
+    { name: 'Accept', isRequired: true, value: 'application/json, text/event-stream' },
+    // Optional, even secret: left off, because the server works without it.
+    { name: 'X-Tenant', isSecret: true, description: 'Optional.' },
+  ] }] }));
+  const server = manifest.provides.mcpServers![0]!;
+  assert.deepEqual(server.headers, {
+    'X-API-Key': { source: 'credential', id: 'mcp.com.acme.widgets.x_api_key' },
+    Authorization: { source: 'credential', id: 'mcp.com.acme.widgets.api_key', prefix: 'Bearer ' },
+    Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+  });
+  assert.deepEqual(manifest.credentials, [
+    { id: 'mcp.com.acme.widgets.x_api_key', label: 'X-API-Key', help: 'Your Acme key.' },
+    { id: 'mcp.com.acme.widgets.api_key', label: 'api_key', help: 'From the Acme dashboard.' },
+  ]);
+  assert.deepEqual(entry.asks, ['X-API-Key', 'api_key']);
+  assert.equal(entry.install.kind, 'remote');
+});
+
