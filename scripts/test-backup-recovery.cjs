@@ -201,8 +201,13 @@ async function main() {
       const fixtureRoot = path.join(directory, `v${version}`);
       fs.mkdirSync(fixtureRoot);
       for (const name of ['user-data', 'home', 'provider-packs']) fs.mkdirSync(path.join(fixtureRoot, name));
-      const env = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: path.join(fixtureRoot, 'home'),
+      const env = { PATH: `${path.dirname(process.execPath)}${path.delimiter}/usr/bin${path.delimiter}/bin`, HOME: path.join(fixtureRoot, 'home'),
         TMPDIR: os.tmpdir(), SHELL: '/bin/sh', WANIGAN_PROVIDER_PACKS_DIR: path.join(fixtureRoot, 'provider-packs'), WANIGAN_MOCK: '1', WANIGAN_SMOKE: '1' };
+      // The environment is built from nothing so no credential or shell state
+      // reaches the child. The display is the one thing the host must supply:
+      // on Linux CI the suite runs under xvfb-run, and an Electron started
+      // without its DISPLAY dies with "Missing X server" before main runs.
+      for (const name of ['DISPLAY', 'XAUTHORITY']) if (process.env[name]) env[name] = process.env[name];
       for (const phase of version === 0 ? ['fault', 'fault-reopen'] : ['restore', 'reopen']) {
         const args = [__filename, phase, fixtureRoot, String(version), '--use-mock-keychain'];
         const native = process.platform === 'darwin' && fs.existsSync('/usr/bin/script');
