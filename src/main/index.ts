@@ -100,6 +100,7 @@ import * as browse from './browse';
 import * as attachments from './attachments';
 import * as mcpRegistry from './mcp/registry';
 import * as extensionStore from './extensions/store';
+import * as mcpStore from './extensions/mcp-store';
 import { forgetBackendCatalog, verifyBackendCredential } from './backend-catalog';
 import { installBuiltinExtensions } from './extensions/builtin';
 import * as mcpServer from './mcp/server';
@@ -2112,6 +2113,20 @@ function registerIpc() {
     return extensionStore.setExtensionEnabled(extensionId(id), enabled);
   });
   handle('extensions:uninstall', (id: unknown) => extensionStore.uninstallExtension(extensionId(id)));
+  // The store. Browsing and staging live in extensions/mcp-store.ts, which
+  // validates every argument itself; these are thin because they have to sit in
+  // this closure. A staged directory is one Wanigan wrote, so it is added to the
+  // same set the folder picker fills — after which it is installed exactly as a
+  // picked folder is, through the inspect, consent and digest steps above.
+  handle('store:sources', () => mcpStore.storeSources());
+  handle('store:sync', (key: unknown) => mcpStore.syncStore(key));
+  handle('store:query', (key: unknown, query: unknown) => mcpStore.queryStoreIndex(key, query));
+  handle('store:stage', async (key: unknown, name: unknown, version: unknown) => {
+    const directory = path.resolve(await mcpStore.stageStoreEntry(key, name, version));
+    chosenExtensionDirs.add(directory);
+    return extensionStore.inspectExtension(directory);
+  });
+  handle('store:updates', () => mcpStore.storeUpdates());
   handle('extensions:exportable', () => extensionStore.exportableConfiguration());
   // Writing your own configuration out as an extension. The destination is
   // picked here rather than passed in, for the same reason as above — and this

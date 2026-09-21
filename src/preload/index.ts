@@ -1,4 +1,6 @@
 import type { SkillCatalogue } from '../shared/skill-catalogue';
+import type { StoreSourceInfo, StoreUpdate } from '../shared/mcp-registry';
+import type { StoreQuery, StoreResults, StoreSyncResult } from '../shared/store-query';
 import type { RecoveryInspection, RecoveryPreview } from '../shared/recovery';
 import type { ModelEconomicsQuote, ModelEconomicsQuoteInput, ModelEconomicsSettings, ModelEconomicsStatus } from '../shared/model-economics';
 import type { OpenRouterConnectionStatus } from '../shared/openrouter-connection';
@@ -178,6 +180,26 @@ const api = {
       call<ExtensionInspection | null>('extensions:export', input),
     /** What "Save as extension" would offer to include, read from live configuration. */
     exportable: () => call<{ mcpServers: { id: string; name: string; detail: string }[] }>('extensions:exportable'),
+  },
+  /**
+   * The store: catalogs that installed extensions declare, browsed and staged.
+   *
+   * There is no install call here, and that is the design. `stage` makes the main
+   * process fetch one exact version and write it out as an extension directory;
+   * what it returns is an ordinary inspection, installed with `extensions.install`
+   * after the same review as a folder picked by hand. The renderer never holds a
+   * manifest it could alter before approval — only a name and a version.
+   */
+  store: {
+    sources: () => call<StoreSourceInfo[]>('store:sources'),
+    /** Bring the local index current: the whole catalog once, then only what changed. */
+    sync: (sourceKey: string) => call<StoreSyncResult>('store:sync', sourceKey),
+    /** Search, sort and filter the local index. Answered on this machine; nothing typed is sent. */
+    query: (sourceKey: string, query: Partial<StoreQuery>) => call<StoreResults>('store:query', sourceKey, query),
+    stage: (sourceKey: string, name: string, version: string) =>
+      call<ExtensionInspection>('store:stage', sourceKey, name, version),
+    /** Installed store extensions with a newer version in the local index. Reports only; never applies one. */
+    updates: () => call<StoreUpdate[]>('store:updates'),
   },
   projects: {
     list: () => call<Project[]>('projects:list'),

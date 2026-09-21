@@ -7,6 +7,7 @@ import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
 import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
+import { enabledStoreSources } from './extensions/store';
 import { SUGGEST_HOST, SUGGEST_PATH, enabled as suggesterEnabled } from './modules/suggest';
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
@@ -324,6 +325,33 @@ function hosts(): EgressHost[] {
     };
   });
 
+  // The store's catalogs, read from the same list the store itself reads
+  // (extensions/mcp-store.ts). A third party's extension can declare a catalog,
+  // so this is derived rather than typed in: a catalog the store contacts and
+  // this table does not print would be the overclaim the table exists to stop.
+  const storeHosts: EgressHost[] = enabledStoreSources().map(({ source }) => {
+    let host = source.url;
+    let pathname = '/';
+    try {
+      const parsed = new URL(source.url);
+      host = parsed.hostname;
+      pathname = parsed.pathname || '/';
+    } catch {
+      // Declared by an installed extension, whose installer refused anything but
+      // https; an unparseable url is a row edited after install, printed as is.
+    }
+    return {
+      host,
+      paths: [pathname, `${pathname.replace(/\/+$/, '')}/<name>/versions/<version>`],
+      by: 'wanigan' as const,
+      purpose: `Browsing the extension catalog “${source.label}” from ${source.publisher}, and fetching the exact entry you open to review.`,
+      when: 'Only when you open the store in Extensions: the first time it reads the whole catalog (one request per hundred servers — a few hundred for the official registry), and after that only what changed since the last read. Reviewing an entry fetches that one version. Searching, sorting and filtering happen on this machine, so nothing you type is sent. GET-only, credential-free, HTTPS-only, bounded, and redirects are refused; what leaves is the names of entries you open — never project files, prompts, paths or terminal content.',
+      // Every request is a click: there is no schedule, so nothing is durably on.
+      activeNow: false,
+      overrideEnv: null,
+    };
+  });
+
   const enumerated: EgressHost[] = [
     {
       host: hostOf(anthropicBase, 'api.anthropic.com'),
@@ -473,6 +501,7 @@ function hosts(): EgressHost[] {
       overrideEnv: null,
     },
     ...scoutHosts,
+    ...storeHosts,
   ];
 
   // Appended last: an installed pack can add destinations to this table, and
@@ -597,7 +626,7 @@ const UNENUMERATED = [
 ];
 
 const PROVENANCE =
-  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the official-source registry the Scout's installed extensions declare — " +
+  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process, the official-source registry the Scout's installed extensions declare, and the store catalogs installed extensions declare — " +
   'with module-owned destinations contributed by the registered modules themselves. Model-catalogue rows are read from the enabled provider packs, because a catalogue is fetched from wherever its pack declares, and a pack must not be able to add a destination this table does not print. Those are still calls Wanigan makes, and say so. ' +
   'The rows marked “agent” are where each CLI sends your prompts, which Wanigan supplies for GLM, DeepSeek and Grok and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
   'An “agent” row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +

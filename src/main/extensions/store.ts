@@ -9,7 +9,7 @@ import {
   mcpFingerprint, ownerExtensionId, scoutFingerprint, validateExtensionManifest,
 } from '../../shared/extension-manifest';
 import type {
-  ExtensionManifest, ExtensionMcpServer, ExtensionScoutSource, ExtensionScoutSourceKind,
+  ExtensionManifest, ExtensionMcpServer, ExtensionScoutSource, ExtensionScoutSourceKind, ExtensionStoreSource,
 } from '../../shared/extension-manifest';
 import type {
   ExtensionArtifactInfo, ExtensionInfo, ExtensionInspection, ExtensionOrigin,
@@ -674,6 +674,32 @@ function toInfo(row: PluginRow): ExtensionInfo {
 export function listExtensions(): ExtensionInfo[] {
   const rows = db().prepare('SELECT * FROM plugins ORDER BY label').all() as PluginRow[];
   return rows.map(toInfo);
+}
+
+/**
+ * The catalogs the store may read, each keyed `<extension id>:<source id>`.
+ *
+ * Only an extension that is enabled and whose exact manifest bytes were approved
+ * contributes one — the same condition under which its MCP servers reach a
+ * session — so switching the declaring extension off is how an operator stops
+ * Wanigan contacting that catalog at all. The manifest is revalidated here, as
+ * `toInfo` does, rather than trusted from the row.
+ */
+export function enabledStoreSources(): { key: string; extensionId: string; source: ExtensionStoreSource }[] {
+  const rows = db().prepare('SELECT * FROM plugins WHERE enabled = 1 ORDER BY label').all() as PluginRow[];
+  const out: { key: string; extensionId: string; source: ExtensionStoreSource }[] = [];
+  for (const row of rows) {
+    if (row.trusted_sha256 !== row.manifest_sha256) continue;
+    let manifest: ExtensionManifest | null = null;
+    try {
+      const result = validateExtensionManifest(JSON.parse(row.manifest_json) as unknown, { appVersion: appVersion() });
+      manifest = result.ok ? result.manifest : null;
+    } catch { manifest = null; }
+    for (const source of manifest?.provides.storeSources ?? []) {
+      out.push({ key: `${row.id}:${source.id}`, extensionId: row.id, source });
+    }
+  }
+  return out;
 }
 
 /* ── inspect ─────────────────────────────────────────────────────────── */

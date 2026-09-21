@@ -79,6 +79,34 @@ export const BUILTIN_EXTENSIONS: readonly ExtensionManifest[] = [
       ],
     },
   },
+  {
+    // The store's default catalog, shipped the way Scout's sources are: as a
+    // manifest through the public validator, so the store has no address it
+    // reaches by a private path. Switch this extension off and the store has
+    // nothing to browse and contacts nobody; a third party's catalog is a second
+    // manifest declaring a second store source, beside this one.
+    schemaVersion: 1,
+    id: 'wanigan.mcp-registry',
+    label: 'MCP Registry catalog',
+    version: '1.0.0',
+    description:
+      'The official MCP Registry, browsable from the store in Extensions. The registry verifies who publishes ' +
+      'under each name; it does not review what a server does, and neither does Wanigan — every install still ' +
+      'shows you the exact command and asks for your approval. Disable this to remove the catalog from the store.',
+    publisher: { id: 'wanigan', name: 'Wanigan' },
+    provides: {
+      storeSources: [
+        {
+          id: 'official',
+          label: 'MCP Registry',
+          description: 'The official registry of MCP servers, run by the Model Context Protocol project.',
+          url: 'https://registry.modelcontextprotocol.io/v0.1/servers',
+          publisher: 'Model Context Protocol',
+          format: 'mcp-registry',
+        },
+      ],
+    },
+  },
 ];
 
 /**
