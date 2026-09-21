@@ -71,7 +71,9 @@ async function main() {
   f.state.save.canceled = false;
   assert.deepEqual(await f.handlers.get('backup:create')(), { dir: '/backup/new' });
   const save = f.calls.find(call => call[0] === 'save')[2];
-  assert(save.defaultPath.startsWith('/fixture/documents/wanigan-backup-'));
+  // path.join spells the separator for the host, so the expectation must too:
+  // on Windows the default path is '\\fixture\\documents\\wanigan-backup-…'.
+  assert(save.defaultPath.startsWith(path.join('/fixture/documents', 'wanigan-backup-')));
   assert.deepEqual(save.properties, ['createDirectory']);
 
   f = fixture();
