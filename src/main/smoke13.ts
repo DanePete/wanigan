@@ -100,6 +100,18 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
     check(accounts.list('generic-cli').length === 0,
       'an unsupported harness lists nothing, which is how the panel knows not to draw a group');
 
+    // The pickers ask one question per profile, and it is the launch's own.
+    // A Codex stage used to be told it had no accounts while its directory
+    // variable was honoured at launch; a redirected Claude profile is still
+    // told no, because a Claude login is not what that session authenticates with.
+    const { accountsForProvider } = await import('./sessions');
+    check(accountsForProvider('codex').length >= 1 && accountsForProvider('codex').every((row) => row.harness === 'codex'),
+      'a Codex profile is offered the Codex accounts, not none', accountsForProvider('codex').map((row) => row.label));
+    check(accountsForProvider('claude').length >= 1 && accountsForProvider('claude').every((row) => row.harness === 'claude-code'),
+      'a Claude profile is offered the Claude accounts');
+    check(accountsForProvider('deepseek').length === 0 && accountsForProvider('no-such-profile').length === 0,
+      'a redirected Claude profile and an unknown one are offered no account at all');
+
     // A second Codex account: the thing that could not be done at all.
     const dir = path.join(dataDir(), 'smoke-codex-second');
     const made = accounts.create({ harness: 'codex', label: 'Smoke Second', configDir: dir });

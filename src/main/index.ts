@@ -17,8 +17,7 @@ import {
   scrollback, shutdownAll, interruptSession,
   setSessionExitObserver,
   redirectsAnthropicApiFor,
-  setFocusedSession, recordObservedModel, killAll,
-} from './sessions';
+  setFocusedSession, recordObservedModel, killAll, accountsForProvider } from './sessions';
 import {
   assertConversationExists, pastSessions, sessionBaseline,
 } from './session-history';
@@ -2920,11 +2919,8 @@ function registerIpc() {
       appliesToAnthropic: usesAnthropicAccount(def) && !redirectsAnthropicApiFor(def),
     });
   });
-  handle('accounts:listForProvider', (providerId: string) => {
-    const def = providerById(providerId);
-    if (!def || !usesAnthropicAccount(def) || redirectsAnthropicApiFor(def)) return [];
-    return accounts.list(def.harness);
-  });
+  handle('accounts:listForProvider', (providerId: string) =>
+    (typeof providerId === 'string' ? accountsForProvider(providerId) : []));
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());
