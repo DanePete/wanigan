@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocketNode, Project, ProviderInfo, RelayRead, WorkDocket } from '@shared/types';
 import { EmptyState, Hint, Note, PageHead, Pill, Section, SectionHead, Stat, ago, dur, usd } from '../components/bits';
-import { AGENT_KINDS, KIND_WORD, phasesOf, type DocketPhase } from '../relay/facts';
+import { AGENT_KINDS, KIND_WORD, nodeWord, phasesOf, type DocketPhase } from '../relay/facts';
 import RelayComposer from '../relay/RelayComposer';
 import RelayRig from '../relay/RelayRig';
 import { RelayDeliveryAction, RelayDeliveryDetails } from '../relay/RelayDelivery';
@@ -143,7 +143,7 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
     select(next.docket.id); setSnapshot(next); setListReady(true);
     setRelays((rows) => [next.docket, ...rows.filter((row) => row.id !== next.docket.id)]);
   };
-  const currentSummary = done ? 'All stages completed' : current ? `${KIND_WORD[current.kind]} · ${current.state.word}` : 'Reading stages';
+  const currentSummary = done ? 'All stages completed' : current ? `${current.source === 'docket' ? nodeWord(current.node) : KIND_WORD[current.kind]} · ${current.state.word}` : 'Reading stages';
 
   return <main className="pane rl-view">
     <PageHead eyebrow={project?.name ?? 'No project'} title="Relay"
@@ -207,8 +207,8 @@ function RelayWorkspace({ projects, projectId, providers, openSession, openGoal 
             </section>
             {detail?.source === 'delivery' && <RelayDeliveryDetails key={detail.id} read={read} kind={detail.stage.kind} stage={detail.stage} busy={busy} unavailable={!!readError} act={act}
               back={detail.id !== current?.id ? () => setInspected(null) : undefined} />}
-            {detail?.source === 'docket' && <div className="rl-detail" aria-label={`${KIND_WORD[detail.node.kind]} stage details`}>
-              <SectionHead label={`${KIND_WORD[detail.node.kind]} details`}
+            {detail?.source === 'docket' && <div className="rl-detail" aria-label={`${nodeWord(detail.node)} stage details`}>
+              <SectionHead label={`${nodeWord(detail.node)} details`}
                 right={detail.node.id !== current?.id ? <button className="btn btn-sm" onClick={() => setInspected(null)}>Back to current stage</button> : undefined} />
               <div className="rl-detail-content" key={detail.node.id}>
                 <p className="rl-stage-instructions">{detail.node.instructions || detail.node.title}</p>
@@ -272,9 +272,9 @@ function RelayAction({ phase, read, done, busy, unavailable, start, finish, veri
   if (read.docket.status === 'rejected') return <><h3>The work was rejected.</h3><p>The review decision is recorded. Inspect its evidence in Goals before deciding what to do next.</p><button className="btn" onClick={openGoal}>Review decision</button></>;
   if (node.kind === 'review' && node.status === 'failed' && phase.decision === 'request_changes') return <><h3>Changes were requested.</h3><p>The review is waiting for an implementation follow-up. Inspect the hand-back evidence before reopening the work.</p><button className="btn btn-primary" onClick={openGoal}>Review hand-back in Goals</button></>;
   if (done) return <><h3>All recorded stages are complete.</h3><p>Review the recorded evidence and changes in Goals.</p><button className="btn" onClick={openGoal}>Review outcome</button></>;
-  if (node.queued) return <><h3>{KIND_WORD[node.kind]} is queued.</h3><p>Waiting for its turn to launch. Its recorded state will update here.</p><button className="btn" onClick={openGoal}>View queue in Goals</button></>;
+  if (node.queued) return <><h3>{nodeWord(node)} is queued.</h3><p>Waiting for its turn to launch. Its recorded state will update here.</p><button className="btn" onClick={openGoal}>View queue in Goals</button></>;
   if (node.gateRunningSince !== null) return <><h3>Verification is running.</h3><p>The project’s checks are running. Results will appear with the stage evidence.</p></>;
-  if (node.status === 'failed' || node.status === 'canceled') return <><h3>{KIND_WORD[node.kind]} needs attention.</h3><p>{node.detail || 'Inspect the evidence, then reopen this stage when you are ready to retry.'}</p>
+  if (node.status === 'failed' || node.status === 'canceled') return <><h3>{nodeWord(node)} needs attention.</h3><p>{node.detail || 'Inspect the evidence, then reopen this stage when you are ready to retry.'}</p>
     <div className="rl-actions"><button className="btn btn-primary" disabled={disabled} onClick={() => void retry()}>{working ? 'Reopening…' : 'Reopen stage'}</button><button className="btn" onClick={openGoal}>Inspect in Goals</button></div></>;
   if (node.status === 'pending' || node.status === 'blocked') return <><h3>Waiting on an earlier stage.</h3><p>{node.deferUntil ? `Deferred until ${new Date(node.deferUntil).toLocaleString()}.` : 'This stage becomes available when its dependencies are complete.'}</p><button className="btn" onClick={openGoal}>Inspect dependencies</button></>;
   if (node.kind === 'estimate') return <><h3>Price the work before building.</h3><p>Use this project’s recorded history to estimate time and cost. This step is local and starts no agent.</p><button className="btn btn-primary" disabled={disabled} onClick={() => void estimate()}>{working ? 'Calculating…' : 'Run forecast'}</button></>;
@@ -296,7 +296,7 @@ function RelayAction({ phase, read, done, busy, unavailable, start, finish, veri
       {node.kind === 'implement' && <Hint>{read.forecast?.totalUsd === null || !read.forecast ? 'Cost is unpriced. Starting this stage may incur provider charges.' : `Estimated cost: ${usd(read.forecast.totalUsd)}. Actual usage may differ.`}</Hint>}
       <button className="btn btn-primary" disabled={disabled} onClick={() => void start(node)}>{working ? 'Starting…' : verb}</button></>;
   }
-  return <><h3>{KIND_WORD[node.kind]} is running.</h3><p>{phase.state.word === 'quiet' ? 'No recent tool completions have been recorded. Open the session to see what the agent needs.' : 'Open the session to follow the work or respond to the agent.'}</p>
+  return <><h3>{nodeWord(node)} is running.</h3><p>{phase.state.word === 'quiet' ? 'No recent tool completions have been recorded. Open the session to see what the agent needs.' : 'Open the session to follow the work or respond to the agent.'}</p>
     <div className="rl-actions">{node.sessionId && <button className="btn btn-primary" onClick={() => openSession(node.sessionId!)}>Open live session</button>}
       {node.kind !== 'review' && <button className="btn" disabled={disabled} onClick={() => void finish(node)}>{working ? 'Recording…' : `Complete ${node.kind === 'plan' ? 'planning' : 'implementation'}`}</button>}
     </div>

@@ -1740,7 +1740,16 @@ export type DocketDetail = WorkDocket & {
  * whole relay with the router's own sentence rather than being moved to the
  * nearest legal value (src/shared/relay-route.ts).
  */
-export type RelayRouteInput = Partial<Record<DocketNodeKind, {
+/**
+ * The stages a relay can route: the docket kinds, plus `refine` — a second
+ * implement node, "Clean up and correct", that runs after the build on a
+ * runner of its own. It is a stage to the operator and a route proof to the
+ * record, but not a docket kind: Control dispatches and gates it exactly as
+ * it does any implement task, which is the point of not inventing one.
+ */
+export type RelayStageKey = DocketNodeKind | 'refine';
+
+export type RelayRouteInput = Partial<Record<RelayStageKey, {
   providerId?: string;
   model?: string;
   effort?: string;
@@ -1899,7 +1908,7 @@ export type RelayPreview = {
   /** Which stages would run. Every declared one unless a confident pipeline answer narrowed the front. */
   phases: DocketNodeKind[];
   pipeline: { pipeline: string; confidence: number } | null;
-  routes: Partial<Record<DocketNodeKind, RelayPreviewRoute>>;
+  routes: Partial<Record<RelayStageKey, RelayPreviewRoute>>;
   /** Wanigan's arithmetic for the calls this preview made. Never a reported cost. */
   estimatedUsd: number | null;
 };

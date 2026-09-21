@@ -68,6 +68,38 @@ export async function runRelaySmoke(check: Check, say: Say): Promise<void> {
     'with no suggester wired, a stage runs on the profile default and the node row carries the same provider and model the route proof does', implementRead.route);
     check(created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId !== null).every((proof) => proof.summary.startsWith('The ') && proof.summary.includes(' stage runs on ')),
       'a route proof’s summary is the router’s own reason sentence');
+
+    // ── a clean-up stage on a runner of its own ────────────────────────
+    // The operator's case: a cheap or local model builds, and a stronger one
+    // reviews and corrects before the checks run. It is a second implement
+    // node so Control gates and dispatches it as any build, and a stage of
+    // its own to the router so it gets its own runner, account and proof.
+    const { RELAY_REFINE_TITLE } = await import('../shared/relay');
+    const refined = await relay.createRelay({
+      projectId: project.id, intent: 'Tidy the retry path.', providerId,
+      routes: { refine: { model: 'sonnet' } },
+    });
+    const refinedNodes = refined.docket.nodes;
+    check(kindsOf(refined) === 'plan,estimate,implement,implement,verify,review' && refinedNodes[3].title === RELAY_REFINE_TITLE,
+      'naming a clean-up route adds one implement node, titled as the clean-up stage, right after the build', kindsOf(refined));
+    const refineNode = refinedNodes[3];
+    check(refineNode.dependsOn.length === 1 && refineNode.dependsOn[0] === refinedNodes[2].id
+      && nodeOf(refined, 'verify').dependsOn[0] === refineNode.id,
+      'the clean-up stage waits on the build and verification waits on the clean-up, so the checks run on the corrected tree');
+    check(refineNode.providerId === providerId && refineNode.model === 'sonnet' && refinedNodes[2].model !== 'sonnet',
+      'the clean-up stage carries its own model while the build keeps the profile default', { build: refinedNodes[2].model, refine: refineNode.model });
+    const refineProof = refined.docket.proofs.find((proof) => proof.kind === 'route' && proof.nodeId === refineNode.id);
+    check(!!refineProof && refineProof.summary.startsWith('The clean-up stage runs on ') && refined.nodes.filter((node) => node.route !== null).length === 5,
+      'the clean-up stage gets a route proof of its own, named as the clean-up stage', refineProof?.summary);
+    const previewed = await relay.previewRelay({ intent: 'Tidy the retry path.', providerId, routes: { refine: { model: 'sonnet' } }, routing: { mode: 'manual', preference: 'cost' } });
+    check(previewed.routes.refine?.route.model === 'sonnet' && previewed.routes.refine.route.source === 'operator',
+      'a preview reports the clean-up stage’s route beside the others', previewed.routes.refine);
+    const unrefined = await relay.createRelay({ projectId: project.id, intent: 'Tidy the retry path, plainly.', providerId });
+    check(kindsOf(unrefined) === 'plan,estimate,implement,verify,review',
+      'with no clean-up route the relay is exactly the five stages it always was');
+    // Taken back out: the checks below count this project's relays, and these
+    // two were made to prove a shape, not to be listed.
+    for (const id of [refined.docket.id, unrefined.docket.id]) db().prepare('DELETE FROM work_dockets WHERE id=?').run(id);
     check(created.routing?.mode === 'auto' && created.routing.preference === 'cost'
       && created.docket.proofs.filter((proof) => proof.kind === 'route' && proof.nodeId === null).length === 1,
     'an omitted routing setting records Auto and Lower cost once, separately from the four stage decisions', created.routing);

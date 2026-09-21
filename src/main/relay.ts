@@ -17,9 +17,10 @@ import { decisionContext, enabled as suggesterEnabled, estimatedUsd, suggestRela
 import { DecisionReceipts } from '../shared/decision-receipts';
 import { MIN_HISTORY, forecastPhase, forecastTotals, type ForecastSample } from '../shared/relay-forecast';
 import { HANDBACK_LIMIT } from '../shared/gate-feedback';
-import { DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS } from '../shared/types';
+import { DOCKET_NODE_KINDS } from '../shared/types';
+import { RELAY_STAGE_KEYS, relayPlan, stageKeyOf } from '../shared/relay';
 import type {
-  DocketDetail, DocketNode, DocketNodeKind, DocketPlanNode, RelayCreateInput, RelayForecast, RelayNodeRead,
+  DocketDetail, DocketNode, DocketNodeKind, RelayCreateInput, RelayForecast, RelayNodeRead, RelayStageKey,
   RelayPhaseForecast, RelayPipelineRead, RelayPreview, RelayPreviewInput, RelayRead, WorkDocket,
 } from '../shared/types';
 
@@ -87,19 +88,19 @@ type StageOverride = { providerId?: string; model?: string; effort?: string; acc
  * not a stage kind is refused by name: an unknown key would otherwise be
  * silently ignored, and the operator would believe a stage was pinned.
  */
-function readRoutes(raw: unknown): Partial<Record<DocketNodeKind, StageOverride>> {
+function readRoutes(raw: unknown): Partial<Record<RelayStageKey, StageOverride>> {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Stage routes must be an object keyed by stage kind.');
-  const out: Partial<Record<DocketNodeKind, StageOverride>> = {};
+  const out: Partial<Record<RelayStageKey, StageOverride>> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!DOCKET_NODE_KINDS.includes(key as DocketNodeKind)) {
-      throw new Error(`Unknown stage "${key}"; a relay routes one of: ${DOCKET_NODE_KINDS.join(', ')}.`);
+    if (!RELAY_STAGE_KEYS.includes(key as RelayStageKey)) {
+      throw new Error(`Unknown stage "${key}"; a relay routes one of: ${RELAY_STAGE_KEYS.join(', ')}.`);
     }
     if (key === 'estimate') throw new Error('The estimate stage runs no agent, so it takes no route.');
     if (value === undefined || value === null) continue;
     if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`The route for the ${key} stage must be an object.`);
     const over = value as Record<string, unknown>;
-    out[key as DocketNodeKind] = {
+    out[key as RelayStageKey] = {
       providerId: optional(over.providerId, `The ${key} stage's provider`, ROUTE_VALUE_MAX),
       model: optional(over.model, `The ${key} stage's model`, ROUTE_VALUE_MAX),
       effort: optional(over.effort, `The ${key} stage's effort`, ROUTE_VALUE_MAX),
@@ -235,18 +236,6 @@ function decisionBinding(intent: string, providerId: string, routes: ReturnType<
  * the assertion is here rather than trusted, because a plan that grew a branch
  * would make the relinking silently wrong.
  */
-function narrowedPlan(phases: readonly DocketNodeKind[]): DocketPlanNode[] | undefined {
-  if (phases.length >= DEFAULT_DOCKET_PLAN.length) return undefined;
-  DEFAULT_DOCKET_PLAN.forEach((node, index) => {
-    const expected = index === 0 ? [] : [index - 1];
-    if (JSON.stringify(node.dependsOn ?? []) !== JSON.stringify(expected)) {
-      throw new Error('The default docket plan is no longer a straight chain, so a suggester cannot narrow it by relinking.');
-    }
-  });
-  const kept = DEFAULT_DOCKET_PLAN.filter((node) => phases.includes(node.kind));
-  return kept.map((node, index) => ({ ...node, dependsOn: index === 0 ? [] : [index - 1] }));
-}
-
 /**
  * Create a relay: a docket from the default plan, every agent stage routed
  * before a row is written, and one `route` proof per routed node.
@@ -301,22 +290,29 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   // A stage the operator chose for is left out of the asking entirely. The
   // router ranks a typed choice above a suggestion, so a call whose answer
   // cannot be used is a call that must not be billed.
+  // The clean-up stage exists only when a route names it: a relay with no
+  // second runner is exactly the relay it always was.
+  const refineOn = routes.refine !== undefined;
   const asks: StageAsk[] = [];
-  for (const kind of DOCKET_NODE_KINDS) {
-    if (kind === 'estimate') continue;
-    if (automation && kind === 'verify') continue;
-    const wants = routes[kind];
+  for (const key of RELAY_STAGE_KEYS) {
+    if (key === 'estimate') continue;
+    if (automation && key === 'verify') continue;
+    if (key === 'refine' && !refineOn) continue;
+    const wants = routes[key];
     const profile = await load(wants?.providerId ?? providerId);
-    if (automation && (kind === 'plan' || kind === 'implement')) assertAutomaticProfile(profile.providerId);
+    if (automation && (key === 'plan' || key === 'implement' || key === 'refine')) assertAutomaticProfile(profile.providerId);
     // Reject invalid launches before paying for a suggestion that cannot run.
     accountFor(wants?.accountId !== undefined ? wants.accountId : relayAccountId,
-      providerById(profile.providerId)?.harness ?? '', `The ${kind} stage`);
+      providerById(profile.providerId)?.harness ?? '', key === 'refine' ? 'The clean-up stage' : `The ${key} stage`);
     if (wants && (wants.model !== undefined || wants.effort !== undefined)) {
-      const route = chooseStage(kind, profile.candidates, profile.defaults, null, { operator: wants });
+      const route = chooseStage(key, profile.candidates, profile.defaults, null, { operator: wants });
       if (route.source !== 'operator') throw new Error(route.reason);
       continue;
     }
-    asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
+    // The clean-up stage is never put to the suggester: the operator chose to
+    // add it, and it runs on the runner they named or that runner's default.
+    if (key === 'refine') continue;
+    asks.push({ phase: key, candidates: profile.offers, descriptions: profile.descriptions });
   }
   const receipt = input.previewReceipt;
   const binding = decisionBinding(intent, providerId, routes, routing, profiles, !!automation);
@@ -333,26 +329,26 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   const pipelineReading = plan.pipeline;
   const phases = phasesFor(DOCKET_NODE_KINDS, pipelineReading);
 
-  const picks = new Map<DocketNodeKind, Pick_>();
-  for (const kind of DOCKET_NODE_KINDS) {
-    if (kind === 'estimate') continue;
-    if (automation && kind === 'verify') continue;
-    if (!phases.includes(kind)) continue;
-    const wants = routes[kind];
+  const picks = new Map<RelayStageKey, Pick_>();
+  for (const key of RELAY_STAGE_KEYS) {
+    if (key === 'estimate') continue;
+    if (automation && key === 'verify') continue;
+    if (key === 'refine' ? !refineOn || !phases.includes('implement') : !phases.includes(key)) continue;
+    const wants = routes[key];
     const stageProvider = wants?.providerId ?? providerId;
     const profile = await load(stageProvider);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
       ? { model: wants.model, effort: wants.effort } : undefined;
-    const reading = operator ? null : plan.stages[kind] ?? null;
-    const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
+    const reading = operator || key === 'refine' ? null : plan.stages[key] ?? null;
+    const route = chooseStage(key, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
     if (operator && route.source !== 'operator') throw new Error(route.reason);
     // The stage's own account, then the relay's, then null. A stage that names
     // null explicitly opts out of the relay's pin and resolves the ordinary way.
     const info = providerById(stageProvider);
     const harness = info?.harness ?? '';
     const wanted = wants?.accountId !== undefined ? wants.accountId : relayAccountId;
-    const accountId = accountFor(wanted, harness, `The ${kind} stage`);
-    picks.set(kind, {
+    const accountId = accountFor(wanted, harness, key === 'refine' ? 'The clean-up stage' : `The ${key} stage`);
+    picks.set(key, {
       providerId: stageProvider, route, profile, accountId,
       permissionMode: wants?.permissionMode ?? relayPermissionMode ?? null,
       reading,
@@ -374,7 +370,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
   }
   const created = control.createDocket({
     projectId, title: titleOf(intent), objective: intent, acceptance, risk: 'elevated',
-    plan: narrowedPlan(phases),
+    plan: relayPlan(phases, refineOn),
   });
   const at = now();
   db().transaction(() => {
@@ -385,7 +381,7 @@ export async function createRelay(raw: RelayCreateInput): Promise<RelayRead> {
         JSON.stringify({ routing, questionPolicy: SUGGEST_QUESTION_POLICY, suggesterUsage: plan.usage,
           previewReceipt: receipt ?? null }), at);
     for (const node of created.nodes) {
-      const pick = picks.get(node.kind);
+      const pick = picks.get(stageKeyOf(node));
       if (!pick) continue;
       db().prepare('UPDATE work_nodes SET provider_id=?, model=?, effort=?, account_id=?, permission_mode=? WHERE id=?')
         .run(pick.providerId, pick.route.model, pick.route.effort, pick.accountId, pick.permissionMode, node.id);
@@ -459,14 +455,17 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
     profiles.set(id, profile);
     return profile;
   };
+  const refineOn = routes.refine !== undefined;
   const asks: StageAsk[] = [];
-  for (const kind of DOCKET_NODE_KINDS) {
-    if (kind === 'estimate') continue;
-    if (automatic && kind === 'verify') continue;
-    const wants = routes[kind];
+  for (const key of RELAY_STAGE_KEYS) {
+    if (key === 'estimate') continue;
+    if (automatic && key === 'verify') continue;
+    if (key === 'refine' && !refineOn) continue;
+    const wants = routes[key];
     const profile = await load(wants?.providerId ?? providerId);
     if (wants && (wants.model !== undefined || wants.effort !== undefined)) continue;
-    asks.push({ phase: kind, candidates: profile.offers, descriptions: profile.descriptions });
+    if (key === 'refine') continue;
+    asks.push({ phase: key, candidates: profile.offers, descriptions: profile.descriptions });
   }
   const asked = routing.mode === 'auto' && !halted()
     && relayPlanRequest(intent, DOCKET_NODE_KINDS, asks, suggesterEnabled(), routing.preference) !== null;
@@ -490,16 +489,17 @@ export async function previewRelay(raw: unknown): Promise<RelayPreview> {
     estimatedUsd: null,
   };
 
-  for (const kind of DOCKET_NODE_KINDS) {
-    if (kind === 'estimate' || !phases.includes(kind)) continue;
-    if (automatic && kind === 'verify') continue;
-    const wants = routes[kind];
+  for (const key of RELAY_STAGE_KEYS) {
+    if (key === 'estimate') continue;
+    if (key === 'refine' ? !refineOn || !phases.includes('implement') : !phases.includes(key)) continue;
+    if (automatic && key === 'verify') continue;
+    const wants = routes[key];
     const profile = await load(wants?.providerId ?? providerId);
     const operator = wants && (wants.model !== undefined || wants.effort !== undefined)
       ? { model: wants.model, effort: wants.effort } : undefined;
-    const reading = operator ? null : plan.stages[kind] ?? null;
-    const route = chooseStage(kind, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
-    preview.routes[kind] = {
+    const reading = operator || key === 'refine' ? null : plan.stages[key] ?? null;
+    const route = chooseStage(key, profile.candidates, profile.defaults, reading?.suggestion ?? null, operator ? { operator } : undefined);
+    preview.routes[key] = {
       route: { model: route.model, effort: route.effort, source: route.source, confidence: route.confidence, reason: route.reason },
       suggested: reading?.suggestion
         ? { model: reading.suggestion.model, effort: reading.suggestion.effort, confidence: reading.suggestion.confidence }
