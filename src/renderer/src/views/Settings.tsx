@@ -4684,6 +4684,26 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
+  /*
+   * URGENT-FIX ESCAPE (AGENTS.md, "The urgent-fix escape"): fixed in place on an
+   * unconverted surface because a user was blocked. "+ Add server" sits in this
+   * Section's header, but the form it opens renders below Wanigan's own server
+   * and the recall list — measured 175 px below the fold of a 1440x900 window.
+   * Clicking it hid the button and showed nothing, which read as a broken button
+   * and stopped an operator adding a server at all. Recorded in
+   * unconverted-fixes.json; this surface may not take the escape again.
+   *
+   * Opening the form (to add or to edit) now brings it into view and puts the
+   * cursor in its first field. Keyed on which draft is open, not on the draft
+   * itself, so typing does not scroll.
+   */
+  const draftForm = useRef<HTMLDivElement>(null);
+  const openDraft = draft === null ? null : (draft.id ?? 'new');
+  useEffect(() => {
+    if (openDraft === null) return;
+    draftForm.current?.scrollIntoView({ block: 'nearest' });
+    draftForm.current?.querySelector<HTMLInputElement>('#mcp-name')?.focus({ preventScroll: true });
+  }, [openDraft]);
   // Which server's command line is open for reading. Enabling a stdio server is
   // a standing grant to execute that line at every launch, so the line is put
   // on screen before the click that grants it, never in a tooltip afterwards.
@@ -4906,7 +4926,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
 
       <div className="set-sub">Servers given to agents</div>
       {draft && (
-        <div className="sunk" style={{ padding: '12px 13px', marginBottom: 11 }}>
+        <div className="sunk" style={{ padding: '12px 13px', marginBottom: 11 }} ref={draftForm}>
           <div className="label" style={{ marginBottom: 8 }}>{draft.id ? 'Edit server' : 'New server'}</div>
           <div className="row2">
             <div>
