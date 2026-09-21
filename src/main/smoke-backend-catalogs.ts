@@ -129,7 +129,8 @@ export async function runBackendCatalogsSmoke(check: Check, say: (text: string) 
     // is about shape and honesty, not about which answer came back.
     {
       const pairPack = BUILTIN_PROVIDER_PACKS.find((pack) => pack.id === 'wanigan.pair');
-      const pairProfile = pairPack?.profiles[0];
+      // By id, not position: the Claude profile now sits first on the pack.
+      const pairProfile = pairPack?.profiles.find((profile) => profile.id === 'pair-codex');
       check(!!pairProfile && pairProfile.backend.catalog?.auth === undefined
         && typeof pairProfile.backend.catalog?.url === 'object' && pairProfile.backend.catalog.url.source === 'process'
         && pairProfile.backend.catalog.url.name === 'WANIGAN_PAIR_MODELS_URL'
