@@ -103,7 +103,9 @@ export async function runBackendCatalogsSmoke(check: Check, say: (text: string) 
       check(!!row && row.overrideEnv === expected.envName && row.activeNow === false,
         `${expected.backendId}: the egress table derives a catalogue row from the manifest — host, path, ${expected.envName}, and inactive without a key`, row);
     }
-    check(report.hosts.filter((h) => h.by === 'wanigan' && h.overrideEnv?.endsWith('_MODELS_URL')).length === BACKENDS.length,
+    // Plus one: the keyless PAIR catalogue below is a fourth row of the same
+    // kind, and is checked on its own because it has no credential to unset.
+    check(report.hosts.filter((h) => h.by === 'wanigan' && h.overrideEnv?.endsWith('_MODELS_URL')).length === BACKENDS.length + 1,
       'exactly one catalogue row per declared catalog — no hand-listed duplicate survives beside the derived one');
 
     // The override is honoured where the reader would honour it, and ignored
@@ -118,6 +120,42 @@ export async function runBackendCatalogsSmoke(check: Check, say: (text: string) 
     check(refused?.host === 'api.x.ai',
       'a cleartext override off loopback is ignored by the reader, and the row keeps saying where the read really goes', refused);
     delete process.env.WANIGAN_XAI_MODELS_URL;
+
+    /* ── a keyless local catalogue: NVIDIA PAIR on loopback ───────────── */
+    // No credential, http rather than https, and a fallback that is Codex's
+    // own default open model. The read is a loopback GET; whether a router is
+    // listening on this machine is not the suite's business, so the assertion
+    // is about shape and honesty, not about which answer came back.
+    {
+      const pairPack = BUILTIN_PROVIDER_PACKS.find((pack) => pack.id === 'wanigan.pair');
+      const pairProfile = pairPack?.profiles[0];
+      check(!!pairProfile && pairProfile.backend.catalog?.auth === undefined
+        && typeof pairProfile.backend.catalog?.url === 'object' && pairProfile.backend.catalog.url.source === 'process'
+        && pairProfile.backend.catalog.url.name === 'WANIGAN_PAIR_MODELS_URL'
+        && pairProfile.backend.catalog.url.fallback === 'http://127.0.0.1:11434/v1/models',
+        'pair: the built-in pack declares a keyless loopback catalogue on its backend');
+      check(validateProviderPackManifest(pairPack!).ok, 'pair: the manifest validates — loopback http is the allowed exception');
+      check(pairProfile?.command.baseArgs?.join(' ') === '--oss --local-provider ollama',
+        'pair: every launch carries Codex’s open-model flags before any field or resume argument', pairProfile?.command.baseArgs);
+      const pairDef = providerById('pair-codex');
+      check(!!pairDef && pairDef.backendId === 'pair' && pairDef.harness === 'codex',
+        'pair: the profile resolves to its backend on the Codex harness');
+      if (pairDef) {
+        const launch = pairDef.launchArgs([], { model: 'gpt-oss:20b' });
+        check(launch.slice(0, 3).join(' ') === '--oss --local-provider ollama' && launch.includes('gpt-oss:20b'),
+          'pair: compiled launch argv starts with the open-model flags and carries the chosen model', launch);
+        const resume = [...pairDef.launchArgs([], {}), ...pairDef.resumeArgs('0192aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee')];
+        check(resume[0] === '--oss' && resume.includes('resume'),
+          'pair: a resume keeps the open-model flags ahead of the resume subcommand, which Codex parses in that order', resume);
+        const read = await providerModelCatalogue({ ...pairDef, launchFields: pairDef.launchFields });
+        check(read.rows.length >= 1 && (read.source === 'live' || read.source === 'published'),
+          'pair: the catalogue answers with rows and says whether they are live or the published fallback',
+          { source: read.source, rows: read.rows.map((r) => r.value).slice(0, 5), note: read.note });
+      }
+      const pairRow = egressReport().hosts.find((h) => h.overrideEnv === 'WANIGAN_PAIR_MODELS_URL');
+      check(pairRow?.host === '127.0.0.1' && pairRow.paths[0] === '/v1/models',
+        'pair: the privacy panel names the loopback host and path the reader fetches', pairRow);
+    }
 
     /* ── a catalog cannot spend another pack's credential ─────────────── */
     const xai = BUILTIN_PROVIDER_PACKS.find((pack) => pack.id === 'wanigan.xai');

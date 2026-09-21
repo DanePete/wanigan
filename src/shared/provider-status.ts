@@ -59,6 +59,9 @@ const PROVIDER_TINT = new Map<string, string>([
   // editing index.css for both themes, and the point of this table is that a
   // provider without an entry silently draws no dot at all.
   ['xai', 'var(--series-3)'],
+  // Local open models through NVIDIA PAIR: the Codex tint, because it is the
+  // Codex harness, on a backend that costs nothing.
+  ['pair-codex', 'var(--codex)'],
 ]);
 
 /**

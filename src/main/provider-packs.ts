@@ -892,6 +892,33 @@ const CLAUDE_COMMAND: ProviderCommandManifest = {
   }],
 };
 
+const CODEX_COMMAND: ProviderCommandManifest = {
+  bin: 'codex',
+  versionArgs: ['--version'],
+  helpArgs: ['--help'],
+  editorExtensions: [{
+    prefix: 'openai.chatgpt-',
+    executablePaths: [
+      'bin/{arch}/codex',
+      'bin/macos-aarch64/codex',
+      'bin/macos-x86_64/codex',
+      'bin/linux-x86_64/codex',
+      'bin/linux-aarch64/codex',
+    ],
+  }],
+};
+
+const CODEX_FIELDS: ProviderLaunchFieldSchema[] = [
+  { id: 'model', label: 'Model', kind: 'text', placeholder: 'CLI default', argv: ['--model', '{value}'] },
+  {
+    id: 'effort', label: 'Reasoning effort', kind: 'select', allowCustom: false,
+    argv: ['--config', 'model_reasoning_effort="{value}"'],
+    choices: ['low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({ value, label: value })),
+  },
+];
+
+const CODEX_RESUME: ProviderResumeManifest = { conversationArgs: ['resume', '{conversationId}'], continueArgs: ['resume'] };
+
 const CLAUDE_FIELDS: ProviderLaunchFieldSchema[] = [
   { id: 'model', label: 'Model', kind: 'text', placeholder: 'CLI default', argv: ['--model', '{value}'] },
   {
@@ -938,31 +965,57 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       label: 'Codex',
       harness: 'codex',
       backend: { id: 'openai', label: 'OpenAI' },
-      command: {
-        bin: 'codex',
-        versionArgs: ['--version'],
-        helpArgs: ['--help'],
-        editorExtensions: [{
-          prefix: 'openai.chatgpt-',
-          executablePaths: [
-            'bin/{arch}/codex',
-            'bin/macos-aarch64/codex',
-            'bin/macos-x86_64/codex',
-            'bin/linux-x86_64/codex',
-            'bin/linux-aarch64/codex',
-          ],
-        }],
-      },
-      launchFields: [
-        { id: 'model', label: 'Model', kind: 'text', placeholder: 'CLI default', argv: ['--model', '{value}'] },
-        {
-          id: 'effort', label: 'Reasoning effort', kind: 'select', allowCustom: false,
-          argv: ['--config', 'model_reasoning_effort="{value}"'],
-          choices: ['low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({ value, label: value })),
-        },
-      ],
-      resume: { conversationArgs: ['resume', '{conversationId}'], continueArgs: ['resume'] },
+      command: CODEX_COMMAND,
+      launchFields: CODEX_FIELDS,
+      resume: CODEX_RESUME,
       initialPromptArgv: ['--', '{prompt}'],
+      capabilities: CODEX_CAPABILITIES,
+      headless: 'codex-json',
+    }],
+  },
+  {
+    schemaVersion: 1,
+    id: 'wanigan.pair',
+    label: 'Local · NVIDIA PAIR',
+    version: '1',
+    // NVIDIA PAIR (Personal AI Router) runs on this Mac and on each paired
+    // machine, and serves one Ollama-compatible endpoint on loopback that it
+    // routes to whichever paired node holds the requested model — a PC's GPU
+    // included. Codex reaches it through its own open-model mode: `--oss` with
+    // Ollama as the local provider talks to 127.0.0.1:11434, which is PAIR's
+    // proxy rather than a local Ollama. Verified 2026-09-21 with PAIR 0.91.7
+    // and Codex 0.155.1: a turn with a tool call ran on a paired PC's RTX-class
+    // card through the Responses API the proxy forwards. Nothing here spends:
+    // the backend is unpriced and is recorded that way.
+    description: 'Codex CLI on an open model served by NVIDIA PAIR’s local endpoint, routed to whichever paired machine holds the model.',
+    publisher: { id: 'wanigan', name: 'Wanigan' },
+    profiles: [{
+      id: 'pair-codex', label: 'Codex · local (PAIR)', harness: 'codex',
+      backend: {
+        id: 'pair', label: 'NVIDIA PAIR', baseUrl: 'http://127.0.0.1:11434',
+        // The catalogue is what the router can serve right now, read from the
+        // same loopback proxy the session posts to. No key: loopback cleartext
+        // is the one non-https form the reader allows, for exactly this case.
+        catalog: {
+          url: { source: 'process', name: 'WANIGAN_PAIR_MODELS_URL', fallback: 'http://127.0.0.1:11434/v1/models' },
+          shape: 'openai-models',
+          // Codex's own default open model, so an unreachable router still
+          // offers the one id `--oss` would start on by itself.
+          fallback: [{ id: 'gpt-oss:20b', label: 'gpt-oss 20B' }],
+        },
+      },
+      // The open-model flags come first, before the launch fields and before
+      // `resume`, which Codex accepts after them.
+      command: { ...CODEX_COMMAND, baseArgs: ['--oss', '--local-provider', 'ollama'] },
+      launchFields: CODEX_FIELDS,
+      resume: CODEX_RESUME,
+      initialPromptArgv: ['--', '{prompt}'],
+      // Codex's Ollama provider defaults to loopback 11434, which is PAIR's
+      // proxy port by default too. The variable names the same place, so an
+      // operator who moved PAIR's proxy port can follow it from the shell.
+      environment: {
+        CODEX_OSS_BASE_URL: { source: 'process', name: 'WANIGAN_PAIR_BASE_URL', fallback: 'http://127.0.0.1:11434' },
+      },
       capabilities: CODEX_CAPABILITIES,
       headless: 'codex-json',
     }],
