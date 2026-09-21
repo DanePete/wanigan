@@ -125,3 +125,19 @@ test('a query from the renderer is normalised, never trusted', () => {
   assert.equal(n.limit, 100);
   assert.deepEqual(normalizeStoreQuery(null), DEFAULT_STORE_QUERY);
 });
+
+test('most downloaded ranks by npm weekly downloads, and never ranks a missing count as zero', () => {
+  const big = entry({ name: 'com.a/big', install: { kind: 'npm', runtime: 'npx', package: 'big', version: '1.0.0' } });
+  const small = entry({ name: 'com.a/small', install: { kind: 'npm', runtime: 'npx', package: 'small', version: '1.0.0' } });
+  const zero = entry({ name: 'com.a/zero', install: { kind: 'npm', runtime: 'npx', package: 'zero', version: '1.0.0' } });
+  const hosted = entry({ name: 'com.a/hosted', install: { kind: 'remote', url: 'https://h.example' }, updatedAt: 9_999 });
+  const unread = entry({ name: 'com.a/unread', install: { kind: 'npm', runtime: 'npx', package: 'unread', version: '1.0.0' } });
+  const counts = new Map([['big', 500_000], ['small', 1_200], ['zero', 0]]);
+  const r = queryStore([hosted, unread, small, zero, big], none, q({ sort: 'downloads' }), null, counts);
+  // A real zero is still a count, so it ranks above entries that have none.
+  assert.deepEqual(names(r).slice(0, 3), ['com.a/big', 'com.a/small', 'com.a/zero']);
+  assert.deepEqual(new Set(names(r).slice(3)), new Set(['com.a/hosted', 'com.a/unread']));
+  // The page carries the counts it shows, and nothing for entries without one.
+  assert.deepEqual(r.downloads, { 'com.a/big': 500_000, 'com.a/small': 1_200, 'com.a/zero': 0 });
+  assert.equal(normalizeStoreQuery({ sort: 'downloads' }).sort, 'downloads');
+});

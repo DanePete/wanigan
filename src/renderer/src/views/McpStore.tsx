@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ExtensionInfo, McpServerReview } from '@shared/types';
 import type { StoreEntry, StoreInstall, StoreSourceInfo, StoreUpdate } from '@shared/mcp-registry';
+import { STORE_DOWNLOADS_FRESH_MS, STORE_NPM_REQUESTS_PER_SECOND } from '@shared/store-query';
+import ExtensionCredentials from './ExtensionCredentials';
 import type {
-  StorePublisher, StoreResults, StoreRuns, StoreRuntime, StoreSort, StoreState,
+  StoreDownloadsStatus, StorePublisher, StoreResults, StoreRuns, StoreRuntime, StoreSort, StoreState,
 } from '@shared/store-query';
 import {
   Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, Reading, SectionHead, Segmented, ago, num, type Tone,
@@ -46,6 +48,16 @@ function runsAs(install: StoreInstall): { glyph: string; word: string; tone: Ton
     }
     default: return { glyph: '–', word: 'Not installable in Wanigan yet', tone: 'quiet' };
   }
+}
+
+/** How long npm will take to answer this many requests at the pace it allows one machine. */
+function readTime(requests: number, perSecond: number = STORE_NPM_REQUESTS_PER_SECOND): string {
+  const minutes = Math.ceil(requests / Math.max(0.05, perSecond) / 60);
+  if (minutes <= 1) return 'under a minute';
+  if (minutes < 60) return `about ${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const rest = Math.round((minutes % 60) / 5) * 5;
+  return `about ${hours} hour${hours === 1 ? '' : 's'}${rest ? ` ${rest} minutes` : ''}`;
 }
 
 /** The exact line an enabled stdio server runs, as the registry stores it. */
@@ -98,8 +110,10 @@ function TurnOnConfirm({ server, busy, onRun, onCancel }: {
   );
 }
 
-export default function McpStore({ installed, busy, justInstalled, onDismissInstalled, onReview }: {
+export default function McpStore({ installed, busy, justInstalled, onDismissInstalled, onReview, onExtensions }: {
   installed: ExtensionInfo[];
+  /** A fresh extension list, after a credential is saved or removed here. */
+  onExtensions: (list: ExtensionInfo[]) => void;
   busy: string | null;
   /** The extension the operator just installed from the store, so its outcome is read out here. */
   justInstalled: ExtensionInfo | null;
@@ -128,6 +142,8 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
   const [confirming, setConfirming] = useState<{ serverId: string; where: 'note' | 'card' } | null>(null);
   const [turning, setTurning] = useState(false);
   const [turned, setTurned] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [downloads, setDownloads] = useState<StoreDownloadsStatus | null>(null);
+  const [downloadsTick, setDownloadsTick] = useState(0);
   // Every query is numbered, and only the newest may write results: a slow
   // answer to an older filter must not replace the current one.
   const generation = useRef(0);
@@ -186,7 +202,36 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
       .catch((e: unknown) => {
         if (alive.current && mine === generation.current) setSync({ phase: 'error', error: e instanceof Error ? e.message : String(e) });
       });
-  }, [sourceKey, spec, syncTick, installedKey]);
+  }, [sourceKey, spec, syncTick, installedKey, downloadsTick]);
+
+  // Most downloaded reads npm's counts, a second host, so the store asks first.
+  // Choosing the sort only reads where things stand and what a read would cost.
+  useEffect(() => {
+    if (sort !== 'downloads') return;
+    void window.wanigan.store.downloads().then((d) => { if (alive.current) setDownloads(d); }).catch(() => {});
+  }, [sort]);
+
+  // While a read runs, follow it and let the ranking fill in as counts arrive.
+  useEffect(() => {
+    if (downloads?.phase !== 'running') return;
+    const timer = setInterval(() => {
+      void window.wanigan.store.downloads().then((d) => {
+        if (!alive.current) return;
+        setDownloads(d);
+        setDownloadsTick((n) => n + 1);
+      }).catch(() => {});
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [downloads?.phase]);
+
+  async function readDownloads() {
+    try {
+      const d = await window.wanigan.store.fetchDownloads();
+      if (alive.current) setDownloads(d);
+    } catch (e) {
+      if (alive.current) setDownloads((d) => d && { ...d, phase: 'error', error: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   // The servers installed store extensions registered, for whether each is on.
   // Read through the same call Settings uses; nothing here writes except turnOn.
@@ -256,7 +301,11 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
     );
   }
 
-  const heading = settled ? `Matching “${settled}”` : sort === 'name' ? 'All servers, A–Z' : 'Recently updated';
+  const heading = settled ? `Matching “${settled}”`
+    : sort === 'name' ? 'All servers, A–Z'
+      : sort === 'downloads' ? 'Most downloaded on npm'
+        : 'Recently updated';
+  const countsStale = !!downloads?.fetchedAt && Date.now() - downloads.fetchedAt > STORE_DOWNLOADS_FRESH_MS;
 
   return (
     <section className="ex-group" aria-label="MCP server store">
@@ -277,8 +326,10 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
         // came in switched on, and a store that said "installed" and nothing else
         // would leave a local server off with nobody told why.
         const notes = justInstalled.artifacts.map((a) => a.note).filter((n): n is string => !!n);
-        const server = serverOf(byId.get(justInstalled.id) ?? justInstalled, servers);
+        const current = byId.get(justInstalled.id) ?? justInstalled;
+        const server = serverOf(current, servers);
         const off = !!server && !server.enabled;
+        const missing = current.credentials.filter((c) => !c.present);
         return (
           <>
             <Note tone={off ? 'info' : 'ok'} role="status" onDismiss={onDismissInstalled}
@@ -286,8 +337,10 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
                     ? { label: 'Turn on here', run: () => setConfirming({ serverId: server.id, where: 'note' }) }
                     : undefined}>
               <strong>{justInstalled.label} is installed.</strong>{' '}
+              {missing.length > 0 && `It needs ${missing.map((c) => c.label).join(' and ')} before it can work — add ${missing.length === 1 ? 'it' : 'them'} below. `}
               {off ? 'It is switched off: installing never turns a server on for you. Turn it on here, or later in Settings → Connections → MCP servers.' : notes.join(' ')}
             </Note>
+            {missing.length > 0 && <ExtensionCredentials extension={current} onChanged={onExtensions} />}
             {off && confirming?.serverId === server.id && confirming.where === 'note' && (
               <TurnOnConfirm server={server} busy={turning} onRun={() => turnOn(server)} onCancel={() => setConfirming(null)} />
             )}
@@ -352,9 +405,44 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
             { value: 'best', label: 'Best match', title: 'Closest to your search; newest first when you have not searched' },
             { value: 'updated', label: 'Recently updated' },
             { value: 'name', label: 'Name' },
+            { value: 'downloads', label: 'Most downloaded', title: 'By npm’s weekly download counts. Only npm packages have them.' },
           ]}
         />
       </div>
+
+      {sort === 'downloads' && downloads && (
+        downloads.phase === 'running' ? (
+          <Note tone="info" role="status">
+            Reading npm&rsquo;s weekly download counts: {num(downloads.done)} of {num(downloads.total)} packages,
+            {' '}{readTime(downloads.requests, downloads.observedPerSecond ?? undefined)} to go
+            {downloads.observedPerSecond ? ' at the pace npm is answering' : ' at the pace npm allows'}. The ranking fills in as they arrive, and it
+            keeps reading if you leave this page.
+            {downloads.pausedUntil && downloads.pausedUntil > Date.now() && (
+              <> npm asked Wanigan to slow down, so it is waiting {Math.ceil((downloads.pausedUntil - Date.now()) / 1000)}s before carrying on.</>
+            )}
+          </Note>
+        ) : downloads.phase === 'error' ? (
+          <Note tone="error" action={{ label: 'Read again', run: () => void readDownloads() }}>{downloads.error}</Note>
+        ) : downloads.fetchedAt === null ? (
+          <Note tone="info" action={{ label: 'Read download counts', run: () => void readDownloads() }}>
+            <strong>Most downloaded needs npm&rsquo;s own download counts, which Wanigan has not read.</strong>{' '}
+            That is {num(downloads.requests)} requests to api.npmjs.org for {num(downloads.total)} npm packages. npm lets one
+            machine ask about forty-five times a minute, so it takes {readTime(downloads.requests)}: unscoped packages
+            arrive in seconds, the rest fill in as they come. It keeps reading if you leave this page, picks up where it
+            stopped if Wanigan quits, and is kept for a week. Only npm packages have counts — hosted, PyPI and Docker
+            servers are listed after them, never ranked as zero.
+          </Note>
+        ) : (
+          <div className="ex-active">
+            <span className="sub">
+              npm weekly downloads as of {ago(downloads.fetchedAt)} · npm packages only; the rest follow, unranked
+            </span>
+            {countsStale && (
+              <button type="button" className="btn btn-sm" onClick={() => void readDownloads()}>Read again</button>
+            )}
+          </div>
+        )
+      )}
 
       {facets && results && results.catalogSize > 0 && (
         <div className="ex-facets">
@@ -442,6 +530,7 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
                 entry={entry}
                 have={byId.get(entry.extensionId) ?? null}
                 server={serverOf(byId.get(entry.extensionId), servers)}
+                downloads={results.downloads[entry.name]}
                 busy={busy}
                 confirming={confirming?.where === 'card' ? confirming.serverId : null}
                 turning={turning}
@@ -449,6 +538,7 @@ export default function McpStore({ installed, busy, justInstalled, onDismissInst
                 onAskTurnOn={(id) => setConfirming({ serverId: id, where: 'card' })}
                 onTurnOn={turnOn}
                 onCancelTurnOn={() => setConfirming(null)}
+                onExtensions={onExtensions}
               />
             ))}
           </div>
@@ -470,9 +560,13 @@ function flip<T>(list: T[], value: T): T[] {
 }
 
 /** One catalog entry: who published it, how it runs, what it asks for, and where it stands on this machine. */
-function StoreCard({ entry, have, server, busy, confirming, turning, onReview, onAskTurnOn, onTurnOn, onCancelTurnOn }: {
+function StoreCard({
+  entry, have, server, downloads, busy, confirming, turning, onReview, onAskTurnOn, onTurnOn, onCancelTurnOn, onExtensions,
+}: {
   entry: StoreEntry;
   have: ExtensionInfo | null;
+  /** npm weekly downloads, when this is an npm package and a count has been read. */
+  downloads?: number;
   /** The server this entry's installed extension registered, when it is installed. */
   server: McpServerReview | null;
   busy: string | null;
@@ -482,7 +576,10 @@ function StoreCard({ entry, have, server, busy, confirming, turning, onReview, o
   onAskTurnOn: (serverId: string) => void;
   onTurnOn: (server: McpServerReview) => Promise<void>;
   onCancelTurnOn: () => void;
+  onExtensions: (list: ExtensionInfo[]) => void;
 }) {
+  const [keysOpen, setKeysOpen] = useState(false);
+  const missing = have?.credentials.filter((c) => !c.present) ?? [];
   const locked = busy !== null;
   const fetching = busy === `stage:${entry.name}`;
   const runs = runsAs(entry.install);
@@ -529,10 +626,26 @@ function StoreCard({ entry, have, server, busy, confirming, turning, onReview, o
 
       <div className="ex-provides">
         <Mark glyph={runs.glyph} word={runs.word} tone={runs.tone} />
-        {entry.asks.length > 0 && (
+        {downloads !== undefined && (
+          <Mark glyph="↓" word={`${num(downloads)} npm downloads last week`} tone="quiet" />
+        )}
+        {entry.asks.length > 0 && !have && (
           <Mark glyph="!" word={`Asks for ${entry.asks.join(', ')}`} tone="warn" />
         )}
+        {have && missing.length > 0 && (
+          <Mark glyph="!" word={`Needs ${missing.map((c) => c.label).join(', ')}`} tone="warn" />
+        )}
+        {have && have.credentials.length > 0 && missing.length === 0 && (
+          <Mark glyph="✓" word="Keys saved" tone="ok" />
+        )}
+        {have && have.credentials.length > 0 && (
+          <button type="button" className="btn btn-sm" onClick={() => setKeysOpen((v) => !v)}>
+            {keysOpen ? 'Hide keys' : missing.length ? 'Add key…' : 'Keys…'}
+          </button>
+        )}
       </div>
+
+      {have && keysOpen && <ExtensionCredentials extension={have} onChanged={onExtensions} />}
 
       {entry.install.kind === 'unsupported' && <p className="ex-blurb">{entry.install.reason}</p>}
 

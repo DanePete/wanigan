@@ -704,6 +704,7 @@ export default function Extensions() {
           justInstalled={justInstalled}
           onDismissInstalled={() => setJustInstalled(null)}
           onReview={(key, name, version) => void reviewFromStore(key, name, version)}
+          onExtensions={setList}
         />
       ) : (<>
       {list !== null && rows.length > 0 && (

@@ -352,6 +352,19 @@ function hosts(): EgressHost[] {
     };
   });
 
+  // npm's download counts, the store's one popularity signal. Listed whenever a
+  // store catalog is on, because that is when the store can offer to read them;
+  // it reads nothing until the operator chooses "Most downloaded" and approves.
+  const storeDownloadHosts: EgressHost[] = storeHosts.length ? [{
+    host: 'api.npmjs.org',
+    paths: ['/downloads/point/last-week/<package names>'],
+    by: 'wanigan',
+    purpose: 'Reading npm\u2019s weekly download counts for the store\u2019s \u201cMost downloaded\u201d sort.',
+    when: 'Only after you choose Most downloaded in the store and approve the read, which states its cost first; then at most once a week. One request per 128 unscoped packages and one per scoped package — a few thousand for the official registry — paced to about forty-five a minute, the rate npm allows one machine. GET-only, credential-free, HTTPS-only, bounded, redirects refused. What leaves is npm package names, which are already public in the catalog.',
+    activeNow: false,
+    overrideEnv: null,
+  }] : [];
+
   const enumerated: EgressHost[] = [
     {
       host: hostOf(anthropicBase, 'api.anthropic.com'),
@@ -502,6 +515,7 @@ function hosts(): EgressHost[] {
     },
     ...scoutHosts,
     ...storeHosts,
+    ...storeDownloadHosts,
   ];
 
   // Appended last: an installed pack can add destinations to this table, and

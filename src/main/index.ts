@@ -2134,6 +2134,10 @@ function registerIpc() {
     return extensionStore.inspectExtension(directory);
   });
   handle('store:updates', () => mcpStore.storeUpdates());
+  // npm download counts: a status read, and a start that returns at once. The
+  // start is the operator's click in the store, after being shown the cost.
+  handle('store:downloads', () => mcpStore.storeDownloadsStatus());
+  handle('store:fetchDownloads', () => mcpStore.startStoreDownloads());
   handle('extensions:exportable', () => extensionStore.exportableConfiguration());
   // Writing your own configuration out as an extension. The destination is
   // picked here rather than passed in, for the same reason as above — and this

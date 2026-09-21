@@ -1,6 +1,6 @@
 import type { SkillCatalogue } from '../shared/skill-catalogue';
 import type { StoreSourceInfo, StoreUpdate } from '../shared/mcp-registry';
-import type { StoreQuery, StoreResults, StoreSyncResult } from '../shared/store-query';
+import type { StoreDownloadsStatus, StoreQuery, StoreResults, StoreSyncResult } from '../shared/store-query';
 import type { RecoveryInspection, RecoveryPreview } from '../shared/recovery';
 import type { ModelEconomicsQuote, ModelEconomicsQuoteInput, ModelEconomicsSettings, ModelEconomicsStatus } from '../shared/model-economics';
 import type { OpenRouterConnectionStatus } from '../shared/openrouter-connection';
@@ -209,6 +209,10 @@ const api = {
       call<ExtensionInspection>('store:stage', sourceKey, name, version),
     /** Installed store extensions with a newer version in the local index. Reports only; never applies one. */
     updates: () => call<StoreUpdate[]>('store:updates'),
+    /** Where reading npm's weekly download counts stands, and what a read would cost. */
+    downloads: () => call<StoreDownloadsStatus>('store:downloads'),
+    /** Start reading npm's weekly download counts. Returns at once; poll `downloads`. */
+    fetchDownloads: () => call<StoreDownloadsStatus>('store:fetchDownloads'),
   },
   projects: {
     list: () => call<Project[]>('projects:list'),

@@ -6,7 +6,10 @@ import {
   isRegistryName, isRegistryVersion, manifestVersion, parseRegistryPage, translateRegistryEntry,
 } from '../../shared/mcp-registry';
 import type { StoreEntry, StoreSourceInfo, StoreUpdate } from '../../shared/mcp-registry';
-import { normalizeStoreQuery, queryStore, type StoreResults, type StoreSyncResult } from '../../shared/store-query';
+import {
+  STORE_DOWNLOADS_FRESH_MS, STORE_NPM_REQUESTS_PER_SECOND, normalizeStoreQuery, npmPackageOf, queryStore,
+  type StoreDownloadsStatus, type StoreResults, type StoreSyncResult,
+} from '../../shared/store-query';
 import { enabledStoreSources, listExtensions } from './store';
 
 /**
@@ -217,7 +220,281 @@ export function queryStoreIndex(key: unknown, rawQuery: unknown): StoreResults {
   const { key: sourceKey, source } = sourceFor(key);
   const index = loadIndex(sourceKey, source.url);
   const installed = new Map(listExtensions().map((x) => [x.id, x.version]));
-  return queryStore(index.entries, installed, normalizeStoreQuery(rawQuery), index.syncedAt);
+  return queryStore(index.entries, installed, normalizeStoreQuery(rawQuery), index.syncedAt, downloadCounts());
+}
+
+/* ── npm download counts ─────────────────────────────────────────────── */
+
+/*
+ * The one popularity signal that is actually published: npm's own weekly
+ * download counts. The registry publishes none, and this only covers npm
+ * packages, so "Most downloaded" ranks the entries it has a count for and lists
+ * the rest after them rather than as zero.
+ *
+ * It is a second host, and a slow one. npm's bulk endpoint refuses scoped names,
+ * so a full read is one request per 128 unscoped packages and one per scoped
+ * package — over four thousand for the official registry — and npm allows one
+ * machine about forty-five a minute. So nothing here runs until the operator
+ * asks in the store, having been told that; requests are paced to npm's rate
+ * rather than retried into it; and every package records when it was read, so a
+ * read interrupted by quitting resumes instead of starting over.
+ */
+const NPM_DOWNLOADS = 'https://api.npmjs.org/downloads/point/last-week/';
+const DOWNLOADS_SCHEMA = 2;
+const BULK_NAMES = 128;
+const DOWNLOAD_WORKERS = 2;
+/** npm's burst allowance, spent before pacing begins. */
+const NPM_BURST = 40;
+/*
+ * Pacing adapts rather than stalls. npm answers a refusal with Retry-After: 0,
+ * so the wait is Wanigan's own: each consecutive refusal doubles a short pause
+ * and widens the gap between requests, and a run of successes narrows it again.
+ * An earlier fixed thirty-second pause on any refusal froze every worker at
+ * npm's marginal rate, where an occasional refusal is normal.
+ */
+const MIN_GAP_MS = 700;
+const MAX_GAP_MS = 8_000;
+const FIRST_PAUSE_MS = 5_000;
+const MAX_PAUSE_MS = 60_000;
+const SPEED_UP_AFTER = 20;
+const MAX_ATTEMPTS = 12;
+const SAVE_EVERY_MS = 5_000;
+const RATE_WINDOW_MS = 120_000;
+
+type DownloadsCache = {
+  schema: number;
+  /** When every package was last read within the freshness window: the read as a whole. */
+  fetchedAt: number | null;
+  counts: Record<string, number>;
+  /** When each package was last read, so an interrupted read resumes. */
+  readAt: Record<string, number>;
+};
+
+let downloadsCache: DownloadsCache | null = null;
+let downloadsMap: Map<string, number> | null = null;
+let downloadsRun: StoreDownloadsStatus = { phase: 'idle', done: 0, total: 0, requests: 0, fetchedAt: null, error: null, pausedUntil: null, observedPerSecond: null };
+
+function downloadsFile(): string {
+  return path.join(ensurePrivateDir(path.join(dataDir(), 'mcp-store')), 'npm-downloads.json');
+}
+
+function numbers(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!value || typeof value !== 'object') return out;
+  for (const [name, n] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) out[name] = n;
+  }
+  return out;
+}
+
+function loadDownloads(): DownloadsCache {
+  if (downloadsCache) return downloadsCache;
+  let cache: DownloadsCache = { schema: DOWNLOADS_SCHEMA, fetchedAt: null, counts: {}, readAt: {} };
+  try {
+    const read = JSON.parse(fs.readFileSync(downloadsFile(), 'utf8')) as Partial<DownloadsCache>;
+    if (read.schema === DOWNLOADS_SCHEMA) {
+      cache = {
+        schema: DOWNLOADS_SCHEMA,
+        fetchedAt: typeof read.fetchedAt === 'number' ? read.fetchedAt : null,
+        counts: numbers(read.counts),
+        readAt: numbers(read.readAt),
+      };
+    }
+  } catch { /* none read yet */ }
+  downloadsCache = cache;
+  return cache;
+}
+
+function saveDownloads(cache: DownloadsCache): void {
+  downloadsCache = cache;
+  downloadsMap = null;
+  const file = downloadsFile();
+  const temp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(cache), { mode: PRIVATE_FILE_MODE });
+  fs.renameSync(temp, file);
+}
+
+function downloadCounts(): Map<string, number> {
+  downloadsMap ??= new Map(Object.entries(loadDownloads().counts));
+  return downloadsMap;
+}
+
+/** Every npm package any enabled catalog's index installs. Names were checked against npm's own rules on the way in. */
+function npmPackages(): string[] {
+  const names = new Set<string>();
+  for (const { key, source } of enabledStoreSources()) {
+    for (const entry of loadIndex(key, source.url).entries) {
+      const pkg = npmPackageOf(entry);
+      if (pkg) names.add(pkg);
+    }
+  }
+  return [...names].sort();
+}
+
+/** What a read still has to ask for: every package not read within the freshness window. */
+function readPlan(packages: string[], cache: DownloadsCache, now: number) {
+  const stale = packages.filter((p) => !(cache.readAt[p] !== undefined && now - cache.readAt[p]! < STORE_DOWNLOADS_FRESH_MS));
+  const scoped = stale.filter((p) => p.startsWith('@'));
+  const plain = stale.filter((p) => !p.startsWith('@'));
+  const bulk: string[][] = [];
+  for (let i = 0; i < plain.length; i += BULK_NAMES) bulk.push(plain.slice(i, i + BULK_NAMES));
+  return { stale, scoped, bulk, requests: bulk.length + scoped.length };
+}
+
+export function storeDownloadsStatus(): StoreDownloadsStatus {
+  if (downloadsRun.phase === 'running') return downloadsRun;
+  const packages = npmPackages();
+  const cache = loadDownloads();
+  const planned = readPlan(packages, cache, Date.now());
+  return {
+    ...downloadsRun,
+    done: packages.length - planned.stale.length,
+    total: packages.length,
+    requests: planned.requests,
+    fetchedAt: cache.fetchedAt,
+    pausedUntil: null,
+    observedPerSecond: null,
+  };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/*
+ * One pace for every worker. Slots are claimed synchronously before any await,
+ * so two workers can never take the same one; a refusal from npm pushes the next
+ * slot out for everyone rather than letting the others keep knocking.
+ */
+let burstLeft = 0;
+let nextSlot = 0;
+let gapMs = 1000 / STORE_NPM_REQUESTS_PER_SECOND;
+let streak = 0;
+let refusals = 0;
+async function takeSlot(): Promise<void> {
+  if (burstLeft > 0) { burstLeft -= 1; return; }
+  const now = Date.now();
+  const at = Math.max(now, nextSlot);
+  nextSlot = at + gapMs;
+  if (at > now) await sleep(at - now);
+}
+
+function paced(ok: boolean): void {
+  if (ok) {
+    refusals = 0;
+    streak += 1;
+    if (streak >= SPEED_UP_AFTER) { streak = 0; gapMs = Math.max(MIN_GAP_MS, gapMs * 0.9); }
+    if (downloadsRun.pausedUntil !== null && Date.now() >= downloadsRun.pausedUntil) downloadsRun = { ...downloadsRun, pausedUntil: null };
+    return;
+  }
+  streak = 0;
+  refusals += 1;
+  burstLeft = 0;
+  gapMs = Math.min(MAX_GAP_MS, gapMs * 1.5);
+  const until = Date.now() + Math.min(MAX_PAUSE_MS, FIRST_PAUSE_MS * 2 ** (refusals - 1));
+  nextSlot = Math.max(nextSlot, until);
+  downloadsRun = { ...downloadsRun, pausedUntil: nextSlot };
+}
+
+/** One npm request, paced. A refusal slows the pace and retries; 404 is "no such package". */
+async function npmJson(url: URL): Promise<unknown> {
+  for (let attempt = 1; ; attempt += 1) {
+    await takeSlot();
+    const response = await fetch(url, {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(12_000),
+      headers: { accept: 'application/json', 'user-agent': 'Wanigan-Store/0.1 (+local; no-credentials)' },
+    });
+    if (response.status === 429 && attempt < MAX_ATTEMPTS) { paced(false); continue; }
+    if (response.status !== 429) paced(true);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`api.npmjs.org returned HTTP ${response.status}.`);
+    try { return JSON.parse(await boundedText(response)) as unknown; } catch { throw new Error('api.npmjs.org returned JSON Wanigan could not read.'); }
+  }
+}
+
+function countFrom(value: unknown): number | null {
+  const n = value && typeof value === 'object' ? (value as { downloads?: unknown }).downloads : undefined;
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+async function runDownloads(packages: string[]): Promise<void> {
+  const cache = loadDownloads();
+  const planned = readPlan(packages, cache, Date.now());
+  const counts: Record<string, number> = { ...cache.counts };
+  const readAt: Record<string, number> = { ...cache.readAt };
+  const wanted = new Set(packages);
+  downloadsRun = {
+    phase: 'running', done: packages.length - planned.stale.length, total: packages.length,
+    requests: planned.requests, fetchedAt: cache.fetchedAt, error: null, pausedUntil: null, observedPerSecond: null,
+  };
+  // The burst covers the bulk requests only. Scoped singles start paced, so the
+  // first of them does not land on a limiter the bulk answers just filled.
+  burstLeft = Math.min(NPM_BURST, planned.bulk.length);
+  nextSlot = 0;
+  gapMs = 1000 / STORE_NPM_REQUESTS_PER_SECOND;
+  streak = 0;
+  refusals = 0;
+  type Job = { names: string[]; bulk: boolean };
+  // Bulk first: four thousand unscoped counts arrive in a few dozen requests,
+  // so the ranking is useful within seconds while the scoped ones trickle in.
+  const jobs: Job[] = [...planned.bulk.map((names) => ({ names, bulk: true })), ...planned.scoped.map((name) => ({ names: [name], bulk: false }))];
+  let next = 0;
+  let failures = 0;
+  let savedAt = Date.now();
+  const answered: number[] = [];
+  const persist = () => saveDownloads({ schema: DOWNLOADS_SCHEMA, fetchedAt: loadDownloads().fetchedAt, counts, readAt });
+  const worker = async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++]!;
+      try {
+        // Names are npm names Wanigan validated, so none contains a comma or a
+        // character that needs escaping; a scoped name keeps its slash.
+        const body = await npmJson(new URL(`${NPM_DOWNLOADS}${job.names.join(',')}`));
+        const at = Date.now();
+        for (const name of job.names) {
+          const n = job.bulk ? countFrom(body && typeof body === 'object' ? (body as Record<string, unknown>)[name] : null) : countFrom(body);
+          if (n !== null) counts[name] = n; else delete counts[name];
+          readAt[name] = at;
+        }
+        answered.push(Date.now());
+        while (answered.length && answered[0]! < Date.now() - RATE_WINDOW_MS) answered.shift();
+        const span = answered.length > 1 ? (answered[answered.length - 1]! - answered[0]!) / 1000 : 0;
+        downloadsRun = {
+          ...downloadsRun,
+          done: Math.min(packages.length, downloadsRun.done + job.names.length),
+          requests: Math.max(0, downloadsRun.requests - 1),
+          // Only once there is a minute of evidence: a rate from a handful of
+          // requests would promise a finish time the next refusal breaks.
+          observedPerSecond: span >= 60 ? (answered.length - 1) / span : downloadsRun.observedPerSecond,
+        };
+      } catch {
+        failures += 1;
+      }
+      // Every bulk answer is thousands of counts, so it is saved at once; singles
+      // are saved every few seconds. Quitting then loses seconds, not the read.
+      if (job.bulk || Date.now() - savedAt >= SAVE_EVERY_MS) { savedAt = Date.now(); persist(); }
+    }
+  };
+  await Promise.all(Array.from({ length: DOWNLOAD_WORKERS }, worker));
+  for (const name of Object.keys(counts)) if (!wanted.has(name)) delete counts[name];
+  for (const name of Object.keys(readAt)) if (!wanted.has(name)) delete readAt[name];
+  // The read as a whole is fresh only when nothing is left unread; otherwise it
+  // keeps what it got and the next read picks up the rest.
+  const complete = failures === 0;
+  saveDownloads({ schema: DOWNLOADS_SCHEMA, fetchedAt: complete ? Date.now() : loadDownloads().fetchedAt, counts, readAt });
+  downloadsRun = complete
+    ? { ...downloadsRun, phase: 'done', done: packages.length, requests: 0, fetchedAt: loadDownloads().fetchedAt, error: null, pausedUntil: null }
+    : { ...downloadsRun, phase: 'error', fetchedAt: loadDownloads().fetchedAt,
+      error: `${failures} of ${jobs.length} requests to api.npmjs.org failed. Everything read so far is kept; read again to fill in the rest.` };
+}
+
+/** Start reading npm download counts, if one is not already running. Returns at once; poll the status. */
+export function startStoreDownloads(): StoreDownloadsStatus {
+  if (downloadsRun.phase === 'running') return downloadsRun;
+  const packages = npmPackages();
+  if (!packages.length) throw new Error('No catalog lists an npm package to count downloads for.');
+  void runDownloads(packages).catch((error: unknown) => {
+    downloadsRun = { ...downloadsRun, phase: 'error', error: error instanceof Error ? error.message : String(error) };
+  });
+  return downloadsRun;
 }
 
 /* ── stage ───────────────────────────────────────────────────────────── */

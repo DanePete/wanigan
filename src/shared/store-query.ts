@@ -9,13 +9,15 @@ import type { StoreEntry } from './mcp-registry.ts';
  * of it — needs every entry in hand. Holding them here also means a search never
  * leaves this machine.
  *
- * Every sort and filter is built from a fact the catalog actually publishes.
- * There is no popularity or rating here because the registry publishes neither,
- * and a number ranked as if it were observed, when it was not, is the one thing
- * this app refuses to show.
+ * Every sort and filter is built from a fact somebody actually publishes. The
+ * registry publishes no popularity and no rating. "Most downloaded" uses npm's
+ * own weekly download counts, which exist only for npm packages: an entry
+ * without one is listed after every entry with one and never ranked as zero,
+ * because a number ranked as if it were observed, when it was not, is the one
+ * thing this app refuses to show.
  */
 
-export const STORE_SORTS = ['best', 'updated', 'name'] as const;
+export const STORE_SORTS = ['best', 'updated', 'name', 'downloads'] as const;
 export const STORE_RUNS = ['local', 'hosted'] as const;
 export const STORE_RUNTIMES = ['npx', 'uvx', 'docker'] as const;
 export const STORE_PUBLISHERS = ['github', 'domain'] as const;
@@ -77,7 +79,43 @@ export type StoreResults = {
   catalogSize: number;
   /** When the index last finished syncing; null before the first sync. */
   syncedAt: number | null;
+  /** npm weekly downloads for the entries on this page that have a count, by registry name. */
+  downloads: Record<string, number>;
 };
+
+/** Weekly npm downloads by package name, and when they were read. */
+export type StoreDownloads = { fetchedAt: number | null; counts: ReadonlyMap<string, number> };
+
+/** Where a download-count read stands, for the store to show while it runs. */
+export type StoreDownloadsStatus = {
+  phase: 'idle' | 'running' | 'done' | 'error';
+  /** Packages whose count has been read, of how many this read covers. */
+  done: number;
+  total: number;
+  /** Requests still to make: bulk for unscoped names, one each for scoped, skipping any read this week. */
+  requests: number;
+  fetchedAt: number | null;
+  error: string | null;
+  /** When npm has asked Wanigan to slow down, the moment reading resumes. */
+  pausedUntil: number | null;
+  /** Requests a second npm has actually answered over the last two minutes; null until there is enough to say. */
+  observedPerSecond: number | null;
+};
+
+/** A download-count read is offered again once it is older than this. */
+export const STORE_DOWNLOADS_FRESH_MS = 7 * 24 * 60 * 60_000;
+/*
+ * npm's pace for one machine, measured 2026-09-21: a burst of about forty-five,
+ * then roughly forty-five requests a minute — a steady one a second already had
+ * a quarter refused. Reads are paced to this rather than retried into the limit,
+ * and the time a read is quoted at comes from the same number.
+ */
+export const STORE_NPM_REQUESTS_PER_SECOND = 0.7;
+
+/** The npm package an entry installs, which is the only key a download count exists for. */
+export function npmPackageOf(entry: StoreEntry): string | null {
+  return entry.install.kind === 'npm' ? entry.install.package : null;
+}
 
 const MAX_TEXT = 200;
 const MAX_LIMIT = 100;
@@ -180,7 +218,12 @@ export function queryStore(
   installed: ReadonlyMap<string, string>,
   query: StoreQuery,
   syncedAt: number | null,
+  downloads: ReadonlyMap<string, number> = new Map(),
 ): StoreResults {
+  const countOf = (e: StoreEntry): number | undefined => {
+    const pkg = npmPackageOf(e);
+    return pkg === null ? undefined : downloads.get(pkg);
+  };
   const words = query.text.toLowerCase().split(/\s+/).filter(Boolean);
   const scored = new Map<StoreEntry, number>();
   const matched: StoreEntry[] = [];
@@ -228,6 +271,16 @@ export function queryStore(
 
   const sorted = [...filtered].sort((a, b) => {
     if (query.sort === 'name') return byName(a, b);
+    if (query.sort === 'downloads') {
+      const ca = countOf(a);
+      const cb = countOf(b);
+      // Counted before uncounted, always: no count is not a count of zero.
+      if (ca !== undefined || cb !== undefined) {
+        if (ca === undefined) return 1;
+        if (cb === undefined) return -1;
+        if (cb !== ca) return cb - ca;
+      }
+    }
     if (query.sort === 'best' && words.length) {
       const d = (scored.get(b) ?? 0) - (scored.get(a) ?? 0);
       if (d) return d;
@@ -235,11 +288,18 @@ export function queryStore(
     return when(b) - when(a) || byName(a, b);
   });
 
+  const page = sorted.slice(query.offset, query.offset + query.limit);
+  const shownDownloads: Record<string, number> = {};
+  for (const entry of page) {
+    const count = countOf(entry);
+    if (count !== undefined) shownDownloads[entry.name] = count;
+  }
   return {
-    entries: sorted.slice(query.offset, query.offset + query.limit),
+    entries: page,
     total: sorted.length,
     facets,
     catalogSize: entries.length,
     syncedAt,
+    downloads: shownDownloads,
   };
 }
