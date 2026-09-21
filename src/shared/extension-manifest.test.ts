@@ -23,7 +23,7 @@ import {
   EXTENSION_SCHEMA_VERSION,
   declaredArtifacts, extensionConsent, extensionOwner, mcpFingerprint,
   ownerExtensionId, scoutFingerprint, validateExtensionManifest,
-  type ExtensionManifest, type ExtensionMcpServer, type ExtensionScoutSource,
+  type ExtensionManifest, type ExtensionMcpServer, type ExtensionScoutSource, type ExtensionStoreSource,
 } from './extension-manifest.ts';
 
 /** A manifest that passes, so every test below changes exactly one thing. */
@@ -64,6 +64,16 @@ const source = (over: Partial<Record<keyof ExtensionScoutSource, unknown>> = {})
 });
 
 const scout = (...sources: Record<string, unknown>[]) => ({ provides: { scoutSources: sources } });
+const catalog = (over: Partial<Record<keyof ExtensionStoreSource, unknown>> = {}): Record<string, unknown> => ({
+  id: 'acme-catalog',
+  label: 'Acme catalog',
+  description: 'Extensions published by Acme.',
+  url: 'https://acme.example/wanigan/index.json',
+  publisher: 'Acme',
+  format: 'mcp-registry',
+  ...over,
+});
+const store = (...sources: Record<string, unknown>[]) => ({ provides: { storeSources: sources } });
 
 test('an extension cannot name another extension\'s credential', () => {
   // The credential store is one flat id space. Without the namespace rule this
@@ -496,3 +506,65 @@ test('an owner string round-trips, and nothing else reads as one', () => {
     assert.equal(ownerExtensionId(owner), null, String(owner));
   }
 });
+
+test('a store source is a whole extension, and the only way a catalog is reached', () => {
+  // A catalog is a complete thing to ship on its own: Wanigan's default is
+  // exactly this, a built-in that declares one store source and nothing else.
+  const result = validateExtensionManifest(raw(store(catalog())));
+  assert.deepEqual(result.errors, [], result.errors.join(' | '));
+  assert.deepEqual(result.manifest!.provides.storeSources, [catalog()]);
+  // `provides` still cannot be empty just because a new block exists.
+  const empty = errorsFor({ provides: { storeSources: [] } });
+  assert.ok(empty.some((e) => /at least one MCP server.*store source/.test(e)), empty.join(' | '));
+
+  // The store lists the description beside the catalog's name. A catalog with
+  // none is a stranger's address the operator is asked to browse blind.
+  const missing = errorsFor(store(catalog({ description: undefined })));
+  assert.ok(missing.some((e) => /storeSources\[0\]\.description must be a non-empty string/.test(e)), missing.join(' | '));
+  assert.ok(errorsFor(store(catalog({ publisher: undefined }))).some((e) => /storeSources\[0\]\.publisher must be a non-empty string/.test(e)));
+  assert.ok(errorsFor(store(catalog({ label: 'x'.repeat(81) }))).some((e) => /label is longer than 80/.test(e)));
+  // A format the store cannot read is an index it would misread as a list of
+  // entries, so it is refused rather than guessed at.
+  const format = errorsFor(store(catalog({ format: 'rss' })));
+  assert.ok(format.some((e) => /storeSources\[0\]\.format must be "mcp-registry"/.test(e)), format.join(' | '));
+  assert.ok(errorsFor(store(catalog({ format: undefined }))).some((e) => /format must be "mcp-registry"/.test(e)));
+
+  // The id is how the store keys a catalog's entries. Two with one id are one
+  // key for two indexes, and an entry would claim whichever was read last.
+  const duplicated = errorsFor(store(catalog(), catalog({ url: 'https://acme.example/other.json' })));
+  assert.ok(duplicated.some((e) => /storeSources declares "acme-catalog" twice/.test(e)), duplicated.join(' | '));
+  assert.ok(errorsFor(store(catalog({ id: 'Acme Catalog' }))).some((e) => /storeSources\[0\]\.id is not in the required format/.test(e)));
+  assert.ok(errorsFor(store(...Array.from({ length: 11 }, (_, i) => catalog({ id: `acme-${i}` }))))
+    .some((e) => /storeSources has more than 10/.test(e)));
+});
+
+test('a store source is an https index and carries no secret', () => {
+  const url = (value: string) => validateExtensionManifest(raw(store(catalog({ url: value }))));
+  // The index decides which bundles the operator is shown. Over plain http a
+  // network attacker rewrites the list, and the consent screen then faithfully
+  // describes whatever they substituted.
+  const http = url('http://acme.example/wanigan/index.json');
+  assert.equal(http.ok, false);
+  assert.ok(http.errors.some((e) => /storeSources\[0\]\.url must use https/.test(e)), http.errors.join(' | '));
+  // A credential in the url is shown on the consent screen and in every log
+  // line that names the fetch, so it is refused rather than redacted.
+  const secret = url('https://user:hunter2@acme.example/wanigan/index.json');
+  assert.equal(secret.ok, false);
+  assert.ok(secret.errors.some((e) => /username or password/.test(e)), secret.errors.join(' | '));
+  assert.ok(url('not a url').errors.some((e) => /storeSources\[0\]\.url must be a valid URL/.test(e)));
+});
+
+test('browsing a catalog is disclosed before anything is installed', () => {
+  // Opening the store already sends a request to the catalog's host. The
+  // consent line has to say so at install time, and has to say *when*: a
+  // store is fetched on browse, which is not Scout's unattended schedule.
+  const lines = extensionConsent(valid(store(catalog())));
+  const host = lines.filter((line) => line.kind === 'host');
+  assert.equal(host.length, 1, JSON.stringify(lines));
+  assert.match(host[0]!.text, /acme\.example/);
+  assert.match(host[0]!.text, /when you browse the store/);
+  assert.match(host[0]!.text, /Acme catalog/);
+  // The hostname only: the path is where a long url hides which machine it reaches.
+  assert.doesNotMatch(host[0]!.text, /index\.json/);
+});
+

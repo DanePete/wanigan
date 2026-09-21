@@ -62,6 +62,7 @@ const MAX_SKILLS = 50;
 const MAX_GATES = 20;
 const MAX_INSTRUCTIONS = 20;
 const MAX_SCOUT_SOURCES = 20;
+const MAX_STORE_SOURCES = 10;
 const MAX_CREDENTIALS = 20;
 /** Matches `saveRecipe` in `src/main/review.ts`, which stores at most 20 and refuses one over 2,000 characters. */
 const MAX_GATE_COMMANDS = 20;
@@ -139,6 +140,14 @@ export type ExtensionInstruction = { scope: 'project' | 'personal'; title: strin
 
 /** The same three Improvement Scout already reads; the manifest mirrors the code, not the other way round. */
 const SCOUT_SOURCE_KINDS = ['changelog', 'release-notes', 'documentation'] as const;
+/**
+ * How a store source's url is read. One format today, declared anyway: a catalog
+ * read as the wrong shape is a list of entries that are not what they say, and
+ * the field is what lets a second format arrive without every existing
+ * manifest's meaning changing underneath it.
+ */
+export const STORE_SOURCE_FORMATS = ['mcp-registry'] as const;
+export type ExtensionStoreSourceFormat = typeof STORE_SOURCE_FORMATS[number];
 export type ExtensionScoutSourceKind = typeof SCOUT_SOURCE_KINDS[number];
 
 /**
@@ -159,6 +168,30 @@ export type ExtensionScoutSource = {
   kind: ExtensionScoutSourceKind;
 };
 
+/**
+ * A catalog of installable extensions, declared the same way a Scout source is.
+ *
+ * The store browses these and nothing else: there is no built-in address and no
+ * fallback, so the set of places Wanigan will fetch an extension from is exactly
+ * the set some manifest declared and an operator consented to. Wanigan's own
+ * catalog is a built-in extension for that reason — a default reachable by a
+ * private path would be an extension point nobody has proven works.
+ *
+ * A source is an index, never a payload. Fetching one yields a list of entries
+ * to show; installing one of them still stages a directory and goes through
+ * `validateExtensionManifest`, the consent screen and digest trust, exactly as
+ * a directory chosen in a picker does.
+ */
+export type ExtensionStoreSource = {
+  id: string;
+  label: string;
+  description: string;
+  /** https, and the index document itself rather than a page describing it. */
+  url: string;
+  publisher: string;
+  format: ExtensionStoreSourceFormat;
+};
+
 export type ExtensionManifest = {
   schemaVersion: 1;
   id: string;
@@ -174,6 +207,7 @@ export type ExtensionManifest = {
     gates?: ExtensionGate[];
     instructions?: ExtensionInstruction[];
     scoutSources?: ExtensionScoutSource[];
+    storeSources?: ExtensionStoreSource[];
   };
 };
 
@@ -548,6 +582,29 @@ function parseScoutSource(raw: unknown, where: string, errors: string[]): Extens
   return { id, label, description, url, publisher, kind };
 }
 
+function parseStoreSource(raw: unknown, where: string, errors: string[]): ExtensionStoreSource | null {
+  if (!isObject(raw)) {
+    errors.push(`${where} must be an object.`);
+    return null;
+  }
+  const id = text(own(raw, 'id'), `${where}.id`, errors, { required: true, max: MAX_ID, pattern: EXTENSION_ID_RE });
+  const label = text(own(raw, 'label'), `${where}.label`, errors, { required: true, max: MAX_LABEL });
+  const description = text(own(raw, 'description'), `${where}.description`, errors, { required: true, max: MAX_DESCRIPTION });
+  const url = text(own(raw, 'url'), `${where}.url`, errors, { required: true, max: MAX_URL_CHARS });
+  const publisher = text(own(raw, 'publisher'), `${where}.publisher`, errors, { required: true, max: MAX_LABEL });
+  // The same rule a Scout source gets, for the same reason: this url is fetched
+  // without a person watching, so plain http and an embedded credential are both
+  // refused rather than warned about.
+  if (url !== undefined) validateScoutUrl(url, `${where}.url`, errors);
+  const formatRaw = own(raw, 'format');
+  const format = (STORE_SOURCE_FORMATS as readonly unknown[]).includes(formatRaw) ? formatRaw as ExtensionStoreSourceFormat : null;
+  if (!format) errors.push(`${where}.format must be ${STORE_SOURCE_FORMATS.map((entry) => `"${entry}"`).join(', ')}.`);
+  if (id === undefined || label === undefined || description === undefined || url === undefined || publisher === undefined || !format) {
+    return null;
+  }
+  return { id, label, description, url, publisher, format };
+}
+
 function parseSkill(raw: unknown, where: string, errors: string[]): ExtensionSkill | null {
   if (!isObject(raw)) {
     errors.push(`${where} must be an object.`);
@@ -804,12 +861,31 @@ export function validateExtensionManifest(value: unknown, opts: { appVersion?: s
       }
     }
 
+    const storeSourcesRaw = own(providesRaw, 'storeSources');
+    if (storeSourcesRaw !== undefined) {
+      if (!Array.isArray(storeSourcesRaw)) errors.push('provides.storeSources must be an array.');
+      else {
+        if (storeSourcesRaw.length > MAX_STORE_SOURCES) errors.push(`provides.storeSources has more than ${MAX_STORE_SOURCES} entries.`);
+        const sources: ExtensionStoreSource[] = [];
+        storeSourcesRaw.slice(0, MAX_STORE_SOURCES).forEach((entry, i) => {
+          const parsed = parseStoreSource(entry, `provides.storeSources[${i}]`, errors);
+          if (parsed) sources.push(parsed);
+        });
+        const seen = new Set<string>();
+        for (const source of sources) {
+          if (seen.has(source.id)) errors.push(`provides.storeSources declares "${source.id}" twice.`);
+          seen.add(source.id);
+        }
+        if (sources.length) provides.storeSources = sources;
+      }
+    }
+
     // An extension that declares nothing installs nothing, and an install
     // dialog with an empty consent list is a dialog that cannot be answered
     // honestly: there is no wording for "this will do nothing" that a person
     // would read as anything other than a bug.
     if (!Object.keys(provides).length && !errors.some((entry) => entry.startsWith('provides.'))) {
-      errors.push('provides must declare at least one MCP server, skill, gate, instruction or Scout source.');
+      errors.push('provides must declare at least one MCP server, skill, gate, instruction, Scout source or store source.');
     }
   }
 
@@ -926,6 +1002,19 @@ export function extensionConsent(manifest: ExtensionManifest): ExtensionConsentL
     hosts.push({
       kind: 'host',
       text: `Wanigan will fetch ${host} on Scout's weekly schedule to look for changes, for the source “${source.label}”.`,
+    });
+  }
+
+  // A store source is fetched when the operator opens the store, not on a
+  // schedule — so the line says "when you browse" rather than borrowing Scout's
+  // "on its own". What it must not hide is that browsing a catalog is already a
+  // request to a stranger's machine, before anything is installed.
+  for (const source of manifest.provides.storeSources ?? []) {
+    let host = source.url;
+    try { host = new URL(source.url).host; } catch { host = source.url; }
+    hosts.push({
+      kind: 'host',
+      text: `Wanigan will fetch ${host} when you browse the store, for the catalog “${source.label}”.`,
     });
   }
 
