@@ -346,9 +346,21 @@ async function checkoutIdentity(root: string): Promise<CheckoutIdentity> {
   const indexPath = await runGit(canonical, ['rev-parse', '--git-path', 'index'], { timeout: 8_000 });
   if (!head.ok || !indexPath.ok || !indexPath.out.trim()) throw new Error('The checkout HEAD or index could not be read. Preview the restore again.');
   const file = path.resolve(canonical, indexPath.out.trim());
-  const stat = fs.statSync(file, { throwIfNoEntry: false });
-  if (stat && (!stat.isFile() || stat.size > 16 * 1024 * 1024)) throw new Error('The checkout index exceeds the restore comparison limit.');
-  const index = stat ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : 'absent';
+  // One descriptor for the check and the read, so the file that was measured
+  // is the file that is hashed. A stat followed by a read by name could hash a
+  // file swapped in between the two.
+  let index = 'absent';
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error('The checkout index exceeds the restore comparison limit.');
+    index = createHash('sha256').update(fs.readFileSync(fd)).digest('hex');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
   if (directoryIdentity(canonical) !== directory) throw new Error('The checkout directory changed while it was being compared.');
   return { root: canonical, directory, head: head.out.trim(), index };
 }
