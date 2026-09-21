@@ -40,6 +40,8 @@ type Row = {
    * extension is the only thing that can name a credential to resolve.
    */
   env: string | null;
+  /** Request headers an extension declared for an http server, as JSON. Null for every hand-added server. */
+  headers: string | null;
   /** The extension that created this row, or NULL for one a person added. */
   owner: string | null;
 };
@@ -64,6 +66,7 @@ function toConfig(r: Row): McpServerConfig {
     url: r.url ?? undefined,
     enabled: r.enabled === 1,
     env: r.env ?? undefined,
+    headers: r.headers ?? undefined,
     owner: r.owner ?? undefined,
   };
 }
@@ -484,6 +487,9 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
   // credential to a server that no longer asks for it — the update would look
   // clean and the secret would still be flowing.
   const env = cfg.env === undefined ? null : (cfg.env.trim() || '');
+  // The same three-way rule as env: undefined leaves what is stored (the
+  // Settings form never sends headers), '' clears them, anything else replaces.
+  const headers = cfg.headers === undefined ? null : (cfg.headers.trim() || '');
   const owner = cfg.owner?.trim() || null;
 
   if (transport === 'stdio' && !command) {
@@ -548,8 +554,8 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
   }
 
   db().prepare(`
-    INSERT INTO mcp_servers (id, project_id, name, transport, command, args, url, enabled, created_at, env, owner)
-    VALUES (@id,@project,@name,@transport,@command,@args,@url,@enabled,@created,@env,@owner)
+    INSERT INTO mcp_servers (id, project_id, name, transport, command, args, url, enabled, created_at, env, headers, owner)
+    VALUES (@id,@project,@name,@transport,@command,@args,@url,@enabled,@created,@env,@headers,@owner)
     ON CONFLICT(id) DO UPDATE SET
       project_id=excluded.project_id, name=excluded.name, transport=excluded.transport,
       command=excluded.command, args=excluded.args, url=excluded.url, enabled=excluded.enabled,
@@ -566,15 +572,18 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
       env=CASE WHEN excluded.env IS NULL THEN mcp_servers.env
                WHEN excluded.env = '' THEN NULL
                ELSE excluded.env END,
+      headers=CASE WHEN excluded.headers IS NULL THEN mcp_servers.headers
+                   WHEN excluded.headers = '' THEN NULL
+                   ELSE excluded.headers END,
       owner=COALESCE(excluded.owner, mcp_servers.owner)
   `).run({
     id, project: projectId, name, transport, command, args, url,
     enabled: cfg.enabled ? 1 : 0, created: Date.now(),
-    env, owner: owner ?? null,
+    env, headers, owner: owner ?? null,
   });
 
   return { id, projectId, name, transport, command: command ?? undefined, args: args ?? undefined,
-    url: url ?? undefined, enabled: !!cfg.enabled, env: env || undefined, owner: owner ?? undefined };
+    url: url ?? undefined, enabled: !!cfg.enabled, env: env || undefined, headers: headers || undefined, owner: owner ?? undefined };
 }
 
 export function removeServer(id: string) {
@@ -748,6 +757,44 @@ function resolveServerEnv(raw: string | null | undefined, name: string): Record<
   }
   return Object.keys(out).length ? out : undefined;
 }
+/**
+ * Headers an extension declared, resolved at the moment a session's config is
+ * written, as resolveServerEnv resolves env: a literal as given, a credential out
+ * of the keychain with its declared prefix. A missing credential drops that one
+ * header and says so — the server then answers with its own auth error, which is
+ * the honest outcome — rather than sending a prefix with nothing after it.
+ */
+function resolveServerHeaders(raw: string | null | undefined, name: string): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  let declared: unknown;
+  try { declared = JSON.parse(raw); } catch { return undefined; }
+  if (!declared || typeof declared !== 'object' || Array.isArray(declared)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [header, value] of Object.entries(declared as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const entry = value as { source?: unknown; id?: unknown; value?: unknown; prefix?: unknown };
+    let resolved: string | null = null;
+    if (entry.source === 'literal' && typeof entry.value === 'string') {
+      resolved = entry.value;
+    } else if (entry.source === 'credential' && typeof entry.id === 'string') {
+      const secret = getProviderKey(entry.id);
+      if (!secret) {
+        console.warn(
+          `[wanigan] MCP server "${name}" sends ${header} from the credential "${entry.id}", which returned nothing. ` +
+          'The header was left off; the server will report its own authentication error.'
+        );
+        continue;
+      }
+      resolved = `${typeof entry.prefix === 'string' ? entry.prefix : ''}${secret}`;
+    }
+    // Checked again here, not only when the manifest and the credential were
+    // accepted: this is the last point before the value becomes a header line.
+    if (resolved === null || /[\r\n\u0000]/.test(resolved)) continue;
+    out[header] = resolved;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> };
 
 /**
@@ -781,7 +828,10 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
   for (const s of listServers(projectId)) {
     if (!s.enabled) continue;
     if (s.transport === 'http') {
-      if (s.url) entries[s.name] = { type: 'http', url: fill(s.url) };
+      if (s.url) {
+        const headers = resolveServerHeaders(s.headers, s.name);
+        entries[s.name] = { type: 'http', url: fill(s.url), ...(headers ? { headers } : {}) };
+      }
     } else if (s.command) {
       const shape: McpApprovedCommand = {
         name: s.name, transport: 'stdio', scope: s.projectId ? 'project' : 'global',

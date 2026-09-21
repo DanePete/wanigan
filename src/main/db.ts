@@ -393,6 +393,10 @@ function migratePhases(d: Database.Database) {
   // and NULL on every row that existed before extensions did, which is the
   // honest reading — those were all added by hand and carry no environment.
   addColumn(d, 'mcp_servers', 'env', 'TEXT');
+  // Request headers an extension declared for an http server, as JSON, the way
+  // `env` holds a stdio server's environment. Added, never rewritten: a row from
+  // before it has NULL here and means what it always meant.
+  addColumn(d, 'mcp_servers', 'headers', 'TEXT');
 
   // Runs carry batches, headless fan-outs, evals and judge passes. One table,
   // so Insights and budgets never need a special case per surface.

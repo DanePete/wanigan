@@ -568,3 +568,70 @@ test('browsing a catalog is disclosed before anything is installed', () => {
   assert.doesNotMatch(host[0]!.text, /index\.json/);
 });
 
+/** An http server asking for a key it sends as a header, as a store entry would. */
+const hosted = (headers: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  credentials: [{ id: 'acme.search.key', label: 'Acme API key', help: 'From your Acme dashboard.' }],
+  provides: { mcpServers: [{ name: 'acme-search', transport: 'http', url: 'https://mcp.acme.example/v1', headers }] },
+  ...extra,
+});
+
+test('an http server can send a declared credential as a header, with a literal prefix', () => {
+  const m = valid(hosted({
+    Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' },
+    Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+  }));
+  assert.deepEqual(m.provides.mcpServers![0]!.headers, {
+    Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' },
+    Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+  });
+  // Read only by a header, the credential still counts as read.
+  assert.deepEqual(validateExtensionManifest(raw(hosted({ 'X-API-Key': { source: 'credential', id: 'acme.search.key' } }))).warnings, []);
+});
+
+test('a header may only read a credential the manifest declares', () => {
+  const e = errorsFor(hosted({ Authorization: { source: 'credential', id: 'someone.else.key' } }));
+  assert.ok(e.some((x) => /does not declare in credentials/.test(x)), e.join(' | '));
+});
+
+test('headers are refused where they would change how a request is framed or routed', () => {
+  for (const name of ['Host', 'Content-Length', 'transfer-encoding', 'Connection', 'Proxy-Authorization']) {
+    assert.ok(errorsFor(hosted({ [name]: { source: 'literal', value: 'x' } })).some((x) => /transport sets itself/.test(x)), name);
+  }
+  // A line break in a value is how one request becomes two.
+  assert.ok(errorsFor(hosted({ Accept: { source: 'literal', value: 'a\r\nX-Evil: 1' } })).some((x) => /without line breaks/.test(x)));
+  assert.ok(errorsFor(hosted({ Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer\r\n' } }))
+    .some((x) => /prefix must be/.test(x)));
+  assert.ok(errorsFor(hosted({ 'Bad Name': { source: 'literal', value: 'x' } })).some((x) => /not a valid HTTP header name/.test(x)));
+  // Field names are case-insensitive, so two spellings are one header declared twice.
+  assert.ok(errorsFor(hosted({ 'X-API-Key': { source: 'literal', value: 'a' }, 'x-api-key': { source: 'literal', value: 'b' } }))
+    .some((x) => /twice/.test(x)));
+});
+
+test('a stdio server takes no headers', () => {
+  const e = errorsFor({
+    credentials: [{ id: 'acme.search.key', label: 'k' }],
+    provides: { mcpServers: [{ name: 'acme-search', transport: 'stdio', command: 'npx', args: ['x'],
+      headers: { Authorization: { source: 'credential', id: 'acme.search.key' } } }] },
+  });
+  assert.ok(e.some((x) => /headers is only valid for an http server/.test(x)), e.join(' | '));
+});
+
+test('the consent screen says which host a header secret is sent to', () => {
+  const lines = extensionConsent(valid(hosted({ Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' } })));
+  const line = lines.find((l) => l.kind === 'credential')!;
+  assert.match(line.text, /Acme API key/);
+  assert.match(line.text, /Authorization header after "Bearer "/);
+  assert.match(line.text, /sent to mcp\.acme\.example/);
+});
+
+test('adding headers does not change the fingerprint of a server that has none', () => {
+  const plain = server();
+  // The shape recorded for every server installed before headers existed.
+  assert.ok(!mcpFingerprint(plain).includes('headers'));
+  const withHeaders = server({ transport: 'http', command: undefined, args: undefined, url: 'https://a.example',
+    headers: { Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Bearer ' } } });
+  const other = server({ transport: 'http', command: undefined, args: undefined, url: 'https://a.example',
+    headers: { Authorization: { source: 'credential', id: 'acme.search.key', prefix: 'Token ' } } });
+  assert.notEqual(mcpFingerprint(withHeaders), mcpFingerprint(other));
+});
+

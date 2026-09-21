@@ -102,7 +102,7 @@ type PluginRow = {
 type ServerRow = {
   id: string; project_id: string | null; name: string; transport: string;
   command: string | null; args: string | null; url: string | null;
-  enabled: number; env: string | null; owner: string | null;
+  enabled: number; env: string | null; headers: string | null; owner: string | null;
 };
 
 type ArtifactRow = {
@@ -226,6 +226,24 @@ function parseServerEnv(raw: string | null): { env: ExtensionMcpServer['env']; c
   return { env: Object.keys(env).length ? env : undefined, complete };
 }
 
+/** The headers column, read back into the manifest's shape so a fingerprint can compare them. */
+function parseServerHeaders(raw: string | null): ExtensionMcpServer['headers'] {
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const headers: NonNullable<ExtensionMcpServer['headers']> = {};
+  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const entry = value as { source?: unknown; id?: unknown; value?: unknown; prefix?: unknown } | null;
+    if (entry && entry.source === 'credential' && typeof entry.id === 'string') {
+      headers[name] = { source: 'credential', id: entry.id, ...(typeof entry.prefix === 'string' && entry.prefix ? { prefix: entry.prefix } : {}) };
+    } else if (entry && entry.source === 'literal' && typeof entry.value === 'string') {
+      headers[name] = { source: 'literal', value: entry.value };
+    }
+  }
+  return Object.keys(headers).length ? headers : undefined;
+}
+
 /**
  * The declared shape of a server as it stands in the database right now.
  *
@@ -236,6 +254,7 @@ function parseServerEnv(raw: string | null): { env: ExtensionMcpServer['env']; c
  */
 function shapeOf(row: ServerRow): ExtensionMcpServer {
   const { env } = parseServerEnv(row.env);
+  const headers = parseServerHeaders(row.headers);
   return {
     name: row.name,
     transport: row.transport === 'http' ? 'http' : 'stdio',
@@ -244,6 +263,7 @@ function shapeOf(row: ServerRow): ExtensionMcpServer {
     ...(row.url ? { url: row.url } : {}),
     scope: row.project_id ? 'project' : 'global',
     ...(env ? { env } : {}),
+    ...(headers ? { headers } : {}),
   };
 }
 
@@ -940,6 +960,9 @@ function applyMcpServers(manifest: ExtensionManifest, owner: string): void {
       // there", which on an update that dropped a variable would keep handing
       // the old credential to a server that no longer asks for it.
       env: server.env && Object.keys(server.env).length ? JSON.stringify(server.env) : '',
+      // Stated either way, for env's reason: an update that dropped a header must
+      // stop sending it, not keep handing the old credential to the host.
+      headers: server.headers && Object.keys(server.headers).length ? JSON.stringify(server.headers) : '',
       // The attribution uninstall reads. Without it, removing an extension is
       // a guess at which rows were its.
       owner,

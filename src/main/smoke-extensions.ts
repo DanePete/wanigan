@@ -5,6 +5,7 @@ import { db } from './db';
 import * as registry from './mcp/registry';
 import * as extensions from './extensions/store';
 import * as builtin from './extensions/builtin';
+import { clearProviderKey } from './keys';
 import { EXTENSION_MANIFEST_FILE, ownerExtensionId, scoutFingerprint } from '../shared/extension-manifest';
 import type { ExtensionInfo, ExtensionInspection } from '../shared/types';
 
@@ -333,10 +334,66 @@ export async function runExtensionsSmoke(check: Check, say: (text: string) => vo
       && artifact(savedSources, 'smoke-ext-edited')?.kind === 'scout-source'
       && artifact(savedSources, 'smoke-ext-edited')?.applied === false,
     'an exported Scout source round-trips as the row stands and reads back as a valid extension whose source is already taken by the row it came from', savedSources.errors);
+
+    // ── headers: a declared credential reaches an http server as a header ──
+    // What matters is the config a session actually launches with, so this reads
+    // the file writeMcpConfig writes rather than trusting the row.
+    say('── extensions · a credential sent as a request header');
+    const hdrManifest: Manifest = {
+      schemaVersion: 1,
+      id: 'smoke-ext-hdr',
+      label: 'Smoke Headers',
+      version: '1.0.0',
+      credentials: [{ id: 'smoke-ext-hdr.key', label: 'Smoke header key' }],
+      provides: {
+        mcpServers: [{
+          name: 'smoke-ext-hdr', transport: 'http', url: 'https://mcp.smoke.example/v1',
+          headers: {
+            Authorization: { source: 'credential', id: 'smoke-ext-hdr.key', prefix: 'Bearer ' },
+            Accept: { source: 'literal', value: 'application/json, text/event-stream' },
+          },
+        }],
+      },
+    };
+    const hdr = write('hdr', hdrManifest);
+    extensions.installExtension(hdr, extensions.inspectExtension(hdr).manifestSha256 ?? '');
+    const hdrRow = () => db().prepare('SELECT * FROM mcp_servers WHERE name = ?').get('smoke-ext-hdr') as
+      { id: string; headers: string | null; url: string } | undefined;
+    const stored = JSON.parse(hdrRow()?.headers ?? '{}') as Record<string, { source: string; id?: string; prefix?: string }>;
+    check(stored.Authorization?.source === 'credential' && stored.Authorization.prefix === 'Bearer '
+      && !(hdrRow()?.headers ?? '').includes('sk-'),
+    'installing stores the declared headers and where each comes from, never a secret', hdrRow()?.headers);
+    registry.setServerEnabled(hdrRow()!.id, true);
+    const sessionHeaders = () => {
+      const file = registry.writeMcpConfig(null, dir);
+      const config = JSON.parse(fs.readFileSync(file!, 'utf8')) as { mcpServers: Record<string, { headers?: Record<string, string> }> };
+      registry.cleanupMcpConfig(file);
+      return config.mcpServers['smoke-ext-hdr']?.headers ?? {};
+    };
+    const bare = sessionHeaders();
+    check(bare.Accept === 'application/json, text/event-stream' && bare.Authorization === undefined,
+      'with no key saved, the header is left off rather than sent as a bare prefix', bare);
+    await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', '  sk-smoke-123\n', new Set());
+    const sent = sessionHeaders();
+    check(sent.Authorization === 'Bearer sk-smoke-123', 'the saved key reaches the server as its header, after the declared prefix', sent);
+    check(extensions.listExtensions().find((x) => x.id === 'smoke-ext-hdr')?.credentials[0]?.present === true,
+      'and the extension reads it back only as present');
+    // A hand edit in Settings sends no headers field; the declared ones must survive it.
+    registry.upsertServer({ id: hdrRow()!.id, projectId: null, name: 'smoke-ext-hdr', transport: 'http', url: 'https://mcp.smoke.example/v2', enabled: true });
+    check(hdrRow()?.url === 'https://mcp.smoke.example/v2' && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
+      'editing the server by hand keeps the headers an extension declared');
+    const providerRefusal = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', 'x', new Set(['smoke-ext-hdr.key']))
+      .then(() => '', (error: unknown) => String(error));
+    check(/provider pack/.test(providerRefusal), 'a credential id a provider pack owns cannot be set through an extension', providerRefusal);
+    const injection = await extensions.setExtensionCredential('smoke-ext-hdr', 'smoke-ext-hdr.key', 'a\r\nX-Evil: 1', new Set())
+      .then(() => '', (error: unknown) => String(error));
+    check(/line break/.test(injection) && sessionHeaders().Authorization === 'Bearer sk-smoke-123',
+      'a key with a line break is refused and the saved one is untouched', injection);
   } catch (error) {
     check(false, 'extensions smoke completed', String(error));
   } finally {
-    for (const name of ['smoke-ext-fs', 'smoke-ext-two', 'smoke-ext-taken', 'smoke-ext-beta-ok']) {
+    clearProviderKey('smoke-ext-hdr.key');
+    for (const name of ['smoke-ext-fs', 'smoke-ext-two', 'smoke-ext-taken', 'smoke-ext-beta-ok', 'smoke-ext-hdr']) {
       const row = db().prepare('SELECT id FROM mcp_servers WHERE name = ?').get(name) as { id: string } | undefined;
       if (row) registry.removeServer(row.id);
     }

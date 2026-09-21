@@ -54,6 +54,19 @@ const SKILL_NAME_RE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** RFC 9110 token: what an HTTP field name may be. */
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+const MAX_HEADERS = 20;
+/*
+ * Headers the transport owns. A manifest that set one could frame the request
+ * itself — a Content-Length or Transfer-Encoding that disagrees with the body is
+ * request smuggling — or reroute it with Host, so they are refused, not passed.
+ */
+const FORBIDDEN_HEADERS = new Set([
+  'host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'upgrade',
+  'te', 'trailer', 'proxy-connection', 'proxy-authorization', 'expect',
+]);
+
 /** `>=x.y.z`, or a bare `x.y.z` meaning the same floor. */
 const REQUIRES_RE = /^(?:>=\s*)?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/;
 
@@ -123,6 +136,15 @@ export type ExtensionEnvValue =
   | { source: 'credential'; id: string }
   | { source: 'literal'; value: string };
 
+/**
+ * A request header an http server is sent. A credential may carry a literal
+ * prefix, for the `Bearer <key>` shape: the operator is asked for the key, and
+ * the prefix is the manifest's, shown on the consent screen.
+ */
+export type ExtensionHeaderValue =
+  | { source: 'literal'; value: string }
+  | { source: 'credential'; id: string; prefix?: string };
+
 export type ExtensionMcpServer = {
   name: string;
   transport: 'stdio' | 'http';
@@ -132,6 +154,8 @@ export type ExtensionMcpServer = {
   description?: string;
   scope?: 'global' | 'project';
   env?: Record<string, ExtensionEnvValue>;
+  /** http servers only. */
+  headers?: Record<string, ExtensionHeaderValue>;
 };
 
 export type ExtensionSkill = { name: string; file: string; description?: string };
@@ -416,6 +440,63 @@ function parseEnv(
   return out;
 }
 
+function parseHeaders(
+  raw: unknown,
+  where: string,
+  errors: string[],
+  declaredCredentials: Set<string>,
+): Record<string, ExtensionHeaderValue> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isObject(raw)) {
+    errors.push(`${where} must be an object.`);
+    return undefined;
+  }
+  const entries = Object.entries(raw);
+  if (entries.length > MAX_HEADERS) errors.push(`${where} has more than ${MAX_HEADERS} entries.`);
+  const out: Record<string, ExtensionHeaderValue> = {};
+  const seen = new Set<string>();
+  for (const [name, value] of entries.slice(0, MAX_HEADERS)) {
+    if (!HEADER_NAME_RE.test(name)) { errors.push(`${where}.${name} is not a valid HTTP header name.`); continue; }
+    const lower = name.toLowerCase();
+    if (FORBIDDEN_HEADERS.has(lower)) { errors.push(`${where}.${name} is a header the transport sets itself, so an extension may not.`); continue; }
+    // HTTP field names are case-insensitive: two spellings are one header.
+    if (seen.has(lower)) { errors.push(`${where} declares ${name} twice.`); continue; }
+    seen.add(lower);
+    if (!isObject(value)) { errors.push(`${where}.${name} must be an object.`); continue; }
+    const source = own(value, 'source');
+    if (source === 'literal') {
+      const v = own(value, 'value');
+      if (typeof v !== 'string' || /[\r\n\u0000]/.test(v)) {
+        errors.push(`${where}.${name}.value must be a string without line breaks or NUL bytes.`);
+        continue;
+      }
+      if (v.length > 2_000) { errors.push(`${where}.${name}.value is longer than 2,000 characters.`); continue; }
+      out[name] = { source: 'literal', value: v };
+    } else if (source === 'credential') {
+      const id = text(own(value, 'id'), `${where}.${name}.id`, errors, { required: true, max: MAX_ID, pattern: EXTENSION_ID_RE });
+      if (id === undefined) continue;
+      // The env block's rule, for the same reason: naming an undeclared id would
+      // read another extension's key and send it to a host of this one's choosing.
+      if (!declaredCredentials.has(id)) {
+        errors.push(
+          `${where}.${name}.id is "${id}", which this manifest does not declare in credentials. ` +
+          'An extension may only read a credential it asks the operator for itself.'
+        );
+        continue;
+      }
+      const prefix = own(value, 'prefix');
+      if (prefix !== undefined && (typeof prefix !== 'string' || prefix.length > 64 || /[\r\n\u0000]/.test(prefix))) {
+        errors.push(`${where}.${name}.prefix must be a string of at most 64 characters without line breaks.`);
+        continue;
+      }
+      out[name] = { source: 'credential', id, ...(typeof prefix === 'string' && prefix ? { prefix } : {}) };
+    } else {
+      errors.push(`${where}.${name}.source must be "credential" or "literal".`);
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function parseMcpServer(
   raw: unknown,
   where: string,
@@ -488,6 +569,10 @@ function parseMcpServer(
   if (transport === 'http' && url !== undefined) validateHttpUrl(url, `${where}.url`, errors);
 
   const env = parseEnv(own(raw, 'env'), `${where}.env`, errors, declaredCredentials);
+  const headers = parseHeaders(own(raw, 'headers'), `${where}.headers`, errors, declaredCredentials);
+  // A stdio server is not an HTTP client; headers on one are a belief about it
+  // that is not true, refused as the url on a stdio server is.
+  if (headers && transportRaw !== 'http') errors.push(`${where}.headers is only valid for an http server.`);
 
   if (name === undefined || !transport) return null;
   return {
@@ -499,6 +584,7 @@ function parseMcpServer(
     ...(description ? { description } : {}),
     ...(scope ? { scope } : {}),
     ...(env ? { env } : {}),
+    ...(headers && transportRaw === 'http' ? { headers } : {}),
   };
 }
 
@@ -897,6 +983,9 @@ export function validateExtensionManifest(value: unknown, opts: { appVersion?: s
     for (const spec of Object.values(server.env ?? {})) {
       if (spec.source === 'credential') referenced.add(spec.id);
     }
+    for (const spec of Object.values(server.headers ?? {})) {
+      if (spec.source === 'credential') referenced.add(spec.id);
+    }
   }
   for (const credential of credentials) {
     if (!referenced.has(credential.id)) {
@@ -1046,6 +1135,13 @@ export function extensionConsent(manifest: ExtensionManifest): ExtensionConsentL
     for (const server of servers) {
       for (const [name, spec] of Object.entries(server.env ?? {})) {
         if (spec.source === 'credential' && spec.id === credential.id) destinations.push(`"${server.name}" as ${name}`);
+      }
+      for (const [name, spec] of Object.entries(server.headers ?? {})) {
+        if (spec.source !== 'credential' || spec.id !== credential.id) continue;
+        // A header leaves this machine, so the line names the host it goes to.
+        let host = server.url ?? '';
+        try { host = new URL(host).host; } catch { /* printed as declared */ }
+        destinations.push(`"${server.name}" in the ${name} header${spec.prefix ? ` after "${spec.prefix}"` : ''}, sent to ${host}`);
       }
     }
     credentialLines.push({
@@ -1197,6 +1293,10 @@ export function mcpFingerprint(server: ExtensionMcpServer): string {
     .map(([name, spec]): [string, string] =>
       [name, spec.source === 'credential' ? `credential:${spec.id}` : `literal:${spec.value}`])
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const headers = Object.entries(server.headers ?? {})
+    .map(([name, spec]): [string, string] =>
+      [name.toLowerCase(), spec.source === 'credential' ? `credential:${spec.id}:${spec.prefix ?? ''}` : `literal:${spec.value}`])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return JSON.stringify({
     v: EXTENSION_SCHEMA_VERSION,
     name: server.name,
@@ -1206,6 +1306,9 @@ export function mcpFingerprint(server: ExtensionMcpServer): string {
     args: server.args ?? [],
     url: server.url ?? null,
     env,
+    // Only when present: every fingerprint recorded before headers existed must
+    // still match its server, or each would read as edited by hand.
+    ...(headers.length ? { headers } : {}),
   });
 }
 

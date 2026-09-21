@@ -2318,6 +2318,12 @@ export type McpServerConfig = {
    * holds one.
    */
   env?: string;
+  /**
+   * Request headers an extension declared for an http server, as JSON: header
+   * names and where each value comes from, never a secret. Same convention as
+   * `env` — undefined leaves what is stored, '' clears it.
+   */
+  headers?: string;
   /** The extension that created this row, or absent for one a person added. */
   owner?: string;
 };
