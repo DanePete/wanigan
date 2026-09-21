@@ -32,9 +32,10 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
       check(missing.includes(id),
         `${id} reports its own missing credential by name rather than failing silently`, missing);
     }
-    check(missingCredentialIds('claude').length === 0 && missingCredentialIds('codex').length === 0,
-      'a profile that declares no credential is never held back by this guard',
-      { claude: missingCredentialIds('claude'), codex: missingCredentialIds('codex') });
+    check(missingCredentialIds('claude').length === 0 && missingCredentialIds('codex').length === 0
+      && missingCredentialIds('pair-codex').length === 0,
+      'a profile that declares no credential is never held back by this guard — the local PAIR profile included',
+      { claude: missingCredentialIds('claude'), codex: missingCredentialIds('codex'), pair: missingCredentialIds('pair-codex') });
     check(missingCredentialIds('no-such-profile').length === 0,
       'an unknown profile id reports nothing rather than throwing');
   } catch (error) {
