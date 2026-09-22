@@ -3,6 +3,7 @@ import * as usage from '../usage';
 import * as otel from '../otel';
 import * as statusline from '../statusline';
 import { migrateUsage } from './usage-storage';
+import { useBankedReset } from './usage-limits';
 import { inspectRecoveryOwner } from '../recovery-inspection';
 import { directRequestConsumption, directRequestDaily } from './usage-direct-requests';
 import { migrateUsageDirectRequests, migrateUsagePaidOperations, migrateUsagePaidSettlements } from './usage-paid-operations';
@@ -46,6 +47,17 @@ export const usageModule: WaniganModule = {
     handle('usage:traces', (id: string) => otel.sessionTraces(observedSessionId(id)));
 
     handle('usage:snapshot', (input?: { days?: number; force?: boolean }) => usage.snapshot(input));
+    /*
+     * The one write on this screen. It spends an asset the person holds, so it
+     * runs only from a press behind a confirmation, and both ids are checked
+     * for shape here because they arrive from the renderer.
+     */
+    const opaqueId = (value: unknown, what: string): string => {
+      if (typeof value !== 'string' || !value || value.length > 200) throw new Error(`${what} is required.`);
+      return value;
+    };
+    handle('usage:useBankedReset', (accountId: unknown, creditId?: unknown) =>
+      useBankedReset(opaqueId(accountId, 'An account id'), creditId == null ? null : opaqueId(creditId, 'A reset id')));
     handle('usage:burn', (force?: boolean) => usage.burnWindows(force === true));
   },
 };

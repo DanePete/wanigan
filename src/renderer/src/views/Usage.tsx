@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
+import type { AccountLimits, BankedResetOutcome, ConsumptionPoint, LimitWindow, ModelConsumption, Project, ProviderInfo, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
 import type { ObservedLimitsReport } from '@shared/status-line';
-import { EmptyState, Note, PageHead, Pill, SectionHead, Stat } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, Pill, SectionHead, Stat } from '../components/bits';
 import { ObservedLimits } from '../components/ObservedLimits';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
@@ -121,8 +121,136 @@ function checkedLabel(at: number, now: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function LimitRow({ limits, now, selected, onSelect }: {
+/** "by Oct 12 (in 20d)", or the provider's own silence when it named no expiry. */
+function expiryLabel(at: number | null, now: number): string {
+  if (at === null) return 'no expiry reported';
+  const day = new Date(at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const left = at - now;
+  if (left <= 0) return `expired ${day}`;
+  const days = Math.floor(left / 86_400_000);
+  const hours = Math.floor((left % 86_400_000) / 3_600_000);
+  return `use by ${day} (in ${days >= 1 ? `${days}d` : `${hours}h`})`;
+}
+
+/**
+ * The provider's verdict on a reset, quoted, with what Wanigan can honestly add.
+ *
+ * Whether the account can run again is what the re-read beside it says: an
+ * outcome of "reset" says a window was refilled, and nothing more.
+ */
+function outcomeSentence(outcome: BankedResetOutcome['outcome']): string {
+  switch (outcome) {
+    case 'reset': return 'Codex answered “reset”: a banked reset was used. The limits shown are re-read from Codex just now.';
+    case 'nothingToReset': return 'Codex answered “nothingToReset”: there was no limit to refill.';
+    case 'noCredit': return 'Codex answered “noCredit”: this account has no banked reset to use.';
+    case 'alreadyRedeemed': return 'Codex answered “alreadyRedeemed”: that reset had already been used.';
+  }
+}
+
+/**
+ * Banked resets, per account, with the one button that spends one.
+ *
+ * Codex reports the bank through the same app-server read that reports the
+ * windows, so the count and each credit's expiry are the backend's words and
+ * the button is enabled only when it counted one. Claude Code reports its bank
+ * only inside a session — `/limit-reset` is the CLI's own offer, gated and
+ * confirmed by the CLI — so for a Claude account the button opens a session
+ * on that account and types the command; Wanigan never touches the credential
+ * and never claims a count it cannot read.
+ */
+function BankedResets({ limits, now, onLimits, handoff }: {
+  limits: AccountLimits; now: number;
+  onLimits: (next: AccountLimits) => void;
+  handoff: { ready: boolean; why: string | null; run: (accountId: string) => Promise<void> } | null;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  // A new reading resets the conversation: what was said about the old one no
+  // longer describes what is on screen.
+  useEffect(() => { setSaid(null); setConfirming(false); }, [limits.fetchedAt]);
+
+  if (limits.harness === 'claude-code') {
+    if (limits.state !== 'ok' || !handoff) return null;
+    const run = async () => {
+      setBusy(true); setSaid(null);
+      try { await handoff.run(limits.accountId); }
+      catch (e) { setSaid({ tone: 'error', text: msg(e) }); }
+      finally { setBusy(false); }
+    };
+    return (
+      <div className="u-bank">
+        <span className="u-bank-head">Banked resets</span>
+        <p className="u-bank-line">
+          Claude Code reports a banked reset only inside a session, and uses one only after its own confirmation.
+          This opens a session on this account and runs <code>/limit-reset</code>; the CLI says what it has.
+        </p>
+        <div className="u-bank-actions">
+          <button type="button" className="btn btn-sm" disabled={busy || !handoff.ready} onClick={() => void run()}
+                  aria-description={handoff.why ?? undefined}>
+            {busy ? 'Opening a session…' : 'Check for a Claude reset'}
+          </button>
+          {handoff.why && <span className="u-bank-why">{handoff.why}</span>}
+        </div>
+        {said && <Note tone={said.tone}>{said.text}</Note>}
+      </div>
+    );
+  }
+
+  const bank = limits.bankedResets;
+  if (limits.state !== 'ok' || bank === undefined) return null;
+  const available = (bank.credits ?? []).filter((c) => c.status === 'available');
+  const canUse = bank.availableCount > 0;
+  const use = async () => {
+    setBusy(true); setSaid(null);
+    try {
+      const result = await window.wanigan.usage.useBankedReset(limits.accountId);
+      setConfirming(false);
+      onLimits(result.limits);
+      setSaid({ tone: result.outcome === 'reset' ? 'ok' : 'error', text: outcomeSentence(result.outcome) });
+    } catch (e) {
+      setSaid({ tone: 'error', text: msg(e) });
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="u-bank">
+      <span className="u-bank-head">Banked resets</span>
+      <p className="u-bank-line">
+        {bank.availableCount === 0
+          ? 'Codex reports none banked on this account.'
+          : `Codex reports ${bank.availableCount} banked reset${bank.availableCount === 1 ? '' : 's'} available.`}
+        {bank.credits === null && bank.availableCount > 0 && ' It listed no detail for them.'}
+      </p>
+      {available.length > 0 && (
+        <ul className="u-bank-list">
+          {available.map((c) => (
+            <li key={c.id}>
+              <span>{c.title ?? c.resetType ?? 'Reset'}</span>
+              <span className="u-bank-expiry">{expiryLabel(c.expiresAt, now)}</span>
+              {c.description && <span className="u-bank-desc">{c.description}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {confirming ? (
+        <ConfirmNote verb="Use one reset" busy={busy} onRun={use} onCancel={() => setConfirming(false)}
+          what={<>Use a banked reset on {limits.accountLabel}? Codex picks the next available one and refills the window it covers. This cannot be undone, and the weekly reset day stays where it is.</>} />
+      ) : (
+        <div className="u-bank-actions">
+          <button type="button" className="btn btn-sm" disabled={!canUse || busy} onClick={() => setConfirming(true)}>
+            Use a banked reset
+          </button>
+        </div>
+      )}
+      {said && <Note tone={said.tone} onDismiss={() => setSaid(null)}>{said.text}</Note>}
+    </div>
+  );
+}
+
+function LimitRow({ limits, now, selected, onSelect, onLimits, handoff }: {
   limits: AccountLimits; now: number; selected: boolean; onSelect: () => void;
+  onLimits: (next: AccountLimits) => void;
+  handoff: { ready: boolean; why: string | null; run: (accountId: string) => Promise<void> } | null;
 }) {
   const stale = limits.state === 'stale' || (limits.fetchedAt !== null && now - limits.fetchedAt > 10 * 60_000);
   const status = limits.state === 'signed-out' ? 'Signed out'
@@ -160,6 +288,7 @@ function LimitRow({ limits, now, selected, onSelect }: {
           </div>
         ) : <p className="u-reading-empty">{limits.detail ?? 'No limit reading available.'}</p>}
         {limits.state === 'ok' && limits.windows.length > 0 && limits.detail && <p className="u-reading-detail">{limits.detail}</p>}
+        <BankedResets limits={limits} now={now} onLimits={onLimits} handoff={handoff} />
       </td>
       <td className="u-freshness">
         {status !== 'Read' && <Pill status={status} tone={limits.state === 'unreadable' || stale ? 'warn' : 'quiet'} />}
@@ -339,7 +468,13 @@ function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
   );
 }
 
-export default function Usage() {
+export default function Usage({ projectId, projects = [], providers = [], onOpenSession }: {
+  /** The project a Claude reset check opens its session in. Undefined: no project yet. */
+  projectId?: string;
+  projects?: Project[];
+  providers?: ProviderInfo[];
+  onOpenSession?: (id: string) => void;
+} = {}) {
   const [snap, setSnap] = useState<UsageSnapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -366,6 +501,33 @@ export default function Usage() {
   }, [days]);
 
   useEffect(() => { load(false); }, [load]);
+
+  /** One row re-read after a reset: replace it, leave every other account's reading alone. */
+  const replaceLimits = useCallback((next: AccountLimits) => {
+    setSnap((current) => current && { ...current, limits: current.limits.map((row) => row.accountId === next.accountId ? next : row) });
+    setNow(Date.now());
+  }, []);
+
+  /**
+   * Where a Claude reset check can open. The command is the CLI's own, so the
+   * session is a real one on the chosen account, in the project the shell
+   * has selected; without a project there is nowhere to open it.
+   */
+  const claudeHandoff = useMemo(() => {
+    if (!onOpenSession) return null;
+    const provider = providers.find((p) => p.harnessId === 'claude-code' && p.path) ?? providers.find((p) => p.id === 'claude' && p.path);
+    const project = projectId && projects.some((p) => p.id === projectId) ? projectId : null;
+    const why = !provider ? 'Claude Code is not installed, so there is no session to open.'
+      : !project ? 'Add a project first: the session needs a repository to open in.' : null;
+    return {
+      ready: why === null, why,
+      run: async (accountId: string) => {
+        if (!provider || !project) throw new Error(why ?? 'Nowhere to open a session.');
+        const session = await window.wanigan.sessions.create({ providerId: provider.id, projectId: project, accountId, initialPrompt: '/limit-reset' });
+        onOpenSession(session.id);
+      },
+    };
+  }, [onOpenSession, providers, projectId, projects]);
 
   // What running sessions' status lines reported. A database read, so unlike
   // the probe it is allowed on a timer.
@@ -461,7 +623,7 @@ export default function Usage() {
               </thead>
               <tbody>
                 {limits.map((limit) => (
-                  <LimitRow key={limit.accountId} limits={limit} now={now}
+                  <LimitRow key={limit.accountId} limits={limit} now={now} onLimits={replaceLimits} handoff={claudeHandoff}
                     selected={selected?.id === limit.accountId} onSelect={() => selectAccount(limit.accountId)} />
                 ))}
               </tbody>

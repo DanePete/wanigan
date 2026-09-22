@@ -27,6 +27,7 @@ import type { IntakeOverview, IntakePoll, IntakeTimer } from '../shared/intake';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
+  BankedResetOutcome,
   AwakeState,
   ExpiringResults,
   LaunchOptions, ObserveOnlyHooks, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
@@ -357,6 +358,8 @@ const api = {
     snapshot: (input?: { days?: number; force?: boolean }) => call<UsageSnapshot>('usage:snapshot', input),
     /** What a previous read established, or null. Never causes a probe. */
     known: () => call<{ at: number; limits: AccountLimits[] } | null>('usage:known'),
+    /** Spends one banked reset on a Codex account. Only from a confirmed press; answers in the provider's words with a fresh reading. */
+    useBankedReset: (accountId: string, creditId?: string | null) => call<BankedResetOutcome>('usage:useBankedReset', accountId, creditId),
     session: (id: string) => call<SessionUsage>('usage:session', id),
     many: (ids: string[]) => call<Record<string, SessionUsage>>('usage:many', ids),
     events: (id: string, limit?: number) => call<ApiEvent[]>('usage:events', id, limit),

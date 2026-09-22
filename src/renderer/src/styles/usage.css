@@ -126,6 +126,20 @@
 .u-reset { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
 .u-reading-empty { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; max-width: 70ch; }
 .u-reading-detail { margin: var(--s-3) 0 0; color: var(--warning); font-size: var(--t-small); line-height: 1.5; }
+
+/* Banked resets: the provider's count, its rows, and the one button that
+   spends one. Set apart from the meters by a rule rather than a box, so it
+   reads as part of the account's reading and not as a second card. */
+.u-bank { display: grid; gap: var(--s-2); margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); max-width: 70ch; }
+.u-bank-head { color: var(--text-dim); font-size: var(--t-small); font-weight: 500; }
+.u-bank-line { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+.u-bank-line code { font-family: var(--mono); font-size: var(--t-small); }
+.u-bank-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--s-1); font-size: var(--t-small); }
+.u-bank-list li { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); align-items: baseline; }
+.u-bank-expiry { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.u-bank-desc { flex-basis: 100%; color: var(--text-faint); }
+.u-bank-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); }
+.u-bank-why { color: var(--text-faint); font-size: var(--t-micro); }
 .u-freshness > span, .u-freshness > time { display: block; }
 .u-freshness > .pill { display: inline-flex; }
 .u-freshness > span:not(.pill) { margin-top: var(--s-2); font-size: var(--t-small); }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexAccount, codexLoginChanged, codexModelPage, codexRateLimits, codexWindow, codexWindowStale } from './codex-account.ts';
+import { codexAccount, codexLoginChanged, codexModelPage, codexRateLimits, codexResetCredits, codexResetOutcome, codexWindow, codexWindowStale } from './codex-account.ts';
 
 const window = (usedPercent: number, resetsAt: number | null = 1000) => ({ usedPercent, resetsAt, windowDurationMins: 300 });
 
@@ -73,4 +73,28 @@ test('a login change is any reported difference; an absent field proves nothing 
   assert.equal(codexLoginChanged(base, { ...base, backendAccountId: 'b' }), true);
   assert.equal(codexLoginChanged(base, { ...base, plan: 'plus' }), true);
   assert.equal(codexLoginChanged(base, { ...base, backendAccountId: null }), false);
+});
+
+test('banked resets are read as reported: absent is unknown, an empty list is none, and detail rows keep their words', () => {
+  assert.equal(codexResetCredits({ rateLimits: {} }), null, 'no summary is no answer, never zero');
+  assert.equal(codexResetCredits({ rateLimitResetCredits: { credits: [] } }), null, 'a summary without a count is unreadable');
+  assert.deepEqual(codexResetCredits({ rateLimitResetCredits: { availableCount: 0, credits: [] } }), { availableCount: 0, credits: [] });
+  assert.deepEqual(codexResetCredits({ rateLimitResetCredits: { availableCount: 2, credits: null } }),
+    { availableCount: 2, credits: null }, 'count without detail keeps the detail unknown');
+  const read = codexResetCredits({ rateLimitResetCredits: { availableCount: 1, credits: [
+    { id: 'rc_1', resetType: 'weekly', status: 'available', grantedAt: 10, expiresAt: 20, title: 'Referral reset', description: 'One weekly reset' },
+    { id: 'rc_2', status: 'something-new', grantedAt: 'soon' },
+    { status: 'available' },
+  ] } });
+  assert.deepEqual(read?.credits, [
+    { id: 'rc_1', resetType: 'weekly', status: 'available', grantedAt: 10_000, expiresAt: 20_000, title: 'Referral reset', description: 'One weekly reset' },
+    { id: 'rc_2', resetType: null, status: 'unknown', grantedAt: null, expiresAt: null, title: null, description: null },
+  ], 'a row without an id cannot be redeemed and is dropped; an unknown status is kept as unknown');
+});
+
+test('a consume outcome is one of the four words the backend uses, and anything else is not an outcome', () => {
+  assert.equal(codexResetOutcome({ outcome: 'reset' }), 'reset');
+  assert.equal(codexResetOutcome({ outcome: 'alreadyRedeemed' }), 'alreadyRedeemed');
+  assert.equal(codexResetOutcome({ outcome: 'ok' }), null);
+  assert.equal(codexResetOutcome(undefined), null);
 });

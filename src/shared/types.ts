@@ -2225,6 +2225,40 @@ export type AccountLimits = {
   plan: string | null;
   windows: LimitWindow[];
   factors: UsageFactors[];
+  /**
+   * Banked limit resets, where the provider reports them. Absent for a harness
+   * with no such read — which is not zero banked, and the surface says so.
+   */
+  bankedResets?: BankedResets;
+};
+
+/** One banked reset as the provider described it. The id is opaque and only ever handed back. */
+export type BankedReset = {
+  id: string;
+  title: string | null;
+  description: string | null;
+  resetType: string | null;
+  status: 'available' | 'redeeming' | 'redeemed' | 'unknown';
+  grantedAt: number | null;
+  /** null: the provider said it does not expire. */
+  expiresAt: number | null;
+};
+
+/**
+ * The provider's own count of banked resets and, when it listed them, the
+ * rows. `credits` null means the count is all that was reported.
+ */
+export type BankedResets = { availableCount: number; credits: BankedReset[] | null };
+
+/**
+ * What a provider answered when asked to use a banked reset, in its own words,
+ * beside the limits re-read straight afterwards. `reset` says the provider
+ * refilled a window; whether the account can run again is what the re-read
+ * says, never what the outcome implies.
+ */
+export type BankedResetOutcome = {
+  outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed';
+  limits: AccountLimits;
 };
 
 /** What was actually spent, per account and model, from Wanigan's own records. */

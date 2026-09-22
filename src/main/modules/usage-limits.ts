@@ -1,9 +1,9 @@
 import * as accounts from '../accounts';
 import { detectProviders } from '../providers';
 import { allLimits as claudeLimits } from './usage-claude-limits';
-import { readCodexStatus, type CodexLimitWindow, type CodexStatus } from './usage-codex-status';
+import { consumeResetCredit, readCodexStatus, type CodexLimitWindow, type CodexStatus } from './usage-codex-status';
 import { codexWindowStale } from '../../shared/codex-account';
-import type { AccountLimits, AgentAccount, LimitWindow } from '../../shared/types';
+import type { AccountLimits, AgentAccount, BankedResetOutcome, BankedResets, LimitWindow } from '../../shared/types';
 import { withUsageIdentityEvidence } from './usage-account-identity';
 
 /**
@@ -106,7 +106,29 @@ function fromCodexStatus(account: AgentAccount, status: CodexStatus, now = Date.
       ? 'This account keeps its credentials outside auth.json, so Wanigan cannot see a login change from files and re-reads it every time.' : null,
   ].filter(Boolean).join(' ');
   return { ...base, state: 'ok' as const, fetchedAt: status.fetchedAt, windows, detail: detail || null,
-    ordinaryUsageAllowed: status.ordinaryUsageAllowed ?? null };
+    ordinaryUsageAllowed: status.ordinaryUsageAllowed ?? null,
+    // Carried only when the backend answered. An absent summary is an
+    // absent field, so the row says "not reported" rather than "none".
+    ...(status.resetCredits ? { bankedResets: bankedResets(status.resetCredits) } : {}) };
+}
+
+function bankedResets(read: NonNullable<CodexStatus['resetCredits']>): BankedResets {
+  return { availableCount: read.availableCount, credits: read.credits };
+}
+
+/**
+ * Use a banked reset on one account. Routed by declared harness: the only
+ * consume Wanigan can make is the Codex app-server's, so any other harness is
+ * refused by name rather than silently doing nothing.
+ */
+export async function useBankedReset(accountId: string, creditId?: string | null): Promise<BankedResetOutcome> {
+  const account = accounts.byId(accountId);
+  if (!account) throw new Error('That account no longer exists in Wanigan.');
+  if (account.harness !== 'codex') {
+    throw new Error(`Wanigan has no way to use a banked reset on a ${account.harness} account. Claude Code offers its own inside a session with /limit-reset.`);
+  }
+  const { outcome, status } = await consumeResetCredit(account.id, creditId);
+  return { outcome, limits: fromCodexStatus(account, status) };
 }
 
 async function codexLimitsFor(account: AgentAccount, force: boolean): Promise<AccountLimits> {

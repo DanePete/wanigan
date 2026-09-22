@@ -45,6 +45,35 @@ export type CodexRateLimits = {
   backendAccountId: string | null;
 };
 
+/**
+ * One banked limit reset, as the backend described it. The title and
+ * description are the backend's display strings, carried verbatim; the id is
+ * opaque and is only ever handed back to the backend.
+ */
+export type CodexResetCredit = {
+  id: string;
+  resetType: string | null;
+  status: 'available' | 'redeeming' | 'redeemed' | 'unknown';
+  /** Unix milliseconds, or null when the backend gave none. */
+  grantedAt: number | null;
+  /** Unix milliseconds, or null: a credit that does not expire. */
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+};
+
+/**
+ * What the backend said about banked resets. `credits` is null when only the
+ * count came back — the read asked for no detail, or the backend gave none —
+ * and an empty array when detail was fetched and there was nothing to list.
+ * The two are different answers and stay different here.
+ */
+export type CodexResetCredits = { availableCount: number; credits: CodexResetCredit[] | null };
+
+/** The backend's verdict on a consume, in its own vocabulary. */
+export type CodexResetOutcome = 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed';
+export const CODEX_RESET_OUTCOMES: readonly CodexResetOutcome[] = ['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed'];
+
 export type CodexAccountRead = {
   authState: 'signed-in' | 'signed-out' | 'unknown';
   /** false means this configuration needs no OpenAI login, so a null account
@@ -105,6 +134,40 @@ export function codexRateLimits(result: unknown): CodexRateLimits {
     spendControlReached: single?.spendControlReached ?? null, buckets,
     ordinaryUsageAllowed: flag(raw.ordinaryUsageAllowed), backendAccountId: text(raw.accountId),
   };
+}
+
+function resetCredit(value: unknown): CodexResetCredit | null {
+  const raw = object(value);
+  const id = text(raw?.id);
+  if (!raw || !id) return null;
+  const status = text(raw.status);
+  const seconds = (field: unknown) => { const n = finite(field); return n === null ? null : n * 1000; };
+  return {
+    id, resetType: text(raw.resetType),
+    status: status === 'available' || status === 'redeeming' || status === 'redeemed' ? status : 'unknown',
+    grantedAt: seconds(raw.grantedAt), expiresAt: seconds(raw.expiresAt),
+    title: text(raw.title), description: text(raw.description),
+  };
+}
+
+/**
+ * The banked-reset summary of a rate-limits read, or null when the reply
+ * carried none. A missing summary is not zero resets: an older app-server, or
+ * a backend that does not bank resets for this plan, says nothing, and this
+ * says nothing back.
+ */
+export function codexResetCredits(result: unknown): CodexResetCredits | null {
+  const raw = object(object(result)?.rateLimitResetCredits);
+  const count = finite(raw?.availableCount);
+  if (!raw || count === null) return null;
+  const list = Array.isArray(raw.credits) ? raw.credits.flatMap((row) => { const c = resetCredit(row); return c ? [c] : []; }) : null;
+  return { availableCount: Math.max(0, Math.floor(count)), credits: list };
+}
+
+/** A consume reply's outcome, or null for a word this reader does not know. */
+export function codexResetOutcome(result: unknown): CodexResetOutcome | null {
+  const word = text(object(result)?.outcome);
+  return CODEX_RESET_OUTCOMES.find((known) => known === word) ?? null;
 }
 
 export function codexAccount(result: unknown): CodexAccountRead {

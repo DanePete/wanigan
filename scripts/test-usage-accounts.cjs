@@ -72,6 +72,11 @@ function fixture() {
             respond(message.id, state.limitsReply ?? { rateLimits: { planType: 'pro', primary: {
               usedPercent: options.env.CODEX_HOME ? 72 : 11, resetsAt: 1000, windowDurationMins: 300,
             } } });
+          }
+          else if (message.method === 'account/rateLimitResetCredit/consume') {
+            if (state.consumeError) { refuse(message.id, state.consumeError); return; }
+            state.consumed = (state.consumed ?? 0) + 1;
+            respond(message.id, state.consumeReply ?? { outcome: 'reset' });
           } else throw new Error('Unexpected protocol method ' + message.method);
         } };
         if (args[0] !== 'app-server') setImmediate(() => {
@@ -179,7 +184,46 @@ test('the Codex reader sends only its read methods on the stable surface, and ke
     const initialize = f.messages.find(message => message.method === 'initialize');
     assert.equal(initialize.params.capabilities, undefined, 'no experimental surface is negotiated');
     assert(f.messages.filter(message => message.method === 'account/read').every(message => message.params.refreshToken === false));
-    assert.deepEqual(f.messages.find(message => message.method === 'account/rateLimits/read').params, { excludeResetCreditDetails: true });
+    assert.deepEqual(f.messages.find(message => message.method === 'account/rateLimits/read').params, { excludeResetCreditDetails: false },
+      'reset-credit detail is asked for; the reserve fallback is never offered');
+    assert.equal(status.resetCredits, null, 'a reply without a reset summary carries none, not zero');
+  } finally { f.close(); }
+});
+
+test('banked resets are carried as reported, and using one is a confirmed write that re-reads the account', async () => {
+  const f = fixture();
+  try {
+    const account = f.account('bank');
+    const credit = { id: 'rc_1', resetType: 'weekly', status: 'available', grantedAt: 10, expiresAt: 20, title: 'Referral reset', description: null };
+    f.state.limitsReply = { ordinaryUsageAllowed: false, rateLimits: { planType: 'pro', primary: { usedPercent: 100, resetsAt: 1000, windowDurationMins: 10080 } },
+      rateLimitResetCredits: { availableCount: 1, credits: [credit] } };
+    const reader = f.load('src/main/modules/usage-codex-status.ts');
+    const limits = f.load('src/main/modules/usage-limits.ts');
+    const before = limits.__test.fromCodexStatus(account, await reader.readCodexStatus(true, account.id), 5000);
+    assert.deepEqual(before.bankedResets, { availableCount: 1, credits: [{ ...credit, grantedAt: 10_000, expiresAt: 20_000 }] });
+    assert.equal(f.state.consumed, undefined, 'a read never spends a reset');
+
+    f.state.limitsReply = { ordinaryUsageAllowed: true, rateLimits: { planType: 'pro', primary: { usedPercent: 0, resetsAt: 9000, windowDurationMins: 10080 } },
+      rateLimitResetCredits: { availableCount: 0, credits: [] } };
+    const result = await limits.useBankedReset(account.id, 'rc_1');
+    assert.equal(result.outcome, 'reset');
+    const consume = f.messages.find(message => message.method === 'account/rateLimitResetCredit/consume');
+    assert.equal(consume.params.creditId, 'rc_1');
+    assert.match(consume.params.idempotencyKey, /^[0-9a-f-]{36}$/, 'each press is one logical attempt');
+    assert.equal(f.state.consumed, 1);
+    assert.deepEqual(result.limits.bankedResets, { availableCount: 0, credits: [] }, 'the answer is a fresh read, not the cached one');
+    assert.equal(result.limits.windows[0].usedPercent, 0);
+    assert.equal(result.limits.ordinaryUsageAllowed, true);
+
+    const claude = f.account('claude-row', 'claude-code');
+    await assert.rejects(limits.useBankedReset(claude.id), /no way to use a banked reset on a claude-code account.*\/limit-reset/);
+    await assert.rejects(limits.useBankedReset('missing'), /no longer exists/);
+    assert.equal(f.state.consumed, 1, 'a refused harness sends nothing');
+
+    f.state.consumeReply = { outcome: 'ok' };
+    await assert.rejects(limits.useBankedReset(account.id), /a word this reader does not know/);
+    f.state.consumeError = 'no credits';
+    await assert.rejects(limits.useBankedReset(account.id), /Codex did not use the reset: no credits/);
   } finally { f.close(); }
 });
 

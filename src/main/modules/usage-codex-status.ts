@@ -4,8 +4,9 @@ import { detectProviders, shellPath } from '../providers';
 import * as accounts from '../accounts';
 import { usageAccountRevision, usageLoginWitnessed } from './usage-account-identity';
 import type { AccountIdentity, AgentAccount } from '../../shared/types';
-import { codexAccount, codexModelPage, codexRateLimits, codexWindow } from '../../shared/codex-account';
-import type { CodexLimitBucket, CodexLimitWindow, CodexModel } from '../../shared/codex-account';
+import { randomUUID } from 'node:crypto';
+import { codexAccount, codexModelPage, codexRateLimits, codexResetCredits, codexResetOutcome, codexWindow } from '../../shared/codex-account';
+import type { CodexLimitBucket, CodexLimitWindow, CodexModel, CodexResetCredits, CodexResetOutcome } from '../../shared/codex-account';
 
 /**
  * The Codex app-server is the one supported local surface that can report the
@@ -16,7 +17,12 @@ import type { CodexLimitBucket, CodexLimitWindow, CodexModel } from '../../share
  * We start a short-lived, stdio-only app-server for each cached read.  It uses
  * the person's existing Codex login, sends only the read methods below,
  * and exits straight afterwards.  No credentials leave the machine through
- * Wanigan and this module deliberately has no reset/consume operation.
+ * Wanigan.
+ *
+ * The one write here is `consumeResetCredit`: it redeems a banked limit reset
+ * the backend itself reported, and it runs only on an explicit press behind a
+ * confirmation. It is never on a poll, a refresh, or a launch path — a banked
+ * reset is an asset the person holds, and spending one is their decision.
  */
 export type { CodexLimitBucket, CodexLimitWindow, CodexModel } from '../../shared/codex-account';
 
@@ -30,6 +36,8 @@ export type CodexStatus = {
   authState?: 'signed-in' | 'signed-out' | 'unknown';
   /** Every metered limit the backend named, as reported. */
   buckets?: CodexLimitBucket[];
+  /** Banked resets as the backend reported them; null when the reply carried no summary. */
+  resetCredits?: CodexResetCredits | null;
   /** The backend's verdict; null is unavailable and is never read as allowed. */
   ordinaryUsageAllowed?: boolean | null;
   /** Ordinary account metadata. Stays in main; it is how a login change is
@@ -69,6 +77,7 @@ function snapshot(result: unknown): CodexStatus {
     fetchedAt: Date.now(), plan: limits.plan, primary: limits.primary, secondary: limits.secondary,
     spendControlReached: limits.spendControlReached, buckets: limits.buckets,
     ordinaryUsageAllowed: limits.ordinaryUsageAllowed, backendAccountId: limits.backendAccountId,
+    resetCredits: codexResetCredits(result),
   };
 }
 
@@ -207,7 +216,8 @@ async function session<T>(account: AgentAccount | null, label: string, purpose: 
         else pendingCall.resolve(msg.result);
       }
     });
-    // Only reads are ever sent. No account mutation is negotiated or sent.
+    // Reads, and the one confirmed write: consumeResetCredit. Nothing here
+    // negotiates a login, refreshes a token or edits configuration.
     call('initialize', { clientInfo: { name: 'wanigan', version: '0.1.0' } })
       .catch((e: Error) => { throw new Error(`${label} could not initialize: ${e.message}`); })
       .then(() => { write({ method: 'initialized' }); return run(call); })
@@ -223,9 +233,11 @@ function request(account: AgentAccount | null): Promise<CodexStatus> {
       () => accountIdentity(undefined));
     if (identity.authState === 'signed-out') return { ...snapshot({}), ...identity };
     try {
-      // A poll has no use for reset-credit detail, and never asks for the
-      // reserve fallback: that would record an experiment exposure.
-      return { ...snapshot(await call('account/rateLimits/read', { excludeResetCreditDetails: true })), ...identity, quotaApplicable: true };
+      // Reset-credit detail is asked for: this read runs on a visit or a press,
+      // never a poll, and the rows are what let a person see a banked reset
+      // before its thirty-day clock runs out. The reserve fallback is never
+      // asked for — that would record an experiment exposure.
+      return { ...snapshot(await call('account/rateLimits/read', { excludeResetCreditDetails: false })), ...identity, quotaApplicable: true };
     } catch (e) {
       // An API-key login has no ChatGPT allowance. The backend says so by
       // refusing; that is "not applicable", neither a fault nor zero usage.
@@ -289,6 +301,33 @@ export async function readCodexStatus(force = false, accountId?: string | null):
   pending.set(pendingKey, work);
   try { return await work; }
   finally { if (pending.get(pendingKey) === work) pending.delete(pendingKey); }
+}
+
+/**
+ * Redeem one banked reset on this account, then re-read its limits.
+ *
+ * The backend picks the next available credit when none is named. The
+ * idempotency key is fresh per press: a retry of the same logical attempt is
+ * the person pressing again, and the backend answers `alreadyRedeemed` if the
+ * first one landed. The cached reading is dropped before the re-read so the
+ * answer is the backend's, not a forty-five-second-old snapshot.
+ */
+export async function consumeResetCredit(accountId: string, creditId?: string | null): Promise<{ outcome: CodexResetOutcome; status: CodexStatus }> {
+  const account = accountFor(accountId);
+  if (!account) throw new Error('A Codex account must be named to use a banked reset.');
+  const outcome = await session(account, 'Codex reset', 'a banked reset', async (call) => {
+    let result: unknown;
+    try {
+      result = await call('account/rateLimitResetCredit/consume', {
+        idempotencyKey: randomUUID(), ...(creditId ? { creditId } : {}),
+      });
+    } catch (e) { throw new Error(`Codex did not use the reset: ${e instanceof Error ? e.message : String(e)}`); }
+    const word = codexResetOutcome(result);
+    if (!word) throw new Error('Codex answered the reset with a word this reader does not know. Refresh limits to see what changed.');
+    return word;
+  });
+  cached.delete(account.id);
+  return { outcome, status: await readCodexStatus(true, account.id) };
 }
 
 export async function readCodexModels(force = false, accountId?: string | null): Promise<CodexModels> {

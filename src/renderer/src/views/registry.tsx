@@ -136,7 +136,9 @@ export const VIEW_RENDERERS: Record<Tab, (ctx: ViewContext) => ReactNode> = {
              seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
   ),
   insights: () => <InsightsView />,
-  usage: () => <UsageView />,
+  usage: ({ projectId, projects, providers, openSession }) => (
+    <UsageView projectId={projectId} projects={projects} providers={providers} onOpenSession={openSession} />
+  ),
   recovery: () => <Recovery />,
   learning: ({ projectId, projects, providers, choose, learningTarget }) => (
     <Learning projectId={projectId} projects={projects} providers={providers}
