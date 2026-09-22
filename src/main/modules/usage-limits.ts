@@ -125,7 +125,7 @@ export async function useBankedReset(accountId: string, creditId?: string | null
   const account = accounts.byId(accountId);
   if (!account) throw new Error('That account no longer exists in Wanigan.');
   if (account.harness !== 'codex') {
-    throw new Error(`Wanigan has no way to use a banked reset on a ${account.harness} account. Claude Code offers its own inside a session with /limit-reset.`);
+    throw new Error(`Wanigan has no way to use a banked reset on a ${account.harness} account. Claude Code offers its own inside a session with /limit-reset, which may apply without asking.`);
   }
   const { outcome, status } = await consumeResetCredit(account.id, creditId);
   return { outcome, limits: fromCodexStatus(account, status) };

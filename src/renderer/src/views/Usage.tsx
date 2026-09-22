@@ -153,10 +153,12 @@ function outcomeSentence(outcome: BankedResetOutcome['outcome']): string {
  * Codex reports the bank through the same app-server read that reports the
  * windows, so the count and each credit's expiry are the backend's words and
  * the button is enabled only when it counted one. Claude Code reports its bank
- * only inside a session — `/limit-reset` is the CLI's own offer, gated and
- * confirmed by the CLI — so for a Claude account the button opens a session
- * on that account and types the command; Wanigan never touches the credential
- * and never claims a count it cannot read.
+ * only inside a session, through its own `/limit-reset`, and that command is
+ * two programs behind one name: the banked one asks "Use your reset?" first,
+ * the once-a-week session variant claims the moment it runs. So for a Claude
+ * account the button opens a session on that account and types nothing — the
+ * person runs the command, and whether it asks is the CLI's to decide. Wanigan
+ * never touches the credential and never claims a count it cannot read.
  */
 function BankedResets({ limits, now, onLimits, handoff }: {
   limits: AccountLimits; now: number;
@@ -182,13 +184,14 @@ function BankedResets({ limits, now, onLimits, handoff }: {
       <div className="u-bank">
         <span className="u-bank-head">Banked resets</span>
         <p className="u-bank-line">
-          Claude Code reports a banked reset only inside a session, and uses one only after its own confirmation.
-          This opens a session on this account and runs <code>/limit-reset</code>; the CLI says what it has.
+          Claude Code reports a reset only inside a session, through its own <code>/limit-reset</code>. Some offers
+          ask before using one and some apply it the moment the command runs, so this only opens a session on this
+          account. Run the command yourself when you mean to.
         </p>
         <div className="u-bank-actions">
           <button type="button" className="btn btn-sm" disabled={busy || !handoff.ready} onClick={() => void run()}
                   aria-description={handoff.why ?? undefined}>
-            {busy ? 'Opening a session…' : 'Check for a Claude reset'}
+            {busy ? 'Opening a session…' : 'Open a session on this account'}
           </button>
           {handoff.why && <span className="u-bank-why">{handoff.why}</span>}
         </div>
@@ -509,9 +512,11 @@ export default function Usage({ projectId, projects = [], providers = [], onOpen
   }, []);
 
   /**
-   * Where a Claude reset check can open. The command is the CLI's own, so the
-   * session is a real one on the chosen account, in the project the shell
-   * has selected; without a project there is nowhere to open it.
+   * Where a Claude session can open for a reset check. Nothing is typed into
+   * it: `/limit-reset` can apply a reset without asking, depending on which
+   * offer the account has, so running it is the person's keystroke. The
+   * session is a real one on the chosen account, in the project the shell has
+   * selected; without a project there is nowhere to open it.
    */
   const claudeHandoff = useMemo(() => {
     if (!onOpenSession) return null;
@@ -523,7 +528,7 @@ export default function Usage({ projectId, projects = [], providers = [], onOpen
       ready: why === null, why,
       run: async (accountId: string) => {
         if (!provider || !project) throw new Error(why ?? 'Nowhere to open a session.');
-        const session = await window.wanigan.sessions.create({ providerId: provider.id, projectId: project, accountId, initialPrompt: '/limit-reset' });
+        const session = await window.wanigan.sessions.create({ providerId: provider.id, projectId: project, accountId });
         onOpenSession(session.id);
       },
     };
