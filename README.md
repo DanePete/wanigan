@@ -143,6 +143,14 @@ view**, where Drupal, WordPress and other sites can each be on or off.
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
   as wrong (its own error messages, its console).
+- **With the helper's trace** (being finished; seen so far only against a
+  stand-in): lenses that colour the page by owner, cache, cost, what can be
+  edited and what just changed; a part's hooks, data, cache, cost, revisions
+  and access; the request behind the page (hooks, queries, assets, logs);
+  editing a part where it shows, in the site's own form or a small one;
+  dragging parts the site can reorder, with Undo (a part whose order is in a
+  template becomes a note for an agent); adding blocks from a palette. All of
+  it by keyboard too.
 
 ### Gemini CLI
 
@@ -393,7 +401,9 @@ verification results and the behavior that remains unverified.
   neither was run against a real model.
 - Live view: proven by hand on the owner's own local Drupal and WordPress
   sites, not by the UI sweeps, which have no view to lay
-  over a page. Not built yet: Serve this card (switching which checkout ddev
+  over a page. What is built on the helper's trace (lenses, the Inspector's
+  trace sections, the request, editing and moving in place) is swept only
+  against a stand-in until the helpers send real traces. Not built yet: Serve this card (switching which checkout ddev
   serves), a component's props form, saving WordPress content by hand, and
   Layout Builder and Canvas pieces by their own ids.
 - On your phone: proven in a phone-sized browser against the real phone
