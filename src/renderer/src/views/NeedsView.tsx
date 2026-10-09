@@ -93,7 +93,7 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
   const dismiss = need.sessionId && (need.kind === 'waiting' || need.kind === 'failed' || need.kind === 'interrupted' || need.kind === 'quiet' || need.kind === 'starting')
     ? () => attempt(() => call('sessions.seen', { id: need.sessionId as string }), (m) => toast(m, 'error'))
     : null;
-  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state) } : null);
+  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state), relayed: session.relayed } : null);
   const [replying, setReplying] = useState(false);
   // What happened to the last reply. The row itself stays until the agent's own events clear it.
   const [sent, setSent] = useState<string | null>(null);

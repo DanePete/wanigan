@@ -375,8 +375,12 @@ verification results and the behavior that remains unverified.
   fallback. Codex reports nothing until its first turn begins, so its
   composer refuses until lifecycle evidence arrives. Answer startup questions
   and send the first message in the terminal; use the composer for later turns.
-- Replying from Needs you is offered for Claude Code and Gemini CLI, though
-  Codex's start-of-turn hook was seen in the scenario run.
+- Replying to Codex from Needs you needs its hooks: a Codex session read only
+  from its OSC 9 notifications (they say a turn ended, never that one began)
+  is answered in its terminal, and says so. With its hooks, the reply was
+  proven with the stand-in Codex, and Codex 0.155.1 was seen firing its
+  start-of-turn hook for a pasted message against a stand-in model provider;
+  a reply to a real Codex model turn from Needs you has not been run.
 - Gemini CLI: proven with the installed 0.46 up to its first hook (folder trust
   answered, the hook through the relay, its conversation id learnt); a real
   model turn needs a Gemini login and has not been run. Its usage limit is not

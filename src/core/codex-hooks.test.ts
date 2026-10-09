@@ -8,45 +8,12 @@ import { mkdirSync, renameSync, statSync, utimesSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { test } from 'node:test';
 import Database from 'better-sqlite3';
-import type { ListedHook } from './codex-server.ts';
-import { CodexHooks, codexTrustArgs, type CodexHookProbe } from './codex-hooks.ts';
+import { CodexHooks, codexTrustArgs } from './codex-hooks.ts';
 import { CODEX_EVENTS, codexHookArgs, relayCommand } from './hooks.ts';
 import { CODEX_UNCOUNTED } from './tokens.ts';
-import { FAKE_CODEX, launcher, relay, testCore, tokenOf, waitFor } from './test-support.ts';
+import { codexWithToken, hashOf, relay, snake, stubProbe, testCore, tokenOf, waitFor } from './test-support.ts';
 
 const RELAY = '/data dir/hooks/relay.sh';
-const hashOf = (event: string): string => `sha256:${event.toLowerCase().padEnd(64, '0').slice(0, 64)}`;
-const snake = (event: string): string => event.replace(/[A-Z]/g, (c, i: number) => `${i ? '_' : ''}${c.toLowerCase()}`);
-
-/**
- * A stand-in for `hooks/list`, shaped as codex-cli 0.155.1 answers: each hook
- * given on the command line listed from `/<session-flags>/config.toml`,
- * untrusted until a `hooks.state` flag trusts its exact hash.
- */
-function stubProbe(options: { version?: string | null; drop?: string; trusted?: string; fail?: boolean } = {}): CodexHookProbe & { lists: number } {
-  const probe = {
-    lists: 0,
-    async version() { return options.version === undefined ? 'codex-cli 0.155.1' : options.version; },
-    async list(_bin: string, _path: string, args: readonly string[]): Promise<ListedHook[]> {
-      probe.lists++;
-      if (options.fail) throw new Error('Codex did not answer about its hooks within 12 seconds.');
-      const state = args.find((a) => a.startsWith('hooks.state=')) ?? '';
-      return args.flatMap((arg): ListedHook[] => {
-        const m = /^hooks\.([A-Za-z]+)=\[\{hooks=\[\{type="command",command=("(?:[^"\\]|\\.)*")/.exec(arg);
-        const event = m?.[1];
-        if (!m || !event || event === options.drop) return [];
-        const key = `/<session-flags>/config.toml:${snake(event)}:0:0`;
-        const trusted = state.includes(`"${key}"={enabled=true,trusted_hash="${hashOf(event)}"}`);
-        return [{
-          key, eventName: `${event[0]!.toLowerCase()}${event.slice(1)}`, source: 'sessionFlags', command: JSON.parse(m[2]!) as string,
-          trustStatus: trusted ? options.trusted ?? 'trusted' : 'untrusted', currentHash: hashOf(event),
-        }];
-      });
-    },
-  };
-  return probe;
-}
-
 test('Codex hook flags define each event once, through the relay, and trust exactly the listed hashes', () => {
   const args = codexHookArgs(RELAY);
   assert.equal(args.length, CODEX_EVENTS.length * 2);
@@ -90,11 +57,6 @@ test('Codex hooks: anything short of every hook trusted launches without them, a
   await hooks.prepare('codex', '/usr/bin');
   assert.equal(failing.lists, 2, 'a probe that failed outright is asked again next launch');
 });
-
-/** A stand-in Codex that also prints its session token, so a test can relay hooks as it. */
-const codexWithToken = (provider: Parameters<typeof launcher>[0]) => (provider === 'codex'
-  ? { file: '/bin/sh', args: ['-c', `echo "TOKEN=$WANIGAN_TOKEN"; ${FAKE_CODEX}`, 'fake-codex'] }
-  : launcher(provider));
 
 const launchLine = async (core: Awaited<ReturnType<typeof testCore>>['core'], id: string): Promise<string> =>
   waitFor('launch line', () => core.sessions.replay(id).replay.match(/codex ready .*/)?.[0].trim());

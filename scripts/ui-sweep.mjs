@@ -109,8 +109,9 @@ try {
     await page.evaluate(async (body) => { await fetch('/test/hook', { method: 'POST', body: JSON.stringify(body) }); }, { sessionId: shipping?.id, event: 'Stop', input: {} });
     await page.goto(`${base}#/needs`);
     await page.waitForSelector('.need-permission .ask-text', { timeout: 8000 }).catch(() => failures.push(`${theme}/needs: no permission row shows what it asks`));
-    // Why a row offers no Reply comes from the live sessions, read after the needs: wait for it, not race it.
-    await page.waitForSelector('.need-waiting .need-why', { timeout: 5000 }).catch(() => {});
+    // Where a reply can go comes from the live sessions, read after the needs: wait for it, not race it.
+    // The demo's Codex reports through its own hooks, so it says when a message starts its turn: Reply.
+    const codexReply = await page.waitForSelector('.need-waiting .need-row:has-text("Search endpoint with cursor pagination") .need-reply-open', { timeout: 5000 }).catch(() => null);
     const asked = await page.evaluate(() => ({
       blocks: [...document.querySelectorAll('.need-permission .ask-text')].map((p) => p.textContent),
       warnings: [...document.querySelectorAll('.need-permission .ask-warning')].map((w) => w.textContent.trim()),
@@ -120,11 +121,12 @@ try {
     if (!asked.blocks.includes('pnpm exec axe http://localhost:3000/checkout')) failures.push(`${theme}/needs: the exact command is not shown (${asked.blocks.join(' | ')})`);
     if (asked.warnings.join() !== 'This command contains hidden characters') failures.push(`${theme}/needs: hidden-character warnings were ${JSON.stringify(asked.warnings)}`);
     if (asked.marks.join() !== '\u{27E8}U+200B\u{27E9}') failures.push(`${theme}/needs: the zero-width space was not spelled out (${asked.marks.join()})`);
-    if (!/not yet seen Codex report when a message starts its turn/.test(asked.why)) failures.push(`${theme}/needs: a Codex row does not say why it offers no Reply`);
+    if (!codexReply) failures.push(`${theme}/needs: a Codex row whose hooks report offers no Reply`);
+    if (asked.why) failures.push(`${theme}/needs: a waiting row refuses a reply: ${asked.why}`);
     await page.$eval('.need-permission .need-row:has(.ask-warning)', (el) => el.scrollIntoView({ block: 'nearest' })).catch(() => {});
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-needs-hidden.png`) });
-    await page.click('.need-waiting .need-reply-open');
+    await page.click('.need-waiting .need-row:has-text("Free shipping banner") .need-reply-open');
     await page.waitForSelector('.need-reply textarea');
     if (!(await page.evaluate(() => document.activeElement?.matches('.need-reply textarea')))) failures.push(`${theme}/needs: Reply did not put the cursor in its box`);
     await page.keyboard.type('Show it in the cart drawer too');
@@ -1471,7 +1473,7 @@ try {
     await page.goto(`${base}#/needs`);
     if (await page.$('.chatter-x')) await page.click('.chatter-x');
     await page.waitForSelector('.need-waiting .need-reply-open');
-    await page.click('.need-waiting .need-reply-open');
+    await page.click('.need-waiting .need-row:has-text("Free shipping banner") .need-reply-open');
     await page.keyboard.type(`Show it in the cart drawer too (${theme})`);
     await page.keyboard.press('Enter');
     await page.waitForSelector('.need-waiting .need-sent', { timeout: 5000 }).catch(() => failures.push(`${theme}/reply: the row never said what happened`));

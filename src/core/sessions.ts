@@ -807,6 +807,12 @@ export class Sessions {
         if (live.hookWait) { clearTimeout(live.hookWait); live.hookWait = null; }
       }
     }
+    // Kept, so the window can tell an agent that says when a message starts a
+    // turn from a Codex read only from its notifications (attention.ts replyRoute).
+    if (relayed && live && !row.relayed) {
+      this.ctx.db.prepare('UPDATE sessions SET relayed = 1 WHERE id = ?').run(sessionId);
+      row = this.row(sessionId);
+    }
     if (relayed && row.provider === 'codex' && this.learnThread(row, event, input)) row = this.row(sessionId);
     if (relayed && row.provider === 'gemini' && this.learnGemini(row, event, input)) row = this.row(sessionId);
     const prev = row.state as SessionState;

@@ -6,7 +6,7 @@ import { pickWatched, topNeeds } from './watch.ts';
 const session = (id: string, startedAt: number, extra: Partial<Session> = {}): Session => ({
   id, projectId: 'p', cardId: null, cardKey: null, provider: 'claude', accountId: null, title: id, state: 'working' as SessionState,
   activity: null, pid: 1, exitCode: null, conversationId: null, model: null, effort: null, cwd: null, startedAt, endedAt: null,
-  lastEventAt: null, limit: null, remote: false, transcriptPath: null, ...extra,
+  lastEventAt: null, limit: null, remote: false, relayed: false, transcriptPath: null, ...extra,
 });
 const need = (kind: Need['kind'], sessionId: string | null, since = 1): Need => ({
   kind, since, sessionId, projectId: 'p', projectName: 'P', projectKey: 'P', cardId: null, cardKey: null, provider: null, title: kind, detail: null,

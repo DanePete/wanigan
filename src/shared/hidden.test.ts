@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { clampParts, reveal, revealText, revealWarning } from './hidden.ts';
-import { ASK_MAX_CHARS, permissionAsk, replyRoute } from './attention.ts';
+import { ASK_MAX_CHARS, CODEX_NOTIFICATIONS_ONLY, permissionAsk, replyRoute } from './attention.ts';
 
 const kinds = (text: string): string[] => reveal(text).parts.flatMap((p) => (p.flag ? [p.flag.kind] : []));
 const code = (cp: number): string => `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -141,15 +141,19 @@ test('a permission request keeps exactly what it asks', () => {
 });
 
 test('Reply is offered where a message is known to land and the row clears on evidence', () => {
-  const live = (provider: 'claude' | 'codex' | 'shell', state: 'waiting' | 'working' = 'waiting') => ({ provider, state, live: true });
+  const live = (provider: 'claude' | 'codex' | 'shell', state: 'waiting' | 'working' = 'waiting', relayed = true) => ({ provider, state, live: true, relayed });
   assert.deepEqual(replyRoute({ kind: 'waiting', sessionId: 's' }, live('claude')), { ok: true });
   assert.deepEqual(replyRoute({ kind: 'question', sessionId: 's' }, live('claude', 'working')), { ok: true });
-  const codex = replyRoute({ kind: 'waiting', sessionId: 's' }, live('codex'));
-  assert.equal(codex?.ok, false);
-  assert.match(codex && !codex.ok ? codex.why : '', /not yet seen Codex report when a message starts its turn/);
-  assert.equal(replyRoute({ kind: 'question', sessionId: 's' }, live('codex')), null, 'a Codex question is answered on its card');
+  // Codex whose own hooks report says when a message starts its turn, as Claude does.
+  assert.deepEqual(replyRoute({ kind: 'waiting', sessionId: 's' }, live('codex')), { ok: true });
+  assert.deepEqual(replyRoute({ kind: 'question', sessionId: 's' }, live('codex', 'working')), { ok: true });
+  // Codex read only from its notifications does not: they say a turn ended, never that one began.
+  const codex = replyRoute({ kind: 'waiting', sessionId: 's' }, live('codex', 'waiting', false));
+  assert.deepEqual(codex, { ok: false, why: CODEX_NOTIFICATIONS_ONLY });
+  assert.match(CODEX_NOTIFICATIONS_ONLY, /^Reply in its terminal: .*never when one starts\.$/);
+  assert.equal(replyRoute({ kind: 'question', sessionId: 's' }, live('codex', 'waiting', false)), null, 'its question is answered on its card');
   assert.equal(replyRoute({ kind: 'permission', sessionId: 's' }, live('claude')), null, 'permission is answered in the terminal');
-  assert.equal(replyRoute({ kind: 'waiting', sessionId: 's' }, { provider: 'claude', state: 'waiting', live: false }), null);
+  assert.equal(replyRoute({ kind: 'waiting', sessionId: 's' }, { provider: 'claude', state: 'waiting', live: false, relayed: true }), null);
   assert.equal(replyRoute({ kind: 'question', sessionId: null }, null), null);
   assert.equal(replyRoute({ kind: 'waiting', sessionId: 's' }, live('shell')), null);
 });

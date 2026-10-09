@@ -418,6 +418,13 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX live_edits_by_project ON live_edits (project_id, created_at);
   `,
+  `
+  -- 1 once the agent's own hooks have reported through Wanigan's relay in this
+  -- session, so it says itself when a message starts a turn. A Codex session
+  -- reading only its OSC 9 notifications stays 0: they say a turn ended, never
+  -- that one began.
+  ALTER TABLE sessions ADD COLUMN relayed INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

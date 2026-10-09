@@ -166,27 +166,33 @@ export function permissionAsk(tool: unknown, input: unknown): PermissionAsk | nu
  * the queue the session's composer uses. `null` when the need is not one a
  * message answers; otherwise either yes, or no with the reason to show.
  *
- * Claude Code and Gemini CLI: their hooks say when they are idle (the message
- * is sent then) and when a message starts a turn (UserPromptSubmit, Gemini's
- * BeforeAgent), so the row clears on the agent's own evidence. Gemini takes one
- * only after its first turn, as its composer does (the core says so).
- * Codex's OSC 9 says when a turn ends but not when one starts, and its
- * UserPromptSubmit hook (when it has hooks) has not been seen firing yet;
- * Wanigan would have to assume the message landed, and the row would clear on
- * that assumption.
+ * Claude Code, Gemini CLI, and Codex once its own hooks report: they say when
+ * they are idle (the message is sent then) and when a message starts a turn
+ * (UserPromptSubmit, Gemini's BeforeAgent), so the row clears on the agent's
+ * own evidence. Gemini takes one only after its first turn, as its composer
+ * does (the core says so). Codex 0.155.1 fires UserPromptSubmit, with the
+ * prompt, for a message pasted in the way the composer types it (seen against
+ * the real binary with a stand-in model provider). A question's answer goes on
+ * its card, which settles it, and to the agent through the same queue.
+ * A Codex read only from its OSC 9 notifications is different: they say a turn
+ * ended, never that one began, so Wanigan would have to assume the message
+ * landed and clear the row on that assumption. Its question is answered on
+ * its card.
  */
 export function replyRoute(
   need: Pick<Need, 'kind' | 'sessionId'>,
-  session: { provider: Provider; state: SessionState; live: boolean } | null,
+  session: { provider: Provider; state: SessionState; live: boolean; relayed: boolean } | null,
 ): { ok: true } | { ok: false; why: string } | null {
   if (need.kind !== 'waiting' && need.kind !== 'question') return null;
   if (!need.sessionId || !session || !session.live || session.provider === 'shell') return null;
-  if (session.provider === 'codex') {
-    // A question is still answered on its card, as it always was.
-    return need.kind === 'question' ? null : { ok: false, why: 'Reply in its terminal: Wanigan has not yet seen Codex report when a message starts its turn.' };
+  if (session.provider === 'codex' && !session.relayed) {
+    return need.kind === 'question' ? null : { ok: false, why: CODEX_NOTIFICATIONS_ONLY };
   }
   return { ok: true };
 }
+
+/** Why a Codex session without its hooks gets no Reply. */
+export const CODEX_NOTIFICATIONS_ONLY = 'Reply in its terminal: this Codex session reports only through its notifications, which say when a turn ends but never when one starts.';
 
 /** Needs, most urgent kind first, then oldest first within a kind. */
 export function rankNeeds(needs: Need[]): Need[] {

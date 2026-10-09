@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { CoreClient } from '../client/client.ts';
 import type { Provider, Session } from '../shared/model.ts';
+import type { CodexHookProbe } from './codex-hooks.ts';
+import type { ListedHook } from './codex-server.ts';
 import { Core, type CoreOptions } from './core.ts';
 
 export const CLI = resolve(import.meta.dirname, '../cli/index.ts');
@@ -23,6 +25,43 @@ export const FAKE_CODEX = [
   '  esac',
   'done',
 ].join('\n');
+
+/** A stand-in Codex that also prints its session token, so a test can relay hooks as it. */
+export const codexWithToken = (provider: Provider): { file: string; args: string[] } => (provider === 'codex'
+  ? { file: '/bin/sh', args: ['-c', `echo "TOKEN=$WANIGAN_TOKEN"; ${FAKE_CODEX}`, 'fake-codex'] }
+  : launcher(provider));
+
+export const hashOf = (event: string): string => `sha256:${event.toLowerCase().padEnd(64, '0').slice(0, 64)}`;
+export const snake = (event: string): string => event.replace(/[A-Z]/g, (c, i: number) => `${i ? '_' : ''}${c.toLowerCase()}`);
+
+/**
+ * A stand-in for `hooks/list`, shaped as codex-cli 0.155.1 answers: each hook
+ * given on the command line listed from `/<session-flags>/config.toml`,
+ * untrusted until a `hooks.state` flag trusts its exact hash.
+ */
+export function stubProbe(options: { version?: string | null; drop?: string; trusted?: string; fail?: boolean } = {}): CodexHookProbe & { lists: number } {
+  const probe = {
+    lists: 0,
+    async version() { return options.version === undefined ? 'codex-cli 0.155.1' : options.version; },
+    async list(_bin: string, _path: string, args: readonly string[]): Promise<ListedHook[]> {
+      probe.lists++;
+      if (options.fail) throw new Error('Codex did not answer about its hooks within 12 seconds.');
+      const state = args.find((a) => a.startsWith('hooks.state=')) ?? '';
+      return args.flatMap((arg): ListedHook[] => {
+        const m = /^hooks\.([A-Za-z]+)=\[\{hooks=\[\{type="command",command=("(?:[^"\\]|\\.)*")/.exec(arg);
+        const event = m?.[1];
+        if (!m || !event || event === options.drop) return [];
+        const key = `/<session-flags>/config.toml:${snake(event)}:0:0`;
+        const trusted = state.includes(`"${key}"={enabled=true,trusted_hash="${hashOf(event)}"}`);
+        return [{
+          key, eventName: `${event[0]!.toLowerCase()}${event.slice(1)}`, source: 'sessionFlags', command: JSON.parse(m[2]!) as string,
+          trustStatus: trusted ? options.trusted ?? 'trusted' : 'untrusted', currentHash: hashOf(event),
+        }];
+      });
+    },
+  };
+  return probe;
+}
 
 /** Agents are stand-ins: an interactive sh, and a "claude" that prints its token and waits. */
 export function launcher(provider: Provider): { file: string; args: string[] } {

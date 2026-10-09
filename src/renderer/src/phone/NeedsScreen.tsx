@@ -40,7 +40,7 @@ function NeedItem({ need, session }: { need: Need; session: Session | null }) {
   const nav = useNav();
   const toast = useToast();
   const [replying, setReplying] = useState(false);
-  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state) } : null);
+  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state), relayed: session.relayed } : null);
   const asks = need.kind === 'permission' ? need.asks ?? [] : [];
   const resume = async (): Promise<void> => {
     const s = await attempt(() => call('sessions.resume', { id: need.sessionId as string }), (m) => toast(m, 'error'));
