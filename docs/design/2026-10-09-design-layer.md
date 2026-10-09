@@ -1,0 +1,273 @@
+# The design layer: edit live, implement natively, prove it pixel for pixel
+
+Status: draft, 9 October 2026. Research behind it: `reports/Real time visual
+editors.md` and the notes in `research_notes/Design layer and native fidelity/`
+(local, not in git).
+
+## The problem
+
+The owner wants to change a real Drupal or WordPress site the way Wix or
+Webflow let you change theirs: click the words and type, swap a picture, change
+a colour, a font, a size or the space around something, and see it at once.
+
+Every tool that does this today pays for it in one of two ways. Site builders
+and page builders (Wix, Webflow, Elementor, Drupal Canvas) store the design in
+their own data model and render it themselves, so the site depends on them.
+AI app builders (v0, Lovable, Bolt) gave up direct edits in 2026 and now have a
+model rewrite the source, which costs tokens, lands in the wrong place and
+cannot be checked.
+
+His sites are neither. They are ordinary Drupal and WordPress sites with their
+own themes, most without Canvas, and the result has to be the site's own code
+and content: what a good developer would have written by hand, deployed the
+usual way, with no Wanigan in production.
+
+## The idea
+
+Three stages, each with one job.
+
+1. **Edit, in a layer.** Changes apply to the live view instantly, inside a
+   layer that Wanigan keeps on its own side. Nothing in the site changes while
+   the owner designs, so editing is fast, free and risk-free.
+2. **Implement, natively.** "Make it real" turns each change into how this site
+   would really do it: content into its field or block through core, a colour
+   into the theme's token, a component's style into that component's own CSS or
+   SCSS source, a one-off into the right native hook. Deterministically where
+   the target is exact; through a coding agent with a precise brief where it
+   needs judgement.
+3. **Verify, pixel for pixel.** Wanigan renders the page without the layer and
+   compares it with the page as designed, at every breakpoint. Where they
+   differ, it says which change and where. A change leaves the layer only when
+   the native page matches it.
+
+The layer gives the real-time feel. The verification gives the fidelity. The
+agent, when one is used, checks its own work against the same test.
+
+## Stage 1: the layer
+
+### What an edit is
+
+One record per change, kept in an append-only log so undo and redo are exact:
+
+| Field | What it holds |
+|---|---|
+| `target` | The part's identity from the trace (below), never a DOM path alone |
+| `scope` | `this` (one element), `kind` (every instance of this component, block type or field), or `site` (a token) |
+| `breakpoint` | `all`, or one of the theme's breakpoints |
+| `change` | `text` (new value), `image` (new asset, alt), `style` (property → value or token), `token` (name → value), `insert` (a component, block or pattern at a place, with its props), `remove` (one placed item) |
+| `before` | The computed value or content as it was, for undo and for the verify step |
+| `state` | `draft`, `implemented`, `verified`, `retired`, or `orphaned` |
+| `by`, `at` | Who made it (owner, or an agent through MCP) and when |
+
+### Identity that survives a reload
+
+The trace's part ids (`p237`) are numbered in render order, so they belong to
+a position, not to a part. Seen on a real Drupal site on 9 October 2026: after
+two blocks swapped places, the ids stayed where they were and the blocks under
+them changed. The layer therefore keys each edit on what the part is, which the
+helpers already report:
+
+- content: entity type, UUID, field, delta, language (Drupal); post id, block
+  path and block name (WordPress);
+- components: the single-directory component id or block name, plus its path
+  among its siblings;
+- configuration: block id, menu link id, template part slug;
+- fallback, for markup no helper explains: a CSS selector path plus a hash of
+  the element's text, and the edit is marked `fragile`.
+
+After every load the page script resolves each edit's identity to elements and
+tags them with a dev-only attribute (`data-wl-edit`). The layer's CSS uses only
+those attributes, so nothing it does can reach an element it was not meant for.
+An edit whose identity no longer resolves becomes `orphaned`, is listed, and is
+never applied to whatever now sits in its place.
+
+### How it renders
+
+The preview must predict the native result, not just look like it. So a style
+edit is previewed the way it will be implemented:
+
+- **Every instance of a component (`kind`)**: Wanigan finds the theme rule that
+  actually sets the property (Chrome's own matched-rules data, with the cascade
+  worked out as DevTools does, following `var(--x)` to where `--x` is set) and
+  edits that rule in place through the DevTools protocol. When the source map
+  or the theme's conventions lead to that rule's line in SCSS or CSS, the native
+  change is the same value at the same place, so specificity, layer and load
+  order cannot differ between preview and result.
+- **One element (`this`), tokens, and any rule that cannot be found**: the
+  layer's own stylesheet, scoped by `data-wl-edit` and by media queries for
+  breakpoints. It wins with `!important` and a doubled attribute selector:
+  Chromium places stylesheets injected by Electron before the page's own, so a
+  plain rule would lose ties. Whether the native rule wins is proven in Stage 3.
+
+Each change repaints at once, without a reload.
+- **Text** patches the traced node's text in place (plain text, or the field's
+  allowed markup through a schema-checked editor: no `contenteditable` free-for-all).
+- **Images** swap the `src`/`srcset` of the traced image to a local preview of
+  the new file, keeping its box, so layout changes show honestly.
+- **Tokens** override the theme's custom property (`--color-accent`,
+  `--wp--preset--color--accent`) on `:root`, so every use repaints together.
+- **Adding a component** renders it on the server, alone, through the helper's
+  piece route with the props the owner chose, and places that HTML where it
+  goes, so the preview is the site's own markup and CSS. **Removing one** hides
+  it and marks the gap; nothing is deleted until it is implemented.
+
+### Where it lives
+
+In Wanigan's data folder, per project, never in the site and never in the
+owner's repository. It survives a restart and a crash. A pending-edit tray
+lists every draft with before and after, per-edit undo, and the reach of each
+(this page, 14 pages, every page).
+
+## Stage 2: implement natively
+
+### The router
+
+Each edit is routed to one native home by what it is and what the site is. The
+site's facts come from the trace and a one-time scan of the theme (its build,
+its tokens, its breakpoints, whether it is a custom theme).
+
+| Edit | Native home | How |
+|---|---|---|
+| Text, image, alt (one instance) | The field or block that holds it, through core (Drupal Entity API with `validate()`, a new revision; WordPress posts and media REST) | Deterministic, through the helper, with a base hash and a 409 if the site changed |
+| Token (site-wide colour, font, size, space) | The theme's token: `theme.json` presets (WordPress), the theme's `:root` custom properties or its SCSS variables (Drupal) | Deterministic for `theme.json` and plain CSS custom properties; agent for SCSS maps and Tailwind config |
+| Style, every instance of a component | That component's own source: its SDC `.css`, its SCSS partial, or its block stylesheet, found from the matched rule and source maps | Deterministic when the rule and file are plain CSS; agent otherwise |
+| Style, one instance | Where core stores one instance's style: WordPress block-support attributes (preset references first); Drupal, a field or component prop that already varies it | Deterministic for block supports; otherwise an agent adds a native hook (a modifier class from a field or a variant prop) and a rule in the component's CSS |
+| Template text | The theme's Twig or PHP template | A diff the owner approves, or an agent |
+| Add a component, block or pattern | Where core places it on this page: a Layout Builder section, a block region, an entity's component or reference field, WordPress block markup in the post, template or part | Deterministic through the helpers' existing insert paths, with a base hash, a 409 and undo |
+| Remove one | The same place: take the placement or reference out | Deterministic; never deletes the content entity, block content or media it showed. Shared placements (a block on every page) say their reach and ask first |
+| A component placed by a template | The template itself | A diff the owner approves, or an agent |
+
+Finding where a style lives in the theme's source, in this order:
+
+1. The rule that wins, from Chrome's matched rules for the element (the
+   protocol lists every matching rule with its source ranges; which one wins
+   is worked out as DevTools does). A `var(--x)` value is followed to where
+   `--x` is set, which may be the real place to change.
+2. That rule's line in the original source, through the stylesheet's source
+   map (ECMA-426). Drupal's CSS aggregation strips the map link, so Wanigan
+   reads styles with aggregation off.
+3. No map: the theme's conventions (a `.scss` or `.pcss.css` beside the CSS, a
+   single-directory component's own file), then a one-time build with maps in
+   a scratch copy, then matching the rule by its text.
+4. Tailwind: the class list in the Twig or PHP template, or the `@theme` token.
+   Its source maps lead into `node_modules`, not to the edit.
+
+Rules for every write:
+
+- Only inside the project's custom theme, custom modules and content. Never
+  core, contrib, vendor or a parent theme someone else ships. If the active
+  theme is not custom, the first step is creating a subtheme or child theme,
+  as its own reviewed change.
+- Every code change is a diff in Changes. Nothing is committed for the owner.
+- A theme build (Sass, PostCSS, Vite, Gulp, Tailwind) runs only on the owner's
+  click, as argv without a shell, with its output shown.
+- An agent is started only on the owner's click (it spends tokens). Its brief
+  carries the edits, the computed styles before and after, the matched source
+  rules and files, the tokens, the breakpoints, and the verification it must
+  pass, which it runs itself through Wanigan's MCP tools.
+
+## Stage 3: verify, pixel for pixel
+
+No design-to-code tool measures its fidelity, and agents' own screenshot checks
+do not predict it (an independent comparison found no correlation). So Wanigan
+runs the check itself, the same way every time, and an agent's own check never
+counts.
+
+**Two renders that can be compared.** The design (the native page with the
+layer) and the result (the native page without it), in hidden windows of the
+same size, device pixel ratio, zoom, GPU mode and session, never throttled.
+Before each capture: web fonts loaded, animations, transitions and the caret
+switched off, lazy images loaded and decoded, the page settled. Full pages are
+captured through the DevTools protocol, not `capturePage`, which takes only
+the viewport.
+
+**Calibrated noise.** Each version is captured twice first. The difference
+between a version and itself is the noise floor, and the tolerance is stated
+as two numbers in the manner of the web-platform-tests "fuzzy" annotation (the
+largest colour difference and the number of pixels allowed), never as a
+percentage, with anti-aliasing forgiveness off for the verdict.
+
+**In this order, stopping at the first failure:**
+
+1. **Styles and boxes, exactly.** A DOM snapshot of both renders: for every
+   element an edit touched, the computed values of its properties and its box
+   must be equal. This says exactly which property is off.
+2. **Pixels.** The two full-page captures, within the calibrated tolerance; a
+   difference is boxed and tied to its edit.
+3. **The rest of the page.** Outside the edited elements, the result must equal
+   the page as it was before the edits, so a change that leaked is caught.
+4. **States and edges.** Hover, focus and active forced on the touched
+   elements; each breakpoint and one pixel either side; dark mode and reduced
+   motion where the theme answers them; long, short and empty text for text
+   edits. Drupal pages are checked with CSS aggregation off and on.
+
+An edit is `verified` when all four pass everywhere it reaches (pages sampled
+from Go to's index when it reaches many). The owner then retires it; retired
+edits are archived, not deleted. An agent's implementation gets at most three
+automatic rounds of "verify, give it the failures, try again"; after that the
+evidence goes to the owner.
+
+**What an agent is given.** The edits as records (computed values before and
+after, the tokens, the matched rules and their source lines, the
+breakpoints), plus the design and current screenshots, as intent rather than
+coordinates. Measured on design-to-code tasks, structured data with an image
+beats an image alone, while coordinates push models to absolute positioning.
+
+## The component library
+
+A view of every component the site can place, so the owner sees what exists
+before adding it:
+
+- **What is listed:** Drupal's single-directory components and placeable
+  blocks, through core's own plugin managers; WordPress's registered block
+  types, patterns and block styles, through core's registries. Each with its
+  name, its source, its props and slots, and the module, plugin or theme it
+  comes from.
+- **A picture of each:** rendered alone through the helper's piece route with
+  example props (a component's schema examples, a block's `example`, a
+  pattern as written), at phone and desktop widths, in a hidden window, cached
+  until the component's files change.
+- **Where it is used:** the pages that show it, from Go to's index and the
+  traces the view has kept.
+- **From there:** add it to the page (drag it onto the live view, or choose it
+  and click where it goes), open its source in the Code tab, or ask an agent
+  about it.
+- Agents read the same library through an MCP tool, so a request can name a
+  real component instead of describing one.
+
+## What this does not promise
+
+- Content that differs between renders (dates, random order, personalisation)
+  is masked, not verified.
+- A text format may change saved markup (Drupal filters, WordPress kses). The
+  verify step shows the difference; it does not hide it.
+- Interaction states (hover, focus) and other content lengths are verified only
+  where the edit names them.
+
+## Phases
+
+1. **Layer and content.** Identity, the edit log, live injection, the tray,
+   scopes; text and images implemented through core and verified; the verify
+   loop (calibration, styles and boxes, pixels, the rest of the page).
+2. **Components.** The library with pictures; adding and removing on the page,
+   implemented through the helpers' insert paths and a new remove path.
+3. **Styles, deterministic.** Tokens in `theme.json` and plain custom
+   properties; WordPress block supports; Drupal component CSS in plain files;
+   editing the winning rule in place for `kind` edits.
+4. **Sources and agents.** Source maps to SCSS and PostCSS, Tailwind, the theme
+   build, the agent brief and its `live_verify` tool.
+5. **Themes and reach.** Creating a subtheme or child theme; reach checks
+   across many pages.
+
+## Still to prove
+
+The research settled the approach; these need a probe before they are relied on:
+
+- Whether DevTools virtual time works in Electron (to freeze clocks and timers).
+- Whether full-page capture through Electron's debugger is reliable at every
+  width, and whether GPU and software rendering differ on macOS.
+- Where Chromium puts a DevTools-edited rule in the cascade.
+- Whether Sass maps a declaration written by a mixin to the mixin or to its
+  `@include`.
+- How each CMS orders its stylesheets on a real page, which decides where a
+  native rule lands.
