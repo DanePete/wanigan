@@ -35,6 +35,11 @@ final class TraceBuilder {
   private array $palette = [];
   private string $theme;
 
+  /**
+   * Each present part's identity (Identity), by part id.
+   */
+  private array $identities = [];
+
   public function __construct(private readonly Recorder $recorder) {
     $this->theme = \Drupal::theme()->getActiveTheme()->getName();
   }
@@ -46,6 +51,14 @@ final class TraceBuilder {
     $html = self::sanitize($html);
     $this->scan($html);
     $this->countQueries();
+    try {
+      $this->identities();
+    }
+    catch (\Throwable $e) {
+      // Parts that cannot be named are still traced, without an identity.
+      $this->identities = [];
+      \Drupal::logger('wanigan_live')->warning('The live view could not name the parts of this page: @message (@file:@line)', ['@message' => $e->getMessage(), '@file' => basename($e->getFile()), '@line' => $e->getLine()]);
+    }
     $parts = [];
     foreach ($this->order as $id) {
       $parts[] = $this->part($id);
@@ -157,6 +170,43 @@ final class TraceBuilder {
         if ($at !== FALSE) {
           array_splice($stack, $at);
         }
+      }
+    }
+  }
+
+  /**
+   * What each part in the page names, in page order (Identity::of()). A
+   * component is named by the key of the nearest part around it that has an
+   * identity, and by which of its id it is there, counted in page order: so
+   * it waits for the page, which says where each part sits.
+   */
+  private function identities(): void {
+    $keys = [];
+    $seen = [];
+    foreach ($this->order as $id) {
+      $p = $this->recorder->parts[$id];
+      if ($p['kind'] === 'component') {
+        $name = Identity::name($p['meta']['component']['id'] ?? NULL);
+        if ($name === NULL) {
+          continue;
+        }
+        $within = NULL;
+        for ($at = $this->parent[$id] ?? NULL; $at !== NULL; $at = $this->parent[$at] ?? NULL) {
+          if (isset($keys[$at])) {
+            $within = $keys[$at];
+            break;
+          }
+        }
+        $slot = ($within ?? '') . "\n" . $name;
+        $seen[$slot] = ($seen[$slot] ?? -1) + 1;
+        $identity = Identity::component($name, $within, $seen[$slot]);
+      }
+      else {
+        $identity = Identity::of($p);
+      }
+      if ($identity !== NULL) {
+        $this->identities[$id] = $identity;
+        $keys[$id] = Identity::key($identity);
       }
     }
   }
@@ -280,6 +330,9 @@ final class TraceBuilder {
     }
     if (!empty($p['alternatives'])) {
       $out['alternatives'] = $p['alternatives'];
+    }
+    if (isset($this->identities[$id])) {
+      $out['identity'] = $this->identities[$id];
     }
     return $out;
   }
