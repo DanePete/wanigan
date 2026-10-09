@@ -26,7 +26,7 @@ html:not(.js) .mega__item:focus-within .mega__panel { visibility: visible; opaci
 /* Header tools */
 .header-tool .search-block-form form, .header-tool form.search-block-form { display: flex; align-items: center; }
 .header-tool .search-block-form .form-item, .header-tool .form-item { margin: 0; }
-.header-tool input[type="search"] { width: 11rem; min-height: 2.5rem; padding: 0.5rem 0.9rem 0.5rem 2.3rem; border-radius: 999px; background: var(--ns-card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357625c' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='M16 16l4.5 4.5'/%3E%3C/svg%3E") 0.8rem 50% / 1rem no-repeat; transition: width var(--ns-ease); }
+.header-tool input[type="search"] { width: clamp(7.5rem, 12vw, 11rem); min-height: 2.5rem; padding: 0.5rem 0.9rem 0.5rem 2.3rem; border-radius: 999px; background: var(--ns-card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2357625c' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6.5'/%3E%3Cpath d='M16 16l4.5 4.5'/%3E%3C/svg%3E") 0.8rem 50% / 1rem no-repeat; transition: width var(--ns-ease); }
 .header-tool input[type="search"]:focus { width: 14rem; }
 .header-tool .form-actions { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(1px, 1px, 1px, 1px); }
 .lang-switch { display: flex; gap: 0.1rem; margin: 0; padding: 0.2rem; list-style: none; border: 1px solid var(--ns-line); border-radius: 999px; background: var(--ns-card); }

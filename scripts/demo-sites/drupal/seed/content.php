@@ -115,33 +115,37 @@ foreach ($products as $p) {
  * Makes sure a node's latest revision is a draft with these values, above
  * its published one: a change waiting for review.
  */
-function ns_pending_draft(int $nid, array $values, string $log, int $uid): void {
+function ns_pending_draft(int $nid, array $values, string $log, $author): void {
   $storage = \Drupal::entityTypeManager()->getStorage('node');
   $latest = $storage->loadRevision($storage->getLatestRevisionId($nid));
   if (!$latest->isDefaultRevision()) {
     $same = TRUE;
     foreach ($values as $field => $value) {
-      $probe = clone $latest;
-      $probe->set($field, $value);
-      $same = $same && $probe->get($field)->equals($latest->get($field));
+      $want = is_array($value) ? trim((string) ($value['value'] ?? '')) : (string) $value;
+      $have = trim((string) $latest->get($field)->value);
+      $same = $same && (is_numeric($want) ? (float) $want === (float) $have : $want === $have);
     }
     if ($same) {
       return;
     }
   }
+  // Saved as the person who wrote it, so the moderation state is theirs.
+  $switcher = \Drupal::service('account_switcher');
+  $switcher->switchTo($author);
   $draft = $storage->createRevision($latest, FALSE);
   foreach ($values as $field => $value) {
     $draft->set($field, $value);
   }
   $draft->set('moderation_state', 'draft');
   $draft->setRevisionLogMessage($log);
-  $draft->setRevisionUserId($uid);
+  $draft->setRevisionUserId($author->id());
   $draft->save();
+  $switcher->switchBack();
 }
 
 foreach ($products as $p) {
   if (!empty($p['draft'])) {
-    ns_pending_draft($made[$p['slug']]->id(), ['field_price' => $p['draft']['price'], 'body' => ns_text($p['draft']['body'])], $p['draft']['log'], $people['sam']->id());
+    ns_pending_draft($made[$p['slug']]->id(), ['field_price' => $p['draft']['price'], 'body' => ns_text($p['draft']['body'])], $p['draft']['log'], $people['sam']);
   }
 }
 ns_say(count($made) . ' products (in French too), one with a draft waiting for review');
@@ -158,11 +162,13 @@ foreach ($articles as $a) {
     $refs[] = ['target_id' => $tags[$tag]->id()];
   }
   $state = $a['state'] ?? 'published';
+  \Drupal::service('account_switcher')->switchTo($people[$a['author']]);
   $node = ns_content('node', 'article:' . $a['slug'], [
     'type' => 'article',
     'langcode' => 'en',
     'title' => $a['title'],
     'uid' => $people[$a['author']]->id(),
+    'revision_uid' => $people[$a['author']]->id(),
     'status' => (int) ($state === 'published'),
     'moderation_state' => $state,
     'promote' => 0,
@@ -174,6 +180,7 @@ foreach ($articles as $a) {
     'body' => ns_text($a['body']),
     'path' => ['alias' => '/journal/' . $a['slug'], 'pathauto' => 0],
   ]);
+  \Drupal::service('account_switcher')->switchBack();
   if (!empty($a['fr'])) {
     ns_translate($node, 'fr', [
       'title' => $a['fr']['title'],

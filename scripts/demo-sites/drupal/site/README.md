@@ -9,7 +9,7 @@ sale, and every name, word and picture is invented.
 | Environment | Address |
 | --- | --- |
 | Local | https://northstar-demo.ddev.site |
-| Live | https://northstar-live.localtest.me |
+| Live | https://northstar-live.127.0.0.1.nip.io |
 
 Live is a stand-in: the same code serving a copy of the database, with
 production's settings and a few differences, rebuilt by each build.

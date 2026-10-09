@@ -212,6 +212,18 @@ ns_display('view', 'node', 'product', 'default', [
   'field_guide' => ['type' => 'link', 'label' => 'hidden', 'settings' => ['trim_length' => 80, 'rel' => '', 'target' => '']],
   'field_related' => ['type' => 'entity_reference_entity_view', 'label' => 'above', 'settings' => ['view_mode' => 'teaser']],
 ]);
+// What search indexes: the product's own words, not the cards around it.
+ns_display('view', 'node', 'product', 'search_index', [
+  'field_category' => ['type' => 'entity_reference_label', 'label' => 'hidden', 'settings' => ['link' => FALSE]],
+  'field_highlights' => ['type' => 'string', 'label' => 'hidden'],
+  'body' => ['type' => 'text_default', 'label' => 'hidden'],
+  'field_materials' => ['type' => 'entity_reference_label', 'label' => 'hidden', 'settings' => ['link' => FALSE]],
+  'field_care' => ['type' => 'text_default', 'label' => 'hidden'],
+]);
+ns_display('view', 'node', 'article', 'search_index', [
+  'body' => ['type' => 'text_default', 'label' => 'hidden'],
+  'field_tags' => ['type' => 'entity_reference_label', 'label' => 'hidden', 'settings' => ['link' => FALSE]],
+]);
 ns_display('view', 'node', 'product', 'teaser', [
   'field_media' => ['type' => 'entity_reference_entity_view', 'label' => 'hidden', 'settings' => ['view_mode' => 'card']],
   'field_price' => ['type' => 'number_decimal', 'label' => 'hidden', 'settings' => ['scale' => 2]],

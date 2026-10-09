@@ -16,6 +16,7 @@
         const close = (except) => items.forEach((item) => {
           if (item !== except) {
             item.classList.remove('is-open');
+            delete item.dataset.pinned;
             item.querySelector('.mega__toggle')?.setAttribute('aria-expanded', 'false');
           }
         });
@@ -25,12 +26,22 @@
           item.querySelector('.mega__toggle').setAttribute('aria-expanded', 'true');
         };
 
+        // Hovering opens a panel for a moment; a click (or Enter) pins it
+        // open until a second click, Escape or a click elsewhere.
         items.forEach((item) => {
           const button = item.querySelector('.mega__toggle');
           let timer;
-          button.addEventListener('click', () => (item.classList.contains('is-open') ? close() : open(item)));
-          item.addEventListener('mouseenter', () => { if (wide()) { clearTimeout(timer); open(item); } });
-          item.addEventListener('mouseleave', () => { if (wide()) { timer = setTimeout(() => close(), 160); } });
+          button.addEventListener('click', () => {
+            if (item.dataset.pinned) {
+              close();
+            }
+            else {
+              open(item);
+              item.dataset.pinned = 'true';
+            }
+          });
+          item.addEventListener('mouseenter', () => { if (wide()) { clearTimeout(timer); if (!item.classList.contains('is-open')) { open(item); } } });
+          item.addEventListener('mouseleave', () => { if (wide() && !item.dataset.pinned) { timer = setTimeout(() => close(), 160); } });
         });
 
         document.addEventListener('keydown', (event) => {

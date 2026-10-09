@@ -36,21 +36,31 @@ final class WelcomeBuilder implements TrustedCallbackInterface {
    * Lazy builder callback.
    */
   public function build(): array {
+    // Drafts are the newest revisions in the draft state; they are this
+    // person's when they wrote that revision.
     $drafts = 0;
     if ($this->entityTypeManager->hasDefinition('content_moderation_state')) {
-      $drafts = (int) $this->entityTypeManager->getStorage('content_moderation_state')->getQuery()
+      $states = $this->entityTypeManager->getStorage('content_moderation_state');
+      $ids = $states->getQuery()
         ->accessCheck(FALSE)
+        ->latestRevision()
         ->condition('moderation_state', 'draft')
-        ->condition('uid', $this->currentUser->id())
         ->condition('content_entity_type_id', 'node')
-        ->count()
         ->execute();
+      $nodes = $this->entityTypeManager->getStorage('node');
+      foreach ($states->loadMultiple($ids) as $state) {
+        $revision = $nodes->loadRevision($state->get('content_entity_revision_id')->value);
+        if ($revision && (int) $revision->getRevisionUserId() === (int) $this->currentUser->id()) {
+          $drafts++;
+        }
+      }
     }
     return [
       '#type' => 'component',
       '#component' => 'northstar:welcome',
       '#props' => [
-        'name' => $this->currentUser->getDisplayName(),
+        // First names in the header: it is a small chip.
+        'name' => explode(' ', (string) $this->currentUser->getDisplayName())[0],
         'drafts' => $drafts,
         'drafts_label' => (string) $this->formatPlural($drafts, '1 draft of yours is waiting', '@count drafts of yours are waiting'),
         'drafts_url' => Url::fromRoute('content_moderation.admin_moderated_content')->toString(),

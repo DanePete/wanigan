@@ -153,7 +153,7 @@ function ns_landing(string $key, array $values, array $sections, array $fr = [])
   if (!$node->isNew()) {
     foreach ($node->get('layout_builder__layout')->getSections() as $section) {
       foreach ($section->getComponents() as $component) {
-        $existing[$component->getUuid()] = $component->get('block_revision_id');
+        $existing[$component->getUuid()] = $component->toArray()['configuration'];
       }
     }
   }
@@ -165,15 +165,22 @@ function ns_landing(string $key, array $values, array $sections, array $fr = [])
         if (($component['inline'] ?? NULL) !== NULL) {
           [$bundle, $label, $fields] = $component['inline'];
           $uuid = ns_uuid("component:{$component['key']}");
-          $block = !empty($existing[$uuid]) ? \Drupal::entityTypeManager()->getStorage('block_content')->loadRevision($existing[$uuid]) : NULL;
+          $stored = $existing[$uuid] ?? [];
+          $block = !empty($stored['block_revision_id']) ? \Drupal::entityTypeManager()->getStorage('block_content')->loadRevision($stored['block_revision_id']) : NULL;
           $block = $block ?: BlockContent::create(['type' => $bundle, 'reusable' => FALSE, 'langcode' => 'en']);
           $block->set('info', $label);
           foreach ($fields as $field => $value) {
             $block->set($field, $value);
           }
-          $config = ['id' => "inline_block:$bundle", 'label' => $label, 'label_display' => '0', 'provider' => 'layout_builder', 'view_mode' => 'full', 'context_mapping' => [], 'block_revision_id' => $block->isNew() ? NULL : $block->getRevisionId(), 'block_serialized' => NULL];
-          if ($block->isNew() || $block->hasTranslationChanges()) {
-            $config['block_serialized'] = serialize($block);
+          if (!$block->isNew() && !$block->hasTranslationChanges() && $stored) {
+            // Unchanged: keep the configuration exactly as Layout Builder
+            // stored it (it compares layouts strictly), so nothing is saved.
+            $config = $stored;
+            $config['label'] = $label;
+          }
+          else {
+            // New or changed: Layout Builder saves the block and records where it is used.
+            $config = ['id' => "inline_block:$bundle", 'label' => $label, 'label_display' => '0', 'provider' => 'layout_builder', 'view_mode' => 'full', 'block_id' => $block->isNew() ? NULL : $block->id(), 'block_revision_id' => $block->isNew() ? NULL : $block->getRevisionId(), 'block_serialized' => serialize($block), 'context_mapping' => []];
           }
           $section->appendComponent(new SectionComponent($uuid, $region, $config));
         }
@@ -266,6 +273,9 @@ $form->set('weight', 0);
 $form->set('redirect', '/');
 $form->save();
 \Drupal::configFactory()->getEditable('contact.settings')->set('default_form', 'workshop')->save();
+foreach (['anonymous', 'authenticated'] as $rid) {
+  \Drupal\user\Entity\Role::load($rid)->grantPermission('access site-wide contact form')->save();
+}
 if ($feedback = ContactForm::load('feedback')) {
   $feedback->delete();
 }

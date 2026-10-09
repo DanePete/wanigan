@@ -5,7 +5,7 @@
  * Makes the Live stand-in's database look like production a step behind
  * Local: development settings off, the older hero and shipping words, a
  * higher price on one product, and the newest product not yet published.
- * Run against the copy with drush --uri=https://northstar-live.localtest.me.
+ * Run against the copy with drush --uri=https://northstar-live.127.0.0.1.nip.io.
  */
 
 require __DIR__ . '/seed/lib.php';

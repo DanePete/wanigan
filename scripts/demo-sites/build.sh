@@ -88,13 +88,17 @@ git_init() {
 }
 
 build_drupal() {
-  local site="$DEMO_DIR/northstar" name="northstar-demo" live="northstar-live.localtest.me"
+  local site="$DEMO_DIR/northstar" name="northstar-demo" live="northstar-live.127.0.0.1.nip.io"
   step "Northstar Storefront (Drupal 11) in $site"
   mkdir -p "$site"
   cd "$site"
   if [ ! -f .ddev/config.yaml ]; then
     ddev config --project-name="$name" --project-type=drupal11 --docroot=web \
       --performance-mode=none --additional-fqdns="$live"
+  elif ! grep -q -- "- $live" .ddev/config.yaml; then
+    # An older build named the Live stand-in differently.
+    ddev config --additional-fqdns="$live"
+    ddev stop
   fi
   ddev start -y
   if [ ! -f composer.json ]; then
@@ -150,6 +154,8 @@ build_drupal() {
   step "Drupal: content model, content, views, blocks, menus"
   ddev drush php:script /var/www/html/.demo-build/drupal/seed.php
   ddev drush cr >/dev/null
+  # Search indexes what the content says now.
+  ddev drush php:eval "\\Drupal::service('search.index')->markForReindex();" >/dev/null
   ddev drush cron >/dev/null 2>&1 || true
 
   step "Drupal: the Live stand-in at https://$live"
@@ -166,9 +172,11 @@ build_drupal() {
 # something to find. Rebuilt from the local database on every build.
 live_drupal() {
   local site="$1" live="$2"
-  if ! grep -q 'northstar-live' web/sites/default/settings.php; then
-    chmod u+w web/sites/default web/sites/default/settings.php
-    cat "$HERE/drupal/site/settings.live.php" >>web/sites/default/settings.php
+  chmod u+w web/sites/default
+  cp "$HERE/drupal/site/settings.live.php" web/sites/default/settings.live.php
+  if ! grep -q "settings.live.php" web/sites/default/settings.php; then
+    chmod u+w web/sites/default/settings.php
+    printf "\n// Wanigan's demo: the Live stand-in (see settings.live.php).\ninclude __DIR__ . '/settings.live.php';\n" >>web/sites/default/settings.php
   fi
   ddev exec "mysql -uroot -proot -hdb -e 'DROP DATABASE IF EXISTS live; CREATE DATABASE live; GRANT ALL ON live.* TO \"db\"@\"%\";' && mysqldump -uroot -proot -hdb --single-transaction db | mysql -uroot -proot -hdb live"
   ddev drush --uri="https://$live" php:script /var/www/html/.demo-build/drupal/live.php

@@ -8,7 +8,8 @@
 /* Header */
 .site-header { position: sticky; top: 0; z-index: 30; background: rgb(250 247 241 / 0.92); backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid transparent; transition: border-color var(--ns-ease), box-shadow var(--ns-ease); }
 .site-header.is-scrolled { border-bottom-color: var(--ns-line); box-shadow: 0 6px 24px rgb(24 32 28 / 0.05); }
-.site-header__inner { display: flex; align-items: center; gap: 2rem; min-height: 4.75rem; }
+.site-header__inner { display: flex; align-items: center; gap: clamp(1rem, 2.5vw, 2.25rem); min-height: 4.75rem; }
+.site-header__inner > .region--header { flex: none; }
 .site-header__nav { display: flex; flex: 1; align-items: center; gap: 1.5rem; }
 .site-header__nav .region--primary-menu { flex: 1; }
 .region--header-tools { display: flex; align-items: center; gap: 0.6rem; }
