@@ -275,6 +275,44 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
+/* ── disclosure ──────────────────────────────────────────────────────────── */
+
+/**
+ * A section that opens on request: its heading is the button (WAI-ARIA
+ * disclosure), with a quiet summary beside the title so a closed one still
+ * says what is in it.
+ */
+export function Disclosure({ title, summary, open: initial = false, children, className }: {
+  title: string;
+  summary?: ReactNode;
+  open?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(initial);
+  return (
+    <section className={`disclosure${open ? ' open' : ''}${className ? ` ${className}` : ''}`} aria-labelledby={`${id}-head`}>
+      <h3 className="disclosure-head">
+        <button type="button" id={`${id}-head`} aria-expanded={open} aria-controls={`${id}-body`} onClick={() => setOpen((v) => !v)}>
+          <Icon name="chevron" size={12} className="disclosure-twist" />
+          <span className="disclosure-title">{title}</span>
+          {summary ? <span className="disclosure-summary">{summary}</span> : null}
+        </button>
+      </h3>
+      <div className="disclosure-body" id={`${id}-body`} hidden={!open}>{open ? children : null}</div>
+    </section>
+  );
+}
+
+/** Copy some text, and say so. `what` finishes "Copied …" ("the path", "the query"). */
+export function CopyButton({ text, label, what = 'it' }: { text: string; label: string; what?: string }) {
+  const toast = useToast();
+  const copy = (): Promise<void> => navigator.clipboard.writeText(text)
+    .then(() => toast(`Copied ${what}.`), () => toast('The clipboard is not available here. Select the text and copy it yourself.', 'error'));
+  return <IconButton icon="copy" label={label} onClick={copy} />;
+}
+
 /* ── toasts ──────────────────────────────────────────────────────────────── */
 
 export interface ToastAction { label: string; run: () => void }
