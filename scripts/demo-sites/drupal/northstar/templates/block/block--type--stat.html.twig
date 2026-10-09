@@ -1,0 +1,10 @@
+{#
+/**
+ * @file
+ * A number block, drawn by the northstar:stat component.
+ */
+#}
+<div{{ attributes.addClass('block', 'block--stat') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:stat', { number: content.field_number, label: content.field_heading, text: content.field_summary }, with_context = false) }}
+</div>

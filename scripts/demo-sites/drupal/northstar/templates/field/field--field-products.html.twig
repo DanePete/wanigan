@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * "Shop the story": the products a journal entry mentions, as a row of cards.
+ */
+#}
+<section{{ attributes.addClass('field', 'field--field-products', 'shop-story') }}>
+  <h2 class="shop-story__title">{{ label }}</h2>
+  {% set cards %}{% for item in items %}<div{{ item.attributes }}>{{ item.content }}</div>{% endfor %}{% endset %}
+  {{ include('northstar:card-grid', { columns: 4, kind: 'products', items: cards }, with_context = false) }}
+</section>

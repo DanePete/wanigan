@@ -1,0 +1,47 @@
+/* core/details, "Ledger": a ruled question with a plus that turns to a minus. */
+.wp-block-details.is-style-ledger {
+	border-top: 1px solid var(--wp--preset--color--line);
+	padding-block: 0;
+}
+
+.wp-block-details.is-style-ledger:last-of-type {
+	border-bottom: 1px solid var(--wp--preset--color--line);
+}
+
+.wp-block-details.is-style-ledger summary {
+	position: relative;
+	padding: 1.1rem 2.5rem 1.1rem 0;
+	list-style: none;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.wp-block-details.is-style-ledger summary::-webkit-details-marker {
+	display: none;
+}
+
+.wp-block-details.is-style-ledger summary::before,
+.wp-block-details.is-style-ledger summary::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	right: 0.35rem;
+	width: 0.85rem;
+	height: 1.5px;
+	background: currentColor;
+	transition: transform var(--wp--custom--motion--quick) ease;
+}
+
+.wp-block-details.is-style-ledger summary::after {
+	transform: rotate(90deg);
+}
+
+.wp-block-details.is-style-ledger[open] summary::after {
+	transform: rotate(0deg);
+}
+
+.wp-block-details.is-style-ledger > :not(summary) {
+	margin-block: 0 1.25rem;
+	padding-inline-end: 2.5rem;
+	color: var(--wp--preset--color--muted);
+}

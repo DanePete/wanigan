@@ -1,0 +1,16 @@
+{#
+/**
+ * @file
+ * A journal entry in a list: drawn by the northstar:article-card component.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--article', 'node--teaser') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:article-card', {
+    url: url,
+    meta: date ~ ' · ' ~ reading_time,
+    media: content.field_image,
+    title: label,
+    summary: content.body,
+  }, with_context = false) }}
+</article>

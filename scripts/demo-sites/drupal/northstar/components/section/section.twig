@@ -1,0 +1,20 @@
+{#
+/**
+ * @file
+ * Section: a heading over content, with an optional footer, in one of three
+ * backgrounds.
+ */
+#}
+{% set level = heading_level|default(2) %}
+<section{{ attributes.addClass('section', 'section--' ~ (tone|default('plain'))) }}>
+  {% if heading or eyebrow %}
+    <header class="section__head">
+      {% if eyebrow %}<p class="section__eyebrow">{{ eyebrow }}</p>{% endif %}
+      <h{{ level }} class="section__heading">{% block heading %}{{ heading }}{% endblock %}</h{{ level }}>
+    </header>
+  {% endif %}
+  <div class="section__content">{% block content %}{{ content }}{% endblock %}</div>
+  {% if footer %}
+    <footer class="section__footer">{% block footer %}{{ footer }}{% endblock %}</footer>
+  {% endif %}
+</section>

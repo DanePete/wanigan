@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * Question: a details element named for its accordion, so the browser keeps
+ * one open at a time; accordion-item.js animates it.
+ */
+#}
+<details{{ attributes.addClass('accordion-item').setAttribute('name', group|default('faq')) }}{{ open ? ' open' }}>
+  <summary class="accordion-item__question">
+    <span>{% block question %}{{ question }}{% endblock %}</span>
+    {{ include('northstar:icon', { name: 'chevron' }, with_context = false) }}
+  </summary>
+  <div class="accordion-item__answer">{% block answer %}{{ answer }}{% endblock %}</div>
+</details>

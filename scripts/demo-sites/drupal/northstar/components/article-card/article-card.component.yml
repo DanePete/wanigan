@@ -1,0 +1,23 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Story card
+status: stable
+description: 'A journal entry in a list: picture, date and reading time, title and a line of summary, all one link.'
+props:
+  type: object
+  required: [url]
+  properties:
+    url:
+      type: string
+      title: Address
+      examples: ['/journal/reading-a-lake-map']
+    meta:
+      type: [string, 'null']
+      title: Date and reading time
+      examples: ['17 September 2026 · 2 min read']
+slots:
+  media:
+    title: Picture
+  title:
+    title: Title
+  summary:
+    title: Summary

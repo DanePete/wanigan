@@ -1,0 +1,22 @@
+{#
+/**
+ * @file
+ * Hero: picture, kicker, heading, text and one action, in two looks.
+ */
+#}
+{% set level = heading_level|default(2) %}
+<section{{ attributes.addClass('hero', 'hero--' ~ (look|default('overlay'))) }}>
+  <div class="hero__media">{% block media %}{{ media }}{% endblock %}</div>
+  <div class="hero__body">
+    <div class="hero__inner">
+      <p class="hero__kicker">{% block kicker %}{{ kicker }}{% endblock %}</p>
+      <h{{ level }} class="hero__heading">{% block heading %}{{ heading }}{% endblock %}</h{{ level }}>
+      <p class="hero__text">{% block text %}{{ text }}{% endblock %}</p>
+      {% if cta_url %}
+        <div class="hero__actions">
+          {{ include('northstar:button', { label: cta_label, url: cta_url, variant: 'primary', arrow: true }, with_context = false) }}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</section>

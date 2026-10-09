@@ -1,0 +1,15 @@
+{#
+/**
+ * @file
+ * Callout: a boxed message with a heading, a sentence and one action.
+ */
+#}
+{% set tone = tone|default('pine') %}
+<aside{{ attributes.addClass('callout', 'callout--' ~ tone) }}>
+  <svg class="callout__mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.2 6.3L20.5 10l-6.3 2.2L12 18.5l-2.2-6.3L3.5 10l6.3-1.7z" fill="currentColor"/></svg>
+  <h2 class="callout__heading">{% block heading %}{{ heading }}{% endblock %}</h2>
+  <p class="callout__text">{% block text %}{{ text }}{% endblock %}</p>
+  {% if cta_url %}
+    {{ include('northstar:button', { label: cta_label, url: cta_url, variant: tone == 'sand' ? 'secondary' : 'light', arrow: true }, with_context = false) }}
+  {% endif %}
+</aside>

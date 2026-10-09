@@ -1,0 +1,10 @@
+{#
+/**
+ * @file
+ * Quote: a pull quote with a name beneath.
+ */
+#}
+<figure{{ attributes.addClass('quote') }}>
+  <blockquote class="quote__words"><p>{% block quote %}{{ quote }}{% endblock %}</p></blockquote>
+  <figcaption class="quote__cite">{% block cite %}{{ cite }}{% endblock %}</figcaption>
+</figure>

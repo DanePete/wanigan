@@ -1,0 +1,16 @@
+{#
+/**
+ * @file
+ * Picture and text: side by side, stacked on a phone.
+ */
+#}
+<div{{ attributes.addClass('media-text', reverse ? 'media-text--reverse') }}>
+  <div class="media-text__media">{% block media %}{{ media }}{% endblock %}</div>
+  <div class="media-text__body">
+    <h2 class="media-text__heading">{% block heading %}{{ heading }}{% endblock %}</h2>
+    <p class="media-text__text">{% block text %}{{ text }}{% endblock %}</p>
+    {% if cta_url %}
+      {{ include('northstar:button', { label: cta_label, url: cta_url, variant: 'link', arrow: true }, with_context = false) }}
+    {% endif %}
+  </div>
+</div>

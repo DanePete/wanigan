@@ -1,0 +1,24 @@
+/* core/heading, "Eyebrow": a small mono label above a section, led by a short rule. */
+.wp-block-heading.is-style-eyebrow {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small) !important;
+	font-weight: 500;
+	line-height: 1.4;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.wp-block-heading.is-style-eyebrow::before {
+	content: "";
+	width: 1.75rem;
+	height: 1px;
+	background: currentColor;
+	flex: none;
+}
+
+.wp-block-heading.is-style-eyebrow.has-text-align-center {
+	justify-content: center;
+}

@@ -1,0 +1,21 @@
+{#
+/**
+ * @file
+ * A product's pictures (media, Media Library), drawn by the northstar:gallery
+ * component. Each picture keeps its item attributes, so its place in the
+ * field can be read from the page and moved. count and product_label come
+ * from northstar_preprocess_field().
+ */
+#}
+{% set pictures %}
+  {% for item in items %}
+    <figure{{ item.attributes.addClass('gallery__item') }}>{{ item.content }}</figure>
+  {% endfor %}
+{% endset %}
+<div{{ attributes.addClass('field', 'field--field-media') }}>
+  {{ include('northstar:gallery', {
+    count: count,
+    label: 'Pictures of @name'|t({ '@name': product_label }),
+    items: pictures,
+  }, with_context = false) }}
+</div>

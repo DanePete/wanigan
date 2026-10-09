@@ -1,0 +1,9 @@
+# Fieldnotes' environments, for wp-cli. Inside ddev:
+#   ddev wp @local option get blogdescription
+#   ddev wp @live option get blogdescription
+# Live is a stand-in on this machine: the same code and a copy of the
+# database, picked by wp-config.php from the address.
+@local:
+  url: https://fieldnotes-demo.ddev.site
+@live:
+  url: https://fieldnotes-live.127.0.0.1.nip.io

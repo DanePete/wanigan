@@ -1,0 +1,315 @@
+/* fieldnotes/trail-finder. Colours and type come from the theme's presets,
+   with plain fallbacks so the block reads anywhere. */
+.trail-finder {
+	--tf-line: var(--wp--preset--color--line, #d5cfbc);
+	--tf-ink: var(--wp--preset--color--contrast, #1a211d);
+	--tf-muted: var(--wp--preset--color--muted, #5e655f);
+	--tf-surface: var(--wp--preset--color--surface, #faf8f2);
+	--tf-accent: var(--wp--preset--color--accent, #b5532b);
+	--tf-mono: var(--wp--preset--font-family--fira-code, ui-monospace, monospace);
+}
+
+.trail-finder__controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem 2rem;
+	align-items: center;
+	padding-block: 1rem;
+	border-block: 1px solid var(--tf-line);
+}
+
+.trail-finder__group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.375rem;
+}
+
+.trail-finder__group--unit {
+	margin-inline-start: auto;
+}
+
+.trail-finder__label {
+	margin-inline-end: 0.375rem;
+	font-family: var(--tf-mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--tf-muted);
+}
+
+.trail-finder__choice {
+	appearance: none;
+	min-height: 2.25rem;
+	padding: 0.35rem 0.9rem;
+	border: 1px solid var(--tf-line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--tf-ink);
+	font: inherit;
+	font-size: 0.875rem;
+	font-weight: 500;
+	line-height: 1.2;
+	cursor: pointer;
+	transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.trail-finder__choice:hover {
+	border-color: var(--tf-ink);
+}
+
+.trail-finder__choice[aria-pressed="true"] {
+	border-color: var(--tf-ink);
+	background: var(--tf-ink);
+	color: var(--wp--preset--color--base, #f2eee4);
+}
+
+.trail-finder__choice:focus-visible {
+	outline: 2px solid var(--tf-accent);
+	outline-offset: 2px;
+}
+
+.trail-finder__count {
+	margin-block: 1.25rem 1.5rem;
+	font-family: var(--tf-mono);
+	font-size: 0.8125rem;
+	color: var(--tf-muted);
+}
+
+.trail-finder__count strong {
+	color: var(--tf-ink);
+	font-weight: 600;
+}
+
+.trail-finder__list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 17.5rem), 1fr));
+	gap: clamp(1.25rem, 2.5vw, 2rem);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.trail-card {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border: 1px solid var(--tf-line);
+	border-radius: 6px;
+	background: var(--tf-surface);
+	transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.trail-card[hidden] {
+	display: none;
+}
+
+.trail-card__picture {
+	display: block;
+	aspect-ratio: 16 / 10;
+	overflow: hidden;
+	background: var(--wp--preset--color--line, #d5cfbc);
+}
+
+.trail-card__picture img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	transition: transform 600ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.trail-card__body {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 0.5rem;
+	padding: 1.1rem 1.25rem 1.25rem;
+}
+
+.trail-card__region {
+	margin: 0;
+	font-family: var(--tf-mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--tf-muted);
+}
+
+.trail-card__title {
+	margin: 0;
+	font-family: var(--wp--preset--font-family--literata, Georgia, serif);
+	font-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+	font-weight: 400;
+	line-height: 1.2;
+	letter-spacing: -0.01em;
+}
+
+.trail-card__title a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.trail-card__title a::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+}
+
+.trail-card__title a:focus-visible {
+	outline: none;
+}
+
+.trail-card:has(.trail-card__title a:focus-visible) {
+	outline: 2px solid var(--tf-accent);
+	outline-offset: 2px;
+}
+
+.trail-card__facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem 1rem;
+	margin: auto 0 0;
+	padding: 0.5rem 0 0;
+	list-style: none;
+	font-family: var(--tf-mono);
+	font-size: 0.8125rem;
+	color: var(--tf-muted);
+}
+
+.trail-card__difficulty {
+	position: absolute;
+	top: -0.95rem;
+	right: 1rem;
+	margin: 0;
+	padding: 0.3rem 0.7rem;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	background: var(--tf-ink);
+	color: var(--wp--preset--color--base, #f2eee4);
+}
+
+.trail-card__difficulty--easy {
+	background: var(--wp--preset--color--moss, #3e5a49);
+}
+
+.trail-card__difficulty--moderate {
+	background: var(--wp--preset--color--lake, #4a6878);
+}
+
+.trail-card__difficulty--hard {
+	background: var(--tf-accent);
+}
+
+.trail-finder__empty {
+	padding: 2rem;
+	border: 1px dashed var(--tf-line);
+	border-radius: 6px;
+	text-align: center;
+	color: var(--tf-muted);
+}
+
+.trail-finder__empty[hidden] {
+	display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.trail-card {
+		transition: transform 220ms ease, box-shadow 220ms ease, opacity 320ms ease, translate 320ms ease;
+	}
+
+	@starting-style {
+		.trail-card {
+			opacity: 0;
+			translate: 0 0.5rem;
+		}
+	}
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+	.trail-card:hover {
+		transform: translateY(-3px);
+		box-shadow: 0 18px 40px -24px rgb(26 33 29 / 0.45);
+	}
+
+	.trail-card:hover .trail-card__picture img {
+		transform: scale(1.04);
+	}
+}
+
+@media (max-width: 640px) {
+	.trail-finder__controls {
+		display: grid;
+		gap: 0.6rem;
+	}
+
+	/* Each set of choices is one row that scrolls sideways, not the page. */
+	.trail-finder__group {
+		flex-wrap: nowrap;
+		margin-inline: calc(-1 * var(--wp--style--root--padding-left, 1.25rem));
+		padding-inline: var(--wp--style--root--padding-left, 1.25rem);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.trail-finder__group::-webkit-scrollbar {
+		display: none;
+	}
+
+	.trail-finder__group--unit {
+		margin-inline-start: calc(-1 * var(--wp--style--root--padding-left, 1.25rem));
+	}
+
+	.trail-finder__label {
+		min-width: 5.5rem;
+	}
+
+	.trail-finder__choice {
+		flex: none;
+	}
+
+	/* Cards become rows: the map small on the left, the facts beside it. */
+	.trail-finder__list {
+		gap: 0.75rem;
+	}
+
+	.trail-card {
+		flex-direction: row;
+	}
+
+	.trail-card__picture {
+		flex: none;
+		width: 7.5rem;
+		aspect-ratio: auto;
+	}
+
+	.trail-card__body {
+		padding: 0.85rem 1rem;
+		gap: 0.3rem;
+	}
+
+	.trail-card__title {
+		font-size: 1.15rem;
+	}
+
+	.trail-card__facts {
+		padding-top: 0.25rem;
+		gap: 0.1rem 0.75rem;
+		font-size: 0.75rem;
+	}
+
+	.trail-card__difficulty {
+		position: static;
+		align-self: flex-start;
+		order: -1;
+		padding: 0.2rem 0.55rem;
+		font-size: 0.6875rem;
+	}
+
+	.trail-card__region {
+		display: none;
+	}
+}

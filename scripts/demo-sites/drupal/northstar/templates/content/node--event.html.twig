@@ -1,0 +1,23 @@
+{#
+/**
+ * @file
+ * An event, in full: picture, a date tile with time and place, the words,
+ * and how to come.
+ *
+ * Variables added in northstar_preprocess_node(): day, month, weekday,
+ * time_range.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--event', 'event') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  <div class="event__image">{{ content.field_media }}</div>
+  <div class="event__columns">
+    <aside class="event__facts">
+      <p class="event__date"><span>{{ month }}</span><strong>{{ day }}</strong></p>
+      <p>{{ include('northstar:icon', { name: 'clock' }, with_context = false) }} {{ weekday }}, {{ time_range }}</p>
+      <p>{{ include('northstar:icon', { name: 'pin' }, with_context = false) }} {{ content.field_where }}</p>
+      <div class="event__link">{{ content.field_link }}</div>
+    </aside>
+    <div class="event__body prose">{{ content.body }}</div>
+  </div>
+</article>

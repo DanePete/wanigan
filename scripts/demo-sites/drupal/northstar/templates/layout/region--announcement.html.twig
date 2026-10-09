@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * The announcement bar across the top of every page.
+ */
+#}
+{% if content %}
+  <div{{ attributes.addClass('region', 'region--announcement') }}>
+    <div class="container">{{ content }}</div>
+  </div>
+{% endif %}

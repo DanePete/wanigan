@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * "Pairs well with": chosen products, as a row of cards in a section.
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-related', 'related') }}>
+  {% set cards %}{% for item in items %}<div{{ item.attributes }}>{{ item.content }}</div>{% endfor %}{% endset %}
+  {{ include('northstar:section', {
+    eyebrow: 'Chosen for it'|t,
+    heading: label,
+    content: include('northstar:card-grid', { columns: 4, items: cards }, with_context = false),
+  }, with_context = false) }}
+</div>

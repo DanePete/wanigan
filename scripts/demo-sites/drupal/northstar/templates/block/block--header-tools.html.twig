@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * A block among the header's tools (search, language, welcome): no title,
+ * no wrapper beyond its own.
+ * Suggested by northstar_theme_suggestions_block_alter() (block--REGION).
+ */
+#}
+<div{{ attributes.addClass('block', 'header-tool') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ content }}
+</div>

@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * A product card shows only its first picture.
+ * Suggested by northstar_theme_suggestions_field_alter() (…--VIEW-MODE).
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-media') }}>
+  {% for item in items|slice(0, 1) %}
+    <div{{ item.attributes }}>{{ item.content }}</div>
+  {% endfor %}
+</div>

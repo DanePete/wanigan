@@ -1,0 +1,13 @@
+{#
+/**
+ * @file
+ * The shop's grid (and the category pages'), drawn by the
+ * northstar:card-grid component: one product card per row of the view.
+ */
+#}
+{% set cards %}
+  {% for item in items %}
+    <div class="card-grid__item">{{- item.content -}}</div>
+  {% endfor %}
+{% endset %}
+{{ include('northstar:card-grid', { columns: options.columns, kind: 'products', items: cards }, with_context = false) }}

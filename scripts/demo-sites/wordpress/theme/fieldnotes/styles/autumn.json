@@ -1,0 +1,110 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/theme.json",
+	"version": 3,
+	"title": "Autumn",
+	"settings": {
+		"color": {
+			"palette": [
+				{
+					"slug": "base",
+					"name": "Cream",
+					"color": "#F4ECDD"
+				},
+				{
+					"slug": "surface",
+					"name": "Bright cream",
+					"color": "#FBF6EC"
+				},
+				{
+					"slug": "contrast",
+					"name": "Bark",
+					"color": "#2A1F1A"
+				},
+				{
+					"slug": "muted",
+					"name": "Tobacco",
+					"color": "#6E5D50"
+				},
+				{
+					"slug": "line",
+					"name": "Straw",
+					"color": "#E2D3B8"
+				},
+				{
+					"slug": "accent",
+					"name": "Oxblood",
+					"color": "#8E3B2F"
+				},
+				{
+					"slug": "moss",
+					"name": "Olive",
+					"color": "#5C6B3A"
+				},
+				{
+					"slug": "lake",
+					"name": "Slate",
+					"color": "#4C5E6B"
+				},
+				{
+					"slug": "deep",
+					"name": "Peat",
+					"color": "#2C211B"
+				},
+				{
+					"slug": "on-deep",
+					"name": "Cream",
+					"color": "#F4ECDD"
+				}
+			]
+		},
+		"custom": {
+			"font": {
+				"standfirst": "var(--wp--preset--font-family--vollkorn)"
+			}
+		}
+	},
+	"styles": {
+		"typography": {
+			"fontFamily": "var:preset|font-family|fira-sans",
+			"lineHeight": "1.65"
+		},
+		"elements": {
+			"heading": {
+				"typography": {
+					"fontFamily": "var:preset|font-family|vollkorn",
+					"fontWeight": "500",
+					"letterSpacing": "-0.01em"
+				}
+			},
+			"button": {
+				"border": {
+					"radius": "3px"
+				},
+				"typography": {
+					"fontFamily": "var:preset|font-family|fira-sans",
+					"fontWeight": "500"
+				}
+			}
+		},
+		"blocks": {
+			"core/site-title": {
+				"typography": {
+					"fontFamily": "var:preset|font-family|vollkorn",
+					"fontWeight": "600",
+					"letterSpacing": "-0.01em"
+				}
+			},
+			"core/quote": {
+				"typography": {
+					"fontFamily": "var:preset|font-family|vollkorn"
+				}
+			},
+			"core/pullquote": {
+				"typography": {
+					"fontFamily": "var:preset|font-family|vollkorn",
+					"fontWeight": "400"
+				}
+			}
+		}
+	}
+}

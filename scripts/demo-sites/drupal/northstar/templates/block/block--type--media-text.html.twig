@@ -1,0 +1,18 @@
+{#
+/**
+ * @file
+ * A picture-and-text block, drawn by the northstar:media-text component.
+ * reverse and cta come from northstar_preprocess_block().
+ */
+#}
+<div{{ attributes.addClass('block', 'block--media-text') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:media-text', {
+    reverse: reverse,
+    cta_label: cta.label,
+    cta_url: cta.url,
+    media: content.field_media,
+    heading: content.field_heading,
+    text: content.field_summary,
+  }, with_context = false) }}
+</div>

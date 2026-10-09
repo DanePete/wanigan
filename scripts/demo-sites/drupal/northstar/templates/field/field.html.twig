@@ -1,0 +1,25 @@
+{#
+/**
+ * @file
+ * A field: a label when it is shown, then one element per item, each keeping
+ * its own attributes.
+ */
+#}
+{%
+  set classes = [
+    'field',
+    'field--' ~ field_name|clean_class,
+    'field--type-' ~ field_type|clean_class,
+    'field--label-' ~ label_display,
+  ]
+%}
+<div{{ attributes.addClass(classes) }}>
+  {% if not label_hidden %}
+    <div{{ title_attributes.addClass('field__label', label_display == 'visually_hidden' ? 'visually-hidden') }}>{{ label }}</div>
+  {% endif %}
+  {% if multiple %}<div class="field__items">{% endif %}
+  {% for item in items %}
+    <div{{ item.attributes.addClass('field__item') }}>{{ item.content }}</div>
+  {% endfor %}
+  {% if multiple %}</div>{% endif %}
+</div>

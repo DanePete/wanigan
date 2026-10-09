@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * Price: the amount (and the earlier one, when reduced), and a line about
+ * shipping.
+ */
+#}
+<p{{ attributes.addClass('price', 'price--' ~ (size|default('sm')), was ? 'price--sale') }}>
+  <span class="price__amount"><span class="visually-hidden">{{ 'Price'|t }}: </span>${{ amount|number_format(2) }}</span>
+  {% if was %}<s class="price__was"><span class="visually-hidden">{{ 'Was'|t }} </span>${{ was|number_format(2) }}</s>{% endif %}
+  {% if note %}
+    <span class="price__note{{ ships_free ? ' price__note--free' }}">{{ note }}</span>
+  {% endif %}
+</p>

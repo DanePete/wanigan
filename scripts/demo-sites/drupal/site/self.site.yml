@@ -1,0 +1,7 @@
+# Drush site aliases for the Northstar demo.
+#
+# "live" is the demo's stand-in for production: this same code serving a copy
+# of the database at another address (see the end of settings.php). It lets
+# Wanigan's live view compare Local with Live. Made up, like the rest.
+live:
+  uri: https://northstar-live.127.0.0.1.nip.io

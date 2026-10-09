@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * Open days: event cards, stacked, or three across in a block.
+ */
+#}
+{% set cards %}
+  {% for row in rows %}
+    <div{{ row.attributes.addClass('card-grid__item') }}>{{- row.content -}}</div>
+  {% endfor %}
+{% endset %}
+{{ include('northstar:card-grid', { columns: 3, kind: 'stories', items: cards }, with_context = false) }}

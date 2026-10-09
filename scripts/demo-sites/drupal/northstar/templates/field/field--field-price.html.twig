@@ -1,0 +1,18 @@
+{#
+/**
+ * @file
+ * A product's price, drawn by the northstar:price component.
+ * amount, was, ships_free and note come from northstar_preprocess_field().
+ * On a card only the good news is worth the room: "Ships free".
+ */
+#}
+{% set full = element['#view_mode'] == 'full' %}
+<div{{ attributes.addClass('field', 'field--field-price') }}>
+  {{ include('northstar:price', {
+    amount: amount,
+    was: was,
+    note: ships_free or full ? note : null,
+    ships_free: ships_free,
+    size: full ? 'lg' : 'sm',
+  }, with_context = false) }}
+</div>

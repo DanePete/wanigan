@@ -1,0 +1,68 @@
+/* Product page */
+.product-page__top { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 5rem); align-items: start; padding-top: 0.5rem; }
+.product-page__gallery { position: sticky; top: 6.5rem; }
+.product-page__summary { display: grid; gap: 1.2rem; padding-top: 0.5rem; }
+.product-page__category { margin: 0; font: 700 0.74rem/1 var(--ns-font); letter-spacing: 0.16em; text-transform: uppercase; }
+.product-page__category a { color: var(--ns-ember); text-decoration: none; }
+.product-page__title { margin: 0; font: 800 clamp(2.1rem, 1.4rem + 2.4vw, 3.3rem)/1.02 var(--ns-font); letter-spacing: -0.04em; text-wrap: balance; }
+.product-page__actions { display: flex; flex-wrap: wrap; gap: 0.75rem; padding-top: 0.25rem; }
+.product-page__actions .button { flex: 1 1 12rem; justify-content: center; min-height: 3.2rem; }
+.product-page__shipping { display: flex; gap: 0.6rem; align-items: center; margin: 0; padding: 0.85rem 1rem; border-radius: var(--ns-radius-sm); background: var(--ns-sand); font-size: 0.88rem; color: var(--ns-ink); }
+.product-page__shipping .icon { color: var(--ns-lake); }
+.product-page__facts { display: grid; gap: 0; margin: 0; border-top: 1px solid var(--ns-line); }
+.facts__row { display: grid; grid-template-columns: 9.5rem 1fr; gap: 1rem; padding: 0.7rem 0; border-bottom: 1px solid var(--ns-line); font-size: 0.88rem; }
+.facts__row dt { font-weight: 700; color: var(--ns-ink-soft); }
+.facts__row dd { margin: 0; }
+.facts__row a { color: var(--ns-ink); }
+.badges { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.field--field-highlights { padding: 1.1rem 0 0.2rem; border-top: 1px solid var(--ns-line); }
+.highlights__title { margin: 0 0 0.8rem; font: 700 0.74rem/1 var(--ns-font); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ns-ink-soft); }
+.highlights { display: grid; gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
+.highlights__item { position: relative; padding-left: 1.9rem; line-height: 1.45; }
+.highlights__item::before { content: ""; position: absolute; left: 0; top: 0.1rem; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--ns-pine) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10.5l3 3 7-7' stroke='%23faf7f1' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 0.9rem no-repeat; }
+.product-page__tabs { max-width: var(--ns-narrow); margin-top: clamp(3rem, 6vw, 5rem); }
+.product-page__tabs .prose { font-size: 1.05rem; }
+.product-page__tabs .field--field-guide { margin-top: 1rem; font-family: var(--ns-font); font-weight: 700; }
+.related { margin-top: var(--ns-space); }
+
+/* Journal entry */
+.page--article .region--content-above h1 { max-width: 20ch; }
+.article__meta { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: -0.75rem 0 2rem; font: 600 0.85rem/1.4 var(--ns-font); color: var(--ns-ink-soft); }
+.article__author { color: var(--ns-ink); }
+.article__image img { display: block; width: 100%; height: auto; border-radius: var(--ns-radius-lg); }
+.article__body { max-width: var(--ns-narrow); margin-top: 2.5rem; }
+.article__body > .field--name-body > p:first-child::first-letter, .article__body .field--body > p:first-child::first-letter { float: left; margin: 0.06em 0.1em 0 0; font: 800 3.6em/0.8 var(--ns-font); color: var(--ns-pine); }
+.article__body .field--field-trip { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.55rem 0.95rem; border-radius: 999px; background: var(--ns-lake-pale); color: var(--ns-lake-deep); font: 600 0.82rem/1.2 var(--ns-font); }
+.article__body .field--field-trip > * + * { margin-top: 0; }
+.article__body .field--field-trip .field__label { font-weight: 700; }
+.article__body .field--field-trip .field__label::after { content: ":"; }
+.tags { margin-top: 2.5rem; }
+.tags__list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.prose .tags__item + .tags__item { margin-top: 0; }
+.tags__item a { display: block; padding: 0.4rem 0.85rem; border-radius: 999px; background: var(--ns-sand); color: var(--ns-ink); font: 600 0.8rem/1 var(--ns-font); text-decoration: none; }
+.tags__item a:hover { background: var(--ns-pine); color: var(--ns-paper); }
+.shop-story { margin-top: var(--ns-space); padding-top: 2.5rem; border-top: 1px solid var(--ns-line); }
+.shop-story__title { margin: 0 0 1.5rem; font: 800 1.6rem/1.1 var(--ns-font); letter-spacing: -0.025em; }
+
+/* Event */
+.event__image img { display: block; width: 100%; height: auto; border-radius: var(--ns-radius-lg); }
+.event__columns { display: grid; grid-template-columns: 16rem minmax(0, var(--ns-narrow)); gap: clamp(2rem, 5vw, 4rem); margin-top: 2.5rem; }
+.event__facts { display: grid; align-content: start; gap: 0.75rem; font-weight: 600; font-size: 0.92rem; }
+.event__facts p { display: flex; gap: 0.5rem; align-items: center; margin: 0; }
+.event__date { display: grid !important; place-items: center; width: 5.5rem; padding: 0.8rem 0; border-radius: var(--ns-radius); background: var(--ns-pine-deep); color: var(--ns-paper); text-align: center; }
+.event__date span { font: 700 0.8rem/1 var(--ns-font); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ns-gold); }
+.event__date strong { font: 800 2.4rem/1 var(--ns-font); letter-spacing: -0.04em; }
+.event__link a { display: inline-block; margin-top: 0.5rem; padding: 0.7rem 1.1rem; border-radius: 999px; background: var(--ns-ember); color: #fff; text-decoration: none; }
+
+/* Plain pages and term pages */
+.node--page .node__content { max-width: var(--ns-narrow); }
+.node--page .node__content > .field > p:first-child { font-size: 1.3rem; line-height: 1.6; color: var(--ns-ink); }
+.term__description { max-width: 40rem; margin: -0.5rem 0 2.25rem; font: italic 400 1.2rem/1.55 var(--ns-serif); color: var(--ns-ink-soft); }
+.term__description p { margin: 0; }
+
+@media (max-width: 56rem) {
+  .product-page__top { grid-template-columns: 1fr; }
+  .product-page__gallery { position: static; }
+  .event__columns { grid-template-columns: 1fr; }
+  .facts__row { grid-template-columns: 8rem 1fr; }
+}

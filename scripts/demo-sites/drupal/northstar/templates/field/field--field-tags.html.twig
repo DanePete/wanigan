@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * An article's tags, as small pills.
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-tags', 'tags') }}>
+  <h2 class="visually-hidden">{{ label }}</h2>
+  <ul class="tags__list">
+    {% for item in items %}
+      <li{{ item.attributes.addClass('tags__item') }}>{{ item.content }}</li>
+    {% endfor %}
+  </ul>
+</div>

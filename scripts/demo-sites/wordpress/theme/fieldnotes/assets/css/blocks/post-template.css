@@ -1,0 +1,18 @@
+/* core/post-template, "Numbered": each entry carries its place in the list, like a logbook. */
+.wp-block-post-template.is-style-numbered {
+	counter-reset: fn-entry;
+}
+
+.wp-block-post-template.is-style-numbered > .wp-block-post {
+	counter-increment: fn-entry;
+}
+
+.wp-block-post-template.is-style-numbered > .wp-block-post > .wp-block-group::before {
+	content: counter(fn-entry, decimal-leading-zero);
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	letter-spacing: 0.08em;
+	opacity: 0.7;
+	min-width: 2.25rem;
+	padding-top: 0.45rem;
+}

@@ -1,0 +1,4 @@
+.feature { display: grid; gap: 0.7rem; align-content: start; }
+.feature__icon { display: grid; place-items: center; width: 3rem; height: 3rem; border-radius: 50%; background: var(--ns-sand); color: var(--ns-pine); font-size: 1.3rem; }
+.feature__heading { margin: 0.35rem 0 0; font: 700 1.2rem/1.2 var(--ns-font); letter-spacing: -0.015em; }
+.feature__text { margin: 0; color: var(--ns-ink-soft); line-height: 1.6; }

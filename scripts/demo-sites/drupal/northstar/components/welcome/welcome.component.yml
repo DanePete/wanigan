@@ -1,0 +1,28 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Welcome back
+status: stable
+description: 'For the person signed in: their name, drafts waiting, a link to their account. Built late, behind a placeholder.'
+props:
+  type: object
+  required: [name]
+  properties:
+    name:
+      type: string
+      title: Name
+      examples: ['Dana Reyes']
+    drafts:
+      type: [integer, 'null']
+      title: Drafts waiting
+      examples: [2]
+    drafts_label:
+      type: [string, 'null']
+      title: Drafts, in words
+      examples: ['2 drafts of yours are waiting']
+    drafts_url:
+      type: [string, 'null']
+      title: Drafts address
+      examples: ['/admin/content/moderated']
+    account_url:
+      type: [string, 'null']
+      title: Account address
+      examples: ['/user']

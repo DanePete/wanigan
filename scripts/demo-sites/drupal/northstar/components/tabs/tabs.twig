@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * Tabs: a tablist over panels; tabs.js wires the roles and the keys.
+ */
+#}
+<div{{ attributes.addClass('tabs').setAttribute('data-tabs', id) }}>
+  <div class="tabs__list" role="tablist" hidden>
+    {% for tab in tabs %}
+      <button class="tabs__tab" type="button" role="tab" id="{{ id }}-{{ tab.id }}-tab" aria-controls="{{ id }}-{{ tab.id }}" aria-selected="{{ loop.first ? 'true' : 'false' }}"{{ loop.first ? '' : ' tabindex="-1"' }}>{{ tab.label }}</button>
+    {% endfor %}
+  </div>
+  <div class="tabs__panels">{% block panels %}{{ panels }}{% endblock %}</div>
+</div>

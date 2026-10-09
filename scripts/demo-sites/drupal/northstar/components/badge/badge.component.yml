@@ -1,0 +1,17 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Badge
+status: stable
+description: 'A short word on a product, in the colour its kind wears.'
+props:
+  type: object
+  required: [label]
+  properties:
+    label:
+      type: string
+      title: Label
+      examples: ['Bestseller']
+    tone:
+      type: [string, 'null']
+      title: Kind
+      enum: [new, bestseller, limited, recycled, neutral, null]
+      default: neutral

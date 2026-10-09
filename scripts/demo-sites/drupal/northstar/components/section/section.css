@@ -1,0 +1,8 @@
+.section { display: grid; gap: clamp(1.25rem, 3vw, 2rem); }
+.section__head { display: grid; gap: 0.5rem; }
+.section__eyebrow { margin: 0; font: 700 0.75rem/1 var(--ns-font); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ns-ember); }
+.section__heading { margin: 0; font: 800 clamp(1.7rem, 1.2rem + 1.6vw, 2.5rem)/1.08 var(--ns-font); letter-spacing: -0.03em; text-wrap: balance; }
+.section__footer { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.section__footer p { margin: 0; }
+.section--sand { padding: clamp(1.5rem, 4vw, 3rem); border-radius: var(--ns-radius-lg); background: var(--ns-sand); }
+.section--pine { padding: clamp(1.5rem, 4vw, 3rem); border-radius: var(--ns-radius-lg); background: var(--ns-pine-deep); color: var(--ns-paper); }

@@ -1,0 +1,9 @@
+.card-grid { display: grid; gap: clamp(0.85rem, 2.2vw, 1.75rem); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
+.card-grid--2 { --cols: 2; }
+.card-grid--3 { --cols: 3; }
+.card-grid--4 { --cols: 4; }
+.card-grid > * { min-width: 0; }
+.card-grid > * > .node, .card-grid > * > .node > div:not(.contextual-region) { height: 100%; }
+@media (max-width: 64rem) { .card-grid--4 { --cols: 3; } }
+@media (max-width: 52rem) { .card-grid--3, .card-grid--4 { --cols: 2; } .card-grid--stories { --cols: 2; } }
+@media (max-width: 36rem) { .card-grid--stories, .card-grid--2.card-grid--stories { --cols: 1; } .card-grid--compact { --cols: 1; } }

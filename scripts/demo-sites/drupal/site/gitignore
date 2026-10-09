@@ -1,0 +1,14 @@
+# Composer's
+/vendor/
+/web/core/
+/web/modules/contrib/
+/web/themes/contrib/
+/web/profiles/contrib/
+/web/libraries/
+# Drupal's
+/web/sites/*/files/
+/web/sites/*/private/
+# The demo build's
+/.demo-admin
+/.demo-build/
+/.demo-images/

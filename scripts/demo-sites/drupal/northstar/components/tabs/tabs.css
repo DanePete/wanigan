@@ -1,0 +1,9 @@
+.tabs__list { display: flex; gap: 0.25rem; overflow-x: auto; border-bottom: 1px solid var(--ns-line); scrollbar-width: none; }
+.tabs__tab { flex: none; padding: 0.85rem 1rem; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--ns-ink-soft); font: 700 0.92rem/1 var(--ns-font); cursor: pointer; }
+.tabs__tab:hover { color: var(--ns-ink); }
+.tabs__tab[aria-selected="true"] { border-bottom-color: var(--ns-ember); color: var(--ns-ink); }
+.tabs__tab:focus-visible { outline: 3px solid var(--ns-gold); outline-offset: -3px; }
+.tabs__panel { padding: 1.4rem 0 0.5rem; }
+.tabs.is-ready .tabs__panel[hidden] { display: none; }
+.tabs:not(.is-ready) .tabs__panel + .tabs__panel { border-top: 1px solid var(--ns-line); }
+.tabs__panel h3 { margin: 0 0 0.75rem; font: 700 1rem/1.3 var(--ns-font); }

@@ -1,0 +1,8 @@
+name: 'Northstar account'
+type: module
+description: 'A welcome block for signed-in people, built late (lazy builder, placeholder) so BigPipe streams it. Part of Wanigan''s made-up demo store.'
+package: Northstar
+core_version_requirement: ^11
+dependencies:
+  - drupal:block
+  - drupal:node

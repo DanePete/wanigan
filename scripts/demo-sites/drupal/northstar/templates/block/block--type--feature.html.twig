@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * A feature block, drawn by the northstar:feature component (which uses
+ * northstar:icon). icon comes from northstar_preprocess_block().
+ */
+#}
+<div{{ attributes.addClass('block', 'block--feature') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:feature', { icon: icon, heading: content.field_heading, text: content.field_summary }, with_context = false) }}
+</div>

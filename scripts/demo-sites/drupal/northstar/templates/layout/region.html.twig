@@ -1,0 +1,17 @@
+{#
+/**
+ * @file
+ * A region: a div named for it, printed only when it has something in it.
+ */
+#}
+{%
+  set classes = [
+    'region',
+    'region--' ~ region|clean_class,
+  ]
+%}
+{% if content %}
+  <div{{ attributes.addClass(classes) }}>
+    {{ content }}
+  </div>
+{% endif %}

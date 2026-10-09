@@ -1,0 +1,11 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Number
+status: stable
+description: 'A big number with a label and a line beneath.'
+slots:
+  number:
+    title: Number
+  label:
+    title: Label
+  text:
+    title: Text

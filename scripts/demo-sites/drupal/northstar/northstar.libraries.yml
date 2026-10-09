@@ -1,0 +1,22 @@
+global:
+  version: VERSION
+  css:
+    base:
+      css/fonts.css: {}
+      css/tokens.css: {}
+      css/base.css: {}
+    layout:
+      css/layout.css: {}
+      css/navigation.css: {}
+    component:
+      css/blocks.css: {}
+      css/content.css: {}
+      css/views.css: {}
+      css/forms.css: {}
+      css/layout-builder.css: {}
+      css/motion.css: {}
+  js:
+    js/nav.js: {}
+  dependencies:
+    - core/drupal
+    - core/once

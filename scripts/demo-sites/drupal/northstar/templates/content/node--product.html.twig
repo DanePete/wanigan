@@ -1,0 +1,58 @@
+{#
+/**
+ * @file
+ * A product, in full: the gallery on one side; name, price, badges,
+ * highlights and actions on the other; then tabs for the description,
+ * materials and care, and shipping; then what it pairs well with.
+ *
+ * Variables added in northstar_preprocess_node(): ships_free, on_sale,
+ * category, category_url, shipping_note.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--product', 'product-page') }}>
+  <div class="product-page__top">
+    <div class="product-page__gallery">
+      {{ content.field_media }}
+    </div>
+    <div class="product-page__summary">
+      {% if category %}
+        <p class="product-page__category"><a href="{{ category_url }}">{{ category }}</a></p>
+      {% endif %}
+      {{ title_prefix }}
+      <h1{{ title_attributes.addClass('product-page__title') }}>{{ label }}</h1>
+      {{ title_suffix }}
+      {{ content.field_price }}
+      {{ content.field_badges }}
+      {{ content.field_highlights }}
+      <div class="product-page__actions">
+        {{ include('northstar:button', { label: 'Add to basket'|t, variant: 'primary' }, with_context = false) }}
+        {{ include('northstar:button', { label: 'Save for later'|t, variant: 'secondary' }, with_context = false) }}
+      </div>
+      <p class="product-page__shipping">{{ include('northstar:icon', { name: 'wave' }, with_context = false) }} {{ shipping_note }}</p>
+      <dl class="product-page__facts">
+        {{ content.field_sku }}
+        {{ content.field_materials }}
+        {{ content.field_since }}
+      </dl>
+    </div>
+  </div>
+
+  {% set panels %}
+    <div class="tabs__panel prose" id="product-{{ node.id }}-description">{{ content.body }}</div>
+    <div class="tabs__panel prose" id="product-{{ node.id }}-care">{{ content.field_care }}{{ content.field_guide }}</div>
+    <div class="tabs__panel prose" id="product-{{ node.id }}-shipping"><p>{{ shipping_note }}</p><p>{{ 'We pack orders on Thursdays and Fridays; most arrive within a week.'|t }}</p></div>
+  {% endset %}
+  <div class="product-page__tabs">
+    {{ include('northstar:tabs', {
+      id: 'product-' ~ node.id,
+      tabs: [
+        { id: 'description', label: 'Description'|t },
+        { id: 'care', label: 'Materials and care'|t },
+        { id: 'shipping', label: 'Shipping'|t },
+      ],
+      panels: panels,
+    }, with_context = false) }}
+  </div>
+
+  {{ content|without('field_media', 'field_price', 'field_compare_price', 'field_badges', 'field_highlights', 'body', 'field_category', 'field_care', 'field_guide', 'field_sku', 'field_materials', 'field_since', 'links') }}
+</article>

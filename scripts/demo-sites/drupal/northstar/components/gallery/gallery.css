@@ -1,0 +1,13 @@
+.gallery { display: grid; gap: 0.75rem; }
+.gallery__stage { display: grid; gap: 0.75rem; }
+.gallery__item { margin: 0; overflow: hidden; border-radius: var(--ns-radius-lg); background: var(--ns-studio); }
+.gallery__item img { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; }
+.gallery.is-ready .gallery__stage { display: block; }
+.gallery.is-ready .gallery__item { display: none; }
+.gallery.is-ready .gallery__item.is-active { display: block; animation: ns-fade 0.35s ease both; }
+.gallery__thumbs { display: flex; gap: 0.6rem; }
+.gallery__thumb { width: 5rem; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: var(--ns-radius-sm); background: var(--ns-studio); cursor: pointer; transition: border-color var(--ns-ease); }
+.gallery__thumb img { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; }
+.gallery__thumb[aria-pressed="true"] { border-color: var(--ns-pine); }
+.gallery__thumb:focus-visible { outline: 3px solid var(--ns-gold); outline-offset: 2px; }
+@keyframes ns-fade { from { opacity: 0; } to { opacity: 1; } }

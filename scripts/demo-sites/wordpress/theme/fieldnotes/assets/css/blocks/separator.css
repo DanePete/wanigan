@@ -1,0 +1,13 @@
+/* core/separator, "Contour": one drawn contour line instead of a rule. */
+.wp-block-separator.is-style-contour {
+	height: 14px;
+	border: 0 !important;
+	background: currentColor;
+	opacity: 1;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='14' viewBox='0 0 120 14'%3E%3Cpath d='M0 7 C15 1 25 1 40 7 S65 13 80 7 S105 1 120 7' fill='none' stroke='black' stroke-width='1.4'/%3E%3C/svg%3E") repeat-x center / 120px 14px;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='14' viewBox='0 0 120 14'%3E%3Cpath d='M0 7 C15 1 25 1 40 7 S65 13 80 7 S105 1 120 7' fill='none' stroke='black' stroke-width='1.4'/%3E%3C/svg%3E") repeat-x center / 120px 14px;
+}
+
+.wp-block-separator.is-style-contour:not(.has-text-color) {
+	color: var(--wp--preset--color--line);
+}

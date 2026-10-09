@@ -1,0 +1,17 @@
+{#
+/**
+ * @file
+ * A callout block, drawn by the northstar:callout component. tone and cta
+ * come from northstar_preprocess_block().
+ */
+#}
+<div{{ attributes.addClass('block', 'block--callout') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:callout', {
+    tone: tone,
+    cta_label: cta.label,
+    cta_url: cta.url,
+    heading: content.field_heading,
+    text: content.field_summary,
+  }, with_context = false) }}
+</div>

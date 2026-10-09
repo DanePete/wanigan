@@ -1,0 +1,26 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Picture and text
+status: stable
+description: 'A picture beside a heading, a paragraph and a link; the picture can sit on either side.'
+props:
+  type: object
+  properties:
+    reverse:
+      type: [boolean, 'null']
+      title: Picture on the right
+      default: false
+    cta_label:
+      type: [string, 'null']
+      title: Link
+      examples: ['Read how we test']
+    cta_url:
+      type: [string, 'null']
+      title: Link address
+      examples: ['/journal/a-cold-morning-test']
+slots:
+  media:
+    title: Picture
+  heading:
+    title: Heading
+  text:
+    title: Text

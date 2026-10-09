@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * The main menu, as the header's navigation (menu--main.html.twig draws the
+ * mega menu inside it).
+ */
+#}
+{% set heading_id = attributes.id ~ '-menu'|clean_id %}
+<nav aria-labelledby="{{ heading_id }}"{{ attributes.addClass('block', 'primary-nav')|without('role', 'aria-labelledby') }}>
+  {{ title_prefix }}
+  <h2{{ title_attributes.addClass('visually-hidden').setAttribute('id', heading_id) }}>{{ configuration.label }}</h2>
+  {{ title_suffix }}
+  {{ content }}
+</nav>

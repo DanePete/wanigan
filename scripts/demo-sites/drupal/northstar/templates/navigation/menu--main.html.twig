@@ -1,0 +1,46 @@
+{#
+/**
+ * @file
+ * The main menu as a mega menu: each top item with children has a button
+ * that opens a panel of its children, each with its description (added in
+ * northstar_preprocess_menu__main()). nav.js opens and closes the panels;
+ * without JavaScript the panels open on hover and focus.
+ */
+#}
+<ul{{ attributes.addClass('mega') }}>
+  {% for item in items %}
+    {% set panel_id = 'mega-' ~ loop.index %}
+    <li{{ item.attributes.addClass('mega__item', item.below ? 'mega__item--parent', item.in_active_trail ? 'is-active-trail') }}>
+      <span class="mega__top">
+        {{ link(item.title, item.url, { class: ['mega__link'] }) }}
+        {% if item.below %}
+          <button class="mega__toggle" type="button" aria-expanded="false" aria-controls="{{ panel_id }}">
+            <span class="visually-hidden">{{ 'Open the @name menu'|t({ '@name': item.title }) }}</span>
+            {{ include('northstar:icon', { name: 'chevron' }, with_context = false) }}
+          </button>
+        {% endif %}
+      </span>
+      {% if item.below %}
+        <div class="mega__panel" id="{{ panel_id }}">
+          <div class="mega__panel-inner">
+            <div class="mega__intro">
+              <p class="mega__eyebrow">{{ item.title }}</p>
+              {% if item.description %}<p class="mega__lede">{{ item.description }}</p>{% endif %}
+              {{ link('All of @name'|t({ '@name': item.title }), item.url, { class: ['mega__all'] }) }}
+            </div>
+            <ul class="mega__children">
+              {% for child in item.below %}
+                <li{{ child.attributes.addClass('mega__child') }}>
+                  <a href="{{ child.url }}" class="mega__child-link">
+                    <span class="mega__child-title">{{ child.title }}</span>
+                    {% if child.description %}<span class="mega__child-text">{{ child.description }}</span>{% endif %}
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      {% endif %}
+    </li>
+  {% endfor %}
+</ul>

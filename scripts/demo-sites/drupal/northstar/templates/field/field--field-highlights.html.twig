@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * A product's highlights: a ticked list, one line per item.
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-highlights') }}>
+  <h2 class="highlights__title">{{ label }}</h2>
+  <ul class="highlights">
+    {% for item in items %}
+      <li{{ item.attributes.addClass('highlights__item') }}>{{ item.content }}</li>
+    {% endfor %}
+  </ul>
+</div>

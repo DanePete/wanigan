@@ -1,0 +1,13 @@
+{#
+/**
+ * @file
+ * Product blocks (bestsellers, from the shop, more like this): a
+ * northstar:card-grid, four across, or a compact list in a sidebar.
+ */
+#}
+{% set cards %}
+  {% for row in rows %}
+    <div{{ row.attributes.addClass('card-grid__item') }}>{{- row.content -}}</div>
+  {% endfor %}
+{% endset %}
+{{ include('northstar:card-grid', { columns: 4, kind: 'products', items: cards }, with_context = false) }}

@@ -1,0 +1,31 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "fieldnotes/trail-conditions",
+	"version": "1.0.0",
+	"title": "Trail conditions",
+	"category": "widgets",
+	"icon": "flag",
+	"description": "The latest conditions report for this trail, with earlier reports behind a toggle.",
+	"keywords": [ "trail", "conditions", "report" ],
+	"textdomain": "fieldnotes-trails",
+	"usesContext": [ "postId", "postType" ],
+	"attributes": {
+		"earlier": {
+			"type": "number",
+			"default": 4
+		}
+	},
+	"supports": {
+		"interactivity": true,
+		"html": false,
+		"spacing": {
+			"margin": true,
+			"padding": true
+		}
+	},
+	"editorScript": "file:./index.js",
+	"viewScriptModule": "file:./view.js",
+	"style": "file:./style.css",
+	"render": "file:./render.php"
+}
