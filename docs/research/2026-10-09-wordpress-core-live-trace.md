@@ -400,7 +400,13 @@ into a container honours the block type's `parent` and the container's
 `allowed_blocks`. The palette is registered patterns
 (`WP_Block_Patterns_Registry`, saved markup the editor accepts) and dynamic
 blocks that render from attributes alone (no sourced attribute, no inner
-blocks), inserted as a void delimiter. A move or insert refuses with HTTP 409
+blocks), inserted as a void delimiter. A place is counted as the app side does
+(`src/shared/live-arrange.ts`): the item's index among the target's items after
+the move, from 0, the moving item left out (B in [A,B,C] to 2 is [A,C,B]; into
+[X,Y] at 1 is [X,B,Y]; the length appends; past it is refused). Removing a block
+also removes a separator beside it, so the block it goes before and the
+container it goes into are tagged before the removal and found again after,
+rather than trusting shifted paths. A move or insert refuses with HTTP 409
 and the list's current order when its store changed since the trace. Undo puts
 back exactly the content it replaced, only while the store is still as the move
 left it; the first change to a theme's template or template part creates the
