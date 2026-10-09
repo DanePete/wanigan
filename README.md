@@ -135,6 +135,12 @@ view**, where Drupal, WordPress and other sites can each be on or off.
   they are written there exactly once (with a revert), or to a plain text field
   through Drupal itself. Try a style on the page; it goes to the agent as
   intent, never written into the stylesheets by hand.
+- **Go to** (Shift+Space in the live view, ⌘⇧Space anywhere in a project):
+  any page of the site by typing a few letters of its title, an admin or
+  structure page, a path or an id, ranked as you type and by what you choose
+  often; Enter opens it in the view, ⌥Enter its edit form, ⌘Enter the default
+  browser, → its tasks. It searches the whole site through the helper, and
+  without one, the pages the view has seen.
 - **The site helper** (Drupal module or WordPress must-use plugin), installed
   on your click: names every piece exactly, shows one piece alone (with sample
   content where there is none), and reloads when content changes too.
