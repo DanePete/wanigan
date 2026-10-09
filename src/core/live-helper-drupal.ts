@@ -1,14 +1,24 @@
 // The Drupal helper for the live view: a development-only module Wanigan
 // writes into the site when the owner asks, and removes when they ask. It
-// marks what made each part of a page (content, fields, blocks, views), shows
-// one piece alone (an entity, a component, a block, or sample content), saves
-// words to a plain text field as the logged-in user, and counts cache tag
-// invalidations so the view can reload when content changes. None of it acts
-// unless the request carries the token Wanigan keeps in Drupal's state
-// (wanigan_live.token) and sends only from its own view.
-// Design: docs/design/2026-10-08-live-view.md.
+// traces what made each part of a page through Drupal core's own render,
+// theme, hook, database and logging paths (a LiveTrace, src/shared/live-trace.ts),
+// offers each part's edit through core's own forms, moves and inserts in the
+// collections core can reorder, answers the "Go to" launcher
+// (src/shared/live-find.ts), shows one piece alone, saves words to a plain
+// text field as the logged-in user, and counts cache tag invalidations so the
+// view can reload when content changes. None of it acts unless the request
+// carries the token Wanigan keeps in Drupal's state (wanigan_live.token) and
+// sends only from its own view.
+// Design: docs/design/2026-10-08-live-view.md. How it hooks core:
+// docs/research/2026-10-09-drupal-core-live-trace.md.
+import { DRUPAL_TRACE_FILES } from './live-helper-drupal-trace.ts';
+import { DRUPAL_INTERCEPT_FILES } from './live-helper-drupal-intercept.ts';
+import { DRUPAL_BUILD_FILES } from './live-helper-drupal-build.ts';
+import { DRUPAL_ASSEMBLE_FILES } from './live-helper-drupal-assemble.ts';
+import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
+import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
 
-export const DRUPAL_HELPER_VERSION = 1;
+export const DRUPAL_HELPER_VERSION = 2;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
 /** The first line of the module's .info.yml: how Wanigan knows a folder of that name is its own. */
 export const DRUPAL_HELPER_MARK = '# Written by Wanigan for its live view.';
@@ -16,7 +26,7 @@ export const DRUPAL_HELPER_MARK = '# Written by Wanigan for its live view.';
 const INFO = `${DRUPAL_HELPER_MARK} Development only: remove it from Wanigan (it is kept out of git).
 name: 'Wanigan live view'
 type: module
-description: 'Marks what made each part of a page for Wanigan''s live view, only for requests that carry its token.'
+description: 'Traces what made each part of a page for Wanigan''s live view, and edits it through Drupal''s own forms, only for requests that carry its token.'
 package: Development
 core_version_requirement: ^10.3 || ^11
 # wanigan-helper-version: ${DRUPAL_HELPER_VERSION}
@@ -32,6 +42,31 @@ const SERVICES = `services:
     tags:
       - { name: page_cache_request_policy }
       - { name: dynamic_page_cache_request_policy }
+  wanigan_live.trace_store:
+    class: Drupal\\wanigan_live\\Trace\\TraceStore
+    arguments: ['@keyvalue.expirable', '@current_user']
+  # Starts a trace for a token request, and stores it as the page leaves.
+  wanigan_live.trace_subscriber:
+    class: Drupal\\wanigan_live\\Trace\\TraceSubscriber
+    arguments: ['@wanigan_live.token', '@wanigan_live.trace_store']
+    tags:
+      - { name: event_subscriber }
+  wanigan_live.trace_logger:
+    class: Drupal\\wanigan_live\\Trace\\TraceLogger
+    arguments: ['@logger.log_message_parser']
+    tags:
+      - { name: logger }
+  # Above every other strategy, for a traced request only: placeholders are
+  # rendered into the page, so nothing streams after the trace is stored.
+  wanigan_live.placeholder_strategy:
+    class: Drupal\\wanigan_live\\Trace\\TracePlaceholderStrategy
+    tags:
+      - { name: placeholder_strategy, priority: 10000 }
+  wanigan_live.twig_extension:
+    class: Drupal\\wanigan_live\\Trace\\TraceTwigExtension
+    arguments: ['@plugin.manager.sdc']
+    tags:
+      - { name: twig.extension }
 `;
 
 const ROUTING = `wanigan_live.changed:
@@ -59,6 +94,70 @@ wanigan_live.piece:
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
     kind: 'entity|sample|component|block'
+  options:
+    no_cache: TRUE
+wanigan_live.trace:
+  path: '/_wanigan/trace/{id}'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::trace'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+    id: '[0-9a-f]{16}'
+  options:
+    no_cache: TRUE
+wanigan_live.edit_done:
+  path: '/_wanigan/edit/done'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::done'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    _admin_route: TRUE
+    no_cache: TRUE
+wanigan_live.edit:
+  path: '/_wanigan/edit/{target}'
+  methods: [GET, POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::edit'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+    target: '[A-Za-z0-9_.:~-]+'
+  options:
+    _admin_route: TRUE
+    no_cache: TRUE
+wanigan_live.move:
+  path: '/_wanigan/move'
+  methods: [POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::move'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.insert:
+  path: '/_wanigan/insert'
+  methods: [POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::insert'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.undo:
+  path: '/_wanigan/undo'
+  methods: [POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::undo'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.find:
+  path: '/_wanigan/find'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::find'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
     no_cache: TRUE
 `;
@@ -229,6 +328,7 @@ use Drupal\\Core\\Controller\\ControllerBase;
 use Drupal\\Core\\Entity\\ContentEntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
 use Drupal\\Core\\Render\\Markup;
+use Drupal\\wanigan_live\\Find\\Finder;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
 use Symfony\\Component\\HttpFoundation\\Request;
 use Symfony\\Component\\HttpFoundation\\Response;
@@ -258,6 +358,15 @@ final class LiveController extends ControllerBase {
       $sum = -1;
     }
     return $this->json(['changed' => $sum]);
+  }
+
+  /**
+   * The "Go to" launcher: the index, or a search when there is a query.
+   */
+  public function find(Request $request): JsonResponse {
+    $finder = new Finder();
+    $query = trim((string) $request->query->get('q', ''));
+    return $this->json($query !== '' ? $finder->search($query, (int) $request->query->get('limit', 50)) : $finder->index());
   }
 
   /**
@@ -437,4 +546,10 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   'src/PageCache/DenyWanigan.php': DENY,
   'src/Controller/LiveController.php': CONTROLLER,
   'templates/wanigan-live-piece.html.twig': PIECE_TEMPLATE,
+  ...DRUPAL_TRACE_FILES,
+  ...DRUPAL_INTERCEPT_FILES,
+  ...DRUPAL_BUILD_FILES,
+  ...DRUPAL_ASSEMBLE_FILES,
+  ...DRUPAL_EDIT_FILES,
+  ...DRUPAL_FIND_FILES,
 };
