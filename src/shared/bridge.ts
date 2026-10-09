@@ -5,6 +5,7 @@ import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
 import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved } from './live-arrange.ts';
 import type { LiveFailure } from './live-site.ts';
+import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -185,6 +186,20 @@ export interface LiveBridge {
   insert(insert: LiveInsert): Promise<LiveMoveSaved>;
   /** Put back a move or insert, by the token the site gave for it. */
   undo(token: string): Promise<LiveMoveSaved>;
+  /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
+
+  /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */
+  find(projectId: string, query?: string, options?: { refresh?: boolean }): Promise<LiveFindAnswer>;
+  /** What the page shown is, when the view shows this project's site; null otherwise. */
+  findHere(projectId: string): Promise<LiveHere | null>;
+  /** Wait for Shift+Space on the page, while nothing there is typed into: 'goto', or null when a newer wait or a new page replaced it. */
+  awaitGoto(): Promise<'goto' | null>;
+  /** The launcher takes the keyboard; true when the view's page had it. */
+  gotoFocus(): Promise<boolean>;
+  /** Give the keyboard back to the view's page. */
+  gotoReturn(): Promise<void>;
+  /** Open a path of a project's site in the default browser (never with the helper's token). */
+  openInBrowser(projectId: string, path: string): Promise<boolean>;
 }
 
 export interface WaniganBridge {

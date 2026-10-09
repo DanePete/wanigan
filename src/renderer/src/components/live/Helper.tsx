@@ -90,7 +90,7 @@ export function HelperSettings({ site, project }: { site: LiveSite; project: Pro
   );
 }
 
-/** Exactly what installing writes and runs, and the yes that does it. Also opened from a trace note (TraceNote.tsx). */
+/** Exactly what installing writes and runs, and the yes that does it. Also opened from a trace note (TraceNote.tsx) and from Go to. */
 export function HelperDialog({ site, project, onClose }: { site: LiveSite; project: ProjectSummary; onClose: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);

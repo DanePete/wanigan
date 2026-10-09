@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
+import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 
 const out = join(root, '.artifacts', 'live');
 mkdirSync(out, { recursive: true });
@@ -31,6 +32,7 @@ try {
     await context.addInitScript(BRIDGE);
     await context.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
     await context.addInitScript(liveStub, liveFixture);
+    await context.addInitScript(LIVE_DEFAULTS);
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -191,6 +193,7 @@ try {
     await old.addInitScript(BRIDGE);
     await old.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
     await old.addInitScript(liveStub, liveFixture);
+    await old.addInitScript(LIVE_DEFAULTS);
     await old.addInitScript(() => { window.__wgLive.outdated = true; window.__wgLive.answer = { state: 'missing' }; });
     const p2 = await old.newPage();
     await p2.goto(`${base}#/p/NS/live`);

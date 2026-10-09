@@ -12,6 +12,7 @@ import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
 import { wireLiveInspect } from './live-inspect.ts';
+import { wireLiveFind } from './live-find.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
@@ -143,6 +144,12 @@ function wireBridge(): void {
   // Agents' looks at the live view (wanigan mcp), relayed by the core: answered from a hidden window, never the owner's view.
   const agentLooks = wireLiveAgent({
     client: () => core.get(), settings: () => appSettings?.store.get() ?? null, view, windowOpen: () => !!win && !win.isDestroyed(),
+  });
+  // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
+  wireLiveFind({
+    ipc: ipcMain, openExternal: (url) => shell.openExternal(url), window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true, settings: () => appSettings?.store.get() ?? null,
+    client: () => core.get(), current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback),
+    sessionFor: (id, url) => view.sessionFor(id, url),
   });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };

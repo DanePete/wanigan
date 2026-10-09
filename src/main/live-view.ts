@@ -57,6 +57,12 @@ export interface LiveViewWiring {
   current(): LiveCurrent | null;
   /** Run code in the page script's isolated world (putting the script in first); `fallback` when it cannot. */
   run<T>(code: string, fallback: T): Promise<T>;
+  /**
+   * A project's view session, locked down as the view's own (its certificate
+   * trust for the site's host), for asking the site's helper as the user
+   * logged in there when no view of it is shown. Null for an address that is not one.
+   */
+  sessionFor(projectId: string, url: string): Session | null;
 }
 
 export interface RenderOptions {
@@ -731,5 +737,16 @@ export function wireLiveView(options: {
   const current = (): LiveCurrent | null => (view && !view.webContents.isDestroyed() && projectId && base
     ? { projectId, webContents: view.webContents, base, token: tokens.get(projectId) ?? null } : null);
 
-  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script, current, run };
+
+  const sessionFor = (id: string, rawUrl: string): Session | null => {
+    const url = liveUrl(rawUrl);
+    if (!url) return null;
+    const partition = partitionFor(id);
+    const ses = session.fromPartition(partition);
+    prepare(ses, partition, id);
+    if (!hosts.has(id)) hosts.set(id, new URL(url).hostname);
+    return ses;
+  };
+
+  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script, current, run, sessionFor };
 }

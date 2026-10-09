@@ -50,7 +50,7 @@ test('G then a letter goes somewhere; G then C is Changes, not a new card', () =
 test('every command the keys can produce is listed on the sheet', () => {
   const produced = new Set<string>();
   const presses: [KeyInput, KeyState][] = [];
-  for (const k of 'abcdefghijklmnopqrstuvwxyz0123456789/,?\\'.split('').concat(['Escape'])) {
+  for (const k of 'abcdefghijklmnopqrstuvwxyz0123456789/,?\\ '.split('').concat(['Escape'])) {
     for (const state of [at(), at({ afterG: true })]) {
       presses.push([key(k), state], [key(k, { metaKey: true }), state], [key(k, { shiftKey: true }), state], [key(k, { metaKey: true, shiftKey: true }), state]);
       // With ⌥ a Mac types another character; the key's code still names the letter.
@@ -127,6 +127,19 @@ test('git’s chords push, pull, fetch, switch and make a branch, and ⌘P opens
   assert.equal(menuAccelerator('git-pull'), 'CmdOrCtrl+Shift+P');
   assert.equal(shortcutText(shortcutFor('git-branch')!, true), '⌘⇧B');
   for (const id of ['git-commit', 'git-stash']) assert.ok(COMMAND_IDS.has(id), `${id} can come from the menu and ⌘K`);
+});
+
+test('⌘⇧Space is Go to, from anywhere in the window and while typing; Shift+Space alone is left to the live view', () => {
+  for (const typing of [false, true]) assert.deepEqual(matchKey(key(' ', { metaKey: true, shiftKey: true }), at({ typing })), { id: 'live-goto' });
+  assert.deepEqual(matchKey(key(' ', { ctrlKey: true, shiftKey: true }), at({ mac: false })), { id: 'live-goto' });
+  assert.equal(matchKey(key(' ', { ctrlKey: true, shiftKey: true }), at({ typing: true })), null, 'Control stays with the terminal on a Mac');
+  assert.equal(matchKey(key(' ', { metaKey: true }), at()), null, '⌘Space is Spotlight’s');
+  assert.equal(matchKey(key(' ', { shiftKey: true }), at()), null, 'the window does not take Shift+Space from typing anywhere');
+  assert.equal(menuAccelerator('live-goto'), 'CmdOrCtrl+Shift+Space');
+  assert.equal(shortcutText(shortcutFor('live-goto')!, true), '⌘⇧Space');
+  // No other chord in the table is ⌘⇧Space.
+  const owners = SHORTCUTS.filter((s) => [s.keys, ...(s.alt ?? [])].some((k) => k.join('+') === 'Mod+Shift+Space'));
+  assert.deepEqual(owners.map((s) => s.id), ['live-goto']);
 });
 
 test('menus carry the same chords, written for each platform', () => {

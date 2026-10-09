@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { compareStub } from './ui-compare-stub.mjs';
+import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 
 const out = join(root, '.artifacts', 'ui');
 mkdirSync(out, { recursive: true });
@@ -1476,6 +1477,7 @@ try {
       cmp.on('pageerror', (e) => errors.push(`compare pageerror: ${e.message}`));
       cmp.on('console', (m) => { if (m.type() === 'error') errors.push(`compare console: ${m.text()}`); });
       await cmp.addInitScript(compareStub);
+      await cmp.addInitScript(LIVE_DEFAULTS);
       await cmp.goto(`${base}#/p/${ns}/board`);
       await cmp.waitForSelector('.card');
       const project = await cmp.evaluate(async (key) => (await window.wanigan.call('projects.list', {})).find((p) => p.key === key), ns);

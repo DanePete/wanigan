@@ -11,7 +11,7 @@ import { PROJECT_VIEWS, type ProjectView } from './views.ts';
 
 export type CommandId =
   | 'palette' | 'new-session' | 'new-card' | 'shortcuts' | 'settings' | 'close-card' | 'history' | 'toggle-rail'
-  | 'quick-open' | 'toggle-editor'
+  | 'quick-open' | 'toggle-editor' | 'live-goto'
   | 'go-needs' | 'go-running' | 'go-accounts' | 'go-settings'
   | `go-${ProjectView}`
   | `project-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
@@ -64,6 +64,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'go-running', label: 'Running', group: 'Go to', keys: ['G', 'R'], sequence: true },
   ...viewShortcuts,
   { id: 'project-1', label: 'Your first nine projects, in order', group: 'Go to', keys: ['Mod', '1–9'] },
+  // Go to (components/live/GoTo.tsx): a page of the open project's site. ⌘⇧Space anywhere, even while typing;
+  // Shift+Space in the live view and its page when nothing is typed into (lib/live-goto.ts, live-page-goto.ts).
+  { id: 'live-goto', label: 'A page of the project’s site', group: 'Go to', keys: ['Mod', 'Shift', 'Space'] },
+  { id: null, label: 'A page of the site, from the live view (not while typing)', group: 'Go to', keys: ['Shift', 'Space'] },
   // In the open project: each opens the git workbench where it happens.
   { id: 'git-push', label: 'Push the branch (shows what goes first)', group: 'Git', keys: ['Mod', 'Alt', 'P'] },
   { id: 'git-pull', label: 'Pull, fast-forward only', group: 'Git', keys: ['Mod', 'Shift', 'P'] },
@@ -175,6 +179,7 @@ export function matchKey(e: KeyInput, state: KeyState): KeyMatch {
     if (k === 'j' && !e.shiftKey) return { id: 'toggle-editor' };
     if (k === 'f' && e.shiftKey) return { id: 'git-fetch' };
     if (k === 'b') return { id: e.shiftKey ? 'git-branch' : 'git-switch' };
+    if (k === ' ' && e.shiftKey) return { id: 'live-goto' };
     return null;
   }
   if (state.typing || state.dialog || e.metaKey || e.ctrlKey || e.altKey) return null;

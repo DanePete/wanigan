@@ -21,6 +21,7 @@ import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
+import { useGoToKeys } from '../lib/live-goto';
 import { navigate } from '../lib/router';
 import { useAppState } from '../lib/settings';
 import { liveFor, type AppSettings } from '@shared/settings';
@@ -307,6 +308,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (!site.helper || !site.token) { setTrace({ state: 'no-helper' }); return; }
     setTrace(await live.trace());
   }, [live, helperSite, site.helper, site.token]);
+  // Go to: Shift+Space here or in the page, and the bar's button (components/live/GoTo.tsx).
+  const goTo = useGoToKeys(project.id);
 
   useEffect(() => { void live.hasScript().then(setHasScript); }, [live]);
   useEffect(() => { setOnly(null); }, [lens]);
@@ -584,6 +587,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           <span className="visually-hidden">Address</span>
           <input className="mono" value={address} onChange={(e) => setAddress(e.target.value)} spellCheck={false} autoComplete="off" />
         </label>
+        <IconButton icon="search" label="Go to a page of the site (Shift+Space)" onClick={goTo} />
         <div className="live-widths" role="group" aria-label="Width">
           {(Object.keys(WIDTHS) as Width[]).map((w) => (
             <IconButton key={w} icon={WIDTHS[w].icon} label={WIDTHS[w].label} aria-pressed={width === w} data-on={width === w ? '' : undefined} onClick={() => setWidth(w)} />

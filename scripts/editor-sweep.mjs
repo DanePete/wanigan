@@ -8,6 +8,7 @@
 // drawer beneath a session and beside the view. Fails on console errors and on
 // anything the disk or the core does not confirm. Screenshots go to
 // .artifacts/ui/<theme>-editor-<name>.png; look at them.
+import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
@@ -51,6 +52,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
     await context.addInitScript(BRIDGE);
     await context.addInitScript(LIVE_STUB);
+    await context.addInitScript(LIVE_DEFAULTS);
     await context.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
     const page = await context.newPage();
     const errors = [];
