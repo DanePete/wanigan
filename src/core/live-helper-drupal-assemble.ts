@@ -201,7 +201,14 @@ final class TraceBuilder {
         }
       }
     }
-    $edits = (new Targets($this))->forPart($p);
+    try {
+      $edits = (new Targets($this))->forPart($p);
+    }
+    catch (\Throwable $e) {
+      // A part whose targets cannot be worked out is still traced.
+      $edits = [];
+      \Drupal::logger('wanigan_live')->warning('The live view could not offer edits for @label: @message (@file:@line)', ['@label' => (string) $p['label'], '@message' => $e->getMessage(), '@file' => basename($e->getFile()), '@line' => $e->getLine()]);
+    }
     if (!empty($p['variables'])) {
       $variables = [];
       foreach ($p['variables'] as $variable) {
