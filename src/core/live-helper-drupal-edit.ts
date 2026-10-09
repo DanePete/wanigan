@@ -14,6 +14,7 @@ use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\Entity\EntityFormDisplay;
 use Drupal\Core\Entity\Entity\EntityViewDisplay;
+use Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem;
 use Drupal\Core\Plugin\Context\Context;
 use Drupal\Core\Plugin\Context\ContextDefinition;
 use Drupal\Core\Plugin\Context\EntityContext;
@@ -175,6 +176,32 @@ final class Targets {
     }
     if (!$entity->get($name)->access('edit')) {
       return 'The user you are logged in as in the live view may not change this field.';
+    }
+    return NULL;
+  }
+
+  /**
+   * Why an item cannot be taken out of a content entity's field here, or
+   * NULL. Beyond fieldWhy(): on content that keeps no revisions, a reference
+   * whose field type tracks what it points at can take that with it once
+   * nothing refers to it (FileFieldItemList::postSave() lowers a file's usage
+   * on such an update, and a file no longer used can be removed; other
+   * reference types delete what only they held). Core's plain entity
+   * reference does neither, and content that keeps revisions keeps the item
+   * in the revision before.
+   */
+  public static function removeWhy(ContentEntityInterface $entity, string $name): ?string {
+    if ($why = self::fieldWhy($entity, $name)) {
+      return $why;
+    }
+    if ($entity->getEntityType()->isRevisionable()) {
+      return NULL;
+    }
+    $definition = $entity->getFieldDefinition($name);
+    $type = \Drupal::service('plugin.manager.field.field_type')->getDefinition($definition->getType(), FALSE);
+    $class = is_array($type) ? ($type['class'] ?? '') : '';
+    if ($definition->getType() !== 'entity_reference' && is_string($class) && is_a($class, EntityReferenceItem::class, TRUE)) {
+      return 'This content keeps no revisions, and taking this item out could let the site delete what it points to (a file nothing uses any more, or content only this item held). Wanigan leaves it in.';
     }
     return NULL;
   }
@@ -1039,7 +1066,7 @@ final class Moves {
     if ($entity === NULL || !$entity->hasField($c['field'])) {
       return [404, self::refuse('There is no such content, or it has no such field.')];
     }
-    if ($why = Targets::fieldWhy($entity, $c['field'])) {
+    if ($why = Targets::removeWhy($entity, $c['field'])) {
       return [403, self::refuse($why)];
     }
     $current = self::identities($entity, $c['field']);

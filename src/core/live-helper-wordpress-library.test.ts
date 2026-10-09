@@ -60,7 +60,12 @@ function get_stylesheet() { return 'northwind'; }
 function get_template() { return 'northwind'; }
 function get_stylesheet_directory() { return WP_CONTENT_DIR . '/themes/northwind'; }
 function get_template_directory() { return WP_CONTENT_DIR . '/themes/northwind'; }
-function get_post_meta() { return ''; }
+// All of a post's meta as stored (values serialized), or '' for one key; add_post_meta() unslashes and serializes, as core's does.
+function get_post_meta($id = 0, $key = '') { return $key === '' ? (isset($GLOBALS['wl']['meta'][(int) $id]) ? $GLOBALS['wl']['meta'][(int) $id] : array()) : ''; }
+function add_post_meta($id, $key, $value) { $GLOBALS['wl']['meta'][(int) $id][wp_unslash($key)][] = maybe_serialize(wp_unslash($value)); return 1; }
+function maybe_serialize($v) { return is_array($v) || is_object($v) || (is_string($v) && @unserialize($v) !== false) ? serialize($v) : $v; }
+function maybe_unserialize($v) { $u = is_string($v) ? @unserialize($v) : false; return $u !== false || $v === 'b:0;' ? $u : $v; }
+function wp_slash($v) { return $v; }
 final class WP_Post { public $ID; public $post_type = 'page'; public $post_title = 'Home'; public function __construct($id) { $this->ID = $id; } }
 function get_post($id) { return isset($GLOBALS['wl']['posts'][(int) $id]) ? new WP_Post((int) $id) : null; }
 function get_post_field($f, $id) { return $GLOBALS['wl']['posts'][(int) $id]; }
@@ -179,6 +184,8 @@ if (getenv('WL_DO') === 'remove') {
   $GLOBALS['wl']['sidebars'] = array('sidebar-1' => array('block-2', 'search-3'), 'wp_inactive_widgets' => array('text-9'));
   $GLOBALS['wl']['menu'] = array(31 => array('title' => 'About', 'parent' => 0, 'menu_order' => 1), 32 => array('title' => 'Shop', 'parent' => 0, 'menu_order' => 2), 33 => array('title' => 'Gifts', 'parent' => 32, 'menu_order' => 3));
   $state = array(31 => array(0, 1), 32 => array(0, 2), 33 => array(32, 3));
+  // The item's own fields, which /wp/v2/menu-items makes again, and a theme's setting for it, which it does not.
+  $GLOBALS['wl']['meta'][31] = array('_menu_item_type' => array('post_type'), '_edit_lock' => array('1:1'), 'acme_icon' => array('star'), 'acme_columns' => array(serialize(array('a' => 1))));
   $trace = array('collections' => array(
     array('id' => 'c-post', 'kind' => 'post-blocks', 'items' => array('pa', 'pb', 'pc'), 'removes' => true),
     array('id' => 'c-w', 'kind' => 'widgets', 'items' => array('w1', 'w2'), 'removes' => true),
@@ -211,6 +218,8 @@ if (getenv('WL_DO') === 'remove') {
   $GLOBALS['wl']['rest'] = array();
   $u = $undo($r);
   $out['menuUndo'] = array($u['status'], $GLOBALS['wl']['menu'], $GLOBALS['wl']['rest'][0]);
+  $made = max(array_keys($GLOBALS['wl']['menu']));
+  $out['menuMeta'] = isset($GLOBALS['wl']['meta'][$made]) ? $GLOBALS['wl']['meta'][$made] : array();
   // The first is back (under a new id): the trace is from before, so make it as the trace saw it again for the next.
   $GLOBALS['wl']['menu'] = array(31 => array('title' => 'About', 'parent' => 0, 'menu_order' => 1), 32 => array('title' => 'Shop', 'parent' => 0, 'menu_order' => 2), 33 => array('title' => 'Gifts', 'parent' => 32, 'menu_order' => 3));
   $out['menuParent'] = $call('remove', array('trace' => '0123456789abcdef', 'collection' => 'c-m', 'item' => 'm2'));
@@ -318,6 +327,7 @@ describe('version 4 of the WordPress helper, under a stand-in WordPress', { skip
     assert.deepEqual([made[0], made[1]], ['POST', '/wp/v2/menu-items']);
     assert.deepEqual(made[2], { type: 'post_type', status: 'publish', parent: 0, classes: [''], menu_order: 1, object: 'page', object_id: 12, menus: 3, title: 'About' }, 'made again from its own fields: the raw title, no rendered markup, no address for a page link');
     assert.deepEqual(Object.values(menu).map((m) => [m.title, m.parent, m.menu_order]).sort(), [['About', 0, 1], ['Gifts', 32, 3], ['Shop', 0, 2]], 'back in its place');
+    assert.deepEqual(out.menuMeta, { acme_icon: ['star'], acme_columns: ['a:1:{s:1:"a";i:1;}'] }, 'its other meta put back as it was stored; its own fields and edit lock left to core');
     const parent = out.menuParent as unknown as { status: number; data: { error: string } };
     assert.equal(parent.status, 409);
     assert.match(parent.data.error, /links under it/);

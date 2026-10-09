@@ -155,4 +155,12 @@ test('what a removal says first and after: configuration asks with where it show
   const menu = removeNotice({ id: 'c-m', kind: 'menu', label: 'Primary', items: [], changes: 'configuration', shows: 'everywhere Primary shows' }, 'wordpress');
   assert.match(menu.confirm!, /\(everywhere Primary shows\)\. The menu item is deleted; the page it linked to stays\. It is saved in the database/);
   assert.match(removeNotice({ id: 'c-w', kind: 'widgets', label: 'Sidebar', items: [], changes: 'configuration' }, 'wordpress').confirm!, /goes to Inactive widgets, with its settings/);
+  // Content shown in many places (a synced pattern, a reusable custom block) is asked about too, and saved as content.
+  const synced = removeNotice({ id: 'c-s', kind: 'post-blocks', label: 'Blocks of pattern “Hero”', items: [], changes: 'content', revisions: true, shows: 'every page that uses pattern “Hero”' }, 'wordpress');
+  assert.deepEqual(synced, {
+    confirm: 'This takes the block out wherever this content shows (every page that uses pattern “Hero”). Only the block goes from the markup: media, reusable blocks and posts it showed stay.',
+    saved: 'Taken out, as a new revision. Only the block goes from the markup: media, reusable blocks and posts it showed stay.',
+  });
+  const reusable = removeNotice({ id: 'c-b', kind: 'field-items', label: 'Links on Footer links', items: [], changes: 'content', revisions: true, shows: 'every page that shows the custom block “Footer links”' }, 'drupal');
+  assert.match(reusable.confirm!, /^This takes the item out of the field for this content wherever it shows \(every page that shows the custom block “Footer links”\)\. Only the reference goes/);
 });

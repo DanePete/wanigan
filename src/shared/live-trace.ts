@@ -286,7 +286,7 @@ export interface TraceCollection {
   removes?: boolean;
   /** Helper 4: why nothing can be taken out of it here, when nothing can. */
   removeWhy?: string;
-  /** Helper 4: where a configuration change here shows, when its pages cannot be counted: "every page shown in the Acme theme". */
+  /** Helper 4: where a change here shows when it is shared (configuration, or content shown in many places) and its pages cannot be counted: "every page shown in the Acme theme". */
   shows?: string;
 }
 

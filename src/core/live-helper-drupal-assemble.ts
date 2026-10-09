@@ -540,13 +540,21 @@ final class TraceBuilder {
         'changes' => 'content',
         'revisions' => $entity->getEntityType()->isRevisionable(),
       ];
-      $collection['removes'] = TRUE;
       if ($why = Targets::fieldWhy($entity, $name)) {
         $collection['why'] = $why;
-        $collection['removeWhy'] = $why;
       }
       elseif (($p['meta']['field']['rendered'] ?? 0) !== ($p['meta']['field']['count'] ?? 0)) {
         $collection['why'] = 'The page shows ' . $p['meta']['field']['rendered'] . ' of this field’s ' . $p['meta']['field']['count'] . ' items, so they cannot be put in order here.';
+      }
+      $remove_why = Targets::removeWhy($entity, $name);
+      $collection['removes'] = $remove_why === NULL;
+      if ($remove_why !== NULL) {
+        $collection['removeWhy'] = $remove_why;
+      }
+      // A reusable custom block is one piece of content shown wherever it is
+      // placed: a change to it shows on all of those pages.
+      if ($entity->getEntityTypeId() === 'block_content' && method_exists($entity, 'isReusable') && $entity->isReusable()) {
+        $collection['shows'] = 'every page that shows the custom block “' . $entity->label() . '”';
       }
       $identities = [];
       foreach ($entity->get($name) as $item) {

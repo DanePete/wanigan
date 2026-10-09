@@ -78,6 +78,11 @@ test('it stays within PHP 7.4, WordPress 7.1’s minimum, where a must-use plugi
   assert.ok(!/:\s*(mixed|static|never)\b/.test(src), 'no PHP 8 return types');
   assert.ok(!/function\s*\([^)]*\b(int|string|array|bool)\s*\|/.test(src), 'no union types');
   assert.ok(!src.includes('#['), 'no attributes');
+  // PHP 8.0 also parses these, and 7.4 stops at each.
+  assert.ok(!/,\s*\)\s*(\{|use\b|:\s*\??[A-Za-z])/.test(src), 'no trailing comma in a parameter or use list');
+  assert.ok(!/\b[A-Za-z_]\w*\(\s*[a-z_]\w*\s*:(?![:/])/.test(src.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")), 'no named arguments');
+  assert.ok(!/(\?\?|\?|=>|[^=!<>]=|&&|\|\|)\s*throw\b/.test(src), 'no throw expression');
+  assert.ok(!/\w\(\s*\.\.\.\s*\)/.test(src), 'no first-class callable');
 });
 
 describe('loaded under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {

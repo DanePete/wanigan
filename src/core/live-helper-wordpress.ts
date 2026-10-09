@@ -2379,7 +2379,7 @@ final class Wanigan_Live {
 			if ($why) $c['why'] = $why;
 			$c['removes'] = !$why;
 			if ($why) $c['removeWhy'] = $why;
-			if ($info['changes'] === 'configuration') $c['shows'] = 'every page that uses ' . $info['label'];
+			if ($info['changes'] === 'configuration' || !empty($info['shared'])) $c['shows'] = 'every page that uses ' . $info['label'];
 			$holder_node = $l['parent'] ? self::node($l['store'], $l['parent']) : null;
 			$c['_private'] = array('type' => 'blocks', 'store' => $l['store'], 'parent' => $l['parent'], 'holder' => $holder_node ? $holder_node['blockName'] : null, 'paths' => $l['paths'], 'fps' => $fps, 'hash' => md5($tree['content']));
 			$out[] = $c;
@@ -2510,6 +2510,8 @@ final class Wanigan_Live {
 				$route = rest_get_route_for_post($post);
 				if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves blocks here.';
 				$info = array('content' => $post->post_content, 'route' => $route, 'post' => $post->ID, 'label' => $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”', 'noun' => $noun, 'changes' => 'content', 'revisions' => post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post), 'why' => $why);
+				// A synced pattern (core's wp_block) is one post shown in every post, template and part that uses it.
+				if ($post->post_type === 'wp_block') $info['shared'] = true;
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
@@ -4295,9 +4297,24 @@ final class Wanigan_Live {
 		}
 		$kept = self::rest('GET', '/wp/v2/menu-items/' . $iid, array('context' => 'edit'));
 		if (is_wp_error($kept)) return $kept;
+		$meta = self::menu_item_meta($iid);
 		$gone = self::rest('DELETE', '/wp/v2/menu-items/' . $iid, array('force' => true));
 		if (is_wp_error($gone)) return $gone;
-		return array('undo' => array('type' => 'menu', 'menu' => $menu, 'before' => $state, 'after' => self::menu_state($menu), 'created' => null, 'deleted' => array('id' => $iid, 'fields' => self::menu_item_fields((array) $kept))));
+		return array('undo' => array('type' => 'menu', 'menu' => $menu, 'before' => $state, 'after' => self::menu_state($menu), 'created' => null, 'deleted' => array('id' => $iid, 'fields' => self::menu_item_fields((array) $kept), 'meta' => $meta)));
+	}
+
+	/**
+	 * A menu item's other post meta, as stored, for undo to put back: what /wp/v2/menu-items does not make again
+	 * (the item's own _menu_item_* fields it does), such as a theme's or plugin's settings for that item.
+	 */
+	public static function menu_item_meta(int $iid): array {
+		$out = array();
+		foreach ((array) get_post_meta($iid) as $key => $values) {
+			$key = (string) $key;
+			if (strpos($key, '_menu_item_') === 0 || in_array($key, array('_edit_lock', '_edit_last', '_wp_old_slug', '_wp_old_date'), true)) continue;
+			$out[$key] = array_map('maybe_unserialize', (array) $values);
+		}
+		return $out;
 	}
 
 	/** What /wp/v2/menu-items needs to make a menu item again, from its own answer in the edit context. */
@@ -4677,6 +4694,10 @@ final class Wanigan_Live {
 					$made = self::rest('POST', '/wp/v2/menu-items', $u['deleted']['fields']);
 					if (is_wp_error($made)) $result = $made;
 					else {
+						// Its other meta, as it was stored (add_post_meta() unslashes and serializes again).
+						foreach (isset($u['deleted']['meta']) ? (array) $u['deleted']['meta'] : array() as $key => $values) {
+							foreach ((array) $values as $value) add_post_meta((int) $made['id'], wp_slash($key), wp_slash($value));
+						}
 						$before = array();
 						foreach ($u['before'] as $iid => $s) $before[(int) $iid === (int) $u['deleted']['id'] ? (int) $made['id'] : $iid] = $s;
 						$u['before'] = $before;

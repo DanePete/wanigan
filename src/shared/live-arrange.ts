@@ -176,7 +176,7 @@ export function moveNotice(c: TraceCollection, platform: 'drupal' | 'wordpress')
 const SHARED_REMOVE: Record<TraceCollection['kind'], string> = {
   'field-items': 'This takes the item out of the field for this content wherever it shows',
   'region-blocks': 'This takes the block off every page that shows this region',
-  'post-blocks': 'This takes the block out of the post wherever the post shows',
+  'post-blocks': 'This takes the block out wherever this content shows',
   layout: 'This takes the block out of the layout for every page that uses it',
   menu: 'This takes the link out of the menu everywhere it shows',
   widgets: 'This takes the widget off every page that shows this area',
@@ -201,16 +201,18 @@ function kept(c: TraceCollection, platform: 'drupal' | 'wordpress'): string {
 }
 
 /**
- * What to say about a removal before it saves, and after. Taking an item out of configuration is said first and
- * asked about, with where it shows (pages counted, or the helper's words); out of content it is just saved, as a
- * revision where the site keeps them. Either way it says what stays.
+ * What to say about a removal before it saves, and after. Taking an item out of anything shared is said first and
+ * asked about, with where it shows (pages counted, or the helper's words): configuration, and content shown in many
+ * places (a reusable custom block, a synced pattern). Out of one page's own content it is just saved, as a revision
+ * where the site keeps them. Either way it says what stays.
  */
 export function removeNotice(c: TraceCollection, platform: 'drupal' | 'wordpress'): { confirm: string | null; saved: string } {
   const stays = kept(c, platform);
-  if (c.changes === 'content') {
-    return { confirm: null, saved: `${c.revisions === false ? 'Taken out.' : 'Taken out, as a new revision.'} ${stays}` };
-  }
   const where = c.reach !== undefined ? ` (${c.reach === 1 ? '1 page' : `${c.reach} pages`})` : c.shows ? ` (${c.shows})` : '';
+  if (c.changes === 'content') {
+    const saved = `${c.revisions === false ? 'Taken out.' : 'Taken out, as a new revision.'} ${stays}`;
+    return { confirm: where ? `${SHARED_REMOVE[c.kind]}${where}. ${stays}` : null, saved };
+  }
   const keep = platform === 'drupal'
     ? 'Export configuration (drush config:export) to keep it in code.'
     : 'It is saved in the database, not in your theme’s code.';
