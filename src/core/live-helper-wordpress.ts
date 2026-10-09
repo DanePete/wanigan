@@ -650,7 +650,7 @@ final class Wanigan_Live {
 			}, PHP_INT_MAX, 1);
 		}
 		add_action('get_template_part', function ($slug, $name, $templates) { Wanigan_Live::candidates((array) $templates); }, PHP_INT_MAX, 3);
-		// template-loader.php (7.0+): the chosen template, just before it is included.
+		// template-loader.php (6.9+): the chosen template, just before it is included.
 		add_action('wp_before_include_template', array(self::class, 'main_start'), PHP_INT_MAX, 1);
 		add_filter('template_include', array(self::class, 'template_chosen'), PHP_INT_MAX);
 		add_action('wp_head', array(self::class, 'block_template_end'), -PHP_INT_MAX);
@@ -765,7 +765,7 @@ final class Wanigan_Live {
 	}
 
 	/**
-	 * template-loader.php fires wp_before_include_template (7.0+) with the realpath of the template it is about to
+	 * template-loader.php fires wp_before_include_template (6.9+) with the realpath of the template it is about to
 	 * include. Nothing fires after the include returns, so this part ends when the page does: its end mark is
 	 * printed at shutdown, inside core's output buffer, after </html>.
 	 */
