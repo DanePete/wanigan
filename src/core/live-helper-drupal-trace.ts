@@ -180,8 +180,14 @@ final class Recorder {
       $this->state()->suggestions[] = $step;
       return;
     }
+    // On the element being built, only the hooks that shape a build, by
+    // core's naming of them: hook_ENTITY_TYPE_view(), hook_entity_view(),
+    // their _alter()s, hook_entity_prepare_view(), hook_block_view_alter(),
+    // hook_block_build_alter(), hook_entity_build_defaults_alter(),
+    // hook_entity_display_build_alter(). Access checks, loads and the like
+    // stay in the request-wide list.
     $top = $this->top();
-    if ($top !== NULL && $top->type === 'R' && count($top->steps) < self::LIMITS['chain']) {
+    if ($top !== NULL && $top->type === 'R' && count($top->steps) < self::LIMITS['chain'] && preg_match('/(^|_)(view|build)(_[a-z0-9_]+)?_alter$|_view$|_prepare_view$/', $hook) && !str_starts_with($hook, 'template_preprocess')) {
       $top->steps[] = $step;
     }
   }

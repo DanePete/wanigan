@@ -446,7 +446,9 @@ final class TraceBuilder {
         $this->{$method}($out);
       }
       catch (\Throwable $e) {
-        // One kind of collection that cannot be read leaves the others.
+        // One kind of collection that cannot be read leaves the others, and
+        // says why in the site's log.
+        \Drupal::logger('wanigan_live')->warning('The live view could not read @what: @message (@file:@line)', ['@what' => $method, '@message' => $e->getMessage(), '@file' => basename($e->getFile()), '@line' => $e->getLine()]);
       }
     }
     if (count($out) > Recorder::LIMITS['collections']) {
@@ -668,7 +670,6 @@ final class TraceBuilder {
       return;
     }
     $manager = \Drupal::service('plugin.manager.menu.link');
-    $tree = \Drupal::service('menu.tree_storage');
     foreach ($levels as $menu_part => $by_parent) {
       $menu = (string) ($this->recorder->parts[$menu_part]['meta']['menu']['name'] ?? '');
       if ($menu === '') {
@@ -680,8 +681,6 @@ final class TraceBuilder {
       }
       foreach ($by_parent as $parent => $items) {
         $id = $ids[$parent];
-        $siblings = $tree->loadByProperties(['menu_name' => $menu, 'parent' => (string) $parent]);
-        uasort($siblings, static fn ($a, $b) => [(int) $a['weight'], (string) $a['title']] <=> [(int) $b['weight'], (string) $b['title']]);
         $content = TRUE;
         $why = NULL;
         foreach ($items as $plugin) {
@@ -720,7 +719,7 @@ final class TraceBuilder {
         if ($why) {
           $collection['why'] = $why;
         }
-        $this->private['collections'][$id] = ['kind' => 'menu', 'menu' => $menu, 'parent' => (string) $parent, 'order' => array_keys($siblings), 'items' => $items];
+        $this->private['collections'][$id] = ['kind' => 'menu', 'menu' => $menu, 'parent' => (string) $parent, 'order' => \Drupal\wanigan_live\Edit\Moves::levelOrder($menu, (string) $parent), 'items' => $items];
         $out[] = $collection;
       }
     }

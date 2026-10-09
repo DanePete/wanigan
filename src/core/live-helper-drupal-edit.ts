@@ -847,6 +847,7 @@ namespace Drupal\wanigan_live\Edit;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\Entity\EntityViewDisplay;
 use Drupal\Core\Entity\RevisionLogInterface;
+use Drupal\Core\Menu\MenuTreeParameters;
 use Drupal\wanigan_live\Trace\Marks;
 use Drupal\wanigan_live\Trace\TraceStore;
 
@@ -1197,10 +1198,24 @@ final class Moves {
     return [200, ['ok' => TRUE]];
   }
 
-  private static function levelOrder(string $menu, string $parent): array {
-    $siblings = \Drupal::service('menu.tree_storage')->loadByProperties(['menu_name' => $menu, 'parent' => $parent]);
-    uasort($siblings, static fn ($a, $b) => [(int) $a['weight'], (string) $a['title']] <=> [(int) $b['weight'], (string) $b['title']]);
-    return array_map('strval', array_keys($siblings));
+  /**
+   * A menu level's links, enabled or not, in the order core sorts them
+   * (MenuLinkTreeManipulators::generateIndexAndSort(): weight, then title,
+   * then id), loaded through the menu tree (menu.link_tree).
+   */
+  public static function levelOrder(string $menu, string $parent): array {
+    $parameters = new MenuTreeParameters();
+    if ($parent !== '') {
+      $parameters->setRoot($parent)->excludeRoot();
+    }
+    $parameters->setMaxDepth(1);
+    $sorted = [];
+    foreach (\Drupal::service('menu.link_tree')->load($menu, $parameters) as $element) {
+      $link = $element->link;
+      $sorted[(50000 + $link->getWeight()) . ' ' . $link->getTitle() . ' ' . $link->getPluginId()] = $link->getPluginId();
+    }
+    ksort($sorted);
+    return array_map('strval', array_values($sorted));
   }
 
   private static function linkState(array $ids): array {

@@ -318,7 +318,7 @@ final class Marks {
     elseif ($base === 'menu' && isset($variables['items']) && is_array($variables['items'])) {
       self::menuItems($recorder, $frame, $variables['items'], NULL);
     }
-    if (isset($variables['content']['_layout_builder']) && is_array($variables['content']['_layout_builder'])) {
+    if (is_array($variables['content'] ?? NULL) && is_array($variables['content']['_layout_builder'] ?? NULL)) {
       $key = $frame->info['key'];
       $entity = $key !== NULL ? Describe::entityOf($variables[$key] ?? NULL) : NULL;
       if ($entity !== NULL) {
