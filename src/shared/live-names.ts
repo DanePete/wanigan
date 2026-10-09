@@ -110,11 +110,17 @@ const PART_ICON: Record<string, LiveKind> = {
  * kind for it, from the page's trace, used when the markup says nothing else.
  */
 export function nameOf(r: LiveRegion, componentName?: string | null, part?: { label: string; kind: string } | null): PartName {
-  const origin = originOf(r.file);
   const only = !r.component && !r.element && !r.view && !r.block && !r.entity && !r.field && !r.file && !r.hook;
   if (only && part) {
     return { title: part.label, kind: `${human(part.kind)} · from the trace`, icon: PART_ICON[part.kind] ?? 'template', origin: null, wrapper: false, small: false };
   }
+  const named = markupName(r, componentName);
+  // The helper names a part as its site does ("Opening hours", not the block's machine name): its label wins, the rest is the markup's.
+  return part && !named.wrapper ? { ...named, title: part.label } : named;
+}
+
+function markupName(r: LiveRegion, componentName?: string | null): PartName {
+  const origin = originOf(r.file);
   if (r.component) {
     const [provider, id] = r.component.split(':');
     return { title: tidyName(componentName ?? human(id ?? r.component)), kind: `Component · ${provider}`, icon: 'component', origin, wrapper: false, small: false };

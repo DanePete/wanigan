@@ -446,7 +446,7 @@ export function livePage(): void {
   function draw(): void {
     frame = 0;
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
-    const root = existing ?? (shown || hovered || painted.length ? host() : null);
+    const root = existing ?? (shown || hovered || painted.length || arranging ? host() : null);
     if (!root) return;
     root.replaceChildren();
     for (const p of painted) {
@@ -716,11 +716,11 @@ export function livePage(): void {
         const d = dragging;
         if (!d) return;
         if (e.type === 'drop') e.preventDefault();
-        if (d.from.kind !== 'entry') { dragging = null; grab = null; }
-        document.documentElement.style.removeProperty('cursor');
+        const l = landing({ x: e.clientX, y: e.clientY });
+        // Placing an entry goes on until a click lands it; a drag ends here.
+        if (d.from.kind !== 'entry') { dragging = null; grab = null; document.documentElement.style.removeProperty('cursor'); }
         document.documentElement.style.removeProperty('user-select');
         cancelAnimationFrame(scroller);
-        const l = landing({ x: e.clientX, y: e.clientY });
         const value = l ? answer(l, d) : null;
         if (value) { if (e.type === 'pointerup') addEventListener('click', swallowClick, true); finish(value); return; }
         if (d.from.kind === 'entry') return;

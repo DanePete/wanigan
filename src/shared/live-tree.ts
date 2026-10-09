@@ -111,7 +111,9 @@ export function layersOf(regions: readonly LiveRegion[], options: {
         return collapse({ key: String(r.index), region: r, name: named.get(r.index) as PartName, regions: [r], children, merged: twice.length ? [r, ...twice] : [] });
       };
       if (group.length === 1) return one(first);
-      return { key: `group ${first.index}`, region: first, name: named.get(first.index) as PartName, regions: group, children: group.map(one), merged: [] };
+      // A run of one kind is named by its kind, not by its first ("Event ×3", not one event's title ×3).
+      const kind = nameOf(first, first.component ? options.componentName?.(first.component) ?? null : null);
+      return { key: `group ${first.index}`, region: first, name: kind, regions: group, children: group.map(one), merged: [] };
     });
   };
   return build(null, 0);
