@@ -1,0 +1,35 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Event card
+status: stable
+description: 'An open day or evening: a date tile, the title, time and place, and a line about it.'
+props:
+  type: object
+  required: [url, day, month]
+  properties:
+    url:
+      type: string
+      title: Address
+      examples: ['/events/autumn-open-day']
+    day:
+      type: string
+      title: Day of the month
+      examples: ['17']
+    month:
+      type: string
+      title: Month
+      examples: ['Oct']
+    weekday:
+      type: [string, 'null']
+      title: Weekday
+      examples: ['Saturday']
+    time_range:
+      type: [string, 'null']
+      title: Time
+      examples: ['10:00 am – 4:00 pm']
+slots:
+  title:
+    title: Title
+  place:
+    title: Place
+  summary:
+    title: Summary

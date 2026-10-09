@@ -1,0 +1,9 @@
+{#
+/**
+ * @file
+ * Card grid: even columns of cards.
+ */
+#}
+<div{{ attributes.addClass('card-grid', 'card-grid--' ~ (columns|default(3)), 'card-grid--' ~ (kind|default('products'))) }}>
+  {% block items %}{{ items }}{% endblock %}
+</div>

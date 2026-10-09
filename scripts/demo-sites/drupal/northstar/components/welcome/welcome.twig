@@ -1,0 +1,15 @@
+{#
+/**
+ * @file
+ * Welcome back: a small chip in the header for the person signed in.
+ */
+#}
+<div{{ attributes.addClass('welcome') }}>
+  <a class="welcome__account" href="{{ account_url }}">
+    {{ include('northstar:icon', { name: 'user' }, with_context = false) }}
+    <span class="welcome__name">{{ 'Welcome back, @name'|t({ '@name': name }) }}</span>
+  </a>
+  {% if drafts %}
+    <a class="welcome__drafts" href="{{ drafts_url }}" title="{{ drafts_label }}"><span class="visually-hidden">{{ drafts_label }}</span><span aria-hidden="true">{{ drafts }}</span></a>
+  {% endif %}
+</div>

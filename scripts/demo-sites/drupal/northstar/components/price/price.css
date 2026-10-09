@@ -1,6 +1,10 @@
-.price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; margin: 0; }
+.price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.6rem; margin: 0; }
 .price__amount { font: 700 1.05rem/1.2 var(--ns-font); color: var(--ns-ink); font-variant-numeric: tabular-nums; }
-.price--lg .price__amount { font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2rem); }
-.price__note { font: 500 0.8rem/1.3 var(--ns-font); color: var(--ns-ink-soft); }
+.price--sale .price__amount { color: var(--ns-ember); }
+.price__was { font: 500 0.9rem/1.2 var(--ns-font); color: var(--ns-ink-soft); }
+.price--lg .price__amount { font-size: clamp(1.6rem, 1.2rem + 1.2vw, 2.1rem); letter-spacing: -0.02em; }
+.price--lg .price__was { font-size: 1.1rem; }
+.price__note { flex-basis: 100%; font: 500 0.78rem/1.3 var(--ns-font); color: var(--ns-ink-soft); }
+.price--lg .price__note { flex-basis: auto; font-size: 0.85rem; }
 .price__note--free { color: var(--ns-pine); }
 .price__note--free::before { content: "✓ "; }

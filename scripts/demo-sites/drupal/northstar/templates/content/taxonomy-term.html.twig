@@ -1,0 +1,10 @@
+{#
+/**
+ * @file
+ * A term at the top of its page: its description, as a lede.
+ */
+#}
+<div{{ attributes.addClass('term', 'term--' ~ term.bundle|clean_class) }}>
+  {{ title_prefix }}{{ title_suffix }}
+  <div class="term__description">{{ content.description }}</div>
+</div>

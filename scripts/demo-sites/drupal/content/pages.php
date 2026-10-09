@@ -2,7 +2,8 @@
 
 /**
  * @file
- * Northstar's plain pages.
+ * Northstar's plain pages. "history" lists earlier revisions, oldest first,
+ * saved before the current text when the page is first made.
  */
 
 return [
@@ -14,9 +15,17 @@ return [
 <p>Everything starts as a sketch in a field journal and spends a season being used before it goes in the shop. Mugs go on the dock rail, bags go in the canoe, prints get checked against the water.</p>
 <p>We keep runs short so we can change things: a wider handle, a deeper cuff, a lake line that was wrong.</p>
 <h2>Who we are</h2>
-<p>Dana draws the maps and tests the mugs. Sam sews the bags and answers the email. Both of us would rather be outside, which is why the workshop closes at four.</p>
+<p>Dana draws the maps and tests the mugs. Sam sews the bags and answers the email. Mika keeps the stock, the books and the stove going. All three of us would rather be outside, which is why the workshop closes at four.</p>
 <p><em>Northstar is made up for Wanigan's demo: the people, the lake and the shop. Nothing here is for sale.</em></p>
 HTML,
+    'history' => [
+      ['dana', 'First version of the about page', '<p>Northstar is a small workshop by a lake. We make goods for being outside.</p>'],
+      ['sam', 'Sam: added how we work', '<p>Northstar is a small workshop by a lake. We make goods for being outside.</p><h2>How we work</h2><p>Everything spends a season being used before it goes in the shop.</p>'],
+    ],
+    'fr' => [
+      'title' => 'À propos de Northstar',
+      'body' => '<p>Northstar est un petit atelier au bord d’un lac qui ne figure sur aucune carte. Nous fabriquons, en petites séries, des objets pour les longues journées dehors.</p><h2>Notre façon de travailler</h2><p>Tout commence par un croquis dans un carnet de terrain et passe une saison à servir avant d’arriver en boutique.</p><p><em>Northstar est inventé pour la démo de Wanigan : rien n’est à vendre.</em></p>',
+    ],
   ],
   'shipping' => [
     'title' => 'Shipping & returns',
@@ -27,6 +36,10 @@ HTML,
 <h2>Returns</h2>
 <p>If something is not right, send it back within a season (ninety days) for a refund or an exchange. Used is fine: we would rather know why it did not work.</p>
 HTML,
+    'fr' => [
+      'title' => 'Livraison et retours',
+      'body' => '<p>Livraison offerte dès 75 $. En dessous, forfait de 6 $.</p><h2>Retours</h2><p>Si quelque chose ne va pas, renvoyez-le dans la saison (quatre-vingt-dix jours) pour un remboursement ou un échange.</p>',
+    ],
   ],
   'care' => [
     'title' => 'Care guide',

@@ -1,9 +1,11 @@
 {#
 /**
  * @file
- * Gallery: the first picture large, the others as a row beneath it.
+ * Gallery: a stage of pictures and, when there is more than one, a row of
+ * thumbnails (gallery.js makes them from the pictures themselves).
  */
 #}
-<div{{ attributes.addClass('gallery', 'gallery--' ~ (count|default(1))).setAttribute('role', 'group').setAttribute('aria-label', label|default('Pictures'|t)) }}>
-  {% block items %}{{ items }}{% endblock %}
+<div{{ attributes.addClass('gallery', 'gallery--' ~ (count|default(1))).setAttribute('role', 'group').setAttribute('aria-label', label|default('Pictures'|t)).setAttribute('data-gallery', '') }}>
+  <div class="gallery__stage">{% block items %}{{ items }}{% endblock %}</div>
+  {% if count > 1 %}<div class="gallery__thumbs" hidden></div>{% endif %}
 </div>

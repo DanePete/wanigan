@@ -11,7 +11,7 @@ props:
       title: Label
       examples: ['Bestseller']
     tone:
-      type: string
+      type: [string, 'null']
       title: Kind
-      enum: [new, bestseller, limited, recycled, neutral]
+      enum: [new, bestseller, limited, recycled, neutral, null]
       default: neutral

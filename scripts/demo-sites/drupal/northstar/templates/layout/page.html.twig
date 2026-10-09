@@ -1,27 +1,29 @@
 {#
 /**
  * @file
- * Northstar's page: announcement bar, header, the main column (with a sidebar
- * when it has blocks) and the footer.
+ * Northstar's page: announcement bar, a sticky header with the mega menu,
+ * the main column (with a sidebar when it has blocks) and the footer.
  *
  * Variables added in northstar_preprocess_page(): year, demo_note.
  * page--node--landing-page.html.twig replaces the main block to run edge to edge.
  */
 #}
 <div class="site">
+  <a href="#main-content" class="skip-link visually-hidden focusable">{{ 'Skip to main content'|t }}</a>
   {{ page.announcement }}
 
-  <header class="site-header" role="banner">
+  <header class="site-header" role="banner" data-site-header>
     <div class="site-header__inner container">
       {{ page.header }}
-      <button class="site-header__toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-        <span class="site-header__toggle-bars" aria-hidden="true"></span>
-        <span class="visually-hidden">{{ 'Menu'|t }}</span>
-      </button>
       <div class="site-header__nav" id="site-nav">
         {{ page.primary_menu }}
         {{ page.header_tools }}
       </div>
+      <button class="site-header__toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+        {{ include('northstar:icon', { name: 'menu', attributes: create_attribute({ class: ['site-header__open'] }) }, with_context = false) }}
+        {{ include('northstar:icon', { name: 'close', attributes: create_attribute({ class: ['site-header__close'] }) }, with_context = false) }}
+        <span class="visually-hidden">{{ 'Menu'|t }}</span>
+      </button>
     </div>
   </header>
 
@@ -50,6 +52,10 @@
 
   <footer class="site-footer" role="contentinfo">
     <div class="site-footer__top container">
+      <div class="site-footer__brand">
+        <img src="{{ base_path ~ directory }}/logo.svg" alt="" width="44" height="44">
+        <p>{{ 'Goods for long days outside, made a few at a time near the lake.'|t }}</p>
+      </div>
       {{ page.footer_top }}
     </div>
     <div class="site-footer__bottom container">

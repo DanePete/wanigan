@@ -2,7 +2,8 @@
 /**
  * @file
  * A product in a list: drawn by the northstar:product-card component.
- * The card shows only the first picture (field--node--field-images--product--teaser.html.twig).
+ * The card shows only the first picture
+ * (field--node--field-media--product--teaser.html.twig).
  */
 #}
 <article{{ attributes.addClass('node', 'node--product', 'node--teaser') }}>
@@ -11,7 +12,7 @@
     url: url,
     category: category,
     has_badges: not node.field_badges.isEmpty(),
-    media: content.field_images,
+    media: content.field_media,
     title: label,
     price: content.field_price,
     badges: content.field_badges,

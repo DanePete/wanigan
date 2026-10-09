@@ -5,13 +5,15 @@
  * Northstar's preprocess functions and template suggestions.
  *
  * Every function here changes something a visitor can see, so a trace of the
- * page has real theme code to point at: the price note, a product's category
- * line, a journal entry's reading time, which heading level a hero uses, and
- * which template draws a block, a field or a page.
+ * page has real theme code to point at: the price and its shipping note, a
+ * sale, a product's category line, a journal entry's byline and reading
+ * time, an event's date tile, a block's colour, icon and heading level, the
+ * menu's descriptions, the language switcher's short names, and which
+ * template draws a block, a field or a page.
  */
 
 use Drupal\block\Entity\Block;
-use Drupal\Core\Url;
+use Drupal\Core\Render\Element;
 use Drupal\node\NodeInterface;
 
 /**
@@ -53,19 +55,44 @@ function northstar_preprocess_page(array &$variables): void {
 function northstar_preprocess_node(array &$variables): void {
   /** @var \Drupal\node\NodeInterface $node */
   $node = $variables['node'];
-  if ($node->bundle() === 'product') {
-    $price = (float) $node->get('field_price')->value;
-    $variables['ships_free'] = $price >= NORTHSTAR_FREE_SHIPPING;
-    $term = $node->get('field_category')->entity;
-    $variables['category'] = $term ? $term->label() : NULL;
-    $variables['category_url'] = $term ? Url::fromRoute('view.products.page_1', [], ['query' => ['category' => $term->id()]])->toString() : NULL;
-    $variables['attributes']['class'][] = $variables['ships_free'] ? 'product--ships-free' : 'product--ships-paid';
-  }
-  if ($node->bundle() === 'article') {
-    $words = str_word_count(strip_tags((string) $node->get('body')->value));
-    $minutes = max(1, (int) round($words / 200));
-    $variables['reading_time'] = \Drupal::translation()->formatPlural($minutes, '1 min read', '@count min read');
-    $variables['date'] = \Drupal::service('date.formatter')->format($node->getCreatedTime(), 'custom', 'j F Y');
+  $formatter = \Drupal::service('date.formatter');
+  switch ($node->bundle()) {
+    case 'product':
+      $price = (float) $node->get('field_price')->value;
+      $was = (float) $node->get('field_compare_price')->value;
+      $variables['ships_free'] = $price >= NORTHSTAR_FREE_SHIPPING;
+      $variables['on_sale'] = $was > $price;
+      $term = $node->get('field_category')->entity;
+      if ($term) {
+        $term = \Drupal::service('entity.repository')->getTranslationFromContext($term);
+        $variables['category'] = $term->label();
+        $variables['category_url'] = $term->toUrl()->toString();
+      }
+      $variables['attributes']['class'][] = $variables['ships_free'] ? 'product--ships-free' : 'product--ships-paid';
+      $variables['shipping_note'] = $variables['ships_free']
+        ? t('This one ships free, and comes back free for a season.')
+        : t('Free shipping on orders over $@amount, and free returns for a season.', ['@amount' => NORTHSTAR_FREE_SHIPPING]);
+      break;
+
+    case 'article':
+      $words = str_word_count(strip_tags((string) $node->get('body')->value));
+      $variables['reading_time'] = \Drupal::translation()->formatPlural(max(1, (int) round($words / 200)), '1 min read', '@count min read');
+      $variables['date'] = $formatter->format($node->getCreatedTime(), 'custom', 'j F Y');
+      $variables['author_label'] = $node->getOwner()->getDisplayName();
+      break;
+
+    case 'event':
+      $when = $node->get('field_when')->first();
+      if ($when) {
+        $start = $when->start_date;
+        $end = $when->end_date;
+        $tz = date_default_timezone_get();
+        $variables['day'] = $start->format('j', ['timezone' => $tz]);
+        $variables['month'] = $start->format('M', ['timezone' => $tz]);
+        $variables['weekday'] = $start->format('l', ['timezone' => $tz]);
+        $variables['time_range'] = $start->format('g:i a', ['timezone' => $tz]) . ' – ' . $end->format('g:i a', ['timezone' => $tz]);
+      }
+      break;
   }
 }
 
@@ -75,9 +102,12 @@ function northstar_preprocess_node(array &$variables): void {
 function northstar_preprocess_field(array &$variables): void {
   $name = $variables['element']['#field_name'] ?? '';
   $items = $variables['element']['#items'] ?? NULL;
-  if ($name === 'field_price' && $items) {
+  $entity = $variables['element']['#object'] ?? NULL;
+  if ($name === 'field_price' && $items && $entity) {
     $amount = (float) $items->value;
+    $was = (float) $entity->get('field_compare_price')->value;
     $variables['amount'] = $amount;
+    $variables['was'] = $was > $amount ? $was : NULL;
     $variables['ships_free'] = $amount >= NORTHSTAR_FREE_SHIPPING;
     $variables['note'] = $variables['ships_free']
       ? t('Ships free')
@@ -91,31 +121,76 @@ function northstar_preprocess_field(array &$variables): void {
       $item['label'] = $labels[$key] ?? $key;
     }
   }
-  if ($name === 'field_images') {
+  if ($name === 'field_media' && $entity instanceof NodeInterface && $entity->bundle() === 'product') {
     $variables['count'] = count($variables['items']);
+    $variables['product_label'] = $entity->label();
   }
 }
 
 /**
  * Implements hook_preprocess_HOOK() for block.html.twig.
  *
- * Layout Builder's inline hero and callout blocks hand their link and tone to
- * the components that draw them.
+ * A content block, inline in Layout Builder or reusable, hands its link,
+ * colour, icon, look and heading level to the component that draws it.
  */
 function northstar_preprocess_block(array &$variables): void {
-  $plugin = $variables['plugin_id'] ?? '';
   $block = $variables['content']['#block_content'] ?? NULL;
-  if (!$block || !in_array($plugin, ['inline_block:hero', 'inline_block:callout'], TRUE)) {
+  if (!$block) {
     return;
   }
-  $link = $block->get('field_link')->first();
-  $variables['cta'] = $link ? ['label' => $link->title, 'url' => $link->getUrl()->toString()] : NULL;
-  if ($plugin === 'inline_block:hero') {
+  $variables['bundle'] = $block->bundle();
+  if ($block->hasField('field_link') && ($link = $block->get('field_link')->first())) {
+    $variables['cta'] = ['label' => $link->title, 'url' => $link->getUrl()->toString()];
+  }
+  if ($block->hasField('field_tone')) {
+    $variables['tone'] = $block->get('field_tone')->value ?: 'pine';
+  }
+  if ($block->hasField('field_icon')) {
+    $variables['icon'] = $block->get('field_icon')->value ?: 'star';
+  }
+  if ($block->hasField('field_style')) {
+    $variables['look'] = $block->get('field_style')->value ?: 'overlay';
+  }
+  if ($block->hasField('field_reverse')) {
+    $variables['reverse'] = (bool) $block->get('field_reverse')->value;
+  }
+  if ($block->bundle() === 'hero') {
     // A hero opens the page, so its heading is the page's h1.
     $variables['heading_level'] = 1;
   }
-  else {
-    $variables['tone'] = $block->get('field_tone')->value ?: 'pine';
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for menu--main.html.twig.
+ *
+ * Adds each link's description, shown under it in the open menu.
+ */
+function northstar_preprocess_menu__main(array &$variables): void {
+  $describe = function (array &$items) use (&$describe): void {
+    foreach ($items as &$item) {
+      $item['description'] = $item['original_link']->getDescription();
+      if (!empty($item['below'])) {
+        $describe($item['below']);
+      }
+    }
+  };
+  $describe($variables['items']);
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for links--language-block.html.twig.
+ *
+ * Short names (EN, FR) in the header, with the language's own name kept for
+ * screen readers.
+ */
+function northstar_preprocess_links__language_block(array &$variables): void {
+  foreach ($variables['links'] as $langcode => &$link) {
+    if (isset($link['link']['#title'])) {
+      $link['full'] = $link['link']['#title'];
+      $link['link']['#title'] = strtoupper($langcode);
+      $link['link']['#options']['attributes']['aria-label'] = (string) $link['full'];
+      $link['link']['#options']['attributes']['lang'] = $langcode;
+    }
   }
 }
 
@@ -123,12 +198,17 @@ function northstar_preprocess_block(array &$variables): void {
  * Implements hook_theme_suggestions_HOOK_alter() for block templates.
  *
  * Adds block--REGION as the least specific suggestion, so a region can style
- * its plain blocks without naming each one.
+ * its plain blocks without naming each one; and block--type--BUNDLE for a
+ * content block, so a hero looks the same inline or reusable.
  */
 function northstar_theme_suggestions_block_alter(array &$suggestions, array $variables): void {
   $id = $variables['elements']['#id'] ?? NULL;
   if ($id && ($block = Block::load($id))) {
     array_unshift($suggestions, 'block__' . $block->getRegion());
+  }
+  $content = $variables['elements']['content'] ?? [];
+  if (!empty($content['#block_content'])) {
+    $suggestions[] = 'block__type__' . $content['#block_content']->bundle();
   }
 }
 
@@ -153,9 +233,28 @@ function northstar_theme_suggestions_page_alter(array &$suggestions, array $vari
  */
 function northstar_theme_suggestions_field_alter(array &$suggestions, array $variables): void {
   $element = $variables['element'];
-  if (in_array($element['#field_name'], ['field_kicker', 'field_heading', 'field_summary'], TRUE)) {
+  $bare = $element['#entity_type'] === 'block_content' && in_array($element['#field_name'], ['field_kicker', 'field_heading', 'field_summary', 'field_number', 'field_cite'], TRUE);
+  if ($bare || $element['#field_name'] === 'field_where') {
     $suggestions[] = 'field__bare';
     return;
   }
   $suggestions[] = 'field__' . $element['#entity_type'] . '__' . $element['#field_name'] . '__' . $element['#bundle'] . '__' . $element['#view_mode'];
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for views-view.html.twig.
+ *
+ * Says which listing it is, for its wrapper's class.
+ */
+function northstar_preprocess_views_view(array &$variables): void {
+  $view = $variables['view'];
+  $variables['listing'] = $view->id() . '--' . $view->current_display;
+  $variables['is_block'] = $view->getDisplay()->getPluginId() === 'block';
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for status-messages.html.twig.
+ */
+function northstar_preprocess_status_messages(array &$variables): void {
+  $variables['icons'] = ['status' => 'check', 'warning' => 'alert', 'error' => 'alert'];
 }

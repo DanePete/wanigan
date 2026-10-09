@@ -2,10 +2,10 @@
 /**
  * @file
  * Product card: the whole card is one link to the product; badges sit on the
- * picture.
+ * picture. Uses the price and badge components through its slots.
  */
 #}
-<div{{ attributes.addClass('product-card') }}>
+<div{{ attributes.addClass('product-card', 'product-card--' ~ (variant|default('default'))) }}>
   <a class="product-card__link" href="{{ url }}">
     <div class="product-card__media">{% block media %}{{ media }}{% endblock %}</div>
     <div class="product-card__body">

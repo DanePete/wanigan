@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * A question block, drawn by the northstar:accordion-item component. Several
+ * in one Layout Builder region share an accordion: opening one closes the
+ * others, and they can be dragged into a new order.
+ */
+#}
+<div{{ attributes.addClass('block', 'block--faq') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:accordion-item', { group: 'faq', question: content.field_heading, answer: content.field_answer }, with_context = false) }}
+</div>

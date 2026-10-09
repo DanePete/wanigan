@@ -1,0 +1,17 @@
+{#
+/**
+ * @file
+ * Event card: a date tile beside what, when and where.
+ */
+#}
+<div{{ attributes.addClass('event-card') }}>
+  <a class="event-card__link" href="{{ url }}">
+    <p class="event-card__date" aria-hidden="true"><span class="event-card__month">{{ month }}</span><span class="event-card__day">{{ day }}</span></p>
+    <div class="event-card__body">
+      <h3 class="event-card__title">{% block title %}{{ title }}{% endblock %}</h3>
+      <p class="event-card__when">{{ include('northstar:icon', { name: 'clock' }, with_context = false) }} {{ weekday }} {{ day }} {{ month }}, {{ time_range }}</p>
+      <p class="event-card__where">{{ include('northstar:icon', { name: 'pin' }, with_context = false) }} {% block place %}{{ place }}{% endblock %}</p>
+      <div class="event-card__summary">{% block summary %}{{ summary }}{% endblock %}</div>
+    </div>
+  </a>
+</div>

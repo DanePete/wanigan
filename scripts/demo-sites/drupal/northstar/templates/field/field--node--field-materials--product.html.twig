@@ -1,0 +1,2 @@
+{# Materials, as a row of the product's facts list; each links to its term page. #}
+<div{{ attributes.addClass('facts__row') }}><dt>{{ label }}</dt><dd>{% for item in items %}<span{{ item.attributes }}>{{ item.content }}</span>{{ not loop.last ? ', ' }}{% endfor %}</dd></div>

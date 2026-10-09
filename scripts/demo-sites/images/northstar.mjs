@@ -199,6 +199,10 @@ export const PRODUCTS = [
   { slug: 'field-journal', draw: 'journal', with: { cover: '#2f5a46', band: '#1c3a2d' }, box: [350, 210, 862, 1080], focus: [560, 520] },
   { slug: 'harbor-camp-lantern', draw: 'lantern', with: { body: '#2b5f7a', glow: '#ffd98a' }, box: [430, 180, 770, 890], focus: [600, 520] },
   { slug: 'lakehouse-wool-blanket', draw: 'blanket', with: { base: '#efe6d2', stripes: ['#c4512d', '#e3b341', '#2f5a46'] }, box: [296, 430, 904, 985], focus: [470, 640] },
+  { slug: 'dawn-enamel-mug', draw: 'mug', with: { body: '#e7d8bd', dark: '#b79f78', speckle: true, inner: '#4a3424' }, box: [350, 380, 995, 960], focus: [600, 700] },
+  { slug: 'storm-wool-beanie', draw: 'beanie', with: { color: '#3d5a73', dark: '#263b4d', stripe: '#e3b341' }, box: [340, 358, 860, 890], focus: [600, 700] },
+  { slug: 'night-field-journal', draw: 'journal', with: { cover: '#1f2a4a', band: '#131b33' }, box: [350, 210, 862, 1080], focus: [560, 520] },
+  { slug: 'ember-market-tote', draw: 'tote', with: { canvas: '#c4512d', strap: '#5a3b22', ink: '#f3e7d2' }, box: [300, 225, 900, 1000], focus: [600, 720] },
 ];
 
 const NORTHSTAR_SCENES = [
@@ -206,6 +210,14 @@ const NORTHSTAR_SCENES = [
   { name: 'journal-cold-morning', w: 1600, h: 900, o: { sky: 'dawn', water: true, horizon: 0.58, mist: 0.8, sunX: 0.3 } },
   { name: 'journal-first-overnight', w: 1600, h: 900, o: { sky: 'dusk', water: true, horizon: 0.56, canoe: [0.4, 0.82, 1.2], tent: [0.82, 0.66, 0.8], sunX: 0.55 } },
   { name: 'journal-shop-autumn', w: 1600, h: 900, o: { sky: 'autumn', horizon: 0.55, trail: true, birds: [0.65, 0.25] } },
+  { name: 'journal-winter-range', w: 1600, h: 900, o: { sky: 'winter', horizon: 0.55, snow: true, snowcaps: true, snowfall: 160, treeCount: 26 } },
+  { name: 'journal-wet-september', w: 1600, h: 900, o: { sky: 'storm', water: true, horizon: 0.55, clouds: 6, cloudColor: '#5b6770', cloudOpacity: 0.85, rain: 180 } },
+  { name: 'journal-open-days', w: 1600, h: 900, o: { sky: 'day', horizon: 0.56, clouds: 3, birds: [0.7, 0.22], trail: true, trailColor: '#d9c39c' } },
+  { name: 'workshop-hero', w: 2000, h: 1050, o: { sky: 'autumn', water: true, horizon: 0.56, mist: 0.45, sunX: 0.28, birds: [0.6, 0.2] } },
+  { name: 'event-open-day', w: 1600, h: 900, o: { sky: 'day', water: true, horizon: 0.55, canoe: [0.3, 0.8, 1.1], clouds: 2 } },
+  { name: 'event-lantern-night', w: 1600, h: 900, o: { sky: 'night', horizon: 0.64, stars: 260, tent: [0.62, 0.9, 1.1], tentColor: '#c4512d', sunX: 0.2, sunR: 0.04 } },
+  { name: 'event-winter-preview', w: 1600, h: 900, o: { sky: 'winter', water: true, ice: true, horizon: 0.52, snow: true, palette: { water: ['#dfe9f0', '#f4f8fb'] } } },
+  { name: 'about-workshop', w: 1600, h: 1000, o: { sky: 'dusk', water: true, horizon: 0.55, sunX: 0.62, mist: 0.3 } },
 ];
 
 /** Every picture this site needs: [file name, () => SVG text]. */
@@ -218,5 +230,6 @@ export function jobs() {
   for (const s of NORTHSTAR_SCENES) out.push([`${s.name}.jpg`, () => landscape(s.w, s.h, { name: s.name, ...s.o })]);
   out.push(['journal-reading-maps.jpg', () => svg(1600, 900, topoMap(1600, 900, 'reading-maps'))]);
   out.push(['journal-behind-the-print.jpg', () => desk(1600, 900, 'behind-the-print')]);
+  out.push(['event-map-evening.jpg', () => desk(1600, 900, 'map-evening')]);
   return out;
 }

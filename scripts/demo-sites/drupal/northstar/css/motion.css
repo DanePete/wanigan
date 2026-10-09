@@ -1,0 +1,7 @@
+/* Motion stays small and never hides anything: hovers lift, the hero's
+   picture settles once, menus and answers ease open. People who ask for
+   less motion get none, and screenshots taken a moment after load match. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

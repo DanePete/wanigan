@@ -1,0 +1,9 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Quote
+status: stable
+description: 'A few words from someone, large, with their name.'
+slots:
+  quote:
+    title: Words
+  cite:
+    title: Who said it

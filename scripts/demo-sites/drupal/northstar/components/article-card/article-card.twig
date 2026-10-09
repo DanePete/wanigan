@@ -1,0 +1,17 @@
+{#
+/**
+ * @file
+ * Story card: a journal entry in a list.
+ */
+#}
+<div{{ attributes.addClass('story-card') }}>
+  <a class="story-card__link" href="{{ url }}">
+    <div class="story-card__media">{% block media %}{{ media }}{% endblock %}</div>
+    <div class="story-card__body">
+      {% if meta %}<p class="story-card__meta">{{ meta }}</p>{% endif %}
+      <h3 class="story-card__title">{% block title %}{{ title }}{% endblock %}</h3>
+      <div class="story-card__summary">{% block summary %}{{ summary }}{% endblock %}</div>
+      <span class="story-card__more">{{ 'Read more'|t }} {{ include('northstar:icon', { name: 'arrow' }, with_context = false) }}</span>
+    </div>
+  </a>
+</div>

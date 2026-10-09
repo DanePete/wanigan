@@ -1,0 +1,24 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Question
+status: stable
+description: 'A question that opens to its answer. Questions side by side form an accordion: opening one closes the others.'
+props:
+  type: object
+  properties:
+    group:
+      type: [string, 'null']
+      title: Accordion it belongs to
+      default: faq
+    open:
+      type: [boolean, 'null']
+      title: Open at first
+      default: false
+slots:
+  question:
+    title: Question
+  answer:
+    title: Answer
+libraryOverrides:
+  dependencies:
+    - core/drupal
+    - core/once

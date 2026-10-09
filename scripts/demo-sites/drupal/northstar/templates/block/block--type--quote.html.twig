@@ -1,0 +1,10 @@
+{#
+/**
+ * @file
+ * A quote block, drawn by the northstar:quote component.
+ */
+#}
+<div{{ attributes.addClass('block', 'block--quote') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:quote', { quote: content.field_summary, cite: content.field_cite }, with_context = false) }}
+</div>

@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * The language switcher: EN · FR, each link named in its own language for
+ * screen readers (northstar_preprocess_links__language_block()).
+ */
+#}
+{% if links %}
+  <ul{{ attributes.addClass('lang-switch') }}>
+    {% for key, item in links %}
+      <li{{ item.attributes.addClass('lang-switch__item') }}>{{ item.link }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}

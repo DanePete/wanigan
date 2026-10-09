@@ -1,0 +1,4 @@
+services:
+  northstar_account.welcome:
+    class: Drupal\northstar_account\WelcomeBuilder
+    arguments: ['@current_user', '@entity_type.manager']

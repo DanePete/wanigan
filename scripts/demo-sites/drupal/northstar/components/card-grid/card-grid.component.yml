@@ -1,0 +1,20 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Card grid
+status: stable
+description: 'Cards in even columns that fold to fewer on narrow screens: two on a phone for products, one for stories.'
+props:
+  type: object
+  properties:
+    columns:
+      type: [integer, 'null']
+      title: Columns on a wide screen
+      enum: [2, 3, 4, null]
+      default: 3
+    kind:
+      type: [string, 'null']
+      title: What the cards are
+      enum: [products, stories, compact, null]
+      default: products
+slots:
+  items:
+    title: Cards

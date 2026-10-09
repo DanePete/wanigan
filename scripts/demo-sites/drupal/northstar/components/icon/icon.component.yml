@@ -1,0 +1,17 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Icon
+status: stable
+description: 'One of the theme''s line icons, drawn inline so it takes the text colour.'
+props:
+  type: object
+  required: [name]
+  properties:
+    name:
+      type: string
+      title: Icon
+      enum: [mountain, compass, wave, leaf, tent, star, arrow, search, menu, close, chevron, check, alert, user, basket, pin, clock, null]
+      examples: [compass]
+    label:
+      type: [string, 'null']
+      title: Accessible name
+      description: 'Leave empty when the icon only decorates words beside it.'

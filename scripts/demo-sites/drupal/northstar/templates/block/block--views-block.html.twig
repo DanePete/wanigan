@@ -1,0 +1,19 @@
+{#
+/**
+ * @file
+ * A views block (bestsellers, the journal, open days, more like this): drawn
+ * as a northstar:section, whose content is the view, whose rows are drawn by
+ * northstar:card-grid and the cards inside it. Its label is the view's own
+ * title (the block sets no label of its own), so it follows the language.
+ */
+#}
+{% set kind = plugin_id|split(':')|last|split('-')|first %}
+{% set eyebrows = { products: 'From the shop'|t, journal: 'Journal'|t, events: 'Open days'|t } %}
+<div{{ attributes.addClass('block', 'block-views') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:section', {
+    heading: label,
+    eyebrow: eyebrows[kind] ?? null,
+    content: content,
+  }, with_context = false) }}
+</div>

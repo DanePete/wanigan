@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * Feature: an icon in a round tile, a heading and a sentence.
+ */
+#}
+<div{{ attributes.addClass('feature') }}>
+  <span class="feature__icon">{{ include('northstar:icon', { name: icon|default('star') }, with_context = false) }}</span>
+  <h2 class="feature__heading">{% block heading %}{{ heading }}{% endblock %}</h2>
+  <p class="feature__text">{% block text %}{{ text }}{% endblock %}</p>
+</div>

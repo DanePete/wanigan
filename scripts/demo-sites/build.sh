@@ -76,8 +76,14 @@ git_init() {
     git add -A
     git commit -q -m "$message"
     echo "  · git: first commit"
+  elif [ -n "$(git status --porcelain)" ]; then
+    # A rebuild leaves the site as the scripts say, committed, so the
+    # Changes view starts clean.
+    git add -A
+    git commit -q -m "Rebuilt by Wanigan's demo build"
+    echo "  · git: rebuilt files committed"
   else
-    echo "  · git: $(git status --short | wc -l | tr -d ' ') changed paths left as they are"
+    echo "  · git: nothing changed"
   fi
 }
 
@@ -105,19 +111,30 @@ build_drupal() {
     ddev drush site:install standard -y --site-name='Northstar Storefront' --site-mail=hello@northstar.example \
       --account-name=admin --account-mail=admin@northstar.example --account-pass="$pass"
   fi
-  ddev drush pm:install -y layout_builder layout_discovery link options >/dev/null
-  # Drupal 11's standard profile leaves pages, articles and search to core's
-  # recipes. Each is applied once; state remembers it, so a rerun skips it.
-  for recipe in page_content_type article_content_type article_tags content_search; do
+  # Core only: Layout Builder, Media and Media Library, responsive images,
+  # dates, links, content moderation, two languages, contact and BigPipe.
+  ddev drush pm:install -y layout_builder layout_discovery link options datetime datetime_range \
+    media media_library responsive_image content_moderation workflows \
+    language locale content_translation config_translation contact big_pipe >/dev/null
+  # Drupal 11's standard profile leaves pages, articles, search, image media
+  # and the editorial workflow to core's recipes. Each is applied once; state
+  # remembers it, so a rerun skips it.
+  for recipe in page_content_type article_content_type article_tags content_search image_media_type editorial_workflow; do
     if [ "$(ddev drush state:get "northstar_demo.recipe.$recipe" 2>/dev/null)" != "1" ]; then
       ddev drush recipe "core/recipes/$recipe"
       ddev drush state:set "northstar_demo.recipe.$recipe" 1
     fi
   done
+  # Searching content is its own module since Drupal 11.4 (the recipe still
+  # names node's old copy of its configuration).
+  ddev drush pm:install -y search_node >/dev/null
 
   step "Drupal: the northstar theme"
   mkdir -p web/themes/custom/northstar/fonts
   rsync -a --delete --exclude fonts "$HERE/drupal/northstar/" web/themes/custom/northstar/
+  mkdir -p web/modules/custom
+  rsync -a --delete "$HERE/drupal/modules/northstar_account/" web/modules/custom/northstar_account/
+  ddev drush pm:install -y northstar_account >/dev/null
   cp web/core/themes/olivero/fonts/metropolis/*.woff2 web/core/themes/olivero/fonts/lora/*.woff2 web/themes/custom/northstar/fonts/
   ddev drush theme:install -y northstar >/dev/null
   ddev drush config:set -y system.theme default northstar >/dev/null

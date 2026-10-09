@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * Number: a big figure, what it counts, and a line of context.
+ */
+#}
+<div{{ attributes.addClass('stat') }}>
+  <p class="stat__number">{% block number %}{{ number }}{% endblock %}</p>
+  <p class="stat__label">{% block label %}{{ label }}{% endblock %}</p>
+  <p class="stat__text">{% block text %}{{ text }}{% endblock %}</p>
+</div>

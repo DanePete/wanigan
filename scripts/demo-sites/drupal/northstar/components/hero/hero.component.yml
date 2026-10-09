@@ -1,21 +1,26 @@
 $schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
 name: Hero
 status: stable
-description: 'A wide picture with a heading, a line of text and one call to action over it.'
+description: 'The opening of a page: a wide picture with words over it, or the words beside it.'
 props:
   type: object
   properties:
+    look:
+      type: [string, 'null']
+      title: Look
+      enum: [overlay, split, null]
+      default: overlay
     heading_level:
-      type: integer
+      type: [integer, 'null']
       title: Heading level
-      enum: [1, 2]
+      enum: [1, 2, null]
       default: 2
     cta_label:
-      type: string
+      type: [string, 'null']
       title: Call to action
       examples: ['Shop the collection']
     cta_url:
-      type: string
+      type: [string, 'null']
       title: Call to action address
       examples: ['/shop']
 slots:
@@ -23,7 +28,7 @@ slots:
     title: Picture
   kicker:
     title: Kicker
-    description: A few words above the heading.
+    description: 'A few words above the heading.'
   heading:
     title: Heading
   text:

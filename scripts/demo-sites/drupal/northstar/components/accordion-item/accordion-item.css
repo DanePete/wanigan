@@ -1,0 +1,9 @@
+.accordion-item { border-bottom: 1px solid var(--ns-line); }
+.accordion-item:first-of-type, .layout__region > .block--faq:first-child .accordion-item { border-top: 1px solid var(--ns-line); }
+.accordion-item__question { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.15rem 0.25rem; font: 700 1.08rem/1.35 var(--ns-font); cursor: pointer; list-style: none; }
+.accordion-item__question::-webkit-details-marker { display: none; }
+.accordion-item__question:hover { color: var(--ns-pine); }
+.accordion-item__question .icon { color: var(--ns-ember); transition: transform var(--ns-ease); }
+.accordion-item[open] .accordion-item__question .icon { transform: rotate(180deg); }
+.accordion-item__answer { overflow: hidden; padding: 0 0.25rem 1.25rem; font-family: var(--ns-serif); color: var(--ns-ink-soft); line-height: 1.65; }
+.accordion-item__answer p { margin: 0; }

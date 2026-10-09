@@ -1,7 +1,7 @@
 $schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
 name: Price
 status: stable
-description: 'A price in dollars, with a note on shipping beneath it.'
+description: 'A price in dollars, struck-through earlier price when reduced, and a note on shipping.'
 props:
   type: object
   required: [amount]
@@ -10,16 +10,20 @@ props:
       type: number
       title: Amount
       examples: [24]
+    was:
+      type: [number, 'null']
+      title: Earlier price
+      examples: [34]
     note:
-      type: string
+      type: [string, 'null']
       title: Note
       examples: ['Ships free']
     ships_free:
-      type: boolean
+      type: [boolean, 'null']
       title: Ships free
       default: false
     size:
-      type: string
+      type: [string, 'null']
       title: Size
-      enum: [sm, lg]
+      enum: [sm, lg, null]
       default: sm

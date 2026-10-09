@@ -1,0 +1,19 @@
+{#
+/**
+ * @file
+ * An event in a list: drawn by the northstar:event-card component.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--event', 'node--teaser') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:event-card', {
+    url: url,
+    day: day,
+    month: month,
+    weekday: weekday,
+    time_range: time_range,
+    title: label,
+    place: content.field_where,
+    summary: content.body,
+  }, with_context = false) }}
+</article>

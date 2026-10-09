@@ -1,16 +1,18 @@
-/* Northstar's colours, type and spacing. Everything else reads these. */
+/* Northstar's colours, type, spacing and motion. Everything else reads these. */
 :root {
-  --ns-ink: #1d2421;
-  --ns-ink-soft: #56615b;
-  --ns-paper: #faf7f0;
+  --ns-ink: #18201c;
+  --ns-ink-soft: #57625c;
+  --ns-paper: #faf7f1;
+  --ns-card: #ffffff;
+  --ns-studio: #f3eee5;
   --ns-sand: #efe6d6;
   --ns-sand-deep: #e2d4bb;
-  --ns-line: #e3d9c8;
+  --ns-line: #e4dacb;
   --ns-pine: #2f5a46;
-  --ns-pine-deep: #1c3a2d;
+  --ns-pine-deep: #17342a;
   --ns-lake: #2b5f7a;
   --ns-lake-deep: #163747;
-  --ns-lake-pale: #d6e6ee;
+  --ns-lake-pale: #d9e8ef;
   --ns-ember: #c4512d;
   --ns-ember-deep: #a3401f;
   --ns-gold: #e3b341;
@@ -19,10 +21,14 @@
   --ns-font: Metropolis, "Avenir Next", system-ui, sans-serif;
   --ns-serif: Lora, Georgia, serif;
 
-  --ns-max: 76rem;
-  --ns-gutter: clamp(1rem, 4vw, 2.5rem);
-  --ns-radius: 14px;
-  --ns-radius-sm: 8px;
-  --ns-shadow: 0 1px 2px rgb(29 36 33 / 0.06), 0 6px 20px rgb(29 36 33 / 0.07);
-  --ns-shadow-lift: 0 2px 4px rgb(29 36 33 / 0.08), 0 14px 34px rgb(29 36 33 / 0.12);
+  --ns-max: 78rem;
+  --ns-narrow: 44rem;
+  --ns-gutter: clamp(1rem, 4vw, 2.75rem);
+  --ns-space: clamp(3.5rem, 8vw, 7rem);
+  --ns-radius: 16px;
+  --ns-radius-sm: 10px;
+  --ns-radius-lg: 22px;
+  --ns-shadow: 0 1px 2px rgb(24 32 28 / 0.05), 0 8px 24px rgb(24 32 28 / 0.06);
+  --ns-shadow-lift: 0 2px 6px rgb(24 32 28 / 0.08), 0 18px 40px rgb(24 32 28 / 0.12);
+  --ns-ease: 0.2s cubic-bezier(.2, .7, .2, 1);
 }

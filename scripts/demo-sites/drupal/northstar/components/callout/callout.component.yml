@@ -6,16 +6,16 @@ props:
   type: object
   properties:
     tone:
-      type: string
+      type: [string, 'null']
       title: Colour
-      enum: [pine, sand, ember]
+      enum: [pine, sand, ember, null]
       default: pine
     cta_label:
-      type: string
+      type: [string, 'null']
       title: Action
       examples: ['Shipping details']
     cta_url:
-      type: string
+      type: [string, 'null']
       title: Action address
       examples: ['/shipping']
 slots:

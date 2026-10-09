@@ -1,0 +1,28 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Section
+status: stable
+description: 'A band of the page with an eyebrow, a heading, its content and a footer link. Holds grids of cards.'
+props:
+  type: object
+  properties:
+    eyebrow:
+      type: [string, 'null']
+      title: Eyebrow
+      examples: ['From the shop']
+    tone:
+      type: [string, 'null']
+      title: Background
+      enum: [plain, sand, pine, null]
+      default: plain
+    heading_level:
+      type: [integer, 'null']
+      title: Heading level
+      enum: [2, 3, null]
+      default: 2
+slots:
+  heading:
+    title: Heading
+  content:
+    title: Content
+  footer:
+    title: Footer

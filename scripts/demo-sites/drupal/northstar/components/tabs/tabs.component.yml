@@ -1,0 +1,32 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Tabs
+status: stable
+description: 'Panels behind a row of tabs, keyboard operable. Without JavaScript the panels are simply stacked.'
+props:
+  type: object
+  required: [id, tabs]
+  properties:
+    id:
+      type: string
+      title: Identifier
+      examples: ['product-12']
+    tabs:
+      type: array
+      title: Tabs
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          label:
+            type: string
+      examples:
+        - [{ id: description, label: Description }, { id: care, label: 'Materials and care' }]
+slots:
+  panels:
+    title: Panels
+    description: 'One element per tab, with the id {id}-{tab id} and the class tabs__panel.'
+libraryOverrides:
+  dependencies:
+    - core/drupal
+    - core/once

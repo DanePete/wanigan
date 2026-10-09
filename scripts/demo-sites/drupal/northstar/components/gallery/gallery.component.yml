@@ -1,19 +1,23 @@
 $schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
 name: Gallery
 status: stable
-description: 'A product’s pictures, the first one large and the rest beside it.'
+description: 'A product’s pictures: one large, the rest as thumbnails that switch it. Without JavaScript the pictures are stacked.'
 props:
   type: object
   properties:
     count:
-      type: integer
+      type: [integer, 'null']
       title: Number of pictures
-      examples: [3]
+      examples: [2]
     label:
-      type: string
+      type: [string, 'null']
       title: Accessible name
       examples: ['Pictures of the Lakeside Enamel Mug']
 slots:
   items:
     title: Pictures
-    description: One figure per picture; the first is drawn large.
+    description: 'One figure per picture, with the class gallery__item.'
+libraryOverrides:
+  dependencies:
+    - core/drupal
+    - core/once
