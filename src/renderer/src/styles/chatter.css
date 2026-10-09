@@ -1,0 +1,528 @@
+/* Chatter: two agents messaging each other, staged as two characters.
+
+   The one surface with personality on purpose: the characters breathe and
+   blink while idle, a message visibly crosses the wire, and the listener shows
+   waiting dots while a reply is owed. Every duration is a token, and reduced
+   motion takes it all to nothing (base.css); the words stay.
+
+   It sits bottom-left of the view, clear of the rail. The alert stack owns the
+   top-right and is an interruption you must deal with; this is something you
+   are being let in on, and it must never cover where an alert lands.
+
+   Colour: the left character is water, the right one is the neutral ink. Green
+   means done here, so it is not a character's colour; the letter and the name
+   say who is who, never colour alone. */
+
+.chatter {
+  --chatter-face: 42px;
+  --chatter-wire: 124px;
+  --chatter-actor: 92px;
+  position: fixed;
+  left: calc(var(--rail-w) + var(--space-4));
+  bottom: var(--space-4);
+  z-index: 30;
+  width: min(380px, calc(100vw - var(--rail-w) - 2 * var(--space-4)));
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: color-mix(in oklab, var(--raised) 97%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: var(--shadow-overlay);
+  transform-origin: bottom left;
+  animation: chatter-in var(--dur-slow) var(--ease-spring) both;
+}
+
+.chatter.is-leaving {
+  animation: chatter-out var(--dur-slow) var(--ease) both;
+  pointer-events: none;
+}
+
+/* ── head ─────────────────────────────────────────────────────────────── */
+
+.chatter-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chatter-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.chatter-n {
+  min-width: 20px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--water-soft);
+  color: var(--water);
+  font: 600 var(--text-xs) / 18px var(--font-mono);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  animation: chatter-bump var(--dur) var(--ease-spring) 1;
+}
+
+.chatter-x {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--dur) var(--ease-spring);
+}
+
+.chatter-x:hover {
+  color: var(--fg);
+  background: var(--hover);
+  transform: rotate(90deg);
+}
+
+/* ── the scene ────────────────────────────────────────────────────────── */
+
+.chatter-stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.chatter-actor {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  width: var(--chatter-actor);
+  /* One slow breath, out of phase between the two, so they read as two beings
+     rather than one animation drawn twice. */
+  animation: chatter-breathe var(--dur-idle) ease-in-out infinite;
+}
+
+.actor-right {
+  animation-delay: calc(var(--dur-idle) * -0.5);
+}
+
+.chatter-face-link {
+  display: block;
+  border-radius: var(--radius-round);
+  text-decoration: none;
+}
+
+.chatter-face-link:hover {
+  text-decoration: none;
+}
+
+.chatter-face {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--chatter-face);
+  height: var(--chatter-face);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  box-shadow: inset 0 -6px 12px color-mix(in oklab, var(--bg) 40%, transparent);
+  transform-origin: center bottom;
+}
+
+.actor-left .chatter-face {
+  background: radial-gradient(circle at 32% 28%, color-mix(in oklab, var(--water) 46%, transparent), var(--raised) 78%);
+}
+
+.actor-right .chatter-face {
+  background: radial-gradient(circle at 68% 28%, color-mix(in oklab, var(--fg) 16%, transparent), var(--raised) 74%);
+}
+
+.chatter-face-link:hover .chatter-face {
+  border-color: var(--water-line);
+}
+
+/* A ring that leaves the speaker as it speaks. */
+.chatter-face::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--water);
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.actor-right .chatter-face::after {
+  border-color: var(--muted);
+}
+
+.chatter-eyes {
+  display: flex;
+  gap: 7px;
+  transform: translateY(-3px);
+}
+
+.chatter-eye {
+  display: block;
+  width: 6px;
+  height: 7px;
+  border-radius: var(--radius-round);
+  background: var(--fg);
+  transform-origin: center;
+  animation: chatter-blink var(--dur-blink) ease-in-out infinite;
+}
+
+.actor-right .chatter-eye {
+  animation-delay: calc(var(--dur-blink) * -0.37);
+}
+
+/* The initial rides the face as a small tag, so the letter and the name both
+   say who this is. */
+.chatter-initial {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  background: var(--surface);
+  color: var(--muted);
+  font: 600 10px / 1 var(--font-ui);
+}
+
+.chatter-actor-name {
+  max-width: var(--chatter-actor);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Speaking: a squash-and-stretch on the face, and a ring leaving it. */
+.is-speaking .chatter-face {
+  animation: chatter-speak var(--dur-react) var(--ease-spring) 1;
+}
+
+.is-speaking .chatter-face::after {
+  animation: chatter-ring var(--dur-travel) var(--ease) 1;
+}
+
+/* Listening: a bob as the packet lands, and a glance toward the speaker. */
+.is-listening .chatter-face {
+  animation: chatter-hear var(--dur-react) var(--ease-spring) calc(var(--dur-travel) * 0.82) 1;
+}
+
+.actor-left.is-listening .chatter-eyes {
+  animation: chatter-glance-right var(--dur-react) var(--ease) calc(var(--dur-travel) * 0.5) both;
+}
+
+.actor-right.is-listening .chatter-eyes {
+  animation: chatter-glance-left var(--dur-react) var(--ease) calc(var(--dur-travel) * 0.5) both;
+}
+
+/* The wire between them, and the message crossing it. */
+.chatter-wire {
+  position: relative;
+  flex: none;
+  width: var(--chatter-wire);
+  height: var(--chatter-face);
+}
+
+.chatter-wire::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 2px dotted var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.chatter-packet {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: var(--radius-round);
+  background: var(--water);
+  box-shadow: 0 0 0 4px var(--water-soft);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: chatter-fly var(--dur-travel) var(--ease) 1;
+}
+
+.speaks-left .chatter-packet {
+  left: 0;
+  --dx: calc(var(--chatter-wire) - 10px);
+}
+
+.speaks-right .chatter-packet {
+  right: 0;
+  --dx: calc(10px - var(--chatter-wire));
+  background: var(--muted);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--fg) 12%, transparent);
+}
+
+/* Waiting for a reply: dots at eye level on the wire side of the face. */
+.chatter-typing {
+  position: absolute;
+  top: calc(var(--chatter-face) * 0.3);
+  display: flex;
+  gap: 3px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  background: var(--surface);
+}
+
+.actor-left .chatter-typing {
+  left: calc(50% + 26px);
+}
+
+.actor-right .chatter-typing {
+  right: calc(50% + 26px);
+}
+
+.chatter-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-round);
+  background: var(--muted);
+  animation: chatter-dots var(--dur-typing) ease-in-out infinite;
+}
+
+.chatter-dot:nth-child(2) {
+  animation-delay: calc(var(--dur-typing) * 0.15);
+}
+
+.chatter-dot:nth-child(3) {
+  animation-delay: calc(var(--dur-typing) * 0.3);
+}
+
+/* ── the thread ───────────────────────────────────────────────────────── */
+
+.chatter-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chatter-line {
+  display: flex;
+}
+
+.chatter-line.side-right {
+  justify-content: flex-end;
+}
+
+.chatter-bubble {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  max-width: 84%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  animation: chatter-pop var(--dur-pop) var(--ease-spring) both;
+}
+
+.side-left .chatter-bubble {
+  border-bottom-left-radius: var(--radius-s);
+  transform-origin: bottom left;
+  background: color-mix(in oklab, var(--water) 17%, var(--sunken));
+}
+
+.side-right .chatter-bubble {
+  border-bottom-right-radius: var(--radius-s);
+  transform-origin: bottom right;
+  background: var(--sunken);
+}
+
+.chatter-who {
+  justify-self: start;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.side-left .chatter-who {
+  color: var(--water);
+}
+
+.side-right .chatter-who {
+  color: var(--fg);
+}
+
+a.chatter-who:hover {
+  text-decoration: underline;
+}
+
+.chatter-said {
+  font-size: var(--text-sm);
+  color: var(--fg);
+  line-height: var(--leading);
+  overflow-wrap: anywhere;
+}
+
+.chatter-quiet {
+  font-size: var(--text-xs);
+  font-style: italic;
+  color: var(--faint);
+}
+
+.chatter-foot {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  color: var(--faint);
+}
+
+.chatter-more {
+  color: var(--muted);
+}
+
+/* ── motion ───────────────────────────────────────────────────────────── */
+
+@keyframes chatter-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.94);
+  }
+}
+
+@keyframes chatter-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+
+@keyframes chatter-bump {
+  50% {
+    transform: scale(1.25);
+  }
+}
+
+@keyframes chatter-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes chatter-blink {
+  0%,
+  93%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.12);
+  }
+}
+
+@keyframes chatter-speak {
+  35% {
+    transform: scale(1.16, 0.86);
+  }
+  70% {
+    transform: scale(0.94, 1.08);
+  }
+}
+
+@keyframes chatter-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes chatter-hear {
+  40% {
+    transform: translateY(-5px) scale(1.06);
+  }
+}
+
+@keyframes chatter-glance-left {
+  to {
+    transform: translate(-3px, -3px);
+  }
+}
+
+@keyframes chatter-glance-right {
+  to {
+    transform: translate(3px, -3px);
+  }
+}
+
+@keyframes chatter-fly {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5);
+  }
+  14% {
+    opacity: 1;
+    transform: translate(calc(var(--dx) * 0.14), -4px) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(calc(var(--dx) * 0.5), -11px) scale(1.15);
+  }
+  86% {
+    opacity: 1;
+    transform: translate(calc(var(--dx) * 0.86), -4px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx), 0) scale(0.5);
+  }
+}
+
+@keyframes chatter-dots {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes chatter-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.82) translateY(6px);
+  }
+}
+
+/* The loops stop outright under reduced motion rather than running once at
+   1ms; base.css already shortens the one-shots. */
+@media (prefers-reduced-motion: reduce) {
+  .chatter-actor,
+  .chatter-eye,
+  .chatter-dot {
+    animation: none !important;
+  }
+}

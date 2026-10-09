@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Where Tailscale mounts the page (PHONE_PATH). Tailscale strips it before Wanigan sees a request,
+         so the page cannot tell /wanigan from /wanigan/; this keeps every relative address under it. -->
+    <base href="/wanigan/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#111417" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Wanigan" />
+    <link rel="manifest" href="./phone.webmanifest" />
+    <link rel="apple-touch-icon" href="./phone-icon-180.png" />
+    <title>Wanigan</title>
+  </head>
+  <body class="phone">
+    <div id="root"></div>
+    <script type="module" src="./src/phone/main.tsx"></script>
+  </body>
+</html>

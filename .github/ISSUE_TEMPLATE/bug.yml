@@ -1,0 +1,46 @@
+name: Bug
+description: Something in Wanigan 2 does not work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: If it happens in the demo (Help › Open the Demo), say so; that makes it much easier to fix.
+      placeholder: |
+        1. Open the demo
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Wanigan commit
+      description: The output of `git rev-parse --short HEAD` in your checkout.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.5"
+    validations:
+      required: true
+  - type: input
+    id: clis
+    attributes:
+      label: Claude Code and Codex versions
+      description: The output of `claude --version` and `codex --version`, if the bug involves a session.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The relevant lines of `core.log` from `~/Library/Application Support/Wanigan 2/`. It contains project paths; remove anything you would rather not share.
+      render: text

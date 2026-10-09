@@ -1,0 +1,1117 @@
+/* Buttons, fields, marks, dialogs and toasts. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease);
+}
+
+.btn:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+
+/* Pressed: a pixel down, so a click is felt. */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Disabled looks inert in every tone, not like a paler live button. */
+.btn:disabled,
+.btn:disabled:hover {
+  background: var(--sunken);
+  border-color: var(--line);
+  color: var(--faint);
+  box-shadow: none;
+  filter: none;
+  cursor: not-allowed;
+}
+
+:root[data-theme='light'] .btn:not(.btn-quiet):not(:disabled) {
+  box-shadow: 0 1px 1px rgb(20 35 45 / 0.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+.btn-m {
+  height: 32px;
+  padding: 0 var(--space-3);
+}
+
+.btn-s {
+  height: 26px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.btn-primary {
+  background: var(--water);
+  border-color: var(--water);
+  color: var(--water-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+.btn-primary:hover {
+  background: var(--water);
+  filter: brightness(1.07);
+}
+
+.btn-attention {
+  background: var(--amber-fill);
+  border-color: var(--amber-fill);
+  color: var(--amber-fill-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+.btn-attention:hover {
+  background: var(--amber-fill);
+  filter: brightness(1.07);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.btn-danger:hover {
+  background: var(--red);
+  color: var(--bg);
+}
+
+.btn-quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+
+.btn-quiet:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.btn-quiet[aria-pressed='true'] {
+  color: var(--water);
+}
+
+/* ── segmented ───────────────────────────────────────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.segmented button {
+  border: 0;
+  border-radius: calc(var(--radius-m) - 2px);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.segmented-m button {
+  height: 28px;
+  padding: 0 var(--space-3);
+}
+
+.segmented-s button {
+  height: 22px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.segmented button:hover {
+  color: var(--fg);
+}
+
+.segmented button.on {
+  background: var(--raised);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+/* ── chips and search ────────────────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-round);
+  background: none;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--fg);
+  border-color: var(--line-strong);
+}
+
+.chip.on {
+  background: var(--water-soft);
+  border-color: var(--water-line);
+  color: var(--fg);
+}
+
+.search-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  width: 240px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  color: var(--faint);
+}
+
+.search-field:focus-within {
+  border-color: var(--water-line);
+}
+
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  color: var(--fg);
+}
+
+/* ── fields ──────────────────────────────────────────────────────────────── */
+
+.field {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.field > label,
+.field-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.field-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--faint);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+
+.field-row > .field {
+  flex: 1;
+  min-width: 140px;
+}
+
+:where(input:not([type='checkbox'], [type='radio']), select, textarea) {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  color: var(--fg);
+  line-height: var(--leading);
+}
+
+:where(input:not([type='checkbox'], [type='radio']), select, textarea):focus {
+  outline: none;
+  border-color: var(--water);
+  box-shadow: 0 0 0 1px var(--water), 0 0 0 4px var(--water-soft);
+}
+
+/* Light fields are white, so they read as fields rather than as disabled. */
+:root[data-theme='light'] :where(input:not([type='checkbox']), select, textarea) {
+  background: var(--surface);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+
+textarea {
+  resize: vertical;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--water);
+}
+
+.input-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ── marks ───────────────────────────────────────────────────────────────── */
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--radius-round);
+  background: var(--faint);
+}
+
+.state-working .state-dot,
+.state-starting .state-dot,
+.state-running .state-dot {
+  background: var(--water);
+}
+
+.state-waiting .state-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--water);
+}
+
+.state-permission {
+  color: var(--amber);
+}
+
+.state-permission .state-dot {
+  background: var(--amber);
+}
+
+.state-failed,
+.state-interrupted {
+  color: var(--red);
+}
+
+.state-failed .state-dot {
+  background: var(--red);
+}
+
+.state-interrupted .state-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--red);
+}
+
+.state-ended .state-dot {
+  background: var(--line-strong);
+}
+
+/* Stopped by its account's usage limit: it needs the owner, so amber. */
+.state-limited {
+  color: var(--amber);
+}
+
+.state-limited .state-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--amber);
+}
+
+.pulse {
+  animation: pulse 1.8s var(--ease) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--water-line);
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.type-glyph {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.type-task .type-glyph {
+  background: var(--type-task);
+}
+
+.type-bug .type-glyph {
+  background: var(--type-bug);
+  border-radius: var(--radius-round);
+}
+
+.type-feature .type-glyph {
+  background: var(--type-feature);
+  transform: rotate(45deg) scale(0.85);
+}
+
+.type-idea .type-glyph {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--type-idea);
+  border-radius: var(--radius-round);
+}
+
+.prio {
+  font: 600 var(--text-xs) / 1 var(--font-mono);
+  padding: 2px var(--space-1);
+  border-radius: var(--radius-s);
+  color: var(--faint);
+  background: var(--sunken);
+}
+
+.prio-0 {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+/* High, not "needs you": amber is reserved for what is waiting on the owner. */
+.prio-1 {
+  color: var(--fg);
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.prio-3 {
+  background: none;
+}
+
+.flag-green {
+  color: var(--green);
+}
+
+/* A project's key, stamped like a log mark. */
+.pmark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border: 1.5px solid currentcolor;
+  border-radius: var(--radius-s);
+  color: var(--muted);
+  font: 600 var(--text-xs) / 1 var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+.pmark-s {
+  min-width: 26px;
+  height: 18px;
+  padding: 0 3px;
+  font-size: var(--text-2xs);
+}
+
+.pmark-m {
+  min-width: 32px;
+  height: 24px;
+  padding: 0 var(--space-1);
+}
+
+.pmark-l {
+  min-width: 44px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-md);
+}
+
+.active .pmark,
+.topbar .pmark {
+  color: var(--water);
+}
+
+/* A command's keys, as the shortcut table declares them. */
+.keycaps {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.keycaps-then {
+  padding: 0 2px;
+  color: var(--faint);
+  font-size: var(--text-2xs);
+}
+
+.flag {
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.flag-amber {
+  color: var(--amber);
+}
+
+.flag-red {
+  color: var(--red);
+}
+
+.flag-faint {
+  color: var(--faint);
+}
+
+/* ── dialog ──────────────────────────────────────────────────────────────── */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--scrim);
+  animation: fade var(--dur) var(--ease);
+}
+
+.scrim-top {
+  place-items: start center;
+  padding-top: 12vh;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.dialog {
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--space-6));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  animation: rise var(--dur) var(--ease);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-4) var(--space-2) var(--space-5);
+}
+
+.dialog-head h2 {
+  margin: 0;
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+}
+
+.dialog-body {
+  padding: var(--space-2) var(--space-5) var(--space-2);
+  overflow: auto;
+}
+
+.dialog-body > p:first-child {
+  margin-top: 0;
+}
+
+.dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.dialog-hint {
+  margin-right: auto;
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* ── toasts ──────────────────────────────────────────────────────────────── */
+
+/* Raised clear of the session composer and the corner below it: an error now
+   stays until dismissed, so it must not sit on a control. */
+.toasts {
+  position: fixed;
+  right: var(--space-6);
+  bottom: calc(var(--space-12) + var(--space-10));
+  z-index: 60;
+  display: grid;
+  gap: var(--space-2);
+  justify-items: end;
+}
+
+.toast {
+  max-width: 420px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  animation: rise var(--dur) var(--ease);
+}
+
+.toast-error {
+  border-color: var(--red);
+}
+
+/* The palette's styles are in palette.css. */
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: calc(-1 * var(--space-2)) 0 var(--space-4);
+}
+
+.draft-criteria {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.draft-criteria li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+.draft-criteria li span {
+  flex: 1;
+}
+
+.draft-criteria .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+/* ── a view that crashed ─────────────────────────────────────────────────── */
+
+.view-crash {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-8);
+  overflow: auto;
+}
+
+.view-crash-box {
+  width: min(560px, 100%);
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.view-crash-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-round);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.view-crash h2 {
+  margin: 0;
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+}
+
+.view-crash-lede {
+  margin: 0;
+  color: var(--muted);
+}
+
+.view-crash-error {
+  width: 100%;
+  max-height: 160px;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  font: 400 var(--text-sm) / var(--leading) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.view-crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.view-crash-compact {
+  padding: var(--space-3);
+}
+
+.view-crash-compact .view-crash-box {
+  padding: var(--space-4);
+}
+
+.toast-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  border-left-width: 3px;
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.toast-x {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-round);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.toast-x:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* ── the shortcut sheet ──────────────────────────────────────────────────── */
+
+.shortcuts {
+  display: grid;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+}
+
+.shortcuts-group h3 {
+  margin: 0 0 var(--space-2);
+  font: 600 var(--text-sm) / 1.2 var(--font-ui);
+  color: var(--muted);
+}
+
+.shortcuts-group dl {
+  margin: 0;
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+}
+
+.shortcut + .shortcut {
+  border-top: 1px solid var(--line);
+}
+
+.shortcut dt {
+  min-width: 0;
+}
+
+.shortcut dd {
+  margin: 0;
+  flex: none;
+}
+
+.shortcut-keys,
+.shortcut-set,
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.shortcut-set + .shortcut-set {
+  margin-left: var(--space-1);
+}
+
+.shortcut-or,
+.shortcut-then {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+/* ── select ──────────────────────────────────────────────────────────────── */
+
+.select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.select-s {
+  height: 30px;
+  font-size: var(--text-sm);
+}
+
+.field .select {
+  width: 100%;
+}
+
+.select:hover:not(:disabled) {
+  border-color: var(--faint);
+}
+
+.select:focus-visible,
+.select[aria-expanded='true'] {
+  outline: none;
+  border-color: var(--water);
+  box-shadow: 0 0 0 1px var(--water), 0 0 0 4px var(--water-soft);
+}
+
+.select:disabled {
+  background: var(--sunken);
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select > svg {
+  flex: none;
+  color: var(--faint);
+  transform: rotate(90deg);
+}
+
+.sel-list {
+  position: fixed;
+  z-index: 70;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  outline: none;
+  animation: fade var(--dur-fast) var(--ease);
+}
+
+.sel-group {
+  padding: var(--space-2) var(--space-2) var(--space-1) 30px;
+  font: 600 var(--text-xs) / 1 var(--font-ui);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.sel-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-s);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.sel-opt.active {
+  background: var(--water-soft);
+}
+
+.sel-opt[aria-disabled='true'] {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.sel-check {
+  flex: none;
+  width: 14px;
+  padding-top: 3px;
+  color: var(--water);
+}
+
+.sel-text {
+  display: grid;
+  min-width: 0;
+}
+
+.sel-detail {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.sel-extra {
+  margin-top: var(--space-1);
+}
+
+/* An account's limits left: a small bar per window, filled by what is left.
+   Water while there is room; red only when nearly gone. Never amber, which means "needs you". */
+.limits-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.limit-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.limit-left-name {
+  color: var(--muted);
+}
+
+.limit-left-bar {
+  width: 48px;
+  height: 4px;
+  border-radius: var(--radius-round);
+  background: var(--sunken);
+  overflow: hidden;
+}
+
+.limit-left-bar span {
+  display: block;
+  height: 100%;
+  background: var(--water);
+}
+
+.limit-left.low .limit-left-bar span {
+  background: var(--red);
+}
+
+.limit-left-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-left.low .limit-left-value {
+  color: var(--red);
+}
+
+/* Under the chosen account, a little roomier, with when each resets. */
+.limits-left.full {
+  gap: var(--space-2) var(--space-4);
+}
+
+.limits-left.full .limit-left-bar {
+  width: 72px;
+}
+
+.account-limits {
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+}
+
+/* A number that just changed gives a small bump, once. */
+.bump {
+  display: inline-block;
+  animation: bump var(--dur-fast) var(--ease);
+}
+
+@keyframes bump {
+  from {
+    transform: scale(1.18);
+  }
+}
+
+/* New session: model and effort side by side when there is room. */
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.model-other {
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+}
+
+/* ── attachments: files waiting for the next message, in any composer ───── */
+
+.attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  height: 40px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+.attach-thumb,
+.attach-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+.attach-thumb {
+  object-fit: cover;
+}
+
+.attach-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-size {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.attach-x {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.attach-x:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.attach-adding {
+  padding: 0 var(--space-3);
+  color: var(--muted);
+}
+
+.attach-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+/* Files dragged over a place that takes them. */
+.drop-over {
+  outline: 2px dashed var(--water-line);
+  outline-offset: -4px;
+}

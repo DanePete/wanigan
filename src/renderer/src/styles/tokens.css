@@ -1,0 +1,199 @@
+/*
+  Wanigan 2 tokens. Every colour, size, radius and duration in the interface
+  comes from here; component styles name tokens, never values.
+
+  Colour carries meaning, and each accent has exactly one:
+    water  — Wanigan itself and the primary action
+    amber  — something needs you (and nothing else)
+    red    — failed, refused, broken
+    green  — done, approved
+*/
+:root {
+  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Whole pixels on a 4px line grid: no half-pixel strokes on a 1x screen. */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-code: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+  --text-hero: 44px;
+  --lh-sm: 16px;
+  --lh-md: 20px;
+  --lh-lg: 24px;
+  --leading-tight: 1.2;
+  --leading: 1.45;
+  --leading-loose: 1.6;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-s: 4px;
+  --radius-m: 7px;
+  --radius-l: 12px;
+  --radius-round: 999px;
+
+  /* A QR code is dark on light in both themes: what every camera reads. */
+  --qr-paper: #ffffff;
+  --qr-ink: #000000;
+
+  --dur-fast: 110ms;
+  --dur: 180ms;
+  --dur-slow: 280ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* The one surface with personality on purpose: agents talking (chatter.css). */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-pop: 320ms; /* a bubble popping in */
+  --dur-react: 260ms; /* a character squashing to speak, or bobbing to hear */
+  --dur-travel: 620ms; /* a message crossing from one character to the other */
+  --dur-typing: 1100ms; /* one cycle of the waiting-for-a-reply dots */
+  --dur-idle: 3400ms; /* one slow breath */
+  --dur-blink: 4600ms; /* how often a character blinks */
+
+  --rail-w: 252px;
+  --rail-w-folded: 56px;
+  --topbar-h: 52px;
+  --drawer-w: min(620px, 92vw);
+  --column-w: 212px;
+  --fab: 60px;
+  --chat-w: min(460px, calc(100vw - 2 * var(--space-5)));
+
+  /* Dark: the river at night. */
+  color-scheme: dark;
+  --bg: #111417;
+  --rail: #0c0f12;
+  --surface: #171b1f;
+  --raised: #1d2227;
+  --hover: #232a31;
+  --sunken: #0e1114;
+  --line: #252b32;
+  --line-strong: #343c45;
+  --fg: #e8e6e1;
+  --muted: #9ba2a8;
+  --faint: #808993;
+
+  --water: #63b3e4;
+  --water-ink: #06131c;
+  --water-soft: rgb(99 179 228 / 0.13);
+  --water-line: rgb(99 179 228 / 0.45);
+  --amber: #f0a640;
+  --amber-ink: #1b1306;
+  --amber-soft: rgb(240 166 64 / 0.13);
+  --amber-line: rgb(240 166 64 / 0.5);
+  /* A filled amber badge or button, in both themes; --amber is for text and strokes. */
+  --amber-fill: #f0a640;
+  --amber-fill-ink: #1b1306;
+  --red: #ef6b5f;
+  --red-soft: rgb(239 107 95 / 0.13);
+  --green: #58c48c;
+  --green-soft: rgb(88 196 140 / 0.13);
+  --diff-add: rgb(88 196 140 / 0.16);
+  --diff-add-word: rgb(88 196 140 / 0.38);
+  --diff-del: rgb(239 107 95 / 0.16);
+  --diff-del-word: rgb(239 107 95 / 0.38);
+  /*
+    Syntax in diffs: quiet hues kept clear of the four meanings (no green,
+    red, amber, or Wanigan's water), each at 4.5:1 or better on the add and
+    remove tints. Names of things share one hue, fields and variables another.
+  */
+  --syn-comment: #8a939c;
+  --syn-keyword: #cba3f0;
+  --syn-string: #86cfc3;
+  --syn-number: #eda0c4;
+  --syn-type: #a0b7f0;
+  --syn-tag: #a0b7f0;
+  --syn-variable: #dccb94;
+  --syn-attr: #dccb94;
+  --syn-punct: #9aa2aa;
+
+  --type-task: #8ba6c9;
+  --type-bug: #ef6b5f;
+  --type-feature: #a99bff;
+  --type-idea: #58c48c;
+
+  /*
+    Lines of history in the commit graph: the syntax hues, so they stay clear
+    of the four meanings (a graph lane is never "done", "failed" or "needs you").
+  */
+  --lane-0: #a0b7f0;
+  --lane-1: #86cfc3;
+  --lane-2: #cba3f0;
+  --lane-3: #eda0c4;
+  --lane-4: #9fb3c4;
+  --lane-5: #dccb94;
+
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--water);
+  --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25);
+  --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.55), 0 2px 10px rgb(0 0 0 / 0.35);
+  --scrim: rgb(5 8 10 / 0.55);
+}
+
+/* Light: river fog. Cool on purpose; this is water, not paper. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6f7;
+  --rail: #eaeef0;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --hover: #e8edef;
+  --sunken: #edf0f2;
+  --line: #dde3e6;
+  --line-strong: #c3cbd0;
+  --fg: #162029;
+  --muted: #4f5b66;
+  --faint: #66717b;
+
+  --water: #1b6ea6;
+  --water-ink: #ffffff;
+  --water-soft: rgb(27 110 166 / 0.1);
+  --water-line: rgb(27 110 166 / 0.45);
+  --amber: #a35c00;
+  --amber-ink: #ffffff;
+  --amber-soft: rgb(196 120 0 / 0.12);
+  --amber-line: rgb(163 92 0 / 0.5);
+  --red: #c4372c;
+  --red-soft: rgb(196 55 44 / 0.1);
+  --green: #16774a;
+  --green-soft: rgb(22 119 74 / 0.1);
+  --diff-add: rgb(22 119 74 / 0.12);
+  --diff-add-word: rgb(22 119 74 / 0.28);
+  --diff-del: rgb(196 55 44 / 0.11);
+  --diff-del-word: rgb(196 55 44 / 0.26);
+  --syn-comment: #5f6973;
+  --syn-keyword: #8040bf;
+  --syn-string: #0b7166;
+  --syn-number: #a62f6b;
+  --syn-type: #3a52ad;
+  --syn-tag: #3a52ad;
+  --syn-variable: #6e5f00;
+  --syn-attr: #6e5f00;
+  --syn-punct: #5a6570;
+
+  --type-task: #4a6f9c;
+  --type-bug: #c4372c;
+  --type-feature: #6a55e0;
+  --type-idea: #1d8653;
+
+  --lane-0: #3a52ad;
+  --lane-1: #0b7166;
+  --lane-2: #8040bf;
+  --lane-3: #a62f6b;
+  --lane-4: #4f6a82;
+  --lane-5: #6e5f00;
+
+  --shadow-card: 0 1px 2px rgb(20 35 45 / 0.08);
+  --shadow-overlay: 0 24px 64px rgb(20 35 45 / 0.2), 0 2px 10px rgb(20 35 45 / 0.1);
+  --scrim: rgb(20 30 38 / 0.28);
+}

@@ -1,0 +1,176 @@
+/* ⌘K: the search field, results in groups, and the keys that move through them. */
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  max-height: calc(100vh - 12vh - var(--space-6));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: rise var(--dur) var(--ease);
+}
+
+.palette-input {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+
+.palette-input input,
+.palette-input input:focus {
+  height: 52px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: none;
+  font-size: var(--text-lg);
+}
+
+.palette-results {
+  min-height: 0;
+  max-height: 56vh;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.palette-group + .palette-group {
+  margin-top: var(--space-1);
+}
+
+.palette-group-head {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--faint);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.palette-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.palette-option > svg {
+  flex: none;
+}
+
+.palette-option.active {
+  background: var(--water-soft);
+  color: var(--fg);
+}
+
+.palette-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.palette-option .keycaps {
+  margin-left: var(--space-1);
+}
+
+.palette-option .keycaps kbd {
+  min-width: 20px;
+}
+
+/* What agents said: the words around the match, then where it was said. */
+.palette-said {
+  align-items: flex-start;
+}
+
+.palette-said > svg {
+  margin-top: 2px;
+}
+
+.palette-stack {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.palette-snippet {
+  color: var(--fg);
+  font: 400 var(--text-code) / var(--lh-md) var(--font-mono);
+}
+
+.palette-said-title {
+  color: var(--fg);
+}
+
+.palette-stack .palette-detail {
+  max-width: none;
+}
+
+.palette-said mark {
+  background: none;
+  color: var(--fg);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--water);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.palette-note {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.palette-empty {
+  padding: var(--space-6) var(--space-3);
+  color: var(--muted);
+  text-align: center;
+}
+
+.palette-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.palette-foot > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.palette-foot kbd {
+  margin-right: 2px;
+}
+
+.palette-foot-end {
+  margin-left: auto;
+}

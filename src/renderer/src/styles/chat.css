@@ -1,0 +1,407 @@
+/* Talk to Wanigan: the round button at the bottom right, and the conversation
+   it opens. Water blue throughout: this is Wanigan himself. Amber appears only
+   through the orb, when something needs you. */
+
+/* ── the button ──────────────────────────────────────────────────────────── */
+
+.chat-fab {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 45; /* over the drawer, under every dialog */
+  display: grid;
+  place-items: center;
+  width: var(--fab);
+  height: var(--fab);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  cursor: pointer;
+  transition: transform var(--dur) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.chat-fab:hover {
+  border-color: var(--water-line);
+  transform: translateY(-2px);
+}
+
+.chat-fab:focus-visible {
+  border-radius: var(--radius-round);
+  box-shadow: var(--focus), var(--shadow-overlay);
+}
+
+/* While Wanigan answers, a slow ring of water light around him. */
+.chat-fab.thinking::after,
+.chat-orb.thinking::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 2px solid var(--water-line);
+  border-radius: var(--radius-round);
+  pointer-events: none;
+  animation: chat-ring 1.6s var(--ease) infinite;
+}
+
+@keyframes chat-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.94);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+
+/* An answer arrived while the conversation was closed. */
+.chat-fab-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--raised);
+  border-radius: var(--radius-round);
+  background: var(--water);
+}
+
+/* Beside the card drawer, not over it. */
+.app.with-drawer > .chat-fab {
+  right: calc(var(--drawer-w) + var(--space-5));
+}
+
+/* Toasts rise above the button; the last cards in a column can scroll clear of it. */
+.app:has(> .chat-fab) ~ .toasts {
+  bottom: calc(var(--space-5) + var(--fab) + var(--space-3));
+}
+
+.app:has(> .chat-fab) .column-cards {
+  padding-bottom: calc(var(--fab) + var(--space-4));
+}
+
+/* With the conversation open, toasts sit beside it, never over its composer:
+   an error toast stays until dismissed, and it covered Send. */
+body:has(> .chat-scrim) .toasts {
+  right: calc(var(--space-5) + var(--chat-w) + var(--space-3));
+  bottom: var(--space-5);
+  max-width: calc(100vw - var(--chat-w) - 3 * var(--space-5));
+}
+
+body:has(> .chat-scrim) .toasts .toast {
+  max-width: min(420px, 100%);
+}
+
+/* ── the conversation ────────────────────────────────────────────────────── */
+
+.chat-scrim {
+  place-items: end;
+  padding: var(--space-5);
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  width: var(--chat-w);
+  height: min(720px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  transform-origin: bottom right;
+  animation: chat-in var(--dur-slow) var(--ease);
+}
+
+@keyframes chat-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2)) scale(0.97);
+  }
+}
+
+.chat-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--water-soft), transparent);
+}
+
+.chat-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.chat-words {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.chat-words h2 {
+  margin: 0;
+  font: 600 var(--text-xl) / var(--leading-tight) var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.chat-scope {
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.chat-scope b {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.chat-tools {
+  align-self: start;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.chat-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+.chat-earlier {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.chat-turn {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chat-q {
+  justify-self: end;
+  max-width: 86%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--water-line);
+  border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l);
+  background: var(--water-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-a {
+  justify-self: start;
+  max-width: 100%;
+  line-height: var(--leading-loose);
+  overflow-wrap: anywhere;
+}
+
+.chat-a p,
+.chat-a ul,
+.chat-a ol {
+  margin: 0 0 var(--space-2);
+}
+
+.chat-a ul,
+.chat-a ol {
+  padding-left: var(--space-5);
+}
+
+.chat-a li + li {
+  margin-top: var(--space-1);
+}
+
+.chat-a > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-a code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  font: 0.92em var(--font-mono);
+}
+
+.chat-a .mono {
+  font-size: 0.92em;
+}
+
+.chat-meta {
+  margin: var(--space-1) 0 0 !important;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+}
+
+.chat-error {
+  color: var(--red);
+}
+
+.chat-stopped {
+  color: var(--muted);
+}
+
+.chat-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.chat-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.chat-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-round);
+  background: var(--water);
+  animation: chat-dot 1s var(--ease) infinite;
+}
+
+.chat-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.chat-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  margin: auto 0;
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+}
+
+.chat-empty-title {
+  margin: 0;
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+}
+
+.chat-empty-body {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.chat-starters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chat-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.chat-compose textarea {
+  min-height: 36px;
+  max-height: 160px;
+  overflow-y: auto;
+  resize: none;
+}
+
+.chat-compose .btn {
+  height: 36px;
+}
+
+.chat-compose .btn-icon {
+  width: 36px;
+}
+
+.chat-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
+  border-top: 1px solid var(--line);
+}
+
+.chat-files + .chat-compose {
+  border-top: 0;
+}
+
+/* What went with a question sits under it, on its side. */
+.chat-turn .attach-chips {
+  justify-self: end;
+  justify-content: flex-end;
+  max-width: 86%;
+}
+
+.chat-hint {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.chat-hint b {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.chat-account {
+  width: auto;
+  max-width: 14em;
+  padding: 0 var(--space-1);
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: var(--leading-tight);
+}
+
+.chat-timer {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-keys {
+  white-space: nowrap;
+}
+
+.chat-keys kbd {
+  min-width: 16px;
+  padding: 0 3px;
+}

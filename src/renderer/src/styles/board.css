@@ -1,0 +1,503 @@
+.board-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(var(--column-w), 1fr);
+  gap: var(--space-3);
+  padding: 0 var(--space-6) var(--space-6);
+  overflow-x: auto;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-l);
+  background: var(--sunken);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.column.drop-target {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.column-working.drop-target {
+  border-style: dashed;
+}
+
+.column-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  flex: none;
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+
+.column-head h2 {
+  margin: 0;
+  font: 600 var(--text-md) / 1 var(--font-ui);
+}
+
+.column-count {
+  font-size: var(--text-sm);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.column-count.hot {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.column-add {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.column-add:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.column-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+  min-height: var(--space-12);
+  flex: 1;
+}
+
+.card-slot {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.drop-line {
+  height: 2px;
+  margin: -1px var(--space-1);
+  border-radius: 2px;
+  background: var(--water);
+}
+
+.column-more {
+  margin: 0 var(--space-3) var(--space-3);
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.column-more:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* ── card ─────────────────────────────────────────────────────────────────── */
+
+.card {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  background: var(--raised);
+}
+
+.card.open {
+  border-color: var(--water);
+  box-shadow: 0 0 0 1px var(--water);
+}
+
+.card.dragging {
+  opacity: 0.35;
+}
+
+.card.asking {
+  border-color: var(--amber-line);
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 16px;
+}
+
+.card-key {
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+.card-head .state {
+  margin-left: auto;
+}
+
+.card-title {
+  margin: 0;
+  font-weight: 500;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.column-done .card-title {
+  color: var(--muted);
+}
+
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+.meta-done {
+  color: var(--green);
+}
+
+.board-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: var(--space-2);
+}
+
+.board-keys kbd {
+  min-width: 16px;
+}
+
+.since {
+  margin: 0 var(--space-6) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
+
+.since-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-1);
+}
+
+/* The whole line opens the detail. */
+.since-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.since-toggle:hover .since-when {
+  text-decoration: underline;
+}
+
+.since-chevron {
+  flex: none;
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.since.open .since-chevron {
+  transform: rotate(90deg);
+}
+
+.since-when {
+  flex: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.since-counts {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.since-count + .since-count::before {
+  content: '·';
+  padding: 0 var(--space-2);
+  color: var(--faint);
+}
+
+.since .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.since-detail {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  /* Under the words of the line, past its chevron. */
+  padding: var(--space-2) var(--space-4) var(--space-3) calc(var(--space-3) + 14px + var(--space-2));
+  border-top: 1px solid var(--line);
+  list-style: none;
+  color: var(--muted);
+}
+
+.since-detail li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+
+.since-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+/* ── toolbar additions ───────────────────────────────────────────────── */
+
+.select-field select {
+  width: auto;
+  height: 30px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  background-color: var(--surface);
+}
+
+.board-wrap .search-field {
+  width: 200px;
+}
+
+.board-count {
+  white-space: nowrap;
+}
+
+.how-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  font: 500 var(--text-sm) / 1 var(--font-ui);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.how-btn:hover {
+  background: var(--raised);
+  border-color: var(--water-line);
+}
+
+.how-q {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--water);
+  color: var(--water-ink);
+  font: 700 var(--text-xs) / 1 var(--font-ui);
+}
+
+/* ── column headers ──────────────────────────────────────────────────── */
+
+/* One glyph per column; together they are the legend. */
+.col-glyph {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: none;
+  border: 1.5px solid var(--faint);
+}
+
+.col-glyph-inbox {
+  border-style: dashed;
+}
+
+.col-glyph-working {
+  border-color: var(--water);
+  border-right-color: transparent;
+}
+
+.col-glyph-review {
+  border-color: var(--water);
+  background: conic-gradient(var(--water) 0 75%, transparent 75% 100%);
+}
+
+.col-glyph-done {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.column-badge {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.column-empty {
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--faint);
+}
+
+.column.flash {
+  animation: column-flash 1.8s var(--ease);
+}
+
+@keyframes column-flash {
+  0%,
+  70% {
+    box-shadow: 0 0 0 2px var(--water);
+  }
+
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
+/* ── card additions ──────────────────────────────────────────────────── */
+
+.claim-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
+.claim-line:hover {
+  border-color: var(--water-line);
+  text-decoration: none;
+}
+
+.claim-line .state {
+  margin: 0;
+}
+
+.claim-who {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.claim-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.claim-urgent {
+  flex: 1;
+  color: var(--amber);
+}
+
+.claim-line.stopped .claim-what {
+  color: var(--faint);
+}
+
+.claim-line > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.card-age {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-age.stuck {
+  color: var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .column.flash {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--water);
+  }
+}
+
+/* Dark lanes read as outlined lanes, with the cards lifted off them. */
+:root:not([data-theme='light']) .column {
+  background: transparent;
+  border-color: var(--line);
+}
+
+:root:not([data-theme='light']) .card {
+  background: var(--raised);
+}
+
+:root:not([data-theme='light']) .card:hover {
+  background: var(--hover);
+}

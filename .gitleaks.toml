@@ -1,0 +1,8 @@
+# Secret scanning for this repository: gitleaks' own rules, plus the folders that are
+# build output or downloads, which are never committed.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Build output and dependencies, never committed"
+paths = ['''^out/''', '''^release/''', '''^dist/''', '''^node_modules/''', '''^\.artifacts/''']

@@ -1,0 +1,259 @@
+/* History: a project's earlier conversations, and the reader. */
+
+.history-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  max-width: 1080px;
+  padding: var(--space-4) var(--space-8) var(--space-2);
+  background: var(--bg);
+}
+
+.history-bar .search-field {
+  width: 320px;
+}
+
+.history-list {
+  max-width: 1080px;
+  padding-top: var(--space-4);
+}
+
+.history-list section + section {
+  margin-top: var(--space-6);
+}
+
+.sessions-more {
+  margin: var(--space-6) 0 0;
+}
+
+.hrows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  background: var(--line);
+}
+
+.hrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.hrow:hover {
+  background: var(--raised);
+}
+
+.hrow.active {
+  box-shadow: inset 2px 0 0 var(--water);
+  background: var(--raised);
+}
+
+.hmark {
+  flex: none;
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.hrow-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.hrow-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hrow-prompt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hrow-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+.hrow-branch {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hrow-actions {
+  flex: none;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.tag {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-round);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+/* ── reader ──────────────────────────────────────────────────────────── */
+
+.reader {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.reader-head {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.reader-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.reader-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: 600 var(--text-xl) / var(--leading-tight) var(--font-display);
+  overflow-wrap: anywhere;
+}
+
+.reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.reader-description {
+  margin: 0;
+  color: var(--muted);
+  line-height: var(--leading-loose);
+}
+
+.reader-actions {
+  margin-top: var(--space-1);
+}
+
+.reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6) var(--space-10);
+}
+
+.reader-note {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--faint);
+  text-align: center;
+}
+
+.turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.turn p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-loose);
+}
+
+.turn-who {
+  display: block;
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.turn:first-child .turn-who {
+  margin-top: 0;
+}
+
+.turn-user p {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.turn-tool code {
+  display: block;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--line);
+  font: 400 var(--text-xs) / var(--leading) var(--font-mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.turn-tool + .turn-tool {
+  margin-top: calc(-1 * var(--space-1));
+}
+
+/* ── continuing as another account ───────────────────────────────────── */
+
+.choose-title {
+  margin: 0 0 var(--space-3);
+  font-weight: 600;
+}
+
+.choose-accounts {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.choose-accounts strong {
+  display: block;
+  font-weight: 600;
+}
+
+.choose-why {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

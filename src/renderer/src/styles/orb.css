@@ -1,0 +1,344 @@
+/* Wanigan's orb: the WebGPU fluid, and the still drawing that stands in for it. */
+
+.orb {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  touch-action: none;
+}
+
+.orb > canvas,
+.orb > .orb-still {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The canvas is laid out but unseen until its first frame; the drawing covers it. */
+.orb[data-render='starting'] > canvas {
+  opacity: 0;
+}
+
+.orb[data-render='fluid']:not(.orb-avatar) > canvas {
+  cursor: grab;
+}
+
+.orb[data-render='fluid']:not(.orb-avatar):active > canvas {
+  cursor: grabbing;
+}
+
+/* ── the still drawing's water ───────────────────────────────────────────── */
+
+.orb-wave {
+  animation: drift 7s linear infinite;
+}
+
+.orb-wave-back {
+  animation-duration: 11s;
+  animation-direction: reverse;
+}
+
+.orb-working .orb-wave {
+  animation-duration: 3.6s;
+}
+
+.orb-working .orb-wave-back {
+  animation-duration: 5.4s;
+}
+
+.orb-attention .orb-wave {
+  animation-duration: 2.6s;
+}
+
+@keyframes drift {
+  to {
+    transform: translateX(-100px);
+  }
+}
+
+.orb-eyes {
+  transform-origin: 50% 40%;
+  animation: blink 6.5s var(--ease) infinite;
+}
+
+@keyframes blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.12);
+  }
+}
+
+/* Thinking quickens the drawing's water, as the fluid's swirl would. */
+.orb[data-mood='thinking'] .orb-wave {
+  animation-duration: 2.4s;
+}
+
+.orb[data-mood='thinking'] .orb-wave-back {
+  animation-duration: 3.8s;
+}
+
+/* ── one-off cues ─────────────────────────────────────────────────────────
+   The fluid performs play and moods itself. The still drawing has CSS versions
+   of a spin and a celebration; everything else, and every cue while motion is
+   reduced, is a short change of light around the glass: a ring that fades in
+   and out once. data-cue is set by Orb.tsx and cleared after about a second. */
+
+.orb::after {
+  content: '';
+  position: absolute;
+  inset: -9%;
+  border-radius: var(--radius-round);
+  background: radial-gradient(closest-side, transparent 80%, var(--orb-cue, var(--water-line)) 91%, transparent 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+
+.orb[data-cue]:not([data-cue='spin'])::after {
+  opacity: 1;
+}
+
+.orb[data-cue='celebrate'] {
+  --orb-cue: var(--green);
+}
+
+.orb[data-cue='alarm'] {
+  --orb-cue: var(--red);
+}
+
+.orb[data-cue='recover'] {
+  --orb-cue: var(--water);
+}
+
+.orb-water {
+  transform-origin: 50% 55%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* A turn: a short wind-up, the eyes go round the back, the water sloshes. */
+  .orb[data-cue='spin'] .orb-eyes {
+    animation: orb-turn 760ms var(--ease) 1;
+  }
+
+  .orb[data-cue='spin'] .orb-water {
+    animation: orb-slosh 900ms var(--ease) 1;
+  }
+
+  /* A celebration: the water hops, the eyes squint happily, a green ring. */
+  .orb[data-cue='celebrate'] .orb-water {
+    animation: orb-hop 900ms var(--ease) 1;
+  }
+
+  .orb[data-cue='celebrate'] .orb-eyes {
+    animation: orb-smile 900ms var(--ease) 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* A change of light, not motion: let the ring fade rather than blink. */
+  .orb::after {
+    transition-duration: var(--dur-slow) !important;
+  }
+}
+
+@keyframes orb-turn {
+  0%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+  15% {
+    transform: translateX(5px);
+  }
+  50% {
+    transform: translateX(-24px) scaleX(0.2);
+    opacity: 0;
+  }
+  51% {
+    transform: translateX(24px) scaleX(0.2);
+    opacity: 0;
+  }
+}
+
+@keyframes orb-slosh {
+  0%,
+  100% {
+    transform: none;
+  }
+  30% {
+    transform: rotate(-7deg);
+  }
+  65% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes orb-hop {
+  0%,
+  100% {
+    transform: none;
+  }
+  35% {
+    transform: translateY(-7px);
+  }
+  70% {
+    transform: translateY(1.5px);
+  }
+}
+
+@keyframes orb-smile {
+  0%,
+  100% {
+    transform: none;
+  }
+  25%,
+  65% {
+    transform: scaleY(0.4);
+  }
+}
+
+/* ── the orb lab (#/orb-lab), a development page ──────────────────────────── */
+
+.orb-lab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--column-w) + var(--space-12) * 2);
+  height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.orb-lab-stage {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding: var(--space-8);
+}
+
+.orb-lab-panel {
+  overflow-y: auto;
+  padding: var(--space-6);
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.orb-lab-title {
+  margin: 0 0 var(--space-1);
+  font: 600 var(--text-xl) / var(--leading-tight) var(--font-display);
+}
+
+.orb-lab-note {
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.orb-lab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.orb-lab-panel .segmented {
+  flex-wrap: wrap;
+}
+
+.orb-lab-sizes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+/* ── play ─────────────────────────────────────────────────────────────────── */
+
+.playable {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+}
+
+.play-button {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  background: var(--raised);
+  color: var(--muted);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.playable:hover .play-button,
+.play-button:focus-visible,
+.play-button[aria-expanded='true'] {
+  opacity: 1;
+  color: var(--water);
+}
+
+.play-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 30;
+  width: 280px;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  animation: rise var(--dur) var(--ease);
+}
+
+.play-toys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-1);
+}
+
+.play-toy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--fg);
+  font: 500 var(--text-sm) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.play-toy:hover:not(:disabled) {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.play-toy:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.play-toy kbd {
+  font-size: var(--text-2xs);
+}
+
+.play-said {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}

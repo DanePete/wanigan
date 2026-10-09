@@ -1,0 +1,68 @@
+{
+  "name": "wanigan",
+  "productName": "Wanigan",
+  "version": "2.0.0-beta.2",
+  "private": true,
+  "description": "A local production desk for coding agents: a board per project, real terminal sessions, and one place that says what needs you.",
+  "author": "Dead North LLC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanePete/wanigan.git"
+  },
+  "homepage": "https://github.com/DanePete/wanigan#readme",
+  "bugs": {
+    "url": "https://github.com/DanePete/wanigan/issues"
+  },
+  "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev -w",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "rebuild": "electron-rebuild -f -w node-pty,better-sqlite3",
+    "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
+    "test:unit": "node scripts/run-electron-node.mjs --test --test-reporter=spec \"src/**/*.test.ts\"",
+    "test:ui": "npm run build && playwright-core install chromium-headless-shell && node scripts/ui-sweep.mjs && node scripts/phone-sweep.mjs && node scripts/ui-regressions.mjs",
+    "test:crawl": "npm run build && playwright-core install chromium-headless-shell && node scripts/ui-crawl.mjs",
+    "test": "npm run typecheck && npm run test:unit && npm run test:ui && npm run test:crawl",
+    "core": "node scripts/run-electron-node.mjs out/main/core.js",
+    "core:stop": "node scripts/run-electron-node.mjs --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/core-stop.ts",
+    "cli": "node scripts/run-electron-node.mjs out/main/cli.js",
+    "dist:mac": "node scripts/dist-mac.mjs",
+    "smoke:app": "npm run build && node scripts/app-smoke.mjs",
+    "scenario": "npm run build && node scripts/scenario.mjs",
+    "local:check": "npm run build && node scripts/local-model-check.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "node-pty": "1.1.0",
+    "qrcode-generator": "^2.0.4"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.0",
+    "@fontsource/ibm-plex-mono": "^5.2.0",
+    "@fontsource/ibm-plex-sans": "^5.2.0",
+    "@fontsource/ibm-plex-sans-condensed": "^5.3.0",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "5.2.0",
+    "@webgpu/types": "^0.1.72",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-web-links": "0.11.0",
+    "@xterm/xterm": "5.5.0",
+    "electron": "44.3.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "5.0.0",
+    "playwright-core": "1.62.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}

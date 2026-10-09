@@ -1,0 +1,15 @@
+name: Idea
+description: Something Wanigan 2 should do, or do differently.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What gets in your way today, working with agents. Start here rather than with the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help

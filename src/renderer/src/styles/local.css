@@ -1,0 +1,28 @@
+/* ── Settings › Local models ─────────────────────────────────────────── */
+
+.local-modules,
+.local-others {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.local-others {
+  margin: 0;
+  gap: var(--space-1);
+}
+
+/* Proven is news about a pairing, never a state that needs you: water, not amber. */
+.tag.proven {
+  border-color: var(--water-line);
+  color: var(--water);
+}
+
+.local-progress {
+  display: grid;
+  grid-template-columns: minmax(120px, 240px) 1fr;
+  align-items: center;
+  gap: var(--space-3);
+}

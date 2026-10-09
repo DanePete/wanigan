@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    The Wanigan mark.
+
+    A wanigan is the shack that rode the log drives downriver with the crew,
+    so the mark is the shack, the raft under it, and the water. It has to
+    survive 32px in a Dock, which rules out the halftone and grain the rest of
+    the system leans on — at that size texture reads as dirt.
+
+    Three decisions are the difference between this and a house icon, which is
+    what the first attempt was:
+
+      - LOW AND LONG, not tall and gabled. A shallow roof with eaves wider
+        than the body reads as a shelter built on a raft; a steep pitch reads
+        as a suburban home button.
+      - THE CHIMNEY IS OFF-CENTRE. Symmetry is what made the first draft
+        generic. One stovepipe to the right breaks it and says somebody lives
+        in there.
+      - THE WATER IS CURVED. Straight rounded bars under a building read as
+        lines of text, which is what the first draft's river looked like.
+
+    The plate split is the Dead North signature and does real work at this
+    size: print misregistration and TV signal bleed are the same artifact, and
+    one signal-red edge and one bolt-blue edge under the ink shape is the
+    whole brand compressed into seven pixels. Colour is an event, so it
+    happens exactly twice — that split, and the lamp in the window.
+
+    Newsprint ground rather than tube black: a Dock is mostly dark icons, and
+    the poster half of the system is the half that stands out in one.
+  -->
+  <defs>
+    <clipPath id="ground">
+      <rect x="56" y="56" width="912" height="912" rx="205" ry="205"/>
+    </clipPath>
+    <pattern id="halftone" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="13" cy="13" r="3.2" fill="#171310" opacity="0.10"/>
+    </pattern>
+    <g id="shack">
+      <rect x="646" y="392" width="56" height="150" rx="6"/>
+      <path d="M512 424 L840 546 L184 546 Z"/>
+      <rect x="238" y="546" width="548" height="152"/>
+    </g>
+    <g id="raft">
+      <rect x="168" y="722" width="238" height="46" rx="23"/>
+      <rect x="428" y="722" width="164" height="46" rx="23"/>
+      <rect x="614" y="722" width="242" height="46" rx="23"/>
+    </g>
+  </defs>
+
+  <g clip-path="url(#ground)">
+    <rect x="56" y="56" width="912" height="912" fill="#ece4d0"/>
+    <rect x="56" y="56" width="912" height="912" fill="url(#halftone)"/>
+
+    <!-- The mark was drawn low in the frame with dead space above it. Lift and
+         enlarge it here rather than moving forty coordinates by hand. -->
+    <g transform="translate(512,512) scale(1.12) translate(-512,-512) translate(0,-151)">
+
+    <!-- MOVE 01, plate split: two off-register plates under the ink. -->
+    <use href="#shack" fill="#b32408" transform="translate(-7,0)"/>
+    <use href="#shack" fill="#0e3fbf" transform="translate(7,0)"/>
+    <use href="#shack" fill="#171310"/>
+
+    <!-- The lamp, off-centre with the chimney. Second and last colour event. -->
+    <rect x="306" y="588" width="104" height="76" rx="7" fill="#b32408"/>
+
+    <use href="#raft" fill="#171310"/>
+
+    <!-- The river: curved, so it cannot be mistaken for text. -->
+    <g fill="none" stroke="#171310" stroke-width="30" stroke-linecap="round">
+      <path d="M140 838 q62 -30 124 0 t124 0 t124 0 t124 0 t124 0"/>
+      <path d="M244 918 q58 -28 116 0 t116 0 t116 0 t116 0"/>
+    </g>
+    </g>
+  </g>
+</svg>

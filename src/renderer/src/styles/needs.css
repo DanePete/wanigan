@@ -1,0 +1,318 @@
+/* Needs you: the one loud screen. Everything else stays quiet. */
+
+.needs {
+  overflow-y: auto;
+}
+
+.needs-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-10) var(--space-8);
+  -webkit-app-region: drag;
+}
+
+.needs-hero > * {
+  -webkit-app-region: no-drag;
+}
+
+.needs-orb {
+  flex: none;
+  filter: drop-shadow(0 18px 30px rgb(0 0 0 / 0.35));
+}
+
+.needs-words {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.needs-headline {
+  margin: 0;
+  font: 600 var(--text-hero) / 1.02 var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.needs-sub {
+  margin: 0;
+  font-size: var(--text-lg);
+  color: var(--muted);
+}
+
+.needs-groups {
+  display: grid;
+  gap: var(--space-8);
+  padding: 0 var(--space-10) var(--space-12);
+  max-width: 1100px;
+}
+
+.need-group header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.need-group h2 {
+  margin: 0;
+  font: 600 var(--text-lg) / 1 var(--font-ui);
+}
+
+.need-group header p {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.needs-hero.busy {
+  gap: var(--space-6);
+  padding: var(--space-8) var(--space-10) var(--space-6);
+}
+
+.needs-hero.busy .needs-headline {
+  font-size: 36px;
+}
+
+/* Rows, not boxes: one bar per row carries the group's colour, once. */
+.need-group ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.need-group .need-row {
+  border-bottom: 1px solid var(--line);
+  box-shadow: inset 3px 0 0 var(--bar, transparent);
+}
+
+.need-permission,
+.need-overlap,
+.need-question,
+.need-limit {
+  --bar: var(--amber);
+}
+
+.need-review {
+  --bar: var(--water);
+}
+
+.need-failed,
+.need-interrupted {
+  --bar: var(--red);
+}
+
+.need-permission h2::before,
+.need-overlap h2::before,
+.need-question h2::before,
+.need-review h2::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-round);
+  background: var(--amber);
+  vertical-align: middle;
+}
+
+.need-review h2::before {
+  background: var(--water);
+}
+
+.need-failed h2::before,
+.need-interrupted h2::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-round);
+  background: var(--red);
+  vertical-align: middle;
+}
+
+.need-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: var(--space-4);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-5);
+  background: var(--surface);
+}
+
+/* A row with the exact request or a reply under it reads from the top. */
+.need-row-open {
+  align-items: start;
+}
+
+.need-row-open > .pmark,
+.need-row-open > .need-since {
+  margin-top: var(--space-2);
+}
+
+.need-main {
+  min-width: 0;
+}
+
+.need-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-weight: 500;
+}
+
+.need-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.need-key {
+  flex: none;
+}
+
+.need-since {
+  width: 80px;
+  flex: none;
+  text-align: right;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.need-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 176px;
+}
+
+.need-limit h2::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-round);
+  background: var(--amber);
+  vertical-align: middle;
+}
+
+.need-limit .need-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 460px;
+}
+
+.continue-confirm {
+  max-width: 300px;
+}
+
+.continue-pick {
+  max-width: 220px;
+  font-size: var(--text-sm);
+}
+
+/* Three quiet lines under "Nothing needs you": is everything ready to work. */
+.readiness {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-10) var(--space-8) calc(var(--space-10) + 148px + var(--space-8));
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.readiness li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.readiness-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.readiness li.ok .readiness-dot {
+  background: var(--green);
+}
+
+/* Optional, not a step left undone: an open ring. */
+.readiness-demo .readiness-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--water);
+}
+
+@media (max-width: 1100px) {
+  .readiness {
+    padding-left: var(--space-10);
+  }
+}
+
+/* A new need rises into its place; the ones already there stay still. */
+.need-row {
+  animation: rise var(--dur) var(--ease);
+}
+
+/* What a permission request asks, exactly. The answer is still given in the terminal. */
+.need-asks {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-1);
+}
+
+.need-why {
+  white-space: normal;
+}
+
+.need-sent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* Reply in place: one line that grows, under the row it answers. */
+.need-reply {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) 0 var(--space-1);
+}
+
+.need-reply.takes-files {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.need-reply .attach-chips {
+  grid-column: 1 / -1;
+}
+
+.need-reply textarea {
+  min-height: 36px;
+  max-height: 160px;
+  resize: none;
+}
+
+.need-reply .btn {
+  height: 36px;
+}
+
+.need-reply-keys {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-xs);
+}

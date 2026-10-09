@@ -1,0 +1,528 @@
+.session-bar {
+  gap: var(--space-4);
+}
+
+.back {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  color: var(--muted);
+}
+
+.back:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.session-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The title keeps its room; the facts wrap to a second line before it is cut
+   (a one-off's "Make this a card" left "Claude Code · C"). */
+.session-bar .topbar-title {
+  flex-shrink: 0;
+  max-width: 40%;
+}
+
+/* Started with Remote Control, or on this Mac's own model: a fact about where the session runs or can be reached, not a state. */
+.remote-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--water-line);
+  border-radius: var(--radius-round);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: var(--lh-md);
+}
+
+.remote-mark svg {
+  color: var(--water);
+}
+
+/* Narrow, the mark keeps the bar on one line: the icon shows, the words are read out. */
+@media (max-width: 1280px) {
+  .remote-mark {
+    padding: var(--space-1);
+  }
+
+  .remote-mark-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.session-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.session-body.with-timeline {
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+
+.session-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sunken);
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.composer-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.composer .btn-icon {
+  width: 36px;
+}
+
+.composer textarea {
+  min-height: 36px;
+  max-height: 160px;
+  resize: none;
+}
+
+.composer .btn {
+  height: 36px;
+}
+
+.timeline {
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  padding: var(--space-4);
+  background: var(--surface);
+}
+
+.timeline h2 {
+  margin: 0 0 var(--space-3);
+  font: 600 var(--text-md) / 1 var(--font-ui);
+}
+
+.timeline ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Turns: each one a fold, the newest open. */
+.turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.turn > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  box-shadow: inset 2px 0 0 var(--line-strong);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.turn > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.turn > details > summary:hover {
+  background: var(--hover);
+}
+
+.turn.live > details > summary {
+  box-shadow: inset 2px 0 0 var(--water);
+}
+
+.turn.asked > details > summary {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.turn.failed > details > summary {
+  box-shadow: inset 2px 0 0 var(--red);
+}
+
+.turn-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.turn-facts {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-files {
+  list-style: none;
+  margin: var(--space-1) 0 0;
+  padding: 0 0 0 var(--space-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.turn-files li {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.turn-steps {
+  list-style: none;
+  margin: var(--space-2) 0 var(--space-1);
+  padding: 0 0 0 var(--space-3);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.tl-kind {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding-top: 1px;
+  min-width: 52px;
+}
+
+.tl-text {
+  overflow-wrap: anywhere;
+}
+
+.tl time {
+  grid-column: 2;
+  font-size: var(--text-xs);
+}
+
+.tl-PermissionRequest .tl-kind,
+.tl-Notification .tl-kind {
+  color: var(--amber);
+}
+
+.tl-PostToolUseFailure .tl-kind,
+.tl-StopFailure .tl-kind,
+.tl-PermissionDenied .tl-kind {
+  color: var(--red);
+}
+
+.tl-Stop .tl-kind {
+  color: var(--green);
+}
+
+/* ── what each turn changed ─────────────────────────────────────────────── */
+
+.timeline-note {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* Under the turn's fold, so it shows whether the turn is open or not. */
+.turn-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-1) 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.turn-diff {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--water);
+  font: inherit;
+  cursor: pointer;
+}
+
+.turn-diff:hover,
+.turn-diff.on {
+  background: var(--water-soft);
+}
+
+.turn-shared {
+  color: var(--muted);
+}
+
+.turn-undo {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.turn-undone {
+  color: var(--muted);
+}
+
+.turn-undo-why {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+}
+
+/* A turn's diff, laid over the terminal; the timeline stays beside it. */
+.session-body > .session-main,
+.session-body > .turn-panel {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.session-body > .timeline {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.turn-panel {
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  animation: fade var(--dur) var(--ease);
+}
+
+.turn-panel:focus {
+  outline: none;
+}
+
+.turn-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.turn-panel-head h2 {
+  margin: 0;
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+}
+
+.turn-panel-what {
+  flex: 1;
+  min-width: 200px;
+  font-size: var(--text-sm);
+}
+
+.turn-panel-head .turn-undo {
+  flex-basis: auto;
+}
+
+.turn-panel-head .turn-undo-why {
+  max-width: 360px;
+}
+
+.turn-panel-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.turn-panel .changes-body {
+  border-top: 0;
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+}
+
+/* The confirmation's list of files. */
+.undo-files {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) 0;
+  max-height: 240px;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.undo-files li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── session rows (lists of sessions anywhere) ───────────────────────────── */
+
+/* Lists are hairline rows, not boxes inside boxes. */
+.srows {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.srows > * {
+  border-bottom: 1px solid var(--line);
+}
+
+.srow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.srow:hover {
+  background: var(--raised);
+  text-decoration: none;
+}
+
+.srow-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.srow-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srow-activity {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srow:not(.live) .srow-title {
+  color: var(--muted);
+}
+
+.srow-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sessions-page,
+.running {
+  max-width: none;
+}
+
+.running-group + .running-group {
+  margin-top: var(--space-6);
+}
+
+.title-button {
+  padding: 0 var(--space-1);
+  margin: 0 calc(-1 * var(--space-1));
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: text;
+  max-width: 48vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-button:hover {
+  border-color: var(--line-strong);
+}
+
+.title-input {
+  font: inherit;
+  padding: 0 var(--space-1);
+  width: min(48vw, 520px);
+}
+
+/* Hit its usage limit: what Claude said, then the ways on. */
+.banner-limit {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.banner-limit .banner-text {
+  min-width: 280px;
+}
+
+/* Asking permission: the line, then exactly what is asked, stacked. */
+.banner-asks {
+  flex-direction: column;
+  align-items: stretch;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.banner-asks .banner-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}

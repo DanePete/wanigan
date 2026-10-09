@@ -1,0 +1,10 @@
+# Findings checked by hand on 7 October 2026: each is a fake value in a test or the
+# demo, there to prove Wanigan hides secrets. A new finding is not covered by this list.
+f819b50ccc749694611f3f656b70309f8cb6f2f0:scripts/ui-sweep.mjs:generic-api-key:186
+f819b50ccc749694611f3f656b70309f8cb6f2f0:scripts/ui-fixtures.ts:generic-api-key:111
+f819b50ccc749694611f3f656b70309f8cb6f2f0:src/shared/mcp.test.ts:generic-api-key:37
+f819b50ccc749694611f3f656b70309f8cb6f2f0:src/core/mcp.test.ts:generic-api-key:14
+f819b50ccc749694611f3f656b70309f8cb6f2f0:src/core/mcp.test.ts:generic-api-key:41
+src/core/mcp.test.ts:generic-api-key:14
+src/core/mcp.test.ts:generic-api-key:41
+src/shared/mcp.test.ts:generic-api-key:37

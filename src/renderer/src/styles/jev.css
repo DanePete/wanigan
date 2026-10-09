@@ -1,0 +1,275 @@
+/* Jev: advice in neutral ink. Never water (Wanigan) or amber (needs you). */
+
+.jev-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-s);
+  background: var(--fg);
+  color: var(--bg);
+  font: 700 var(--text-2xs) / 1 var(--font-ui);
+  flex: none;
+}
+
+.jev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-1) 1px 1px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.jev-chip.jev-failed {
+  padding: 1px var(--space-1);
+  color: var(--faint);
+}
+
+.sev {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 10px;
+}
+
+.sev span {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--line-strong);
+}
+
+.sev span:nth-child(1) { height: 4px; }
+.sev span:nth-child(2) { height: 6px; }
+.sev span:nth-child(3) { height: 8px; }
+.sev span:nth-child(4) { height: 10px; }
+
+.sev span.on {
+  background: var(--muted);
+}
+
+/* ── the strip on a board ─────────────────────────────────────────────── */
+
+.jev-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  margin: 0 var(--space-6) var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.jev-strip-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.jev-strip .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.jev-health {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.jev-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex: none;
+}
+
+.jev-dot.off {
+  background: var(--faint);
+}
+
+/* ── the drawer ───────────────────────────────────────────────────────── */
+
+.jev-section h3 .jev-mark {
+  align-self: center;
+}
+
+.jev-read {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.jev-line {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.jev-odds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  max-width: 360px;
+}
+
+.jev-odds li {
+  display: grid;
+  grid-template-columns: 120px 1fr 40px;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.jev-odds-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.jev-odds-bar span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+}
+
+.jev-odds-p {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── settings ─────────────────────────────────────────────────────────── */
+
+.settings {
+  max-width: 820px;
+}
+
+.settings-group + .settings-group {
+  margin-top: var(--space-8);
+}
+
+.settings-row {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.settings-row p {
+  margin: 0;
+}
+
+.jev-key {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.jev-key label {
+  font-weight: 600;
+}
+
+.jev-key input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.settings-sub {
+  margin: var(--space-6) 0 var(--space-3);
+  font: 600 var(--text-md) / 1 var(--font-ui);
+}
+
+.settings-projects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  background: var(--line);
+}
+
+.settings-projects li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+}
+
+.settings-project-name {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .settings-projects li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.settings-notify-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.settings-label {
+  font-weight: 600;
+}
+
+.settings-group .settings-row + .settings-row {
+  margin-top: var(--space-3);
+}
+
+/* A row's name with what it does beside it: Updates' version and Check now. */
+.settings-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* A new version is news, not something waiting on you: water, never amber. */
+.settings-row.update-found {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.settings-note {
+  margin: var(--space-3) 0 0;
+}

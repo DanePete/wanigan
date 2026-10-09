@@ -1,0 +1,57 @@
+# macOS packaging for Wanigan 2.
+#
+# `npm run dist:mac` builds release/mac-arm64/Wanigan 2.app (and a zip). It is
+# named "Wanigan 2" with its own app id so it installs beside Wanigan 1 instead
+# of replacing it; both keep their own data.
+#
+# Three traps from Wanigan 1, each of which cost a day, are handled here:
+#   - Native addons cannot load from inside app.asar (dlopen needs a real path),
+#     and node-pty's spawn-helper is exec'd, so they are unpacked.
+#   - Under the hardened runtime, V8 needs JIT entitlements and the locally
+#     rebuilt addons need library validation off, or the app dies on launch.
+#   - The --dir target rewrites the source package.json; scripts/dist-mac.mjs
+#     snapshots and restores it around the build.
+#
+# One deliberate difference: Electron's RunAsNode fuse stays ON. The core is
+# this same binary started with ELECTRON_RUN_AS_NODE, which is what lets every
+# session outlive the window. Turning the fuse off would end that.
+
+appId: io.deadnorth.wanigan2
+productName: Wanigan 2
+copyright: Copyright © 2026 Dead North LLC
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**
+
+asarUnpack:
+  - '**/*.node'
+  - node_modules/node-pty/**
+  - node_modules/better-sqlite3/**
+
+npmRebuild: true
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dir
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+  # No Developer ID here: a local build is ad-hoc signed (identity "-").
+  identity: '-'
+  notarize: false
+  extendInfo:
+    # Agents read the repositories you open; macOS attributes their file access
+    # to this app, and with no usage string the access is denied outright.
+    NSDocumentsFolderUsageDescription: Wanigan runs coding agents in the projects you open.
+    NSDesktopFolderUsageDescription: Wanigan runs coding agents in the projects you open.
+    NSDownloadsFolderUsageDescription: Wanigan runs coding agents in the projects you open.

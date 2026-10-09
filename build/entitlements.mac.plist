@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    V8 compiles JavaScript to machine code and then runs it, so it needs pages
+    that are both writable and executable. Under the hardened runtime, without
+    BOTH of these keys, the kernel refuses that mapping and the app is killed
+    the instant V8 warms up: no window, no error dialog, nothing in the console
+    the user can act on. Electron needs the pair — allow-jit alone is not
+    enough, because V8's older code paths allocate memory that is executable
+    without going through the JIT entitlement's MAP_JIT route.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!--
+    node-pty and better-sqlite3 are .node addons dlopen'd from
+    app.asar.unpacked at runtime. Library validation requires every library
+    loaded into the process to be signed by the same Team ID as the host
+    binary; a locally rebuilt addon is not, and the load fails with
+    "code signature not valid for use in process" — again at runtime, long
+    after the build passed.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
