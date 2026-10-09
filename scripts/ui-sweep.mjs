@@ -206,6 +206,25 @@ try {
       await page.screenshot({ path: join(out, `${theme}-${name}.png`) });
     }
 
+    // The Live tab is always offered. While the live view is off it says so, and
+    // its button is the same switch as Settings › Live view.
+    {
+      await page.goto(`${base}#/p/${ns}/board`);
+      const tab = page.locator('.topbar .tabs a', { hasText: /^Live$/ });
+      await tab.waitFor({ timeout: 5000 }).catch(() => failures.push(`${theme}/live: a project has no Live tab while the live view is off`));
+      await tab.click();
+      await page.waitForSelector('text=The live view is off', { timeout: 5000 }).catch(() => failures.push(`${theme}/live: the Live tab does not say the live view is off`));
+      if ((await tab.getAttribute('aria-current')) !== 'page') failures.push(`${theme}/live: the Live tab is not marked as the current view`);
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: join(out, `${theme}-live-off.png`) });
+      await page.getByRole('button', { name: 'Switch on the live view' }).click();
+      const on = await page.waitForFunction(() => window.__wgApp.settings.liveView === true, null, { timeout: 5000 }).then(() => true, () => false);
+      if (!on) failures.push(`${theme}/live: Switch on the live view did not switch the setting on`);
+      if (await page.locator('text=The live view is off').count()) failures.push(`${theme}/live: still says the live view is off after switching it on`);
+      // Put it back: the rest of the sweep sees the app as it starts.
+      await page.evaluate(() => window.wanigan.setSettings({ liveView: false }));
+    }
+
     // The git workbench, read-only here (the live section at the end changes it, once).
     // Every expectation is the core's own answer, asked through the same bridge.
     {

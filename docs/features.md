@@ -394,6 +394,7 @@ no view to lay over the page, and nothing there serves a site.
 | Feature | The claim | Test | Status |
 |---|---|---|---|
 | Off until switched on | Settings › Live view; Drupal, WordPress and other sites each on or off; switching it off takes the view away. | `main/awake.test.ts` › settings validation; the owner's Drupal site by hand | added |
+| The Live tab is always there | Each project shows a Live tab; while the live view is off (or off for that kind of site) it says so and switches it on in place, the same setting as Settings › Live view. | `scripts/ui-sweep.mjs` › "a project has no Live tab while the live view is off", "Switch on the live view did not switch the setting on" | added |
 | Finding the site | From `.ddev` (overrides in order), `wp-config.php`, a dev script or `.lando.yml`; nothing started, nothing reached. | `core/live.test.ts` › "a ddev Drupal site is found…", "a WordPress site is found…"; `shared/live.test.ts` › ddev configs | added |
 | Certificates | Only one issued by this Mac's mkcert authority for the site's host is trusted beyond Chromium's own verdict. | the owner's Drupal site by hand (mkcert not in the Keychain) | manual (a native session handler) |
 | Edits followed | Every file an edit names, Codex's patches included; a reload once quiet, longer for Sass and PHP (opcache); stylesheets swapped in place. | `shared/edits.test.ts`; `core/live.test.ts` › "an agent’s edits, turns and start reach the live view…" | added |

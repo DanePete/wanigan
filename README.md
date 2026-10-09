@@ -114,8 +114,9 @@ reliably.
 ### Live view (optional)
 
 Your local Drupal, WordPress or other site, inside Wanigan, following the
-agents as they work. It is off until you switch it on in **Settings › Live
-view**, where Drupal, WordPress and other sites can each be on or off.
+agents as they work. Every project has a **Live** tab. The view is off until
+you switch it on, from that tab or in **Settings › Live view**, where Drupal,
+WordPress and other sites can each be on or off.
 
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts

@@ -15,7 +15,7 @@ import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
 import { navigate } from '../lib/router';
 import { useAppState } from '../lib/settings';
-import { liveFor } from '@shared/settings';
+import { liveFor, type AppSettings } from '@shared/settings';
 import { Icon } from './icons';
 import { Inspector, type Selection } from './live/Inspector';
 import { HelperOffer, HelperSettings } from './live/Helper';
@@ -45,10 +45,10 @@ export function LivePane({ project, follow = null, card = null, compact = false,
   const { state } = useAppState();
   const site = useQuery('live.site', { projectId: project.id }, ['liveSite', 'projects'], forProject(project.id));
   const [editing, setEditing] = useState(false);
-  if (state && !state.settings.liveView) return <LiveOff />;
+  if (state && !state.settings.liveView) return <LiveOff platform={site.data?.platform ?? null} />;
   const platform = site.data?.platform ?? null;
   if (state && site.data?.url && !editing && !liveFor(state.settings, platform)) {
-    return <LiveOff kind={PLATFORMS.find((p) => p.value === platform)?.label ?? null} onChange={() => setEditing(true)} />;
+    return <LiveOff platform={platform} kindOff onChange={() => setEditing(true)} />;
   }
   if (!site.data) {
     return site.error ? <p className="error-text live-pad">{site.error.message}</p> : <p className="faint live-pad">Looking for the site…</p>;
@@ -65,19 +65,41 @@ export function LivePane({ project, follow = null, card = null, compact = false,
   );
 }
 
-/** The live view is off, or off for this kind of site. */
-function LiveOff({ kind = null, onChange }: { kind?: string | null; onChange?: () => void }) {
+/** The setting that switches each kind of site on. */
+const KIND_SETTING: Record<LivePlatform, 'liveDrupal' | 'liveWordpress' | 'liveSites'> = { drupal: 'liveDrupal', wordpress: 'liveWordpress', site: 'liveSites' };
+
+/**
+ * The live view is off, or off for this kind of site. The tab is always there,
+ * so this is where it is found: switching it on here is the same switch as in
+ * Settings › Live view, and nothing is loaded until it is pressed.
+ */
+function LiveOff({ platform = null, kindOff = false, onChange }: { platform?: LivePlatform | null; kindOff?: boolean; onChange?: () => void }) {
+  const { update } = useAppState();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const kind = platform ? PLATFORMS.find((p) => p.value === platform)?.label ?? null : null;
+  const plural = kind === 'Another site' ? 'other sites' : kind ? `${kind} sites` : null;
+  const switchOn = async (): Promise<void> => {
+    setBusy(true);
+    // The view and this kind of site together: one press is enough to see the page.
+    const patch: Partial<AppSettings> = platform ? { liveView: true, [KIND_SETTING[platform]]: true } : { liveView: true };
+    await update(patch).catch((e: Error) => toast(e.message, 'error'));
+    setBusy(false);
+  };
   return (
-    <Empty title={kind ? `The live view is off for ${kind === 'Another site' ? 'other sites' : `${kind} sites`}` : 'The live view is off'}
+    <Empty title={kindOff && plural ? `The live view is off for ${plural}` : 'The live view is off'}
       action={(
         <>
-          <Button tone="primary" icon="settings" onClick={() => navigate({ name: 'settings' })}>Open Settings</Button>
-          {kind && onChange ? <Button tone="quiet" onClick={onChange}>Change the site</Button> : null}
+          <Button tone="primary" icon="live" disabled={busy} onClick={() => void switchOn()}>
+            {kindOff && plural ? `Switch it on for ${plural}` : 'Switch on the live view'}
+          </Button>
+          <Button tone="quiet" icon="settings" onClick={() => navigate({ name: 'settings' })}>Settings</Button>
+          {kindOff && onChange ? <Button tone="quiet" onClick={onChange}>Change the site</Button> : null}
         </>
       )}>
-      {kind
-        ? 'Switch that kind of site on in Settings › Live view, or point this project at another address.'
-        : 'Switch it on in Settings › Live view to see each project’s local site here, changing as the agents change it.'}
+      {kindOff
+        ? 'Switch that kind of site on, or point this project at another address.'
+        : 'The live view shows this project’s local site inside Wanigan and reloads it as the agents edit, outlining what each change made. It loads only your local site, and only once you switch it on; it is the same switch as in Settings › Live view.'}
     </Empty>
   );
 }

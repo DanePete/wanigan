@@ -3,8 +3,6 @@ import type { CardSummary, ProjectSummary, Session } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { shortcutFor } from '@shared/shortcuts';
 import { LIVE_VIEW, PROJECT_VIEWS, href, openCard, type ProjectView as View } from '../lib/router';
-import { useAppState } from '../lib/settings';
-import { liveFor } from '@shared/settings';
 import { LivePane } from '../components/Live';
 import { PROVIDER_LABEL, actorName, ago, duration, plural } from '../lib/format';
 import { Icon } from '../components/icons';
@@ -19,9 +17,6 @@ export function ProjectView({ project, view, setDialog }: { project: ProjectSumm
   const toast = useToast();
   const [pausing, setPausing] = useState(false);
   const [settings, setSettings] = useState(false);
-  const app = useAppState().state?.settings;
-  const site = useQuery('live.site', app?.liveView ? { projectId: project.id } : null, ['liveSite', 'projects'], forProject(project.id));
-  const liveOn = !!app && liveFor(app, site.data?.platform ?? null);
   const resume = (): Promise<void> => attempt(() => call('projects.resume', { id: project.id }), (m) => toast(m, 'error'))
     .then((r) => { if (r) toast(`${project.name} resumed.`); });
   return (
@@ -44,16 +39,15 @@ export function ProjectView({ project, view, setDialog }: { project: ProjectSumm
               {v.view === 'sessions' && project.liveSessions ? <span className="count">{project.liveSessions}</span> : null}
             </a>
           ))}
-          {liveOn || view === LIVE_VIEW.view ? (
-            <a
-              href={href({ name: 'project', projectKey: project.key, view: LIVE_VIEW.view })}
-              className={view === LIVE_VIEW.view ? 'active' : ''}
-              aria-current={view === LIVE_VIEW.view ? 'page' : undefined}
-              title="The project’s local site, following the agents’ edits"
-            >
-              {LIVE_VIEW.label}
-            </a>
-          ) : null}
+          {/* Always offered: while it is off, the tab says so and switches it on in place. */}
+          <a
+            href={href({ name: 'project', projectKey: project.key, view: LIVE_VIEW.view })}
+            className={view === LIVE_VIEW.view ? 'active' : ''}
+            aria-current={view === LIVE_VIEW.view ? 'page' : undefined}
+            title="The project’s local site, following the agents’ edits"
+          >
+            {LIVE_VIEW.label}
+          </a>
         </nav>
         <div className="topbar-tools">
           {project.pausedAt
