@@ -13,9 +13,23 @@
 //   project's `.codex/config.toml` only when that project is trusted.
 //   `codex mcp add|remove` change only the global file; `remove` exits 0 even
 //   when nothing was removed, and `add --url` starts a browser sign-in at once.
+// - Gemini CLI 0.46 (read from its bundle and run against a throwaway home, no
+//   network, on October 9, 2026): `mcpServers` in `~/.gemini/settings.json`
+//   (user) and `<project>/.gemini/settings.json` (project; JSON with comments).
+//   It loads no MCP server at all, user ones included, in a folder it does not
+//   trust. `url` is Streamable HTTP unless `type` says "sse"; `httpUrl` is the
+//   older spelling. `gemini mcp add|remove --scope user|project` (default
+//   project): `add` overwrites a server of the same name and exits 0, `remove`
+//   exits 0 when there was nothing to remove, and in a folder it does not trust
+//   `add --scope project` writes the file back with only its MCP servers and
+//   `remove` finds nothing, so a project change runs with
+//   GEMINI_CLI_TRUST_WORKSPACE=true (that one command, no trust written).
+//   `gemini mcp enable|disable` cannot find any server in 0.46; `/mcp disable`
+//   in a session writes `~/.gemini/mcp-server-enablement.json`. OAuth servers
+//   sign in from a session with `/mcp auth <name>`.
 import type { AccountProvider } from './model.ts';
 
-export type McpAgent = AccountProvider;
+export type McpAgent = AccountProvider | 'gemini';
 export type McpTransport = 'stdio' | 'http' | 'sse' | 'ws' | 'unknown';
 export type McpScope = 'user' | 'local' | 'project' | 'plugin';
 
@@ -50,6 +64,8 @@ export interface McpServer {
   note: string | null;
   /** The store entry it matches, if any. */
   catalogId: string | null;
+  /** Gemini CLI only: why Wanigan's Gemini sessions do not get this server (it holds a value that could be a secret), or null when they do. */
+  notInWanigan?: string | null;
 }
 
 export interface McpGroup {
@@ -110,6 +126,8 @@ export interface McpCatalogEntry {
   claude: { args: string[]; documented: boolean; note?: string } | null;
   /** Arguments after `codex mcp add`. */
   codex: { args: string[]; documented: boolean; note?: string } | null;
+  /** Arguments after `gemini mcp add` (Wanigan adds `--scope`). */
+  gemini: { args: string[]; documented: boolean; note?: string } | null;
   /** What has to be installed for it to start. */
   needs: string | null;
   note: string | null;
@@ -120,7 +138,9 @@ export interface McpCatalogEntry {
 /**
  * Twelve well-known servers, each checked on October 6, 2026 against the
  * publisher's own documentation. `documented: false` marks a command Wanigan
- * translated from the publisher's JSON or TOML. Left out on purpose: the MCP
+ * translated from the publisher's JSON or TOML. Every Gemini CLI command is
+ * Wanigan's translation, run against Gemini CLI 0.46 with a throwaway home to
+ * see what it writes; none was checked against a publisher's Gemini page. Left out on purpose: the MCP
  * Filesystem server (agents already have file tools; Codex needs a folder
  * argument), the reference Postgres server (archived and deprecated on npm; its
  * connection string carries a password), and Slack (its Codex instructions do
@@ -137,6 +157,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
       args: ['github', '--url', 'https://api.githubcopilot.com/mcp/', '--bearer-token-env-var', 'GITHUB_PAT_TOKEN'], documented: true,
       note: 'Codex reads the token from GITHUB_PAT_TOKEN in the environment it runs in.',
     },
+    gemini: { args: ['--transport', 'http', 'github', 'https://api.githubcopilot.com/mcp/', '--header', 'Authorization: Bearer YOUR_GITHUB_PAT'], documented: false },
     needs: null, note: 'GitHub’s remote server takes a personal access token; it has no browser sign-in for these CLIs.',
     match: ['https://api.githubcopilot.com/mcp'],
   },
@@ -147,6 +168,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'stdio', auth: 'none', key: null,
     claude: { args: ['playwright', 'npx', '@playwright/mcp@latest'], documented: true },
     codex: { args: ['playwright', '--', 'npx', '@playwright/mcp@latest'], documented: true },
+    gemini: { args: ['playwright', 'npx', '@playwright/mcp@latest'], documented: false },
     needs: 'Node.js 18 or later', note: null,
     match: ['@playwright/mcp'],
   },
@@ -157,6 +179,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'figma', 'https://mcp.figma.com/mcp'], documented: true },
     codex: { args: ['figma', '--url', 'https://mcp.figma.com/mcp'], documented: true },
+    gemini: { args: ['--transport', 'http', 'figma', 'https://mcp.figma.com/mcp'], documented: false },
     needs: null, note: 'How many calls you get depends on your Figma plan and seat.',
     match: ['https://mcp.figma.com/mcp'],
   },
@@ -167,6 +190,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'linear', 'https://mcp.linear.app/mcp'], documented: true },
     codex: { args: ['linear', '--url', 'https://mcp.linear.app/mcp'], documented: true },
+    gemini: { args: ['--transport', 'http', 'linear', 'https://mcp.linear.app/mcp'], documented: false },
     needs: null, note: null,
     match: ['https://mcp.linear.app/'],
   },
@@ -177,6 +201,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'sentry', 'https://mcp.sentry.dev/mcp'], documented: true },
     codex: { args: ['sentry', '--url', 'https://mcp.sentry.dev/mcp'], documented: false },
+    gemini: { args: ['--transport', 'http', 'sentry', 'https://mcp.sentry.dev/mcp'], documented: false },
     needs: null, note: null,
     match: ['https://mcp.sentry.dev/'],
   },
@@ -187,6 +212,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'none', key: null,
     claude: { args: ['--transport', 'http', 'context7', 'https://mcp.context7.com/mcp'], documented: false },
     codex: { args: ['context7', '--', 'npx', '-y', '@upstash/context7-mcp'], documented: true },
+    gemini: { args: ['--transport', 'http', 'context7', 'https://mcp.context7.com/mcp'], documented: false },
     needs: 'Node.js, for Codex', note: 'Works without a key at a lower rate limit.',
     match: ['https://mcp.context7.com/', '@upstash/context7-mcp'],
   },
@@ -197,6 +223,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'notion', 'https://mcp.notion.com/mcp'], documented: true },
     codex: { args: ['notion', '--url', 'https://mcp.notion.com/mcp'], documented: false },
+    gemini: { args: ['--transport', 'http', 'notion', 'https://mcp.notion.com/mcp'], documented: false },
     needs: null, note: null,
     match: ['https://mcp.notion.com/'],
   },
@@ -207,6 +234,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'cloudflare-api', 'https://mcp.cloudflare.com/mcp'], documented: false },
     codex: { args: ['cloudflare-api', '--url', 'https://mcp.cloudflare.com/mcp'], documented: false },
+    gemini: { args: ['--transport', 'http', 'cloudflare-api', 'https://mcp.cloudflare.com/mcp'], documented: false },
     needs: null, note: 'You choose its permissions when you sign in.',
     match: ['https://mcp.cloudflare.com/'],
   },
@@ -217,6 +245,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'stripe', 'https://mcp.stripe.com/'], documented: true },
     codex: { args: ['stripe', '--url', 'https://mcp.stripe.com'], documented: true },
+    gemini: { args: ['--transport', 'http', 'stripe', 'https://mcp.stripe.com'], documented: false },
     needs: null, note: null,
     match: ['https://mcp.stripe.com'],
   },
@@ -227,6 +256,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'vercel', 'https://mcp.vercel.com'], documented: true },
     codex: { args: ['vercel', '--url', 'https://mcp.vercel.com'], documented: true },
+    gemini: { args: ['--transport', 'http', 'vercel', 'https://mcp.vercel.com'], documented: false },
     needs: null, note: null,
     match: ['https://mcp.vercel.com'],
   },
@@ -237,6 +267,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'http', auth: 'oauth', key: null,
     claude: { args: ['--transport', 'http', 'supabase', 'https://mcp.supabase.com/mcp'], documented: false },
     codex: { args: ['supabase', '--url', 'https://mcp.supabase.com/mcp'], documented: false },
+    gemini: { args: ['--transport', 'http', 'supabase', 'https://mcp.supabase.com/mcp'], documented: false },
     needs: null, note: 'Without a project_ref in the URL it can reach every project in your organisation.',
     match: ['https://mcp.supabase.com/'],
   },
@@ -247,6 +278,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     transport: 'stdio', auth: 'none', key: null,
     claude: { args: ['fetch', '--', 'uvx', 'mcp-server-fetch'], documented: false },
     codex: { args: ['fetch', '--', 'uvx', 'mcp-server-fetch'], documented: false },
+    gemini: { args: ['fetch', 'uvx', 'mcp-server-fetch'], documented: false },
     needs: 'uv (Python)', note: 'It can reach local and internal addresses.',
     match: ['mcp-server-fetch'],
   },
@@ -372,6 +404,94 @@ export function redactText(text: string): string {
     .split(/(\s+)/).map((w) => (/\s/.test(w) || !looksSecret(w.replace(/[.,;:]+$/, '')) ? w : HIDDEN)).join('');
 }
 
+/* ── what Wanigan's Gemini sessions may be given ───────────────────────── */
+
+/** A setting's name that says its value is a credential. */
+const CREDENTIAL_KEY = /(token|secret|passw|pwd|api[-_]?key|apikey|key$|auth|credential|cookie|bearer|signature|session|private)/i;
+/** Settings of a Gemini server that hold no credential by what they are (names, numbers, choices). */
+const PLAIN_FIELDS = new Set(['type', 'timeout', 'trust', 'description', 'includeTools', 'excludeTools', 'cwd', 'tcp', 'authProviderType', 'targetAudience', 'targetServiceAccount']);
+
+/**
+ * A value Gemini CLI fills in from the environment, holding nothing itself:
+ * empty, or only `$NAME` / `${NAME}` references (optionally after Bearer,
+ * Basic or Token). Gemini 0.46 expands those in every string of its settings
+ * (resolveEnvVarsInString, seen run); `${NAME:-default}` is refused here,
+ * because its default is a literal written into the file.
+ */
+function fromEnvironment(value: unknown): boolean {
+  return typeof value === 'string' && (value === '' || (!hasFallback(value) && onlyReferences(value)));
+}
+
+/** Whether an address carries something that could be a credential: a password or name in it, a credential-named or token-like query value, a token-like path part. */
+function addressHoldsSecret(raw: string): boolean {
+  if (hasFallback(raw)) return true;
+  let url: URL;
+  try { url = new URL(raw.replace(REFERENCE, 'wanigan-ref')); } catch { return true; }
+  if ((url.username && url.username !== 'wanigan-ref') || (url.password && url.password !== 'wanigan-ref')) return true;
+  for (const [k, v] of url.searchParams) if (v !== 'wanigan-ref' && (CREDENTIAL_KEY.test(k) || looksSecret(v))) return true;
+  return url.pathname.split('/').some((part) => looksSecret(safeDecode(part)));
+}
+
+/**
+ * Why a Gemini MCP server is not copied into Wanigan's Gemini home, in plain
+ * words, or null when it may be. Wanigan reads, copies and stores no
+ * credential, so a server goes in only when nothing in it could be one: its
+ * env and headers come from the environment, its command line and address
+ * hold nothing token-like, and no other setting does. When in doubt it stays
+ * out. The value is never repeated.
+ */
+export function geminiNotCopied(raw: unknown): string | null {
+  const out = (what: string, fix = 'move it into an environment variable and write $NAME in its place') =>
+    `Not in Wanigan’s Gemini sessions: ${what}, and Wanigan copies nothing that could be a secret. To use it there, ${fix}.`;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out('Wanigan could not read its entry', 'check the entry in settings.json');
+  const r = raw as Record<string, unknown>;
+  for (const field of ['env', 'headers'] as const) {
+    const values = r[field];
+    if (values === undefined) continue;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return out(`its ${field} is not a list of names and values`, 'check the entry in settings.json');
+    for (const [name, value] of Object.entries(values)) {
+      if (fromEnvironment(value)) continue;
+      return field === 'env'
+        ? out(`its environment variable ${name} is written into the file`, `set ${name} in your environment and write "$${name}" in settings.json instead`)
+        : out(`its ${name} header is written into the file`, `put the value in an environment variable and write it as a reference, such as "Bearer $TOKEN"`);
+    }
+  }
+  const args = r.args ?? [];
+  if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) return out('its arguments are not a list of words', 'check the entry in settings.json');
+  if (r.command !== undefined && typeof r.command !== 'string') return out('its command is not a word', 'check the entry in settings.json');
+  const line = [...(typeof r.command === 'string' ? [r.command] : []), ...(args as string[])];
+  if (redactArgs(line).some((a, i) => a !== line[i])) return out('its command line holds what looks like a key, token or password');
+  for (const key of ['url', 'httpUrl']) {
+    if (r[key] === undefined) continue;
+    if (typeof r[key] !== 'string' || addressHoldsSecret(r[key] as string)) return out('its address holds what looks like a key, token or password');
+  }
+  const handled = new Set(['env', 'headers', 'args', 'command', 'url', 'httpUrl']);
+  const visit = (value: unknown, path: string[]): string | null => {
+    if (typeof value === 'string') {
+      const key = path[path.length - 1] ?? '';
+      const named = !PLAIN_FIELDS.has(path[0] ?? '') && CREDENTIAL_KEY.test(key);
+      // An OAuth tokenUrl or authorizationUrl is an address, judged as one.
+      const address = /^https?:\/\//i.test(value);
+      const secret = address ? addressHoldsSecret(value)
+        : (named && !fromEnvironment(value)) || (looksSecret(value) && !onlyReferences(value));
+      return secret ? path.join('.') : null;
+    }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        const found = visit(v, [...path, k]);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  for (const [key, value] of Object.entries(r)) {
+    if (handled.has(key)) continue;
+    const found = visit(value, [key]);
+    if (found) return out(`its ${found} setting holds what looks like a credential`);
+  }
+  return null;
+}
+
 /** A shell-ready rendering of an argument list, for showing and for typing into a terminal. */
 export function shellJoin(args: readonly string[]): string {
   // `•••` is shown, never typed, so it needs no quoting.
@@ -444,7 +564,10 @@ export interface McpPlan {
 
 export interface McpAddParams {
   catalogId: string;
-  accountId: string;
+  /** The account it is added for. Gemini CLI has no accounts: leave it out and name the agent. */
+  accountId?: string | null;
+  /** Gemini CLI, which has one sign-in rather than accounts. */
+  agent?: 'gemini';
   scope: Exclude<McpScope, 'plugin'>;
   projectId?: string | null;
 }

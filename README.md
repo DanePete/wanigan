@@ -151,17 +151,30 @@ Gemini CLI runs in a terminal like Claude Code and Codex, and reports its turns,
 its tools and what it asks you through hooks. Gemini takes hooks only from its
 own settings, so Wanigan keeps a Gemini home in its data folder
 (`GEMINI_CLI_HOME`) holding Wanigan's hooks; your own `~/.gemini` is never
-written. Your sign-in stays where Gemini keeps it, and your chosen sign-in
-method and trusted folders are copied in. Your own Gemini extensions, MCP
-servers and global `GEMINI.md` live in your home and are not loaded there.
+written. Your sign-in stays where Gemini keeps it. As each session starts,
+your chosen sign-in method, trusted folders and MCP servers are copied in, but
+only servers holding nothing that could be a credential: a key written into a
+server's settings keeps it out (the MCP view says so; write it as `$NAME` from
+your environment to use it). Your own skills (`~/.gemini/skills` and
+`~/.agents/skills`) are linked in, so Gemini reads them where they are. The Skills and MCP views list Gemini's with
+each project's `.gemini/skills`, `.agents/skills` and `.gemini/settings.json`,
+and add or copy to them on your click. Your own Gemini extensions and global
+`GEMINI.md` live in your home and are not loaded there.
 
 - In a folder Gemini has not been told to trust, it asks first, and loads no
   hooks until you answer; Needs you shows it as not yet started.
 - The composer works from Gemini's second message: its first screen may ask you
   to sign in or to trust the folder, so the first message goes in its terminal.
 - Nothing reports a refused permission or a cancel; its window title going back
-  to Ready does, and Wanigan reads it. Its usage limit is not detected, and its
-  tokens are not counted yet.
+  to Ready does, and Wanigan reads it.
+- Nothing reports its usage limit either: Gemini draws a dialog (keep trying,
+  switch model, or stop). Wanigan reads that dialog's exact words in a turn, so
+  the session shows as limited, with the reset Gemini printed, and Needs you
+  sends you to its terminal. Stopping keeps it limited until the next prompt.
+  It is screen text: if Gemini rewords it, Wanigan misses it.
+- Its tokens are counted from its own chat file, the one its hook names inside
+  Wanigan's Gemini home: each reply once, cached input apart, thoughts as
+  output.
 
 What was proven and how is in
 [docs/research/2026-10-07-gemini-and-grok.md](docs/research/2026-10-07-gemini-and-grok.md).
@@ -272,8 +285,8 @@ Releases), or download the newest from there once.
 | **Pull requests** | An approved card's branch is pushed and its pull request opened with `gh`, after a confirm that shows exactly what goes where. |
 | **Wanigan** | The 3D water is Wanigan. He swirls while thinking, raises the alarm when a session fails, shows a blue flame when it recovers and celebrates when nothing needs you. |
 | **Demo** | Help › Open the Demo: sample projects, stand-in agents, its own data, nothing real touched and no model called. |
-| **Skills** | Supported personal and project skills, Claude plugin skills and Claude-synced skills, read in place. Built-in and Codex plugin skills are not listed. Copy one to a project or your own skills, or remove one, after seeing exactly which files change. |
-| **MCP servers** | Every MCP server each account and project has, secrets hidden, and a store of twelve well-known ones. Adding or removing runs the agent’s own CLI as that account, only on a click; a server that needs a key is finished in a terminal, never handed to Wanigan. |
+| **Skills** | Supported personal and project skills for Claude Code, Codex and Gemini CLI, Claude plugin skills and Claude-synced skills, read in place. Built-in and Codex plugin skills are not listed. Copy one to a project or your own skills, or remove one, after seeing exactly which files change. |
+| **MCP servers** | Every MCP server each account and project has (and Gemini CLI's, which has one sign-in), secrets hidden, and a store of twelve well-known ones. Adding or removing runs the agent’s own CLI as that account, only on a click; a server that needs a key is finished in a terminal, never handed to Wanigan. |
 
 ### Agents use the board through `wanigan`
 
@@ -379,9 +392,15 @@ verification results and the behavior that remains unverified.
   Codex's start-of-turn hook was seen in the scenario run.
 - Gemini CLI: proven with the installed 0.46 up to its first hook (folder trust
   answered, the hook through the relay, its conversation id learnt); a real
-  model turn needs a Gemini login and has not been run. Its usage limit is not
-  detected, its tokens are not counted, and MCP servers and skills are not
-  offered for it.
+  model turn needs a Gemini login and has not been run. Its usage limit and
+  token count were proven with the installed CLI against a fake Gemini API on
+  this Mac (`scripts/gemini-fake-api-check.ts`); a real account's limit and a
+  real model's usage numbers have not been seen. Its MCP servers and skills are
+  listed, added and copied by Gemini's own rules, and Gemini itself, pointed at
+  Wanigan's Gemini home, lists and connects to them; none has been used in a
+  real turn, the store's Gemini commands are Wanigan's translations (not
+  checked against each publisher), and the MCP view has no connection check
+  for Gemini.
 - Grok Build: not yet an agent. Its installer was not run (it verifies nothing
   it downloads); what its binary says is in the research note, and its hook
   events are translated and tested, waiting for it to be installed and seen

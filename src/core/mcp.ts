@@ -9,11 +9,12 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  MCP_CATALOG, catalogMatch, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin,
+  MCP_CATALOG, catalogMatch, geminiNotCopied, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin,
   type McpAddParams, type McpAgent, type McpCatalogEntry, type McpCheck, type McpGroup, type McpListing, type McpPair,
   type McpPlan, type McpScope, type McpServer, type McpTransport,
 } from '../shared/mcp.ts';
 import { OWNER, type Session } from '../shared/model.ts';
+import { stripJsonComments } from '../shared/jsonc.ts';
 import { CoreError } from '../shared/protocol.ts';
 import { parseToml, TomlError, type TomlTable, type TomlValue } from '../shared/toml.ts';
 import { CONFIG_ENV, type Accounts } from './accounts.ts';
@@ -29,7 +30,14 @@ import type { Sessions } from './sessions.ts';
 
 const RUN_TIMEOUT_MS = 60_000;
 const CHECK_TIMEOUT_MS = 90_000;
-const AGENT: Record<McpAgent, string> = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT: Record<McpAgent, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' };
+/**
+ * Gemini CLI 0.46 writes a project's settings back with only its MCP servers
+ * when it does not trust the folder, and finds nothing there to remove: a
+ * project change runs trusted, for that one command (nothing is written to
+ * its trusted folders). See src/shared/mcp.ts.
+ */
+const GEMINI_TRUST = { name: 'GEMINI_CLI_TRUST_WORKSPACE', value: 'true' };
 
 export interface McpOptions {
   home: string;
@@ -83,6 +91,7 @@ export class Mcp {
       notes: [
         'Servers your claude.ai account connects, and anything a managed policy adds, live outside these files. Check connections lists them as Claude Code reports them.',
         'Codex has no connection check; it connects to its servers when a session starts.',
+        'Gemini CLI has no connection check here either. It loads no server at all in a folder it does not trust, and servers an administrator sets in its system settings are not listed.',
       ],
     };
   }
@@ -91,10 +100,13 @@ export class Mcp {
   plan(params: McpAddParams, budget = new ConfigReadBudget(this.limits)): McpPlan {
     const entry = MCP_CATALOG.find((e) => e.id === params.catalogId);
     if (!entry) throw new CoreError('not_found', 'That server is not in the store.');
+    if (params.agent === 'gemini') return this.geminiPlan(entry, params, budget);
+    if (!params.accountId) throw new CoreError('invalid', 'Which account?');
     const account = configAccount(this.ctx.db, budget, params.accountId);
     const agent = account.provider;
     const spec = entry[agent];
     if (!spec) throw new CoreError('refused', `${entry.name} has no ${AGENT[agent]} setup Wanigan has checked.`);
+    const configEnv = CONFIG_ENV[agent];
     const scope = params.scope;
     if (agent === 'codex' && scope !== 'user') throw new CoreError('invalid', 'Codex adds servers for the whole account only.');
     if (scope !== 'user' && scope !== 'local' && scope !== 'project') throw new CoreError('invalid', 'The scope must be user, local or project.');
@@ -119,8 +131,8 @@ export class Mcp {
     const after = agent === 'claude' && entry.auth === 'oauth'
       ? `Sign in the first time a session uses it: type /mcp in Claude Code, or run claude mcp login ${name}.`
       : agent === 'codex' && spec.note ? spec.note : null;
-    const env = account.configDir ? { name: CONFIG_ENV[agent], value: account.configDir } : null;
-    const inherited = !env && process.env[CONFIG_ENV[agent]] ? `env -u ${CONFIG_ENV[agent]} ` : '';
+    const env = account.configDir ? { name: configEnv, value: account.configDir } : null;
+    const inherited = !env && process.env[configEnv] ? `env -u ${configEnv} ` : '';
     return {
       agent,
       argv,
@@ -136,6 +148,38 @@ export class Mcp {
     };
   }
 
+  /** What adding a store entry to Gemini CLI would run and change: user or project scope, no account. */
+  private geminiPlan(entry: McpCatalogEntry, params: McpAddParams, budget: ConfigReadBudget): McpPlan {
+    const spec = entry.gemini;
+    if (!spec) throw new CoreError('refused', `${entry.name} has no Gemini CLI setup Wanigan has checked.`);
+    const scope = params.scope;
+    if (scope !== 'user' && scope !== 'project') throw new CoreError('invalid', 'Gemini CLI adds servers for every project, or to one repository.');
+    const project = scope === 'project' ? this.project(params.projectId, budget) : null;
+    const file = this.geminiFile(project?.path ?? null);
+    const argv = ['gemini', 'mcp', 'add', '--scope', scope, ...spec.args];
+    const env = project ? GEMINI_TRUST : null;
+    const name = entry.server;
+    const hasKey = !!entry.key && spec.args.some((a) => a.includes(entry.key?.placeholder ?? '\0'));
+    const inherited = process.env.GEMINI_CLI_HOME ? 'env -u GEMINI_CLI_HOME ' : '';
+    return {
+      agent: 'gemini',
+      argv,
+      env,
+      cwd: project?.path ?? this.options.neutralDir,
+      command: `${inherited}${env ? `${env.name}=${env.value} ` : ''}${shellJoin(argv)}`,
+      effect: project
+        ? `Writes “${name}” into ${project.name}’s .gemini/settings.json (project scope). Gemini CLI loads it there once it trusts the folder, and git will see the change. Gemini changes a project’s settings properly only when it trusts the folder, so this one command runs as trusted; nothing is added to your trusted folders.`
+        : hasKey
+          ? `Adds “${name}” to ${display(file, this.options.home)} (user scope): Gemini CLI can use it in every folder it trusts. With your key written into that file, Wanigan’s Gemini sessions do not get it; to use it there, put the key in an environment variable and write $NAME in its place.`
+          : `Adds “${name}” to ${display(file, this.options.home)} (user scope): Gemini CLI can use it in every folder it trusts, in Wanigan’s sessions too.`,
+      file: display(file, this.options.home),
+      mode: hasKey ? 'terminal' : 'run',
+      why: hasKey ? `It needs ${entry.key?.what}. Put yours in place of ${entry.key?.placeholder}, then press Return. Wanigan deletes this terminal’s record when it closes; your shell’s own history may still keep the line.` : null,
+      exists: this.geminiHas(file, name, budget),
+      after: entry.auth === 'oauth' ? `Sign in the first time a session uses it: type /mcp auth ${name} in Gemini CLI.` : spec.note ?? null,
+    };
+  }
+
   /** Add a store entry through the agent's CLI. With `preview`, only the plan. */
   async add(params: McpAddParams, preview: boolean): Promise<{ plan: McpPlan; done: boolean; output: string | null }> {
     const budget = new ConfigReadBudget(this.limits);
@@ -143,11 +187,15 @@ export class Mcp {
     if (preview) return { plan, done: false, output: null };
     if (plan.exists) throw new CoreError('conflict', 'A server with that name is already there.');
     if (plan.mode === 'terminal') throw new CoreError('refused', 'This one finishes in a terminal. Open it there, or copy the command.');
-    const account = configAccount(this.ctx.db, budget, params.accountId);
+    const account = params.agent === 'gemini' ? null : configAccount(this.ctx.db, budget, params.accountId as string);
     const project = params.scope === 'user' ? null : this.project(params.projectId, budget);
     const result = await this.exclusive(plan.file, () => this.run(plan));
     const entry = MCP_CATALOG.find((e) => e.id === params.catalogId) as McpCatalogEntry;
-    if (result.code !== 0 || !this.changedHas(plan.agent, account, params.scope, project?.path ?? null, entry.server, budget)) {
+    // Gemini overwrites a server of the same name and exits 0 either way: only the file says it worked.
+    const present = account
+      ? this.changedHas(plan.agent, account, params.scope, project?.path ?? null, entry.server, budget)
+      : this.changedGemini(this.geminiFile(project?.path ?? null), entry.server, budget);
+    if (result.code !== 0 || !present) {
       throw new CoreError('refused', failure(plan, result));
     }
     if (project) this.board.log({ projectId: project.id, actor: OWNER, verb: 'added an MCP server', detail: `${entry.server} (${AGENT[plan.agent]}, ${params.scope})` });
@@ -160,13 +208,14 @@ export class Mcp {
     const budget = new ConfigReadBudget(this.limits);
     const found = this.find(id, budget);
     const { server } = found;
+    if (server.agent === 'gemini' && server.removable) return this.geminiRemove(found, preview, budget);
     if (!server.removable || !found.account) {
       throw new CoreError('refused', server.scope === 'plugin'
         ? 'This server comes with a plugin. Remove or switch off the plugin in Claude Code (/plugin) instead.'
         : 'Wanigan can’t remove this one with the agent’s CLI. Edit the file it is defined in.');
     }
     const account = found.account;
-    const agent = server.agent;
+    const agent = server.agent as Exclude<McpAgent, 'gemini'>;
     const argv = agent === 'claude'
       ? ['claude', 'mcp', 'remove', found.configName, '--scope', server.scope]
       : ['codex', 'mcp', 'remove', found.configName];
@@ -187,6 +236,33 @@ export class Mcp {
       throw new CoreError('refused', failure(plan, result));
     }
     if (server.projectId) this.board.log({ projectId: server.projectId, actor: OWNER, verb: 'removed an MCP server', detail: `${server.name} (${AGENT[agent]}, ${server.scope})` });
+    this.ctx.emit('mcp', {});
+    return { plan, done: true, output: tidy(result.output) };
+  }
+
+  /** `gemini mcp remove --scope user|project`, confirmed from the file: Gemini exits 0 when it removed nothing. */
+  private async geminiRemove(found: Found, preview: boolean, budget: ConfigReadBudget): Promise<{ plan: McpPlan; done: boolean; output: string | null }> {
+    const { server } = found;
+    const scope = server.scope === 'project' ? 'project' : 'user';
+    const argv = ['gemini', 'mcp', 'remove', '--scope', scope, found.configName];
+    const env = scope === 'project' ? GEMINI_TRUST : null;
+    const inherited = process.env.GEMINI_CLI_HOME ? 'env -u GEMINI_CLI_HOME ' : '';
+    const plan: McpPlan = {
+      agent: 'gemini', argv, env,
+      cwd: found.projectPath ?? this.options.neutralDir,
+      command: `${inherited}${env ? `${env.name}=${env.value} ` : ''}${shellJoin(argv)}`,
+      effect: `Removes “${server.name}” from ${server.definedIn}.` + (scope === 'project'
+        ? ' It is the repository’s file, so git will see the change. The command runs as trusted, as Gemini needs to change a project’s settings; nothing is added to your trusted folders.'
+        : ' Wanigan’s Gemini sessions stop getting it from the next one started.'),
+      file: server.definedIn,
+      mode: 'run', why: null, exists: true, after: null,
+    };
+    if (preview) return { plan, done: false, output: null };
+    const result = await this.exclusive(server.definedIn, () => this.run(plan));
+    if (this.changedGemini(this.geminiFile(found.projectPath), found.configName, budget) || (result.code !== 0 && result.code !== null)) {
+      throw new CoreError('refused', failure(plan, result));
+    }
+    if (server.projectId) this.board.log({ projectId: server.projectId, actor: OWNER, verb: 'removed an MCP server', detail: `${server.name} (Gemini CLI, ${scope})` });
     this.ctx.emit('mcp', {});
     return { plan, done: true, output: tidy(result.output) };
   }
@@ -369,6 +445,38 @@ export class Mcp {
         found: Object.entries(servers.value).map(([name, raw]) => this.codexServer({ name, raw, account: null, file, projectId: p.id, removable: false })),
       });
     }
+
+    // Gemini CLI: one sign-in, so one user file, which Wanigan's Gemini sessions
+    // get a copy of as they start (hooks.ts); and each project's own.
+    const geminiFile = this.geminiFile(null);
+    const user = isDir(join(home, '.gemini')) ? readMcpJson(geminiFile, undefined, budget, true) : null;
+    const lists = geminiLists(user?.json ?? null, user ? readMcpJson(join(home, '.gemini', 'mcp-server-enablement.json'), undefined, budget, true).json : null);
+    if (user) {
+      const servers = serverMapping(user.json?.mcpServers), problem = user.error ?? servers.error;
+      const g = {
+        group: {
+          id: hash('gemini\0user'), agent: 'gemini' as const, title: 'Gemini CLI', account: null, projectId: null, where: display(geminiFile, home), check: null,
+          note: problem ? `Wanigan could not read this file (${problem}), so some servers cannot be listed.`
+            : 'Wanigan’s Gemini sessions get these too, copied into its Gemini home as each one starts, except any that hold a value that could be a secret (marked).',
+        },
+        found: Object.entries(servers.value).map(([name, raw]) => this.geminiServer({ name, raw, scope: 'user', file: geminiFile, projectId: null, projectPath: null, off: lists.off(name) })),
+      };
+      if (g.found.length || problem) groups.push(g); else empty.push({ agent: 'gemini', where: g.group.where });
+    }
+    for (const p of projects) {
+      const file = this.geminiFile(p.path);
+      const { json, error } = readMcpJson(file, undefined, budget, true);
+      const servers = serverMapping(json?.mcpServers), problem = error ?? servers.error;
+      if (!Object.keys(servers.value).length && !problem) continue;
+      const own = geminiLists(json, null);
+      groups.push({
+        group: {
+          id: hash(`gemini-project\0${p.id}`), agent: 'gemini', title: p.name, account: null, projectId: p.id, where: '.gemini/settings.json', check: null,
+          note: problem ? `Wanigan could not read this file (${problem}).` : 'Gemini CLI loads these only once it trusts the folder.',
+        },
+        found: Object.entries(servers.value).map(([name, raw]) => this.geminiServer({ name, raw, scope: 'project', file, projectId: p.id, projectPath: p.path, off: lists.off(name) ?? own.off(name) })),
+      });
+    }
     return { groups, empty };
   }
 
@@ -433,8 +541,60 @@ export class Mcp {
     return { server, configName: s.name, account: s.account, projectPath: null };
   }
 
+  private geminiServer(s: { name: string; raw: unknown; scope: 'user' | 'project'; file: string; projectId: string | null; projectPath: string | null; off: string | null }): Found {
+    const r = (s.raw && typeof s.raw === 'object' ? s.raw : {}) as Record<string, unknown>;
+    // createUrlTransport (0.46): httpUrl, or url, is Streamable HTTP unless type says "sse".
+    const url = typeof r.httpUrl === 'string' ? r.httpUrl : typeof r.url === 'string' ? r.url : null;
+    const command = typeof r.command === 'string' ? r.command : null;
+    const args = (r.args ?? []) as string[];
+    const transport: McpTransport = url ? (typeof r.httpUrl !== 'string' && r.type === 'sse' ? 'sse' : 'http') : command ? 'stdio' : 'unknown';
+    const notes = [s.off, r.trust === true ? 'Trusted: Gemini runs its tools without asking.' : null].filter(Boolean);
+    const server: McpServer = {
+      id: hash(`gemini\0${s.scope}\0${s.file}\0${s.name}`),
+      name: s.name,
+      agent: 'gemini',
+      transport,
+      target: url ? redactUrl(url) : command ? shellJoin([command, ...redactArgs(args)]) : '(no command or URL)',
+      env: pairs(r.env),
+      headers: pairs(r.headers),
+      scope: s.scope,
+      accountId: null,
+      projectId: s.projectId,
+      folder: null,
+      definedIn: display(s.file, this.options.home),
+      removable: true,
+      enabled: !s.off,
+      note: notes.length ? notes.join(' ') : null,
+      catalogId: catalogMatch({ url, command, args }),
+      // The user file is what Wanigan copies into its Gemini home (hooks.ts); a project's file Gemini reads where it is.
+      notInWanigan: s.scope === 'user' ? geminiNotCopied(s.raw) : null,
+    };
+    return { server, configName: s.name, account: null, projectPath: s.projectPath };
+  }
+
+  /** Gemini CLI's settings: the owner's own (Wanigan reads the real home's, as its sessions do), or a project's. */
+  private geminiFile(projectPath: string | null): string {
+    return projectPath ? join(projectPath, '.gemini', 'settings.json') : join(this.options.home, '.gemini', 'settings.json');
+  }
+
+  /** Whether a Gemini settings file has a server of that name, read just now. */
+  private geminiHas(file: string, name: string, budget: ConfigReadBudget): boolean {
+    const { json, error } = readMcpJson(file, undefined, budget, true);
+    if (error) throw new CoreError('refused', `Wanigan could not verify this Gemini CLI configuration (${error}). Check the file before trying again.`);
+    return hasServer(json?.mcpServers, name);
+  }
+
+  private changedGemini(file: string, name: string, budget: ConfigReadBudget): boolean {
+    try { return this.geminiHas(file, name, budget); }
+    catch (error) {
+      if (error instanceof ConfigReadRefused) throw new ConfigReadRefused(true);
+      throw error;
+    }
+  }
+
   /** Whether a server of that name is configured in that place, read from the file just now. */
   private has(agent: McpAgent, account: ConfigAccount, scope: McpScope, projectPath: string | null, name: string, budget: ConfigReadBudget): boolean {
+    if (agent === 'gemini') return this.geminiHas(this.geminiFile(scope === 'project' ? projectPath : null), name, budget);
     if (agent === 'codex') {
       const { table, error } = readToml(join(this.codexHome(account), 'config.toml'), budget);
       if (error) throw new CoreError('refused', `Wanigan could not verify this Codex configuration (${error}). Check the file before trying again.`);
@@ -490,7 +650,11 @@ export class Mcp {
     if (!isDir(plan.cwd)) throw folderMissing(plan.cwd, plan.agent);
     const { bin, path } = await requireCli(plan.agent, this.options.binaries?.[plan.agent]);
     const env: Record<string, string> = { ...cleanEnv(process.env), PATH: path };
-    if (plan.env) env[plan.env.name] = plan.env.value; else delete env[CONFIG_ENV[plan.agent]];
+    if (plan.agent === 'gemini') {
+      // The owner's own ~/.gemini, whatever this process inherited: what Wanigan lists and its sessions copy.
+      delete env.GEMINI_CLI_HOME;
+      if (plan.env) env[plan.env.name] = plan.env.value;
+    } else if (plan.env) env[plan.env.name] = plan.env.value; else delete env[CONFIG_ENV[plan.agent]];
     return new Promise((resolve) => {
       // An argv, never a shell; no input, so a prompt can only time out, never hang.
       const child = spawn(bin, plan.argv.slice(1), { cwd: plan.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -566,6 +730,29 @@ function hasServer(value: unknown, name: string): boolean {
   return true;
 }
 
+/**
+ * What keeps Gemini CLI from loading a server, as its canLoadServer decides
+ * (0.46): not in `mcp.allowed` when that list is set, named in `mcp.excluded`,
+ * or switched off with /mcp disable (mcp-server-enablement.json). Names are
+ * compared lowercased and trimmed, as Gemini compares them.
+ */
+function geminiLists(settings: Record<string, unknown> | null, enablement: Record<string, unknown> | null): { off: (name: string) => string | null } {
+  const norm = (v: unknown): string[] | null => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase().trim()) : null);
+  const mcp = settings?.mcp && typeof settings.mcp === 'object' ? settings.mcp as Record<string, unknown> : {};
+  const allowed = norm(mcp.allowed);
+  const excluded = norm(mcp.excluded) ?? [];
+  return {
+    off: (name) => {
+      const id = name.toLowerCase().trim();
+      if (allowed && !allowed.includes(id)) return 'Not in mcp.allowed in Gemini’s settings, so Gemini does not load it.';
+      if (excluded.includes(id)) return 'Left out by mcp.excluded in Gemini’s settings.';
+      const state = enablement?.[id];
+      if (state && typeof state === 'object' && (state as { enabled?: unknown }).enabled === false) return 'Switched off in Gemini CLI (/mcp disable).';
+      return null;
+    },
+  };
+}
+
 function appendNote(group: { note: string | null }, note: string): void {
   if (!group.note?.includes(note)) group.note = group.note ? `${group.note} ${note}` : note;
 }
@@ -597,7 +784,7 @@ function pluginServers(root: string, manifest: Record<string, unknown> | null, b
 }
 
 /** MCP-owned read state: only a missing file proves absence; other readers keep their existing contract. */
-function readMcpJson(file: string, max = 4 * 1024 * 1024, budget?: ConfigReadBudget): { json: Record<string, unknown> | null; error: string | null } {
+function readMcpJson(file: string, max = 4 * 1024 * 1024, budget?: ConfigReadBudget, jsonc = false): { json: Record<string, unknown> | null; error: string | null } {
   let text: string;
   try {
     // Preserve Claude's supported config links and limits while checking the opened regular file.
@@ -615,7 +802,8 @@ function readMcpJson(file: string, max = 4 * 1024 * 1024, budget?: ConfigReadBud
     return { json: null, error };
   }
   try {
-    const parsed: unknown = JSON.parse(text);
+    // Gemini CLI reads its settings with comments allowed (strip-json-comments).
+    const parsed: unknown = JSON.parse(jsonc ? stripJsonComments(text) : text);
     const value = budget ? budget.value(parsed) : parsed;
     if (value && typeof value === 'object' && !Array.isArray(value)) return { json: value as Record<string, unknown>, error: null };
   } catch (error) { if (error instanceof ConfigReadRefused) throw error; /* JSON parser messages may quote credentials from the source. */ }

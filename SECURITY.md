@@ -37,10 +37,16 @@ I can, and credit in the fix if you want it.
   and is never sent back to the window. Account discovery checks filenames;
   sign-in checks ask each CLI who is signed in, without reading or copying
   Claude Code or Codex sign-in credential files.
-  Gemini setup reads the owner's Gemini settings and trusted-folder metadata,
-  copying the selected sign-in method and trusted folders into Wanigan's own
-  Gemini home. It does not copy Gemini credential files or write back to the
-  owner's settings.
+  Gemini setup reads the owner's Gemini settings and trusted-folder metadata
+  and never writes back to them. Into Wanigan's own Gemini home it copies the
+  selected sign-in method, the trusted folders, the MCP servers that hold
+  nothing that could be a credential (every `env` and header value an
+  environment-variable reference such as `$TOKEN`, nothing key-like in a
+  command line, address or other setting; when in doubt a server is left out
+  and the MCP view says why, without the value), the names in `mcp.allowed`,
+  `mcp.excluded` and the servers switched off; and it links to the owner's
+  skill folders. It does not copy Gemini credential files or any value that
+  looks like a key, token or password.
   MCP configuration values are read for the owner's display. Owned fixtures
   verify masking of literal fallback values in arguments, environment values,
   headers, HTTP targets and CLI diagnostics, including the tested one-layer

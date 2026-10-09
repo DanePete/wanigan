@@ -82,6 +82,7 @@ export class Skills {
       notes: [
         'Claude Code’s built-in skills live inside the app itself and are not listed.',
         'Codex’s built-in skills (in each account’s skills/.system) and skills from Codex plugins are not listed.',
+        'Gemini CLI’s built-in skills live inside the CLI and are not listed. It reads a project’s skills only in a folder it trusts.',
         ...notes,
       ],
     };
@@ -271,20 +272,28 @@ export class Skills {
     budget.value(data);
     const folder = dir.split(sep).pop() ?? '';
     const named = frontmatterText(data, 'name');
+    // Gemini loads a skill only when its frontmatter has both, and goes by the
+    // name with path-like characters made dashes (skillLoader, Gemini CLI 0.46).
+    const geminiSkips = root.group.agent === 'gemini' && (!named || !frontmatterText(data, 'description'));
+    const geminiName = named.replace(/[:\\/<>*?"|]/g, '-');
     // Claude calls a personal or project skill by its folder; plugins and synced skills by their declared name.
-    const name = (root.group.source === 'plugin' || root.group.source === 'synced' || root.group.agent === 'codex') ? (named || folder) : folder;
+    const name = root.group.agent === 'gemini' ? (geminiSkips ? folder : geminiName)
+      : (root.group.source === 'plugin' || root.group.source === 'synced' || root.group.agent === 'codex') ? (named || folder) : folder;
     const linked = isLink(dir);
     const size = measure(root.plugin ? directory : linked ? realOrSelf(dir) : dir, budget);
     const agent = root.group.agent;
     const skill: Skill = {
       id: createHash('sha256').update(`${agent}\0${root.plugin?.key ?? ''}\0${file}`).digest('base64url').slice(0, 22),
       name,
-      description: unreadable ?? (frontmatterText(data, 'description') || firstProse(body) || 'No description.'),
+      description: unreadable ?? (geminiSkips ? 'Gemini CLI skips this one: its SKILL.md frontmatter needs both a name and a description.'
+        : frontmatterText(data, 'description') || firstProse(body) || 'No description.'),
       agent,
       source: root.group.source,
-      invoke: agent !== 'claude' ? null
-        : root.plugin ? `/${root.plugin.name}:${name}`
-          : root.group.source === 'synced' ? null : `/${name}`,
+      // Gemini makes each skill a slash command, its name with spaces as dashes (SkillCommandLoader).
+      invoke: agent === 'gemini' ? (geminiSkips || unreadable ? null : `/${name.trim().replace(/\s+/g, '-')}`)
+        : agent !== 'claude' ? null
+          : root.plugin ? `/${root.plugin.name}:${name}`
+            : root.group.source === 'synced' ? null : `/${name}`,
       dir,
       displayDir: display(dir, this.home),
       linkedTo: linked ? safeReadlink(dir) : null,
@@ -353,7 +362,7 @@ export class Skills {
 
     addRoot(this.root({
       agent: 'codex', source: 'personal', title: 'Personal', account: 'every Codex account', dir: join(this.home, '.agents', 'skills'), anchor: this.home,
-      accountIds: 'all', projectIds: 'all', removable: true, skip: none, deep: true,
+      accountIds: 'all', projectIds: 'all', removable: true, skip: none, deep: true, note: 'Gemini CLI reads this folder too.',
     }));
     for (const a of codex) {
       const home = a.configDir ?? join(this.home, '.codex');
@@ -367,6 +376,27 @@ export class Skills {
         addRoot(this.root({
           agent: 'codex', source: 'project', title: p.name, account: null, projectId: p.id, dir: join(p.path, folder, 'skills'), anchor: p.path,
           accountIds: 'all', projectIds: [p.id], removable: true, skip: none, deep: true, where: `${folder}/skills`,
+          ...(folder === '.agents' ? { note: 'Gemini CLI reads this folder too.' } : {}),
+        }));
+      }
+    }
+
+    // Gemini CLI: one sign-in, so every Gemini session. Its own folder, then the
+    // Agent Skills one it shares with Codex, one level deep; a project's only once trusted.
+    addRoot(this.root({
+      agent: 'gemini', source: 'personal', title: 'Personal', account: null, dir: join(this.home, '.gemini', 'skills'), anchor: this.home,
+      accountIds: 'all', projectIds: 'all', removable: true, skip: none,
+    }));
+    addRoot(this.root({
+      agent: 'gemini', source: 'personal', title: 'Personal', account: null, dir: join(this.home, '.agents', 'skills'), anchor: this.home,
+      accountIds: 'all', projectIds: 'all', removable: true, skip: none, note: 'Codex reads this folder too.',
+    }));
+    for (const p of projects) {
+      for (const folder of ['.gemini', '.agents']) {
+        addRoot(this.root({
+          agent: 'gemini', source: 'project', title: p.name, account: null, projectId: p.id, dir: join(p.path, folder, 'skills'), anchor: p.path,
+          accountIds: 'all', projectIds: [p.id], removable: true, skip: none, where: `${folder}/skills`,
+          ...(folder === '.agents' ? { note: 'Codex reads this folder too.' } : {}),
         }));
       }
     }
@@ -402,13 +432,14 @@ export class Skills {
   private target(to: SkillTarget, budget: ConfigReadBudget): { root: string; anchor: string; projectId: string | null } {
     if (!to || typeof to !== 'object') throw new CoreError('invalid', 'Copy it where?');
     const agent = to.agent;
-    if (agent !== 'claude' && agent !== 'codex') throw new CoreError('invalid', 'Copy it for which agent?');
+    if (agent !== 'claude' && agent !== 'codex' && agent !== 'gemini') throw new CoreError('invalid', 'Copy it for which agent?');
+    const folder = agent === 'claude' ? '.claude' : agent === 'gemini' ? '.gemini' : '.agents';
     if (to.projectId) {
       const project = configProjects(this.ctx.db, budget, String(to.projectId), true)[0];
       if (!project) throw new CoreError('not_found', 'No such project.');
-      return { root: join(project.path, agent === 'claude' ? '.claude' : '.agents', 'skills'), anchor: project.path, projectId: project.id };
+      return { root: join(project.path, folder, 'skills'), anchor: project.path, projectId: project.id };
     }
-    if (agent === 'codex') return { root: join(this.home, '.agents', 'skills'), anchor: this.home, projectId: null };
+    if (agent === 'codex' || agent === 'gemini') return { root: join(this.home, folder, 'skills'), anchor: this.home, projectId: null };
     const account = to.accountId
       ? configAccount(this.ctx.db, budget, String(to.accountId))
       : configAccounts(this.ctx.db, budget).find((a) => a.provider === 'claude' && a.isDefault);

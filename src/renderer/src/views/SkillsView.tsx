@@ -12,7 +12,7 @@ import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import '../styles/library.css';
 
-const AGENT: Record<SkillAgent, string> = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT: Record<SkillAgent, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' };
 const SOURCE: Record<Skill['source'], string> = { personal: 'Personal', project: 'Project', plugin: 'Plugin', synced: 'Synced from claude.ai' };
 type Filter = 'all' | SkillAgent;
 
@@ -43,7 +43,7 @@ export function SkillsView({ projects }: { projects: ProjectSummary[] | undefine
         </div>
         <div className="topbar-tools">
           <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
-            options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
+            options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
           <label className="search-field">
             <Icon name="search" size={14} />
             <span className="visually-hidden">Search skills</span>
@@ -88,6 +88,7 @@ function GroupList({ group, projects, current, onPick }: {
           <span className={`lib-agent lib-agent-${group.agent}`}>{AGENT[group.agent]}</span>
         </p>
         <p className="lib-where mono" title={group.where}>{group.where}</p>
+        {group.note ? <p className="lib-group-note">{group.note}</p> : null}
       </header>
       <ul className="lib-rows">
         {group.skills.map((s) => (
@@ -182,7 +183,7 @@ function SkillDetail({ skill, projects, accounts }: { skill: Skill; projects: Pr
             <span className="mono">{skill.displayDir}</span>
             {skill.linkedTo ? '. The folder it points to stays where it is.' : ' to Wanigan’s trash, where you can take it back.'}
           </p>
-          <p className="faint">{AGENT[skill.agent]} stops seeing it in sessions that start after this.</p>
+          <p className="faint">{readers(skill)} {/[\\/]\.agents[\\/]skills[\\/]/.test(skill.dir) ? 'stop' : 'stops'} seeing it in sessions that start after this.</p>
         </Dialog>
       ) : null}
     </article>
@@ -191,11 +192,18 @@ function SkillDetail({ skill, projects, accounts }: { skill: Skill; projects: Pr
 
 interface Destination { key: string; label: string; group: string; to: SkillTarget }
 
+/** Who reads a skill's folder: the Agent Skills folder is Codex's and Gemini CLI's both. */
+function readers(skill: Skill): string {
+  return /[\\/]\.agents[\\/]skills[\\/]/.test(skill.dir) ? 'Codex and Gemini CLI' : AGENT[skill.agent];
+}
+
+const PROJECT_FOLDER: Record<SkillAgent, string> = { claude: '.claude', codex: '.agents', gemini: '.gemini' };
+
 function destinations(mode: 'project' | 'personal', skill: Skill, projects: ProjectSummary[], accounts: Account[]): Destination[] {
   if (mode === 'project') {
-    return projects.flatMap((p) => (['claude', 'codex'] as const).map((agent) => ({
+    return projects.flatMap((p) => (['claude', 'codex', 'gemini'] as const).map((agent) => ({
       key: `${p.id}:${agent}`, group: p.name,
-      label: `${p.name} — ${AGENT[agent]} (${agent === 'claude' ? '.claude' : '.agents'}/skills)`,
+      label: `${p.name} — ${agent === 'codex' ? 'Codex and Gemini CLI' : AGENT[agent]} (${PROJECT_FOLDER[agent]}/skills)`,
       to: { agent, projectId: p.id },
     }))).filter((d) => !(skill.source === 'project' && skill.projectIds !== 'all' && skill.projectIds.includes(d.to.projectId as string) && d.to.agent === skill.agent));
   }
@@ -205,8 +213,11 @@ function destinations(mode: 'project' | 'personal', skill: Skill, projects: Proj
   // Not where it already is: a personal skill copied onto itself is refused.
   const own = (d: Destination): boolean => skill.source === 'personal' && d.to.agent === skill.agent
     && (skill.accountIds === 'all' || skill.accountIds.includes(d.to.accountId as string));
-  return [...claude, { key: 'codex', group: 'Codex', label: 'Codex — every account (~/.agents/skills)', to: { agent: 'codex' as const, accountId: null } }]
-    .filter((d) => !own(d));
+  return [
+    ...claude,
+    { key: 'codex', group: 'Codex', label: 'Codex — every account, and Gemini CLI (~/.agents/skills)', to: { agent: 'codex' as const, accountId: null } },
+    { key: 'gemini', group: 'Gemini CLI', label: 'Gemini CLI (~/.gemini/skills)', to: { agent: 'gemini' as const, accountId: null } },
+  ].filter((d) => !own(d));
 }
 
 function CopyDialog({ skill, mode, projects, accounts, onClose, onDone }: {
@@ -282,12 +293,14 @@ function CopyDialog({ skill, mode, projects, accounts, onClose, onDone }: {
 }
 
 function seenBy(skill: Skill, projects: ProjectSummary[], accounts: Account[]): string {
-  const who = skill.accountIds === 'all'
-    ? `${AGENT[skill.agent]}, any account`
-    : `${AGENT[skill.agent]} as ${skill.accountIds.map((id) => accounts.find((a) => a.id === id)?.label ?? 'an account').join(', ')}`;
+  // Gemini CLI has one sign-in, and reads a project's skills only in a folder it trusts.
+  const who = skill.agent === 'gemini' ? 'Gemini CLI'
+    : skill.accountIds === 'all'
+      ? `${AGENT[skill.agent]}, any account`
+      : `${AGENT[skill.agent]} as ${skill.accountIds.map((id) => accounts.find((a) => a.id === id)?.label ?? 'an account').join(', ')}`;
   const where = skill.projectIds === 'all'
     ? 'in every project'
-    : `in ${skill.projectIds.map((id) => projects.find((p) => p.id === id)?.name ?? 'a project').join(', ')}`;
+    : `in ${skill.projectIds.map((id) => projects.find((p) => p.id === id)?.name ?? 'a project').join(', ')}${skill.agent === 'gemini' ? ' once Gemini trusts the folder' : ''}`;
   return `${who}, ${where}${skill.enabled === false ? ' (once the plugin is switched on)' : ''}`;
 }
 

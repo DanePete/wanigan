@@ -29,12 +29,15 @@ export interface ConversationUsage extends TokenCounts {
   /** Subagent transcripts whose replies are included. */
   subagents: number;
   /** Whose record the counts came from. */
-  source: 'claude' | 'codex' | 'mixed';
+  source: 'claude' | 'codex' | 'gemini' | 'mixed';
 }
 
 type Json = Record<string, unknown>;
 
 interface Reply extends TokenCounts { at: number; main: boolean; model: string | null }
+
+/** A Gemini reply also keeps what its request sent: the prompt count, cached part included. */
+interface GeminiReply extends Reply { sent: number }
 
 /** Replies by message id, gathered line by line from any number of transcripts. */
 export class UsageTally {
@@ -196,6 +199,87 @@ function ownTurn(thread: string | null, turn: string | null): boolean {
 }
 
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
+/**
+ * Gemini CLI (0.46, its bundled ChatRecordingService, run with its own
+ * --fake-responses flag) keeps a conversation in `<GEMINI_CLI_HOME>/.gemini/tmp/
+ * <project>/chats/session-<time>-<id8>.jsonl`. Each model reply is a line
+ * `{id, type: "gemini", tokens, model}`, where `tokens` is what
+ * recordMessageTokens made of the reply's usageMetadata: `{input:
+ * promptTokenCount, output: candidatesTokenCount, cached:
+ * cachedContentTokenCount, thoughts: thoughtsTokenCount, tool:
+ * toolUsePromptTokenCount, total: totalTokenCount}`.
+ * - pushMessage writes a reply again whenever it changes (its tool calls
+ *   arrive after it), so a reply is counted once, by its id.
+ * - `{$set: {messages}}` rewrites the history with the replies' tokens kept,
+ *   and `$rewindTo` drops replies from the conversation but not from what they
+ *   cost: both are read as more lines about the same replies.
+ * - `input` includes the cached part: the CLI's own /stats shows input as
+ *   input − cached, and cache efficiency as cached ÷ input. Thoughts are
+ *   output the model wrote; tool-use prompt tokens are input it read.
+ * - A subagent's conversation is `chats/<parent session id>/<agent id>.jsonl`:
+ *   it spends tokens, and has its own context.
+ */
+export class GeminiTally {
+  private readonly replies = new Map<string, GeminiReply>();
+  private order = 0;
+  subagents = 0;
+
+  /** One chat line, raw. Lines that carry no tokens are skipped before parsing. */
+  addLine(line: string, main = true): void {
+    if (!line.includes('"tokens"')) return;
+    let l: Json;
+    try { l = JSON.parse(line) as Json; } catch { return; }
+    this.add(l, main);
+  }
+
+  add(l: Json, main = true): void {
+    const set = l.$set && typeof l.$set === 'object' ? l.$set as Json : null;
+    const messages = Array.isArray(set?.messages) ? set.messages : Array.isArray(l.messages) ? l.messages : null;
+    if (messages) {
+      for (const m of messages) if (m && typeof m === 'object') this.reply(m as Json, main);
+      return;
+    }
+    this.reply(l, main);
+  }
+
+  private reply(m: Json, main: boolean): void {
+    const id = str(m.id);
+    const t = m.tokens && typeof m.tokens === 'object' ? m.tokens as Json : null;
+    if (m.type !== 'gemini' || !id || !t || !isCount(t.input) || !isCount(t.output)) return;
+    const cached = isCount(t.cached) ? Math.min(t.cached, t.input) : 0;
+    const earlier = this.replies.get(id);
+    this.replies.set(id, {
+      input: t.input - cached + (isCount(t.tool) ? t.tool : 0),
+      output: t.output + (isCount(t.thoughts) ? t.thoughts : 0),
+      cacheRead: cached,
+      cacheWrite: 0,
+      at: earlier?.at ?? ++this.order,
+      main: (earlier?.main ?? false) || main,
+      model: str(m.model) ?? earlier?.model ?? null,
+      sent: t.input,
+    });
+  }
+
+  total(): ConversationUsage {
+    const sum: ConversationUsage = {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0, context: null, contextWindow: null, model: null, subagents: this.subagents, source: 'gemini',
+    };
+    let latest: GeminiReply | null = null;
+    for (const r of this.replies.values()) {
+      sum.input += r.input;
+      sum.output += r.output;
+      sum.cacheRead += r.cacheRead;
+      sum.requests += 1;
+      if (r.main && (!latest || r.at > latest.at)) latest = r;
+    }
+    if (latest) {
+      sum.context = latest.sent;
+      sum.model = latest.model;
+    }
+    return sum;
+  }
+}
 
 /** Several conversations as one count, for a card whose sessions ran different agents. */
 export function mergeUsage(a: ConversationUsage | null, b: ConversationUsage | null): ConversationUsage | null {

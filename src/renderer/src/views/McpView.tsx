@@ -11,7 +11,9 @@ import { navigate } from '../lib/router';
 import { Button, Dialog, Empty, Segmented, useToast } from '../components/ui';
 import '../styles/library.css';
 
-const AGENT: Record<McpAgent, string> = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT: Record<McpAgent, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' };
+/** Gemini CLI has one sign-in, so it is picked as itself rather than as an account. */
+const GEMINI = 'gemini';
 const AUTH: Record<McpCatalogEntry['auth'], string> = { none: 'No sign-in', oauth: 'Signs in with your browser', key: 'Needs a key you provide' };
 type Tab = 'installed' | 'store';
 type Filter = 'all' | McpAgent;
@@ -35,7 +37,7 @@ export function McpView({ projects }: { projects: ProjectSummary[] | undefined }
         <div className="topbar-tools">
           {tab === 'installed' ? (
             <Segmented size="s" label="Agent" value={filter} onChange={setFilter}
-              options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }]} />
+              options={[{ value: 'all', label: 'All' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' }, { value: 'gemini', label: 'Gemini CLI' }]} />
           ) : null}
           <Segmented size="s" label="Show" value={tab} onChange={setTab}
             options={[{ value: 'installed', label: 'Installed' }, { value: 'store', label: 'Store' }]} />
@@ -70,7 +72,7 @@ function Installed({ groups, checks, projects, loaded, empty, notes, onStore }: 
   if (loaded && !groups.length) {
     return (
       <Empty title="No MCP servers here" action={<Button tone="primary" onClick={onStore}>Browse the store</Button>}>
-        Servers you add to Claude Code or Codex, by hand or from the store, appear here.
+        Servers you add to Claude Code, Codex or Gemini CLI, by hand or from the store, appear here.
       </Empty>
     );
   }
@@ -154,11 +156,13 @@ function ServerRow({ server: s, result, project, onRemove }: { server: McpServer
           <span className="lib-tag">{s.transport === 'unknown' ? '?' : s.transport}</span>
           <span className="lib-tag" title={scopeHint(s)}>{scope}</span>
           {!s.enabled ? <span className="lib-tag">off</span> : null}
+          {s.notInWanigan ? <span className="lib-tag">not in Wanigan’s sessions</span> : null}
         </p>
         <p className="mcp-target mono" title={s.target}>{s.target}</p>
         {pairs.length ? <p className="mcp-pairs mono">{pairs.join('   ')}</p> : null}
         {result ? <p className={`mcp-status tone-${result.tone}`}>{result.status}{result.issue ? <span className="faint"> — {result.issue}</span> : null}</p> : null}
         {s.note ? <p className="faint small">{s.note}</p> : null}
+        {s.notInWanigan ? <p className="mcp-elsewhere small">{s.notInWanigan}</p> : null}
         {s.scope === 'local' && s.folder && !project ? <p className="faint small">For <span className="mono">{s.folder}</span></p> : null}
       </div>
       <div className="mcp-actions">
@@ -174,6 +178,11 @@ function StatusDot({ result }: { result: McpCheckResult | null }) {
 }
 
 function scopeHint(s: McpServer): string {
+  if (s.agent === 'gemini') {
+    return s.scope === 'user'
+      ? 'User scope: in ~/.gemini/settings.json, for every folder Gemini trusts. Wanigan’s Gemini sessions get a copy as they start.'
+      : 'In the project’s .gemini/settings.json. Gemini loads it once it trusts the folder.';
+  }
   if (s.scope === 'user') return 'User scope: every project, for this account.';
   if (s.scope === 'local') return 'Local scope: only this folder, for this account.';
   if (s.scope === 'project') return s.agent === 'claude' ? 'Project scope: in the repository’s .mcp.json, for everyone who opens it.' : 'In the project’s .codex/config.toml.';
@@ -220,7 +229,8 @@ function Store({ catalog, groups, accounts, projects, onAdd }: {
       if (!s.catalogId) continue;
       const who = s.accountId
         ? accounts.find((a) => a.id === s.accountId)?.label ?? 'an account'
-        : projects.find((p) => p.id === s.projectId)?.name ?? 'a project';
+        : s.agent === 'gemini' && s.scope === 'user' ? 'every project'
+          : projects.find((p) => p.id === s.projectId)?.name ?? 'a project';
       const label = `${AGENT[s.agent]} · ${who}`;
       map.set(s.catalogId, [...new Set([...(map.get(s.catalogId) ?? []), label])]);
     }
@@ -261,16 +271,21 @@ function Store({ catalog, groups, accounts, projects, onAdd }: {
 function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEntry; accounts: Account[]; projects: ProjectSummary[]; onClose: () => void }) {
   const toast = useToast();
   const usable = accounts.filter((a) => entry[a.provider]);
-  const [accountId, setAccountId] = useState(() => (usable.find((a) => a.isDefault && a.provider === 'claude') ?? usable[0])?.id ?? '');
+  // An account's id, or Gemini CLI itself.
+  const [accountId, setAccountId] = useState(() => (usable.find((a) => a.isDefault && a.provider === 'claude') ?? usable[0])?.id ?? (entry.gemini ? GEMINI : ''));
+  const gemini = accountId === GEMINI;
   const account = usable.find((a) => a.id === accountId);
   const [scope, setScope] = useState<'user' | 'local' | 'project'>('user');
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
   const [plan, setPlan] = useState<McpPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const effectiveScope = account?.provider === 'codex' ? 'user' : scope;
-  const params = { catalogId: entry.id, accountId, scope: effectiveScope, projectId: effectiveScope === 'user' ? null : projectId || null };
-  const spec = account ? entry[account.provider] : null;
+  const effectiveScope = account?.provider === 'codex' || (gemini && scope === 'local') ? 'user' : scope;
+  const params = {
+    catalogId: entry.id, ...(gemini ? { agent: 'gemini' as const } : { accountId }),
+    scope: effectiveScope, projectId: effectiveScope === 'user' ? null : projectId || null,
+  };
+  const spec = gemini ? entry.gemini : account ? entry[account.provider] : null;
 
   useEffect(() => {
     let live = true;
@@ -285,7 +300,7 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
     setBusy(true);
     const r = await attempt(() => call('mcp.add', params), setError);
     setBusy(false);
-    if (r?.done) { toast(`Added ${entry.name} to ${AGENT[r.plan.agent]} as ${account?.label}.`); onClose(); }
+    if (r?.done) { toast(`Added ${entry.name} to ${AGENT[r.plan.agent]}${account ? ` as ${account.label}` : ''}.`); onClose(); }
   };
   const openTerminal = async (): Promise<void> => {
     setBusy(true);
@@ -316,8 +331,11 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
       <div className="field">
         <label htmlFor="mcp-account">Add to</label>
         <Select id="mcp-account" value={accountId} onChange={setAccountId}
-          options={(['claude', 'codex'] as const).flatMap((agent) => usable.filter((a) => a.provider === agent)
-            .map((a) => ({ value: a.id, label: a.label, group: AGENT[agent], ...(a.identity ? { detail: a.identity } : {}) })))} />
+          options={[
+            ...(['claude', 'codex'] as const).flatMap((agent) => usable.filter((a) => a.provider === agent)
+              .map((a) => ({ value: a.id, label: a.label, group: AGENT[agent], ...(a.identity ? { detail: a.identity } : {}) }))),
+            ...(entry.gemini ? [{ value: GEMINI, label: 'Gemini CLI', group: AGENT.gemini, detail: 'One sign-in' }] : []),
+          ]} />
       </div>
       {account?.provider === 'claude' ? (
         <div className="field">
@@ -327,6 +345,15 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
               { value: 'user', label: 'Every project', hint: 'User scope, in this account’s settings' },
               { value: 'local', label: 'One project, just you', hint: 'Local scope, in this account’s settings' },
               { value: 'project', label: 'The repository (.mcp.json)', hint: 'Project scope, shared with everyone who clones it' },
+            ]} />
+        </div>
+      ) : gemini ? (
+        <div className="field">
+          <span className="field-label">Where</span>
+          <Segmented size="s" label="Where" value={effectiveScope === 'project' ? 'project' : 'user'} onChange={setScope}
+            options={[
+              { value: 'user', label: 'Every project', hint: 'User scope, in ~/.gemini/settings.json' },
+              { value: 'project', label: 'The repository (.gemini/settings.json)', hint: 'Project scope, shared with everyone who clones it' },
             ]} />
         </div>
       ) : null}
@@ -350,7 +377,13 @@ function AddDialog({ entry, accounts, projects, onClose }: { entry: McpCatalogEn
             </div>
           ) : null}
           {plan.after ? <p className="faint small">{plan.after}</p> : null}
-          {spec && !spec.documented ? <p className="faint small">{entry.publisher}’s docs give this setup as configuration; the command is Wanigan’s translation of it.</p> : null}
+          {spec && !spec.documented ? (
+            <p className="faint small">
+              {gemini
+                ? `Wanigan’s translation for Gemini CLI, run against Gemini CLI 0.46 to see what it writes; not checked against ${entry.publisher}’s own docs.`
+                : `${entry.publisher}’s docs give this setup as configuration; the command is Wanigan’s translation of it.`}
+            </p>
+          ) : null}
           {entry.note ? <p className="faint small">{entry.note}</p> : null}
         </div>
       ) : !error ? <p className="faint">Working out the command…</p> : null}

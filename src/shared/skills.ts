@@ -12,9 +12,18 @@
 //   `<project>/.agents/skills` and `<project>/.codex/skills` for a repository,
 //   each walked into subfolders, hidden folders skipped. `~/.codex/skills` is
 //   not read when CODEX_HOME points elsewhere, and `.claude/skills` never is.
+// - Gemini CLI 0.46 (its SkillManager and skillLoader, read from the bundle;
+//   `gemini skills list` run against a throwaway home): `~/.gemini/skills` and
+//   `~/.agents/skills` for the user, `<project>/.gemini/skills` and
+//   `<project>/.agents/skills` only in a folder it trusts. One level only
+//   (`*/SKILL.md`); a SKILL.md without both `name` and `description` in its
+//   frontmatter is skipped. It goes by its frontmatter name, and each skill is
+//   also a slash command. Its built-in skills live inside the CLI.
+//   Wanigan's Gemini sessions read the user folders through links in Wanigan's
+//   Gemini home (hooks.ts), so they are the owner's own.
 import type { AccountProvider } from './model.ts';
 
-export type SkillAgent = AccountProvider;
+export type SkillAgent = AccountProvider | 'gemini';
 export type SkillSource = 'personal' | 'project' | 'plugin' | 'synced';
 
 export interface Skill {
@@ -24,7 +33,7 @@ export interface Skill {
   description: string;
   agent: SkillAgent;
   source: SkillSource;
-  /** How it is called in Claude Code (`/name`, `/plugin:name`); null when not known. */
+  /** How it is called in Claude Code (`/name`, `/plugin:name`) or Gemini CLI (`/name`); null when not known. */
   invoke: string | null;
   /** The skill's folder, absolute, and as the owner would type it. */
   dir: string;

@@ -30,7 +30,7 @@ import { openDatabase, type DB } from './db.ts';
 import { createHandlers, dispatch, type Handlers } from './handlers.ts';
 import { computeNeeds } from './needs.ts';
 import { setGitEnvironment } from './git.ts';
-import { writeGeminiHome, writeHookFiles } from './hooks.ts';
+import { geminiHomeDir, writeGeminiHome, writeHookFiles } from './hooks.ts';
 import { CoreServer } from './server.ts';
 import { Sessions } from './sessions.ts';
 import { Skills } from './skills.ts';
@@ -187,7 +187,7 @@ export class Core {
           return { stopping: true, live: 0, busy: false };
         },
       }, this.chat, {
-        skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts),
+        skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts, geminiHomeDir(options.dataDir)),
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
         attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live,
         boardViews: new BoardViews(ctx, this.board),

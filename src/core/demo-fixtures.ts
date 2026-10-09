@@ -92,6 +92,10 @@ export function seedSkills(home: string, projects: { northstar: string; orbit: s
   skill(join(home, '.codex', 'skills', 'release-notes'), 'release-notes',
     'Draft release notes from merged pull requests since the last tag.', '# Release notes\n\nGroup by feature, fix and chore. Link each PR.\n');
 
+  // Gemini CLI: its own folder (it reads ~/.agents/skills too, beside Codex).
+  skill(join(home, '.gemini', 'skills', 'storefront-copy'), 'storefront-copy',
+    'Write product copy in the Northstar voice: short, concrete, no superlatives.', '# Storefront copy\n\nOne sentence of what it is, one of why it matters.\n');
+
   // Projects.
   skill(join(projects.northstar, '.claude', 'skills', 'checkout-a11y'), 'checkout-a11y',
     'Audit the checkout flow with axe and fix what it finds, one violation per commit.',
@@ -135,6 +139,20 @@ export function seedMcp(home: string, projects: { northstar: string; orbit: stri
     '',
   ].join('\n'));
   writeFileSync(join(home, '.codex_personal', 'config.toml'), 'model = "gpt-5"\n');
+  // Gemini CLI: one sign-in, its own settings (comments allowed), and a project's.
+  mkdirSync(join(home, '.gemini'), { recursive: true });
+  writeFileSync(join(home, '.gemini', 'settings.json'), [
+    '{',
+    '  // Gemini CLI reads comments here.',
+    '  "mcpServers": {',
+    '    "context7": { "httpUrl": "https://mcp.context7.com/mcp" },',
+    '    "northstar-search": { "command": "npx", "args": ["-y", "@acme/search-mcp"], "env": { "SEARCH_API_KEY": "acme_gemini_not_a_real_key" }, "trust": true }',
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  mkdirSync(join(projects.orbit, '.gemini'), { recursive: true });
+  writeFileSync(join(projects.orbit, '.gemini', 'settings.json'), JSON.stringify({ mcpServers: { linear: { url: 'https://mcp.linear.app/mcp', type: 'http' } } }, null, 2));
 }
 
 /**
@@ -194,8 +212,8 @@ export function seedAgentFolders(home: string, projects: string): void {
   claude('.claude', join(projects, 'spike-since-deleted'), 2);
 }
 
-/** Stand-ins for `claude` and `codex`: a canned `claude mcp list`, and nothing else ever changes. */
-export function fakeMcpBinaries(base: string): { claude: string; codex: string } {
+/** Stand-ins for `claude`, `codex` and `gemini`: a canned `claude mcp list`, and nothing else ever changes. */
+export function fakeMcpBinaries(base: string): { claude: string; codex: string; gemini: string } {
   const claude = join(base, 'fake-mcp-claude');
   writeFileSync(claude, [
     '#!/bin/sh',
@@ -212,7 +230,9 @@ export function fakeMcpBinaries(base: string): { claude: string; codex: string }
   ].join('\n'), { mode: 0o755 });
   const codex = join(base, 'fake-mcp-codex');
   writeFileSync(codex, '#!/bin/sh\necho "The UI sweep’s stand-in changes nothing." >&2\nexit 1\n', { mode: 0o755 });
-  return { claude, codex };
+  const gemini = join(base, 'fake-mcp-gemini');
+  writeFileSync(gemini, '#!/bin/sh\necho "The UI sweep’s stand-in changes nothing." >&2\nexit 1\n', { mode: 0o755 });
+  return { claude, codex, gemini };
 }
 
 /*

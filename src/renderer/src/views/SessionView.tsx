@@ -129,7 +129,8 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
           <Icon name="alert" size={15} />
           <span className="banner-text">
             {limitDetail(session.limit?.resetsAt ?? null, Date.now(), account?.label)}
-            {session.activity ? <span className="faint"> Claude said: “{session.activity}”</span> : null}
+            {session.activity ? <span className="faint"> {session.provider === 'claude' ? 'Claude' : PROVIDER_LABEL[session.provider]} said: “{session.activity}”</span> : null}
+            {session.provider === 'gemini' ? <span className="faint"> Gemini asks in its terminal whether to keep trying, switch model or stop.</span> : null}
           </span>
           {session.provider === 'claude' ? <ContinueOn sessionId={session.id} accountId={session.accountId} projectKey={project.key} /> : null}
         </div>

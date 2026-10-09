@@ -1087,13 +1087,25 @@ try {
     await page.keyboard.press('Escape');
     await page.fill('.topbar-tools .search-field input', 'debug');
     await page.waitForTimeout(200);
-    if ((await page.$$('.lib-row')).length !== 2) failures.push(`${theme}: skills search did not narrow to the two debugging skills`);
+    // Claude's, and the one in ~/.agents/skills that Codex and Gemini CLI both read.
+    if ((await page.$$('.lib-row')).length !== 3) failures.push(`${theme}: skills search did not narrow to the three debugging skills`);
     await page.screenshot({ path: join(out, `${theme}-skills-search.png`) });
+    // Gemini CLI's own: its folder, and the Agent Skills one it shares with Codex.
+    await page.fill('.topbar-tools .search-field input', '');
+    await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
+    await page.waitForSelector('.lib-row:has-text("storefront-copy")', { timeout: 3000 })
+      .catch(() => failures.push(`${theme}: the Skills view does not list Gemini CLI’s own skill`));
+    if (!(await page.$('.lib-group-note:has-text("Codex reads this folder too")'))) failures.push(`${theme}: Gemini’s ~/.agents/skills does not say Codex reads it too`);
+    await page.click('.lib-row:has-text("storefront-copy")');
+    await page.waitForSelector('.lib-detail .prose');
+    if (!(await page.$('.lib-facts dd.mono:has-text("/storefront-copy")'))) failures.push(`${theme}: a Gemini skill does not say its slash command`);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: join(out, `${theme}-skills-gemini.png`) });
 
     // MCP: no secret reaches the page; check connections (a stand-in CLI); the store; two add plans.
     await page.goto(`${base}#/mcp`);
     await page.waitForSelector('.mcp-row');
-    const leaked = await page.evaluate(() => ['not-a-real-password-9f3a', 'acme_demo_not_a_real_key', 'fake_staging_token_8f2e1d0c9b'].filter((s) => document.body.innerText.includes(s)));
+    const leaked = await page.evaluate(() => ['not-a-real-password-9f3a', 'acme_demo_not_a_real_key', 'fake_staging_token_8f2e1d0c9b', 'acme_gemini_not_a_real_key'].filter((s) => document.body.innerText.includes(s)));
     if (leaked.length) failures.push(`${theme}: MCP page shows secrets: ${leaked.join(', ')}`);
     await page.click('.mcp-group:first-of-type .mcp-check button');
     await page.waitForSelector('.mcp-status.tone-ok', { timeout: 8000 }).catch(() => failures.push(`${theme}: Check connections never showed a status`));
@@ -1115,6 +1127,28 @@ try {
     await page.waitForTimeout(300);
     await page.screenshot({ path: join(out, `${theme}-mcp-add.png`) });
     await page.keyboard.press('Escape');
+    // Gemini CLI: one sign-in, picked as itself; its repository scope runs trusted for that one command.
+    await page.click('.store-card:has-text("Linear") button');
+    await page.waitForSelector('.dialog .plan-command', { timeout: 8000 });
+    await page.click('#mcp-account');
+    await page.click('.sel-list [role="option"]:has-text("Gemini CLI")').catch(() => failures.push(`${theme}: the add dialog does not offer Gemini CLI`));
+    await page.click('.dialog [role="radio"]:has-text("The repository (.gemini/settings.json)")').catch(() => failures.push(`${theme}: Gemini’s repository scope is not offered`));
+    await page.waitForSelector('.dialog .plan-command:has-text("GEMINI_CLI_TRUST_WORKSPACE=true gemini mcp add --scope project")', { timeout: 8000 })
+      .catch(() => failures.push(`${theme}: the Gemini add plan does not show Gemini’s own command`));
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(out, `${theme}-mcp-add-gemini.png`) });
+    await page.keyboard.press('Escape');
+    // Gemini's own servers, filtered.
+    await page.click('.topbar-tools [role="radio"]:has-text("Installed")');
+    await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
+    await page.waitForSelector('.mcp-row:has-text("northstar-search")', { timeout: 3000 }).catch(() => failures.push(`${theme}: the MCP view does not list Gemini CLI’s servers`));
+    if (await page.$('.mcp-row:has-text("drupal-db")')) failures.push(`${theme}: the Gemini CLI filter shows a Claude Code server`);
+    // A server with a key written into its settings is not copied into Wanigan's Gemini home, and says why.
+    const elsewhere = await page.textContent('.mcp-row:has-text("northstar-search") .mcp-elsewhere').catch(() => '');
+    if (!/^Not in Wanigan’s Gemini sessions: its environment variable SEARCH_API_KEY is written into the file/.test(elsewhere ?? '')) failures.push(`${theme}: a Gemini server holding a key inline does not say it is kept out of Wanigan’s sessions (${(elsewhere ?? '').slice(0, 80)})`);
+    if (await page.$('.mcp-row:has-text("context7") .mcp-elsewhere')) failures.push(`${theme}: a Gemini server with nothing secret in it is marked as kept out`);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: join(out, `${theme}-mcp-gemini.png`) });
 
     // The window's minimum is 960 wide: the busiest screens must still fit at 1024.
     if (theme === 'dark') {

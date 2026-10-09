@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HIDDEN, MCP_CATALOG, catalogMatch, looksSecret, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin } from './mcp.ts';
+import { catalogMatch, geminiNotCopied, HIDDEN, looksSecret, MCP_CATALOG, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin } from './mcp.ts';
 import { parseToml } from './toml.ts';
 
 test('secrets are hidden wherever they hide', () => {
@@ -121,4 +121,40 @@ test('toml: Codex config as Codex writes it and as people edit it', () => {
   assert.throws(() => parseToml('x = "open'), /line 1: A string is not closed/);
   assert.throws(() => parseToml('x = 1\nx = 2'), /line 2: “x” is set twice/);
   assert.throws(() => parseToml('x = trusted'), /Cannot read the value/);
+});
+
+// What Wanigan's Gemini sessions may be given: only a server holding nothing that could be a credential.
+// The reference forms are the ones Gemini CLI 0.46 expands in its settings (resolveEnvVarsInString, seen run).
+test('Gemini: a server is copied only when every value comes from the environment and nothing looks like a credential', () => {
+  for (const ok of [
+    { command: 'npx', args: ['-y', '@acme/tools'] },
+    { command: 'node', args: ['server.js', '--token', '$ACME_TOKEN'], env: { ACME_API_KEY: '$ACME_API_KEY', EMPTY: '', OTHER: '${OTHER_KEY}' } },
+    { url: 'https://mcp.example.test/mcp', type: 'http', headers: { Authorization: 'Bearer ${GITHUB_TOKEN}', 'X-Api-Key': '$ACME_KEY' } },
+    { httpUrl: 'https://mcp.example.test/mcp?api_key=${ACME_KEY}' },
+    { url: 'https://mcp.example.test/sse', type: 'sse', trust: true, timeout: 30_000, description: 'Acme tools', includeTools: ['search'] },
+    { url: 'https://mcp.example.test/mcp', oauth: { clientId: 'acme-client', authorizationUrl: 'https://auth.example.test/authorize', tokenUrl: 'https://auth.example.test/token', scopes: ['read'] } },
+  ]) assert.equal(geminiNotCopied(ok), null, JSON.stringify(ok));
+  const secret = 'acme-sk-0123456789abcdefghij';
+  const cases: [unknown, RegExp][] = [
+    [{ command: 'npx', env: { ACME_API_KEY: secret } }, /environment variable ACME_API_KEY is written into the file.*write "\$ACME_API_KEY"/],
+    [{ command: 'npx', env: { LOG: 'info' } }, /environment variable LOG is written into the file/],
+    [{ command: 'npx', env: { ACME_API_KEY: '${ACME_API_KEY:-fallback}' } }, /ACME_API_KEY is written into the file/],
+    [{ url: 'https://api.example.test/mcp', headers: { Authorization: `Bearer ${secret}` } }, /its Authorization header is written into the file/],
+    [{ command: 'node', args: ['server.js', '--token', secret] }, /command line holds what looks like a key/],
+    [{ command: 'node', args: ['server.js', `--api-key=${secret}`] }, /command line/],
+    [{ command: 'node', args: ['postgres://app:hunter2@db/shop'] }, /command line/],
+    [{ url: `https://mcp.example.test/mcp?token=plain-token` }, /address holds/],
+    [{ url: 'https://user:pass@mcp.example.test/mcp' }, /address holds/],
+    [{ url: `https://mcp.example.test/${secret}/mcp` }, /address holds/],
+    [{ url: 'https://mcp.example.test/mcp', oauth: { clientId: 'acme', clientSecret: 'shh-not-a-reference' } }, /its oauth.clientSecret setting/],
+    [{ command: 'npx', cwd: '/tmp', extra: { nested: secret } }, /its extra.nested setting/],
+    [{ command: 'npx', env: ['A=B'] }, /not a list of names and values/],
+    ['not an entry', /could not read its entry/],
+  ];
+  for (const [raw, why] of cases) {
+    const said = geminiNotCopied(raw);
+    assert.match(said ?? '', why, JSON.stringify(raw));
+    assert.match(said ?? '', /^Not in Wanigan’s Gemini sessions: .*Wanigan copies nothing that could be a secret\. To use it there, /);
+    for (const value of [secret, 'hunter2', 'plain-token', 'shh-not-a-reference', 'fallback']) assert.ok(!(said ?? '').includes(value), 'the value is never repeated');
+  }
 });

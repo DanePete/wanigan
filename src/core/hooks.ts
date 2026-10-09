@@ -1,7 +1,9 @@
 // Hook wiring for agent CLIs. Wanigan writes these files into its own data
 // directory and passes them on the command line; nothing goes into a repository.
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseJsonc } from '../shared/jsonc.ts';
+import { geminiNotCopied } from '../shared/mcp.ts';
 
 export interface HookFiles {
   relay: string;
@@ -95,17 +97,33 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * one, so this is how hooks reach it without touching the owner's ~/.gemini or
  * a project. The login stays where it is (macOS Keychain). The owner's chosen
  * sign-in method and trusted folders are copied in (read, never written back),
- * so Gemini asks neither again; their own extensions, MCP servers and global
- * GEMINI.md stay in their own home and are not loaded here.
+ * so Gemini asks neither again; their MCP servers that hold nothing that could
+ * be a credential (with the lists that allow or leave servers out, and those
+ * switched off) are copied in at each launch, and their own skill folders are
+ * linked in, so Gemini reads them where they are.
+ * Their own extensions and global GEMINI.md stay in their own home and are not
+ * loaded here.
  */
+/** Where Wanigan's Gemini home is, in its data folder. */
+export const geminiHomeDir = (dataDir: string): string => join(dataDir, 'gemini-home');
+
 export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string): string {
-  const home = join(dataDir, 'gemini-home');
+  const home = geminiHomeDir(dataDir);
   const dir = join(home, '.gemini');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const own = readJson(join(ownerHome, '.gemini', 'settings.json'));
   const selectedType = typeof (own?.security as { auth?: { selectedType?: unknown } } | undefined)?.auth?.selectedType === 'string'
     ? (own!.security as { auth: { selectedType: string } }).auth.selectedType
     : typeof own?.selectedAuthType === 'string' ? own.selectedAuthType as string : null;
+  const mcpServers = own && isRecord(own.mcpServers)
+    ? Object.fromEntries(Object.entries(own.mcpServers).filter(([, server]) => geminiNotCopied(server) === null)) : null;
+  const ownLists = own && isRecord(own.mcp) ? own.mcp : null;
+  const lists: Record<string, string[]> = {};
+  for (const key of ['allowed', 'excluded']) {
+    const listed = ownLists ? names(ownLists, key) : null;
+    if (listed) lists[key] = listed;
+  }
+  const mcp = Object.keys(lists).length ? lists : null;
   const hooks: Record<string, unknown[]> = {};
   for (const event of GEMINI_EVENTS) {
     // Gemini's hook timeout is in milliseconds.
@@ -121,14 +139,50 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
     },
     // The title says Ready, Working or Action Required: what covers a refusal or a cancel, which no hook reports.
     ui: { dynamicWindowTitle: true },
+    // The owner's own MCP servers, as their own Gemini would load them, but
+    // only those holding nothing that could be a credential (geminiNotCopied):
+    // Wanigan reads, copies and stores no credential. The MCP view marks the
+    // rest. And the lists that allow or leave servers out, which are names.
+    ...(mcpServers ? { mcpServers } : {}),
+    ...(mcp ? { mcp } : {}),
   };
   atomicWrite(join(dir, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
+  // Servers the owner switched off in a session (/mcp disable) stay off; none switched off, none here.
+  // Only names and their switch are copied.
+  const enablement = readJson(join(ownerHome, '.gemini', 'mcp-server-enablement.json'));
+  const switches = enablement ? Object.fromEntries(Object.entries(enablement).flatMap(([name, state]) =>
+    (isRecord(state) && typeof state.enabled === 'boolean' ? [[name, { enabled: state.enabled }]] : []))) : {};
+  if (Object.keys(switches).length) atomicWrite(join(dir, 'mcp-server-enablement.json'), `${JSON.stringify(switches, null, 2)}\n`);
+  else rmSync(join(dir, 'mcp-server-enablement.json'), { force: true });
   const trusted = join(ownerHome, '.gemini', 'trustedFolders.json');
   if (existsSync(trusted) && !existsSync(join(dir, 'trustedFolders.json'))) {
     const folders = readJson(trusted);
     if (folders) atomicWrite(join(dir, 'trustedFolders.json'), `${JSON.stringify(folders, null, 2)}\n`);
   }
+  // The owner's own skills, read where they are: Gemini looks for user skills
+  // in its home's .gemini/skills and .agents/skills (SkillManager, 0.46).
+  linkOwnFolder(join(dir, 'skills'), join(ownerHome, '.gemini', 'skills'));
+  mkdirSync(join(home, '.agents'), { recursive: true, mode: 0o700 });
+  linkOwnFolder(join(home, '.agents', 'skills'), join(ownerHome, '.agents', 'skills'));
   return home;
+}
+
+/**
+ * A link in Wanigan's Gemini home to one of the owner's folders, while that
+ * folder exists. A link that points elsewhere, or at nothing, is replaced or
+ * taken away; a real folder in its place (Gemini made one) is left alone.
+ */
+function linkOwnFolder(link: string, target: string): void {
+  let isDirectory = false;
+  try { isDirectory = statSync(target).isDirectory(); } catch { isDirectory = false; }
+  let current: string | null = null;
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return;
+    current = readlinkSync(link);
+  } catch { current = null; }
+  if (current === target && isDirectory) return;
+  if (current !== null) unlinkSync(link);
+  if (isDirectory) symlinkSync(target, link, 'dir');
 }
 
 /** Whether Gemini CLI saved a conversation in a Gemini home: its chat files end in the id's first eight characters. */
@@ -144,13 +198,21 @@ export function geminiChatSaved(home: string, sessionId: string): boolean {
   }
 }
 
+/** A JSON object as Gemini reads one (comments allowed), or null. */
 function readJson(file: string): Record<string, unknown> | null {
   try {
-    const v = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-    return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+    return parseJsonc(readFileSync(file, 'utf8'));
   } catch {
     return null;
   }
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** A list of server names, or null when the setting is not one. */
+function names(settings: Record<string, unknown>, key: string): string[] | null {
+  const v = settings[key];
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v as string[] : null;
 }
 
 function atomicWrite(file: string, text: string): void {

@@ -90,7 +90,8 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
   const toast = useToast();
   const projectKey = need.projectKey;
   const sessionHref = need.sessionId ? href({ name: 'session', projectKey, sessionId: need.sessionId }) : null;
-  const dismiss = need.sessionId && (need.kind === 'waiting' || need.kind === 'failed' || need.kind === 'interrupted' || need.kind === 'quiet' || need.kind === 'starting')
+  const dismiss = need.sessionId && (need.kind === 'waiting' || need.kind === 'failed' || need.kind === 'interrupted' || need.kind === 'quiet' || need.kind === 'starting'
+    || (need.kind === 'limit' && need.provider !== 'claude'))
     ? () => attempt(() => call('sessions.seen', { id: need.sessionId as string }), (m) => toast(m, 'error'))
     : null;
   const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state) } : null);
@@ -125,8 +126,12 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
   let primary: ReactElement | null = null;
   if (need.kind === 'review' || need.kind === 'question') {
     primary = <Button tone={need.kind === 'review' ? 'primary' : 'attention'} onClick={() => need.cardKey && openCard(need.cardKey)}>{need.kind === 'review' ? 'Review' : 'Answer'}</Button>;
-  } else if (need.kind === 'limit' && need.sessionId) {
+  } else if (need.kind === 'limit' && need.sessionId && need.provider === 'claude') {
     primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} />;
+  } else if (need.kind === 'limit' && sessionHref) {
+    // Gemini CLI has one sign-in and nowhere else to carry the conversation;
+    // its own dialog asks whether to keep trying, switch model or stop.
+    primary = <a className="btn btn-m btn-attention" href={sessionHref}><span>Answer in terminal</span></a>;
   } else if (need.kind === 'interrupted' && need.sessionId && need.resumable) {
     const resume = (): Promise<void> => attempt(() => call('sessions.resume', { id: need.sessionId as string }), (m) => toast(m, 'error', { action: { label: 'Retry', run: () => void resume() } }))
       .then((s) => { if (s) navigate({ name: 'session', projectKey, sessionId: s.id }); });
