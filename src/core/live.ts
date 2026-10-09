@@ -361,11 +361,7 @@ export class Live {
       if (existsSync(plan.folder) && !(readText(existing) ?? '').startsWith(DRUPAL_HELPER_MARK)) {
         throw new CoreError('refused', `${plan.folder} already exists and Wanigan did not write it. Nothing was changed.`);
       }
-      for (const [file, text] of Object.entries(DRUPAL_HELPER_FILES)) {
-        const path = join(plan.folder, file);
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, text);
-      }
+      writeDrupalHelper(plan.folder);
       await excludeFromGit(root, plan.folder);
       const token = randomBytes(24).toString('hex');
       await ddev.run(root, ['drush', 'state:set', 'wanigan_live.token', token]);
@@ -635,6 +631,33 @@ interface EditRow {
 }
 
 /* ── the helper ────────────────────────────────────────────────────────── */
+
+/**
+ * Writes the Drupal helper's files into its folder (already Wanigan's own, or
+ * new), then removes any file an older helper wrote that this one does not:
+ * new files first, so a site serving a request meanwhile never finds a class
+ * missing.
+ */
+export function writeDrupalHelper(folder: string): void {
+  for (const [file, text] of Object.entries(DRUPAL_HELPER_FILES)) {
+    const path = join(folder, file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text);
+  }
+  const keep = new Set(Object.keys(DRUPAL_HELPER_FILES));
+  const prune = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        prune(path);
+        if (readdirSync(path).length === 0) rmSync(path, { recursive: true, force: true });
+      } else if (!keep.has(relative(folder, path).split(sep).join('/'))) {
+        rmSync(path, { force: true });
+      }
+    }
+  };
+  prune(folder);
+}
 
 /** Where WordPress is in a project: the folder holding wp-content (the ddev docroot, or one of the usual ones). */
 function wordpressRoot(root: string): string | null {

@@ -153,7 +153,17 @@ WordPress and other sites can each be on or off.
   intent, never written into the stylesheets by hand.
 - **The site helper** (Drupal module or WordPress must-use plugin), installed
   on your click: names every piece exactly, shows one piece alone (with sample
-  content where there is none), and reloads when content changes too.
+  content where there is none), and reloads when content changes too. The
+  Drupal helper also traces each render through Drupal core itself: the
+  template, suggestions and preprocess steps behind every part, its variables
+  (secrets redacted), cache metadata, time, queries and hooks; each part's edit
+  through Drupal's own forms (a field's own widget, a block's or a menu link's
+  form, Layout Builder's page, or a template copied into your theme when you
+  say so); moves and inserts where Drupal itself keeps an order (a field's
+  items, a region's blocks, a menu, a display's fields, Layout Builder), with
+  undo; and the Go to launcher's list of pages. It names no module: anything
+  built on Drupal core shows up through it. How it hooks core:
+  [docs/research/2026-10-09-drupal-core-live-trace.md](docs/research/2026-10-09-drupal-core-live-trace.md).
 - **Before and after.** With screenshots on, each card shows its page as its
   session began and after each turn that changed files, with what changed
   boxed. Taken and kept on this Mac.
@@ -536,7 +546,9 @@ verification results and the behavior that remains unverified.
   the app has not been run, and ddev's wording when Docker is not running was
   read from its binary, not seen. Not built yet: Serve this card (switching which checkout ddev
   serves), a component's props form, saving WordPress content by hand, and
-  Layout Builder and Canvas pieces by their own ids. Agents' looks at it
+  Canvas pieces by their own ids. The Drupal helper's Layout Builder moves, and
+  reordering a field with several items, have not been run against a real
+  site. Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.

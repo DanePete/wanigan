@@ -74,3 +74,11 @@ test('collections keep only their own parts, known palette entries and known mov
   assert.equal(side?.changes, 'configuration');
   assert.equal(side?.reach, 41);
 });
+
+test('a part keeps the libraries it attached, bounded, and nothing that is not a name', () => {
+  const t = parseTrace({ ...base, parts: [{ id: 'p1', kind: 'component', label: 'Hero', libraries: ['core/components.acme--hero', '', 7, 'x'.repeat(300), ...Array.from({ length: 120 }, (_, i) => `acme/l${i}`)] }, { id: 'p2', kind: 'block', label: 'Search', libraries: 'core/drupal' }] });
+  assert.equal(t?.parts[0]?.libraries?.[0], 'core/components.acme--hero');
+  assert.equal(t?.parts[0]?.libraries?.[1]?.length, 200, 'a name is bounded');
+  assert.equal(t?.parts[0]?.libraries?.length, 100, 'the list is bounded');
+  assert.equal(t?.parts[1]?.libraries, undefined, 'not a list: dropped');
+});
