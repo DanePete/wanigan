@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LiveRegion } from './live.ts';
+import { SHORTCUTS } from './shortcuts.ts';
 import {
   ALIKE, DIFFERS, IGNORED, ONE_SIDE, alignRows, alignedRect, alignedRow, changeBoxes, changesOf, colourDelta, compareKey, compareSummary,
   difference, matchRows, maxDelta, pageRect, partAt, rowHashes, scrollFor, sourceRow, stepChange, type Pixels,
@@ -96,6 +97,19 @@ test('a taller block pairs its rows and leaves the rest beside nothing', () => {
   assert.deepEqual(kinds(alignRows(rowHashes(a), rowHashes(b))), ['same:20', 'changed:10', 'only-b:6', 'same:20']);
 });
 
+test('an item added to a list whose items look alike at their edges: the band could sit anywhere between two titles, and says so', () => {
+  // Each item: two rows of its background, its own title row, background, a subtitle every item shares, background.
+  const item = (title: number): number[] => [7, 7, title, 7, 8, 7];
+  const a = [...range(1, 10), ...item(101), 0, 0, ...item(102), 0, 0, ...item(103), ...range(300, 10)];
+  const b = [...range(1, 10), ...item(101), 0, 0, ...item(109), 0, 0, ...item(102), 0, 0, ...item(103), ...range(300, 10)];
+  const al = alignRows(rowHashes(page(a)), rowHashes(page(b)));
+  const band = al.bands.find((x) => x.kind === 'only-b');
+  assert.equal(band?.rows, 8);
+  const top = band!.a - band!.slack!.up;
+  const bottom = band!.a + band!.slack!.down;
+  assert.ok(top <= 13 && bottom >= 18, `it could sit anywhere from after the first title (row 12) to the second (row 18): ${top}–${bottom}`);
+});
+
 test('pages with nothing in common are compared from the top, the longer one’s rest beside nothing', () => {
   const al = alignRows(rowHashes(page(range(1, 30))), rowHashes(page(range(400, 50))));
   assert.deepEqual(kinds(al), ['changed:30', 'only-b:20']);
@@ -166,6 +180,8 @@ test('a change is named by the local part it overlaps most, the smallest of equa
   assert.equal(partAt({ x: 300, y: 700, width: 400, height: 100 }, regions, 1440)?.component, 'acme:cards', 'across two cards: the list holding both');
   assert.equal(partAt({ x: 60, y: 700, width: 100, height: 40 }, regions, 1440)?.index, 3);
   assert.equal(partAt({ x: 0, y: 1090, width: 1440, height: 1 }, regions, 1440, true)?.component, 'acme:cards', 'a band added to a list is named by the list');
+  assert.equal(partAt({ x: 0, y: 620, width: 1440, height: 1 }, regions, 1440, true)?.component, 'acme:cards', 'not by the item that begins where it was added');
+  assert.equal(partAt({ x: 0, y: 0, width: 1440, height: 1 }, regions, 1440, true)?.component, 'acme:page', 'at the very top, the part that starts there');
   assert.equal(partAt({ x: 0, y: 5000, width: 10, height: 10 }, regions, 1440), null);
 });
 
@@ -208,4 +224,23 @@ test('stepping through changes wraps, and scrolling puts one a quarter of the wa
   assert.equal(stepChange(0, 0, 1), -1);
   assert.equal(scrollFor({ x: 0, y: 1000, width: 10, height: 10 }, 0.5, 400), 400);
   assert.equal(scrollFor({ x: 0, y: 10, width: 10, height: 10 }, 1, 400), 0);
+});
+
+test('the shortcut sheet lists exactly the viewer’s keys, and each does what it says', () => {
+  const listed = SHORTCUTS.filter((s) => s.group === 'Comparing pages');
+  const press = (keys: string[]) => {
+    const shift = keys[0] === 'Shift';
+    const k = keys[keys.length - 1] as string;
+    const key = ({ '←': 'ArrowLeft', '→': 'ArrowRight', Space: ' ' } as Record<string, string>)[k] ?? (shift ? k.toUpperCase() : k.toLowerCase());
+    return compareKey({ key, shiftKey: shift, metaKey: false, ctrlKey: false, altKey: false });
+  };
+  const said = listed.flatMap((s) => [s.keys, ...(s.alt ?? [])].map((keys) => [s.label, press(keys)] as const));
+  assert.ok(said.every(([, action]) => action !== null), 'every listed key does something');
+  assert.deepEqual(said.map(([label, action]) => `${label}: ${JSON.stringify(action)}`), [
+    'Show Local, or the hosted page: {"flip":"a"}', 'Show Local, or the hosted page: {"flip":"b"}', 'Flip to the other: {"flip":"other"}',
+    'Slider: {"mode":"slider"}', 'Onion skin: {"mode":"onion"}', 'Difference: {"mode":"difference"}', 'Side by side: {"mode":"side"}',
+    'Next change: {"step":1}', 'Previous change: {"step":-1}',
+    'Phone, tablet or desktop width: {"width":390}', 'Phone, tablet or desktop width: {"width":768}', 'Phone, tablet or desktop width: {"width":1440}',
+    'Ignore the change on this page: {"ignore":"page"}', 'Ignore the change on every page: {"ignore":"site"}',
+  ]);
 });

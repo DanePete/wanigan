@@ -6,9 +6,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { LiveViewState } from '@shared/bridge';
 import {
-  inFolder, isStylesheet, regionMadeBy, sameRegion,
+  inFolder, isStylesheet, regionMadeBy, sameRegion, sameSite,
   type LiveCandidate, type LiveEdit, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
 } from '@shared/live';
+import type { CompareWidth } from '@shared/live-compare';
+import { samePage } from '@shared/live-envs';
 import { nameOf, themeOf } from '@shared/live-names';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
@@ -18,6 +20,8 @@ import { useAppState } from '../lib/settings';
 import { liveFor } from '@shared/settings';
 import { Icon } from './icons';
 import { Inspector, type Selection } from './live/Inspector';
+import { CompareDialog } from './live/Compare';
+import { EnvTabs, EnvironmentSettings, HOSTED_NOTE, useEnvs } from './live/Environments';
 import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
 import { NoteComposer, NotesTab, draftFor } from './live/Notes';
@@ -134,6 +138,7 @@ function LiveSetup({ site, project, onDone, canCancel }: { site: LiveSite; proje
         </div>
       </form>
       {site.url ? <HelperSettings site={site} project={project} /> : null}
+      {site.url ? <EnvironmentSettings site={site} project={project} /> : null}
     </div>
   );
 }
@@ -161,10 +166,10 @@ const CONTENT_RELOADS_A_MINUTE = 4;
 
 type Tab = 'layers' | 'notes' | 'problems';
 type Width = 'full' | 'tablet' | 'phone';
-const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' | 'tablet' | 'phone' }> = {
-  full: { px: null, label: 'Full width', icon: 'desktop' },
-  tablet: { px: 768, label: 'Tablet, 768 pixels wide', icon: 'tablet' },
-  phone: { px: 390, label: 'Phone, 390 pixels wide', icon: 'phone' },
+const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' | 'tablet' | 'phone'; compare: CompareWidth }> = {
+  full: { px: null, label: 'Full width', icon: 'desktop', compare: 1440 },
+  tablet: { px: 768, label: 'Tablet, 768 pixels wide', icon: 'tablet', compare: 768 },
+  phone: { px: 390, label: 'Phone, 390 pixels wide', icon: 'phone', compare: 390 },
 };
 
 type Banner =
@@ -214,12 +219,23 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [width, setWidth] = useState<Width>('full');
   const [changed, setChanged] = useState<ReadonlySet<number>>(new Set());
   const [problems, setProblems] = useState<LiveProblem[] | null>(null);
+  // A hosted environment (Dev, Test, Live) in place of the local site: read-only, and it does not follow the agents.
+  const envData = useEnvs(project.id, !compact);
+  const envs = envData?.envs ?? [];
+  const [envId, setEnvId] = useState<string | null>(null);
+  const env = envs.find((e) => e.id === envId) ?? null;
+  const hostedRef = useRef<string | null>(null);
+  hostedRef.current = env?.id ?? null;
+  /** The page the stage opens: the site's address, or the same page on the environment switched to. */
+  const [stageUrl, setStageUrl] = useState(url);
+  const [comparing, setComparing] = useState(false);
   const queue = useRef<{ paths: Set<string>; timer: number | null }>({ paths: new Set(), timer: null });
   /** Files to outline once the load in flight has finished. */
   const outlineAfterLoad = useRef<string[] | null>(outlineFirst);
   const late = useRef<{ timer: number | null; seen: number; tries: number }>({ timer: null, seen: -1, tries: 0 });
   const root = site.servedPath ?? project.path;
   const components = useMemo(() => new Map((parts.data?.components ?? []).map((c) => [c.id, c])), [parts.data]);
+  const componentNames = useMemo(() => new Map([...components].map(([id, c]) => [id, c.name])), [components]);
   const componentsRef = useRef(components);
   componentsRef.current = components;
   const scanned = useRef<LiveRegion[]>([]);
@@ -282,7 +298,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   }, [live, scanAndOutline]);
 
   useEffect(() => live.onState((s) => {
-    if (s.projectId !== project.id) return;
+    if (s.projectId !== project.id || (s.env ?? null) !== hostedRef.current) return;
     setView(s);
     if (s.url) setAddress(s.url);
     if (s.loading) { setProblems(null); return; }
@@ -316,7 +332,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   // already watching content.
   const edited = useRef(new Set<string>());
   useEffect(() => bridge().on((event, data) => {
-    if (event !== 'live') return;
+    if (event !== 'live' || hostedRef.current) return;
     const e = data as LiveEvent;
     if (e.projectId !== project.id || (follow && e.sessionId !== follow)) return;
     if (e.kind === 'turn-start') { edited.current.delete(e.sessionId); return; }
@@ -344,6 +360,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   useEffect(() => {
     if (token.current === site.token) return;
     token.current = site.token;
+    if (hostedRef.current) return;
     let stopped = false;
     void (async () => {
       for (let i = 0; i < 20 && site.token && !stopped; i++) {
@@ -359,7 +376,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   // Content saved in Drupal changes the page without touching a file: the helper counts it, and the view follows.
   useEffect(() => {
-    if (!site.helper || !site.token || !following) return;
+    if (!site.helper || !site.token || !following || env) return;
     let last: number | null = null;
     let recent: number[] = [];
     let stopped = false;
@@ -378,7 +395,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       });
     }, CONTENT_EVERY_MS);
     return () => window.clearInterval(timer);
-  }, [site.helper, site.token, site.platform, following, live]);
+  }, [site.helper, site.token, site.platform, following, live, env]);
 
   useEffect(() => () => {
     const t = queue.current.timer;
@@ -418,6 +435,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     void live.reload();
   };
 
+  /** Show the same page on another environment (null: the local site). */
+  const switchTo = (next: string | null): void => {
+    const to = envs.find((e) => e.id === next) ?? null;
+    setStageUrl(samePage(view?.url ?? stageUrl, env?.url ?? url, to?.url ?? url));
+    setEnvId(to?.id ?? null);
+    setSelection(null);
+    setRegions([]);
+    setBanner(null);
+  };
+
   const go = (e: FormEvent): void => {
     e.preventDefault();
     void live.go(address).then((ok) => {
@@ -439,6 +466,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   return (
     <div className={`live${compact ? ' live-compact' : ''}`}>
       <form className="live-bar" onSubmit={go} aria-label="Live view">
+        {!compact && envs.length ? <EnvTabs envs={envs} value={env?.id ?? null} onChange={switchTo} /> : null}
         <IconButton icon="back" label="Back" disabled={!view?.canGoBack} onClick={() => void live.back()} />
         <IconButton icon="chevron" label="Forward" disabled={!view?.canGoForward} onClick={() => void live.forward()} />
         <IconButton icon="refresh" label={view?.loading ? 'Loading…' : 'Reload (hold Shift to skip the cache)'}
@@ -456,12 +484,21 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           title={hasScript ? 'Point at something on the page to see what made it: ↑ and ↓ walk out and in, Enter picks, Escape stops' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
           {picking ? 'Picking…' : 'Pick'}
         </Button>
-        {card && shots ? <ShotPage card={card} page={view?.url ?? null} /> : null}
+        {!compact ? (
+          <Button size="s" tone="quiet" icon="compare" disabled={!envs.length || !!view?.loading} onClick={() => setComparing(true)}
+            title={envs.length ? `Lay this page on Local over the same page on ${env?.name ?? envs[envs.length - 1]?.name}: wipe, onion skin, difference, flip, side by side`
+              : envData?.candidates.length ? `${envData.candidates.length} hosted environments are named in the project’s files: keep them in the site settings (the gear) to compare with them`
+                : 'Add a hosted environment (Dev, Test, Live) in the site settings (the gear) to compare with it'}>
+            Compare
+          </Button>
+        ) : null}
+        {card && shots && !env ? <ShotPage card={card} page={view?.url ?? null} /> : null}
         <IconButton icon="open" label="Open in the default browser" onClick={() => void live.open()} />
         <IconButton icon="settings" label="Site settings" onClick={onEdit} />
       </form>
       <div className="live-main">
-        <LiveStage project={project} url={url} token={site.token} view={view} width={WIDTHS[width].px} onReload={() => void live.reload(true)} onEdit={onEdit} />
+        <LiveStage project={project} url={env || sameSite(stageUrl, url) ? stageUrl : url} token={env ? null : site.token} env={env?.id ?? null} view={view} width={WIDTHS[width].px}
+          onReload={() => void live.reload(true)} onEdit={onEdit} />
         {compact ? (
           selection?.pick ? (
             <div className="live-strip">
@@ -483,19 +520,25 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                 <Button size="s" tone="quiet" icon="back" onClick={() => void live.back()}>Back to the page</Button>
               </p>
             ) : null}
-            {banner && tab === 'layers' && !alone ? <p className="live-note small" role="status">{bannerText(banner)}</p> : null}
+            {env ? (
+              <div className="live-note live-hosted small" role="status">
+                <span><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits.</span>
+                <span className="faint">{HOSTED_NOTE}</span>
+              </div>
+            ) : null}
+            {banner && tab === 'layers' && !alone && !env ? <p className="live-note small" role="status">{bannerText(banner)}</p> : null}
             {tab === 'layers' ? (
               selection ? (
                 <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={parts.data?.docroot ?? null}
-                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper} onSelect={select} onClose={unselect} onSaved={saved} />
+                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect} onSaved={saved} />
               ) : (
                 <>
                   {regions.length ? (
                     <Layers regions={regions} components={components} selected={null} changed={changed} onHover={hover} onSelect={select} />
                   ) : (
-                    <NothingMarked platform={site.platform} loading={!!view?.loading} />
+                    <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
                   )}
-                  <HelperOffer site={site} project={project} />
+                  {env ? null : <HelperOffer site={site} project={project} />}
                 </>
               )
             ) : tab === 'notes' ? (
@@ -507,11 +550,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
             )}
             <p className="live-side-foot faint small">
-              {site.platform === 'drupal' ? 'Drupal' : site.platform === 'wordpress' ? 'WordPress' : 'Site'} · {follow ? 'following this session' : `following every session in ${project.name}`}
+              {site.platform === 'drupal' ? 'Drupal' : site.platform === 'wordpress' ? 'WordPress' : 'Site'} · {env ? `${env.name}, read-only` : follow ? 'following this session' : `following every session in ${project.name}`}
             </p>
           </aside>
         )}
       </div>
+      {comparing && envs.length ? (
+        <CompareDialog project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
+          width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
+      ) : null}
     </div>
   );
 }
@@ -540,8 +587,15 @@ function selectionTitle(s: Selection, components: Map<string, { name: string }>)
   return r.component ? components.get(r.component)?.name ?? r.component : r.file ? fileName(r.file) : r.entity ?? r.block ?? r.view ?? 'Part';
 }
 
-function NothingMarked({ platform, loading }: { platform: LivePlatform | null; loading: boolean }) {
+function NothingMarked({ platform, loading, hosted = false }: { platform: LivePlatform | null; loading: boolean; hosted?: boolean }) {
   if (loading) return <p className="faint small live-side-block">Loading the page…</p>;
+  if (hosted) {
+    return (
+      <div className="live-side-block">
+        <p className="small">Nothing on this page says what made it: a hosted site rarely does (its Twig debug is off, and it has no helper). Pick a part to point an agent at it anyway.</p>
+      </div>
+    );
+  }
   return (
     <div className="live-side-block">
       <p className="small">Nothing on this page says what made it. Pick a part to point an agent at it anyway.</p>
@@ -590,8 +644,11 @@ function EditsList({ project }: { project: ProjectSummary }) {
  * moves, steps the view aside while something covers it (showing the last
  * frame instead), narrows to a device's width, and shows why a page did not load.
  */
-function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
-  project: ProjectSummary; url: string; token: string | null; view: LiveViewState | null; width: number | null; onReload: () => void; onEdit: () => void;
+function LiveStage({ project, url, token, env, view, width, onReload, onEdit }: {
+  project: ProjectSummary; url: string; token: string | null;
+  /** A hosted environment's id: shown read-only in its own session. Null: the local site. */
+  env: string | null;
+  view: LiveViewState | null; width: number | null; onReload: () => void; onEdit: () => void;
 }) {
   const live = liveBridge() as NonNullable<ReturnType<typeof liveBridge>>;
   const device = useRef<HTMLDivElement>(null);
@@ -607,7 +664,7 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
       const b = el.getBoundingClientRect();
       return { x: b.left, y: b.top, width: b.width, height: b.height };
     };
-    void live.show(project.id, url, rect(), token);
+    void live.show(project.id, url, rect(), token, env);
     let raf = 0;
     const moved = (): void => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => live.bounds(rect())); };
     const observer = new ResizeObserver(moved);
@@ -619,7 +676,7 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
       window.removeEventListener('resize', moved);
       void live.hide();
     };
-  }, [live, project.id, url, token]);
+  }, [live, project.id, url, token, env]);
 
   useEffect(() => {
     let current = true;
@@ -634,12 +691,12 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
         {frame && !error ? <img className="live-frame" src={frame} alt="" /> : null}
       </div>
       {width ? <span className="live-device-size faint small" aria-hidden="true">{width} px</span> : null}
-      {error ? <LoadProblem error={error} url={url} onReload={onReload} onEdit={onEdit} /> : null}
+      {error ? <LoadProblem error={error} url={url} hosted={!!env} onReload={onReload} onEdit={onEdit} /> : null}
     </div>
   );
 }
 
-function LoadProblem({ error, url, onReload, onEdit }: { error: NonNullable<LiveViewState['error']>; url: string; onReload: () => void; onEdit: () => void }) {
+function LoadProblem({ error, url, hosted, onReload, onEdit }: { error: NonNullable<LiveViewState['error']>; url: string; hosted: boolean; onReload: () => void; onEdit: () => void }) {
   const host = (() => { try { return new URL(error.url || url).host; } catch { return url; } })();
   const certificate = /CERT|SSL/i.test(error.description);
   const nobody = /CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|CONNECTION_FAILED|TIMED_OUT/i.test(error.description);
@@ -651,11 +708,13 @@ function LoadProblem({ error, url, onReload, onEdit }: { error: NonNullable<Live
           {certificate ? `This Mac does not trust ${host}’s certificate` : nobody ? `Nothing answered at ${host}` : `${host} did not load`}
         </p>
         <p className="small">
-          {certificate
-            ? 'Wanigan trusts certificates from this Mac’s own mkcert authority (ddev’s). This one is from somewhere else, or mkcert has no authority here yet: run mkcert -install, then reload.'
-            : nobody
-              ? 'Start the site first (for ddev: ddev start in the project folder), then reload.'
-              : 'Chromium gave this reason:'}
+          {certificate && hosted
+            ? 'A hosted environment’s certificate is checked as any browser checks it, and Wanigan makes no exception for it.'
+            : certificate
+              ? 'Wanigan trusts certificates from this Mac’s own mkcert authority (ddev’s). This one is from somewhere else, or mkcert has no authority here yet: run mkcert -install, then reload.'
+              : nobody
+                ? hosted ? 'Check the environment’s address in the site settings, and that this Mac is online.' : 'Start the site first (for ddev: ddev start in the project folder), then reload.'
+                : 'Chromium gave this reason:'}
           {' '}<span className="mono faint">{error.description}</span>
         </p>
         <div className="live-problem-actions">

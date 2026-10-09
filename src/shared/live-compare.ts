@@ -23,7 +23,14 @@ export interface Pixels { data: Uint8ClampedArray | Uint8Array; width: number; h
  * beside them, `only-b` the other way round. `a` and `b` are the first row of
  * each side at the band (for a side the band has none of, the row it sits before).
  */
-export interface Band { kind: 'same' | 'changed' | 'only-a' | 'only-b'; a: number; b: number; rows: number }
+export interface Band {
+  kind: 'same' | 'changed' | 'only-a' | 'only-b'; a: number; b: number; rows: number;
+  /**
+   * A one-sided band could sit this many rows higher or lower and line up just as well: rows repeated around it
+   * (a list's items alike at their edges) leave where it was added open. Naming it looks at the whole span.
+   */
+  slack?: { up: number; down: number };
+}
 
 export interface Alignment {
   bands: Band[];
@@ -159,6 +166,21 @@ export function alignRows(a: ArrayLike<number>, b: ArrayLike<number>, minSame = 
     if (r.da > paired) bands.push({ kind: 'only-a', a: r.a + paired, b: r.b + paired, rows: r.da - paired });
     if (r.db > paired) bands.push({ kind: 'only-b', a: r.a + paired, b: r.b + paired, rows: r.db - paired });
   }
+  // How far each one-sided band between two matching runs could slide: while the row above it equals its last row
+  // (up), or its first row equals the row below it (down), moving it changes nothing.
+  bands.forEach((band, i) => {
+    if (band.kind !== 'only-a' && band.kind !== 'only-b') return;
+    const rows = band.kind === 'only-a' ? a : b;
+    const start = band.kind === 'only-a' ? band.a : band.b;
+    const end = start + band.rows;
+    const above = bands[i - 1]?.kind === 'same' ? bands[i - 1]!.rows : 0;
+    const below = bands[i + 1]?.kind === 'same' ? bands[i + 1]!.rows : 0;
+    let up = 0;
+    while (up < above && rows[start - up - 1] === rows[end - up - 1]) up++;
+    let down = 0;
+    while (down < below && rows[start + down] === rows[end + down]) down++;
+    if (up || down) band.slack = { up, down };
+  });
   return { bands, height: bands.reduce((n, band) => n + band.rows, 0), same };
 }
 
@@ -354,6 +376,8 @@ export interface Change {
   rect: Rect;
   /** Pixels that differ inside it; for a band, its rows. */
   size: number;
+  /** For a band: how far it could slide (see Band). */
+  slack?: { up: number; down: number };
 }
 
 /** Every area of change and every one-sided band, top to bottom. */
@@ -365,7 +389,9 @@ export function changesOf(diff: Difference, al: Alignment): Change[] {
   });
   let y = 0;
   for (const band of al.bands) {
-    if (band.kind === 'only-a' || band.kind === 'only-b') out.push({ kind: band.kind, rect: { x: 0, y, width: diff.width, height: band.rows }, size: band.rows });
+    if (band.kind === 'only-a' || band.kind === 'only-b') {
+      out.push({ kind: band.kind, rect: { x: 0, y, width: diff.width, height: band.rows }, size: band.rows, ...(band.slack ? { slack: band.slack } : {}) });
+    }
     y += band.rows;
   }
   return out.sort((p, q) => p.rect.y - q.rect.y || p.rect.x - q.rect.x);
@@ -384,16 +410,23 @@ function overlap(p: Rect, q: Rect): number {
 /**
  * The part of the local page a change is in: the region it overlaps most,
  * and of regions that overlap it about as much, the smallest (the hero, not
- * the page around it). A band one side has alone is a line across the page:
- * it is named by the smallest region at least half the page wide that holds
- * that line (the list an item was added to). Rectangles in A's page.
+ * the page around it). A band one side has alone is a span across the page
+ * (a line where the other side's rows go, or every row it could slide to): it
+ * is named by the smallest region at least half the page wide that holds the
+ * whole span, below its top (the list an item was added to, not the item next
+ * to it). Rectangles in A's page.
  */
 export function partAt(rect: Rect, regions: readonly LiveRegion[], pageWidth: number, line = false): LiveRegion | null {
   const usable = regions.filter((r) => r.rect.width > 0 && r.rect.height > 0);
   if (line) {
-    const holding = usable.filter((r) => r.rect.y <= rect.y && rect.y < r.rect.y + r.rect.height && r.rect.width >= pageWidth / 2)
+    // A band sits where the other side's rows begin: the part that starts at that line is the next item, not the
+    // list it was added to, so a part holds the line only when the line is inside it, below its top.
+    const bottom = rect.y + Math.max(1, rect.height) - 1;
+    const holding = (strict: boolean): LiveRegion[] => usable
+      .filter((r) => (strict ? r.rect.y < rect.y : r.rect.y <= rect.y) && bottom < r.rect.y + r.rect.height && r.rect.width >= pageWidth / 2)
       .sort((p, q) => area(p.rect) - area(q.rect));
-    if (holding[0]) return holding[0];
+    const found = holding(true)[0] ?? holding(false)[0];
+    if (found) return found;
   }
   let best = 0;
   for (const r of usable) best = Math.max(best, overlap(rect, r.rect));

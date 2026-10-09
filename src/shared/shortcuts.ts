@@ -29,7 +29,7 @@ export const GIT_COMMANDS: readonly { id: GitCommandId; label: string }[] = [
   { id: 'git-stash', label: 'Stash changes…' },
 ];
 
-export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'On the board' | 'In Changes' | 'In Commits' | 'In dialogs and lists';
+export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'On the board' | 'In Changes' | 'In Commits' | 'Comparing pages' | 'In dialogs and lists';
 
 export interface Shortcut {
   /** The command it runs; null when a view handles the key itself (the board, a dialog). */
@@ -84,6 +84,18 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // And the Commits tab (views/git/Commits.tsx).
   { id: null, label: 'Next commit', group: 'In Commits', keys: ['J'], alt: [['↓']] },
   { id: null, label: 'Previous commit', group: 'In Commits', keys: ['K'], alt: [['↑']] },
+  // And the live view's Compare (components/live/CompareViewer.tsx, keys from shared/live-compare.ts compareKey).
+  { id: null, label: 'Show Local, or the hosted page', group: 'Comparing pages', keys: ['←'], alt: [['→']] },
+  { id: null, label: 'Flip to the other', group: 'Comparing pages', keys: ['Space'] },
+  { id: null, label: 'Slider', group: 'Comparing pages', keys: ['S'] },
+  { id: null, label: 'Onion skin', group: 'Comparing pages', keys: ['O'] },
+  { id: null, label: 'Difference', group: 'Comparing pages', keys: ['D'] },
+  { id: null, label: 'Side by side', group: 'Comparing pages', keys: ['T'] },
+  { id: null, label: 'Next change', group: 'Comparing pages', keys: ['J'] },
+  { id: null, label: 'Previous change', group: 'Comparing pages', keys: ['K'] },
+  { id: null, label: 'Phone, tablet or desktop width', group: 'Comparing pages', keys: ['1'], alt: [['2'], ['3']] },
+  { id: null, label: 'Ignore the change on this page', group: 'Comparing pages', keys: ['I'] },
+  { id: null, label: 'Ignore the change on every page', group: 'Comparing pages', keys: ['Shift', 'I'] },
   { id: null, label: 'Choose a result', group: 'In dialogs and lists', keys: ['↑'], alt: [['↓']] },
   { id: null, label: 'Create the card and open it', group: 'In dialogs and lists', keys: ['Mod', 'Enter'] },
   { id: null, label: 'Send a message to the agent', group: 'In dialogs and lists', keys: ['Enter'] },
@@ -91,7 +103,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Close a dialog', group: 'In dialogs and lists', keys: ['Esc'] },
 ];
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'On the board', 'In Changes', 'In Commits', 'In dialogs and lists'];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'On the board', 'In Changes', 'In Commits', 'Comparing pages', 'In dialogs and lists'];
 
 /** How a key is written on this platform. */
 export function keyLabel(key: string, mac: boolean): string {
