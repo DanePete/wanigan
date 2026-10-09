@@ -60,6 +60,28 @@ try {
       await page.waitForFunction(() => document.querySelectorAll('.hrow').length === 500);
     });
 
+    // A Gemini CLI session at its usage limit: Gemini has one sign-in and asks in its own dialog,
+    // so Needs you sends the owner to the terminal and offers no account to carry it on.
+    await check('gemini-limit-need', () => {
+      const original = window.wanigan.call;
+      window.wanigan.call = async (method, params) => {
+        const result = await original(method, params);
+        if (method !== 'needs.list') return result;
+        const like = result.find((n) => n.kind === 'limit') ?? result[0];
+        return [{ ...like, kind: 'limit', provider: 'gemini', accountId: null, title: 'Gemini on the search endpoint', cardId: null, cardKey: null,
+          detail: 'Hit its usage limit. Resets 11:09 am.', since: Date.now() - 60_000 }, ...result];
+      };
+    }, async (page) => {
+      await page.goto(`${base}#/needs`);
+      const row = page.locator('.need-row', { hasText: 'Gemini on the search endpoint' });
+      await row.waitFor();
+      assert.equal(await row.getByRole('link', { name: 'Answer in terminal' }).count(), 1, 'the owner answers Gemini’s own dialog');
+      assert.equal(await row.getByRole('button', { name: 'Dismiss' }).count(), 1);
+      assert.equal(await row.getByText(/Continue on/).count(), 0, 'no Claude account is offered for a Gemini conversation');
+      assert.match(await row.textContent(), /Resets 11:09 am/);
+      await row.screenshot({ path: join(out, `${theme}-gemini-limit-need-row.png`), animations: 'disabled' });
+    });
+
     await check('crawl-target-survives-replacement', null, async (page) => {
       await page.addInitScript(`(${pageHelpers})();`);
       await page.goto(`${base}#/needs`);
