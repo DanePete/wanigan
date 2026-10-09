@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aiClientSentence, parseSaveAi, parseSiteAi, saveAiSentence, savesSentence, savesSignature, siteAiText } from './live-ai.ts';
+import { aiClientSentence, groupSaves, parseSaveAi, parseSiteAi, saveAiSentence, savesSentence, savesSignature, siteAiText } from './live-ai.ts';
 import type { TraceSave } from './live-trace.ts';
 
 const save: TraceSave = {
@@ -54,6 +54,22 @@ test('before a save it says whose code runs, and that the AI Client is connected
   assert.equal(savesSignature(save), savesSignature({ ...save, runs: [...save.runs].reverse() }), 'the same code asks once, in whatever order it was listed');
 });
 
+test('code every kind of save runs is said once, and each kind says only what it adds', () => {
+  const run = (by: string, hooks: string[]) => ({ by, kind: 'module' as const, owner: 'contrib' as const, hooks });
+  const saves: TraceSave[] = [
+    { id: 'entity:node', label: 'Saving a content item (node)', runs: [run('acme_search', ['entity_update']), run('acme_ai', ['node_presave'])] },
+    { id: 'entity:user', label: 'Saving a user (user)', runs: [run('acme_search', ['entity_insert'])] },
+    { id: 'entity:file', label: 'Saving a file (file)', runs: [] },
+  ];
+  const g = groupSaves(saves);
+  assert.deepEqual(g.everywhere.map((r) => r.by), ['acme_search']);
+  assert.deepEqual(g.each.map((e) => [e.save.id, e.extra.map((r) => r.by)]), [['entity:node', ['acme_ai']], ['entity:user', []]], 'a save that runs core alone is left out');
+  const text = siteAiText({ version: 1, platform: 'drupal', coreAi: false, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false }, saves });
+  assert.match(text, /^- Every kind of save below: acme_search \(module\)$/m);
+  assert.match(text, /^- Saving a content item \(node\): acme_ai \(module\) on node_presave$/m);
+  assert.match(text, /^- Saving a user \(user\): only what every save runs$/m);
+});
+
 test('after a save it says what core’s AI Client and the Abilities API reported, and what it cannot see', () => {
   const none = saveAiSentence(parseSaveAi({ watched: { prompts: true, abilities: true }, prompts: [], abilities: [] }));
   assert.deepEqual(none, { ran: false, text: 'WordPress’s AI Client sent no prompt and no ability ran during this save. AI a plugin calls on its own, outside core’s AI Client, is not seen.' });
@@ -65,6 +81,7 @@ test('after a save it says what core’s AI Client and the Abilities API reporte
   assert.deepEqual(ran, { ran: true, text: 'During this save, WordPress’s AI Client sent 2 prompts (2 × acme acme-large-2, 1,212 tokens), and an ability ran (acme-seo/summarize).' });
   const stopped = saveAiSentence(parseSaveAi({ watched: { prompts: true, abilities: true }, prompts: [], abilities: [], stopped: 2 }));
   assert.match(stopped?.text ?? '', /asked 2 times during this save and stopped, as you chose. AI a plugin calls on its own, outside core’s AI Client, was not stopped/);
+  assert.match(saveAiSentence(parseSaveAi({ watched: { prompts: true, abilities: true }, prompts: [], abilities: [], stopped: 0 }))?.text ?? '', /^You chose to stop WordPress’s AI Client for this save; nothing asked it for a prompt/);
   assert.equal(parseSaveAi({ watched: { prompts: false, abilities: false }, prompts: [] }), null, 'nothing listened to: nothing to say');
   assert.equal(parseSaveAi('no'), null);
 });

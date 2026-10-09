@@ -3216,9 +3216,12 @@ final class Wanigan_Live {
 	/** "Saving a Page", "Saving the site's settings". */
 	private static function save_label(string $kind, string $sub): string {
 		if ($kind === 'post') {
+			// Core's own media type reads as a mass noun; every other type by its own singular name.
+			if ($sub === 'attachment') return 'Saving media';
 			$type = get_post_type_object($sub);
 			$name = $type && isset($type->labels->singular_name) ? wp_strip_all_tags((string) $type->labels->singular_name) : $sub;
-			return 'Saving ' . (preg_match('/^[aeiou]/i', $name) ? 'an ' : 'a ') . $name;
+			// "a" or "an" by how it sounds: an event, a user, a URL.
+			return 'Saving ' . (preg_match('/^(?:[aeio]|u(?!s|r|ni|ti|te|ku|bi))/i', $name) ? 'an ' : 'a ') . $name;
 		}
 		if ($kind === 'option') return 'Saving the site’s settings (' . $sub . ')';
 		return 'Saving widgets';

@@ -311,7 +311,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     setBanner({ kind: 'write', text, warn });
     if (toastIt) toast(text, warn ? 'error' : 'info');
   }, [toast]);
-  const checks = useWriteChecks({ live, scan: scanned, traceId: currentTraceId, say: sayWrite });
+  /** Until when the site's change counter moving is the live view's own write, not someone else's. */
+  const ownWriteUntil = useRef(0);
+  const wrote = useCallback(() => { ownWriteUntil.current = Date.now() + 8_000; }, []);
+  const checks = useWriteChecks({ live, scan: scanned, traceId: currentTraceId, say: sayWrite, written: wrote });
   /** What an edit sheet's parts showed when it opened: the save is read back against it. */
   const editCheck = useRef<Promise<WriteCheck> | null>(null);
   const arrange = useArrange({
@@ -495,6 +498,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       if (stopped || queue.current.timer !== null) return;
       void live.helperChanged().then((n) => {
         if (n === null || n < 0) return;
+        // The live view's own write moved the counter: that page reloaded already, and its read-back is said.
+        if (Date.now() < ownWriteUntil.current) { last = n; return; }
         if (last !== null && n !== last) {
           recent = [...recent.filter((t) => Date.now() - t < 60_000), Date.now()];
           if (recent.length > CONTENT_RELOADS_A_MINUTE) { stopped = true; setBanner({ kind: 'restless' }); return; }

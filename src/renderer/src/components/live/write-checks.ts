@@ -36,7 +36,7 @@ export interface WriteChecks {
   traced(answer: LiveTraceAnswer): Promise<void>;
 }
 
-export function useWriteChecks({ live, scan, traceId, say }: {
+export function useWriteChecks({ live, scan, traceId, say, written }: {
   live: Bridge | null;
   /** The page's regions as last scanned. */
   scan: MutableRefObject<LiveRegion[]>;
@@ -44,6 +44,8 @@ export function useWriteChecks({ live, scan, traceId, say }: {
   traceId: () => string | null;
   /** Say something about a write: `warn` when it needs the owner to look. */
   say: (text: string, warn: boolean, toast: boolean) => void;
+  /** A write came back from the site: its own change is not someone else's (the content watch need not reload for it). */
+  written?: () => void;
 }): WriteChecks {
   const pending = useRef<{ check: WriteCheck; reloaded: boolean; ai: string | null } | null>(null);
   const undos = useRef(new Map<string, WriteCheck>());
@@ -71,13 +73,14 @@ export function useWriteChecks({ live, scan, traceId, say }: {
   }, [prepare, scan]);
 
   const settle = useCallback((check: WriteCheck, result: { ok: boolean; ai?: SaveAi | null; undo?: string | null }): void => {
+    written?.();
     const ai = saveAiSentence(result.ai ?? null);
     // What the site's AI did is said at once, whether or not the save went through: it may have spent either way.
     if (ai?.ran) say(ai.text, false, true);
     if (!result.ok) { pending.current = null; return; }
     if (result.undo) undos.current.set(result.undo, check);
     pending.current = { check, reloaded: false, ai: ai?.text ?? null };
-  }, [say]);
+  }, [say, written]);
 
   const loading = useCallback((): void => {
     if (pending.current) pending.current.reloaded = true;

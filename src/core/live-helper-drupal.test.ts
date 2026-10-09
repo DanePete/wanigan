@@ -203,6 +203,7 @@ namespace {
     'node' => SaveCode::forEntityType('node'),
     'block' => SaveCode::forEntityType('block'),
     'missing' => SaveCode::forEntityType('nope'),
+    'articles' => array_map([SaveCode::class, 'article'], ['user', 'URL alias', 'order', 'item', 'image style', 'unpublished thing']),
     'site' => array_column(SaveCode::site(), 'id'),
     'targets' => [SaveCode::forTarget('field.node.title.en.12', ['kind' => 'field', 'type' => 'node']), SaveCode::forTarget('config.block.acme_search', ['kind' => 'config']), SaveCode::forTarget('link.menu_link_content:abc', ['kind' => 'link']), SaveCode::forTarget('link.system.admin', ['kind' => 'link']), SaveCode::forTarget('tpl.0123', ['kind' => 'template-override'])],
     'collections' => [SaveCode::forCollection(['kind' => 'field-items', 'type' => 'paragraph'], 'content'), SaveCode::forCollection(['kind' => 'region-blocks'], 'configuration'), SaveCode::forCollection(['kind' => 'menu'], 'configuration'), SaveCode::forCollection(['kind' => 'layout', 'storage' => 'overrides', 'type' => 'node'], 'content'), SaveCode::forCollection(['kind' => 'layout', 'storage' => 'defaults', 'type' => 'node'], 'configuration')],
@@ -221,6 +222,7 @@ namespace {
     assert.deepEqual(block.runs.map((r) => [r.by, r.hooks]), [['acme_ai', ['entity_presave']], ['northwind_seo', ['config.save']]], 'configuration adds the config save listeners, by the module their class is in');
     assert.equal(block.core, 1, 'core’s own listener is counted, not listed');
     assert.equal(out.missing, null);
+    assert.deepEqual(out.articles, ['a', 'a', 'an', 'an', 'an', 'an'], 'a user, a URL alias, an order');
     assert.deepEqual(out.site, ['entity:node', 'entity:paragraph'], 'the site-wide list is content, those running the most first');
     assert.deepEqual(out.targets, ['node', 'block', 'menu_link_content', null, null]);
     assert.deepEqual(out.collections, ['paragraph', 'block', null, 'node', 'entity_view_display']);

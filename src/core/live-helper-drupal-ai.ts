@@ -82,7 +82,7 @@ final class SaveCode {
     $label = (string) $definition->getSingularLabel();
     return self::$cache[$type] = [
       'id' => 'entity:' . $type,
-      'label' => 'Saving ' . (preg_match('/^[aeiou]/i', $label) ? 'an ' : 'a ') . $label . ' (' . $type . ')',
+      'label' => 'Saving ' . self::article($label) . ' ' . $label . ' (' . $type . ')',
       'runs' => array_values($runs),
       'core' => $core,
     ];
@@ -104,6 +104,13 @@ final class SaveCode {
     }
     usort($out, static fn ($a, $b) => count($b['runs']) <=> count($a['runs']) ?: strcmp($a['id'], $b['id']));
     return $out;
+  }
+
+  /**
+   * "a" or "an" before a label, by how it sounds: an order, a user, a URL alias.
+   */
+  public static function article(string $label): string {
+    return preg_match('/^(?:[aeio]|u(?!s|r|ni|ti|te|ku|bi))/i', $label) ? 'an' : 'a';
   }
 
   /**

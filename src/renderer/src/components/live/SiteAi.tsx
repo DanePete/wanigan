@@ -3,7 +3,7 @@
 // moved or added (src/shared/live-ai.ts). Read-only: nothing here prompts a
 // model, and no key is ever read; the helper lists what core already knows.
 import { useState } from 'react';
-import { abilityHints, aiClientSentence, keyWords, runnerName, SAVE_CAVEAT, savesSentence, type LiveSiteAiAnswer, type SiteAi } from '@shared/live-ai';
+import { abilityHints, aiClientSentence, groupSaves, keyWords, runnerName, SAVE_CAVEAT, savesSentence, type LiveSiteAiAnswer, type SiteAi } from '@shared/live-ai';
 import type { TraceAi, TraceSave } from '@shared/live-trace';
 import { Button, Disclosure } from '../ui';
 
@@ -49,7 +49,7 @@ export function SiteAiSection({ answer, onRefresh }: { answer: LiveSiteAiAnswer 
     );
   }
   const ai = answer.ai;
-  const saving = ai.saves.filter((s) => s.runs.length);
+  const grouped = groupSaves(ai.saves);
   const abilities = ai.abilities ?? [];
   return (
     <Disclosure title="AI on this site" summary={summary(ai)} className="live-site-ai">
@@ -106,19 +106,27 @@ export function SiteAiSection({ answer, onRefresh }: { answer: LiveSiteAiAnswer 
         </>
       )}
       <h4 className="live-subhead small">What saving runs besides core</h4>
-      {saving.length ? (
+      {grouped.each.length ? (
         <ul className="live-edit-list">
-          {saving.map((s) => (
-            <li key={s.id}>
+          {grouped.everywhere.length ? (
+            <li>
               <div className="live-edit-what">
-                <span className="small">{s.label}</span>
-                <span className="faint small">{s.runs.map(runnerName).join(', ')}</span>
+                <span className="small">Every kind of save below</span>
+                <span className="faint small">{grouped.everywhere.map(runnerName).join(', ')}</span>
+              </div>
+            </li>
+          ) : null}
+          {grouped.each.map(({ save, extra }) => (
+            <li key={save.id}>
+              <div className="live-edit-what">
+                <span className="small">{save.label}</span>
+                <span className="faint small">{extra.length ? `${grouped.everywhere.length ? 'Also ' : ''}${extra.map(runnerName).join(', ')}` : 'Only what every save runs'}</span>
               </div>
             </li>
           ))}
         </ul>
       ) : <p className="faint small">Only core’s own code, as far as core’s hook lists show.</p>}
-      <p className="faint small">{saving.length ? `${SAVE_CAVEAT} ` : ''}Read from {ai.platform === 'drupal' ? 'Drupal' : 'WordPress'} core through the site helper: Wanigan calls no model, and never reads a key.</p>
+      <p className="faint small">{grouped.each.length ? `${SAVE_CAVEAT} ` : ''}Read from {ai.platform === 'drupal' ? 'Drupal' : 'WordPress'} core through the site helper: Wanigan calls no model, and never reads a key.</p>
       <div className="live-actions"><Button size="s" tone="quiet" icon="refresh" onClick={onRefresh}>Read it again</Button></div>
     </Disclosure>
   );

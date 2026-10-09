@@ -197,6 +197,19 @@ export function listed(items: string[], max = 6): string {
   return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
 }
 
+/**
+ * What each kind of save runs, with the code every one of them runs said once: on most sites the same modules
+ * or plugins hook every save (search indexing, aliases), and only a few hook one kind. A save that runs core
+ * alone is left out.
+ */
+export function groupSaves(saves: readonly TraceSave[]): { everywhere: SaveRunner[]; each: { save: TraceSave; extra: SaveRunner[] }[] } {
+  const ran = saves.filter((s) => s.runs.length);
+  const key = (r: SaveRunner): string => `${r.kind}:${r.by}`;
+  const everywhere = ran.length > 1 ? (ran[0] as TraceSave).runs.filter((r) => ran.every((s) => s.runs.some((x) => key(x) === key(r)))) : [];
+  const common = new Set(everywhere.map(key));
+  return { everywhere, each: ran.map((save) => ({ save, extra: save.runs.filter((r) => !common.has(key(r))) })) };
+}
+
 /** What Wanigan cannot know about code it found on a save path. */
 export const SAVE_CAVEAT = 'Wanigan cannot see what that code does, and some of it may call outside services, including AI billed to the site.';
 
@@ -239,6 +252,9 @@ export function saveAiSentence(ai: SaveAi | null): { ran: boolean; text: string 
   if (ai.abilities.length) {
     const names = [...new Set(ai.abilities.map((a) => a.name))];
     parts.push(`${ai.abilities.length === 1 ? 'an ability ran' : `${ai.abilities.length} abilities ran`} (${listed(names)})`);
+  }
+  if (ai.stopped === 0 && !parts.length) {
+    return { ran: false, text: 'You chose to stop WordPress’s AI Client for this save; nothing asked it for a prompt, and no ability ran. AI a plugin calls on its own, outside core’s AI Client, is not seen.' };
   }
   if (ai.stopped) {
     const text = `WordPress’s AI Client was asked ${ai.stopped === 1 ? 'once' : `${ai.stopped} times`} during this save and stopped, as you chose. AI a plugin calls on its own, outside core’s AI Client, was not stopped.`;
@@ -294,10 +310,12 @@ export function siteAiText(ai: SiteAi): string {
       for (const a of ai.abilities) lines.push(`- ${abilityLine(a)}`);
     } else lines.push('This WordPress has no Abilities API (it came in 6.9).');
   }
-  const ran = ai.saves.filter((s) => s.runs.length);
-  if (ran.length) {
+  const { everywhere, each } = groupSaves(ai.saves);
+  const on = (r: SaveRunner): string => `${runnerName(r)} on ${r.hooks.slice(0, 4).join(', ')}${r.hooks.length > 4 ? '…' : ''}`;
+  if (each.length) {
     lines.push('What saving runs besides core (found through core’s own hook lists; what the code does is not seen, and some of it may call outside services, including AI billed to the site):');
-    for (const s of ran) lines.push(`- ${s.label}: ${s.runs.map((r) => `${runnerName(r)} on ${r.hooks.slice(0, 4).join(', ')}${r.hooks.length > 4 ? '…' : ''}`).join('; ')}`);
+    if (everywhere.length) lines.push(`- Every kind of save below: ${everywhere.map((r) => runnerName(r)).join(', ')}`);
+    for (const { save, extra } of each) lines.push(`- ${save.label}: ${extra.length ? extra.map(on).join('; ') : 'only what every save runs'}`);
   } else {
     lines.push('Saving content runs only core’s own code here, as far as core’s hook lists show.');
   }
