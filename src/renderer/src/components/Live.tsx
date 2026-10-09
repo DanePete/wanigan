@@ -24,6 +24,7 @@ import { NoteComposer, NotesTab, draftFor } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
+import { openInEditor, relativeTo } from '../editor/EditButton';
 import '../styles/live.css';
 
 const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[] = [
@@ -472,6 +473,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               </span>
               <NoteComposer compact project={project} components={components} prefer={follow}
                 draft={draftFor(view?.url ?? url, { regions: selection.pick.regions, pick: selection.pick })} onDone={unselect} />
+              {selection.region?.file && parts.data?.docroot && relativeTo(project.path, `${parts.data.docroot}/${selection.region.file}`) ? (
+                <IconButton icon="code" label="Edit its template in the code editor"
+                  onClick={() => openInEditor({ projectId: project.id, path: relativeTo(project.path, `${parts.data!.docroot}/${selection.region!.file}`) as string, find: selection.pick?.text ?? null })} />
+              ) : null}
               <IconButton icon="close" label="Clear the pick" onClick={unselect} />
             </div>
           ) : null

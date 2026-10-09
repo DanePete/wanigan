@@ -15,6 +15,7 @@ import { Icon } from '../icons';
 import { Button, IconButton, useToast } from '../ui';
 import { KIND_ICON } from './Layers';
 import { NoteComposer, draftFor } from './Notes';
+import { EditButton, openInEditor, relativeTo } from '../../editor/EditButton';
 import type { StyleChange } from './note-store';
 
 export interface Selection { region: LiveRegion | null; pick: LivePick | null }
@@ -102,7 +103,7 @@ export function Inspector({ project, platform, selection, regions, components, d
 
       {region ? <Alike region={region} regions={regions} /> : null}
 
-      {region ? <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme} /> : (
+      {region ? <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme} words={pick?.text ?? null} /> : (
         <p className="faint small">Nothing around it says what made it. Notes still tell an agent where it is on the page.</p>
       )}
 
@@ -188,11 +189,17 @@ function adminLabel(r: LiveRegion): string {
 }
 
 /** What made a part: its component's folder and files, or its template and whose code it is, and how to change it here only. */
-function MadeBy({ region, component, docroot, project, theme }: {
+function MadeBy({ region, component, docroot, project, theme, words }: {
   region: LiveRegion; component: LiveComponent | null; docroot: string | null; project: ProjectSummary; theme: string | null;
+  /** The words picked on the page: the code editor opens the template where it writes them. */
+  words: string | null;
 }) {
   const origin = originOf(region.file);
   const template = region.file && docroot ? `${docroot}/${region.file}` : null;
+  // In the code editor: the template (at the picked words when it writes them), or a component's own files.
+  const templatePath = template ? relativeTo(project.path, template) : null;
+  const componentPath = (file: string): string | null => (component ? relativeTo(project.path, `${component.dir}/${file}`) : null);
+  const componentTwig = component?.files.find((f) => f.endsWith('.twig')) ?? null;
   const options = overrides(region);
   return (
     <section className="live-section" aria-label="What made it">
@@ -202,7 +209,12 @@ function MadeBy({ region, component, docroot, project, theme }: {
           <span className="mono small">{component.id}</span>
           {component.description ? <span className="small">{component.description}</span> : null}
           <span className="mono small faint" title={component.dir}>{near(project.path, component.dir)}/</span>
-          <span className="live-files">{component.files.map((f) => <span key={f} className="lib-tag mono">{f}</span>)}</span>
+          <span className="live-files">{component.files.map((f) => {
+            const path = componentPath(f);
+            return path
+              ? <button key={f} type="button" className="lib-tag mono live-file-open" title={`Open ${f} in the code editor`} onClick={() => openInEditor({ projectId: project.id, path })}>{f}</button>
+              : <span key={f} className="lib-tag mono">{f}</span>;
+          })}</span>
           {component.props.length ? (
             <ul className="live-props small" aria-label="Its props">
               {component.props.map((p) => (
@@ -214,7 +226,10 @@ function MadeBy({ region, component, docroot, project, theme }: {
               ))}
             </ul>
           ) : null}
-          <div className="live-actions"><Button size="s" tone="quiet" icon="folder" onClick={() => void bridge().openPath(component.dir)}>Show in Finder</Button></div>
+          <div className="live-actions">
+            {componentTwig && componentPath(componentTwig) ? <EditButton tone="plain" label="Edit code" target={{ projectId: project.id, path: componentPath(componentTwig) as string, find: words }} /> : null}
+            <Button size="s" tone="quiet" icon="folder" onClick={() => void bridge().openPath(component.dir)}>Show in Finder</Button>
+          </div>
         </div>
       ) : region.component ? <span className="mono small">{region.component}</span> : null}
       {region.file ? (
@@ -224,7 +239,12 @@ function MadeBy({ region, component, docroot, project, theme }: {
             {origin ? <span className={`live-origin ${origin}`}>{ORIGIN[origin]}</span> : null}
           </span>
           {region.hook ? <span className="faint small">Theme hook {region.hook}</span> : null}
-          {template ? <div className="live-actions"><Button size="s" tone="quiet" icon="file" onClick={() => void bridge().openPath(template)}>Show in Finder</Button></div> : null}
+          {template ? (
+            <div className="live-actions">
+              {templatePath ? <EditButton tone="plain" label="Edit code" target={{ projectId: project.id, path: templatePath, find: words }} /> : null}
+              <Button size="s" tone="quiet" icon="file" onClick={() => void bridge().openPath(template)}>Show in Finder</Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {region.file && origin && origin !== 'yours' && options.length && theme ? (

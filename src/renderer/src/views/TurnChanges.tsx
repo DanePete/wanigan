@@ -9,6 +9,7 @@ import { PROVIDER_LABEL, plural } from '../lib/format';
 import { Button, Dialog, Empty, IconButton, useToast } from '../components/ui';
 import { FileDiff, STATUS_LABEL } from '../components/FileDiff';
 import { Icon } from '../components/icons';
+import { EditButton } from '../editor/EditButton';
 
 /** Under a turn in the timeline: what it changed (open it to see), and undo when it is the last. */
 export function TurnChange({ checkpoint, baseline, last, open, onOpen, onUndo }: {
@@ -58,6 +59,10 @@ export function TurnPanel({ session, projectId, checkpoint, label, last, onUndo,
   onUndo: () => void; onClose: () => void;
 }) {
   const changes = useQuery('sessions.turnChanges', { id: session.id, checkpoint: checkpoint.id }, []);
+  // A session on a card with a worktree of its own changed files there, not in the project folder.
+  const cards = useQuery('cards.list', session.cardId ? { projectId } : null, ['board']);
+  const worktree = session.cardId ? cards.data?.find((c) => c.id === session.cardId)?.worktree ?? null : null;
+  const worktreeCard = worktree && session.cwd && (session.cwd === worktree.path || session.cwd.startsWith(`${worktree.path}/`)) ? session.cardId : null;
   const [selected, setSelected] = useState<string | null>(null);
   const files = changes.data?.files ?? [];
   const current = files.find((f) => f.path === selected) ?? files[0];
@@ -111,7 +116,8 @@ export function TurnPanel({ session, projectId, checkpoint, label, last, onUndo,
                     : current.diff === null && !current.binary ? <p className="faint view-pad">This turn changed too much to show every file here.</p>
                       : (
                         <FileDiff key={current.path} projectId={projectId} cardId={null} file={current} notes={[]} onRemove={() => {}}
-                          given={{ path: current.path, diff: current.diff ?? '', truncated: current.truncated }} />
+                          given={{ path: current.path, diff: current.diff ?? '', truncated: current.truncated }}
+                          actions={current.status !== 'D' && !current.binary ? <EditButton target={{ projectId, cardId: worktreeCard, path: current.path }} /> : null} />
                       )}
                 </div>
               </div>
