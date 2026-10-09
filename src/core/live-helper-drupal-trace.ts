@@ -556,6 +556,13 @@ final class Source {
    * A callable's name (function or Class::method) and where it is written.
    */
   public static function callable(mixed $callable): array {
+    // A one-element list holding a callable string, as some registries keep it.
+    if (is_array($callable) && count($callable) === 1 && is_string(reset($callable))) {
+      $callable = reset($callable);
+    }
+    if (is_array($callable) && !(isset($callable[0], $callable[1]) && is_string($callable[1]))) {
+      return ['name' => 'callable'];
+    }
     $key = is_string($callable) ? $callable : (is_array($callable) && count($callable) === 2 ? (is_object($callable[0]) ? get_class($callable[0]) : (string) $callable[0]) . '::' . $callable[1] : NULL);
     if ($key !== NULL && isset(self::$callables[$key])) {
       return self::$callables[$key];
