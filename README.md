@@ -257,7 +257,7 @@ Releases), or download the newest from there once.
 | **Watch** | Running's second layout: up to four live terminals at once, the ones that most need you first. A tile never resizes its session; click one to type into it. |
 | **Tokens** | Each session's header shows what its conversation used and how much is in context now, read from the CLI's own transcript; a card adds up its conversations. No dollars: a plan is not billed per token. |
 | **History** | Earlier Claude Code and Codex conversations discovered in a project's folder and its card worktrees, across configured accounts, including ones run in a terminal or VS Code. Per-file reads and transcript previews are bounded; total discovery still has open limits under review. Read one, or resume it as a live session (⌘⇧T). Read from where the CLIs keep them and never written; a CLI's database is read from a temporary copy, so the CLI is never blocked. |
-| **Needs you** | Permission prompts, reviews, questions from agents, failed or interrupted sessions, usage limits (continue on another account in one click), finished turns: ranked, across every project, and announced in the window or as a notification. Reply to a finished turn or answer a question in place; a permission row shows exactly what is asked, with hidden or lookalike characters spelled out. |
+| **Needs you** | Permission prompts, reviews, questions from agents, failed or interrupted sessions, usage limits, Claude Code's and Codex's (a Claude Code conversation continues on another account in one click), finished turns: ranked, across every project, and announced in the window or as a notification. Reply to a finished turn or answer a question in place; a permission row shows exactly what is asked, with hidden or lookalike characters spelled out. |
 | **Accounts** | Claude Code and Codex accounts found in supported config locations, with who each is signed in as according to the CLI. Each project picks its own. |
 | **Pause** | Per project: no new sessions or claims, and live agents are asked to wrap up. Nothing running is killed. |
 | **Changes** | A project's uncommitted git changes, or everything one card's branch changed: syntax colour for PHP, Twig, YAML, JS/TS, CSS and more, unified or side by side, a Viewed mark per file, J/K between files, and notes on lines sent to the agent as one message. |
@@ -317,7 +317,10 @@ three-line `sh` script over `nc`. Codex gets the same hooks from `-c` flags,
 trusted by hash for that launch only after Codex's own app server lists them as
 trusted (`scripts/codex-hooks-probe.ts` re-checks a new Codex version, spending
 nothing); otherwise, and as a fallback, its state comes from the OSC 9
-notifications it writes when asked to. A shell reports only running, ended, or
+notifications it writes when asked to. A Codex turn that fails (its usage limit
+included) or is interrupted fires neither a hook nor a notification; the
+thread's rollout records it, and the core reads it there for the turn the
+hook named. A shell reports only running, ended, or
 failed with its exit code. Any session ended by a signal Wanigan did not send is
 failed too.
 
@@ -368,13 +371,26 @@ verification results and the behavior that remains unverified.
   Talk to Wanigan and an image attached to a reply in the 7 October 2026
   scenario (Claude Code 2.1.292, Codex 0.155.1). The independent review did not
   repeat those model turns; `npm run scenario -- --spend` runs them again.
-- Codex: its usage limit is not detected (it says so only as screen text), and
-  a Codex conversation resumes only in the account it lives in. In the scenario
-  run its hooks reported a real turn (SessionStart, UserPromptSubmit,
-  PreToolUse, PermissionRequest, PostToolUse, Stop); OSC 9 stays on as the
-  fallback. Codex reports nothing until its first turn begins, so its
-  composer refuses until lifecycle evidence arrives. Answer startup questions
-  and send the first message in the terminal; use the composer for later turns.
+- Codex's usage limit is read from its own rollout, where Codex records the
+  failed turn; no hook or notification says so. Proven with the stand-in
+  Codex, and seen from the real 0.155.1 against a stand-in model provider's
+  429 (`scripts/codex-hooks-probe.ts --turns`), but not yet from a real account
+  hitting a real limit: the server's reply, which carries the reset, is shaped
+  from Codex's source. A Codex session without its hooks does not know its
+  rollout, so there its limit, a failed turn and Esc are not seen, and it reads
+  working until its next prompt.
+- A Codex conversation continues only in the account it lives in. Codex
+  resumes only a thread in its own CODEX_HOME (`codex resume <path>` is
+  refused). A copy or link of the rollout in another account does load the
+  history with no model call, but leaves one thread id in two accounts, which
+  History refuses to choose between, and whether that account accepts the
+  first one's encrypted reasoning is unknown without spending a turn.
+- Codex's hooks reported a real turn in the scenario run (SessionStart,
+  UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop); OSC 9
+  stays on as the fallback. Codex reports nothing until its first turn begins,
+  so its composer refuses until lifecycle evidence arrives. Answer startup
+  questions and send the first message in the terminal; use the composer for
+  later turns.
 - Replying to Codex from Needs you needs its hooks: a Codex session read only
   from its OSC 9 notifications (they say a turn ended, never that one began)
   is answered in its terminal, and says so. With its hooks, the reply was

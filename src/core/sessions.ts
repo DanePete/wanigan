@@ -3,7 +3,8 @@
 // Claude Code and (when its version takes them trusted) Codex, Codex's OSC 9
 // notifications otherwise, the process itself for everything.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { constants as fsConstants, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { open as openFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as pty from 'node-pty';
@@ -16,7 +17,8 @@ import type { LocalModels } from './local-models.ts';
 import { modelArgs } from '../shared/models.ts';
 import { delivery, type Delivery } from '../shared/attachments.ts';
 import { CODEX_LIFECYCLE_ARGS, EMPTY_LINE, scanCodex, typeInto, type TypedLine } from '../shared/codex.ts';
-import { limitResetsAt, usageLimitMessage, whyNotTarget } from '../shared/limits.ts';
+import { codexRolloutLine, type CodexTurnEnd } from '../shared/codex-turns.ts';
+import { CODEX_STAYS, codexLimitResetsAt, limitResetsAt, usageLimitMessage, whyNotTarget } from '../shared/limits.ts';
 import {
   LIVE_STATES, OWNER, PROVIDERS, SYSTEM, sessionActor,
   type Account, type CardSummary, type CardType, type Project, type Provider, type Session, type SessionEvent, type SessionState,
@@ -45,6 +47,10 @@ const STOP_GRACE_MS = 4_000;
 const MAX_EVENTS_PER_SESSION = 2_000;
 /** How long a Codex launched with hooks has, after a prompt, to report it through them. */
 const CODEX_HOOKS_WAIT_MS = 30_000;
+/** How often a Codex turn's rollout is looked at for how the turn ended, while it runs. */
+const CODEX_TURN_POLL_MS = 1_000;
+/** At most this much of what a Codex rollout grew by is read per look: a turn's end is the last thing in it. */
+const CODEX_TURN_READ_MAX = 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A Claude session's display name: the card's key and as much of its title as reads in a picker. */
 const NAME_MAX = 60;
@@ -102,6 +108,30 @@ interface Live {
   turned?: boolean;
   /** Looks in a Claude transcript for an interrupt, after the owner typed mid-turn. */
   interruptChecks?: NodeJS.Timeout[];
+  /** The Codex turn under way, followed in its rollout for an end no hook reports. */
+  codexTurn?: CodexTurnWatch | null;
+}
+
+/**
+ * A Codex turn that its UserPromptSubmit hook named, followed in the thread's
+ * rollout: a failed or interrupted turn fires no hook and no notification
+ * (shared/codex-turns.ts), only that record says it ended.
+ */
+interface CodexTurnWatch {
+  turnId: string;
+  rollout: string;
+  /** How far the rollout has been read: the end of the last whole line. */
+  offset: number;
+  /** Which file that offset is in: a replaced rollout is read from its start. */
+  file: { dev: number; ino: number } | null;
+  /** The bytes of a line not yet finished when last read. */
+  carry: Buffer;
+  /** When the account's full windows reset, from the turn's latest token count. */
+  fullUntil: number | null;
+  /** The rollout says the turn completed; its Stop hook gets one more look to arrive first. */
+  completed: boolean;
+  reading: boolean;
+  timer: NodeJS.Timeout;
 }
 
 export interface SessionsOptions {
@@ -691,6 +721,7 @@ export class Sessions {
    */
   async continueOn(id: string, accountId: string, size?: { cols?: number; rows?: number }): Promise<Session> {
     const old = this.get(id);
+    if (old.provider === 'codex') throw new CoreError('refused', CODEX_STAYS);
     if (old.provider !== 'claude' || !old.conversationId) throw new CoreError('refused', 'Only a Claude Code conversation can continue on another account.');
     const { accounts } = this.options;
     const all = accounts.list();
@@ -795,8 +826,11 @@ export class Sessions {
     return this.apply(sessionId, n.event, n.input, true);
   }
 
-  /** A lifecycle event, relayed by the agent's hook or read from its terminal. */
-  private apply(sessionId: string, event: string, input: HookInput, relayed: boolean): string {
+  /**
+   * A lifecycle event, relayed by the agent's hook or read from its terminal or
+   * record. `resetsAt` is when a limit Wanigan read itself resets, when known.
+   */
+  private apply(sessionId: string, event: string, input: HookInput, relayed: boolean, resetsAt: number | null = null): string {
     const live = this.live.get(sessionId);
     let row = this.row(sessionId);
     if (live) {
@@ -854,10 +888,14 @@ export class Sessions {
     if (chatter) this.ctx.emit('chatter', { projectId: row.project_id, sessionId, from: row.title, agent: chatterAgent(input), to: chatter.to, label: chatter.label, at: now });
 
     const asking = state === 'permission' ? (prev === 'permission' ? row.asking_since : now) : null;
-    const limitNews = this.noteLimit(row, prev, state, event, input, now);
+    const limitNews = this.noteLimit(row, prev, state, event, input, now, resetsAt);
     this.update(sessionId, { state, activity: activity ?? row.activity, lastEventAt: now, askingSince: asking, asks: this.asks(row, prev, state, event, input) });
     if (limitNews || (state !== prev && (state === 'permission' || prev === 'permission' || state === 'waiting' || prev === 'limited'))) this.ctx.emit('needs', {});
     if (state === 'waiting' && prev !== 'waiting') this.deliverNext(sessionId, true);
+    if (row.provider === 'codex') {
+      if (event === 'Stop' || event === 'StopFailure' || event === 'Interrupted') this.endCodexTurn(live);
+      else if (relayed && event === 'UserPromptSubmit') this.watchCodexTurn(live, input.turn_id, row.transcript_path);
+    }
     if (event === 'SessionStart' && row.provider === 'claude') return this.briefing(sessionId);
     // Gemini shows a hook's plain output in its window; context goes back as JSON.
     if (event === 'SessionStart' && row.provider === 'gemini') {
@@ -932,6 +970,116 @@ export class Sessions {
     if (state === 'waiting' || state === 'permission') this.apply(live.id, 'UserPromptSubmit', {}, false);
   }
 
+  /**
+   * Follow the turn a relayed Codex UserPromptSubmit named, in the thread's
+   * rollout, from where the file ends now: a failed or interrupted turn is
+   * reported nowhere else. Nothing is followed without the rollout, which
+   * learnThread keeps only inside the account's CODEX_HOME.
+   */
+  private watchCodexTurn(live: Live, turnId: unknown, rollout: string | null): void {
+    this.endCodexTurn(live);
+    if (typeof turnId !== 'string' || !turnId || turnId.length > 200 || !rollout) return;
+    let offset = 0;
+    let file: CodexTurnWatch['file'] = null;
+    try {
+      const info = statSync(rollout);
+      if (info.isFile()) { offset = info.size; file = { dev: info.dev, ino: info.ino }; }
+    } catch { offset = 0; }
+    const watch: CodexTurnWatch = {
+      turnId, rollout, offset, file, carry: Buffer.alloc(0), fullUntil: null, completed: false, reading: false,
+      timer: setInterval(() => { void this.pollCodexTurn(live, watch); }, CODEX_TURN_POLL_MS),
+    };
+    watch.timer.unref();
+    live.codexTurn = watch;
+  }
+
+  private endCodexTurn(live: Live): void {
+    if (live.codexTurn) clearInterval(live.codexTurn.timer);
+    live.codexTurn = null;
+  }
+
+  /**
+   * One look at a followed Codex turn's rollout. A failure becomes StopFailure
+   * with Codex's words and error kind (a usage limit then reads `limited`, as
+   * Claude's does); an interrupt, Interrupted; a completion with no Stop hook
+   * by the next look, Stop.
+   */
+  private async pollCodexTurn(live: Live, watch: CodexTurnWatch): Promise<void> {
+    if (watch.reading || live.codexTurn !== watch || this.closed || this.live.get(live.id) !== live) return;
+    if (watch.completed) {
+      // Codex records a completion after its Stop hook has run: none came.
+      this.endCodexTurn(live);
+      this.apply(live.id, 'Stop', {}, false);
+      return;
+    }
+    watch.reading = true;
+    let end: CodexTurnEnd | null = null;
+    try {
+      for (const line of await this.rolloutGrowth(watch)) {
+        const fact = codexRolloutLine(line, watch.turnId);
+        if (!fact) continue;
+        if ('fullUntil' in fact) watch.fullUntil = fact.fullUntil;
+        else { end = fact.end; break; }
+      }
+    } catch {
+      // Not there yet, or unreadable just now: looked at again next time.
+    } finally {
+      watch.reading = false;
+    }
+    if (!end || live.codexTurn !== watch || this.closed || this.live.get(live.id) !== live) return;
+    if (end.kind === 'completed') { watch.completed = true; return; }
+    this.endCodexTurn(live);
+    if (end.kind === 'aborted') { this.apply(live.id, 'Interrupted', {}, false); return; }
+    const input: HookInput = { error: end.info ?? 'unknown', last_assistant_message: end.message };
+    const limit = usageLimitMessage('StopFailure', input);
+    const said = limit ? codexLimitResetsAt(limit, end.at ?? this.ctx.now()) : null;
+    // Codex prints the minute; the window it reported full has the second, when the two agree.
+    const resetsAt = !limit ? null
+      : said !== null && watch.fullUntil !== null && Math.abs(watch.fullUntil - said) < 60_000 ? watch.fullUntil
+        : said ?? watch.fullUntil;
+    this.apply(live.id, 'StopFailure', input, false, resetsAt);
+  }
+
+  /**
+   * The whole lines a rollout has gained since it was last read: at most the
+   * newest CODEX_TURN_READ_MAX bytes of them. Opened without waiting and never
+   * through a final link, and read only if it is a regular file: a FIFO put in
+   * its place cannot hold a reader.
+   */
+  private async rolloutGrowth(watch: CodexTurnWatch): Promise<string[]> {
+    const file = await openFile(watch.rollout, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW);
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) return [];
+      const { size } = info;
+      // Replaced or rewritten shorter: read it from the start. Turn ids keep other turns' ends out.
+      if (size < watch.offset || (watch.file && (watch.file.dev !== info.dev || watch.file.ino !== info.ino))) {
+        watch.offset = 0;
+        watch.carry = Buffer.alloc(0);
+      }
+      watch.file = { dev: info.dev, ino: info.ino };
+      if (size === watch.offset) return [];
+      const from = Math.max(watch.offset, size - CODEX_TURN_READ_MAX);
+      const buffer = Buffer.alloc(size - from);
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, from);
+      let bytes = buffer.subarray(0, bytesRead);
+      if (from > watch.offset) {
+        // Started inside a line: drop it, and whatever was carried before the gap.
+        const nl = bytes.indexOf(0x0a);
+        bytes = nl < 0 ? Buffer.alloc(0) : bytes.subarray(nl + 1);
+        watch.carry = Buffer.alloc(0);
+      }
+      watch.offset = from + bytesRead;
+      const all = watch.carry.length ? Buffer.concat([watch.carry, bytes]) : bytes;
+      const last = all.lastIndexOf(0x0a);
+      watch.carry = Buffer.from(all.subarray(last + 1));
+      if (watch.carry.length > CODEX_TURN_READ_MAX) watch.carry = Buffer.alloc(0);
+      return last < 0 ? [] : all.subarray(0, last).toString('utf8').split('\n');
+    } finally {
+      await file.close();
+    }
+  }
+
   /** A line in a session's timeline from Wanigan itself, not from the agent. */
   private note(id: string, text: string): void {
     this.ctx.db.prepare('INSERT INTO session_events (session_id, at, event, tool, summary, path) VALUES (?, ?, ?, NULL, ?, NULL)').run(id, this.ctx.now(), 'Wanigan', text);
@@ -966,10 +1114,11 @@ export class Sessions {
 
   /**
    * Record when a session hit its usage limit and when that limit resets:
-   * Claude's own message first, else the account's last limits reading.
+   * what Wanigan read itself (a Codex rollout), else Claude's own message,
+   * else the account's last limits reading.
    * Returns whether there is news for Needs you.
    */
-  private noteLimit(row: SessionRow, prev: SessionState, state: SessionState, event: string, input: HookInput, now: number): boolean {
+  private noteLimit(row: SessionRow, prev: SessionState, state: SessionState, event: string, input: HookInput, now: number, given: number | null): boolean {
     const { db } = this.ctx;
     if (state !== 'limited') {
       if (prev === 'limited') db.prepare('UPDATE sessions SET limit_since = NULL, limit_resets_at = NULL WHERE id = ?').run(row.id);
@@ -980,7 +1129,7 @@ export class Sessions {
     const reset = event === 'Notification' && input.notification_type === 'quota_auto_resume_stale';
     if (!message && !reset) return false;
     const resetsAt = message
-      ? limitResetsAt(message, now) ?? this.options.accounts.limitResetFor(row.account_id, now)
+      ? given ?? limitResetsAt(message, now) ?? this.options.accounts.limitResetFor(row.account_id, now)
       : Math.min(row.limit_resets_at ?? now, now);
     db.prepare('UPDATE sessions SET limit_since = ?, limit_resets_at = ? WHERE id = ?').run(now, resetsAt, row.id);
     return true;
@@ -1181,6 +1330,7 @@ export class Sessions {
     live.scrollback.close();
     if (live.noHooksTimer) clearTimeout(live.noHooksTimer);
     if (live.hookWait) clearTimeout(live.hookWait);
+    this.endCodexTurn(live);
     this.live.delete(live.id);
     live.watch?.done();
     if (live.utility) {

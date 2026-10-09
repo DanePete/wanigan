@@ -4,7 +4,8 @@
 // no model is called. The UI sweep uses the same world, so what the screenshots
 // show is what the demo shows.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { Probe } from './accounts.ts';
@@ -473,11 +474,66 @@ export async function seedDemo(core: Core, base: string, { calm = false }: { cal
     ] as const) core.sessions.hook(s7.id, event, input as never);
   }
 
+  // Orbit API: a Codex turn its account's usage limit stopped. No hook or
+  // notification says so; its rollout does, and the core reads it there.
+  if (!calm) {
+    const headers = await card(oa.id, 'task', 'Rate limit headers in the API docs', { priority: 2 });
+    const s9 = await run<{ id: string }>('sessions.start', { projectId: oa.id, provider: 'codex', cardId: headers.id });
+    await codexLimited(core, s9.id, join(base, 'home', '.codex'), dirs[1] as string);
+  }
+
   seedHistory(join(base, 'home'), repo, wt, s1.conversationId);
   seedAgentFolders(join(base, 'home'), join(base, 'projects'));
 
   // Let Jev's stand-in read what was filed.
   for (let i = 0; i < 50 && core.jev.busy; i++) await new Promise((r) => setTimeout(r, 50));
+}
+
+/**
+ * A Codex turn stopped by its account's usage limit, as codex-cli 0.155.1
+ * records one: its UserPromptSubmit hook names the turn, and the thread's
+ * rollout gets the server's full window, then the turn failing with Codex's own
+ * words. Waits until the core has read it (it looks once a second).
+ */
+async function codexLimited(core: Core, sessionId: string, codexHome: string, cwd: string): Promise<void> {
+  const thread = randomUUID();
+  const turn = randomUUID();
+  const now = new Date();
+  const day = [String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')];
+  const folder = join(codexHome, 'sessions', ...day);
+  mkdirSync(folder, { recursive: true });
+  const rollout = join(folder, `rollout-${day.join('-')}T09-04-36-${thread}.jsonl`);
+  let ordinal = 0;
+  const line = (type: string, payload: Record<string, unknown>): string => `${JSON.stringify({ timestamp: new Date().toISOString(), ordinal: ordinal++, type, payload })}\n`;
+  const seconds = Math.floor(Date.now() / 1000);
+  writeFileSync(rollout, line('session_meta', { id: thread, cwd, originator: 'codex-tui', cli_version: '0.155.1', source: 'cli' }));
+  const base = { session_id: thread, transcript_path: rollout, cwd, model: 'gpt-5.5', permission_mode: 'default' };
+  core.sessions.hook(sessionId, 'SessionStart', { ...base, hook_event_name: 'SessionStart', source: 'startup' });
+  core.sessions.hook(sessionId, 'UserPromptSubmit', { ...base, hook_event_name: 'UserPromptSubmit', turn_id: turn, prompt: 'Document the X-RateLimit headers.' });
+  const resets = seconds + 2 * 3600 + 40 * 60;
+  // What its first request cost before the limit, as the token count carries it.
+  const used = { input_tokens: 18_400, cached_input_tokens: 12_288, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 18_400 };
+  appendFileSync(rollout, [
+    line('event_msg', { type: 'task_started', turn_id: turn, started_at: seconds, model_context_window: 258400, collaboration_mode_kind: 'default' }),
+    line('event_msg', { type: 'token_count', info: { total_token_usage: used, last_token_usage: used, model_context_window: 258400 }, rate_limits: { limit_id: 'codex', limit_name: null,
+      primary: { used_percent: 100, window_minutes: 300, resets_at: resets }, secondary: { used_percent: 38, window_minutes: 10080, resets_at: resets + 4 * 86400 },
+      credits: null, individual_limit: null, spend_control_reached: null, plan_type: null, rate_limit_reached_type: null } }),
+    line('event_msg', { type: 'task_complete', turn_id: turn, last_agent_message: null, started_at: seconds, completed_at: seconds, duration_ms: 41, error: {
+      message: `You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at ${codexTime(resets * 1000)}.`,
+      codex_error_info: 'usage_limit_exceeded',
+    } }),
+  ].join(''));
+  for (let i = 0; i < 60 && core.sessions.get(sessionId).state !== 'limited'; i++) await new Promise((r) => setTimeout(r, 100));
+}
+
+/** How Codex prints a reset in its message: the time alone on the same day, else the date too. */
+function codexTime(at: number): string {
+  const d = new Date(at);
+  const time = `${((d.getHours() + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() < 12 ? 'AM' : 'PM'}`;
+  if (d.toDateString() === new Date().toDateString()) return time;
+  const n = d.getDate();
+  const suffix = n >= 11 && n <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+  return `${d.toLocaleString('en-US', { month: 'short' })} ${n}${suffix}, ${d.getFullYear()} ${time}`;
 }
 
 /** A conversation's first exchange, written where Claude Code keeps it for that account and folder (a stand-in saves nothing). */
@@ -650,7 +706,7 @@ function fakeClaude(base: string, calm: boolean): string {
   ].join('\n')) : chat([
     'In Northstar Storefront: the permission prompt on NS-6, NS-7 waiting for your review, and the agent’s question on NS-7.',
     '',
-    'In Orbit API: Claude Code on OA-5 wants to run a setup command copied from a web page, and the command has a hidden character in it. Read it before you answer. OA-4 hit its usage limit, and Codex finished its turn on OA-1.',
+    'In Orbit API: Claude Code on OA-5 wants to run a setup command copied from a web page, and the command has a hidden character in it. Read it before you answer. OA-4 and OA-6 hit their accounts’ usage limits (OA-6 is Codex, which carries on only in its own account), and Codex finished its turn on OA-1.',
     '',
     'Fieldnotes is paused.',
   ].join('\n'));

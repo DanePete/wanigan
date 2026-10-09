@@ -1,14 +1,16 @@
 // A session stopped by its account's usage limit: carry its conversation on
 // under another account with room, or wait for the reset. The accounts offered
-// are the ones the core would accept (shared/limits.ts decides both).
+// are the ones the core would accept (shared/limits.ts decides both). A Codex
+// conversation stays in its account, and says so.
 import { Select } from './Select';
 import { useEffect, useState } from 'react';
-import { continueTargets } from '@shared/limits';
+import { CODEX_STAYS, continueTargets } from '@shared/limits';
+import type { Provider } from '@shared/model';
 import { attempt, call, useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
 import { Button, useToast } from './ui';
 
-export function ContinueOn({ sessionId, accountId, projectKey }: { sessionId: string; accountId: string | null; projectKey: string }) {
+export function ContinueOn({ sessionId, accountId, projectKey, provider }: { sessionId: string; accountId: string | null; projectKey: string; provider: Provider | null }) {
   const toast = useToast();
   const accounts = useQuery('accounts.list', {}, ['accounts']);
   const [chosen, setChosen] = useState('');
@@ -20,7 +22,19 @@ export function ContinueOn({ sessionId, accountId, projectKey }: { sessionId: st
   const targets = continueTargets(accounts.data ?? [], accountId);
   const target = targets.find((t) => t.account.id === chosen) ?? targets[0];
   const wait = (): Promise<void> => attempt(() => call('sessions.seen', { id: sessionId }), (m) => toast(m, 'error'))
-    .then((r) => { if (r) toast('Left to wait. Claude carries on by itself after the reset if it can; otherwise press Enter in its terminal.'); });
+    .then((r) => {
+      if (r) toast(provider === 'codex' ? 'Left to wait. Codex does not try again by itself: after the reset, send your message again in its terminal.'
+        : 'Left to wait. Claude carries on by itself after the reset if it can; otherwise press Enter in its terminal.');
+    });
+
+  if (provider === 'codex') {
+    return (
+      <>
+        <span className="faint small">{CODEX_STAYS}</span>
+        <Button size="s" tone="quiet" onClick={wait}>Wait for the reset</Button>
+      </>
+    );
+  }
 
   if (accounts.error) {
     return (

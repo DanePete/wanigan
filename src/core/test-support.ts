@@ -14,13 +14,25 @@ import { Core, type CoreOptions } from './core.ts';
 
 export const CLI = resolve(import.meta.dirname, '../cli/index.ts');
 
-/** A stand-in Codex: shows its arguments, then answers lines with real OSC 9 notifications. */
+/** The lines codex-cli 0.155.1 drew for a turn stopped by a Plus account's usage limit. */
+export const CODEX_LIMIT_SCREEN = [
+  '■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit',
+  'https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:21 AM.',
+] as const;
+
+/**
+ * A stand-in Codex: shows its arguments, then answers lines with real OSC 9
+ * notifications, or with the two red lines codex-cli 0.155.1 drew when a turn
+ * hit the usage limit (byte for byte, at 120 columns). That turn sends no
+ * notification and no Stop hook; only its rollout records it.
+ */
 export const FAKE_CODEX = [
   'echo "codex ready HOME=${CODEX_HOME-unset} ARGS=$*"',
   'while IFS= read -r line; do',
   '  case "$line" in',
   '    *ask*) printf "\\033]9;Approval requested: run the tests\\007" ;;',
   '    *done*) printf "\\033]9;Agent turn complete\\007" ;;',
+  `    *limit*) printf "\\r\\n\\033[39;49m\\033[K\\033[38;5;1;49m${CODEX_LIMIT_SCREEN[0]}\\033[39m\\033[49m\\033[0m\\r\\n\\033[39;49m\\033[K\\033[38;5;1;49m${CODEX_LIMIT_SCREEN[1]}\\033[39m\\033[49m\\033[0m\\r\\n" ;;`,
   '    *) echo "got: $line" ;;',
   '  esac',
   'done',

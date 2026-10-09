@@ -126,7 +126,7 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
   if (need.kind === 'review' || need.kind === 'question') {
     primary = <Button tone={need.kind === 'review' ? 'primary' : 'attention'} onClick={() => need.cardKey && openCard(need.cardKey)}>{need.kind === 'review' ? 'Review' : 'Answer'}</Button>;
   } else if (need.kind === 'limit' && need.sessionId) {
-    primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} />;
+    primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} provider={need.provider} />;
   } else if (need.kind === 'interrupted' && need.sessionId && need.resumable) {
     const resume = (): Promise<void> => attempt(() => call('sessions.resume', { id: need.sessionId as string }), (m) => toast(m, 'error', { action: { label: 'Retry', run: () => void resume() } }))
       .then((s) => { if (s) navigate({ name: 'session', projectKey, sessionId: s.id }); });

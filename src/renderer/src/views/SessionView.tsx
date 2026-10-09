@@ -128,10 +128,11 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
         <div className="banner banner-amber banner-limit">
           <Icon name="alert" size={15} />
           <span className="banner-text">
-            {limitDetail(session.limit?.resetsAt ?? null, Date.now(), account?.label)}
-            {session.activity ? <span className="faint"> Claude said: “{session.activity}”</span> : null}
+            {limitDetail(session.limit?.resetsAt ?? null, Date.now(), account?.label, session.provider)}
+            {session.activity ? <span className="faint"> {session.provider === 'codex' ? 'Codex' : 'Claude'} said: “{session.activity}”</span> : null}
           </span>
-          {session.provider === 'claude' ? <ContinueOn sessionId={session.id} accountId={session.accountId} projectKey={project.key} /> : null}
+          {session.provider === 'claude' || session.provider === 'codex'
+            ? <ContinueOn sessionId={session.id} accountId={session.accountId} projectKey={project.key} provider={session.provider} /> : null}
         </div>
       ) : null}
       {!live ? (
