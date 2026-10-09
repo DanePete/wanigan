@@ -1,0 +1,49 @@
+/* fieldnotes/season-figures */
+.season-figures {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+	gap: 0;
+	margin: 0;
+	border-top: 1px solid var(--wp--preset--color--line, #d5cfbc);
+}
+
+.season-figures__item {
+	display: flex;
+	flex-direction: column-reverse;
+	justify-content: flex-end;
+	gap: 0.35rem;
+	padding: 1.25rem 1.5rem 0.25rem 0;
+}
+
+.season-figures__item + .season-figures__item {
+	padding-inline-start: 1.5rem;
+	border-inline-start: 1px solid var(--wp--preset--color--line, #d5cfbc);
+}
+
+.season-figures dd {
+	margin: 0;
+	font-family: var(--wp--preset--font-family--literata, Georgia, serif);
+	font-size: clamp(2.25rem, 1.6rem + 2.2vw, 3.5rem);
+	font-weight: 300;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	font-variant-numeric: lining-nums tabular-nums;
+}
+
+.season-figures dt {
+	font-size: 0.875rem;
+	line-height: 1.4;
+	color: var(--wp--preset--color--muted, #5e655f);
+}
+
+@media (max-width: 640px) {
+	.season-figures {
+		grid-template-columns: 1fr 1fr;
+	}
+
+	.season-figures__item,
+	.season-figures__item + .season-figures__item {
+		padding: 1rem 0.75rem 0.5rem 0;
+		border-inline-start: 0;
+	}
+}

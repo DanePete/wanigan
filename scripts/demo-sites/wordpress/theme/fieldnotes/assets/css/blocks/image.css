@@ -1,0 +1,15 @@
+/* core/image, "Plate": a printed plate, with its caption set as a label under a rule. */
+.wp-block-image.is-style-plate img {
+	border-radius: 2px;
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--wp--preset--color--contrast) 8%, transparent);
+}
+
+.wp-block-image.is-style-plate figcaption,
+.wp-block-image.is-style-plate .wp-element-caption {
+	display: flex;
+	gap: 0.75rem;
+	margin-top: 0.75rem;
+	padding-top: 0.6rem;
+	border-top: 1px solid var(--wp--preset--color--line);
+	text-align: left;
+}

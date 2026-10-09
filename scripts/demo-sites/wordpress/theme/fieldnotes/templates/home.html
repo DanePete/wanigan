@@ -1,0 +1,31 @@
+<!-- wp:template-part {"slug":"header","tagName":"header"} /-->
+
+<!-- wp:group {"metadata":{"name":"Journal"},"tagName":"main","style":{"spacing":{"margin":{"top":"0"},"padding":{"bottom":"var:preset|spacing|70"},"blockGap":"var:preset|spacing|50"}},"layout":{"type":"constrained"}} -->
+<main class="wp-block-group" style="margin-top:0;padding-bottom:var(--wp--preset--spacing--70)"><!-- wp:group {"metadata":{"name":"Journal header"},"tagName":"header","align":"wide","className":"fn-hero-in","style":{"spacing":{"padding":{"top":"var:preset|spacing|60"},"blockGap":"var:preset|spacing|30"}},"layout":{"type":"constrained","contentSize":"60rem","justifyContent":"left"}} -->
+<header class="wp-block-group alignwide fn-hero-in" style="padding-top:var(--wp--preset--spacing--60)"><!-- wp:paragraph {"className":"fn-eyebrow","textColor":"accent"} -->
+<p class="fn-eyebrow has-accent-color has-text-color">The journal</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:heading {"level":1,"fontSize":"display"} -->
+<h1 class="wp-block-heading has-display-font-size">Notes from the field, <em>written up the week they happened</em></h1>
+<!-- /wp:heading -->
+
+<!-- wp:paragraph {"className":"fn-standfirst fn-measure","textColor":"muted","fontSize":"large"} -->
+<p class="fn-standfirst fn-measure has-muted-color has-text-color has-large-font-size">Trail notes, gear lists, weather logs and the odd essay, from two people who carry a pencil on every walk.</p>
+<!-- /wp:paragraph --></header>
+<!-- /wp:group -->
+
+<!-- wp:pattern {"slug":"fieldnotes/journal-lead"} /-->
+
+<!-- wp:pattern {"slug":"fieldnotes/category-chips"} /-->
+
+<!-- wp:query {"queryId":31,"query":{"perPage":9,"pages":0,"offset":0,"postType":"post","order":"desc","orderBy":"date","author":"","search":"","exclude":[],"sticky":"exclude","inherit":false},"metadata":{"name":"Journal entries"},"align":"wide"} -->
+<div class="wp-block-query alignwide"><!-- wp:post-template {"className":"fn-grid","style":{"spacing":{"blockGap":"var:preset|spacing|50"}},"layout":{"type":"grid","columnCount":3,"minimumColumnWidth":"18rem"}} -->
+<!-- wp:pattern {"slug":"fieldnotes/post-card"} /-->
+<!-- /wp:post-template -->
+
+<!-- wp:pattern {"slug":"fieldnotes/pagination"} /--></div>
+<!-- /wp:query --></main>
+<!-- /wp:group -->
+
+<!-- wp:template-part {"slug":"footer","tagName":"footer"} /-->

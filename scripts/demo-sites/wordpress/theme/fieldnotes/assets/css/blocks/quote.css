@@ -1,0 +1,28 @@
+/* core/quote, "Margin note": written in the margin, set small, with its source. */
+.wp-block-quote.is-style-margin-note {
+	padding: 1rem 1.25rem 1rem 1.25rem;
+	border: 0;
+	border-radius: var(--wp--custom--radius--small);
+	background: color-mix(in srgb, var(--wp--preset--color--accent) 7%, var(--wp--preset--color--surface));
+	font-family: var(--wp--preset--font-family--manrope);
+	font-size: var(--wp--preset--font-size--small);
+	font-style: normal;
+	font-weight: 400;
+	line-height: 1.6;
+}
+
+.wp-block-quote.is-style-margin-note::before {
+	content: "Margin note";
+	display: block;
+	margin-bottom: 0.4rem;
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--wp--preset--color--accent);
+}
+
+.wp-block-quote.is-style-margin-note cite {
+	margin-top: 0.5rem;
+	color: var(--wp--preset--color--muted);
+}

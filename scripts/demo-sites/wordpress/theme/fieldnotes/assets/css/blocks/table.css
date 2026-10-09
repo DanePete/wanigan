@@ -1,0 +1,59 @@
+/* core/table, "Logbook": a weather log's columns, figures in Fira Code. */
+.wp-block-table.is-style-logbook {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.wp-block-table.is-style-logbook table {
+	min-width: 34rem;
+	border-collapse: collapse;
+	border: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.wp-block-table.is-style-logbook :where(th, td) {
+	padding: 0.7rem 0.9rem 0.7rem 0;
+	border: 0;
+	border-bottom: 1px solid var(--wp--preset--color--line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.wp-block-table.is-style-logbook thead {
+	border-bottom: 0;
+}
+
+.wp-block-table.is-style-logbook thead th {
+	border-bottom: 1px solid var(--wp--preset--color--contrast);
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	font-weight: 500;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--wp--preset--color--muted);
+}
+
+.wp-block-table.is-style-logbook tbody td:not(:last-child) {
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: 0.875em;
+	white-space: nowrap;
+}
+
+.wp-block-table.is-style-logbook tbody tr:hover {
+	background: color-mix(in srgb, var(--wp--preset--color--line) 30%, transparent);
+}
+
+.wp-block-table.is-style-logbook tfoot {
+	border-top: 0;
+}
+
+.wp-block-table.is-style-logbook tfoot td {
+	border-bottom: 0;
+	border-top: 1px solid var(--wp--preset--color--contrast);
+	font-weight: 600;
+}
+
+.wp-block-table.is-style-logbook figcaption {
+	margin-top: 0.75rem;
+	text-align: left;
+}

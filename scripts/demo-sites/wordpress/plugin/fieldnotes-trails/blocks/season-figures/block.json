@@ -1,0 +1,28 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "fieldnotes/season-figures",
+	"version": "1.0.0",
+	"title": "Season figures",
+	"category": "widgets",
+	"icon": "chart-bar",
+	"description": "The journal in numbers, counted when the page is made: trails, kilometres of trail, weather logs and readers' notes.",
+	"keywords": [ "numbers", "stats", "season" ],
+	"textdomain": "fieldnotes-trails",
+	"attributes": {},
+	"supports": {
+		"html": false,
+		"align": [ "wide", "full" ],
+		"color": {
+			"text": true,
+			"background": true
+		},
+		"spacing": {
+			"margin": true,
+			"padding": true
+		}
+	},
+	"editorScript": "file:./index.js",
+	"style": "file:./style.css",
+	"render": "file:./render.php"
+}

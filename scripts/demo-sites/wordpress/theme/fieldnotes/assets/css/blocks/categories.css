@@ -1,0 +1,33 @@
+/* core/categories, "Chips": the journal's sections as a row of pills, the current one filled. */
+.wp-block-categories.is-style-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wp-block-categories.is-style-chips .cat-item a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 2.25rem;
+	padding: 0.35rem 0.95rem;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--pill);
+	font-size: var(--wp--preset--font-size--small);
+	font-weight: 500;
+	text-decoration: none;
+	transition: border-color var(--wp--custom--motion--quick) ease, background-color var(--wp--custom--motion--quick) ease;
+}
+
+.wp-block-categories.is-style-chips .cat-item a:hover {
+	border-color: var(--wp--preset--color--contrast);
+	color: inherit;
+}
+
+.wp-block-categories.is-style-chips .current-cat a {
+	border-color: var(--wp--preset--color--contrast);
+	background: var(--wp--preset--color--contrast);
+	color: var(--wp--preset--color--base);
+}

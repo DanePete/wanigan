@@ -1,0 +1,44 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/theme.json",
+	"version": 3,
+	"title": "Lake",
+	"settings": {
+		"color": {
+			"palette": [
+				{ "slug": "base", "name": "Ice", "color": "#EEF2F2" },
+				{ "slug": "surface", "name": "Snow", "color": "#FAFCFC" },
+				{ "slug": "contrast", "name": "Deep water", "color": "#13232B" },
+				{ "slug": "muted", "name": "Slate", "color": "#53636B" },
+				{ "slug": "line", "name": "Frost", "color": "#D2DCDF" },
+				{ "slug": "accent", "name": "Signal", "color": "#2F6D8C" },
+				{ "slug": "moss", "name": "Reed", "color": "#4F6E5E" },
+				{ "slug": "lake", "name": "Lake", "color": "#3B6276" },
+				{ "slug": "deep", "name": "Deep water", "color": "#102029" },
+				{ "slug": "on-deep", "name": "Ice", "color": "#E7EEF0" }
+			]
+		}
+	},
+	"styles": {
+		"elements": {
+			"heading": {
+				"typography": {
+					"fontFamily": "var:preset|font-family|manrope",
+					"fontWeight": "600",
+					"letterSpacing": "-0.03em",
+					"lineHeight": "1.08"
+				}
+			}
+		},
+		"blocks": {
+			"core/site-title": {
+				"typography": { "fontFamily": "var:preset|font-family|manrope", "fontWeight": "700", "letterSpacing": "-0.04em" }
+			},
+			"core/quote": {
+				"typography": { "fontFamily": "var:preset|font-family|manrope", "fontStyle": "normal", "fontWeight": "500" }
+			},
+			"core/pullquote": {
+				"typography": { "fontFamily": "var:preset|font-family|manrope", "fontWeight": "600" }
+			}
+		}
+	}
+}

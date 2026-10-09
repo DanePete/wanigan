@@ -1,0 +1,28 @@
+/* core/group, "Card": a bright sheet with a hairline edge. */
+.wp-block-group.is-style-card {
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--medium);
+	background-color: var(--wp--preset--color--surface);
+}
+
+/* core/group, "Notebook page": ruled lines and a red margin, like the real thing. */
+.wp-block-group.is-style-notebook {
+	--fn-rule: 2rem;
+	position: relative;
+	padding: calc(var(--fn-rule) * 1) clamp(1.25rem, 4vw, 3rem) calc(var(--fn-rule) * 1) clamp(2.75rem, 7vw, 5rem);
+	border-radius: var(--wp--custom--radius--small);
+	background-color: var(--wp--preset--color--surface);
+	background-image:
+		linear-gradient(90deg, transparent calc(clamp(2.75rem, 7vw, 5rem) - 1.1rem), color-mix(in srgb, var(--wp--preset--color--accent) 45%, transparent) calc(clamp(2.75rem, 7vw, 5rem) - 1.1rem), color-mix(in srgb, var(--wp--preset--color--accent) 45%, transparent) calc(clamp(2.75rem, 7vw, 5rem) - 1rem), transparent calc(clamp(2.75rem, 7vw, 5rem) - 1rem)),
+		repeating-linear-gradient(180deg, transparent 0, transparent calc(var(--fn-rule) - 1px), color-mix(in srgb, var(--wp--preset--color--lake) 22%, transparent) calc(var(--fn-rule) - 1px), color-mix(in srgb, var(--wp--preset--color--lake) 22%, transparent) var(--fn-rule));
+	box-shadow: var(--wp--preset--shadow--soft);
+	line-height: var(--fn-rule);
+}
+
+.wp-block-group.is-style-notebook > * {
+	margin-block: 0 !important;
+}
+
+.wp-block-group.is-style-notebook > * + * {
+	margin-block-start: var(--fn-rule) !important;
+}

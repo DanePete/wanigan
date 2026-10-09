@@ -1,0 +1,47 @@
+/* core/list, "Checklist": square boxes a pencil could tick, for gear lists. */
+.wp-block-list.is-style-checklist {
+	padding-inline-start: 0;
+	list-style: none;
+}
+
+.wp-block-list.is-style-checklist li {
+	position: relative;
+	padding: 0.55rem 0 0.55rem 2.1rem;
+	border-bottom: 1px solid var(--wp--preset--color--line);
+}
+
+.wp-block-list.is-style-checklist li::before {
+	content: "";
+	position: absolute;
+	top: 0.85rem;
+	left: 0.1rem;
+	width: 1.05rem;
+	height: 1.05rem;
+	border: 1.5px solid var(--wp--preset--color--contrast);
+	border-radius: 3px;
+	background: var(--wp--preset--color--surface);
+}
+
+.wp-block-list.is-style-checklist li:has(> strong:first-child)::after,
+.wp-block-list.is-style-checklist li.is-packed::after {
+	content: "";
+	position: absolute;
+	top: 0.98rem;
+	left: 0.42rem;
+	width: 0.36rem;
+	height: 0.62rem;
+	border: solid var(--wp--preset--color--accent);
+	border-width: 0 2px 2px 0;
+	transform: rotate(40deg);
+}
+
+.wp-block-list.is-style-checklist li > em {
+	display: block;
+	font-size: var(--wp--preset--font-size--small);
+	font-style: normal;
+	color: var(--wp--preset--color--muted);
+}
+
+.wp-block-list.is-style-checklist li ul {
+	margin-top: 0.4rem;
+}

@@ -1,0 +1,41 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/theme.json",
+	"version": 3,
+	"title": "Night",
+	"settings": {
+		"color": {
+			"palette": [
+				{ "slug": "base", "name": "Night", "color": "#141A17" },
+				{ "slug": "surface", "name": "Tent light", "color": "#1C2420" },
+				{ "slug": "contrast", "name": "Birch", "color": "#ECE6D8" },
+				{ "slug": "muted", "name": "Fog", "color": "#A3AA9F" },
+				{ "slug": "line", "name": "Shadow", "color": "#33403A" },
+				{ "slug": "accent", "name": "Ember", "color": "#E58B5C" },
+				{ "slug": "moss", "name": "Moss", "color": "#7FA48D" },
+				{ "slug": "lake", "name": "Lake", "color": "#86A9BC" },
+				{ "slug": "deep", "name": "Spruce", "color": "#0C110F" },
+				{ "slug": "on-deep", "name": "Birch", "color": "#ECE6D8" }
+			],
+			"duotone": [
+				{ "slug": "spruce-paper", "name": "Night and birch", "colors": [ "#0C110F", "#ECE6D8" ] },
+				{ "slug": "ember-paper", "name": "Ember and night", "colors": [ "#2A120A", "#E58B5C" ] },
+				{ "slug": "lake-fog", "name": "Lake and night", "colors": [ "#0F1A20", "#86A9BC" ] }
+			]
+		}
+	},
+	"styles": {
+		"elements": {
+			"button": {
+				":hover": {
+					"color": { "background": "var:preset|color|accent", "text": "var:preset|color|deep" }
+				}
+			}
+		},
+		"blocks": {
+			"core/image": {
+				"filter": { "duotone": "var(--wp--preset--duotone--spruce-paper)" }
+			}
+		},
+		"css": "img{filter:brightness(.92)}"
+	}
+}

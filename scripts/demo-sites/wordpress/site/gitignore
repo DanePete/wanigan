@@ -1,0 +1,26 @@
+# WordPress core (wp-cli downloads it)
+/wp-admin/
+/wp-includes/
+/index.php
+/license.txt
+/readme.html
+/wp-*.php
+!/wp-config.php
+/xmlrpc.php
+# WordPress's own themes, uploads and logs
+/wp-content/themes/twentytwentyfive/
+/wp-content/themes/index.php
+/wp-content/plugins/index.php
+/wp-content/index.php
+/wp-content/uploads/
+/wp-content/upgrade/
+/wp-content/debug.log
+# Wanigan's live view helper, if installed
+/wp-content/mu-plugins/wanigan-live.php
+# The demo build's
+/.demo-admin
+/.demo-build/
+/.demo-images/
+/.demo-preview/
+# ddev's generated settings
+/wp-config-ddev.php

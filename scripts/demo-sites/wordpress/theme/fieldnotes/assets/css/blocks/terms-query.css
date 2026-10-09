@@ -1,0 +1,53 @@
+/* core/terms-query, "Chips": regions as pills, each with its count. */
+.wp-block-terms-query.is-style-chips .wp-block-term-template {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.wp-block-terms-query.is-style-chips .wp-block-term-template > * {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-height: 2.25rem;
+	margin: 0;
+	padding: 0.35rem 0.95rem;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--pill);
+	font-size: var(--wp--preset--font-size--small);
+	transition: border-color var(--wp--custom--motion--quick) ease;
+}
+
+.wp-block-terms-query.is-style-chips .wp-block-term-template > *:hover {
+	border-color: var(--wp--preset--color--contrast);
+}
+
+.wp-block-terms-query.is-style-chips :where(.wp-block-term-name) {
+	margin: 0;
+	font-size: inherit;
+	font-weight: 500;
+}
+
+.wp-block-terms-query.is-style-chips :where(.wp-block-term-name) a {
+	text-decoration: none;
+}
+
+.wp-block-terms-query.is-style-chips :where(.wp-block-term-name) a::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+}
+
+.wp-block-terms-query.is-style-chips .wp-block-term-template > * {
+	position: relative;
+}
+
+.wp-block-terms-query.is-style-chips :where(.wp-block-term-count) {
+	margin: 0;
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	color: var(--wp--preset--color--muted);
+}

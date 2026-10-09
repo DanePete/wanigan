@@ -1,0 +1,465 @@
+/*
+ * Fieldnotes: what theme.json cannot say. Every colour, size and font here is
+ * a theme.json preset (var(--wp--preset--…)) or a custom value
+ * (var(--wp--custom--…)), so the style variations restyle this too.
+ */
+
+/* ── Reading ─────────────────────────────────────────────────────────── */
+
+body {
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+	font-optical-sizing: auto;
+}
+
+::selection {
+	background: color-mix(in srgb, var(--wp--preset--color--accent) 22%, transparent);
+	color: inherit;
+}
+
+:where(h1, h2, h3, h4, .wp-block-post-title, .wp-block-query-title) {
+	text-wrap: balance;
+}
+
+:where(p, li, figcaption, dd) {
+	text-wrap: pretty;
+}
+
+:where(.wp-block-post-content, .entry-content) a:where(:not(.wp-element-button)),
+:where(.wp-block-group, .wp-block-column, .wp-block-media-text__content) > p a:where(:not(.wp-element-button)) {
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.22em;
+	text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+	transition: color var(--wp--custom--motion--quick) ease, text-decoration-color var(--wp--custom--motion--quick) ease;
+}
+
+:where(.wp-block-post-content, .entry-content) a:where(:not(.wp-element-button)):hover {
+	text-decoration-color: currentColor;
+}
+
+:focus-visible {
+	outline: 2px solid var(--wp--preset--color--accent);
+	outline-offset: 3px;
+}
+
+.has-drop-cap:not(:focus)::first-letter {
+	float: left;
+	margin: 0.08em 0.12em 0 0;
+	font-family: var(--wp--preset--font-family--literata);
+	font-size: 4.4em;
+	font-weight: 300;
+	line-height: 0.82;
+	color: var(--wp--preset--color--accent);
+}
+
+/* Small mono labels: the journal's field-data voice. */
+.fn-label,
+.is-style-eyebrow {
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	font-weight: 500;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+}
+
+.fn-standfirst {
+	font-family: var(--wp--preset--font-family--literata);
+	font-weight: 300;
+	letter-spacing: -0.01em;
+	line-height: 1.45;
+}
+
+.fn-measure {
+	max-width: var(--wp--custom--measure);
+}
+
+/* ── The page frame ──────────────────────────────────────────────────── */
+
+.wp-site-blocks > header.wp-block-template-part {
+	position: sticky;
+	top: 0;
+	z-index: 50;
+}
+
+.admin-bar .wp-site-blocks > header.wp-block-template-part {
+	top: var(--wp-admin--admin-bar--height, 32px);
+}
+
+.site-header {
+	background: color-mix(in srgb, var(--wp--preset--color--base) 88%, transparent);
+	-webkit-backdrop-filter: saturate(1.3) blur(14px);
+	backdrop-filter: saturate(1.3) blur(14px);
+	border-bottom: 1px solid color-mix(in srgb, var(--wp--preset--color--line) 70%, transparent);
+}
+
+.site-header .wp-block-site-title a {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 0.1em;
+}
+
+/* The main menu: quiet links, a drawn underline on hover, submenus as cards. */
+.site-header .wp-block-navigation .wp-block-navigation-item__content {
+	padding-block: 0.35rem;
+}
+
+.site-header .wp-block-navigation > .wp-block-navigation__container > .wp-block-navigation-item > .wp-block-navigation-item__content {
+	background-image: linear-gradient(currentColor, currentColor);
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	background-size: 0 1px;
+	transition: background-size var(--wp--custom--motion--quick) ease;
+}
+
+.site-header .wp-block-navigation > .wp-block-navigation__container > .wp-block-navigation-item:hover > .wp-block-navigation-item__content,
+.site-header .wp-block-navigation .current-menu-item > .wp-block-navigation-item__content {
+	background-size: 100% 1px;
+}
+
+.site-header .wp-block-navigation .wp-block-navigation__submenu-container {
+	min-width: 14rem !important;
+	padding: 0.5rem !important;
+	border: 1px solid var(--wp--preset--color--line) !important;
+	border-radius: var(--wp--custom--radius--medium);
+	background: var(--wp--preset--color--surface) !important;
+	box-shadow: var(--wp--preset--shadow--soft);
+}
+
+.site-header .wp-block-navigation .wp-block-navigation__submenu-container .wp-block-navigation-item__content {
+	padding: 0.5rem 0.75rem;
+	border-radius: var(--wp--custom--radius--small);
+}
+
+.site-header .wp-block-navigation .wp-block-navigation__submenu-container .wp-block-navigation-item__content:hover {
+	background: var(--wp--preset--color--base);
+	color: var(--wp--preset--color--accent);
+}
+
+.wp-block-navigation__responsive-container.is-menu-open {
+	padding: var(--wp--preset--spacing--40);
+	background: var(--wp--preset--color--base) !important;
+}
+
+.wp-block-navigation__responsive-container.is-menu-open .wp-block-navigation__responsive-container-content {
+	font-family: var(--wp--preset--font-family--literata);
+	font-size: var(--wp--preset--font-size--x-large);
+	font-weight: 300;
+}
+
+.wp-block-navigation__responsive-container.is-menu-open .wp-block-navigation__submenu-container {
+	font-family: var(--wp--preset--font-family--manrope);
+	font-size: var(--wp--preset--font-size--medium);
+}
+
+.site-footer a:where(:not(.wp-element-button)) {
+	text-decoration: none;
+}
+
+.site-footer a:where(:not(.wp-element-button)):hover {
+	color: var(--wp--preset--color--on-deep);
+	text-decoration: underline;
+	text-underline-offset: 0.22em;
+}
+
+.site-footer__wordmark {
+	margin: 0;
+	font-family: var(--wp--preset--font-family--literata);
+	font-size: clamp(3.5rem, 1rem + 15.5vw, 15rem);
+	font-weight: 300;
+	line-height: 0.8;
+	letter-spacing: -0.05em;
+	color: color-mix(in srgb, var(--wp--preset--color--on-deep) 92%, transparent);
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+/* ── Cards in query loops ────────────────────────────────────────────── */
+
+.fn-card {
+	position: relative;
+	height: 100%;
+}
+
+.fn-card .wp-block-post-featured-image {
+	overflow: hidden;
+}
+
+.fn-card .wp-block-post-featured-image img {
+	transition: transform var(--wp--custom--motion--calm) var(--wp--custom--motion--ease);
+}
+
+.fn-card .wp-block-post-title a::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+}
+
+.fn-card :where(.wp-block-post-terms, .wp-block-read-more) {
+	position: relative;
+	z-index: 2;
+}
+
+.fn-card:has(.wp-block-post-title a:focus-visible) {
+	outline: 2px solid var(--wp--preset--color--accent);
+	outline-offset: 4px;
+	border-radius: var(--wp--custom--radius--medium);
+}
+
+.fn-card .wp-block-post-title a:focus-visible {
+	outline: none;
+}
+
+@media (hover: hover) {
+	.fn-card:hover .wp-block-post-featured-image img {
+		transform: scale(1.035);
+	}
+
+	.fn-card:hover .wp-block-post-title a {
+		color: var(--wp--preset--color--accent);
+	}
+}
+
+/* A trail's facts: bound to its post meta, shown as a row of figures. */
+.fn-facts {
+	border-top: 1px solid var(--wp--preset--color--contrast);
+}
+
+.fn-facts > .wp-block-group {
+	min-width: 0;
+}
+
+.fn-fact__value {
+	font-family: var(--wp--preset--font-family--literata);
+	font-weight: 300;
+	letter-spacing: -0.01em;
+	font-variant-numeric: lining-nums;
+}
+
+.fn-facts--compact {
+	border-top: 0;
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	color: var(--wp--preset--color--muted);
+}
+
+.fn-facts--compact p {
+	margin: 0;
+}
+
+.fn-facts--compact > p + p::before {
+	content: "·";
+	margin-inline-end: 0.6em;
+}
+
+/* An aside that stays in view while the article scrolls past. */
+@media (min-width: 782px) {
+	.fn-sticky {
+		position: sticky;
+		top: 6.5rem;
+		align-self: start;
+	}
+}
+
+/* The weather strip: dated rows. */
+.fn-rows > li {
+	border-top: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.fn-rows > li:last-child {
+	border-bottom: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* Covers: the caption plate in a corner. */
+.fn-plate-label {
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	letter-spacing: 0.06em;
+}
+
+/* "All" sits in front of the category chips as a chip of its own. */
+.fn-chip {
+	display: inline-flex;
+	margin: 0;
+}
+
+.fn-chip a {
+	display: inline-flex;
+	align-items: center;
+	min-height: 2.25rem;
+	padding: 0.35rem 0.95rem;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--pill);
+	font-size: var(--wp--preset--font-size--small);
+	font-weight: 500;
+	text-decoration: none;
+	transition: border-color var(--wp--custom--motion--quick) ease, background-color var(--wp--custom--motion--quick) ease;
+}
+
+.fn-chip a:hover {
+	border-color: var(--wp--preset--color--contrast);
+	color: inherit;
+}
+
+.fn-chip.is-current a {
+	border-color: var(--wp--preset--color--contrast);
+	background: var(--wp--preset--color--contrast);
+	color: var(--wp--preset--color--base);
+}
+
+/* ── Motion: small, and only for those who have not asked for less ─────
+ * Titles rise in on load; cards lift and their pictures ease in on hover;
+ * the trail finder's cards fade back in when a filter brings them back.
+ * Nothing waits on scrolling, so a full-page capture shows the whole page. */
+
+@keyframes fn-rise {
+	from {
+		opacity: 0;
+		translate: 0 1.25rem;
+	}
+
+	to {
+		opacity: 1;
+		translate: 0 0;
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.fn-hero-in > * {
+		animation: fn-rise 900ms var(--wp--custom--motion--ease) both;
+	}
+
+	.fn-hero-in > :nth-child(2) {
+		animation-delay: 80ms;
+	}
+
+	.fn-hero-in > :nth-child(3) {
+		animation-delay: 160ms;
+	}
+
+	.fn-hero-in > :nth-child(4) {
+		animation-delay: 240ms;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-duration: 1ms !important;
+	}
+}
+
+/* ── Small screens ───────────────────────────────────────────────────── */
+
+@media (max-width: 781px) {
+	.fn-stack-mobile {
+		flex-direction: column;
+		align-items: flex-start !important;
+	}
+
+	.fn-hide-mobile {
+		display: none !important;
+	}
+}
+
+/* Text a step quieter than its surroundings, whatever the colours. */
+.fn-dim {
+	color: color-mix(in srgb, currentColor 64%, transparent);
+}
+
+.site-footer__fineprint {
+	border-top: 1px solid color-mix(in srgb, var(--wp--preset--color--on-deep) 16%, transparent);
+}
+
+/* The wordmark's small contour mark, drawn in the accent colour. */
+.fn-wordmark a::before {
+	content: "";
+	display: inline-block;
+	width: 0.95em;
+	height: 0.95em;
+	margin-inline-end: 0.3em;
+	vertical-align: -0.12em;
+	background: var(--wp--preset--color--accent);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M3 22c4-7 8-10 13-10s9 3 13 10'/%3E%3Cpath d='M8 23c2.5-4.5 5-6.5 8-6.5s5.5 2 8 6.5'/%3E%3Cpath d='M13 24c1-1.8 2-2.7 3-2.7s2 .9 3 2.7'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M3 22c4-7 8-10 13-10s9 3 13 10'/%3E%3Cpath d='M8 23c2.5-4.5 5-6.5 8-6.5s5.5 2 8 6.5'/%3E%3Cpath d='M13 24c1-1.8 2-2.7 3-2.7s2 .9 3 2.7'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* An eyebrow over a title: a mono label led by a short rule (the paragraph
+   twin of the heading block's "Eyebrow" style). */
+.fn-eyebrow {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	font-weight: 500;
+	line-height: 1.4;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.fn-eyebrow::before {
+	content: "";
+	width: 1.75rem;
+	height: 1px;
+	background: currentColor;
+	flex: none;
+}
+
+/* On the journal's own page, "Everything" is where you are. */
+.blog .fn-chip--all a {
+	border-color: var(--wp--preset--color--contrast);
+	background: var(--wp--preset--color--contrast);
+	color: var(--wp--preset--color--base);
+}
+
+/* The header's search: a quiet icon that opens into a field. */
+.site-header__search .wp-block-search__button {
+	width: 2.5rem;
+	height: 2.5rem;
+	margin: 0;
+	padding: 0;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--pill);
+	background: transparent;
+	color: var(--wp--preset--color--contrast);
+}
+
+.site-header__search .wp-block-search__button:hover {
+	border-color: var(--wp--preset--color--contrast);
+	background: transparent;
+	color: var(--wp--preset--color--accent);
+}
+
+.site-header__search .wp-block-search__button svg {
+	width: 1.25rem;
+	height: 1.25rem;
+	fill: currentColor;
+}
+
+.site-header__search .wp-block-search__inside-wrapper {
+	gap: 0.5rem;
+}
+
+/* The field letter on the front page: a band of its own. */
+.fn-letter-band {
+	padding-block: var(--wp--preset--spacing--60);
+}
+
+/* Synced notes inside an entry or trail (the field letter, "Leave it as you
+   found it", "How we keep the log"). */
+.fn-pad {
+	padding: var(--wp--preset--spacing--40);
+}
+
+.fn-pad > * + * {
+	margin-block-start: 0.6rem;
+}
+
+/* The essay band: its words sit low, on the same grid as every other section. */
+.wp-block-cover.fn-essay {
+	align-items: flex-end;
+}
