@@ -255,8 +255,8 @@ export interface LivePick {
 export interface LiveProblem {
   level: 'error' | 'warning';
   text: string;
-  /** Where it came from: the page's own messages, or the browser console. */
-  source: 'page' | 'console';
+  /** Where it came from: the page's own messages, the browser console, or a request that failed while it loaded. */
+  source: 'page' | 'console' | 'network';
 }
 
 /* ── addresses ─────────────────────────────────────────────────────────── */

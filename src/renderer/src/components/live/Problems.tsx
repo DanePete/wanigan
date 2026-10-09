@@ -25,7 +25,7 @@ export function ProblemsTab({ problems, project, url, onRefresh }: {
   const keep = (): void => {
     addNote(project.id, {
       url: url ?? '', regions: [], pick: null, words: null, style: [], shot: null,
-      text: `Fix what this page reports:\n${problems.map((p) => `- ${p.level === 'error' ? 'Error' : 'Warning'} (${p.source === 'page' ? 'shown on the page' : 'console'}): ${p.text}`).join('\n')}`,
+      text: `Fix what this page reports:\n${problems.map((p) => `- ${p.level === 'error' ? 'Error' : 'Warning'} (${p.source === 'page' ? 'shown on the page' : p.source === 'network' ? 'a request' : 'console'}): ${p.text}`).join('\n')}`,
     });
   };
   return (
@@ -33,7 +33,7 @@ export function ProblemsTab({ problems, project, url, onRefresh }: {
       <ul className="live-problems">
         {problems.map((p, i) => (
           <li key={i} className={`live-problem-item ${p.level}`}>
-            <span className="live-problem-level">{p.level === 'error' ? 'Error' : 'Warning'} · {p.source === 'page' ? 'on the page' : 'console'}</span>
+            <span className="live-problem-level">{p.level === 'error' ? 'Error' : 'Warning'} · {p.source === 'page' ? 'on the page' : p.source === 'network' ? 'request' : 'console'}</span>
             <span className="small mono">{p.text}</span>
           </li>
         ))}
