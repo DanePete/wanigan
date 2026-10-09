@@ -380,7 +380,7 @@ test('the real exact-cap queue leaves five bytes for HTTP termination when a str
   assert.deepEqual(t.counts(), { streams: 0, events: 0, data: 0 });
 });
 
-test('a phone stream carries board news but never the live view’s edits, site settings, hand edits or screenshots', async () => {
+test('a phone stream carries board news but never the live view’s edits, site settings, hand edits, screenshots or code editor saves', async () => {
   const t = await fixture();
   try {
     const phone = await t.pair('Live check');
@@ -391,12 +391,14 @@ test('a phone stream carries board news but never the live view’s edits, site 
       listener('liveSite', { projectId: 'p' });
       listener('liveEdits', { projectId: 'p' });
       listener('liveShots', { cardId: 'c' });
+      listener('files', { projectId: 'p', cardId: null, path: 'web/themes/custom/acme/editor-secret.css' });
       listener('board', { projectId: 'p', cardId: null });
     }
     await waitFor('the board event to arrive', () => peer.text.includes('"event":"board"'), 2_000);
     assert.ok(!peer.text.includes('"event":"live"'), 'no edit events');
     assert.ok(!peer.text.includes('"event":"liveSite"'), 'no site settings');
     assert.ok(!peer.text.includes('"event":"liveEdits"') && !peer.text.includes('"event":"liveShots"'), 'no hand edits or screenshots');
+    assert.ok(!peer.text.includes('"event":"files"') && !peer.text.includes('editor-secret.css'), 'no code editor saves');
     assert.ok(!peer.text.includes('secret.twig'), 'no paths from this Mac');
   } finally {
     await t.close();

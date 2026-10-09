@@ -17,6 +17,7 @@ import { History, type HistoryLimits } from './history.ts';
 import { Reviews } from './review.ts';
 import { Phone, type PhoneOptions } from './phone/phone.ts';
 import { Live } from './live.ts';
+import { Files } from './files.ts';
 import { LocalModels, type LocalModelsOptions } from './local-models.ts';
 import { Models, type CodexModelReader } from './models.ts';
 import { Tokens } from './tokens.ts';
@@ -189,6 +190,7 @@ export class Core {
         skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts),
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
         attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live,
+        files: new Files(ctx, this.board),
       });
       this.server = new CoreServer({
         socketPath: this.paths.socket,
