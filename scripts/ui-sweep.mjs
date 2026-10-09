@@ -100,6 +100,8 @@ try {
       return page.$eval('.srow', (a) => a.getAttribute('href'));
     })();
     const limitedHref = await page.$eval('.srow:has-text("Rate limiter drops bursts")', (a) => a.getAttribute('href'));
+    // A Codex turn its limit stopped, read from its rollout: no account is offered, and it says why.
+    const codexLimitedHref = await page.$eval('.srow:has-text("Rate limit headers in the API docs")', (a) => a.getAttribute('href'));
     // Started with Remote Control, with a screenshot and a log waiting in its composer.
     const attachedHref = await page.$eval('.srow:has-text("Free shipping banner")', (a) => a.getAttribute('href'));
 
@@ -109,8 +111,9 @@ try {
     await page.evaluate(async (body) => { await fetch('/test/hook', { method: 'POST', body: JSON.stringify(body) }); }, { sessionId: shipping?.id, event: 'Stop', input: {} });
     await page.goto(`${base}#/needs`);
     await page.waitForSelector('.need-permission .ask-text', { timeout: 8000 }).catch(() => failures.push(`${theme}/needs: no permission row shows what it asks`));
-    // Why a row offers no Reply comes from the live sessions, read after the needs: wait for it, not race it.
-    await page.waitForSelector('.need-waiting .need-why', { timeout: 5000 }).catch(() => {});
+    // Where a reply can go comes from the live sessions, read after the needs: wait for it, not race it.
+    // The demo's Codex reports through its own hooks, so it says when a message starts its turn: Reply.
+    const codexReply = await page.waitForSelector('.need-waiting .need-row:has-text("Search endpoint with cursor pagination") .need-reply-open', { timeout: 5000 }).catch(() => null);
     const asked = await page.evaluate(() => ({
       blocks: [...document.querySelectorAll('.need-permission .ask-text')].map((p) => p.textContent),
       warnings: [...document.querySelectorAll('.need-permission .ask-warning')].map((w) => w.textContent.trim()),
@@ -120,11 +123,17 @@ try {
     if (!asked.blocks.includes('pnpm exec axe http://localhost:3000/checkout')) failures.push(`${theme}/needs: the exact command is not shown (${asked.blocks.join(' | ')})`);
     if (asked.warnings.join() !== 'This command contains hidden characters') failures.push(`${theme}/needs: hidden-character warnings were ${JSON.stringify(asked.warnings)}`);
     if (asked.marks.join() !== '\u{27E8}U+200B\u{27E9}') failures.push(`${theme}/needs: the zero-width space was not spelled out (${asked.marks.join()})`);
-    if (!/not yet seen Codex report when a message starts its turn/.test(asked.why)) failures.push(`${theme}/needs: a Codex row does not say why it offers no Reply`);
+    if (!codexReply) failures.push(`${theme}/needs: a Codex row whose hooks report offers no Reply`);
+    if (asked.why) failures.push(`${theme}/needs: a waiting row refuses a reply: ${asked.why}`);
+    // A Codex turn its limit stopped: when it resets, and that its conversation stays in its account.
+    const codexLimit = await page.$eval('.need-limit .need-row:has-text("Rate limit headers in the API docs")', (el) => el.textContent ?? '').catch(() => '');
+    if (!/Hit its usage limit on Default\. Resets \d{1,2}:\d{2} [ap]m\./.test(codexLimit) || !codexLimit.includes('A Codex conversation continues only in the account it lives in.') || /Continue on/.test(codexLimit)) {
+      failures.push(`${theme}/needs: the Codex limit row reads "${codexLimit}"`);
+    }
     await page.$eval('.need-permission .need-row:has(.ask-warning)', (el) => el.scrollIntoView({ block: 'nearest' })).catch(() => {});
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-needs-hidden.png`) });
-    await page.click('.need-waiting .need-reply-open');
+    await page.click('.need-waiting .need-row:has-text("Free shipping banner") .need-reply-open');
     await page.waitForSelector('.need-reply textarea');
     if (!(await page.evaluate(() => document.activeElement?.matches('.need-reply textarea')))) failures.push(`${theme}/needs: Reply did not put the cursor in its box`);
     await page.keyboard.type('Show it in the cart drawer too');
@@ -170,6 +179,7 @@ try {
       ['paused-project', '#/p/FIE/board', '.banner-paused'],
       ['session', sessionHref, '.xterm-rows'],
       ['session-limited', limitedHref, '.banner-limit button'],
+      ['session-limited-codex', codexLimitedHref, '.banner-limit button'],
       ['session-attached', attachedHref, '.composer .attach-chip img'],
     ];
     for (const [name, hash, ready] of routes) {
@@ -654,9 +664,17 @@ try {
       if (f.px < 6) failures.push(`${theme}/running-watch: "${f.title}" text is ${f.px}px, too small to read`);
     }
     const asking = await page.$$eval('.watch-tile.asking', (tiles) => tiles.map((t) => t.getAttribute('aria-label')));
-    // Amber where the owner has to act: asking permission, a question on its card, its usage limit.
-    const mustAsk = ['Checkout button has no accessible name', 'Free shipping banner', 'Rate limiter drops bursts at the minute boundary'];
-    if (mustAsk.some((t) => !asking.some((a) => a?.includes(t)))) failures.push(`${theme}/running-watch: expected the permission, question and limit tiles amber, got ${JSON.stringify(asking)}`);
+    // Amber where the owner has to act: asking permission, its usage limit (Claude's and Codex's), a question on its card.
+    // Five sessions need the owner and four fit: the question ranks after both limits, so it is pinned to be seen.
+    const mustAsk = ['Checkout button has no accessible name', 'Rate limiter drops bursts at the minute boundary', 'Rate limit headers in the API docs'];
+    if (mustAsk.some((t) => !asking.some((a) => a?.includes(t)))) failures.push(`${theme}/running-watch: expected the permission and both limit tiles amber, got ${JSON.stringify(asking)}`);
+    await page.click('.topbar [role="radio"]:has-text("List")');
+    await page.click('.running-row:has-text("Free shipping banner") button[aria-pressed]');
+    await page.click('.topbar [role="radio"]:has-text("Watch")');
+    await tilesShowing(page, 1).catch(() => failures.push(`${theme}/running-watch: the pinned question did not show as a tile`));
+    if (!(await page.$('.watch-tile.asking[aria-label*="Free shipping banner"]'))) failures.push(`${theme}/running-watch: the question tile is not amber`);
+    await page.locator('.watch-tile button[aria-pressed="true"]').first().click();
+    await tilesShowing(page, 4).catch(() => failures.push(`${theme}/running-watch: unpinning the question did not go back to the four that need you most`));
     const more = runningCount - 4;
     const moreText = (await page.textContent('.watch-more').catch(() => '')) ?? '';
     if (more > 0 && !new RegExp(`^${more} more sessions? running, not shown`).test(moreText)) failures.push(`${theme}/running-watch: says "${moreText}" with ${runningCount} running`);
@@ -1644,7 +1662,7 @@ try {
     await page.goto(`${base}#/needs`);
     if (await page.$('.chatter-x')) await page.click('.chatter-x');
     await page.waitForSelector('.need-waiting .need-reply-open');
-    await page.click('.need-waiting .need-reply-open');
+    await page.click('.need-waiting .need-row:has-text("Free shipping banner") .need-reply-open');
     await page.keyboard.type(`Show it in the cart drawer too (${theme})`);
     await page.keyboard.press('Enter');
     await page.waitForSelector('.need-waiting .need-sent', { timeout: 5000 }).catch(() => failures.push(`${theme}/reply: the row never said what happened`));

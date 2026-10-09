@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { activityFor, nextState } from './attention.ts';
-import { continueTargets, geminiLimit, limitDetail, limitResetsAt, screenWords, usageLimitMessage, whyNotTarget } from './limits.ts';
+import { CODEX_STAYS, codexLimitResetsAt, continueTargets, geminiLimit, limitDetail, limitResetsAt, screenWords, usageLimitMessage, whyNotTarget } from './limits.ts';
 import type { Account } from './model.ts';
 import { parseUsage } from './usage.ts';
 
@@ -126,4 +126,58 @@ test('Gemini: a limit is a state of its own, with the dialog’s words as what i
   assert.equal(activityFor('UsageLimit', { message: 'Usage limit reached for all Pro models.' }), 'Usage limit reached for all Pro models.');
   assert.equal(nextState('limited', 'UserPromptSubmit', {}), 'working', 'a new turn lifts it');
   assert.equal(nextState('limited', 'PreToolUse', {}), 'working', 'so does the turn going on, on another model');
+});
+
+// Codex 0.155.1's own words (UsageLimitReachedError's Display at rust-v0.155.1,
+// and the real binary's rollout), as the failed turn Wanigan reads carries them.
+const codexStop = (message: string, error = 'usage_limit_exceeded') => ({ error, last_assistant_message: message });
+
+test('every shape of Codex’s usage-limit message is a limit, and nothing else of that kind is', () => {
+  const limits = [
+    'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:21 AM.',
+    'You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again later.',
+    'You’ve hit your usage limit. To get more access now, send a request to your admin or try again at Oct 10th, 2026 9:05 AM.',
+    'You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again later.',
+    'You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 4:10 PM.',
+    'You’ve hit your usage limit. Try again at 4:10 PM.',
+    'You’ve hit your usage limit. Try again later.',
+    'You’ve hit your usage limit for gpt-5.3-codex-spark. Switch to another model now, or try again at 4:10 PM.',
+    'You’ve hit your usage limit. To continue using Codex, start a free trial of Pro today, or try again at 4:10 PM.',
+    'Your workspace is out of credits. Add credits to continue.',
+    'You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.',
+  ];
+  for (const message of limits) assert.equal(usageLimitMessage('StopFailure', codexStop(message)), message, message);
+  // The same kind, but nothing that resets: an API key out of quota, a plan without Codex.
+  assert.equal(usageLimitMessage('StopFailure', codexStop('Quota exceeded. Check your plan and billing details.')), null);
+  assert.equal(usageLimitMessage('StopFailure', codexStop('To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.')), null);
+  // The words under another kind of failure are not Codex's limit.
+  assert.equal(usageLimitMessage('StopFailure', codexStop(limits[0] as string, 'server_overloaded')), null);
+  assert.equal(usageLimitMessage('StopFailure', codexStop('')), null, 'no message, no claim');
+  assert.equal(nextState('working', 'StopFailure', codexStop(limits[0] as string)), 'limited');
+  assert.equal(nextState('working', 'StopFailure', codexStop('Quota exceeded. Check your plan and billing details.')), 'waiting');
+});
+
+test('Codex’s reset is read in this machine’s zone: a time alone is on the day the turn ended', () => {
+  const at = new Date(2026, 9, 9, 9, 4).getTime();
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at 11:21 AM.', at), new Date(2026, 9, 9, 11, 21).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 12:05 PM.', at), new Date(2026, 9, 9, 12, 5).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at 12:30 AM.', new Date(2026, 9, 9, 0, 10).getTime()), new Date(2026, 9, 9, 0, 30).getTime(), '12 AM is midnight');
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at Oct 10th, 2026 9:05 AM.', at), new Date(2026, 9, 10, 9, 5).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit or try again at Nov 1st, 2026 11:00 PM.', at), new Date(2026, 10, 1, 23, 0).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at Oct 22nd, 2026 1:00 PM.', at), new Date(2026, 9, 22, 13, 0).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at Oct 23rd, 2026 1:00 PM.', at), new Date(2026, 9, 23, 13, 0).getTime());
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again later.', at), null, 'later is not a time');
+  assert.equal(codexLimitResetsAt('Your workspace is out of credits. Add credits to continue.', at), null);
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at 13:05 PM.', at), null, 'not a time Codex prints');
+  assert.equal(codexLimitResetsAt('You’ve hit your usage limit. Try again at soon.', at), null);
+});
+
+test('a Codex limit says what to do once it resets, and its conversation stays in its account', () => {
+  const now = Date.UTC(2026, 9, 6, 18, 0);
+  assert.equal(limitDetail(now - 1, now, 'Personal', 'codex'), 'Hit its usage limit on Personal. The limit has reset: send your message again in its terminal.');
+  assert.equal(limitDetail(now - 1, now, 'Personal', 'claude'), 'Hit its usage limit on Personal. The limit has reset: press Enter in its terminal to continue.');
+  const from = account('personal', { provider: 'codex' });
+  const other = account('work', { provider: 'codex', usage: used(5) });
+  assert.equal(whyNotTarget(other, from), CODEX_STAYS);
+  assert.deepEqual(continueTargets([from, other], 'personal'), []);
 });

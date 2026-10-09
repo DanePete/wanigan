@@ -176,6 +176,13 @@ export interface Session {
   cwd: string | null;
   /** Started with Claude Code's Remote Control, because the owner asked: reachable from claude.ai and the Claude app. */
   remote: boolean;
+  /**
+   * The agent's own hooks have reported through Wanigan's relay in this
+   * session, so it says itself when a message starts a turn. False for a Codex
+   * session read only from its OSC 9 notifications, which say a turn ended but
+   * never that one began.
+   */
+  relayed: boolean;
   /** While asking permission: exactly what, as its hook said. Absent when it did not say. */
   asks?: PermissionAsk[];
   startedAt: number;

@@ -8,21 +8,72 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { CoreClient } from '../client/client.ts';
 import type { Provider, Session } from '../shared/model.ts';
+import type { CodexHookProbe } from './codex-hooks.ts';
+import type { ListedHook } from './codex-server.ts';
 import { Core, type CoreOptions } from './core.ts';
 
 export const CLI = resolve(import.meta.dirname, '../cli/index.ts');
 
-/** A stand-in Codex: shows its arguments, then answers lines with real OSC 9 notifications. */
+/** The lines codex-cli 0.155.1 drew for a turn stopped by a Plus account's usage limit. */
+export const CODEX_LIMIT_SCREEN = [
+  '■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit',
+  'https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:21 AM.',
+] as const;
+
+/**
+ * A stand-in Codex: shows its arguments, then answers lines with real OSC 9
+ * notifications, or with the two red lines codex-cli 0.155.1 drew when a turn
+ * hit the usage limit (byte for byte, at 120 columns). That turn sends no
+ * notification and no Stop hook; only its rollout records it.
+ */
 export const FAKE_CODEX = [
   'echo "codex ready HOME=${CODEX_HOME-unset} ARGS=$*"',
   'while IFS= read -r line; do',
   '  case "$line" in',
   '    *ask*) printf "\\033]9;Approval requested: run the tests\\007" ;;',
   '    *done*) printf "\\033]9;Agent turn complete\\007" ;;',
+  `    *limit*) printf "\\r\\n\\033[39;49m\\033[K\\033[38;5;1;49m${CODEX_LIMIT_SCREEN[0]}\\033[39m\\033[49m\\033[0m\\r\\n\\033[39;49m\\033[K\\033[38;5;1;49m${CODEX_LIMIT_SCREEN[1]}\\033[39m\\033[49m\\033[0m\\r\\n" ;;`,
   '    *) echo "got: $line" ;;',
   '  esac',
   'done',
 ].join('\n');
+
+/** A stand-in Codex that also prints its session token, so a test can relay hooks as it. */
+export const codexWithToken = (provider: Provider): { file: string; args: string[] } => (provider === 'codex'
+  ? { file: '/bin/sh', args: ['-c', `echo "TOKEN=$WANIGAN_TOKEN"; ${FAKE_CODEX}`, 'fake-codex'] }
+  : launcher(provider));
+
+export const hashOf = (event: string): string => `sha256:${event.toLowerCase().padEnd(64, '0').slice(0, 64)}`;
+export const snake = (event: string): string => event.replace(/[A-Z]/g, (c, i: number) => `${i ? '_' : ''}${c.toLowerCase()}`);
+
+/**
+ * A stand-in for `hooks/list`, shaped as codex-cli 0.155.1 answers: each hook
+ * given on the command line listed from `/<session-flags>/config.toml`,
+ * untrusted until a `hooks.state` flag trusts its exact hash.
+ */
+export function stubProbe(options: { version?: string | null; drop?: string; trusted?: string; fail?: boolean } = {}): CodexHookProbe & { lists: number } {
+  const probe = {
+    lists: 0,
+    async version() { return options.version === undefined ? 'codex-cli 0.155.1' : options.version; },
+    async list(_bin: string, _path: string, args: readonly string[]): Promise<ListedHook[]> {
+      probe.lists++;
+      if (options.fail) throw new Error('Codex did not answer about its hooks within 12 seconds.');
+      const state = args.find((a) => a.startsWith('hooks.state=')) ?? '';
+      return args.flatMap((arg): ListedHook[] => {
+        const m = /^hooks\.([A-Za-z]+)=\[\{hooks=\[\{type="command",command=("(?:[^"\\]|\\.)*")/.exec(arg);
+        const event = m?.[1];
+        if (!m || !event || event === options.drop) return [];
+        const key = `/<session-flags>/config.toml:${snake(event)}:0:0`;
+        const trusted = state.includes(`"${key}"={enabled=true,trusted_hash="${hashOf(event)}"}`);
+        return [{
+          key, eventName: `${event[0]!.toLowerCase()}${event.slice(1)}`, source: 'sessionFlags', command: JSON.parse(m[2]!) as string,
+          trustStatus: trusted ? options.trusted ?? 'trusted' : 'untrusted', currentHash: hashOf(event),
+        }];
+      });
+    },
+  };
+  return probe;
+}
 
 /** Agents are stand-ins: an interactive sh, and a "claude" that prints its token and waits. */
 export function launcher(provider: Provider): { file: string; args: string[] } {

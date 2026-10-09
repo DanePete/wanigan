@@ -94,7 +94,7 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
     || (need.kind === 'limit' && need.provider !== 'claude'))
     ? () => attempt(() => call('sessions.seen', { id: need.sessionId as string }), (m) => toast(m, 'error'))
     : null;
-  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state) } : null);
+  const route = replyRoute(need, session ? { provider: session.provider, state: session.state, live: LIVE_STATES.has(session.state), relayed: session.relayed } : null);
   const [replying, setReplying] = useState(false);
   // What happened to the last reply. The row itself stays until the agent's own events clear it.
   const [sent, setSent] = useState<string | null>(null);
@@ -126,8 +126,8 @@ function NeedRow({ need, session }: { need: Need; session: Session | null }) {
   let primary: ReactElement | null = null;
   if (need.kind === 'review' || need.kind === 'question') {
     primary = <Button tone={need.kind === 'review' ? 'primary' : 'attention'} onClick={() => need.cardKey && openCard(need.cardKey)}>{need.kind === 'review' ? 'Review' : 'Answer'}</Button>;
-  } else if (need.kind === 'limit' && need.sessionId && need.provider === 'claude') {
-    primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} />;
+  } else if (need.kind === 'limit' && need.sessionId && (need.provider === 'claude' || need.provider === 'codex')) {
+    primary = <ContinueOn sessionId={need.sessionId} accountId={need.accountId ?? null} projectKey={projectKey} provider={need.provider} />;
   } else if (need.kind === 'limit' && sessionHref) {
     // Gemini CLI has one sign-in and nowhere else to carry the conversation;
     // its own dialog asks whether to keep trying, switch model or stop.

@@ -57,7 +57,7 @@ export function computeNeeds(ctx: Ctx): Need[] {
       // Stands until the session moves on or the owner chooses to wait. The
       // reset coming and going is news again: limit_since moves.
       const at = s.limit_since ?? s.last_event_at ?? s.started_at;
-      if (at > seen) needs.push({ ...base, kind: 'limit', detail: limitDetail(s.limit_resets_at, ctx.now(), s.account_label), since: at, accountId: s.account_id });
+      if (at > seen) needs.push({ ...base, kind: 'limit', detail: limitDetail(s.limit_resets_at, ctx.now(), s.account_label, s.provider), since: at, accountId: s.account_id });
     } else if (s.state === 'waiting' && s.last_event === 'Stop' && (s.last_event_at ?? 0) > seen) {
       // Only after a finished turn: an agent idle at a fresh prompt has not asked for anything.
       needs.push({ ...base, kind: 'waiting', detail: 'Finished its turn', since: s.last_event_at ?? s.started_at });

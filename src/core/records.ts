@@ -86,6 +86,8 @@ export interface SessionRow {
   /** 1 for a terminal a key may be typed into: its output is never kept or searched. */
   ephemeral: number | null;
   transcript_path: string | null;
+  /** 1 once the agent's own hooks have reported through the relay. */
+  relayed?: number | null;
   card_key?: string | null;
 }
 
@@ -120,6 +122,7 @@ export const toSession = (r: SessionRow): Session => ({
   effort: r.effort ?? null,
   cwd: r.cwd,
   remote: r.remote === 1,
+  relayed: r.relayed === 1,
   startedAt: r.started_at,
   endedAt: r.ended_at,
   lastEventAt: r.last_event_at,
