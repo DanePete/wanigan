@@ -1,6 +1,7 @@
 // What the renderer can reach: `window.wanigan`. In the app it is the preload
 // bridge; in the browser test harness it is the same shape over HTTP.
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
+import type { LiveFailure } from './live-site.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -35,8 +36,13 @@ export interface LiveViewState {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
-  /** Why the page did not load, in Chromium's words (e.g. ERR_CERT_AUTHORITY_INVALID). */
-  error: { code: number; description: string; url: string } | null;
+  /**
+   * Why the page did not load: Chromium's words (e.g. ERR_CERT_AUTHORITY_INVALID)
+   * and, when it refused a certificate, that certificate as the site presented it.
+   */
+  error: LiveFailure | null;
+  /** The HTTP status of the page shown, when one loaded (a router's 404 for a site that is not running, say). */
+  status: number | null;
   /** How many errors and warnings the page's console has logged since it loaded. */
   logged: number;
 }
@@ -94,8 +100,11 @@ export interface LiveBridge {
   cancelEdit(): Promise<void>;
   /** The site helper's count of content changes (null without a helper, or when it did not answer). */
   helperChanged(): Promise<number | null>;
-  /** Save words to a plain text field through the site helper, as the user logged in in the view. */
-  helperSave(field: string, before: string, after: string): Promise<{ ok: boolean; error: string | null; label: string | null }>;
+  /**
+   * Save words to a plain text field through the site helper, as the user logged in in the view. When the site
+   * did not answer, `failure` says how, for the same words the view uses.
+   */
+  helperSave(field: string, before: string, after: string): Promise<{ ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null }>;
   /** Whether this build carries the page script (regions, outlines, picking). */
   hasScript(): Promise<boolean>;
   onState(listener: (state: LiveViewState) => void): () => void;

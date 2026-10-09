@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type Session } from 'electron';
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
+import { certificateOf, failureKind, principal, type LiveFailure, type LivePresented } from '../shared/live-site.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
@@ -27,10 +28,13 @@ export interface LiveViewWiring {
   /**
    * A full-page screenshot of a page of a project's site, taken in a hidden
    * window in the same session as the live view (its login, its certificate
-   * trust, the helper's token). Null when the page did not load or drew nothing.
+   * trust, the helper's token). When the page did not load, why (the same
+   * failure the view reports); null when it loaded and drew nothing.
    */
-  shoot(projectId: string, url: string, token: string | null): Promise<{ data: string; width: number; height: number } | null>;
+  shoot(projectId: string, url: string, token: string | null): Promise<LiveShotTaken | { failure: LiveFailure } | null>;
 }
+
+export interface LiveShotTaken { data: string; width: number; height: number }
 
 /** Screenshots are a desktop page: this many CSS pixels wide, and as tall as the page up to a limit. */
 const SHOT_WIDTH = 1440;
@@ -50,41 +54,57 @@ function script(): string | null {
   return pageScript;
 }
 
-let authority: X509Certificate | null | undefined;
+/** Where mkcert keeps its authority: $CAROOT, or mkcert's own folder (`mkcert -CAROOT`). */
+const caroot = (): string => process.env.CAROOT || join(homedir(), 'Library', 'Application Support', 'mkcert');
 
 /**
  * The owner's own local certificate authority, if mkcert made one: ddev signs
- * every *.ddev.site certificate with it (`mkcert -CAROOT`, or $CAROOT). Read,
- * never written; when mkcert has not been installed into the system's trust
- * store, this is how the view can still trust exactly those certificates.
+ * every *.ddev.site certificate with it. Read, never written, and read again
+ * each time a certificate is refused (it is only then that it is wanted), so
+ * one made by `mkcert -install` after Wanigan started counts. When mkcert has
+ * not been installed into the system's trust store, this is how the view can
+ * still trust exactly those certificates.
  */
 function localAuthority(): X509Certificate | null {
-  if (authority !== undefined) return authority;
-  const root = process.env.CAROOT || join(homedir(), 'Library', 'Application Support', 'mkcert');
   try {
-    const pem = readFileSync(join(root, 'rootCA.pem'), 'utf8');
-    authority = pem.length < 64 * 1024 ? new X509Certificate(pem) : null;
+    const pem = readFileSync(join(caroot(), 'rootCA.pem'), 'utf8');
+    const ca = pem.length < 64 * 1024 ? new X509Certificate(pem) : null;
+    return ca?.ca ? ca : null;
   } catch {
-    authority = null;
+    return null;
   }
-  return authority;
 }
 
 /**
- * Whether a certificate Chromium refused is one the owner's local authority
- * issued for this host, and is in date. Nothing else is overruled.
+ * A certificate Chromium refused: whether the owner's local authority issued
+ * it for this host and it is in date (then it is trusted here; nothing else is
+ * overruled), and, either way, the certificate as it describes itself, so
+ * the view can say exactly what was refused.
  */
-function issuedLocally(pem: string, hostname: string): boolean {
+function judge(pem: string, hostname: string, verdict: string): { trusted: boolean; presented: LivePresented | null } {
   const ca = localAuthority();
-  if (!ca || !ca.ca) return false;
+  let leaf: X509Certificate;
+  try { leaf = new X509Certificate(pem); } catch { return { trusted: false, presented: null }; }
+  let local = false;
+  try { local = !!ca && leaf.issuer === ca.subject && leaf.verify(ca.publicKey); } catch { local = false; }
+  const now = Date.now();
+  const trusted = local && leaf.checkHost(hostname) !== undefined && Date.parse(leaf.validFrom) <= now && now <= Date.parse(leaf.validTo);
+  let presented: LivePresented | null = null;
   try {
-    const leaf = new X509Certificate(pem);
-    const now = Date.now();
-    return leaf.issuer === ca.subject && leaf.verify(ca.publicKey) && leaf.checkHost(hostname) !== undefined
-      && Date.parse(leaf.validFrom) <= now && now <= Date.parse(leaf.validTo);
-  } catch {
-    return false;
-  }
+    presented = { certificate: certificateOf(leaf), local, authority: ca ? principal(ca.subject) : null, caroot: caroot(), verdict };
+  } catch { presented = null; }
+  return { trusted, presented };
+}
+
+/** Chromium's error code from a failed request's message (`net::ERR_CERT_DATE_INVALID`), as far as the words say. */
+const NET_CODES: Record<string, number> = {
+  ERR_CERT_COMMON_NAME_INVALID: -200, ERR_CERT_DATE_INVALID: -201, ERR_CERT_AUTHORITY_INVALID: -202, ERR_CONNECTION_REFUSED: -102,
+  ERR_NAME_NOT_RESOLVED: -105, ERR_CONNECTION_RESET: -101, ERR_CONNECTION_CLOSED: -100, ERR_TIMED_OUT: -7, ERR_CONNECTION_TIMED_OUT: -118,
+};
+function failureFrom(error: unknown, url: string): Omit<LiveFailure, 'certificate'> {
+  const message = error instanceof Error ? error.message : String(error);
+  const name = /ERR_[A-Z_]+/.exec(message)?.[0] ?? message.slice(0, 200);
+  return { code: NET_CODES[name] ?? (/^ERR_CERT_/.test(name) ? -200 : -2), description: name, url };
 }
 
 /** A partition name for a project: Electron wants a plain string; ids are opaque, so keep only safe characters. */
@@ -111,12 +131,23 @@ export function wireLiveView(options: {
   let base: string | null = null;
   let attached = false;
   let lastError: LiveViewState['error'] = null;
+  /** The HTTP status of the page the view shows, when one loaded. */
+  let lastStatus: number | null = null;
   let logged: LiveProblem[] = [];
   const prepared = new Set<string>();
   /** The host each project's view may load, for its certificate check. */
   const hosts = new Map<string, string>();
   /** The token each project's site helper answers to: sent with the view's own page loads to that host, and nothing else. */
   const tokens = new Map<string, string>();
+  /** The certificate each project's site last presented and Chromium refused, by host: what a failure says was refused. */
+  const refusedCerts = new Map<string, LivePresented>();
+  const certKey = (id: string, hostname: string): string => `${id}\n${hostname.toLowerCase()}`;
+  /** A failure, with the certificate behind it when it was a refused one. */
+  const failure = (id: string, base: Omit<LiveFailure, 'certificate'>): LiveFailure => {
+    let host = '';
+    try { host = new URL(base.url).hostname; } catch { /* no address: no certificate to look for */ }
+    return { ...base, certificate: failureKind(base) === 'certificate' && host ? refusedCerts.get(certKey(id, host)) ?? null : null };
+  };
 
   const send = (): void => {
     const w = options.window();
@@ -125,8 +156,8 @@ export function wireLiveView(options: {
     const state: LiveViewState = wc && !wc.isDestroyed() ? {
       projectId, url: wc.getURL() || base, title: wc.getTitle(), loading: wc.isLoading(),
       canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(), error: lastError,
-      logged: logged.length,
-    } : { projectId: null, url: null, title: '', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 };
+      status: lastStatus, logged: logged.length,
+    } : { projectId: null, url: null, title: '', loading: false, canGoBack: false, canGoForward: false, error: null, status: null, logged: 0 };
     w.webContents.send('live:state', state);
   };
 
@@ -152,9 +183,13 @@ export function wireLiveView(options: {
       callback({ requestHeaders: details.requestHeaders });
     });
     ses.setCertificateVerifyProc((request, callback) => {
-      if (request.errorCode === 0) { callback(0); return; }
+      const key = certKey(id, request.hostname);
+      if (request.errorCode === 0) { refusedCerts.delete(key); callback(0); return; }
       const host = hosts.get(id);
-      callback(host && request.hostname === host && issuedLocally(request.certificate.data, request.hostname) ? 0 : -3);
+      const { trusted, presented } = judge(request.certificate.data, request.hostname, request.verificationResult);
+      if (host && request.hostname === host && trusted) { refusedCerts.delete(key); callback(0); return; }
+      if (presented) refusedCerts.set(key, presented); else refusedCerts.delete(key);
+      callback(-3);
     });
   };
 
@@ -187,6 +222,7 @@ export function wireLiveView(options: {
     base = null;
     attached = false;
     lastError = null;
+    lastStatus = null;
     logged = [];
   };
 
@@ -219,20 +255,25 @@ export function wireLiveView(options: {
       logged = [...logged, { level: details.level, text: `${details.message.slice(0, 400)}${where}`, source: 'console' as const }].slice(-MAX_CONSOLE);
       send();
     });
-    for (const name of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'] as const) {
+    for (const name of ['did-start-loading', 'did-stop-loading', 'did-navigate-in-page', 'page-title-updated'] as const) {
       wc.on(name as 'did-stop-loading', () => {
         if (name === 'did-start-loading') lastError = null;
         send();
       });
     }
+    wc.on('did-navigate', (_e, _url, httpResponseCode) => {
+      lastStatus = httpResponseCode > 0 ? httpResponseCode : null;
+      send();
+    });
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       // -3 is an aborted load (a new navigation replaced it): not a failure.
       if (!isMainFrame || code === -3) return;
-      lastError = { code, description, url };
+      lastError = failure(id, { code, description, url });
+      lastStatus = null;
       send();
     });
     wc.on('render-process-gone', (_e, details) => {
-      lastError = { code: -1, description: `The page stopped (${details.reason}).`, url: wc.getURL() };
+      lastError = { code: -1, description: `The page stopped (${details.reason}).`, url: wc.getURL(), certificate: null };
       send();
     });
     return v;
@@ -345,6 +386,8 @@ export function wireLiveView(options: {
     if (!token) return null;
     const origin = new URL(view.webContents.getURL() || base).origin;
     const headers = { 'X-Wanigan-Live': token, Accept: 'application/json' };
+    const id = projectId;
+    let saving = false;
     try {
       if (action === 'changed') {
         const res = await view.webContents.session.fetch(`${origin}/_wanigan/changed`, { headers, credentials: 'include' });
@@ -352,6 +395,7 @@ export function wireLiveView(options: {
         return res.ok && typeof data.changed === 'number' ? data.changed : null;
       }
       if (action === 'save' && rawBody && typeof rawBody === 'object') {
+        saving = true;
         const { field, before, after } = rawBody as Record<string, unknown>;
         if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.' };
         const res = await view.webContents.session.fetch(`${origin}/_wanigan/save`, {
@@ -363,7 +407,11 @@ export function wireLiveView(options: {
           : { ok: false, error: `The site answered ${res.status}.`, label: null };
       }
     } catch (error) {
-      return action === 'save' ? { ok: false, error: `The site did not answer: ${(error as Error).message}`, label: null } : null;
+      // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);
+      // this is only the fallback.
+      if (!saving) return null;
+      const why = failure(id, failureFrom(error, `${origin}/_wanigan/save`));
+      return { ok: false, error: `The site did not answer (${why.description}).`, label: null, failure: why };
     }
     return null;
   });
@@ -401,7 +449,7 @@ export function wireLiveView(options: {
     }
   });
 
-  const shoot = async (id: string, rawUrl: string, token: string | null): Promise<{ data: string; width: number; height: number } | null> => {
+  const shoot = async (id: string, rawUrl: string, token: string | null): Promise<LiveShotTaken | { failure: LiveFailure } | null> => {
     const url = liveUrl(rawUrl);
     if (!url || !options.enabled()) return null;
     const partition = partitionFor(id);
@@ -416,11 +464,17 @@ export function wireLiveView(options: {
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
     wc.on('will-navigate', (event, next) => { if (!sameSite(url, next)) event.preventDefault(); });
     wc.setAudioMuted(true);
+    let failed: Omit<LiveFailure, 'certificate'> | null = null;
+    wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
+      if (isMainFrame && code !== -3) failed = { code, description, url: failedUrl || url };
+    });
     try {
       // Never the browser's cached copy: a page sent with max-age would make the after the before again.
       const fresh = { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' };
       const loaded = await Promise.race([wc.loadURL(url, fresh).then(() => true, () => false), pause(SHOT_LOAD_MS).then(() => false)]);
-      if (!loaded) return null;
+      if (!loaded) {
+        return { failure: failure(id, failed ?? { code: -7, description: `The page did not finish loading within ${SHOT_LOAD_MS / 1000} seconds`, url }) };
+      }
       await pause(SHOT_SETTLE_MS);
       // A page grows as it settles at its new size (late content, images that load once in view): grow the window
       // to the page, and again, until the height holds.

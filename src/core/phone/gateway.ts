@@ -19,7 +19,7 @@ import { CoreError } from '../../shared/protocol.ts';
  * watches, and the live view's edits and site settings (paths on this Mac,
  * many a second while an agent works) have nothing on the phone to follow them.
  */
-const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots']);
+const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots', 'liveRun']);
 
 const MAX_RPC_BODY = 256 * 1024;
 const MAX_PAIR_BODY = 4 * 1024;

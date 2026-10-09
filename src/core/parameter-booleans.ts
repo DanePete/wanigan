@@ -29,6 +29,7 @@ const FIELDS: BooleanParams = {
   'mcp.add': { preview: true },
   'mcp.remove': { preview: true },
   'phone.setControl': { control: true },
+  'live.start': { restart: true },
 };
 
 export function validateBooleans(method: Method, params: object): void {

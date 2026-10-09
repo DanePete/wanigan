@@ -100,6 +100,9 @@ export async function testCore(options: Partial<CoreOptions> = {}): Promise<Test
     local: { lmsBin: null, ollamaUrl: 'http://127.0.0.1:9' },
     // No Tailscale and any free port: the owner's own tailnet is never touched. A phone test passes its own.
     phone: { port: 0, tailscale: new Tailscale({ bin: null }), rendererDir: join(dir, 'renderer') },
+    // ddev is looked for only in the test's own bin folder (empty unless a test puts a stand-in there), so the
+    // owner's ddev is never asked about, or starts, any of the owner's sites.
+    live: { path: [join(dir, 'bin'), '/usr/bin', '/bin'].join(':') },
     ...rest,
     // A test that replaces how accounts are probed still looks for them in its own home, never the real one.
     accounts: {

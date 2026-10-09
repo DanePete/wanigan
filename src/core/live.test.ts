@@ -3,6 +3,7 @@
 // nothing reads the owner's projects or starts ddev.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { X509Certificate } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import { after, before, describe, test } from 'node:test';
 import { CoreClient } from '../client/client.ts';
 import type { LiveEvent } from '../shared/live.ts';
 import { detect, devPort, excludeFromGit } from './live.ts';
-import { testCore, tokenOf, type TestCore } from './test-support.ts';
+import { testCore, tokenOf, waitFor, type TestCore } from './test-support.ts';
 
 function folder(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'wg-live-'));
@@ -301,5 +302,177 @@ describe('the Drupal helper, before anything is written', () => {
       await excludeFromGit(repo, module, false);
       assert.equal(readFileSync(exclude, 'utf8').trimEnd(), '# the owner’s own\n.worktrees/');
     } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+});
+
+/**
+ * A stand-in ddev, put on the test core's own PATH (the owner's ddev is never
+ * on it): it writes each call to a log, answers `describe -j` with the state in
+ * a file beside it, shaped as ddev 1.25 writes it, and `start` or `restart`
+ * prints a few lines (with ddev's colours) and sets that state to running.
+ */
+const STAND_IN_DDEV = `#!/bin/sh
+here=$(dirname "$0")
+echo "$PWD|$*" >> "$here/ddev-calls"
+state=$(cat "$here/ddev-state" 2>/dev/null || echo paused)
+case "$1" in
+  describe)
+    printf '{"level":"info","msg":"Project: acme","raw":{"approot":"%s","hostname":"acme.ddev.site","hostnames":["acme.ddev.site"],"name":"acme","primary_url":"https://acme.ddev.site","router":"traefik","router_status":"healthy","services":{"web":{"status":"exited"}},"status":"%s","status_desc":"%s","type":"wordpress"},"time":"2026-10-09T21:14:03-05:00"}\\n' "$PWD" "$state" "$state" ;;
+  start|restart)
+    [ -f "$here/ddev-slow" ] && sleep 1
+    if [ "$state" = broken ]; then echo 'Failed to start acme: web container failed to become ready' >&2; exit 1; fi
+    echo "Starting acme..."
+    printf '\\033[32mContainer ddev-acme-web  Started\\033[0m\\r\\n'
+    echo running > "$here/ddev-state"
+    echo "Successfully started acme"
+    echo "Your project can be reached at https://acme.ddev.site" ;;
+  *) echo "the stand-in does not know $1" >&2; exit 2 ;;
+esac
+`;
+
+describe('whether the site runs, and starting it', () => {
+  let t: TestCore;
+  let projectId: string;
+  let bin: string;
+  const runs: { event: string; data: unknown }[] = [];
+  const calls = (): string[] => (existsSync(join(bin, 'ddev-calls')) ? readFileSync(join(bin, 'ddev-calls'), 'utf8').trim().split('\n') : []);
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Acme', GIT_AUTHOR_EMAIL: 'dev@example.test', GIT_COMMITTER_NAME: 'Acme', GIT_COMMITTER_EMAIL: 'dev@example.test' };
+
+  before(async () => {
+    t = await testCore();
+    bin = join(t.dir, 'bin');
+    mkdirSync(join(t.projectDir, '.ddev'), { recursive: true });
+    writeFileSync(join(t.projectDir, '.ddev', 'config.yaml'), 'name: acme\ntype: wordpress\ndocroot: ""\n');
+    projectId = (await t.owner.call('projects.add', { path: t.projectDir })).id;
+    await t.owner.call('live.setSite', { projectId, url: 'https://acme.ddev.site/' });
+    t.core.bus.on((event, data) => { if (event === 'liveRun') runs.push({ event, data }); });
+  });
+  after(async () => { await t?.close(); });
+
+  test('with no ddev on its PATH, Wanigan says so and starts nothing', async () => {
+    const status = await t.owner.call('live.status', { projectId });
+    assert.deepEqual(status.run, { tool: 'ddev', state: 'no-ddev', said: null, start: 'ddev start', folder: t.projectDir, name: 'acme' });
+    await assert.rejects(t.owner.call('live.start', { projectId }), /ddev is not installed/);
+  });
+
+  test('a paused site: ddev is asked in the folder the site serves, and its words come back', async () => {
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'ddev'), STAND_IN_DDEV, { mode: 0o755 });
+    const status = await t.owner.call('live.status', { projectId });
+    assert.deepEqual(status.run, { tool: 'ddev', state: 'paused', said: 'paused', start: 'ddev start', folder: t.projectDir, name: 'acme' });
+    assert.deepEqual(status.hostnames, ['acme.ddev.site']);
+    assert.deepEqual(status.certificates, []);
+    assert.equal(status.busy, null);
+    assert.deepEqual(calls(), [`${t.projectDir}|describe -j`], 'asking is one describe, and nothing else');
+  });
+
+  test('a certificate the project keeps where ddev looks: its file, its key, that git tracks it, and what it says of itself', async () => {
+    const certs = join(t.projectDir, '.ddev', 'traefik', 'certs');
+    mkdirSync(certs, { recursive: true });
+    const fixture = readFileSync(join(import.meta.dirname, 'fixtures', 'live-northwind-wildcard.crt'), 'utf8');
+    writeFileSync(join(certs, 'northwind.crt'), fixture);
+    writeFileSync(join(certs, 'northwind.key'), 'a stand-in for the key that came with it\n');
+    writeFileSync(join(certs, 'notes.pem'), 'not a certificate\n');
+    execFileSync('git', ['init', '-q'], { cwd: t.projectDir, env: gitEnv });
+    execFileSync('git', ['add', '.ddev/traefik/certs/northwind.crt'], { cwd: t.projectDir, env: gitEnv });
+    execFileSync('git', ['commit', '-qm', 'Keep the certificate'], { cwd: t.projectDir, env: gitEnv });
+    const [kept, ...more] = (await t.owner.call('live.status', { projectId })).certificates;
+    assert.equal(more.length, 0, 'a file that is not a certificate is left out');
+    assert.deepEqual([kept?.file, kept?.key, kept?.tracked, kept?.generated], ['.ddev/traefik/certs/northwind.crt', '.ddev/traefik/certs/northwind.key', true, true]);
+    assert.equal(kept?.certificate.fingerprint, new X509Certificate(fixture.slice(fixture.indexOf('-----BEGIN'))).fingerprint256);
+    assert.deepEqual(kept?.certificate.issuer, { cn: 'mkcert pat@northwind-laptop.local', o: 'mkcert development CA', ou: 'pat@northwind-laptop.local (Pat Example)' });
+    assert.ok(kept?.certificate.names.includes('*.ddev.site'));
+    assert.equal(kept?.certificate.validTo, Date.UTC(2025, 5, 1));
+  });
+
+  test('Start it runs ddev start in the site’s folder, says each line as it comes, and answers with the site running', async () => {
+    runs.length = 0;
+    const done = await t.owner.call('live.start', { projectId });
+    assert.equal(done.ok, true);
+    assert.equal(done.command, 'ddev start');
+    assert.equal(done.folder, t.projectDir);
+    assert.deepEqual(done.output, ['Starting acme...', 'Container ddev-acme-web  Started', 'Successfully started acme', 'Your project can be reached at https://acme.ddev.site'], 'colours and carriage returns gone');
+    assert.equal(done.status.run.state, 'running');
+    assert.equal(done.status.busy, null);
+    assert.ok(calls().includes(`${t.projectDir}|start`));
+    const events = runs.map((r) => r.data as { line: string | null; done: boolean; ok: boolean | null; command: string; projectId: string });
+    assert.deepEqual(events.map((e) => e.line), [null, ...done.output, null]);
+    assert.deepEqual(events.at(-1), { projectId, command: 'ddev start', line: null, done: true, ok: true });
+    assert.ok(events.slice(0, -1).every((e) => !e.done));
+  });
+
+  test('a restart is one at a time; a failed start says so with ddev’s words; a session cannot start a site', async () => {
+    writeFileSync(join(bin, 'ddev-slow'), '');
+    const first = t.owner.call('live.start', { projectId, restart: true });
+    await waitFor('the restart to begin', () => runs.some((r) => (r.data as { command: string }).command === 'ddev restart'));
+    assert.equal((await t.owner.call('live.status', { projectId })).busy?.command, 'ddev restart', 'a view opened meanwhile sees it going');
+    await assert.rejects(t.owner.call('live.start', { projectId }), /ddev restart is already running for this site/);
+    assert.equal((await first).ok, true);
+    assert.ok(calls().includes(`${t.projectDir}|restart`));
+    rmSync(join(bin, 'ddev-slow'));
+
+    writeFileSync(join(bin, 'ddev-state'), 'broken\n');
+    const failed = await t.owner.call('live.start', { projectId });
+    assert.equal(failed.ok, false);
+    assert.deepEqual(failed.output, ['Failed to start acme: web container failed to become ready']);
+    assert.equal(failed.status.run.state, 'other');
+    assert.equal(failed.status.run.said, 'broken');
+
+    const s = await t.owner.call('sessions.start', { projectId, provider: 'claude' });
+    const agent = await CoreClient.connect(t.core.paths.socket, await tokenOf(t.core, s.id));
+    try {
+      await assert.rejects(agent.call('live.status', { projectId }), /not available to a session/);
+      await assert.rejects(agent.call('live.start', { projectId }), /not available to a session/);
+    } finally {
+      agent.close();
+      await t.owner.call('sessions.stop', { id: s.id });
+    }
+    await assert.rejects(t.owner.call('live.start', { projectId, restart: 'yes' as never }), /restart must be true or false/);
+  });
+
+  test('Lando and a dev script are named, never asked or run; a project with no ddev config is not started with ddev', async () => {
+    const before = calls().length;
+    // Projects are kept by their real path (/var is /private/var).
+    const lando = realpathSync(folder({ '.lando.yml': "name: 'harbor'\nrecipe: drupal10\n" }));
+    const app = realpathSync(folder({ 'package.json': JSON.stringify({ scripts: { dev: 'vite --port 5174' } }), 'package-lock.json': '{}' }));
+    try {
+      const landoId = (await t.owner.call('projects.add', { path: lando })).id;
+      await t.owner.call('live.setSite', { projectId: landoId, url: 'https://harbor.lndo.site/' });
+      assert.deepEqual((await t.owner.call('live.status', { projectId: landoId })).run, { tool: 'lando', state: null, said: null, start: 'lando start', folder: lando, name: null });
+      await assert.rejects(t.owner.call('live.start', { projectId: landoId }), /has no ddev config \(\.ddev\/config\.yaml\), so Wanigan cannot start its site with ddev/);
+      const appId = (await t.owner.call('projects.add', { path: app })).id;
+      await t.owner.call('live.setSite', { projectId: appId, url: 'http://localhost:5174/' });
+      assert.deepEqual((await t.owner.call('live.status', { projectId: appId })).run, { tool: 'script', state: null, said: null, start: 'npm run dev', folder: app, name: null });
+      await t.owner.call('live.setSite', { projectId: appId, url: 'https://example.test/' });
+      assert.equal((await t.owner.call('live.status', { projectId: appId })).run.tool, null, 'an address nothing in the project names: no guess');
+      assert.equal(calls().length, before, 'ddev was not asked');
+    } finally { for (const r of [lando, app]) rmSync(r, { recursive: true, force: true }); }
+  });
+});
+
+describe('a card’s missed before and after', () => {
+  let t: TestCore;
+  let cardId: string;
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+  before(async () => {
+    t = await testCore();
+    const projectId = (await t.owner.call('projects.add', { path: t.projectDir })).id;
+    cardId = (await t.owner.call('cards.create', { projectId, type: 'task', title: 'Rename a location' })).id;
+  });
+  after(async () => { await t?.close(); });
+
+  test('why a screenshot was not taken is kept, one a kind, until one of that kind is', async () => {
+    const reason = 'This site isn’t running. ddev says it is paused.';
+    const miss = await t.owner.call('live.shotMissed', { cardId, sessionId: null, kind: 'before', url: 'https://acme.ddev.site/', reason });
+    assert.deepEqual([miss.kind, miss.reason, miss.url], ['before', reason, 'https://acme.ddev.site/']);
+    await t.owner.call('live.shotMissed', { cardId, sessionId: null, kind: 'before', url: 'https://acme.ddev.site/', reason: 'Nothing answered at acme.ddev.site.' });
+    await t.owner.call('live.shotMissed', { cardId, sessionId: null, kind: 'after', url: 'https://acme.ddev.site/', reason });
+    assert.deepEqual((await t.owner.call('live.shotMisses', { cardId })).map((m) => [m.kind, m.reason]).sort(),
+      [['after', reason], ['before', 'Nothing answered at acme.ddev.site.']], 'the newer reason replaced the older');
+    await t.owner.call('live.saveShot', { cardId, sessionId: null, kind: 'before', url: 'https://acme.ddev.site/', data: png, width: 1, height: 1 });
+    assert.deepEqual((await t.owner.call('live.shotMisses', { cardId })).map((m) => m.kind), ['after'], 'a before taken clears the missed before');
+    await assert.rejects(t.owner.call('live.shotMissed', { cardId, sessionId: null, kind: 'during' as never, url: 'https://acme.ddev.site/', reason }), /needs its kind/);
+    await assert.rejects(t.owner.call('live.shotMissed', { cardId, sessionId: null, kind: 'after', url: 'https://acme.ddev.site/', reason: '   ' }), /needs its kind/);
   });
 });
