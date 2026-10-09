@@ -47,18 +47,23 @@ stage() {
 }
 
 # Draws the pictures inside the web container (Node, ImageMagick and fonts are there).
-# They are kept between builds in <site>/.demo-images, and only missing ones are drawn.
+# They are kept between builds in <site>/.demo-images, and only missing ones are drawn,
+# unless the drawing code changed since: then every one is drawn again (the seeds
+# replace a changed picture in place, keeping its id).
 draw_images() {
-  local site="$1" set="$2"
+  local site="$1" set="$2" sum redraw=""
   mkdir -p "$site/.demo-images"
+  sum="$(cat "$HERE"/images/*.mjs | shasum -a 256 | cut -d' ' -f1)"
+  [ "$(cat "$site/.demo-images/.drawn-by" 2>/dev/null)" = "$sum" ] || redraw=1
   ddev exec -d /var/www/html/.demo-build/images bash -c "
     set -e
     if [ ! -d node_modules/@resvg/resvg-js ]; then
       npm init -y >/dev/null
       npm install --no-audit --no-fund --loglevel=error @resvg/resvg-js@2.6.2 >/dev/null
     fi
-    node make-images.mjs $set /var/www/html/.demo-images
+    REDRAW=$redraw node make-images.mjs $set /var/www/html/.demo-images
   "
+  echo "$sum" >"$site/.demo-images/.drawn-by"
 }
 
 # A local git repository for the site, so Wanigan's Changes view and the live

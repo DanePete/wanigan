@@ -66,7 +66,8 @@ small module:
   template and an edit shows on the next load.
 
 **Fieldnotes** (`wordpress/`) is a block theme, a child of Twenty Twenty-Five,
-with a small plugin of ours; see `wordpress/build.sh` for its parts.
+with a small plugin of ours. `wordpress/site/README.md`, which becomes the built
+site's own README, lists what is in it; `wordpress/build.sh` puts it together.
 
 ## Live stand-ins
 
@@ -84,8 +85,10 @@ Fieldnotes.
 `images/` draws every picture as SVG and renders it to JPEG with resvg inside
 the web container: products as studio shots with one backdrop and framing,
 and landscapes and maps for the journals. The same seed always draws the same
-picture. Only missing pictures are drawn; delete a site's `.demo-images/` to
-draw them all again.
+picture. Only missing pictures are drawn, unless the drawing code has changed
+since the last build (its checksum is kept in `.demo-images/.drawn-by`): then
+every picture is drawn again, and the seeds replace each changed one in place.
+Delete a site's `.demo-images/` to draw them all again anyway.
 
 ## HTTPS
 
