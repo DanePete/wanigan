@@ -26,6 +26,8 @@ import { Chatter } from './components/Chatter';
 import { Alerts } from './components/Alerts';
 import { ViewBoundary } from './components/ViewBoundary';
 import { CoreProblemPanel } from './components/CoreProblem';
+import { GoToHost } from './components/live/GoTo';
+import { openGoTo } from './lib/live-goto';
 import { ShortcutSheet } from './dialogs/ShortcutSheet';
 import { COMMAND_IDS, matchKey, type CommandId } from '@shared/shortcuts';
 import { windowTitle } from '@shared/views';
@@ -152,6 +154,7 @@ function Shell() {
         </ViewBoundary>
       ) : null}
       <ViewBoundary name="Talk to Wanigan" frame={() => null}><TalkToWanigan project={project} hidden={route.name === 'session'} /></ViewBoundary>
+      <ViewBoundary name="Go to" frame={() => null}><GoToHost project={project} /></ViewBoundary>
 
       <ViewBoundary name="This dialog" resetKey={dialog?.kind ?? ''} compact onClose={close}
         frame={(panel) => createPortal(<div className="scrim"><div className="dialog">{panel}</div></div>, document.body)}>
@@ -220,6 +223,11 @@ function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
         if (location.hash.includes('card=')) openCard(null);
         return false;
       case 'toggle-rail': toggleRail(); return true;
+      case 'live-goto':
+        // A page of the open project's site (components/live/GoTo.tsx); the same chord closes it.
+        if (!currentProject()) return false;
+        openGoTo({ projectId: null, fromPage: false });
+        return true;
       case 'settings': case 'go-settings': navigate({ name: 'settings' }); return true;
       case 'go-needs': navigate({ name: 'needs' }); return true;
       case 'go-running': navigate({ name: 'running' }); return true;

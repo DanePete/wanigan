@@ -1,0 +1,315 @@
+/* Go to: a page of the project's site, by typing. Built like ⌘K (palette.css), with two-line rows. */
+
+.goto {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: calc(100vh - 12vh - var(--space-6));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: rise var(--dur) var(--ease);
+}
+
+.goto-input {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+
+.goto-input input,
+.goto-input input:focus {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: none;
+  font-size: var(--text-lg);
+}
+
+.goto-host {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+/* What stands between the owner and the whole site: quiet, never amber (nothing here needs the owner). */
+.goto-notice {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.goto-notice > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.goto-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.goto-notice-title {
+  margin: 0;
+  color: var(--fg);
+  font-weight: 600;
+  font-size: var(--text-md);
+  line-height: var(--lh-md);
+}
+
+.goto-notice-body {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.goto-notice-action {
+  flex: none;
+  align-self: center;
+}
+
+.goto-reading {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.goto-results {
+  min-height: 0;
+  max-height: 58vh;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.goto-results:empty {
+  display: none;
+}
+
+.goto-group + .goto-group {
+  margin-top: var(--space-1);
+}
+
+.goto-group-head {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.goto-acts-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+.goto-acts-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goto-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.goto-row > svg {
+  flex: none;
+}
+
+.goto-row.active {
+  background: var(--water-soft);
+  color: var(--fg);
+}
+
+.goto-act {
+  min-height: 36px;
+}
+
+/* A task of the page shown: its name and address on one line. */
+.goto-compact {
+  min-height: 36px;
+}
+
+.goto-compact .goto-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.goto-compact .goto-label {
+  flex: none;
+}
+
+.goto-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.goto-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: var(--text-md);
+  line-height: var(--lh-md);
+}
+
+.goto-label mark {
+  background: none;
+  color: var(--fg);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--water);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.goto-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+}
+
+.goto-meta-part {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goto-meta-part:last-child {
+  flex: 0 1 auto;
+  max-width: none;
+  min-width: 0;
+}
+
+.goto-meta-part + .goto-meta-part::before {
+  content: '·';
+  margin: 0 var(--space-2);
+}
+
+.goto-path {
+  font-size: var(--text-xs);
+}
+
+.goto-via {
+  color: var(--muted);
+}
+
+.goto-side {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+/* Draft, private, scheduled, in the trash: said, in the quiet colour, never amber. */
+.goto-status {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-round);
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  line-height: var(--lh-sm);
+}
+
+.goto-act .keycaps {
+  margin-left: auto;
+}
+
+.goto-more {
+  padding: var(--space-1) var(--space-3) var(--space-2) calc(var(--space-3) + 16px + var(--space-3));
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.goto-empty {
+  padding: var(--space-6) var(--space-3);
+  color: var(--muted);
+  text-align: center;
+}
+
+.goto-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.goto-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.goto-keys > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+/* A key that does nothing for the chosen row stays in its place, faded. */
+.goto-keys > span.off {
+  opacity: 0.45;
+}
+
+.goto-foot kbd {
+  margin-right: 2px;
+}
+
+.goto-count {
+  flex: none;
+  max-width: 45%;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

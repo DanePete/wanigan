@@ -69,6 +69,9 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
         { type: 'separator' },
         ...PROJECT_VIEWS.map((v) => item(v.label, `go-${v.view}`)),
         { type: 'separator' },
+        // Go to: a page of the open project's site, in the live view.
+        item('Page of the Site…', 'live-goto'),
+        { type: 'separator' },
         ...(projects.length
           ? projects.map((p, i): MenuItemConstructorOptions => ({
             label: `${p.name} (${p.key})`,

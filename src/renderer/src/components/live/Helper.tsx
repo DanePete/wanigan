@@ -87,8 +87,8 @@ export function HelperSettings({ site, project }: { site: LiveSite; project: Pro
   );
 }
 
-/** Exactly what installing writes and runs, and the yes that does it. */
-function HelperDialog({ site, project, onClose }: { site: LiveSite; project: ProjectSummary; onClose: () => void }) {
+/** Exactly what installing writes and runs, and the yes that does it (offered from Go to too). */
+export function HelperDialog({ site, project, onClose }: { site: LiveSite; project: ProjectSummary; onClose: () => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const plan = site.helperPlan;

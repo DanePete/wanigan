@@ -35,6 +35,7 @@ test('the Go menu has every view, each with its chord', () => {
   for (const [label, sublabel] of Object.entries(want)) assert.equal(find(label, go).sublabel, sublabel, label);
   find('Accounts', go);
   find('Settings', go);
+  assert.equal(find('Page of the Site…', go).accelerator, 'CmdOrCtrl+Shift+Space');
   assert.equal(find('Northstar (NS)', go).accelerator, 'CmdOrCtrl+1');
   assert.equal(find('Orbit API (OA)', go).accelerator, 'CmdOrCtrl+2');
   click(find('Needs You', go));
