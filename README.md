@@ -127,9 +127,10 @@ WordPress and other sites can each be on or off.
   being placed), what the view follows, and the keys that work now.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
-  [ and ] the side panel's tabs, ⇧C Compare; on a chosen part E edits, M moves,
-  . opens its code, ⇧A shows it alone; ⌘↩ adds a note, ⇧⌘↩ sends it (or the
-  notes waiting). All are on the shortcut sheet (?).
+  [ and ] the side panel's tabs, ⇧C Compare, ⇧B the component library; on a
+  chosen part E edits, M moves, . opens its code, ⇧A shows it alone, ⇧X takes
+  it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes waiting). All are on the
+  shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -182,11 +183,30 @@ WordPress and other sites can each be on or off.
   (secrets redacted), cache metadata, time, queries and hooks; each part's edit
   through Drupal's own forms (a field's own widget, a block's or a menu link's
   form, Layout Builder's page, or a template copied into your theme when you
-  say so); moves and inserts where Drupal itself keeps an order (a field's
-  items, a region's blocks, a menu, a display's fields, Layout Builder), with
-  undo; and the Go to launcher's list of pages. It names no module: anything
+  say so); moves, inserts and taking an item out where Drupal itself keeps an
+  order (a field's items, a region's blocks, a menu, a display's fields, Layout
+  Builder), with undo; and the Go to launcher's list of pages. It names no module: anything
   built on Drupal core shows up through it. How it hooks core:
   [docs/research/2026-10-09-drupal-core-live-trace.md](docs/research/2026-10-09-drupal-core-live-trace.md).
+- **The component library** (⇧B): everything the site can place, as its core
+  lists it through the helper: Drupal's single-directory components and the
+  block library's blocks, WordPress's block types, patterns and block styles.
+  Each is pictured alone in the site's own theme at a phone's and a desktop's
+  width (in a hidden window; kept until its files change), with its props,
+  slots, files (opening in the Code tab) and where this page uses it. Add one
+  by dragging it onto the page or with Place and a click, through the same
+  insert as the palette; what core cannot place alone (a Drupal component
+  outside a template or field) says so.
+- **Take out** (⇧X) on a chosen part: only its placement or reference goes,
+  never what it showed. A Drupal block placement or menu link is switched off
+  as its own form does it; a WordPress widget goes to Inactive widgets; a
+  WordPress menu item is deleted and Undo makes it again. Anything shared (a
+  region's blocks, a menu, a template, a synced pattern, a reusable block) says
+  where it shows and asks first. Refused where core would delete what it
+  showed. Seen working on both demo sites.
+- **A helper another Wanigan set up** (another Mac, a reinstall, a test)
+  answers only to that one, so the view says so at the top of its panel, and
+  Go to too, with setting it up again here as the way out.
 - **Before and after.** With screenshots on, each card shows its page as its
   session began and after each turn that changed files, with what changed
   boxed. Taken and kept on this Mac.
@@ -227,14 +247,16 @@ WordPress and other sites can each be on or off.
   template becomes a note for an agent); adding blocks from a palette. All of
   it by keyboard too.
 - **Agents see it too.** Every agent session is handed Wanigan's own MCP
-  server, `wanigan mcp`, with seven read-only tools: `live_status`, `live_look`
+  server, `wanigan mcp`, with eight read-only tools: `live_status`, `live_look`
   (a page and its parts, named the way Layers names them, with a picture only
   when asked), `live_find`, `live_part` (what the Inspector shows: whose code
   it is, the override to create, the admin link), `live_problems`,
   `live_diff` (what changed since the session's last turn, each changed area
   matched to the edited file that explains it, or said to be unexplained), and
   `live_site_ai` (the AI the site runs as its core reports it, never a key,
-  and the code beyond core that runs when content is saved).
+  and the code beyond core that runs when content is saved), and
+  `live_library` (the component library above, so a change can name a real
+  component, block or pattern).
 - **The site's AI, before it spends.** The Inspector's AI on this site lists
   WordPress core's AI Client, its connectors (set up or not, where each key
   comes from, never the key) and abilities; Drupal core has no AI API, and it
@@ -273,6 +295,9 @@ throwaway home, against the real `wanigan mcp`:
   MCP server otherwise). Seen: `gemini mcp list` connects (protocol 2025-11-25)
   and the token reaches the server. A Gemini session listing the tools needs a
   sign-in and has not been seen.
+- The listings above were seen with the first six tools; `live_site_ai` and
+  `live_library` came later and have been seen only through Wanigan's own
+  tests, not in a CLI's listing.
 - With no real agent has a tool call been seen through a model's turn, or a
   look at a real site; the tools' answers are tested against a real core with a
   stand-in for the app. No installed CLI subscribes to MCP resources, so the
@@ -617,11 +642,11 @@ verification results and the behavior that remains unverified.
 - Remote Control and Codex's token counts follow what the CLIs' binaries show;
   neither was run against a real model.
 - Live view: proven by hand on the owner's own local Drupal and WordPress
-  sites, not by the UI sweeps, which have no view to lay
-  over a page (they show its not-running and certificate states with made-up
-  data and a stand-in ddev). What is built on the helper's trace (lenses, the
-  Inspector's trace sections, the request, editing and moving in place) is
-  swept only against a stand-in until the helpers send real traces. Telling a
+  sites and, in the real app driven by a script, on the two demo sites (moves,
+  taking out with Undo, the component library and its pictures, part identity,
+  a helper set up by another Wanigan); not by the UI sweeps, which have no view
+  to lay over a page and fake the helper's answers with made-up data (they show
+  its not-running and certificate states with a stand-in ddev). Telling a
   site that is not running from a certificate problem, and Start it, are
   tested against ddev 1.25's JSON and a stand-in ddev; a real `ddev start` from
   the app has not been run, and ddev's wording when Docker is not running was
