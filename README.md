@@ -144,6 +144,46 @@ view**, where Drupal, WordPress and other sites can each be on or off.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
   as wrong (its own error messages, its console).
 
+### Code editor
+
+Change files by hand without leaving Wanigan: a drawer beneath the view (or
+beside it) with a real editor, CodeMirror 6, loaded the first time you open a
+file.
+
+- **Opens from where you are.** ⌘P finds any file in the project by a few
+  letters of its name or path (`name:42` for a line). **Edit** on a file in
+  Changes or in a turn's diff; **Edit code** on a part picked in the live view
+  opens its template where it writes the words you picked. ⌘J shows or hides
+  the drawer.
+- **An editor, not a text box.** Highlighting for PHP, Twig (with the HTML,
+  CSS and JavaScript around it), CSS and Sass, JavaScript and TypeScript, YAML,
+  JSON, Markdown, XML, shell, TOML and .env files; folding, bracket matching,
+  several cursors, search and replace (⌘F), go to line (⌃G), completion,
+  indentation that matches the file, soft wrap (⌥Z), Vim keys if you switch
+  them on. ⌘S saves.
+- **Breadcrumbs, Back and Forward.** Above the text: the file's folders and
+  where the cursor is (a PHP class and method, a Twig block, a CSS rule, a YAML
+  key), each with a menu of what is beside it; ⌘⇧. moves there. Back and
+  Forward (⌃- and ⌃⇧-, or the mouse's buttons) go between every place you
+  jumped to, across files; hold either for the recent places.
+- **Never over an agent's work.** A save names the version it was made from.
+  If an agent (or anything else) changed the file since, nothing is written:
+  you get both versions side by side to merge. A file an agent changes while
+  you have nothing unsaved reloads, saying which session changed it.
+- **Your own files only, by default.** Drupal core, contributed modules and
+  themes, vendor folders, node_modules and WordPress itself open read-only,
+  saying why (an update would lose the change) and how to override it instead;
+  **Edit anyway** if you mean it. Nothing outside the project folder (or a
+  card's worktree) opens, nor git's own files, nor anything binary or over
+  2 MB.
+- **The page follows.** A save is in the project's Activity and reaches the
+  live view exactly as an agent's edit does: it reloads, or swaps the
+  stylesheets in place.
+- **Unsaved text survives** closing the window, until you save it or throw it
+  away. Esc then Tab leaves the editor for the rest of the window.
+
+⌘P used to be Push; Push is now ⌥⌘P.
+
 ### Gemini CLI
 
 Gemini CLI runs in a terminal like Claude Code and Codex, and reports its turns,
@@ -260,6 +300,7 @@ Releases), or download the newest from there once.
 | **Needs you** | Permission prompts, reviews, questions from agents, failed or interrupted sessions, usage limits (continue on another account in one click), finished turns: ranked, across every project, and announced in the window or as a notification. Reply to a finished turn or answer a question in place; a permission row shows exactly what is asked, with hidden or lookalike characters spelled out. |
 | **Accounts** | Claude Code and Codex accounts found in supported config locations, with who each is signed in as according to the CLI. Each project picks its own. |
 | **Pause** | Per project: no new sessions or claims, and live agents are asked to wrap up. Nothing running is killed. |
+| **Code editor** | A drawer beneath any project view: open with ⌘P, Edit in Changes or a turn's diff, or Edit code on a part in the live view; breadcrumbs and Back and Forward; a save never lands over an agent's change, and the live view follows it. |
 | **Changes** | A project's uncommitted git changes, or everything one card's branch changed: syntax colour for PHP, Twig, YAML, JS/TS, CSS and more, unified or side by side, a Viewed mark per file, J/K between files, and notes on lines sent to the agent as one message. |
 | **Branches** | A card can work on its own branch in its own git worktree, so agents never share a checkout; merge it back with one button that refuses rather than forces. |
 | **AI review** | On request, Claude Code checks a card against its criteria with read-only tools and cites file-and-quote proof; Wanigan checks every quote against the file. Advice only. |
