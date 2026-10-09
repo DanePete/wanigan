@@ -66,6 +66,9 @@ export function GoToHost({ project }: { project: ProjectSummary | undefined }) {
     }
   }), [project]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Another project on screen: what was open for the last one does not come back with it.
+  useEffect(() => { if (current.current && current.current.projectId !== project?.id) setOpen(null); }, [project?.id]);
+
   if (!project) return null;
   return (
     <>
