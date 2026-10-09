@@ -10,7 +10,9 @@
 //   answers the text, so there is one hash). A WordPress block's identity is its place in the stored markup, so after
 //   a reorder it names whatever block is there now: the text is what tells them apart. What resolves is tagged with
 //   `data-wl-edit`; compileLayer() is injected as one stylesheet, replaced whole; text edits patch their words in
-//   place. An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
+//   place. The same stored thing rendered twice on a page (an entity, a post) is two parts with one identity: an edit
+//   for `this` reaches every one of them, as the native change will, once one of them shows the words it was made on.
+//   An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
 //   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
 //   called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
 // - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
@@ -130,13 +132,16 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
     let why = count ? '' : 'Its element is not on this page any more.';
     // An implemented text edit's element shows its new words: that is the edit resolving, not other words.
     const theirs = e.change.type === 'text' ? layerTextHash(e.change.value) : null;
-    for (let i = 0; i < count; i++) {
+    // The words check: one element showing the text the edit was made on (or, for a text edit, its new words) says
+    // the identity still names that thing; every element of that identity is then the same stored thing.
+    const named = !guarded(e) || Array.from({ length: count }, (_, i) => {
+      const t = typeof texts[i] === 'string' ? texts[i] as string : null;
+      const h = t === null ? null : layerTextHash(t);
+      return h === e.target.textHash || h === theirs;
+    }).some(Boolean);
+    if (count && !named) why = 'Its element shows other words now.';
+    for (let i = 0; i < count && named; i++) {
       if (e.change.type === 'text' && plain[i] !== true) { why ||= 'Its element holds more than words now.'; continue; }
-      if (guarded(e)) {
-        const t = typeof texts[i] === 'string' ? texts[i] as string : null;
-        const h = t === null ? null : layerTextHash(t);
-        if (h !== e.target.textHash && h !== theirs) { why ||= 'Its element shows other words now.'; continue; }
-      }
       accept.push(i);
     }
     if (accept.length) {
@@ -227,7 +232,7 @@ function renderInWindow(deps: {
   decode: (png: Buffer) => Promise<Bitmap>;
 }): LayerRender {
   return (r) => inHiddenWindow<LayerRendered>(
-    { partition: r.partition, url: r.url, base: r.base, width: r.width, network: true, what: 'The page', failed: 'The page could not be rendered' },
+    { partition: r.partition, url: r.url, base: r.base, width: r.width, network: true, freeze: true, what: 'The page', failed: 'The page could not be rendered' },
     async (page) => {
       const script = deps.pageScript();
       if (!script) return { error: 'This build of Wanigan has no page script, so it cannot find the edits on a page.' };
@@ -243,12 +248,12 @@ function renderInWindow(deps: {
       await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design }), 0);
       if (r.design) {
         const css = compileLayer(r.edits, []);
-        if (css) await page.wc.insertCSS(css, { cssOrigin: 'author' });
+        if (css) await page.wc.insertCSS(css, { cssOrigin: 'user' });
       }
-      await page.settle();
+      await page.freeze();
       const { height } = await page.grow(VERIFY_MAX_HEIGHT);
       const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
-      const png = await page.shoot(height);
+      const png = await page.shoot(height, true);
       if (!png) return { error: 'The page could not be pictured.' };
       return { png, bitmap: await deps.decode(png), elements, found: res.resolved };
     },
@@ -331,7 +336,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const replaceSheet = async (wc: WebContents, css: string): Promise<void> => {
     const old = sheet && sheet.wc === wc.id ? sheet.key : null;
     sheet = null;
-    if (css) sheet = { wc: wc.id, key: await wc.insertCSS(css, { cssOrigin: 'author' }) };
+    // The user origin: its !important outranks every page declaration, a layered !important included (an author
+    // sheet from insertCSS comes before the page's and loses ties: docs/research/2026-10-09-design-layer-probes.md).
+    if (css) sheet = { wc: wc.id, key: await wc.insertCSS(css, { cssOrigin: 'user' }) };
     if (old) await wc.removeInsertedCSS(old).catch(() => {});
   };
 

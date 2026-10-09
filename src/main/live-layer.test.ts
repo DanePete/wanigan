@@ -91,11 +91,11 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
   let edits = over.edits ?? [];
   const marks: { id: string; state: string; verdict?: LayerVerdict }[] = [];
   const saves: [string, string, string][] = [];
-  const sheets: { inserted: string[]; removed: string[]; reloads: number } = { inserted: [], removed: [], reloads: 0 };
+  const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
   let url = over.url ?? `${BASE}paddling`;
   const webContents = {
     id: 7, getURL: () => url, isDestroyed: () => false,
-    insertCSS: async (css: string) => { sheets.inserted.push(css); return `key-${sheets.inserted.length}`; },
+    insertCSS: async (css: string, options?: { cssOrigin?: string }) => { sheets.inserted.push(css); sheets.origins.push(options?.cssOrigin); return `key-${sheets.inserted.length}`; },
     removeInsertedCSS: async (key: string) => { sheets.removed.push(key); },
     reloadIgnoringCache: () => { sheets.reloads++; },
     on: () => webContents,
@@ -163,6 +163,7 @@ test('applying resolves an edit by its part’s identity, tags what it found, an
     assert.deepEqual(find?.args, [[{ id: e.id, parts: ['p1'], inner: 'h2:nth-of-type(1)', selector: null, text: true }], true], 'the part whose identity it is, and only that one, checked by its text');
     assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [], on: true });
     assert.deepEqual(w.sheets.inserted, [compileLayer([e], [])]);
+    assert.deepEqual(w.sheets.origins, ['user'], 'the user origin: its !important outranks the page’s, layered or not');
     assert.match(w.sheets.inserted[0]!, new RegExp(`\\[data-wl-edit~="${e.id}"\\]\\[data-wl-edit~="${e.id}"\\] \\{ color: #123456 !important; \\}`));
     assert.deepEqual(applied, { page: '/paddling', shown: [{ id: e.id, elements: 1 }], orphaned: [], elsewhere: [], off: false });
     assert.deepEqual(w.marks, [], 'nothing changed state');
@@ -229,6 +230,26 @@ test('a container whose children’s words changed is orphaned: a block keyed by
     // One word inside it changed is other words too: the hash is over all of its text.
     w.page.parts = { b1: { '': [holding('Paddling 101 Learn the strokes!')] } };
     assert.deepEqual((await w.apply()).orphaned.map((o) => o.id), [e.id, empty.id]);
+  } finally { w.done(); }
+});
+
+test('the same stored thing shown twice on a page is one identity: an edit for it reaches both, and is not orphaned', async () => {
+  const e = edit();
+  // The same card (one entity, one identity) rendered in the page and again in a sidebar teaser.
+  const twice: LiveTrace = { ...trace(), parts: [...trace().parts, { id: 'p5', kind: 'component', label: 'Card', identity: card(0) }] };
+  const w = wire({ edits: [e], trace: twice });
+  try {
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] }, p5: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
+    const both = await w.apply();
+    assert.deepEqual((w.page.calls.find((c) => c.name === 'layerFind')?.args[0] as { parts: string[] }[])[0]?.parts, ['p1', 'p5']);
+    assert.deepEqual(both.shown, [{ id: e.id, elements: 2 }], 'both, counted');
+    assert.deepEqual(w.page.set?.tags, { [e.id]: [0, 1] });
+    // The teaser shortens the title: one of them still shows the words the edit was made on, so both are the thing.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] }, p5: { 'h2:nth-of-type(1)': [words('Paddling…')] } };
+    assert.deepEqual((await w.apply()).shown, [{ id: e.id, elements: 2 }]);
+    assert.deepEqual(w.marks, [], 'never orphaned, and never one picked');
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Canoeing 201')] }, p5: { 'h2:nth-of-type(1)': [words('Canoeing…')] } };
+    assert.deepEqual((await w.apply()).orphaned, [{ id: e.id, why: 'Its element shows other words now.' }], 'neither shows its words: it names something else now');
   } finally { w.done(); }
 });
 
