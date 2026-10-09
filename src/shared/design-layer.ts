@@ -35,8 +35,11 @@ export type LayerProperty = (typeof LAYER_PROPERTIES)[number];
  * Who an edit is for. What the trace says the part is (its PartIdentity, helper 4), and the element inside it the
  * owner chose (a CSS path from the part's own root element; null for the part itself). Markup no helper explains has
  * only a `selector` from the document, and its edit is fragile: said so in the tray, and orphaned rather than
- * guessed when it stops matching. `textHash` is the element's own words when the edit was made (layerTextHash): a
- * target that now resolves to other words is orphaned, never applied to whatever sits in its place.
+ * guessed when it stops matching. `textHash` is all the element's words when the edit was made (layerTextHash of its
+ * whole text, children included, so a container is guarded too): a target that now resolves to other words is
+ * orphaned, never applied to whatever sits in its place. A text edit also resolves to its own new words, once the
+ * site has them. A WordPress block is named by its place in the stored markup (WordPress keeps no id for a block),
+ * so after a reorder this hash is what keeps an edit from landing on the block that moved into that place.
  */
 export interface LayerTarget {
   part: PartIdentity | null;

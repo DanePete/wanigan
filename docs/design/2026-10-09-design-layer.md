@@ -282,7 +282,12 @@ part a helper can name carries `identity`:
   `entity` `term`; `post_title`, `post_content`, `post_excerpt` or a
   registered meta key as `field`. A block in stored markup is `block` (its
   store, path and name). A widget, menu item, template and template part are
-  `config`.
+  `config`. WordPress keeps no id for a block, so a block's path is a place:
+  after a reorder its identity stays with the place (seen on the Fieldnotes
+  demo). What keeps an edit from landing on the block that moved there is
+  the target's text hash, which is therefore taken over all of the element's
+  words, children included; a container with no words at all cannot be
+  guarded, and its edit says it is fragile.
 
 **The core** keeps the log in its database (an additive migration): one row
 per edit and an append-only list of what was done to them (add, discard,
