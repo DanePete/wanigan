@@ -512,6 +512,47 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (card_id, kind)
   );
   `,
+  `
+  -- The design layer (docs/design/2026-10-09-design-layer.md): the owner's
+  -- edits to the live page, kept here until they are made real in the site and
+  -- verified; never written into the site or the project. One row per edit as
+  -- layerEdit() checked it (target, change, before and verdict as JSON), in the
+  -- order made (seq); listed is 0 while an undo has taken its add back or it is
+  -- discarded. Beside it, everything done to the edits, append-only and in
+  -- order: undo and redo replay it exactly. ref is the add or discard an undo or
+  -- redo acts on; state_from and state_to are a mark's.
+  CREATE TABLE live_layer_edits (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES projects(id),
+    seq          INTEGER NOT NULL,
+    target_json  TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    page         TEXT NOT NULL,
+    scope        TEXT NOT NULL CHECK (scope IN ('this', 'kind', 'site')),
+    breakpoint   TEXT NOT NULL,
+    change_json  TEXT NOT NULL,
+    before_json  TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('draft', 'implemented', 'verified', 'retired', 'orphaned')),
+    made_by      TEXT NOT NULL CHECK (made_by IN ('owner', 'agent')),
+    made_at      INTEGER NOT NULL,
+    verdict_json TEXT,
+    listed       INTEGER NOT NULL DEFAULT 1 CHECK (listed IN (0, 1)),
+    updated_at   INTEGER NOT NULL,
+    UNIQUE (project_id, seq)
+  );
+  CREATE INDEX live_layer_edits_by_project ON live_layer_edits (project_id, listed, seq);
+  CREATE TABLE live_layer_actions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    edit_id    TEXT NOT NULL REFERENCES live_layer_edits(id),
+    action     TEXT NOT NULL CHECK (action IN ('add', 'discard', 'undo', 'redo', 'mark')),
+    ref        INTEGER REFERENCES live_layer_actions(id),
+    state_from TEXT,
+    state_to   TEXT,
+    at         INTEGER NOT NULL
+  );
+  CREATE INDEX live_layer_actions_by_project ON live_layer_actions (project_id, id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

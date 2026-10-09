@@ -35,6 +35,7 @@ import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
 import { mcpHandlers } from './mcp-handlers.ts';
 import { boardViewsHandlers, type BoardViews } from './board-views.ts';
+import { LiveLayer, liveLayerHandlers } from './live-layer.ts';
 import { gitHandlers, refuseBesideAgents } from './git-handlers.ts';
 import { saidLimit, saidQuery, searchSaid } from './said.ts';
 import { validateBooleans } from './parameter-booleans.ts';
@@ -45,9 +46,6 @@ export type Caller = { role: 'owner' } | { role: 'session'; session: Session } |
 
 type Handler<M extends Method> = (params: Params<M>, caller: Caller) => Result<M> | Promise<Result<M>>;
 export type Handlers = { [M in Method]: Handler<M> };
-
-/** The design layer's methods until the core keeps its log: said plainly, never answered with an empty layer. */
-const layerNotYet = (): never => { throw new CoreError('refused', 'The design layer is not built yet.'); };
 
 /**
  * What a paused project's live agent sessions are told, once, when each is
@@ -338,13 +336,8 @@ export function createHandlers(
     'live.start': (p) => more.live.start(str(p.projectId, 'project'), p.restart === true),
     'live.shotMissed': (p) => more.live.shotMissed(p),
     'live.shotMisses': (p) => more.live.shotMisses(str(p.cardId, 'card')),
-    // The design layer's log: the contract is src/shared/design-layer.ts; the core's side is still to be built.
-    'live.layer': layerNotYet,
-    'live.layerAdd': layerNotYet,
-    'live.layerDiscard': layerNotYet,
-    'live.layerUndo': layerNotYet,
-    'live.layerRedo': layerNotYet,
-    'live.layerMark': layerNotYet,
+    // The design layer's log (core/live-layer.ts; the contract is src/shared/design-layer.ts).
+    ...liveLayerHandlers(new LiveLayer(ctx, board)),
     'files.read': (p) => more.files.read(p, p.path),
     'files.write': (p) => more.files.write(p, p.path, p.text, p.baseHash, p.anyway === true),
     'files.stat': (p) => more.files.stat(p, p.path),
