@@ -145,6 +145,8 @@ export interface TracePart {
   /** Template suggestions or hierarchy candidates: which exist, and which was chosen. */
   alternatives?: { name: string; file?: string; exists: boolean; chosen?: boolean }[];
   access?: { result: 'allowed' | 'forbidden' | 'neutral'; reason?: string };
+  /** Asset libraries the part attached itself (not those of the parts inside it), as the platform names them: `core/drupal`, `acme/hero`. */
+  libraries?: string[];
 }
 
 export interface TraceQuery {
@@ -345,6 +347,10 @@ export function parseTrace(raw: unknown): LiveTrace | null {
     if (isObj(v.access) && (v.access.result === 'allowed' || v.access.result === 'forbidden' || v.access.result === 'neutral')) {
       const reason = str(v.access.reason, 500);
       out.access = { result: v.access.result, ...(reason ? { reason } : {}) };
+    }
+    if (Array.isArray(v.libraries)) {
+      const libraries = v.libraries.map((l) => str(l, 200)).filter((l): l is string => !!l).slice(0, 100);
+      if (libraries.length) out.libraries = libraries;
     }
     return out;
   }, 'parts', truncated);
