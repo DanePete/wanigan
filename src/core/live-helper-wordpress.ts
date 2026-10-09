@@ -3419,7 +3419,7 @@ final class Wanigan_Live {
 			$entry = isset($body['entry']) ? (string) $body['entry'] : '';
 			if (!in_array($entry, isset($c['public']['inserts']) ? $c['public']['inserts'] : array(), true)) self::answer(array('ok' => false, 'error' => 'That cannot be inserted there.'), 400);
 			$to = $c;
-			$index = isset($body['index']) ? (int) $body['index'] : count($c['public']['items']);
+			$index = isset($body['index']) && is_int($body['index']) ? $body['index'] : (isset($body['index']) ? -1 : count($c['public']['items']));
 			$item = null;
 		} else {
 			$item = isset($body['item']) ? (string) $body['item'] : '';
@@ -3428,19 +3428,23 @@ final class Wanigan_Live {
 			if ($dest !== $cid && !in_array($dest, isset($c['public']['movesTo']) ? $c['public']['movesTo'] : array(), true)) self::answer(array('ok' => false, 'error' => 'It cannot move there.'), 400);
 			$to = $dest === $cid ? $c : self::collection($stored, $dest);
 			if (!$to) self::answer(array('ok' => false, 'error' => 'That is not a collection on this page.'), 404);
-			$index = isset($body['to']['index']) ? (int) $body['to']['index'] : 0;
+			$index = isset($body['to']['index']) && is_int($body['to']['index']) ? $body['to']['index'] : -1;
 			$entry = null;
 		}
-		$index = max(0, $index);
+		$before = self::place($to['public']['items'], $item, $index);
+		if ($before === false) {
+			$room = count(array_diff($to['public']['items'], array($item)));
+			self::answer(array('ok' => false, 'error' => 'There is no place ' . $index . ' there: counting from 0, it can go at 0 to ' . $room . '.'), 400);
+		}
 		switch ($c['private']['type']) {
 			case 'blocks':
-				$result = self::move_blocks($c, $to, $item, $entry, $index);
+				$result = self::move_blocks($c, $to, $item, $entry, $before);
 				break;
 			case 'widgets':
-				$result = $insert ? new WP_Error('wanigan', 'Add widgets in Appearance › Widgets.') : self::move_widget($c, $to, $item, $index);
+				$result = $insert ? new WP_Error('wanigan', 'Add widgets in Appearance › Widgets.') : self::move_widget($c, $to, $item, $before);
 				break;
 			case 'menu':
-				$result = self::move_menu($c, $to, $item, $entry, $index, $stored);
+				$result = self::move_menu($c, $to, $item, $entry, $before, $stored);
 				break;
 			default:
 				$result = new WP_Error('wanigan', 'Wanigan cannot move that.');
@@ -3462,6 +3466,18 @@ final class Wanigan_Live {
 		self::answer($out);
 	}
 
+	/**
+	 * Where an item goes, as the live view counts (src/shared/live-arrange.ts): $index is its place among the target
+	 * collection's items after the move, from 0, the moving item itself left out of them. [A,B,C] moving B to 2 is
+	 * [A,C,B]; to 0, [B,A,C]; into [X,Y] at 1, [X,B,Y]; an index equal to the length appends. Answers the item it
+	 * goes before (null: at the end), or false for a place past the end.
+	 */
+	public static function place(array $items, $moving, int $index) {
+		$rest = array_values(array_filter($items, function ($i) use ($moving) { return $i !== $moving; }));
+		if ($index < 0 || $index > count($rest)) return false;
+		return $index < count($rest) ? $rest[$index] : null;
+	}
+
 	private static function collection(array $stored, string $id): ?array {
 		foreach (isset($stored['trace']['collections']) ? $stored['trace']['collections'] : array() as $c) {
 			if ($c['id'] === $id && isset($stored['private']['collections'][$id])) return array('public' => $c, 'private' => $stored['private']['collections'][$id]);
@@ -3475,7 +3491,7 @@ final class Wanigan_Live {
 	 * serialize_block() walks innerContent, taking the next inner block at each null), so a block moving in or out
 	 * of a container moves a placeholder too.
 	 */
-	private static function move_blocks(array $from, array $to, ?string $item, ?string $entry, int $index) {
+	private static function move_blocks(array $from, array $to, ?string $item, ?string $entry, ?string $before) {
 		$fp = $from['private'];
 		$tp = $to['private'];
 		if ($fp['store'] !== $tp['store']) return new WP_Error('wanigan', 'Blocks move only within one post or template.');
@@ -3486,21 +3502,21 @@ final class Wanigan_Live {
 		}
 		$blocks = parse_blocks($info['content']);
 		if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', 'Writing this ' . $info['noun'] . '’s blocks back would change other parts of it, so Wanigan does not save it.');
-		$target_items = $tp['paths'];
-		$anchor = null;
-		$keys = array_keys($target_items);
-		if ($item !== null) $keys = array_values(array_diff($keys, array($item)));
-		if ($index < count($keys)) $anchor = $target_items[$keys[$index]];
+		$anchor = $before !== null ? $tp['paths'][$before] : null;
 		if ($item !== null) {
 			$path = $fp['paths'][$item];
 			$node = self::node_in($blocks, $path);
 			if (!$node || md5(serialize_block($node)) !== $fp['fps'][$item]) return new WP_Error('wanigan', 'That block is not where it was.', array('items' => self::current_items($info['content'], $fp)));
 			$check = self::may_hold($blocks, $tp['parent'], $node['blockName']);
 			if (is_wp_error($check)) return $check;
+			// Removing a block (and the separator beside it) shifts the paths after it; the block it goes before and
+			// the container it goes into are tagged first and found again after.
+			if ($anchor !== null) $blocks = self::tag($blocks, $anchor, 'before');
+			if ($tp['parent']) $blocks = self::tag($blocks, $tp['parent'], 'holder');
 			$blocks = self::remove_at($blocks, $path);
-			// Paths after the removed block in the same list shift down by one.
-			if ($anchor !== null) $anchor = self::shift_after($anchor, $path);
-			$parent = self::shift_after($tp['parent'], $path);
+			if ($anchor !== null) $anchor = self::tagged($blocks, 'before');
+			$parent = $tp['parent'] ? self::tagged($blocks, 'holder') : array();
+			if (($anchor === null && $before !== null) || $parent === null) return new WP_Error('wanigan', 'Wanigan lost track of where the block goes. Nothing was changed.');
 			$new = array($node);
 		} else {
 			$parent = $tp['parent'];
@@ -3514,6 +3530,7 @@ final class Wanigan_Live {
 		$at = $anchor !== null ? end($anchor) : null;
 		$blocks = self::insert_at($blocks, $parent, $at, $new);
 		if (is_wp_error($blocks)) return $blocks;
+		$blocks = self::untag($blocks);
 		$content = serialize_blocks($blocks);
 		$saved = self::save_store($fp['store'], $info, $content);
 		if (is_wp_error($saved)) return $saved;
@@ -3575,10 +3592,31 @@ final class Wanigan_Live {
 		return true;
 	}
 
-	private static function shift_after(array $path, array $removed): array {
-		$depth = count($removed) - 1;
-		if (count($path) > $depth && array_slice($path, 0, $depth) === array_slice($removed, 0, $depth) && $path[$depth] > $removed[$depth]) $path[$depth]--;
-		return $path;
+	/** A mark on a parsed block, under a key serialize_block() never reads. */
+	private static function tag(array $blocks, array $path, string $tag): array {
+		$node = self::node_in($blocks, $path);
+		if (!$node) return $blocks;
+		$node['_wanigan'] = $tag;
+		return self::replace_node($blocks, $path, $node);
+	}
+
+	private static function tagged(array $blocks, string $tag, array $at = array()): ?array {
+		foreach ($blocks as $i => $b) {
+			if (isset($b['_wanigan']) && $b['_wanigan'] === $tag) return array_merge($at, array($i));
+			if (!empty($b['innerBlocks'])) {
+				$found = self::tagged($b['innerBlocks'], $tag, array_merge($at, array($i)));
+				if ($found !== null) return $found;
+			}
+		}
+		return null;
+	}
+
+	private static function untag(array $blocks): array {
+		foreach ($blocks as $i => $b) {
+			unset($blocks[$i]['_wanigan']);
+			if (!empty($b['innerBlocks'])) $blocks[$i]['innerBlocks'] = self::untag($b['innerBlocks']);
+		}
+		return $blocks;
 	}
 
 	private static function separator(): array {
@@ -3672,7 +3710,7 @@ final class Wanigan_Live {
 	}
 
 	/** widgets.php wp_set_sidebars_widgets(): a widget's place among the widget areas. */
-	private static function move_widget(array $from, array $to, string $item, int $index) {
+	private static function move_widget(array $from, array $to, string $item, ?string $before) {
 		if (!current_user_can('edit_theme_options')) return new WP_Error('wanigan', 'Your WordPress user cannot change widgets (edit_theme_options).');
 		$all = wp_get_sidebars_widgets();
 		$fs = $from['private']['sidebar'];
@@ -3689,9 +3727,8 @@ final class Wanigan_Live {
 		$before[$ts] = isset($all[$ts]) ? array_values((array) $all[$ts]) : array();
 		$all[$fs] = array_values(array_diff($now, array($wid)));
 		$list = $ts === $fs ? $all[$fs] : $before[$ts];
-		// The index counts the items the page shows; place it before the shown item at that index.
-		$shown = array_values(array_diff(array_values($to['private']['widgets']), array($wid)));
-		$pos = $index < count($shown) ? array_search($shown[$index], $list, true) : false;
+		// Before the widget the page shows at that place (widgets the page does not show keep theirs).
+		$pos = $before !== null ? array_search($to['private']['widgets'][$before], $list, true) : false;
 		array_splice($list, $pos === false ? count($list) : $pos, 0, array($wid));
 		$all[$ts] = $list;
 		wp_set_sidebars_widgets($all);
@@ -3703,7 +3740,7 @@ final class Wanigan_Live {
 	 * Menu links reordered (or moved under another link of the same menu, or a link to this page added) through
 	 * /wp/v2/menu-items: menu_order is one sequence over the whole menu, depth first, so the menu is renumbered.
 	 */
-	private static function move_menu(array $from, array $to, ?string $item, ?string $entry, int $index, array $stored) {
+	private static function move_menu(array $from, array $to, ?string $item, ?string $entry, ?string $before, array $stored) {
 		if (!current_user_can('edit_theme_options')) return new WP_Error('wanigan', 'Your WordPress user cannot change menus (edit_theme_options).');
 		$menu = $from['private']['menu'];
 		if ($to['private']['menu'] !== $menu) return new WP_Error('wanigan', 'Links move only within one menu.');
@@ -3732,9 +3769,8 @@ final class Wanigan_Live {
 		$children = array();
 		uasort($state, function ($a, $b) { return $a[1] - $b[1]; });
 		foreach ($state as $iid => $s) if ($iid !== $moving) $children[$s[0]][] = $iid;
-		$shown = array_values(array_diff(array_map('intval', array_values($to['private']['items'])), array($moving)));
 		$siblings = isset($children[$parent]) ? $children[$parent] : array();
-		$pos = $index < count($shown) ? array_search($shown[$index], $siblings, true) : false;
+		$pos = $before !== null ? array_search((int) $to['private']['items'][$before], $siblings, true) : false;
 		array_splice($siblings, $pos === false ? count($siblings) : $pos, 0, array($moving));
 		$children[$parent] = $siblings;
 		$order = array();

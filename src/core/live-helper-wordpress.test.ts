@@ -94,6 +94,38 @@ echo json_encode(array('hooks' => array_values(array_unique($GLOBALS['wl_hooks']
   }));
   const COUNTER = ['save_post', 'deleted_post', 'trashed_post', 'untrashed_post', 'edited_term', 'created_term', 'delete_term', 'wp_update_nav_menu', 'customize_save_after', 'switch_theme', 'update_option_sidebars_widgets', 'added_post_meta', 'updated_post_meta', 'deleted_post_meta', 'updated_option'];
 
+  test('a move or insert puts the item at its place in the target after the move, appends at the length, and refuses past it', () => {
+    const place = join(dir, 'place.php');
+    writeFileSync(place, `<?php
+define('ABSPATH', __DIR__ . '/');
+function add_action() { return true; }
+function add_filter() { return true; }
+require getenv('WL_PLUGIN');
+$cases = json_decode(getenv('WL_CASES'), true);
+echo json_encode(array_map(function ($c) { return Wanigan_Live::place($c[0], $c[1], $c[2]); }, $cases));
+`);
+    // [items of the target, the moving item (null for an insert), index] → the item it goes before, null for the end, false for refused.
+    const cases: [string[], string | null, number, string | null | false][] = [
+      [['A', 'B', 'C'], 'B', 2, null], // [A,C,B]
+      [['A', 'B', 'C'], 'B', 0, 'A'], // [B,A,C]
+      [['A', 'B', 'C'], 'B', 1, 'C'], // [A,B,C]: where it was
+      [['A', 'B', 'C'], 'B', 3, false], // past the end once B is out of the list
+      [['X', 'Y'], 'B', 1, 'Y'], // into another collection: [X,B,Y]
+      [['X', 'Y'], 'B', 2, null], // appended: [X,Y,B]
+      [['X', 'Y'], 'B', 3, false],
+      [['X', 'Y'], 'B', -1, false],
+      [[], 'B', 0, null], // into an empty collection
+      [['A', 'B'], null, 2, null], // an insert at the length appends
+      [['A', 'B'], null, 0, 'A'],
+      [['A', 'B'], null, 3, false],
+    ];
+    const got = JSON.parse(execFileSync(php as string, [place], {
+      env: { PATH: process.env.PATH ?? '', WL_PLUGIN: plugin, WL_CASES: JSON.stringify(cases.map(([items, moving, index]) => [items, moving, index])) },
+      encoding: 'utf8',
+    })) as (string | null | false)[];
+    assert.deepEqual(got, cases.map((c) => c[3]));
+  });
+
   test('PHP finds no syntax error in it', () => {
     assert.match(execFileSync(php as string, ['-l', plugin], { encoding: 'utf8' }), /No syntax errors/);
   });
