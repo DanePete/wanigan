@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DRUPAL_HELPER_FILES, DRUPAL_HELPER_MARK, DRUPAL_HELPER_MODULE, DRUPAL_HELPER_VERSION } from './live-helper-drupal.ts';
@@ -25,8 +25,8 @@ function declared(text: string): string | null {
 
 const classes = new Map(php.map(([f, t]) => [declared(t), { file: f, text: t }]));
 
-test('this Wanigan writes helper version 2, and its info file says so under the mark', () => {
-  assert.equal(DRUPAL_HELPER_VERSION, 2);
+test('this Wanigan writes helper version 3, and its info file says so under the mark', () => {
+  assert.equal(DRUPAL_HELPER_VERSION, 3);
   const info = files[`${DRUPAL_HELPER_MODULE}.info.yml`] ?? '';
   assert.ok(info.startsWith(DRUPAL_HELPER_MARK));
   assert.match(info, new RegExp(`# wanigan-helper-version: ${DRUPAL_HELPER_VERSION}\\n`));
@@ -51,7 +51,7 @@ test('every class the services, routes and the service provider name is one the 
     assert.ok(found, `route class ${cls}`);
     assert.match(found.text, new RegExp(`function ${method}\\(`), `${cls}::${method}`);
   }
-  for (const route of ['wanigan_live.trace', 'wanigan_live.edit', 'wanigan_live.edit_done', 'wanigan_live.move', 'wanigan_live.insert', 'wanigan_live.undo', 'wanigan_live.find']) {
+  for (const route of ['wanigan_live.trace', 'wanigan_live.edit', 'wanigan_live.edit_done', 'wanigan_live.move', 'wanigan_live.insert', 'wanigan_live.undo', 'wanigan_live.find', 'wanigan_live.ai']) {
     assert.match(routing, new RegExp(`^${route.replace('.', '\\.')}:\\n`, 'm'), route);
   }
   // Every route answers only the live view's token.
@@ -154,5 +154,75 @@ test('a move\'s index is the item\'s place in the target once moved, from 0 to i
     assert.deepEqual(hidden, ['A', 'H', 'C', 'B'], 'an item the page does not show keeps its place');
     assert.deepEqual(empty, ['B'], 'into an empty collection');
     assert.deepEqual(fits, [true, false, true, false, true, false, false], 'from 0 to the target\'s other items, nothing past');
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('what a save runs is read from core’s module handler and extension list, named by module, core counted and the helper left out', (t) => {
+  const bin = which('php', process.env.PATH ?? '');
+  if (!bin) { t.skip('PHP is not installed here'); return; }
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), 'wanigan-drupal-saves-')));
+  try {
+    // A made-up project: composer.json at its root, Drupal in web/, a contributed, a custom and a core module.
+    const module = (path: string, code: string): void => { mkdirSync(join(folder, dirname(path)), { recursive: true }); writeFileSync(join(folder, path), `<?php\n${code}\n`); };
+    writeFileSync(join(folder, 'composer.json'), '{}');
+    module('web/modules/contrib/acme_ai/acme_ai.module', 'function acme_ai_entity_presave($e) {}\nfunction acme_ai_node_presave($e) {}');
+    module('web/modules/custom/northwind_seo/northwind_seo.module', 'function northwind_seo_node_update($e) {}');
+    module('web/modules/custom/northwind_seo/src/Listener.php', 'class NorthwindListener { public function onSave() {} }');
+    module('web/core/modules/node/node.module', 'function node_node_presave($e) {}');
+    module('web/core/lib/CoreListener.php', 'class CoreListener { public function onSave() {} }');
+    module('web/modules/custom/wanigan_live/wanigan_live.module', 'function wanigan_live_entity_presave($e) {}');
+    for (const f of ['src/Trace/Source.php', 'src/Trace/SaveCode.php', 'src/Edit/Targets.php']) module(`helper/${f}`, (files[f] ?? '').replace(/^<\?php\n/, ''));
+    writeFileSync(join(folder, 'check.php'), `<?php
+namespace Drupal\\Core\\Config\\Entity { interface ConfigEntityTypeInterface {} }
+namespace Drupal\\Core\\Entity { interface ContentEntityTypeInterface {} }
+namespace {
+  $root = ${JSON.stringify(folder)};
+  foreach (['web/modules/contrib/acme_ai/acme_ai.module', 'web/modules/custom/northwind_seo/northwind_seo.module', 'web/modules/custom/northwind_seo/src/Listener.php', 'web/core/modules/node/node.module', 'web/core/lib/CoreListener.php', 'web/modules/custom/wanigan_live/wanigan_live.module', 'helper/src/Trace/Source.php', 'helper/src/Trace/SaveCode.php', 'helper/src/Edit/Targets.php'] as $f) require $root . '/' . $f;
+  class Ext { public function __construct(private string $path, private string $type = 'module') {} public function getPath() { return $this->path; } public function getType() { return $this->type; } }
+  $modules = ['acme_ai' => ['modules/contrib/acme_ai', 'Acme AI'], 'northwind_seo' => ['modules/custom/northwind_seo', 'Northwind SEO'], 'node' => ['core/modules/node', 'Node'], 'wanigan_live' => ['modules/custom/wanigan_live', 'Wanigan live view']];
+  class ModuleList { public function __construct(private array $m) {} public function exists($n) { return isset($this->m[$n]); } public function get($n) { return new Ext($this->m[$n][0]); } public function getName($n) { return $this->m[$n][1]; } public function getPath($n) { return $this->m[$n][0]; } }
+  class Handler {
+    public function __construct(private array $m) {}
+    public function getModuleList() { return array_map(fn ($x) => new Ext($x[0]), $this->m); }
+    public function invokeAllWith($hook, callable $cb) { foreach (['acme_ai', 'northwind_seo', 'node', 'wanigan_live'] as $module) { if (function_exists($module . '_' . $hook)) $cb($module . '_' . $hook, $module); } }
+  }
+  class Content implements Drupal\\Core\\Entity\\ContentEntityTypeInterface { public function __construct(private string $l) {} public function getSingularLabel() { return $this->l; } }
+  class Configured implements Drupal\\Core\\Config\\Entity\\ConfigEntityTypeInterface { public function getSingularLabel() { return 'block'; } }
+  class Types { public function hasDefinition($t) { return isset($this->getDefinitions()[$t]); } public function getDefinition($t) { return $this->getDefinitions()[$t]; } public function getDefinitions() { return ['node' => new Content('content item'), 'paragraph' => new Content('paragraph'), 'block' => new Configured()]; } }
+  class Dispatcher { public function getListeners($e) { return $e === 'config.save' ? [[new NorthwindListener(), 'onSave'], [new CoreListener(), 'onSave']] : []; } }
+  class Drupal {
+    public static array $m;
+    public static function root() { return ${JSON.stringify(join(folder, 'web'))}; }
+    public static function entityTypeManager() { return new Types(); }
+    public static function moduleHandler() { return new Handler(self::$m); }
+    public static function service($id) { return match ($id) { 'extension.list.module' => new ModuleList(self::$m), 'event_dispatcher' => new Dispatcher(), 'theme_handler' => new class { public function listInfo() { return []; } } }; }
+  }
+  Drupal::$m = $modules;
+  class_alias('Drupal\\wanigan_live\\Trace\\SaveCode', 'SaveCode');
+  echo json_encode([
+    'node' => SaveCode::forEntityType('node'),
+    'block' => SaveCode::forEntityType('block'),
+    'missing' => SaveCode::forEntityType('nope'),
+    'site' => array_column(SaveCode::site(), 'id'),
+    'targets' => [SaveCode::forTarget('field.node.title.en.12', ['kind' => 'field', 'type' => 'node']), SaveCode::forTarget('config.block.acme_search', ['kind' => 'config']), SaveCode::forTarget('link.menu_link_content:abc', ['kind' => 'link']), SaveCode::forTarget('link.system.admin', ['kind' => 'link']), SaveCode::forTarget('tpl.0123', ['kind' => 'template-override'])],
+    'collections' => [SaveCode::forCollection(['kind' => 'field-items', 'type' => 'paragraph'], 'content'), SaveCode::forCollection(['kind' => 'region-blocks'], 'configuration'), SaveCode::forCollection(['kind' => 'menu'], 'configuration'), SaveCode::forCollection(['kind' => 'layout', 'storage' => 'overrides', 'type' => 'node'], 'content'), SaveCode::forCollection(['kind' => 'layout', 'storage' => 'defaults', 'type' => 'node'], 'configuration')],
+  ]);
+}
+`);
+    const out = JSON.parse(execFileSync(bin, [join(folder, 'check.php')], { encoding: 'utf8' })) as Record<string, unknown>;
+    assert.deepEqual(out.node, {
+      id: 'entity:node', label: 'Saving a content item (node)', core: 1,
+      runs: [
+        { by: 'acme_ai', kind: 'module', owner: 'contrib', hooks: ['node_presave', 'entity_presave'], callbacks: ['acme_ai_node_presave', 'acme_ai_entity_presave'], name: 'Acme AI' },
+        { by: 'northwind_seo', kind: 'module', owner: 'yours', hooks: ['node_update'], callbacks: ['northwind_seo_node_update'], name: 'Northwind SEO' },
+      ],
+    });
+    const block = out.block as { runs: { by: string; hooks: string[] }[]; core: number };
+    assert.deepEqual(block.runs.map((r) => [r.by, r.hooks]), [['acme_ai', ['entity_presave']], ['northwind_seo', ['config.save']]], 'configuration adds the config save listeners, by the module their class is in');
+    assert.equal(block.core, 1, 'core’s own listener is counted, not listed');
+    assert.equal(out.missing, null);
+    assert.deepEqual(out.site, ['entity:node', 'entity:paragraph'], 'the site-wide list is content, those running the most first');
+    assert.deepEqual(out.targets, ['node', 'block', 'menu_link_content', null, null]);
+    assert.deepEqual(out.collections, ['paragraph', 'block', null, 'node', 'entity_view_display']);
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });

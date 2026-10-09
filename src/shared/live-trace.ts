@@ -36,11 +36,23 @@
 // Everything past a part's id, kind and label is optional: a helper reports
 // what its platform knows, and nothing it would have to guess. Values shown to
 // the owner (`preview`) are bounded and have secrets redacted by the helper.
+//
+// Helper version 3 adds what a save runs besides the platform's core
+// (`saves`, named by an edit target's or a collection's `saves`), what core
+// knows of the site's AI (`ai`, WordPress only), and two routes:
+//
+// - `GET /_wanigan/ai` answers the site's AI as its core reports it
+//   (src/shared/live-ai.ts SiteAi): never a key, only where a key comes from.
+// - A save, move, insert or undo answers with `"ai"` (live-ai.ts SaveAi) on
+//   WordPress: the prompts core's AI Client sent and the abilities that ran
+//   during it, as provider and model ids and ability names; no prompt text,
+//   no response text. A body with `"noSiteAi": true` asks the helper to stop
+//   core's AI Client for that one save (`wp_ai_client_prevent_prompt`).
 
 export const TRACE_VERSION = 1;
 
 /** Bounds a helper applies before answering, which parseTrace applies again. */
-export const TRACE_LIMITS = { parts: 4000, edits: 4000, hooks: 5000, queries: 2000, assets: 500, logs: 500, chain: 200, variables: 200, preview: 400, collections: 1000, palette: 1000 } as const;
+export const TRACE_LIMITS = { parts: 4000, edits: 4000, hooks: 5000, queries: 2000, assets: 500, logs: 500, chain: 200, variables: 200, preview: 400, collections: 1000, palette: 1000, saves: 200, runs: 100 } as const;
 
 export type TraceOwner = 'yours' | 'contrib' | 'core' | 'plugin' | 'theme' | 'unknown';
 
@@ -121,6 +133,51 @@ export interface EditTarget {
   revisions?: boolean;
   /** Why it cannot be edited here, when it cannot. */
   why?: string;
+  /** The TraceSave its save runs: what else runs when it is saved. */
+  saves?: string;
+}
+
+/** Where code that runs on a save lives, as the site reports it about itself. */
+export const SAVE_RUNNER_KINDS = ['plugin', 'mu-plugin', 'theme', 'drop-in', 'module', 'profile', 'library', 'unknown'] as const;
+export type SaveRunnerKind = (typeof SAVE_RUNNER_KINDS)[number];
+
+/**
+ * One plugin, theme or module outside the platform's core whose code runs
+ * when something is saved, found through the platform's own hook registry
+ * (never run to find out) and named by the file its callbacks are written in.
+ */
+export interface SaveRunner {
+  /** Its machine name: a plugin's or theme's folder, a must-use plugin's file, a Drupal module. */
+  by: string;
+  /** Its human name, from its own plugin header, style.css or .info.yml. */
+  name?: string;
+  kind: SaveRunnerKind;
+  owner: TraceOwner;
+  /** The save-time hooks it is on, as the platform names them: save_post, rest_after_insert_page, node_presave. */
+  hooks: string[];
+  /** Its callbacks (function or Class::method), bounded. */
+  callbacks?: string[];
+}
+
+/** What saving one kind of thing runs besides the platform's own core. */
+export interface TraceSave {
+  /** "post:page", "entity:node". */
+  id: string;
+  /** "Saving a Page", "Saving Content (node)". */
+  label: string;
+  runs: SaveRunner[];
+  /** How many of core's own callbacks are on the same hooks. */
+  core?: number;
+}
+
+/** What WordPress core knows of the site's AI, for the edit sheet. Never a key. */
+export interface TraceAi {
+  /** Core's AI Client is there (WordPress 7.0 and later): plugins can prompt models through it. */
+  client: boolean;
+  /** wp_supports_ai(), when core has it; null when it does not. */
+  supports: boolean | null;
+  /** AI providers whose connector has a key set up, by name, as core's Connectors report them. */
+  connected: string[];
 }
 
 export const PART_KINDS = ['template', 'component', 'block', 'entity', 'field', 'view', 'region', 'form', 'shortcode', 'pattern', 'menu', 'widget'] as const;
@@ -202,6 +259,8 @@ export interface TraceCollection {
   reach?: number;
   /** Why it cannot be reordered here, when it cannot. */
   why?: string;
+  /** The TraceSave a move or an insert here runs: what else runs when it is saved. */
+  saves?: string;
 }
 
 /** Something that can be inserted into a collection: a block, a component, a pattern, a field item. */
@@ -233,6 +292,10 @@ export interface LiveTrace {
   logs?: TraceLog[];
   collections?: TraceCollection[];
   palette?: PaletteEntry[];
+  /** What each kind of save on this page runs besides core, by the id edit targets and collections name. */
+  saves?: TraceSave[];
+  /** WordPress: what core knows of the site's AI. */
+  ai?: TraceAi;
   /** The lists a bound cut short. */
   truncated?: string[];
 }
@@ -272,6 +335,44 @@ function list<T>(v: unknown, max: number, each: (x: unknown) => T | null, name: 
   return v.slice(0, max).map(each).filter((x): x is T => x !== null);
 }
 
+/** Strings from a list, each bounded, the list bounded; nothing that is not a string. */
+const strings = (v: unknown, max: number, each = 200): string[] => (Array.isArray(v) ? v.map((x) => str(x, each)).filter((x): x is string => !!x).slice(0, max) : []);
+
+/** One plugin, theme or module a save runs, checked; null when it names nothing. */
+export function parseRunner(v: unknown): SaveRunner | null {
+  if (!isObj(v)) return null;
+  const by = str(v.by, 200);
+  if (!by) return null;
+  const kind = SAVE_RUNNER_KINDS.includes(v.kind as SaveRunnerKind) ? v.kind as SaveRunnerKind : 'unknown';
+  const owner = OWNERS.includes(v.owner as TraceOwner) ? v.owner as TraceOwner : 'unknown';
+  const out: SaveRunner = { by, kind, owner, hooks: strings(v.hooks, 40) };
+  const name = str(v.name, 200); if (name) out.name = name;
+  const callbacks = strings(v.callbacks, 20, 300); if (callbacks.length) out.callbacks = callbacks;
+  return out;
+}
+
+/** What saves on a page run, checked and bounded: each with an id and a label, its runners named. */
+export function parseSaves(v: unknown, truncated: Set<string> = new Set()): TraceSave[] {
+  return list(v, TRACE_LIMITS.saves, (s): TraceSave | null => {
+    if (!isObj(s)) return null;
+    const id = str(s.id, 200), label = str(s.label, 300);
+    if (!id || !label) return null;
+    const out: TraceSave = { id, label, runs: list(s.runs, TRACE_LIMITS.runs, parseRunner, `runs:${id}`, truncated) };
+    if (num(s.core) !== undefined) out.core = Math.floor(num(s.core) as number);
+    return out;
+  }, 'saves', truncated);
+}
+
+/** What WordPress core knows of the site's AI, checked; null when the helper said nothing of it. */
+export function parseTraceAi(v: unknown): TraceAi | null {
+  if (!isObj(v)) return null;
+  return {
+    client: v.client === true,
+    supports: typeof v.supports === 'boolean' ? v.supports : null,
+    connected: strings(v.connected, 50),
+  };
+}
+
 /**
  * A helper's answer, checked: shape, bounds, relative source paths. Anything
  * malformed is dropped, not repaired; null when it is not a trace at all.
@@ -284,6 +385,10 @@ export function parseTrace(raw: unknown): LiveTrace | null {
   if (!id || !url || !url.startsWith('/') || url.startsWith('//')) return null;
   const truncated = new Set<string>(Array.isArray(raw.truncated) ? raw.truncated.filter((t): t is string => typeof t === 'string').slice(0, 20) : []);
   const total = isObj(raw.total) ? raw.total : {};
+  const saves = Array.isArray(raw.saves) ? parseSaves(raw.saves, truncated) : null;
+  const saveIds = new Set((saves ?? []).map((s) => s.id));
+  /** A save id this trace describes, or nothing. */
+  const savesOf = (v: unknown): string | null => (typeof v === 'string' && saveIds.has(v) ? v : null);
   const edits = list(raw.edits, TRACE_LIMITS.edits, (v): EditTarget | null => {
     if (!isObj(v)) return null;
     const eid = str(v.id, 200), label = str(v.label, 300);
@@ -293,6 +398,7 @@ export function parseTrace(raw: unknown): LiveTrace | null {
     if (v.via === 'schema') { out.schema = v.schema; out.value = v.value; }
     if (typeof v.revisions === 'boolean') out.revisions = v.revisions;
     const why = str(v.why, 500); if (why) out.why = why;
+    const save = savesOf(v.saves); if (save) out.saves = save;
     return out;
   }, 'edits', truncated);
   const editIds = new Set(edits.map((e) => e.id));
@@ -416,6 +522,7 @@ export function parseTrace(raw: unknown): LiveTrace | null {
       if (typeof c.revisions === 'boolean') out.revisions = c.revisions;
       if (num(c.reach) !== undefined) out.reach = num(c.reach);
       const why = str(c.why, 500); if (why) out.why = why;
+      const save = savesOf(c.saves); if (save) out.saves = save;
       return out;
     }, 'collections', truncated);
     // A move target must be a collection this trace knows.
@@ -423,6 +530,15 @@ export function parseTrace(raw: unknown): LiveTrace | null {
     for (const c of collections) if (c.movesTo) c.movesTo = c.movesTo.filter((m) => collectionIds.has(m));
     trace.collections = collections;
   }
+  if (saves) trace.saves = saves;
+  const ai = raw.platform === 'wordpress' ? parseTraceAi(raw.ai) : null;
+  if (ai) trace.ai = ai;
   if (truncated.size) trace.truncated = [...truncated];
   return trace;
+}
+
+/** The save an edit target or a collection runs, from the trace that names it. */
+export function saveOf(trace: LiveTrace | null, of: { saves?: string } | null | undefined): TraceSave | null {
+  if (!trace?.saves || !of?.saves) return null;
+  return trace.saves.find((s) => s.id === of.saves) ?? null;
 }

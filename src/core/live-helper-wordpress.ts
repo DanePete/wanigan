@@ -18,7 +18,7 @@
 // docs/research/2026-10-09-wordpress-core-live-trace.md.
 // Design: docs/design/2026-10-08-live-view.md.
 
-export const WORDPRESS_HELPER_VERSION = 2;
+export const WORDPRESS_HELPER_VERSION = 3;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
 /** A line of the file: how Wanigan knows a file of that name is its own. */
 export const WORDPRESS_HELPER_MARK = '// Written by Wanigan for its live view.';
@@ -119,7 +119,7 @@ final class Wanigan_Live {
 	const KEEP = 20;
 	const TTL = 600;
 	const MAX_JSON = 4000000;
-	const LIMITS = array('parts' => 4000, 'edits' => 4000, 'hooks' => 5000, 'queries' => 2000, 'assets' => 500, 'logs' => 500, 'chain' => 200, 'variables' => 200, 'preview' => 400, 'collections' => 1000, 'palette' => 1000);
+	const LIMITS = array('parts' => 4000, 'edits' => 4000, 'hooks' => 5000, 'queries' => 2000, 'assets' => 500, 'logs' => 500, 'chain' => 200, 'variables' => 200, 'preview' => 400, 'collections' => 1000, 'palette' => 1000, 'saves' => 200, 'runs' => 100, 'connectors' => 100, 'abilities' => 500);
 	/** Keys whose values are never shown. */
 	const SECRET = '/pass|pwd|secret|token|nonce|auth|cookie|salt|session|api[_-]?key|private[_-]?key|credential|signature|hash/i';
 
@@ -200,6 +200,14 @@ final class Wanigan_Live {
 	private static $present = null;
 	private static $nesting = array();
 	private static $started = 0.0;
+	/** @var array<string,array|null> What each kind of save runs besides core, by key (save_code()). */
+	private static $saves = array();
+	/** @var array<string,string>|null Plugins' and must-use plugins' own names, by kind and slug. */
+	private static $code_names = null;
+	/** @var array|null What the site's own AI did during this request's save, while the helper listens (listen()). */
+	private static $ai = null;
+	/** @var string[] The lists of /_wanigan/ai a bound cut short. */
+	private static $ai_cut = array();
 
 	/* ── starting ───────────────────────────────────────────────────────── */
 
@@ -210,7 +218,7 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|undo|find)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|undo|find|ai)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
@@ -1542,10 +1550,16 @@ final class Wanigan_Live {
 			$parts[$id] = self::finish_part($p, isset(self::$meta[$id]) ? self::$meta[$id] : array());
 		}
 		$collections = self::collections($parts);
+		$saves = array();
 		$public = array();
 		$private = array();
 		foreach ($collections as $c) {
 			$private[$c['id']] = $c['_private'];
+			$key = self::save_key($c['_private']);
+			if ($key !== null && self::save_code($key)) {
+				$c['saves'] = $key;
+				$saves[$key] = true;
+			}
 			unset($c['_private']);
 			$public[] = $c;
 		}
@@ -1553,6 +1567,14 @@ final class Wanigan_Live {
 			if (!isset($parts[$part])) continue;
 			foreach (array_keys($options) as $o) $parts[$part]['edits'][] = self::option_edit($o);
 			$parts[$part]['edits'] = array_values(array_unique($parts[$part]['edits']));
+		}
+		// What saving each edit target runs besides core.
+		foreach (self::$edits as $eid => $e) {
+			$key = isset(self::$private[$eid]) ? self::save_key(self::$private[$eid]) : null;
+			if ($key !== null && self::save_code($key)) {
+				self::$edits[$eid]['saves'] = $key;
+				$saves[$key] = true;
+			}
 		}
 		$user = wp_get_current_user();
 		$started = isset($timestart) && is_numeric($timestart) ? (float) $timestart : self::$started;
@@ -1571,8 +1593,11 @@ final class Wanigan_Live {
 			'logs' => self::$logs,
 			'collections' => array_slice($public, 0, self::LIMITS['collections']),
 			'palette' => self::palette(),
+			'saves' => array_slice(array_values(array_map(function ($key) { return self::save_code($key); }, array_keys($saves))), 0, self::LIMITS['saves']),
 			'_collections' => $private,
 		);
+		$ai = self::ai_summary();
+		if ($ai) $trace['ai'] = $ai;
 		if (SAVEQUERIES) {
 			$trace['total']['queries'] = self::$qcount;
 			$trace['total']['queryMs'] = round(self::$qms, 3);
@@ -2658,8 +2683,11 @@ final class Wanigan_Live {
 		}
 		$file = $r ? $r->getFileName() : false;
 		$source = $file ? self::source($file, (int) $r->getStartLine()) : null;
-		$by = $file ? self::whose($file)[2] : ($r && $r->isInternal() ? 'php' : 'unknown');
-		$out = array('callback' => self::cut($name, 300), 'source' => $source, 'by' => $by);
+		$w = $file ? self::whose($file) : null;
+		$internal = !$file && $r && $r->isInternal();
+		$by = $w ? $w[2] : ($internal ? 'php' : 'unknown');
+		// kind and owner are read by what a save runs (save_code()), never put in a step as they are.
+		$out = array('callback' => self::cut($name, 300), 'source' => $source, 'by' => $by, 'kind' => $w ? $w[3] : ($internal ? 'core' : 'unknown'), 'owner' => $w ? $w[0] : ($internal ? 'core' : 'unknown'));
 		if ($key !== null) self::$describe[$key] = $out;
 		return $out;
 	}
@@ -2701,7 +2729,8 @@ final class Wanigan_Live {
 	}
 
 	/**
-	 * Whose code a file is: [owner, package, by]. A plugin or theme core's update data knows (the
+	 * Whose code a file is: [owner, package, by, kind], kind being where it sits: 'mu-plugin', 'plugin', 'theme',
+	 * 'library' (a Composer package), 'drop-in', 'core' or 'unknown'. A plugin or theme core's update data knows (the
 	 * update_plugins and update_themes site transients: WordPress.org's or a vendor's updater) is someone else's;
 	 * one installed but unknown to it is the project's own. Must-use plugins have no update source and count as the
 	 * project's own.
@@ -2710,7 +2739,7 @@ final class Wanigan_Live {
 		$f = wp_normalize_path($file);
 		$dir = dirname($f);
 		if (isset(self::$whose[$dir])) return self::$whose[$dir];
-		$out = array('unknown', '', 'unknown');
+		$out = array('unknown', '', 'unknown', 'unknown');
 		$plugins = wp_normalize_path(WP_PLUGIN_DIR) . '/';
 		$mu = wp_normalize_path(WPMU_PLUGIN_DIR) . '/';
 		$content = wp_normalize_path(WP_CONTENT_DIR) . '/';
@@ -2723,23 +2752,23 @@ final class Wanigan_Live {
 		};
 		if (strpos($f, $mu) === 0) {
 			$seg = preg_replace('/\.php$/', '', $first($mu));
-			$out = array('yours', $seg, $seg);
+			$out = array('yours', $seg, $seg, 'mu-plugin');
 		} elseif (strpos($f, $plugins) === 0) {
 			$seg = $first($plugins);
 			$slug = preg_replace('/\.php$/', '', $seg);
-			$out = array(self::updates('update_plugins', $seg, 'plugin'), $slug, $slug);
+			$out = array(self::updates('update_plugins', $seg, 'plugin'), $slug, $slug, 'plugin');
 		} else {
 			foreach ($themes as $root) {
 				if (strpos($f, $root . '/') === 0) {
 					$slug = $first($root . '/');
-					$out = array(self::updates('update_themes', $slug, 'theme'), $slug, $slug);
+					$out = array(self::updates('update_themes', $slug, 'theme'), $slug, $slug, 'theme');
 					break;
 				}
 			}
 			if ($out[0] === 'unknown') {
-				if (preg_match('#/vendor/([^/]+/[^/]+)/#', $f, $m)) $out = array('contrib', $m[1], $m[1]);
-				elseif (strpos($f, $abs . 'wp-includes/') === 0 || strpos($f, $abs . 'wp-admin/') === 0 || $dir . '/' === $abs) $out = array('core', 'wordpress', 'core');
-				elseif ($dir . '/' === $content) $out = array('unknown', 'drop-in', 'drop-in');
+				if (preg_match('#/vendor/([^/]+/[^/]+)/#', $f, $m)) $out = array('contrib', $m[1], $m[1], 'library');
+				elseif (strpos($f, $abs . 'wp-includes/') === 0 || strpos($f, $abs . 'wp-admin/') === 0 || $dir . '/' === $abs) $out = array('core', 'wordpress', 'core', 'core');
+				elseif ($dir . '/' === $content) $out = array('unknown', 'drop-in', 'drop-in', 'drop-in');
 			}
 		}
 		self::$whose[$dir] = $out;
@@ -3162,12 +3191,427 @@ final class Wanigan_Live {
 		return $t ? $t * 1000 : null;
 	}
 
+	/* ── what a save runs, and the site's own AI ─────────────────────────── */
+
+	/**
+	 * The hooks core fires when it saves one kind of thing, as the live view saves it. A post of any type (templates,
+	 * template parts and menu links are posts) goes through post.php wp_insert_post() from its REST controller
+	 * (class-wp-rest-posts-controller.php update_item(), and the templates and menu-items controllers): the filters
+	 * before it is written, the actions after, and the REST controller's own. A site option goes through option.php
+	 * update_option(); widgets through the widgets controller, which writes their settings and sidebars_widgets.
+	 */
+	private static function save_hooks(string $kind, string $sub): array {
+		if ($kind === 'post' && preg_match('/^[a-z0-9_-]{1,40}$/', $sub)) {
+			$hooks = array('wp_insert_post_data', 'rest_pre_insert_' . $sub, 'pre_post_update', 'edit_post_' . $sub, 'edit_post', 'post_updated', 'transition_post_status', 'save_post_' . $sub, 'save_post', 'wp_insert_post', 'added_post_meta', 'updated_post_meta', 'rest_insert_' . $sub, 'rest_after_insert_' . $sub, 'wp_after_insert_post');
+			// post.php wp_insert_post(): an attachment has its own hooks before the post's (media is where alt text is made).
+			if ($sub === 'attachment') $hooks = array_merge(array('wp_insert_attachment_data', 'add_attachment', 'edit_attachment', 'attachment_updated', 'wp_generate_attachment_metadata', 'wp_update_attachment_metadata'), $hooks);
+			if ($sub === 'nav_menu_item') $hooks[] = 'wp_update_nav_menu_item';
+			return $hooks;
+		}
+		if ($kind === 'option' && preg_match('/^[A-Za-z0-9_.-]{1,190}$/', $sub)) return array('pre_update_option_' . $sub, 'pre_update_option', 'update_option', 'update_option_' . $sub, 'updated_option');
+		if ($kind === 'widgets') return array('widget_update_callback', 'pre_update_option_sidebars_widgets', 'update_option_sidebars_widgets', 'updated_option', 'rest_save_sidebar', 'rest_after_save_widget');
+		return array();
+	}
+
+	/** "Saving a Page", "Saving the site's settings". */
+	private static function save_label(string $kind, string $sub): string {
+		if ($kind === 'post') {
+			$type = get_post_type_object($sub);
+			$name = $type && isset($type->labels->singular_name) ? wp_strip_all_tags((string) $type->labels->singular_name) : $sub;
+			return 'Saving ' . (preg_match('/^[aeiou]/i', $name) ? 'an ' : 'a ') . $name;
+		}
+		if ($kind === 'option') return 'Saving the site’s settings (' . $sub . ')';
+		return 'Saving widgets';
+	}
+
+	/**
+	 * What saving one kind of thing runs besides core: the callbacks on the hooks core fires for that save, read from
+	 * plugin.php's $wp_filter as it stands, each named by the file it is written in (whose()). Nothing is run to
+	 * find out, and what a callback does is not known: only that it is there. Answers null for a key that saves
+	 * nothing core hooks.
+	 */
+	private static function save_code(string $key): ?array {
+		if (array_key_exists($key, self::$saves)) return self::$saves[$key];
+		$bits = explode(':', $key, 2);
+		$kind = $bits[0];
+		$sub = isset($bits[1]) ? $bits[1] : '';
+		$hooks = self::save_hooks($kind, $sub);
+		if (!$hooks) return self::$saves[$key] = null;
+		global $wp_filter;
+		$runs = array();
+		$core = 0;
+		foreach ($hooks as $hook) {
+			if (!isset($wp_filter[$hook]) || !($wp_filter[$hook] instanceof WP_Hook)) continue;
+			foreach ($wp_filter[$hook]->callbacks as $callbacks) {
+				foreach ($callbacks as $cb) {
+					$fn = isset($cb['function']) ? $cb['function'] : null;
+					if ($fn === null || self::ours($fn)) continue;
+					$d = self::describe($fn);
+					if ($d['kind'] === 'core') {
+						$core++;
+						continue;
+					}
+					$id = $d['kind'] . ':' . $d['by'];
+					if (!isset($runs[$id])) {
+						if (count($runs) >= self::LIMITS['runs']) continue;
+						$runs[$id] = array('by' => self::cut($d['by'], 200), 'kind' => in_array($d['kind'], array('plugin', 'mu-plugin', 'theme', 'drop-in', 'library'), true) ? $d['kind'] : 'unknown', 'owner' => $d['owner'], 'hooks' => array(), 'callbacks' => array());
+					}
+					if (!in_array($hook, $runs[$id]['hooks'], true)) $runs[$id]['hooks'][] = $hook;
+					if (count($runs[$id]['callbacks']) < 20 && !in_array($d['callback'], $runs[$id]['callbacks'], true)) $runs[$id]['callbacks'][] = $d['callback'];
+				}
+			}
+		}
+		foreach ($runs as $id => $r) {
+			$name = self::code_name($r['kind'], $r['by']);
+			if ($name !== null) $runs[$id]['name'] = $name;
+			if (!$r['callbacks']) unset($runs[$id]['callbacks']);
+		}
+		// Plugins, then must-use plugins, themes and the rest; by name within each.
+		$order = array('plugin' => 0, 'mu-plugin' => 1, 'theme' => 2, 'drop-in' => 3, 'library' => 4, 'unknown' => 5);
+		uasort($runs, function ($a, $b) use ($order) {
+			return ($order[$a['kind']] - $order[$b['kind']]) ?: strcasecmp(isset($a['name']) ? $a['name'] : $a['by'], isset($b['name']) ? $b['name'] : $b['by']);
+		});
+		return self::$saves[$key] = array('id' => $key, 'label' => self::cut(self::save_label($kind, $sub), 300), 'runs' => array_values($runs), 'core' => $core);
+	}
+
+	/** Which save an edit target or a collection goes through (its private record): a key for save_code(), or null. */
+	private static function save_key(array $p): ?string {
+		$type = isset($p['type']) ? (string) $p['type'] : '';
+		if ($type === 'post') {
+			$post = get_post((int) $p['post']);
+			return $post ? 'post:' . $post->post_type : null;
+		}
+		if ($type === 'block' || $type === 'blocks') return self::store_key((string) $p['store']);
+		if ($type === 'option') return 'option:' . ($p['field'] === 'title' ? 'blogname' : ($p['field'] === 'description' ? 'blogdescription' : (string) $p['field']));
+		if ($type === 'menu-item' || $type === 'menu') return 'post:nav_menu_item';
+		if ($type === 'widget' || $type === 'widgets') return 'widgets';
+		// The block editor (or the classic one), opened on a post: it saves through the same core path.
+		if ($type === 'link' && is_array($p['cap']) && $p['cap'][0] === 'edit_post') {
+			$post = get_post((int) $p['cap'][1]);
+			return $post ? 'post:' . $post->post_type : null;
+		}
+		return null;
+	}
+
+	private static function store_key(string $store): ?string {
+		if (preg_match('/^post:(\d+)$/', $store, $m)) {
+			$post = get_post((int) $m[1]);
+			return $post ? 'post:' . $post->post_type : null;
+		}
+		if (strpos($store, 'tp:') === 0) return 'post:wp_template_part';
+		if (strpos($store, 'tpl:') === 0) return 'post:wp_template';
+		return null;
+	}
+
+	/**
+	 * A plugin's, must-use plugin's or theme's own name, from its header as core reads it (wp-admin/includes/plugin.php
+	 * get_plugins() and get_mu_plugins(); theme.php wp_get_theme()). Null when it has none.
+	 */
+	private static function code_name(string $kind, string $by): ?string {
+		if ($kind === 'theme') {
+			$theme = wp_get_theme($by);
+			$name = $theme->exists() ? trim(wp_strip_all_tags((string) $theme->get('Name'))) : '';
+			return $name !== '' ? self::cut($name, 200) : null;
+		}
+		if ($kind !== 'plugin' && $kind !== 'mu-plugin') return null;
+		if (self::$code_names === null) {
+			self::$code_names = array();
+			try {
+				if (!function_exists('get_plugins')) require_once ABSPATH . 'wp-admin/includes/plugin.php';
+				foreach (get_plugins() as $file => $data) {
+					$slug = strpos($file, '/') !== false ? substr($file, 0, strpos($file, '/')) : preg_replace('/\.php$/', '', $file);
+					if (!empty($data['Name']) && !isset(self::$code_names['plugin:' . $slug])) self::$code_names['plugin:' . $slug] = (string) $data['Name'];
+				}
+				foreach (get_mu_plugins() as $file => $data) {
+					if (!empty($data['Name'])) self::$code_names['mu-plugin:' . preg_replace('/\.php$/', '', $file)] = (string) $data['Name'];
+				}
+			} catch (Throwable $e) {
+				// No names to read: the folder names stand.
+			}
+		}
+		$name = isset(self::$code_names[$kind . ':' . $by]) ? trim(wp_strip_all_tags(self::$code_names[$kind . ':' . $by])) : '';
+		return $name !== '' ? self::cut($name, 200) : null;
+	}
+
+	/**
+	 * Core's Connectors (connectors.php wp_get_connectors(), 7.0+), each with where its key comes from and never the
+	 * key: connectors.php _wp_connectors_get_api_key_source() looks in the environment variable, then the constant,
+	 * then the setting, and answers 'env', 'constant', 'database' or 'none'. Whether a key works is not asked: core's
+	 * own check calls the provider. Null when core has no Connectors API.
+	 */
+	private static function connectors(): ?array {
+		static $out = null;
+		if ($out !== null) return $out;
+		if (!function_exists('wp_get_connectors')) return null;
+		$out = array();
+		try {
+			$all = wp_get_connectors();
+		} catch (Throwable $e) {
+			$all = array();
+		}
+		foreach ((array) $all as $id => $c) {
+			if (!is_array($c)) continue;
+			if (count($out) >= self::LIMITS['connectors']) {
+				self::$ai_cut[] = 'connectors';
+				break;
+			}
+			$auth = isset($c['authentication']) && is_array($c['authentication']) ? $c['authentication'] : array();
+			$method = isset($auth['method']) ? (string) $auth['method'] : 'none';
+			$source = 'none';
+			if ($method !== 'none') {
+				$source = function_exists('_wp_connectors_get_api_key_source') && !empty($auth['setting_name'])
+					? (string) _wp_connectors_get_api_key_source((string) $auth['setting_name'], isset($auth['env_var_name']) ? (string) $auth['env_var_name'] : '', isset($auth['constant_name']) ? (string) $auth['constant_name'] : '')
+					: 'unknown';
+				if (!in_array($source, array('env', 'constant', 'database', 'none'), true)) $source = 'unknown';
+			}
+			$item = array(
+				'id' => self::cut((string) $id, 100),
+				'name' => self::cut(isset($c['name']) && is_string($c['name']) && $c['name'] !== '' ? wp_strip_all_tags($c['name']) : (string) $id, 200),
+				'type' => isset($c['type']) && is_string($c['type']) ? self::cut($c['type'], 100) : 'unknown',
+				'method' => self::cut($method, 60),
+				'keySource' => $source,
+				'setUp' => $method === 'none' || ($source !== 'none' && $source !== 'unknown'),
+			);
+			if (isset($c['plugin']) && is_array($c['plugin']) && !empty($c['plugin']['file']) && is_string($c['plugin']['file'])) {
+				$item['plugin'] = self::cut($c['plugin']['file'], 300);
+				// As core's own Connectors screen asks it (_wp_connectors_get_connector_script_module_data()).
+				if (isset($c['plugin']['is_active']) && is_callable($c['plugin']['is_active'])) {
+					try {
+						$item['active'] = (bool) call_user_func($c['plugin']['is_active']);
+					} catch (Throwable $e) {
+						// Not known: left out.
+					}
+				}
+			}
+			$out[] = $item;
+		}
+		return $out;
+	}
+
+	/**
+	 * The Abilities API's registry (abilities-api.php wp_get_abilities(), 6.9+), each ability with its own label,
+	 * category and annotations, and whose code it is, found by the file its execute callback is written in. Null
+	 * when core has no Abilities API.
+	 */
+	private static function abilities(): ?array {
+		if (!function_exists('wp_get_abilities')) return null;
+		$out = array();
+		try {
+			$all = wp_get_abilities();
+		} catch (Throwable $e) {
+			$all = array();
+		}
+		foreach ((array) $all as $a) {
+			if (!$a instanceof WP_Ability) continue;
+			if (count($out) >= self::LIMITS['abilities']) {
+				self::$ai_cut[] = 'abilities';
+				break;
+			}
+			$meta = (array) $a->get_meta();
+			$notes = isset($meta['annotations']) && is_array($meta['annotations']) ? $meta['annotations'] : array();
+			$item = array('name' => self::cut($a->get_name(), 200), 'label' => self::cut(wp_strip_all_tags($a->get_label()), 300));
+			foreach (array('readonly', 'destructive', 'idempotent') as $k) $item[$k] = isset($notes[$k]) && is_bool($notes[$k]) ? $notes[$k] : null;
+			$description = trim(wp_strip_all_tags((string) $a->get_description()));
+			if ($description !== '') $item['description'] = self::cut($description, 500);
+			$category = (string) $a->get_category();
+			if ($category !== '') $item['category'] = self::cut($category, 100);
+			if (isset($meta['public']) && is_bool($meta['public'])) $item['public'] = $meta['public'];
+			if (isset($meta['show_in_rest']) && is_bool($meta['show_in_rest'])) $item['rest'] = $meta['show_in_rest'];
+			$fn = self::ability_code($a);
+			if ($fn !== null) {
+				$d = self::describe($fn);
+				if ($d['kind'] === 'core') {
+					$item['by'] = 'wordpress';
+					$item['byName'] = 'WordPress core';
+					$item['owner'] = 'core';
+				} elseif ($d['by'] !== 'unknown') {
+					$item['by'] = self::cut($d['by'], 200);
+					$item['kind'] = in_array($d['kind'], array('plugin', 'mu-plugin', 'theme', 'drop-in', 'library'), true) ? $d['kind'] : 'unknown';
+					$item['owner'] = $d['owner'];
+					$name = self::code_name($d['kind'], $d['by']);
+					if ($name !== null) $item['byName'] = $name;
+				}
+			}
+			$out[] = $item;
+		}
+		return $out;
+	}
+
+	/**
+	 * The code an ability runs: its execute callback (WP_Ability's own protected property, read in its scope), or the
+	 * do_execute() of an ability class of its own. Never called.
+	 */
+	private static function ability_code(WP_Ability $a) {
+		try {
+			$read = Closure::bind(static function ($ability) {
+				return isset($ability->execute_callback) ? $ability->execute_callback : null;
+			}, null, WP_Ability::class);
+			$fn = $read($a);
+			if ($fn !== null) return $fn;
+			return get_class($a) !== 'WP_Ability' && method_exists($a, 'do_execute') ? array(get_class($a), 'do_execute') : null;
+		} catch (Throwable $e) {
+			return null;
+		}
+	}
+
+	/** What core knows of the site's AI, for the edit sheet: whether its AI Client is there and which providers have a key. */
+	private static function ai_summary(): ?array {
+		if (!function_exists('wp_ai_client_prompt')) return null;
+		$connected = array();
+		foreach (self::connectors() ?: array() as $c) {
+			if ($c['type'] === 'ai_provider' && $c['setUp']) $connected[] = $c['name'];
+		}
+		return array('client' => true, 'supports' => function_exists('wp_supports_ai') ? (bool) wp_supports_ai() : null, 'connected' => array_slice($connected, 0, 50));
+	}
+
+	/** GET /_wanigan/ai: the site's AI as core reports it (src/shared/live-ai.ts SiteAi). Never a key. */
+	private static function site_ai(): void {
+		$saves = array();
+		foreach (array_slice(array_values(get_post_types(array('show_ui' => true), 'names')), 0, 60) as $type) {
+			$save = self::save_code('post:' . $type);
+			if ($save) $saves[] = $save;
+		}
+		usort($saves, function ($a, $b) { return count($b['runs']) - count($a['runs']); });
+		$out = array(
+			'version' => 1,
+			'platform' => 'wordpress',
+			'coreAi' => function_exists('wp_ai_client_prompt'),
+			'supports' => function_exists('wp_supports_ai') ? (bool) wp_supports_ai() : null,
+			'connectors' => self::connectors(),
+			'abilities' => self::abilities(),
+			'watches' => array('prompts' => function_exists('wp_ai_client_prompt'), 'abilities' => function_exists('wp_get_abilities')),
+			'saves' => $saves,
+		);
+		if (self::$ai_cut) $out['truncated'] = array_values(array_unique(self::$ai_cut));
+		self::answer($out);
+	}
+
+	/**
+	 * Listen to the site's own AI while a save, move, insert or undo runs. Core's AI Client
+	 * (ai-client/adapters/class-wp-ai-client-event-dispatcher.php) fires "wp_ai_client_{$event}" for the PHP AI
+	 * Client's BeforeGenerateResultEvent and AfterGenerateResultEvent; an ability fires wp_ability_invoked (7.1) and
+	 * wp_before_execute_ability and wp_after_execute_ability (6.9) from abilities-api/class-wp-ability.php execute().
+	 * What is kept is the provider and model, and the ability's name; a prompt, a response or an input never is. With
+	 * $stop the owner chose, for this one save, to stop core's AI Client (class-wp-ai-client-prompt-builder.php
+	 * __call() asks wp_ai_client_prevent_prompt before every generation and support check); AI a plugin calls on its
+	 * own, outside core's AI Client, is not stopped, and not seen.
+	 */
+	private static function listen(bool $stop): void {
+		$prompts = function_exists('wp_ai_client_prompt');
+		$abilities = function_exists('wp_get_abilities');
+		self::$ai = array('watched' => array('prompts' => $prompts, 'abilities' => $abilities), 'prompts' => array(), 'abilities' => array());
+		if ($prompts) {
+			add_action('wp_ai_client_before_generate_result', array(self::class, 'prompt_before'), PHP_INT_MAX);
+			add_action('wp_ai_client_after_generate_result', array(self::class, 'prompt_after'), PHP_INT_MAX);
+			if ($stop) {
+				self::$ai['stopped'] = 0;
+				add_filter('wp_ai_client_prevent_prompt', array(self::class, 'prompt_stop'), PHP_INT_MAX);
+			}
+		}
+		if ($abilities) {
+			add_action('wp_ability_invoked', array(self::class, 'ability_invoked'), PHP_INT_MAX, 1);
+			add_action('wp_before_execute_ability', array(self::class, 'ability_started'), PHP_INT_MAX, 1);
+			add_action('wp_after_execute_ability', array(self::class, 'ability_done'), PHP_INT_MAX, 1);
+		}
+	}
+
+	/** Which provider, model and capability a PHP AI Client event is for: its getModel() and getCapability(). */
+	private static function prompt_of($event): array {
+		$p = array('provider' => '', 'model' => '');
+		try {
+			$model = is_object($event) && method_exists($event, 'getModel') ? $event->getModel() : null;
+			if (is_object($model)) {
+				$p['provider'] = self::cut((string) $model->providerMetadata()->getId(), 100);
+				$p['model'] = self::cut((string) $model->metadata()->getId(), 200);
+			}
+			$capability = is_object($event) && method_exists($event, 'getCapability') ? $event->getCapability() : null;
+			if (is_object($capability)) $p['capability'] = self::cut((string) $capability->value, 60);
+		} catch (Throwable $e) {
+			// An SDK whose shape changed: the prompt is still counted, unnamed.
+		}
+		return $p;
+	}
+
+	public static function prompt_before($event): void {
+		if (self::$ai === null || count(self::$ai['prompts']) >= 50) return;
+		self::$ai['prompts'][] = array_merge(self::prompt_of($event), array('done' => false));
+	}
+
+	public static function prompt_after($event): void {
+		if (self::$ai === null) return;
+		$p = self::prompt_of($event);
+		$tokens = null;
+		try {
+			if (is_object($event) && method_exists($event, 'getResult')) $tokens = (int) $event->getResult()->getTokenUsage()->getTotalTokens();
+		} catch (Throwable $e) {
+			$tokens = null;
+		}
+		for ($i = count(self::$ai['prompts']) - 1; $i >= 0; $i--) {
+			$q = self::$ai['prompts'][$i];
+			if (!$q['done'] && $q['provider'] === $p['provider'] && $q['model'] === $p['model']) {
+				self::$ai['prompts'][$i]['done'] = true;
+				if ($tokens !== null) self::$ai['prompts'][$i]['tokens'] = $tokens;
+				return;
+			}
+		}
+		if (count(self::$ai['prompts']) < 50) self::$ai['prompts'][] = array_merge($p, array('done' => true), $tokens !== null ? array('tokens' => $tokens) : array());
+	}
+
+	/** The owner's choice for this save: every prompt core's AI Client is asked for is stopped, and counted. */
+	public static function prompt_stop($prevent) {
+		if (self::$ai !== null && isset(self::$ai['stopped'])) self::$ai['stopped']++;
+		return true;
+	}
+
+	public static function ability_invoked($name): void {
+		self::ability_seen((string) $name, 'invoked');
+	}
+
+	public static function ability_started($name): void {
+		self::ability_seen((string) $name, 'started');
+	}
+
+	public static function ability_done($name): void {
+		self::ability_seen((string) $name, 'done');
+	}
+
+	/** One ability's step: invoked (7.1), started after its checks, done after it ran. One record a run. */
+	private static function ability_seen(string $name, string $step): void {
+		if (self::$ai === null) return;
+		$list = &self::$ai['abilities'];
+		if ($step !== 'invoked') {
+			for ($i = count($list) - 1; $i >= 0; $i--) {
+				if ($list[$i]['name'] !== $name || $list[$i]['done']) continue;
+				if ($step === 'done') {
+					$list[$i]['done'] = true;
+					return;
+				}
+				if (empty($list[$i]['started'])) {
+					$list[$i]['started'] = true;
+					return;
+				}
+				break;
+			}
+		}
+		if (count($list) >= 100) return;
+		$list[] = array('name' => self::cut($name, 200), 'done' => $step === 'done', 'started' => $step !== 'invoked');
+	}
+
+	/** What the site's AI did during this save, as the answer carries it. */
+	private static function ai_report(): array {
+		$out = self::$ai;
+		$out['abilities'] = array_map(function ($a) {
+			return array('name' => $a['name'], 'done' => $a['done']);
+		}, $out['abilities']);
+		return $out;
+	}
+
 	/* ── the live view's routes ──────────────────────────────────────────── */
 
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|undo|find)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|undo|find|ai)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -3175,12 +3619,15 @@ final class Wanigan_Live {
 		try {
 			if ($route === 'trace' && !$post) self::serve_trace($arg);
 			if ($route === 'find' && !$post) self::find();
+			if ($route === 'ai' && !$post) self::site_ai();
 			if ($route === 'edit' && !$post && $arg === 'done') self::edit_done();
 			if ($route === 'edit' && !$post) self::edit_form($arg);
 			if (!$post) self::answer(array('ok' => false, 'error' => 'That route takes a POST.'), 405);
 			$body = json_decode((string) file_get_contents('php://input', false, null, 0, 2 * 1024 * 1024), true);
 			if (!is_array($body)) self::answer(array('ok' => false, 'error' => 'The request was not JSON.'), 400);
 			if (!is_user_logged_in()) self::answer(array('ok' => false, 'error' => 'Log in to WordPress in the live view to change this.'), 403);
+			// From here on the site's own AI is listened to, and what it did comes back with the answer.
+			self::listen(isset($body['noSiteAi']) && $body['noSiteAi'] === true);
 			if ($route === 'edit') self::edit_save($arg, $body);
 			if ($route === 'move') self::move($body, false);
 			if ($route === 'insert') self::move($body, true);
@@ -3192,6 +3639,7 @@ final class Wanigan_Live {
 	}
 
 	private static function answer(array $data, int $status = 200): void {
+		if (self::$ai !== null && !isset($data['ai'])) $data['ai'] = self::ai_report();
 		wp_send_json($data, $status);
 	}
 
