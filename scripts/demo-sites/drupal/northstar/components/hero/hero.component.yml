@@ -1,0 +1,30 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Hero
+status: stable
+description: 'A wide picture with a heading, a line of text and one call to action over it.'
+props:
+  type: object
+  properties:
+    heading_level:
+      type: integer
+      title: Heading level
+      enum: [1, 2]
+      default: 2
+    cta_label:
+      type: string
+      title: Call to action
+      examples: ['Shop the collection']
+    cta_url:
+      type: string
+      title: Call to action address
+      examples: ['/shop']
+slots:
+  media:
+    title: Picture
+  kicker:
+    title: Kicker
+    description: A few words above the heading.
+  heading:
+    title: Heading
+  text:
+    title: Text

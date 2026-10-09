@@ -1,0 +1,9 @@
+{#
+/**
+ * @file
+ * Gallery: the first picture large, the others as a row beneath it.
+ */
+#}
+<div{{ attributes.addClass('gallery', 'gallery--' ~ (count|default(1))).setAttribute('role', 'group').setAttribute('aria-label', label|default('Pictures'|t)) }}>
+  {% block items %}{{ items }}{% endblock %}
+</div>

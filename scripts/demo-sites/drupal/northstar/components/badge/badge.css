@@ -1,0 +1,14 @@
+.badge {
+  display: inline-block;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  font: 700 0.7rem/1 var(--ns-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--ns-sand);
+  color: var(--ns-ink);
+}
+.badge--new { background: var(--ns-gold); color: var(--ns-ink); }
+.badge--bestseller { background: var(--ns-pine); color: var(--ns-paper); }
+.badge--limited { background: var(--ns-ember); color: #fff; }
+.badge--recycled { background: var(--ns-lake-pale); color: var(--ns-lake-deep); }

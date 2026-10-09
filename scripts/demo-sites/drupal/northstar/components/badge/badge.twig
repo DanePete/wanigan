@@ -1,0 +1,7 @@
+{#
+/**
+ * @file
+ * Badge: one short word, coloured by its kind.
+ */
+#}
+<span{{ attributes.addClass('badge', 'badge--' ~ (tone|default('neutral'))) }}>{{ label }}</span>

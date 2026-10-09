@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="Northstar">
+  <circle cx="24" cy="24" r="23" fill="#1c3a2d"/>
+  <path d="M9 34 L19 20 L23.5 26 L27 21.5 L39 34 Z" fill="#efe6d6"/>
+  <path d="M24 7 L25.6 11.4 L30 13 L25.6 14.6 L24 19 L22.4 14.6 L18 13 L22.4 11.4 Z" fill="#e3b341"/>
+  <path d="M9 37.5 Q16.5 35 24 37.5 T39 37.5" stroke="#8db7cc" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

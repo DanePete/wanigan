@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * Price: the amount, and a line about shipping.
+ */
+#}
+<p{{ attributes.addClass('price', 'price--' ~ (size|default('sm'))) }}>
+  <span class="price__amount"><span class="visually-hidden">{{ 'Price'|t }}: </span>${{ amount|number_format(2) }}</span>
+  {% if note %}
+    <span class="price__note{{ ships_free ? ' price__note--free' }}">{{ note }}</span>
+  {% endif %}
+</p>

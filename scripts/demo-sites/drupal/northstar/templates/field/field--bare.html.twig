@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * Words printed inside a component's heading or paragraph: no wrapping div,
+ * just the field's own attributes on a span.
+ * Suggested by northstar_theme_suggestions_field_alter() for field_kicker,
+ * field_heading and field_summary.
+ */
+#}
+{% for item in items %}
+  <span{{ attributes.addClass('field', 'field--' ~ field_name|clean_class) }}>{{ item.content }}</span>
+{% endfor %}

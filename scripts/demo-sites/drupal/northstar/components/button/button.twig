@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * Button: a link when it has an address, otherwise a button.
+ */
+#}
+{% set classes = ['button', 'button--' ~ (variant|default('primary'))] %}
+{% if url %}
+  <a{{ attributes.addClass(classes).setAttribute('href', url) }}>{{ label }}{% if arrow %}<span class="button__arrow" aria-hidden="true">→</span>{% endif %}</a>
+{% else %}
+  <button{{ attributes.addClass(classes).setAttribute('type', 'button') }}>{{ label }}</button>
+{% endif %}

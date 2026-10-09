@@ -1,0 +1,29 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Product card
+status: stable
+description: 'A product in a list or grid: picture, category, name, price and badges, linking to the product.'
+props:
+  type: object
+  required: [url]
+  properties:
+    url:
+      type: string
+      title: Product address
+      examples: ['/shop/lakeside-enamel-mug']
+    category:
+      type: string
+      title: Category
+      examples: ['Drinkware']
+    has_badges:
+      type: boolean
+      title: Has badges
+      default: false
+slots:
+  media:
+    title: Picture
+  title:
+    title: Name
+  price:
+    title: Price
+  badges:
+    title: Badges

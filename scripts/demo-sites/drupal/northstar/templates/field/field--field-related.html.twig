@@ -1,0 +1,14 @@
+{#
+/**
+ * @file
+ * Related products: a heading over a row of product cards.
+ */
+#}
+<section{{ attributes.addClass('field', 'field--field-related', 'related') }}>
+  <h2 class="related__title">{{ label }}</h2>
+  <div class="related__items">
+    {% for item in items %}
+      <div{{ item.attributes.addClass('related__item') }}>{{ item.content }}</div>
+    {% endfor %}
+  </div>
+</section>

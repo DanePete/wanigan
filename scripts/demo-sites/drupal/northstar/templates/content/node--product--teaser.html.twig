@@ -1,0 +1,19 @@
+{#
+/**
+ * @file
+ * A product in a list: drawn by the northstar:product-card component.
+ * The card shows only the first picture (field--node--field-images--product--teaser.html.twig).
+ */
+#}
+<article{{ attributes.addClass('node', 'node--product', 'node--teaser') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  {{ include('northstar:product-card', {
+    url: url,
+    category: category,
+    has_badges: not node.field_badges.isEmpty(),
+    media: content.field_images,
+    title: label,
+    price: content.field_price,
+    badges: content.field_badges,
+  }, with_context = false) }}
+</article>

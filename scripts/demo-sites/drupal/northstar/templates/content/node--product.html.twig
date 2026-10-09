@@ -1,0 +1,36 @@
+{#
+/**
+ * @file
+ * A product, in full: the gallery on one side; name, price, badges,
+ * highlights and description on the other; related products beneath.
+ *
+ * Variables added in northstar_preprocess_node(): ships_free, category,
+ * category_url.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--product', 'product-page') }}>
+  <div class="product-page__top">
+    <div class="product-page__gallery">
+      {{ content.field_images }}
+    </div>
+    <div class="product-page__summary">
+      {% if category %}
+        <p class="product-page__category"><a href="{{ category_url }}">{{ category }}</a></p>
+      {% endif %}
+      {{ title_prefix }}
+      <h1{{ title_attributes.addClass('product-page__title') }}>{{ label }}</h1>
+      {{ title_suffix }}
+      {{ content.field_price }}
+      {{ content.field_badges }}
+      <div class="product-page__actions">
+        {{ include('northstar:button', { label: 'Add to basket'|t, variant: 'primary' }, with_context = false) }}
+        {{ include('northstar:button', { label: 'Save for later'|t, variant: 'secondary' }, with_context = false) }}
+      </div>
+      {{ content.field_highlights }}
+      <div class="product-page__body prose">
+        {{ content.body }}
+      </div>
+    </div>
+  </div>
+  {{ content|without('field_images', 'field_price', 'field_badges', 'field_highlights', 'body', 'field_category', 'links') }}
+</article>

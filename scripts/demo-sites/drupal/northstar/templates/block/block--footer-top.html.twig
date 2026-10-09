@@ -1,0 +1,11 @@
+{#
+/**
+ * @file
+ * A block in the footer's top row: a small heading over a few lines.
+ * Suggested by northstar_theme_suggestions_block_alter() (block--REGION).
+ */
+#}
+{% extends 'block.html.twig' %}
+{% block content %}
+  <div class="block__content block__content--footer">{{ content }}</div>
+{% endblock %}

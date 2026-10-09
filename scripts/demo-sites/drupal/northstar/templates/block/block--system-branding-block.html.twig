@@ -1,0 +1,18 @@
+{#
+/**
+ * @file
+ * The shop's mark and name, linking home.
+ */
+#}
+<div{{ attributes.addClass('block', 'branding') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  <a class="branding__link" href="{{ path('<front>') }}" rel="home">
+    {% if site_logo %}
+      <img class="branding__logo" src="{{ site_logo }}" alt="" width="40" height="40" fetchpriority="high">
+    {% endif %}
+    <span class="branding__text">
+      {% if site_name %}<span class="branding__name">{{ site_name }}</span>{% endif %}
+      {% if site_slogan %}<span class="branding__slogan">{{ site_slogan }}</span>{% endif %}
+    </span>
+  </a>
+</div>

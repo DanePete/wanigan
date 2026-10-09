@@ -1,0 +1,13 @@
+/* Product and journal listings */
+.views-exposed-form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin: 0 0 2rem; padding: 1rem 1.25rem; border-radius: var(--ns-radius); background: var(--ns-sand); }
+.views-exposed-form .form-item { display: grid; gap: 0.35rem; margin: 0; }
+.views-exposed-form label { font: 700 0.72rem/1 var(--ns-font); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ns-ink-soft); }
+.views-exposed-form select { min-width: 14rem; }
+.views-exposed-form .form-actions { margin: 0; }
+.views-view-grid, .views-view-responsive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr)); gap: clamp(1rem, 2.4vw, 1.75rem); }
+.views-view-responsive-grid__item { min-width: 0; }
+.view-journal .view-content { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: clamp(1rem, 2.4vw, 1.75rem); }
+.view-empty { padding: 2rem; border-radius: var(--ns-radius); background: var(--ns-sand); text-align: center; }
+.view-header p { max-width: 40rem; margin: -0.5rem 0 1.75rem; font-family: var(--ns-serif); font-size: 1.1rem; color: var(--ns-ink-soft); }
+.pager__items { display: flex; justify-content: center; gap: 0.5rem; margin: 2.5rem 0 0; padding: 0; list-style: none; }
+.main-grid__sidebar .views-view-responsive-grid { grid-template-columns: 1fr; }

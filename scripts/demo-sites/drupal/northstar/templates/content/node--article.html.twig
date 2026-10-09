@@ -1,0 +1,23 @@
+{#
+/**
+ * @file
+ * A journal entry, in full: byline with reading time, picture, text, tags.
+ *
+ * Variables added in northstar_preprocess_node(): reading_time, date.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--article', 'article') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  <p class="article__meta">
+    <span>{{ 'By'|t }} {{ author_name }}</span>
+    <span aria-hidden="true">·</span>
+    <time datetime="{{ node.createdtime|date('c') }}">{{ date }}</time>
+    <span aria-hidden="true">·</span>
+    <span>{{ reading_time }}</span>
+  </p>
+  <div class="article__image">{{ content.field_image }}</div>
+  <div{{ content_attributes.addClass('article__body', 'prose') }}>
+    {{ content.body }}
+  </div>
+  {{ content.field_tags }}
+</article>

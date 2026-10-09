@@ -1,0 +1,26 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Button
+status: stable
+description: 'A link or button in one of three looks.'
+props:
+  type: object
+  required: [label]
+  properties:
+    label:
+      type: string
+      title: Label
+      examples: ['Shop the collection']
+    url:
+      type: string
+      title: Address
+      description: Draws a link when set, a button when not.
+      examples: ['/shop']
+    variant:
+      type: string
+      title: Look
+      enum: [primary, secondary, light]
+      default: primary
+    arrow:
+      type: boolean
+      title: Arrow after the label
+      default: false

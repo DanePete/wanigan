@@ -1,0 +1,21 @@
+name: Northstar
+type: theme
+description: 'The made-up Northstar Storefront: an outdoor-goods shop built from single-directory components. Wanigan''s demo site.'
+core_version_requirement: ^11
+base theme: stable9
+logo: logo.svg
+libraries:
+  - northstar/global
+regions:
+  announcement: Announcement
+  header: Header
+  primary_menu: 'Primary menu'
+  header_tools: 'Header tools'
+  highlighted: Highlighted
+  breadcrumb: Breadcrumb
+  content_above: 'Content above'
+  content: Content
+  sidebar: Sidebar
+  content_below: 'Content below'
+  footer_top: 'Footer top'
+  footer_bottom: 'Footer bottom'

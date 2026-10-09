@@ -1,0 +1,161 @@
+<?php
+
+/**
+ * @file
+ * Northstar's preprocess functions and template suggestions.
+ *
+ * Every function here changes something a visitor can see, so a trace of the
+ * page has real theme code to point at: the price note, a product's category
+ * line, a journal entry's reading time, which heading level a hero uses, and
+ * which template draws a block, a field or a page.
+ */
+
+use Drupal\block\Entity\Block;
+use Drupal\Core\Url;
+use Drupal\node\NodeInterface;
+
+/**
+ * Orders at or above this many dollars ship free.
+ */
+const NORTHSTAR_FREE_SHIPPING = 75;
+
+/**
+ * Implements hook_preprocess_HOOK() for html.html.twig.
+ */
+function northstar_preprocess_html(array &$variables): void {
+  $variables['attributes']['class'][] = 'northstar';
+  $node = \Drupal::routeMatch()->getParameter('node');
+  if ($node instanceof NodeInterface) {
+    $variables['attributes']['class'][] = 'page--' . str_replace('_', '-', $node->bundle());
+  }
+  if (\Drupal::service('path.matcher')->isFrontPage()) {
+    $variables['attributes']['class'][] = 'page--front';
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for page.html.twig.
+ */
+function northstar_preprocess_page(array &$variables): void {
+  $variables['year'] = date('Y');
+  $variables['demo_note'] = t('A made-up shop for Wanigan’s demo. Nothing here is for sale.');
+  // Products and landing pages print their own title (beside the gallery, or
+  // in the hero), so the page title block steps aside on them.
+  $node = $variables['node'] ?? NULL;
+  if ($node instanceof NodeInterface && in_array($node->bundle(), ['product', 'landing_page'], TRUE)) {
+    unset($variables['page']['content_above']['northstar_page_title']);
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for node.html.twig.
+ */
+function northstar_preprocess_node(array &$variables): void {
+  /** @var \Drupal\node\NodeInterface $node */
+  $node = $variables['node'];
+  if ($node->bundle() === 'product') {
+    $price = (float) $node->get('field_price')->value;
+    $variables['ships_free'] = $price >= NORTHSTAR_FREE_SHIPPING;
+    $term = $node->get('field_category')->entity;
+    $variables['category'] = $term ? $term->label() : NULL;
+    $variables['category_url'] = $term ? Url::fromRoute('view.products.page_1', [], ['query' => ['category' => $term->id()]])->toString() : NULL;
+    $variables['attributes']['class'][] = $variables['ships_free'] ? 'product--ships-free' : 'product--ships-paid';
+  }
+  if ($node->bundle() === 'article') {
+    $words = str_word_count(strip_tags((string) $node->get('body')->value));
+    $minutes = max(1, (int) round($words / 200));
+    $variables['reading_time'] = \Drupal::translation()->formatPlural($minutes, '1 min read', '@count min read');
+    $variables['date'] = \Drupal::service('date.formatter')->format($node->getCreatedTime(), 'custom', 'j F Y');
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for field.html.twig.
+ */
+function northstar_preprocess_field(array &$variables): void {
+  $name = $variables['element']['#field_name'] ?? '';
+  $items = $variables['element']['#items'] ?? NULL;
+  if ($name === 'field_price' && $items) {
+    $amount = (float) $items->value;
+    $variables['amount'] = $amount;
+    $variables['ships_free'] = $amount >= NORTHSTAR_FREE_SHIPPING;
+    $variables['note'] = $variables['ships_free']
+      ? t('Ships free')
+      : t('Free shipping over $@amount', ['@amount' => NORTHSTAR_FREE_SHIPPING]);
+  }
+  if ($name === 'field_badges' && $items) {
+    $labels = $items->getFieldDefinition()->getFieldStorageDefinition()->getSetting('allowed_values');
+    foreach ($variables['items'] as $delta => &$item) {
+      $key = (string) $items->get($delta)->value;
+      $item['tone'] = $key;
+      $item['label'] = $labels[$key] ?? $key;
+    }
+  }
+  if ($name === 'field_images') {
+    $variables['count'] = count($variables['items']);
+  }
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for block.html.twig.
+ *
+ * Layout Builder's inline hero and callout blocks hand their link and tone to
+ * the components that draw them.
+ */
+function northstar_preprocess_block(array &$variables): void {
+  $plugin = $variables['plugin_id'] ?? '';
+  $block = $variables['content']['#block_content'] ?? NULL;
+  if (!$block || !in_array($plugin, ['inline_block:hero', 'inline_block:callout'], TRUE)) {
+    return;
+  }
+  $link = $block->get('field_link')->first();
+  $variables['cta'] = $link ? ['label' => $link->title, 'url' => $link->getUrl()->toString()] : NULL;
+  if ($plugin === 'inline_block:hero') {
+    // A hero opens the page, so its heading is the page's h1.
+    $variables['heading_level'] = 1;
+  }
+  else {
+    $variables['tone'] = $block->get('field_tone')->value ?: 'pine';
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter() for block templates.
+ *
+ * Adds block--REGION as the least specific suggestion, so a region can style
+ * its plain blocks without naming each one.
+ */
+function northstar_theme_suggestions_block_alter(array &$suggestions, array $variables): void {
+  $id = $variables['elements']['#id'] ?? NULL;
+  if ($id && ($block = Block::load($id))) {
+    array_unshift($suggestions, 'block__' . $block->getRegion());
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter() for page templates.
+ *
+ * Adds page--node--BUNDLE, so a landing page can run edge to edge.
+ */
+function northstar_theme_suggestions_page_alter(array &$suggestions, array $variables): void {
+  $node = \Drupal::routeMatch()->getParameter('node');
+  if ($node instanceof NodeInterface) {
+    $suggestions[] = 'page__node__' . $node->bundle();
+  }
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter() for field templates.
+ *
+ * Adds field--ENTITY--FIELD--BUNDLE--VIEW-MODE (a product card shows only its
+ * first picture), and field--bare for words printed inside a component's
+ * heading or paragraph, where a wrapping div would not be allowed.
+ */
+function northstar_theme_suggestions_field_alter(array &$suggestions, array $variables): void {
+  $element = $variables['element'];
+  if (in_array($element['#field_name'], ['field_kicker', 'field_heading', 'field_summary'], TRUE)) {
+    $suggestions[] = 'field__bare';
+    return;
+  }
+  $suggestions[] = 'field__' . $element['#entity_type'] . '__' . $element['#field_name'] . '__' . $element['#bundle'] . '__' . $element['#view_mode'];
+}

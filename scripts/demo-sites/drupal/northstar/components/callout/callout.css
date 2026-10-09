@@ -1,0 +1,15 @@
+.callout {
+  display: grid;
+  gap: 0.85rem;
+  justify-items: start;
+  height: 100%;
+  padding: clamp(1.5rem, 3vw, 2.25rem);
+  border-radius: var(--ns-radius);
+}
+.callout--pine { background: var(--ns-pine-deep); color: var(--ns-paper); }
+.callout--sand { background: var(--ns-sand); color: var(--ns-ink); }
+.callout--ember { background: var(--ns-ember); color: #fff; }
+.callout__mark { width: 1.75rem; height: 1.75rem; color: var(--ns-gold); }
+.callout--sand .callout__mark { color: var(--ns-ember); }
+.callout__heading { margin: 0; font: 800 clamp(1.4rem, 1.1rem + 1vw, 1.9rem)/1.1 var(--ns-font); letter-spacing: -0.02em; text-wrap: balance; }
+.callout__text { margin: 0; line-height: 1.55; opacity: 0.92; }

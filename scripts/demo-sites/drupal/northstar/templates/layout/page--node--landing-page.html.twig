@@ -1,0 +1,18 @@
+{#
+/**
+ * @file
+ * A landing page runs edge to edge: Layout Builder's sections set their own
+ * widths. Suggested by northstar_theme_suggestions_page_alter().
+ */
+#}
+{% extends 'page.html.twig' %}
+{% block main %}
+  <main class="site-main site-main--landing" role="main">
+    <a id="main-content" tabindex="-1"></a>
+    {% if page.content_above|render|striptags|trim %}
+      <div class="container">{{ page.content_above }}</div>
+    {% endif %}
+    {{ page.content }}
+    {{ page.content_below }}
+  </main>
+{% endblock %}

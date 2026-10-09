@@ -1,0 +1,12 @@
+{#
+/**
+ * @file
+ * A block in the announcement bar: one short line, no title.
+ * Suggested by northstar_theme_suggestions_block_alter() (block--REGION).
+ */
+#}
+<div{{ attributes.addClass('block', 'block--announcement') }}>
+  {{ title_prefix }}{{ title_suffix }}
+  <span class="block--announcement__mark" aria-hidden="true">✦</span>
+  {{ content }}
+</div>

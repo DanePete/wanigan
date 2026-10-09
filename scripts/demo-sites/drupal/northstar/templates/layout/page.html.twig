@@ -1,0 +1,60 @@
+{#
+/**
+ * @file
+ * Northstar's page: announcement bar, header, the main column (with a sidebar
+ * when it has blocks) and the footer.
+ *
+ * Variables added in northstar_preprocess_page(): year, demo_note.
+ * page--node--landing-page.html.twig replaces the main block to run edge to edge.
+ */
+#}
+<div class="site">
+  {{ page.announcement }}
+
+  <header class="site-header" role="banner">
+    <div class="site-header__inner container">
+      {{ page.header }}
+      <button class="site-header__toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+        <span class="site-header__toggle-bars" aria-hidden="true"></span>
+        <span class="visually-hidden">{{ 'Menu'|t }}</span>
+      </button>
+      <div class="site-header__nav" id="site-nav">
+        {{ page.primary_menu }}
+        {{ page.header_tools }}
+      </div>
+    </div>
+  </header>
+
+  {{ page.highlighted }}
+
+  {% block main %}
+    <main class="site-main" role="main">
+      <a id="main-content" tabindex="-1"></a>
+      <div class="container">
+        {{ page.breadcrumb }}
+        {{ page.content_above }}
+        <div class="main-grid{{ page.sidebar ? ' main-grid--with-sidebar' }}">
+          <div class="main-grid__content">
+            {{ page.content }}
+          </div>
+          {% if page.sidebar %}
+            <aside class="main-grid__sidebar" role="complementary">
+              {{ page.sidebar }}
+            </aside>
+          {% endif %}
+        </div>
+        {{ page.content_below }}
+      </div>
+    </main>
+  {% endblock %}
+
+  <footer class="site-footer" role="contentinfo">
+    <div class="site-footer__top container">
+      {{ page.footer_top }}
+    </div>
+    <div class="site-footer__bottom container">
+      <p class="site-footer__legal">© {{ year }} Northstar Storefront. {{ demo_note }}</p>
+      {{ page.footer_bottom }}
+    </div>
+  </footer>
+</div>

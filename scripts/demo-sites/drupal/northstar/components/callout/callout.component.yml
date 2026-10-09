@@ -1,0 +1,25 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Callout
+status: stable
+description: 'A short boxed message with one action, in pine, sand or ember.'
+props:
+  type: object
+  properties:
+    tone:
+      type: string
+      title: Colour
+      enum: [pine, sand, ember]
+      default: pine
+    cta_label:
+      type: string
+      title: Action
+      examples: ['Shipping details']
+    cta_url:
+      type: string
+      title: Action address
+      examples: ['/shipping']
+slots:
+  heading:
+    title: Heading
+  text:
+    title: Text

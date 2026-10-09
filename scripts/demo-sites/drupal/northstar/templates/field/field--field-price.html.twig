@@ -1,0 +1,15 @@
+{#
+/**
+ * @file
+ * A product's price, drawn by the northstar:price component.
+ * amount, ships_free and note come from northstar_preprocess_field().
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-price') }}>
+  {{ include('northstar:price', {
+    amount: amount,
+    note: note,
+    ships_free: ships_free,
+    size: element['#view_mode'] == 'full' ? 'lg' : 'sm',
+  }, with_context = false) }}
+</div>

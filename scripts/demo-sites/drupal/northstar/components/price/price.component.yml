@@ -1,0 +1,25 @@
+$schema: https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json
+name: Price
+status: stable
+description: 'A price in dollars, with a note on shipping beneath it.'
+props:
+  type: object
+  required: [amount]
+  properties:
+    amount:
+      type: number
+      title: Amount
+      examples: [24]
+    note:
+      type: string
+      title: Note
+      examples: ['Ships free']
+    ships_free:
+      type: boolean
+      title: Ships free
+      default: false
+    size:
+      type: string
+      title: Size
+      enum: [sm, lg]
+      default: sm

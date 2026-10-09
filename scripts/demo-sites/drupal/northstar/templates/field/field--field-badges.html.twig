@@ -1,0 +1,16 @@
+{#
+/**
+ * @file
+ * A product's badges: one northstar:badge per item, in the order they are
+ * saved. Each item's tone and label come from northstar_preprocess_field().
+ */
+#}
+<div{{ attributes.addClass('field', 'field--field-badges') }}>
+  <ul class="badges">
+    {% for item in items %}
+      <li{{ item.attributes.addClass('badges__item') }}>
+        {{ include('northstar:badge', { label: item.label, tone: item.tone }, with_context = false) }}
+      </li>
+    {% endfor %}
+  </ul>
+</div>

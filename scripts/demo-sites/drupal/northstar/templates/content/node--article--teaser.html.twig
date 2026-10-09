@@ -1,0 +1,18 @@
+{#
+/**
+ * @file
+ * A journal entry in a list: picture, date and reading time, title, summary.
+ */
+#}
+<article{{ attributes.addClass('node', 'node--article', 'node--teaser', 'article-card') }}>
+  <a class="article-card__link" href="{{ url }}">
+    <div class="article-card__image">{{ content.field_image }}</div>
+    <div class="article-card__body">
+      <p class="article-card__meta">{{ date }} · {{ reading_time }}</p>
+      {{ title_prefix }}
+      <h3{{ title_attributes.addClass('article-card__title') }}>{{ label }}</h3>
+      {{ title_suffix }}
+      <div class="article-card__summary">{{ content.body }}</div>
+    </div>
+  </a>
+</article>
