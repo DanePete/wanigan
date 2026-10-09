@@ -80,6 +80,16 @@ export interface LiveShot {
   createdAt: number;
 }
 
+/** A card's before or after that could not be taken, and why, in the live view's words. */
+export interface LiveShotMiss {
+  cardId: string;
+  sessionId: string | null;
+  kind: 'before' | 'after';
+  url: string;
+  reason: string;
+  createdAt: number;
+}
+
 /** A helper Wanigan installed in a site. */
 export interface LiveHelper {
   kind: 'drupal' | 'wordpress';

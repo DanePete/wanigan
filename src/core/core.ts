@@ -17,7 +17,7 @@ import { Checkpoints } from './checkpoints.ts';
 import { History, type HistoryLimits } from './history.ts';
 import { Reviews } from './review.ts';
 import { Phone, type PhoneOptions } from './phone/phone.ts';
-import { Live } from './live.ts';
+import { Live, type LiveOptions } from './live.ts';
 import { LiveAgent } from './live-agent.ts';
 import { LiveEnvironments } from './live-envs.ts';
 import { LocalModels, type LocalModelsOptions } from './local-models.ts';
@@ -79,6 +79,8 @@ export interface CoreOptions {
   configReadLimits?: Partial<ConfigReadLimits>;
   /** Test seams for models on this Mac: a stand-in `lms` (or null for none) and Ollama's address. */
   local?: Omit<LocalModelsOptions, 'home'>;
+  /** Test seam and the demo: the PATH the live view looks for ddev on (and runs it with). Left out, the login shell's. */
+  live?: LiveOptions;
   /** Phone access: where the page is built, and test seams (a stand-in Tailscale, a port, a push service). */
   phone?: Partial<Pick<PhoneOptions, 'rendererDir' | 'port' | 'tailscale' | 'pushFetch'>>;
   /** Test seam: how long a message waits for Claude Code to show the images pasted before it. */
@@ -174,7 +176,7 @@ export class Core {
       this.mcp = new Mcp(ctx, this.accounts, this.board, this.sessions, {
         home, neutralDir: join(options.dataDir, 'probe'), limits: readLimits, ...(options.mcpBinaries ? { binaries: options.mcpBinaries } : {}),
       });
-      this.live = new Live(ctx, this.board, options.dataDir);
+      this.live = new Live(ctx, this.board, options.dataDir, options.live);
       // Only the app answers an agent's look at the live view; the server knows which connection that is.
       this.liveAgent = new LiveAgent(ctx, this.board, this.live, { hosts: () => this.server?.liveHostCount ?? 0, ...(options.liveWaitMs ? { waitMs: options.liveWaitMs } : {}) });
       this.phone = new Phone(ctx, {

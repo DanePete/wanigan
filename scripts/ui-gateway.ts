@@ -2,7 +2,7 @@
 // served over HTTP with `window.wanigan` bridged to it (POST /rpc, GET /events).
 // Never shipped. Run under Electron's Node (scripts/run-electron-node.mjs).
 // `--demo` runs the core as the demo does: what would leave the machine is refused.
-import { mkdtempSync, readFileSync, realpathSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { extname, join, resolve } from 'node:path';
@@ -21,14 +21,40 @@ function serveFile(res: ServerResponse, path: string): void {
   res.writeHead(200, { 'content-type': types[extname(path)] ?? 'application/octet-stream' }).end(readFileSync(path));
 }
 
+/**
+ * A stand-in ddev for the live view's sweep, on the core's own PATH (the
+ * owner's ddev is never on it): `describe -j` answers with the state written in
+ * the project's .ddev/stand-in-state, shaped as ddev 1.25 writes it; `start`
+ * and `restart` take a moment, print a few lines and set it running.
+ */
+const STAND_IN_DDEV = `#!/bin/sh
+state=$(cat .ddev/stand-in-state 2>/dev/null || echo stopped)
+name=$(sed -n 's/^name: *//p' .ddev/config.yaml | head -1)
+case "$1" in
+  describe)
+    printf '{"level":"info","msg":"Project: %s","raw":{"approot":"%s","hostname":"%s.ddev.site","hostnames":["%s.ddev.site"],"name":"%s","primary_url":"https://%s.ddev.site","router":"traefik","router_status":"healthy","status":"%s","status_desc":"%s"},"time":"2026-10-09T21:14:03-05:00"}\\n' "$name" "$PWD" "$name" "$name" "$name" "$name" "$state" "$state" ;;
+  start|restart)
+    echo "Starting $name..."
+    sleep 2
+    echo "Container ddev-$name-web  Started"
+    echo running > .ddev/stand-in-state
+    echo "Successfully started $name" ;;
+  *) echo "the stand-in ddev does not know $1" >&2; exit 2 ;;
+esac
+`;
+
 async function main(): Promise<void> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'wg-ui-')));
   const options = demoOptions(join(base, 'demo'));
+  const liveBin = join(base, 'live-bin');
+  mkdirSync(liveBin);
+  writeFileSync(join(liveBin, 'ddev'), STAND_IN_DDEV, { mode: 0o755 });
   const core = new Core({
     dataDir: join(base, 'data'),
     cli: { runtime: process.execPath, entry: join(ROOT, 'src/cli/index.ts') },
     demo,
     ...options,
+    live: { path: [liveBin, '/usr/bin', '/bin'].join(':') },
     // The phone page as built, behind the real phone gateway, on any free port.
     phone: { ...options.phone, rendererDir: RENDERER },
   });

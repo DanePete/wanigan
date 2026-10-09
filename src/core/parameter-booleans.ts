@@ -32,6 +32,7 @@ const FIELDS: BooleanParams = {
   'live.look': { image: true, fullPage: true, all: true },
   'live.part': { image: true },
   'live.problems': { sinceTurn: true },
+  'live.start': { restart: true },
 };
 
 export function validateBooleans(method: Method, params: object): void {

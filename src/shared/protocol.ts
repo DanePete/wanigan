@@ -11,9 +11,10 @@ import type { LocalStatus } from './local-models.ts';
 import type { PairingCode, PhoneDevice, PhoneStatus } from './phone.ts';
 import type { SessionCheckpoints, TurnChanges } from './checkpoints.ts';
 import type { SkillCopyPlan, SkillRead, SkillTarget, SkillsListing } from './skills.ts';
-import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveSite } from './live.ts';
+import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveShotMiss, LiveSite } from './live.ts';
 import type { LiveAsk, LiveLook, LiveToolResult } from './live-agent.ts';
 import type { LiveEnvs } from './live-envs.ts';
+import type { LiveRunEvent, LiveStartResult, LiveStatus } from './live-site.ts';
 import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } from './mcp.ts';
 import type { ConversationUsage } from './tokens.ts';
 import type { SaidSearch } from './said.ts';
@@ -354,6 +355,18 @@ export interface Methods {
   /** Ignore a rectangle of the local page in comparisons at one width: on one page (its path) or every page (null). */
   'live.mask': { params: { projectId: string; path: string | null; width: number; rect: { x: number; y: number; width: number; height: number }; label?: string | null }; result: LiveEnvs };
   'live.unmask': { params: { projectId: string; id: string }; result: LiveEnvs };
+  /**
+   * Whether the project's site runs: for ddev, what `ddev describe -j` says in
+   * the folder the site serves; Lando and dev scripts are named, not asked. With
+   * the certificates the project keeps where ddev looks for them. Reads only.
+   */
+  'live.siteStatus': { params: { projectId: string }; result: LiveStatus };
+  /** Run `ddev start` (or `ddev restart`) in the folder the site serves, on the owner's click; its lines arrive as `liveRun`. */
+  'live.start': { params: { projectId: string; restart?: boolean }; result: LiveStartResult };
+  /** A screenshot of a card's page could not be taken: why, in the live view's words. The card says so until one is. */
+  'live.shotMissed': { params: { cardId: string; sessionId: string | null; kind: 'before' | 'after'; url: string; reason: string }; result: LiveShotMiss };
+  /** Why a card's before or after was not taken, newest first; gone once one of that kind is. */
+  'live.shotMisses': { params: { cardId: string }; result: LiveShotMiss[] };
   'sessions.input': { params: { id: string; data: string }; result: { ok: true } };
   'sessions.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } };
   /** The PTY's size comes with the replay; null once the session has ended. */
@@ -615,6 +628,10 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.removeEnv': ['owner'],
   'live.mask': ['owner'],
   'live.unmask': ['owner'],
+  'live.siteStatus': ['owner'],
+  'live.start': ['owner'],
+  'live.shotMissed': ['owner'],
+  'live.shotMisses': ['owner'],
   'sessions.input': ['owner', 'phone'],
   'sessions.resize': ['owner', 'phone'],
   'sessions.watch': ['owner', 'phone'],
@@ -715,6 +732,8 @@ export interface Events {
   'liveAsk': LiveAsk;
   /** An agent looked at the live view: what a card shows as evidence changed. */
   'liveLooks': { projectId: string; cardId: string | null; sessionId: string };
+  /** A ddev start or restart the owner asked for printed a line, or finished. */
+  'liveRun': LiveRunEvent;
   /** A composer's waiting files changed; `key` is `attachKey` of where they wait. */
   'attachments': { key: string };
   /** Terminal output, only to connections watching that session. */

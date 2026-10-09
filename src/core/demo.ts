@@ -174,6 +174,8 @@ export function demoOptions(base: string, { calm = false }: { calm?: boolean } =
     local: { lmsBin: fakeLms(base), ollamaUrl: 'http://127.0.0.1:9' },
     // A stand-in Tailscale, so Settings › Phone shows a network without reading the owner's.
     phone: { tailscale: demoTailscale(), port: 0 },
+    // No ddev: the live view never asks the owner's ddev about, or starts, any of the owner's sites.
+    live: { path: [join(base, 'live-bin'), '/usr/bin', '/bin'].join(':') },
   };
 }
 

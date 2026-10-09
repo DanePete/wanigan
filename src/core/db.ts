@@ -497,6 +497,21 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX live_masks_by_project ON live_masks (project_id, created_at);
   `,
+  `
+  -- A card's before or after that could not be taken (the site was not
+  -- running, or its page did not load), and why, in the live view's words: the
+  -- card says so rather than nothing. One a kind a card; a screenshot of that
+  -- kind taken later clears it.
+  CREATE TABLE live_shot_misses (
+    card_id    TEXT NOT NULL REFERENCES cards(id),
+    kind       TEXT NOT NULL CHECK (kind IN ('before', 'after')),
+    session_id TEXT REFERENCES sessions(id),
+    url        TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (card_id, kind)
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

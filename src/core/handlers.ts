@@ -327,6 +327,11 @@ export function createHandlers(
     'live.removeEnv': (p) => more.liveEnvs.remove(str(p.projectId, 'project'), str(p.id, 'environment')),
     'live.mask': (p) => more.liveEnvs.mask(str(p.projectId, 'project'), { path: p.path, width: p.width, rect: p.rect, label: p.label }),
     'live.unmask': (p) => more.liveEnvs.unmask(str(p.projectId, 'project'), str(p.id, 'area')),
+    // Whether the project's own site runs, for the window (the agents' live.status above is the session's).
+    'live.siteStatus': (p) => more.live.status(str(p.projectId, 'project')),
+    'live.start': (p) => more.live.start(str(p.projectId, 'project'), p.restart === true),
+    'live.shotMissed': (p) => more.live.shotMissed(p),
+    'live.shotMisses': (p) => more.live.shotMisses(str(p.cardId, 'card')),
     'sessions.models': (p) => more.models.catalogue(oneOf(p.provider, PROVIDERS, 'agent'), p.accountId ? str(p.accountId, 'account') : null, p.projectId ? str(p.projectId, 'project') : null),
     'sessions.input': (p) => { sessions.input(str(p.id, 'session'), p.data); return { ok: true }; },
     'sessions.resize': (p) => { sessions.resize(str(p.id, 'session'), p.cols, p.rows); return { ok: true }; },

@@ -1,10 +1,16 @@
 // Before and after screenshots for a card's details: the card's page as it
-// was before its session worked, and after each turn that edited files.
+// was before the card's session worked, and after each turn that edited files.
 // Taken in the main process (a hidden window in the live view's own session),
 // kept by the core. Only while Settings › Live view has screenshots on, and
 // only of a site the live view is on for. Nothing leaves this Mac.
+//
+// The site is asked whether it runs first: a site that is not running is not
+// photographed (ddev's router would answer with its own 404, or another
+// project's certificate, and that would be kept as the page). When a
+// screenshot cannot be taken, the card is told why, in the live view's words.
 import { liveFor, type AppSettings } from '../shared/settings.ts';
 import type { LiveEvent, LiveSite } from '../shared/live.ts';
+import { diagnose, troubleText, type LiveStatus } from '../shared/live-site.ts';
 import type { Method } from '../shared/protocol.ts';
 import type { LiveViewWiring } from './live-view.ts';
 
@@ -30,10 +36,21 @@ export function wireLiveShots(options: {
       const site = await client.callRaw('live.site', { projectId: e.projectId }) as LiveSite;
       if (!site.url || !liveFor(s, site.platform)) return;
       const page = (await client.callRaw('live.page', { cardId: e.cardId }) as { url: string | null }).url ?? site.url;
+      const host = new URL(page).hostname;
+      const missed = (reason: string): Promise<unknown> =>
+        client.callRaw('live.shotMissed', { cardId: e.cardId, sessionId: e.sessionId, kind, url: page, reason });
+      const status = await client.callRaw('live.siteStatus', { projectId: e.projectId }) as LiveStatus;
+      const before = diagnose({ host, status, failure: null, now: Date.now() });
+      if (before) { await missed(troubleText(before)); return; }
       const shot = await options.shoot(e.projectId, page, site.token);
       if (!shot) return;
+      if ('failure' in shot) {
+        const why = diagnose({ host, status, failure: shot.failure, now: Date.now() });
+        if (why) await missed(troubleText(why));
+        return;
+      }
       await client.callRaw('live.saveShot', { cardId: e.cardId, sessionId: e.sessionId, kind, url: page, ...shot });
-    }).catch(() => { /* a screenshot that could not be taken is simply not there; the card says so */ });
+    }).catch(() => { /* a screenshot that could not be taken, nor said why, is simply not there */ });
   };
 
   return {

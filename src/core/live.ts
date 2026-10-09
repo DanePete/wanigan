@@ -5,15 +5,19 @@
 // nothing here starts a process or reaches the network. A hand edit writes
 // one file, only the owner's own, only where the words appear exactly once.
 // Design: docs/design/2026-10-08-live-view.md.
-import { execFile } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { execFile, spawn } from 'node:child_process';
+import { X509Certificate, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
-  LIVE_PLATFORMS, componentProps, ddevInfo, ddevPlatform, liveUrl,
+  LIVE_PLATFORMS, componentProps, ddevInfo, ddevPlatform, liveUrl, sameSite,
   type DdevInfo, type LiveCandidate, type LiveComponent, type LiveEdit, type LiveFound, type LiveHelper, type LiveHelperPlan,
-  type LiveParts, type LivePlatform, type LiveShot, type LiveSite,
+  type LiveParts, type LivePlatform, type LiveShot, type LiveShotMiss, type LiveSite,
 } from '../shared/live.ts';
+import {
+  certificateOf, ddevStatus, scriptStart,
+  type LiveCertFile, type LiveRun, type LiveRunEvent, type LiveStartResult, type LiveStatus,
+} from '../shared/live-site.ts';
 import { DRUPAL_HELPER_FILES, DRUPAL_HELPER_MARK, DRUPAL_HELPER_MODULE, DRUPAL_HELPER_VERSION } from './live-helper-drupal.ts';
 import { WORDPRESS_HELPER_FILE, WORDPRESS_HELPER_MARK, WORDPRESS_HELPER_VERSION, wordpressHelper } from './live-helper-wordpress.ts';
 import { cleanEnv, loginPath, which } from './environment.ts';
@@ -49,20 +53,170 @@ interface HelperRecord { kind: 'drupal' | 'wordpress'; version: number }
 
 /** A ddev command may wait on a container starting: give it time, then give up and say so. */
 const DDEV_TIMEOUT_MS = 180_000;
+/** Asking ddev whether a site runs reads Docker's state; it answers in a second or two, or something is wrong. */
+const DDEV_STATUS_MS = 20_000;
+/** A first `ddev start` may pull images: give it this long before giving up on it. */
+const DDEV_START_MS = 10 * 60_000;
+/** The lines of a ddev start kept for the view (the newest). */
+const START_LINES = 40;
+/** Where ddev looks for a project's own certificates, and how many of them are read. */
+const CERT_DIRS = ['.ddev/traefik/certs', '.ddev/custom_certs'];
+const MAX_CERT_FILES = 20;
+const MAX_CERT_BYTES = 64 * 1024;
 const DEV_KEYS = ['twig_debug', 'twig_cache_disable', 'disable_rendered_output_cache_bins'];
+
+export interface LiveOptions {
+  /**
+   * The PATH ddev is looked for on, and run with. Left out, the login shell's
+   * (where the owner's ddev is). Tests and the demo give their own, so the
+   * owner's ddev, and the owner's sites, are never asked or started.
+   */
+  path?: string;
+}
 
 export class Live {
   private readonly ctx: Ctx;
   private readonly board: Board;
   /** Where screenshots are kept: the core's own data folder. */
   private readonly shotDir: string;
+  private readonly options: LiveOptions;
   /** Projects whose helper is being installed or removed: one at a time each. */
   private readonly busy = new Set<string>();
+  /** Projects whose site Wanigan is starting for the owner, with what the command has said so far. */
+  private readonly starting = new Map<string, { command: string; output: string[] }>();
+  /** ddev being asked about a folder: callers at the same moment share one answer. */
+  private readonly asking = new Map<string, Promise<Pick<LiveRun, 'state' | 'said' | 'name'>>>();
 
-  constructor(ctx: Ctx, board: Board, dataDir: string) {
+  constructor(ctx: Ctx, board: Board, dataDir: string, options: LiveOptions = {}) {
     this.ctx = ctx;
     this.board = board;
     this.shotDir = join(dataDir, 'live-shots');
+    this.options = options;
+  }
+
+  /* ── whether the site runs ─────────────────────────────────────────── */
+
+  /**
+   * Whether the project's site runs. What runs it is found in the folder the
+   * site serves, for the address the owner chose: ddev (asked, with
+   * `ddev describe -j`), Lando or a dev script (named, never asked or run).
+   * With the certificates the project keeps where ddev looks for them.
+   */
+  async status(projectId: string): Promise<LiveStatus> {
+    const project = this.project(projectId);
+    const row = this.row(project.id);
+    const folder = row?.served_path ?? project.path;
+    const found = detect(folder);
+    const run = runner(folder, found, row?.url ?? null);
+    if (run.tool === 'ddev') Object.assign(run, await this.askDdev(folder, found.ddev?.name ?? null));
+    return {
+      projectId: project.id,
+      run,
+      hostnames: found.ddev?.hostnames ?? [],
+      certificates: await keptCertificates(folder),
+      busy: this.starting.get(project.id) ?? null,
+      checkedAt: this.ctx.now(),
+    };
+  }
+
+  private askDdev(folder: string, name: string | null): Promise<Pick<LiveRun, 'state' | 'said' | 'name'>> {
+    const pending = this.asking.get(folder);
+    if (pending) return pending;
+    const asked = (async (): Promise<Pick<LiveRun, 'state' | 'said' | 'name'>> => {
+      const ddev = await this.ddevBin();
+      if (!ddev) return { state: 'no-ddev', said: null, name };
+      return new Promise((done) => {
+        execFile(ddev.bin, ['describe', '-j'], { cwd: folder, env: ddev.env, timeout: DDEV_STATUS_MS, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+          if (error && (error as { killed?: boolean }).killed) { done({ state: 'unknown', said: `ddev did not answer within ${DDEV_STATUS_MS / 1000} seconds`, name }); return; }
+          if (error && (error as { code?: unknown }).code === 'ENOENT') { done({ state: 'no-ddev', said: null, name }); return; }
+          const read = ddevStatus(String(stdout), String(stderr), { folder, name: name ?? undefined });
+          done({ ...read, name: read.name ?? name });
+        });
+      });
+    })().finally(() => this.asking.delete(folder));
+    this.asking.set(folder, asked);
+    return asked;
+  }
+
+  /** ddev on the PATH the core was given (or the login shell's), and the environment it runs with; null when it is not there. */
+  private async ddevBin(): Promise<{ bin: string; env: Record<string, string> } | null> {
+    const path = this.options.path ?? await loginPath();
+    const bin = which('ddev', path);
+    return bin ? { bin, env: { ...cleanEnv(process.env), PATH: path } } : null;
+  }
+
+  /**
+   * Start the site with ddev (or restart it), in the folder it serves, on the
+   * owner's click: the command is the one the view showed, each line it prints
+   * goes to the view as it comes, and the site's status after is the answer.
+   * One at a time a project.
+   */
+  async start(projectId: string, restart = false): Promise<LiveStartResult> {
+    const project = this.project(projectId);
+    const row = this.row(project.id);
+    const folder = row?.served_path ?? project.path;
+    if (!detect(folder).ddev) throw new CoreError('refused', `${folder} has no ddev config (.ddev/config.yaml), so Wanigan cannot start its site with ddev.`);
+    const going = this.starting.get(project.id);
+    if (going) throw new CoreError('refused', `${going.command} is already running for this site. Wait for it to finish.`);
+    const ddev = await this.ddevBin();
+    if (!ddev) throw new CoreError('refused', 'ddev is not installed (or not on your shell’s PATH), so Wanigan cannot start the site with it.');
+    const command = restart ? 'ddev restart' : 'ddev start';
+    const busy = { command, output: [] as string[] };
+    this.starting.set(project.id, busy);
+    const tell = (event: Omit<LiveRunEvent, 'projectId' | 'command'>): void => this.ctx.emit('liveRun', { projectId: project.id, command, ...event });
+    const say = (line: string): void => {
+      busy.output.push(line);
+      if (busy.output.length > START_LINES) busy.output.splice(0, busy.output.length - START_LINES);
+      tell({ line, done: false, ok: null });
+    };
+    tell({ line: null, done: false, ok: null });
+    let ok = false;
+    try {
+      ok = await new Promise<boolean>((done) => {
+        const child = spawn(ddev.bin, [restart ? 'restart' : 'start'], { cwd: folder, env: ddev.env, stdio: ['ignore', 'pipe', 'pipe'] });
+        const timer = setTimeout(() => { say(`Wanigan stopped waiting after ${DDEV_START_MS / 60_000} minutes.`); child.kill('SIGTERM'); }, DDEV_START_MS);
+        const reader = (): ((chunk: Buffer) => void) => {
+          let rest = '';
+          return (chunk) => {
+            const parts = (rest + chunk.toString('utf8')).split(/\r?\n|\r/);
+            rest = (parts.pop() ?? '').slice(-2_000);
+            for (const part of parts) { const line = plain(part); if (line) say(line); }
+          };
+        };
+        child.stdout.on('data', reader());
+        child.stderr.on('data', reader());
+        child.on('error', (error) => { clearTimeout(timer); say(error.message); done(false); });
+        child.on('close', (code) => { clearTimeout(timer); done(code === 0); });
+      });
+    } finally {
+      this.starting.delete(project.id);
+    }
+    const status = await this.status(project.id);
+    tell({ line: null, done: true, ok });
+    return { ok, command, folder, output: busy.output.slice(-20), status };
+  }
+
+  /** A card's before or after could not be taken: keep why, until one of that kind is. */
+  shotMissed(params: { cardId?: unknown; sessionId?: unknown; kind?: unknown; url?: unknown; reason?: unknown }): LiveShotMiss {
+    const card = this.board.card(String(params.cardId ?? ''));
+    const sessionId = typeof params.sessionId === 'string' && params.sessionId ? params.sessionId : null;
+    const kind = params.kind === 'before' || params.kind === 'after' ? params.kind : null;
+    const url = liveUrl(params.url);
+    const reason = typeof params.reason === 'string' ? params.reason.replace(/\s+/g, ' ').trim().slice(0, 1_000) : '';
+    if (!kind || !url || !reason) throw new CoreError('invalid', 'A missed screenshot needs its kind, the page and why.');
+    if (sessionId && !this.ctx.db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId)) throw new CoreError('not_found', 'No such session.');
+    this.ctx.db.prepare(`INSERT INTO live_shot_misses (card_id, kind, session_id, url, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(card_id, kind) DO UPDATE SET session_id = excluded.session_id, url = excluded.url, reason = excluded.reason, created_at = excluded.created_at`)
+      .run(card.id, kind, sessionId, url, reason, this.ctx.now());
+    this.ctx.emit('liveShots', { cardId: card.id });
+    return this.shotMisses(card.id).find((m) => m.kind === kind) as LiveShotMiss;
+  }
+
+  shotMisses(cardId: string): LiveShotMiss[] {
+    const card = this.board.card(cardId);
+    const rows = this.ctx.db.prepare('SELECT card_id, kind, session_id, url, reason, created_at FROM live_shot_misses WHERE card_id = ? ORDER BY created_at DESC')
+      .all(card.id) as { card_id: string; kind: 'before' | 'after'; session_id: string | null; url: string; reason: string; created_at: number }[];
+    return rows.map((r) => ({ cardId: r.card_id, kind: r.kind, sessionId: r.session_id, url: r.url, reason: r.reason, createdAt: r.created_at }));
   }
 
   /**
@@ -92,6 +246,7 @@ export class Live {
     writeFileSync(join(this.shotDir, file), png, { mode: 0o600 });
     this.ctx.db.prepare(`INSERT INTO live_shots (id, card_id, session_id, kind, url, file, width, height, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, card.id, sessionId, kind, url, file, width, height, this.ctx.now());
+    this.ctx.db.prepare('DELETE FROM live_shot_misses WHERE card_id = ? AND kind = ?').run(card.id, kind);
     const old = this.ctx.db.prepare('SELECT id, file FROM live_shots WHERE card_id = ? ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?').all(card.id, MAX_SHOTS_A_CARD) as { id: string; file: string }[];
     for (const gone of [...replaced, ...old.filter((o) => o.id !== id)]) this.dropShot(gone);
     this.ctx.emit('liveShots', { cardId: card.id });
@@ -201,7 +356,7 @@ export class Live {
     const plan = this.drupalPlan(root);
     if (plan.refused) throw new CoreError('refused', plan.refused);
     return this.exclusive(project.id, async () => {
-      const ddev = await ddevCommand();
+      const ddev = await this.ddevCommand();
       const existing = join(plan.folder, `${DRUPAL_HELPER_MODULE}.info.yml`);
       if (existsSync(plan.folder) && !(readText(existing) ?? '').startsWith(DRUPAL_HELPER_MARK)) {
         throw new CoreError('refused', `${plan.folder} already exists and Wanigan did not write it. Nothing was changed.`);
@@ -234,7 +389,7 @@ export class Live {
     if (record.kind === 'wordpress') return this.removeWordpress(project.id, root);
     const plan = this.drupalPlan(root);
     return this.exclusive(project.id, async () => {
-      const ddev = await ddevCommand();
+      const ddev = await this.ddevCommand();
       await ddev.run(root, ['drush', 'pm:uninstall', DRUPAL_HELPER_MODULE, '-y']).catch((error: Error) => {
         // Already gone from Drupal (the database was replaced): nothing left to switch off.
         if (!/not installed|is not enabled|Unable to uninstall/i.test(error.message)) throw error;
@@ -284,6 +439,22 @@ export class Live {
       this.ctx.emit('liveSite', { projectId });
       return this.site(projectId);
     });
+  }
+
+  /** ddev, and a way to run it in a project folder. */
+  private async ddevCommand(): Promise<{ run(cwd: string, args: string[]): Promise<string> }> {
+    const ddev = await this.ddevBin();
+    if (!ddev) throw new CoreError('refused', 'ddev is not installed (or not on your shell’s PATH), and the helper is installed with it.');
+    return {
+      run: (cwd, args) => new Promise((done, fail) => {
+        execFile(ddev.bin, args, { cwd, env: ddev.env, timeout: DDEV_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+          if (!error) { done(String(stdout)); return; }
+          const said = `${stderr || stdout || error.message}`.trim().split('\n').slice(-4).join(' ').slice(0, 600);
+          const shown = args[0] === 'drush' && args[1] === 'state:set' ? 'ddev drush state:set wanigan_live.token …' : `ddev ${args.join(' ')}`;
+          fail(new CoreError('refused', `${shown} failed: ${said}${/not running|stopped|start the project/i.test(said) ? ' Start the site (ddev start) and try again.' : ''}`));
+        });
+      }),
+    };
   }
 
   private async exclusive<T>(projectId: string, work: () => Promise<T>): Promise<T> {
@@ -499,23 +670,6 @@ function helperRecord(raw: string | null): HelperRecord | null {
   }
 }
 
-/** ddev, found on the login shell's PATH, and a way to run it in a project folder. */
-async function ddevCommand(): Promise<{ run(cwd: string, args: string[]): Promise<string> }> {
-  const path = await loginPath();
-  const bin = which('ddev', path);
-  if (!bin) throw new CoreError('refused', 'ddev is not installed (or not on your shell’s PATH), and the helper is installed with it.');
-  return {
-    run: (cwd, args) => new Promise((done, fail) => {
-      execFile(bin, args, { cwd, env: { ...cleanEnv(process.env), PATH: path }, timeout: DDEV_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
-        if (!error) { done(String(stdout)); return; }
-        const said = `${stderr || stdout || error.message}`.trim().split('\n').slice(-4).join(' ').slice(0, 600);
-        const shown = args[0] === 'drush' && args[1] === 'state:set' ? 'ddev drush state:set wanigan_live.token …' : `ddev ${args.join(' ')}`;
-        fail(new CoreError('refused', `${shown} failed: ${said}${/not running|stopped|start the project/i.test(said) ? ' Start the site (ddev start) and try again.' : ''}`));
-      });
-    }),
-  };
-}
-
 const DEV_LIST = `[${DEV_KEYS.map((k) => `'${k}'`).join(', ')}]`;
 
 /**
@@ -642,21 +796,86 @@ export function detect(root: string): { candidates: LiveCandidate[]; ddev: DdevI
     }
   }
 
-  const pkg = readText(join(root, 'package.json'));
-  if (pkg) {
-    try {
-      const scripts = (JSON.parse(pkg) as { scripts?: Record<string, unknown> }).scripts ?? {};
-      const dev = typeof scripts.dev === 'string' ? scripts.dev : typeof scripts.start === 'string' ? scripts.start : '';
-      const port = devPort(dev);
-      if (port) add({ url: `http://localhost:${port}/`, platform: 'site', source: 'package', why: `the dev script in package.json (${dev.slice(0, 60)})` });
-    } catch { /* not JSON: nothing to find */ }
-  }
+  const dev = devScript(root);
+  const port = dev ? devPort(dev.script) : null;
+  if (dev && port) add({ url: `http://localhost:${port}/`, platform: 'site', source: 'package', why: `the dev script in package.json (${dev.script.slice(0, 60)})` });
 
   const lando = readText(join(root, '.lando.yml'));
   const landoName = lando ? /^name:\s*['"]?([A-Za-z0-9-]+)['"]?\s*$/m.exec(lando)?.[1] : undefined;
   if (landoName) add({ url: `https://${landoName}.lndo.site/`, platform: guessPlatform(root), source: 'lando', why: 'name in .lando.yml' });
 
   return { candidates, ddev };
+}
+
+/** The script package.json runs a dev server with: `dev`, else `start`. */
+function devScript(root: string): { key: 'dev' | 'start'; script: string } | null {
+  const pkg = readText(join(root, 'package.json'));
+  if (!pkg) return null;
+  try {
+    const scripts = (JSON.parse(pkg) as { scripts?: Record<string, unknown> }).scripts ?? {};
+    if (typeof scripts.dev === 'string') return { key: 'dev', script: scripts.dev };
+    if (typeof scripts.start === 'string') return { key: 'start', script: scripts.start };
+  } catch { /* not JSON: nothing to find */ }
+  return null;
+}
+
+/**
+ * What runs the site at an address, from the project's own files: ddev when
+ * the address is one of its hostnames, Lando or a dev script when it is the
+ * address found for them. Nothing is asked or run here; ddev's state is filled
+ * in by asking it. Without a known runner, null: Wanigan does not guess.
+ */
+function runner(folder: string, found: ReturnType<typeof detect>, url: string | null): LiveRun {
+  const run: LiveRun = { tool: null, state: null, said: null, start: null, folder, name: found.ddev?.name ?? null };
+  let host = '';
+  try { host = url ? new URL(url).hostname.toLowerCase() : ''; } catch { /* no address */ }
+  if (found.ddev && (!url || found.ddev.hostnames.some((h) => h.toLowerCase() === host))) return { ...run, tool: 'ddev', start: 'ddev start' };
+  const source = url ? found.candidates.find((c) => sameSite(c.url, url))?.source : undefined;
+  if (source === 'lando') return { ...run, tool: 'lando', start: 'lando start' };
+  if (source === 'package') {
+    const dev = devScript(folder);
+    const locks = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb'].filter((f) => existsSync(join(folder, f)));
+    return { ...run, tool: 'script', start: dev ? scriptStart(dev.key, locks) : null };
+  }
+  return run;
+}
+
+/**
+ * The certificates a project keeps where ddev looks for its own
+ * (.ddev/traefik/certs, .ddev/custom_certs): each one's file, its key beside
+ * it, whether git tracks it, ddev's mark, and what it says of itself. Small
+ * files only; one that is not a certificate is left out.
+ */
+async function keptCertificates(folder: string): Promise<LiveCertFile[]> {
+  const files = CERT_DIRS.flatMap((dir) => names(join(folder, dir)).filter((n) => /\.(crt|pem)$/i.test(n) && !/(^|[-_.])key\.pem$/i.test(n)).map((n) => `${dir}/${n}`))
+    .slice(0, MAX_CERT_FILES);
+  if (!files.length) return [];
+  const tracked = await gitTracked(folder, CERT_DIRS);
+  const out: LiveCertFile[] = [];
+  for (const file of files) {
+    const text = readText(join(folder, file), MAX_CERT_BYTES);
+    const pem = text ? /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/.exec(text)?.[0] : undefined;
+    if (!text || !pem) continue;
+    let certificate;
+    try { certificate = certificateOf(new X509Certificate(pem)); } catch { continue; }
+    const key = file.replace(/\.(crt|pem)$/i, '.key');
+    out.push({ file, key: existsSync(join(folder, key)) ? key : null, tracked: tracked.has(file), generated: text.startsWith('#ddev-generated'), certificate });
+  }
+  return out;
+}
+
+/** The files git tracks under some folders of a checkout, relative to it; none when it is not one. */
+function gitTracked(folder: string, dirs: string[]): Promise<Set<string>> {
+  return new Promise((done) => {
+    execFile('git', ['ls-files', '-z', '--', ...dirs], { cwd: folder, timeout: 10_000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+      done(error ? new Set() : new Set(String(stdout).split('\0').filter(Boolean)));
+    });
+  });
+}
+
+/** A line a terminal program printed, without its colours and cursor moves. */
+function plain(line: string): string {
+  return line.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim().slice(0, 400);
 }
 
 /** The port a dev script listens on: an explicit --port, or the tool's own default. */

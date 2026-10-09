@@ -43,25 +43,35 @@ function useImage(id: string | null): string | null {
 }
 
 export function CardShots({ card }: { card: CardDetail }) {
-  const shots = useQuery('live.shots', { cardId: card.id }, ['liveShots'], (_e, d) => (d as { cardId?: string }).cardId === card.id);
+  const forCard = (_e: unknown, d: unknown): boolean => (d as { cardId?: string }).cardId === card.id;
+  const shots = useQuery('live.shots', { cardId: card.id }, ['liveShots'], forCard);
+  const misses = useQuery('live.shotMisses', { cardId: card.id }, ['liveShots'], forCard);
   const list = shots.data ?? [];
   const before = list.find((s) => s.kind === 'before') ?? null;
   const after = [...list].reverse().find((s) => s.kind === 'after') ?? null;
+  /** Why one was not taken: the site was not running, or its page did not load. */
+  const missed = (kind: 'before' | 'after'): string | null => misses.data?.find((m) => m.kind === kind)?.reason ?? null;
   const [mode, setMode] = useState<Mode>('side');
   const [big, setBig] = useState(false);
-  if (!before && !after) return null;
+  if (!before && !after && !missed('before') && !missed('after')) return null;
   return (
     <section className="drawer-section live-shots">
       <h3>Before and after</h3>
-      <div className="live-shots-bar">
-        {before && after ? <Segmented<Mode> size="s" label="Show" value={mode} options={MODES} onChange={setMode} /> : null}
-        <Button size="s" tone="quiet" icon="open" onClick={() => setBig(true)}>Larger</Button>
-      </div>
-      <Compare before={before} after={after} mode={before && after ? mode : 'side'} />
+      {before || after ? (
+        <>
+          <div className="live-shots-bar">
+            {before && after ? <Segmented<Mode> size="s" label="Show" value={mode} options={MODES} onChange={setMode} /> : null}
+            <Button size="s" tone="quiet" icon="open" onClick={() => setBig(true)}>Larger</Button>
+          </div>
+          <Compare before={before} after={after} mode={before && after ? mode : 'side'} />
+        </>
+      ) : null}
       <p className="faint small">
-        {before ? `Before: ${ago(before.createdAt)}, as the session began.` : 'No before: screenshots were off when the session began.'}
-        {' '}{after ? `After: ${ago(after.createdAt)}, after its last turn that changed files.` : 'No after yet: one is taken when a turn that changes files ends.'}
-        {' '}<span className="mono">{(after ?? before)?.url}</span>
+        {missed('before') && !before ? `No before was taken. ${missed('before')}`
+          : before ? `Before: ${ago(before.createdAt)}, as the session began.` : 'No before: screenshots were off when the session began.'}
+        {' '}{missed('after') ? `The last turn’s after was not taken. ${missed('after')}`
+          : after ? `After: ${ago(after.createdAt)}, after its last turn that changed files.` : 'No after yet: one is taken when a turn that changes files ends.'}
+        {' '}<span className="mono">{(after ?? before)?.url ?? misses.data?.[0]?.url}</span>
       </p>
       {big ? (
         <Dialog title={`${card.key}: before and after`} width={1180} onClose={() => setBig(false)}>
