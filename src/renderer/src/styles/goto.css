@@ -13,6 +13,28 @@
   animation: rise var(--dur) var(--ease);
 }
 
+/*
+  Over the live view's address field: the field opens into it, so it sits where
+  the field is (placed by GoTo.tsx), with no dimming between it and the bar.
+*/
+.scrim-anchored {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
+.goto-anchored {
+  position: fixed;
+  max-height: calc(100vh - var(--space-12));
+  animation: fade var(--dur-fast) var(--ease);
+}
+
+.goto-anchored .goto-input input,
+.goto-anchored .goto-input input:focus {
+  height: 40px;
+  font-size: var(--text-md);
+}
+
 .goto-input {
   display: flex;
   flex: none;

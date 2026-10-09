@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { LiveComponent } from '@shared/live';
 import type { ProjectSummary, Session } from '@shared/model';
 import { nameOf } from '@shared/live-names';
+import { isAddKey, isSendKey } from '@shared/live-keys';
 import { keyLabel } from '@shared/shortcuts';
 import { attempt, bridge, call, forProject, useQuery } from '../../lib/api';
 import { liveBridge } from '../../lib/live';
@@ -91,7 +92,9 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
         placeholder={hasChange ? 'Anything to add? (optional)' : 'What should change here?'}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void keep(); }
+          // ⇧⌘↩ sends it now (the live view's key for sending); ⌘↩ keeps it with the others.
+          if (isSendKey(e, mac)) { e.preventDefault(); e.stopPropagation(); if (agents.length) void now(); else toast(`Start a session in ${project.name} to send it.`, 'error'); }
+          else if (isAddKey(e, mac)) { e.preventDefault(); void keep(); }
         }} />
       <div className="live-compose-actions">
         <Button size="s" tone="primary" type="submit" icon="note" disabled={!ready}>Add to notes</Button>
@@ -106,7 +109,7 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
       </div>
       {!compact ? (
         <p className="faint small">
-          {keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} adds it. Notes go to an agent together, with a picture of each part.
+          {keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} adds it{agents.length ? <>, {keyLabel('Shift', mac)}{mac ? '' : '+'}{keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} sends it now</> : null}. Notes go to an agent together, with a picture of each part.
           {agents.length ? '' : ` Start a session in ${project.name} to send them.`}
         </p>
       ) : null}
@@ -114,19 +117,38 @@ export function NoteComposer({ project, draft, components, prefer, compact = fal
   );
 }
 
-/** The notes waiting to be sent, and sending them. */
-export function NotesTab({ project, components, prefer, onShow }: {
-  project: ProjectSummary;
-  components: Map<string, LiveComponent>;
-  prefer: string | null;
-  /** Point at a note's part on the page (null: stop). */
-  onShow: (note: LiveNote | null) => void;
-}) {
+/**
+ * Sending the notes waiting: to the session chosen in the Notes tab, else the
+ * one followed, else the project's only agent. The tab's Send button and the
+ * live view's ⇧⌘↩ both use it, so they send the same notes to the same place.
+ */
+export function useNotesSender(project: ProjectSummary, components: Map<string, LiveComponent>, prefer: string | null) {
   const toast = useToast();
   const notes = useNotes(project.id);
   const agents = useAgents(project);
   const [to, setTo] = useState(prefer ?? '');
   const target = agents.find((s) => s.id === to) ?? agents.find((s) => s.id === prefer) ?? agents[0];
+  const sendAll = async (): Promise<void> => {
+    if (!notes.length) { toast('No notes are waiting to be sent.'); return; }
+    if (!target) { toast(`Start a session in ${project.name} to send the notes.`, 'error'); return; }
+    const ok = await attempt(() => send(notes, target, components), (m) => toast(m, 'error'));
+    if (ok === undefined) return;
+    clearNotes(project.id);
+    toast(`Sent ${notes.length === 1 ? 'the note' : `${notes.length} notes`} to ${target.cardKey ?? target.title}. They arrive when the agent is next idle.`);
+  };
+  return { notes, agents, target, setTo, sendAll };
+}
+
+/** The notes waiting to be sent, and sending them. */
+export function NotesTab({ project, components, sender, onShow }: {
+  project: ProjectSummary;
+  components: Map<string, LiveComponent>;
+  sender: ReturnType<typeof useNotesSender>;
+  /** Point at a note's part on the page (null: stop). */
+  onShow: (note: LiveNote | null) => void;
+}) {
+  const { notes, agents, target, setTo, sendAll } = sender;
+  const mac = bridge().platform === 'darwin';
 
   if (!notes.length) {
     return (
@@ -139,14 +161,6 @@ export function NotesTab({ project, components, prefer, onShow }: {
       </div>
     );
   }
-
-  const sendAll = async (): Promise<void> => {
-    if (!target) return;
-    const ok = await attempt(() => send(notes, target, components), (m) => toast(m, 'error'));
-    if (ok === undefined) return;
-    clearNotes(project.id);
-    toast(`Sent ${notes.length === 1 ? 'the note' : `${notes.length} notes`} to ${target.cardKey ?? target.title}. They arrive when the agent is next idle.`);
-  };
 
   return (
     <div className="live-side-block">
@@ -175,7 +189,8 @@ export function NotesTab({ project, components, prefer, onShow }: {
       {agents.length ? (
         <div className="live-send">
           <SendTo agents={agents} value={target?.id ?? ''} onChange={setTo} />
-          <Button size="s" tone="primary" icon="send" onClick={sendAll}>
+          <Button size="s" tone="primary" icon="send" onClick={sendAll} aria-keyshortcuts={mac ? 'Shift+Meta+Enter' : 'Shift+Control+Enter'}
+            title={`${keyLabel('Shift', mac)}${keyLabel('Mod', mac)}${keyLabel('Enter', mac)} sends them from anywhere in the live view`}>
             Send {notes.length === 1 ? 'the note' : `${notes.length} notes`}{agents.length > 1 ? '' : ` to ${target?.cardKey ?? target?.title ?? 'the session'}`}
           </Button>
           <Button size="s" tone="quiet" onClick={() => clearNotes(project.id)}>Clear</Button>

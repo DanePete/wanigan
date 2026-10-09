@@ -1,6 +1,7 @@
 // "Go to": every page of the project's site, found by typing, and gone to.
 // Shift+Space in the live view or its page, ⌘⇧Space anywhere in a project, or
-// the live view's toolbar button. The site's helper lists its destinations
+// the live view's address field, which it opens over: the field is where a page
+// is typed, an address or words alike. The site's helper lists its destinations
 // (content, admin and structure pages, templates and settings, each with its
 // tasks); matching them is instant and local (shared/live-goto.ts), the site
 // searches its content as typing pauses, and what the owner chooses often and
@@ -19,7 +20,7 @@ import { bridge, forProject, useQuery } from '../../lib/api';
 import { ago } from '../../lib/format';
 import { liveBridge, useCoversLive } from '../../lib/live';
 import {
-  goToEditor, goWhenShown, keepAnswer, keepSearch, keptAnswer, keptSearch, liveOnScreen, loadVisits, onGoTo, rememberVisit,
+  goToAnchor, goToEditor, goWhenShown, keepAnswer, keepSearch, keptAnswer, keptSearch, liveOnScreen, loadVisits, onGoTo, rememberVisit, shownOrigin,
 } from '../../lib/live-goto';
 import { navigate } from '../../lib/router';
 import { Icon, type IconName } from '../icons';
@@ -29,7 +30,7 @@ import '../../styles/goto.css';
 
 /* ── the host: what opens and closes it ────────────────────────────────── */
 
-interface Opened { projectId: string; fromPage: boolean; returnTo: HTMLElement | null }
+interface Opened { projectId: string; fromPage: boolean; returnTo: HTMLElement | null; address: string | null; query: string | null }
 type Closing = 'escape' | 'to-page' | 'away';
 
 /** Wait for the live view to step back in after the launcher stops covering it, then act (focus goes to a shown view only). */
@@ -57,7 +58,7 @@ export function GoToHost({ project }: { project: ProjectSummary | undefined }) {
     // The same request again closes it: ⌘⇧Space toggles, as ⌘K does.
     if (current.current?.projectId === project.id) { close('escape'); return; }
     const returnTo = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
-    setOpen({ projectId: project.id, fromPage: req.fromPage, returnTo });
+    setOpen({ projectId: project.id, fromPage: req.fromPage, returnTo, address: req.address ?? null, query: req.query ?? null });
     // A chord pressed while the page had the keyboard: take it, and give it back after.
     if (!req.fromPage) {
       void liveBridge()?.gotoFocus().then((had) => {
@@ -73,7 +74,7 @@ export function GoToHost({ project }: { project: ProjectSummary | undefined }) {
   return (
     <>
       {open && open.projectId === project.id ? (
-        <GoTo project={project} onClose={close} onHelper={() => { close('away'); setHelper(true); }} />
+        <GoTo project={project} address={open.address} initialQuery={open.query} onClose={close} onHelper={() => { close('away'); setHelper(true); }} />
       ) : null}
       {helper ? <HelperFor project={project} onClose={() => setHelper(false)} /> : null}
     </>
@@ -164,14 +165,39 @@ function Marked({ text, at }: { text: string; at: number[] }) {
 
 /* ── the launcher ──────────────────────────────────────────────────────── */
 
-function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose: (how: Closing) => void; onHelper: () => void }) {
+/** Where the launcher sits when it opens over the live view's address field. */
+function anchoredAt(projectId: string): { left: number; top: number; width: number } | null {
+  const r = goToAnchor(projectId);
+  if (!r) return null;
+  const width = Math.min(Math.max(r.width, 620), window.innerWidth - 16);
+  return { left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)), top: Math.max(8, r.top - 6), width };
+}
+
+function GoTo({ project, address = null, initialQuery = null, onClose, onHelper }: {
+  project: ProjectSummary;
+  /** Opened from the address field: the address shown, selected, so typing replaces it and Enter goes there. */
+  address?: string | null;
+  /** Opened by typing into the address field: what was typed. */
+  initialQuery?: string | null;
+  onClose: (how: Closing) => void; onHelper: () => void;
+}) {
   useCoversLive();
   const mac = bridge().platform === 'darwin';
   const live = liveBridge();
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const input = useRef<HTMLInputElement>(null);
   const site = useQuery('live.site', { projectId: project.id }, ['liveSite'], forProject(project.id));
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(address ?? initialQuery ?? '');
+  /** The address the field showed, not yet typed over: the results are the ones for nothing typed, and Enter goes to it. */
+  const untouched = !!address && query === address;
+  // Over the address field while the live view is on screen: the field is where a page is typed.
+  const [anchor, setAnchor] = useState(() => (liveOnScreen(project.id) ? anchoredAt(project.id) : null));
+  useEffect(() => {
+    if (!anchor) return undefined;
+    const moved = (): void => setAnchor(anchoredAt(project.id));
+    window.addEventListener('resize', moved);
+    return () => window.removeEventListener('resize', moved);
+  }, [anchor !== null, project.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [answer, setAnswer] = useState<LiveFindAnswer | null>(() => keptAnswer(project.id));
   const [loading, setLoading] = useState(!!live);
   const [attempt, setAttempt] = useState(0);
@@ -186,14 +212,28 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
   const [flash, setFlash] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
 
-  const q = query.trim();
+  const q = untouched ? '' : query.trim();
   const ready = answer?.state === 'ready';
   const origin = answer?.origin ?? (() => { try { return site.data?.url ? new URL(site.data.url).origin : null; } catch { return null; } })();
   const platform = answer?.platform ?? site.data?.platform ?? null;
   const host = origin ? new URL(origin).host : null;
   const shown = liveOnScreen(project.id);
+  /** A hosted environment the view shows: the same path opens there, read-only, as the address field always did. */
+  const viewOrigin = (shown ? shownOrigin(project.id) : null) ?? origin;
+  /** An address of another site, typed: the view opens only this site, and says where that is changed. */
+  const elsewhere = (() => {
+    if (!/^https?:\/\//i.test(q) || /\s/.test(q)) return null;
+    try {
+      const h = new URL(q).host;
+      return [origin, viewOrigin].some((o) => o && new URL(o).host.toLowerCase() === h.toLowerCase()) ? null : h;
+    } catch { return null; }
+  })();
 
-  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => {
+    const el = input.current;
+    el?.focus();
+    if (address) el?.select();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The index (kept from the last time, then fresh) and, when the view shows this site, what the page is.
   useEffect(() => {
@@ -231,7 +271,8 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
   const thisPage = hereInIndex ?? hereFound;
 
   // The site's own search, once typing pauses: content beyond the index's recent pages.
-  const jump = useMemo(() => directJump(q, platform, origin), [q, platform, origin]);
+  // An address of the page shown (a hosted environment's too) jumps there, as the address field always took it.
+  const jump = useMemo(() => directJump(q, platform, viewOrigin) ?? (viewOrigin !== origin ? directJump(q, platform, origin) : null), [q, platform, origin, viewOrigin]);
   useEffect(() => {
     if (!live || !ready || !q || (q.length < 2 && asked?.q !== q) || q.startsWith('/')) return undefined;
     const kept = keptSearch(project.id, q);
@@ -370,7 +411,8 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
   }, [q, jump, index, indexIds, byUrl, answer, visits, searched, searching, thisPage, here, ready, host]);
 
   const flat = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
-  const active = flat.find((r) => r.key === activeKey) ?? flat[0] ?? null;
+  // The address as it was, untouched: nothing is chosen until ↓, so Enter goes to the address, as a browser's field does.
+  const active = flat.find((r) => r.key === activeKey) ?? (untouched ? null : flat[0] ?? null);
   const optionId = (key: string): string => `goto-${uid}-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const shownCount = flat.filter((r) => r.source !== 'search-site').length;
 
@@ -407,7 +449,7 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
   const where = (row: Row): FindItem => row.item;
 
   const openInView = async (url: string): Promise<void> => {
-    const full = addressOf(origin, url);
+    const full = addressOf(viewOrigin, url);
     if (!live || !full) { setFlash('That is not an address of this site.'); return; }
     if (liveOnScreen(project.id)) {
       const ok = await live.go(full);
@@ -480,8 +522,10 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
       return;
     }
     if (!flat.length) return;
-    const at = Math.max(0, flat.findIndex((r) => r.key === active?.key));
-    setActiveKey((flat[(at + by + flat.length) % flat.length] as Row).key);
+    const at = flat.findIndex((r) => r.key === active?.key);
+    // Nothing chosen yet (the address untouched): ↓ chooses the first, ↑ the last.
+    const next = at < 0 ? (by > 0 ? 0 : flat.length - 1) : (at + by + flat.length) % flat.length;
+    setActiveKey((flat[next] as Row).key);
   };
 
   const showActs = (): boolean => {
@@ -508,7 +552,12 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
       e.preventDefault();
       if (e.nativeEvent.isComposing) return;
       if (acting) { acts[acting.index]?.run(); return; }
-      if (!active) return;
+      if (!active) {
+        if (elsewhere) { setFlash(`${elsewhere} is another site. The live view opens only this project’s: change its address in Site settings (the site menu).`); return; }
+        // The address as it was: go there again, as Enter in a browser's address field does.
+        if (untouched && address && live) { void live.go(address).then((ok) => (ok ? onClose('to-page') : setFlash('The live view could not open that address.'))); }
+        return;
+      }
       if (e.altKey && !e.metaKey && !e.ctrlKey) edit(active);
       else if (mod) void inBrowser(active);
       else if (plain || e.shiftKey) open(active);
@@ -552,8 +601,9 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
   const actsKey = active && active.source !== 'search-site';
 
   return createPortal(
-    <div className="scrim scrim-top" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose('escape'); }}>
-      <div className="goto" role="dialog" aria-modal="true" aria-label={`Go to a page of ${host ?? 'the site'}`} onKeyDown={onKey}>
+    <div className={`scrim ${anchor ? 'scrim-anchored' : 'scrim-top'}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose('escape'); }}>
+      <div className={`goto${anchor ? ' goto-anchored' : ''}`} role="dialog" aria-modal="true" aria-label={`Go to a page of ${host ?? 'the site'}`} onKeyDown={onKey}
+        style={anchor ? { left: anchor.left, top: anchor.top, width: anchor.width } : undefined}>
         <div className="goto-input">
           <Icon name="search" />
           <input
@@ -605,7 +655,11 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
                   {s.more ? <div className="goto-more" role="presentation">{s.more} more: type more to narrow</div> : null}
                 </div>
               ))}
-              {!sections.length && q && !searching ? (
+              {elsewhere ? (
+                <div className="goto-empty" role="presentation">
+                  {elsewhere} is another site. The live view opens only this project’s site: change its address in Site settings, in the site menu at the left of the bar.
+                </div>
+              ) : !sections.length && q && !searching ? (
                 <div className="goto-empty" role="presentation">
                   Nothing {ready ? 'on the site' : 'the live view knows'} matches “{q}”.
                   {ready ? null : ' With the helper, Go to searches the whole site.'}
@@ -626,7 +680,9 @@ function GoTo({ project, onClose, onHelper }: { project: ProjectSummary; onClose
             ) : (
               <>
                 <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-                <span className={active ? undefined : 'off'}><kbd>{mac ? '↩' : 'Enter'}</kbd> open</span>
+                {untouched && !active
+                  ? <span><kbd>{mac ? '↩' : 'Enter'}</kbd> this address again</span>
+                  : <span className={active ? undefined : 'off'}><kbd>{mac ? '↩' : 'Enter'}</kbd> open</span>}
                 <span className={editKey ? undefined : 'off'}><kbd>{mac ? '⌥↩' : 'Alt+Enter'}</kbd> edit</span>
                 <span className={actsKey ? undefined : 'off'}><kbd>{mac ? '⌘↩' : 'Ctrl+Enter'}</kbd> browser</span>
                 <span className={actsKey ? undefined : 'off'}><kbd>→</kbd> actions</span>

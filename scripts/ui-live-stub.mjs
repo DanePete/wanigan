@@ -204,6 +204,7 @@ export function liveStub(f) {
   let regions = [];
   let shown = { outline: [], paint: [] };
   let arranging = null;
+  let picking = null;
   let reflow = 0;
   const toRegions = (w) => {
     const list = layoutAt(w);
@@ -213,6 +214,16 @@ export function liveStub(f) {
       piece: null, hook: p.hook ?? null, field: null, suggestions: p.suggestions ?? [], part: p.part, parent: p.parent ? at.get(p.parent) : null, order: i,
       rect: { x: p.rect[0], y: p.rect[1], width: p.rect[2], height: p.rect[3] },
     }));
+  };
+  /** What the page script answers for a part picked or chosen: the region, what holds it, and its words when it is only words. */
+  const pickOf = (index) => {
+    const r = regions[index];
+    if (!r) return null;
+    const label = layoutAt(bounds.width)[index]?.label ?? '';
+    const chain = [];
+    for (let at = r; at; at = at.parent === null ? null : regions[at.parent]) chain.push(at);
+    const leaf = !regions.some((x) => x.parent === index);
+    return { url: 'https://acme.example.test/', selector: `#${r.part}`, tag: 'div', text: label, own: leaf ? label : null, classes: [], rect: r.rect, style: { color: 'rgb(20, 20, 20)' }, regions: chain };
   };
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
   const draw = () => {
@@ -259,20 +270,30 @@ export function liveStub(f) {
     },
     async hide() { host?.remove(); host = null; },
     async cover(covered) { if (host) host.style.visibility = covered ? 'hidden' : 'visible'; return covered && bounds ? wireAt(bounds.width, bounds.height) : null; },
-    async reload() { setTimeout(tell, 30); },
+    async reload() { window.__wgLive.calls.push('reload'); setTimeout(tell, 30); },
     async css() { return 0; },
-    async go() { return true; },
+    async go(url) { window.__wgLive.calls.push(`go ${url}`); return true; },
     async back() {}, async forward() {}, async open() {}, async devtools() {},
     async scan() { return regions; },
     async outline(indexes, label, tone) { shown.outline = indexes.map((index) => ({ index, label, tone })); draw(); return indexes.length; },
     async clear() { shown.outline = []; draw(); },
-    async pick() { return null; }, async cancelPick() {},
+    // Picking: the sweep answers with __wgLive.enter(index) as Enter (or a click) on the page would; null is Escape.
+    async pick(start) {
+      window.__wgLive.calls.push(`pick ${start ?? 'page'}`);
+      return new Promise((resolve) => { picking = resolve; window.__wgLive.enter = (index) => { picking = null; resolve(index === null ? null : pickOf(index ?? start)); }; });
+    },
+    async cancelPick() { const p = picking; picking = null; p?.(null); },
+    async choose(index) { window.__wgLive.calls.push(`choose ${index}`); return pickOf(index); },
+    // Shift+Space, or one of the live view's keys, pressed on the page: the sweep calls __wgLive.press(key).
+    awaitGoto() { return new Promise((resolve) => { window.__wgLive.press = (key = 'goto') => { window.__wgLive.press = null; resolve(key); }; }); },
+    async findHere() { return null; },
+    async find() { return { state: 'no-helper', result: null, known: [], origin: 'https://acme.example.test', platform: 'drupal', message: null }; },
     async capture() { return null; },
     async problems() { return []; },
     async mutations() { return 0; },
     async picked() { return null; },
     async style() { return null; }, async unstyle() { return null; },
-    async editText() { return null; }, async cancelEdit() {},
+    async editText() { window.__wgLive.calls.push('editText'); return window.__wgLive.words ?? null; }, async cancelEdit() {},
     async helperChanged() { return 1; },
     async helperSave() { return { ok: true, error: null, label: 'Article 12' }; },
     async hasScript() { return true; },

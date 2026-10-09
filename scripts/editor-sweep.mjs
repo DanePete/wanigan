@@ -4,7 +4,7 @@
 // disk), quick open, breadcrumbs and their menus, Back and Forward, an agent's
 // change to a file with nothing unsaved and with unsaved work, a save refused
 // because the file changed first and the merge that follows, Drupal core read-
-// only until Edit anyway, Edit code from a part picked in the live view, the
+// only until Edit anyway, Code (.) on a part picked in the live view, the
 // drawer beneath a session and beside the view. Fails on console errors and on
 // anything the disk or the core does not confirm. Screenshots go to
 // .artifacts/ui/<theme>-editor-<name>.png; look at them.
@@ -13,37 +13,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
+import { PICK_STUB as LIVE_STUB } from './ui-pick-stub.mjs';
 
 const out = join(root, '.artifacts', 'ui');
 mkdirSync(out, { recursive: true });
 const { base, gateway } = await startGateway();
 const failures = [];
-
-/** The live view, played: a page with one part (the demo module's pay button), picked on request. */
-const LIVE_STUB = `(() => {
-  const region = {
-    index: 0, file: 'modules/custom/northstar_checkout/templates/northstar-pay-button.html.twig', entity: null, block: null, view: null, element: null,
-    component: null, piece: null, hook: 'northstar_pay_button', field: null, suggestions: ['northstar-pay-button'], parent: null, order: 0,
-    rect: { x: 40, y: 40, width: 220, height: 48 },
-  };
-  const listeners = new Set();
-  window.__liveCalls = [];
-  const state = { projectId: null, url: 'https://northstar.example.test/checkout/7/pay', title: 'Pay', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 };
-  const answers = {
-    show: async (projectId) => { state.projectId = projectId; setTimeout(() => { for (const l of listeners) l({ ...state }); }, 50); return true; },
-    bounds: () => {}, hide: async () => {}, cover: async () => null, go: async () => true,
-    // What the page was asked to do after an edit: the sweep reads these.
-    reload: async (hard) => { window.__liveCalls.push(hard ? 'reload-hard' : 'reload'); }, css: async () => { window.__liveCalls.push('css'); return 1; },
-    back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
-    scan: async () => [region], outline: async () => 1, clear: async () => {}, cancelPick: async () => {},
-    pick: async () => ({ url: state.url, selector: 'button.pay-button', tag: 'button', text: 'Pay', own: null, classes: ['pay-button'], rect: region.rect, style: {}, regions: [region] }),
-    capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null, style: async () => null, unstyle: async () => null,
-    editText: async () => null, cancelEdit: async () => {}, helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'no helper', label: null }),
-    hasScript: async () => true,
-    onState: (l) => { listeners.add(l); return () => listeners.delete(l); },
-  };
-  window.wanigan.live = answers;
-})();`;
 
 const browser = await chromium.launch();
 try {
@@ -341,14 +316,16 @@ try {
       await page.waitForSelector('.live-side .live-layer', { timeout: 8000 }).catch(() => fail('the live view listed no parts'));
       await page.waitForTimeout(400);
       await page.click('.live-bar button:has-text("Pick")');
-      await page.waitForSelector('.live-inspector button:has-text("Edit code")', { timeout: 8000 }).catch(() => fail('a picked part has no Edit code'));
-      await page.click('.live-inspector button:has-text("Edit code")');
+      // Code, one of the four verbs on the part (its key is .): the template, at the words picked.
+      await page.waitForSelector('.live-verbs button[aria-keyshortcuts="."]:not([disabled])', { timeout: 8000 }).catch(() => fail('a picked part has no Code'));
+      await page.focus('.live-inspector .live-side-title');
+      await page.keyboard.press('.');
       await page.waitForFunction(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'northstar-pay-button.html.twig', null, { timeout: 8000 })
-        .catch(() => fail('Edit code did not open the template'));
+        .catch(() => fail('Code (.) did not open the template'));
       await settle();
       const line = await page.textContent('.editor-status button').catch(() => '');
       const wantLine = readFileSync(join(repo, twig), 'utf8').split('\n').findIndex((l) => l.includes('Pay')) + 1;
-      if (line !== `Line ${wantLine}, column ${readFileSync(join(repo, twig), 'utf8').split('\n')[wantLine - 1].indexOf('Pay') + 1}`) fail(`Edit code opened at "${line}", not at the picked words (line ${wantLine})`);
+      if (line !== `Line ${wantLine}, column ${readFileSync(join(repo, twig), 'utf8').split('\n')[wantLine - 1].indexOf('Pay') + 1}`) fail(`Code opened at "${line}", not at the picked words (line ${wantLine})`);
       await shot('live');
       // A save follows exactly as an agent's edit does: a template reloads the page past the cache, a stylesheet is swapped in place.
       const calls = () => page.evaluate(() => window.__liveCalls.slice());

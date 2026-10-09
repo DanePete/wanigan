@@ -1,12 +1,15 @@
 // The Go to launcher in the window: what opens it (Shift+Space in the live
-// view or its page, its toolbar button, ⌘⇧Space anywhere in a project), what
+// view or its page, the live view’s address field, ⌘⇧Space anywhere in a
+// project), where it opens (over the address field when the live view is on
+// screen), what
 // it remembers on this Mac (each project's chosen destinations, for
 // frecency), the answers it can show at once while a fresh one comes, and the
 // hook an edit popover offers its forms through. The launcher itself is
 // components/live/GoTo.tsx; the rules are shared/live-goto.ts.
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { FindItem, FindResult } from '@shared/live-find';
 import { readVisits, remember, type LiveFindAnswer, type Visit } from '@shared/live-goto';
+import type { LiveKeyId } from '@shared/live-keys';
 import { liveBridge } from './live';
 
 /* ── opening ───────────────────────────────────────────────────────────── */
@@ -16,6 +19,10 @@ export interface GoToRequest {
   projectId: string | null;
   /** Opened by Shift+Space on the page: the keyboard goes back there on Escape. */
   fromPage: boolean;
+  /** Opened from the address field: the address shown, in the field and selected, so typing replaces it and Enter goes there. */
+  address?: string | null;
+  /** Opened by typing into the address field: what was typed so far. */
+  query?: string | null;
 }
 
 const openers = new Set<(r: GoToRequest) => void>();
@@ -30,6 +37,30 @@ export function onGoTo(listener: (r: GoToRequest) => void): () => void {
   openers.add(listener);
   return () => { openers.delete(listener); };
 }
+
+/* ── where it opens ────────────────────────────────────────────────────── */
+
+/** The live view’s address field, by project: Go to opens over it, so the field is where a page is typed. */
+const anchors = new Map<string, HTMLElement>();
+
+/** Called by the address field while it is on screen; returns its withdrawal. */
+export function anchorGoTo(projectId: string, el: HTMLElement): () => void {
+  anchors.set(projectId, el);
+  return () => { if (anchors.get(projectId) === el) anchors.delete(projectId); };
+}
+
+/** Where the address field is now, when the project’s live view shows one. */
+export function goToAnchor(projectId: string): DOMRect | null {
+  const el = anchors.get(projectId);
+  return el?.isConnected ? el.getBoundingClientRect() : null;
+}
+
+/** The origin the live view shows when it is not the local site’s (a hosted environment): Go to opens the same path there. */
+const shownOrigins = new Map<string, string>();
+export function showingOrigin(projectId: string, origin: string | null): void {
+  if (origin) shownOrigins.set(projectId, origin); else shownOrigins.delete(projectId);
+}
+export const shownOrigin = (projectId: string): string | null => shownOrigins.get(projectId) ?? null;
 
 /* ── where the live view is on screen ──────────────────────────────────── */
 
@@ -48,13 +79,19 @@ export function goWhenShown(projectId: string, url: string): void {
 const editable = (el: Element | null): boolean => !!el && ((el as HTMLElement).isContentEditable
   || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || !!el.closest('.xterm, [role="textbox"], [role="combobox"]'));
 
+/** Whether keys at an element are someone's typing: a field, an editor, a terminal. The live view's single keys leave those alone. */
+export const isTyping = editable;
+
 /**
  * Called by the live view while it is on screen: it is known to be there,
  * Shift+Space in its toolbar or side panel (not while typing) opens Go to,
- * and so does Shift+Space in its page, which the page script answers. Returns
- * the toolbar button's action.
+ * and so does Shift+Space in its page, which the page script answers. The
+ * page answers the live view's own keys too (P picks…), which `onPageKey`
+ * runs. Returns what opens Go to from the address field.
  */
-export function useGoToKeys(projectId: string): () => void {
+export function useGoToKeys(projectId: string, onPageKey?: (id: LiveKeyId) => void): (from?: Pick<GoToRequest, 'address' | 'query'>) => void {
+  const pageKey = useRef(onPageKey);
+  pageKey.current = onPageKey;
   useEffect(() => {
     onScreen.set(projectId, (onScreen.get(projectId) ?? 0) + 1);
     // A page chosen before the view was here: go there now (the view's show reached the app first).
@@ -86,8 +123,9 @@ export function useGoToKeys(projectId: string): () => void {
     const wait = async (): Promise<void> => {
       while (!stopped) {
         const got = await live.awaitGoto().catch(() => null);
-        if (stopped || got !== 'goto') return;
-        openGoTo({ projectId, fromPage: true });
+        if (stopped || !got) return;
+        if (got === 'goto') openGoTo({ projectId, fromPage: true });
+        else pageKey.current?.(got);
       }
     };
     let loading = true;
@@ -100,7 +138,7 @@ export function useGoToKeys(projectId: string): () => void {
     return () => { stopped = true; off(); };
   }, [projectId]);
 
-  return useCallback(() => openGoTo({ projectId, fromPage: false }), [projectId]);
+  return useCallback((from?: Pick<GoToRequest, 'address' | 'query'>) => openGoTo({ projectId, fromPage: false, ...from }), [projectId]);
 }
 
 /* ── remembered on this Mac ────────────────────────────────────────────── */

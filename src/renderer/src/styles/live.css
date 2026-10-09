@@ -36,26 +36,102 @@
   }
 }
 
+/* Three groups: the site (one menu), the page (where, how wide, which lens), the tools (Pick, and the rest). */
+.live-bar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.live-bar-page {
+  flex: 1;
+}
+
+.live-bar-site {
+  padding-right: var(--space-2);
+  margin-right: var(--space-1);
+  border-right: 1px solid var(--line);
+}
+
+.live-bar-tools {
+  padding-left: var(--space-2);
+  margin-left: var(--space-1);
+  border-left: 1px solid var(--line);
+}
+
+.live-site-menu {
+  gap: var(--space-1);
+  color: var(--fg);
+}
+
+/* A key beside a control's name: there to be learned, never louder than the name. */
+.live-key {
+  margin-left: var(--space-1);
+  font-size: var(--text-2xs);
+}
+
+.live-bar .btn-primary .live-key {
+  border-color: var(--water-ink);
+  color: var(--water-ink);
+}
+
+/* Where a page is typed: it opens Go to over itself (components/live/GoTo.tsx). */
 .live-address {
   flex: 1;
   min-width: 0;
-  margin: 0 var(--space-2);
-}
-
-.live-address input {
-  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   height: 28px;
+  margin: 0 var(--space-2);
   padding: 0 var(--space-3);
   border: 1px solid var(--line);
   border-radius: var(--radius-round);
   background: var(--sunken);
-  color: var(--fg);
+  color: var(--faint);
   font-size: var(--text-sm);
+  text-align: left;
+  cursor: text;
 }
 
-.live-address input:focus {
+.live-address:hover {
+  border-color: var(--line-strong);
+}
+
+.live-address:focus-visible {
   border-color: var(--water-line);
   outline: none;
+}
+
+.live-address-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.live-address-host {
+  color: var(--muted);
+}
+
+.live-address-hint {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--text-xs);
+}
+
+.live-address-hint kbd {
+  font-size: var(--text-2xs);
+}
+
+/* Beside a terminal the address needs the room: the hint gives it up. */
+.live-compact .live-address-hint {
+  display: none;
 }
 
 /* ── the stage and its side ──────────────────────────────────────────────── */
@@ -259,12 +335,66 @@
   font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
 }
 
-.live-side-foot {
-  margin: auto 0 0;
-  padding-top: var(--space-3);
-  /* The Talk to Wanigan button sits over this corner. */
-  padding-right: calc(var(--fab) + var(--space-3));
+/*
+  The one status line under the page and its side panel: what just happened or
+  the state the view is in, the site and what it follows, and the keys that
+  work now. The Talk to Wanigan button sits over its right end.
+*/
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 30px;
+  padding: var(--space-1) calc(var(--fab) + var(--space-5) + var(--space-2)) var(--space-1) var(--space-4);
   border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
+
+.live-status-said {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.live-status-said > svg {
+  flex: none;
+  color: var(--water);
+}
+
+.live-status-text {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.live-status-where {
+  flex: none;
+  white-space: nowrap;
+}
+
+.live-status-keys {
+  flex: none;
+  display: flex;
+  gap: var(--space-3);
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.live-status-keys kbd {
+  margin-right: 2px;
+  font-size: var(--text-2xs);
+}
+
+@media (max-width: 1280px) {
+  .live-status-keys {
+    display: none;
+  }
 }
 
 .live-note {
@@ -660,6 +790,71 @@
   gap: var(--space-2);
 }
 
+/* The four verbs on a chosen part: Edit ▾, Move, Code, Alone, each with its key. */
+.live-verbs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.live-verb {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  height: auto;
+  min-height: calc(var(--space-12) + var(--space-4));
+  padding: var(--space-2) var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.live-verb > svg {
+  color: var(--water);
+}
+
+.live-verb:disabled > svg {
+  color: var(--faint);
+}
+
+.live-verb-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.live-verb kbd {
+  font-size: var(--text-2xs);
+}
+
+.live-verb[aria-pressed='true'],
+.live-verb[aria-expanded='true'] {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+/* What the Move verb opens: where the part is, and the steps. */
+.live-move {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--water-line);
+  border-radius: var(--radius-m);
+  background: var(--water-soft);
+}
+
+.live-move p {
+  margin: 0;
+}
+
+/* Why it looks like this: folded under the note, each part saying in one line what it holds. */
+.live-why {
+  gap: 0;
+}
+
+.live-why > .live-section-title {
+  margin-bottom: var(--space-1);
+}
+
 .live-made-file {
   display: flex;
   flex-wrap: wrap;
@@ -960,13 +1155,6 @@
   padding: var(--space-3);
   border-radius: var(--radius-m);
   background: var(--sunken);
-}
-
-.live-alone {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
 }
 
 /* ── what a card's agents looked at in the live view ─────────────────────── */

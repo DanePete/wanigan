@@ -10,10 +10,11 @@
 //   with a picture of the order now and one of the order wanted.
 // - The keyboard does the same from the Inspector: Alt+↑ and Alt+↓ move the
 //   chosen part, Alt+Shift+← and → take it to another place it may go, Enter
-//   saves and Escape puts it back, each step said aloud.
+//   saves and Escape puts it back, each step said aloud. In the panel its Move
+//   verb opens, the arrows alone do it.
 // - The palette (Add) places an entry by dragging it onto the page, by
 //   choosing it and clicking where it goes, or by naming the place.
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import {
   announce, buildSpec, collectionOf, moveNotice, placesIn, requestText, stepMove, targetsFor,
   type ArrangeDrop, type ArrangeSpec, type LiveInsert, type LiveMove, type LiveMoveSaved, type Step,
@@ -25,7 +26,7 @@ import type { Layer } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { liveBridge } from '../../lib/live';
 import { Select } from '../Select';
-import { Button, Dialog, Disclosure, useToast } from '../ui';
+import { Button, Dialog, useToast } from '../ui';
 import { addNote } from './note-store';
 
 type At = { collection: string; index: number };
@@ -303,17 +304,31 @@ function nameFor(r: LiveRegion, layers: readonly Layer[]): string {
   return walk(layers) ?? 'this part';
 }
 
-/** The Inspector's Move section: where the part is, buttons for each step, and the keys that do the same. */
-export function MoveSection({ arrange, region, trace }: { arrange: ReturnType<typeof useArrange>; region: LiveRegion; trace: LiveTrace | null }) {
+/**
+ * What the Inspector's Move verb opens: where the part is, a button for each
+ * step, and the keys that do the same. Here the arrows alone move it (↑ ↓, and
+ * ← → to another place); anywhere in the part's details Alt+arrows do.
+ */
+export function MoveSection({ arrange, region, trace, panelRef, onClose }: {
+  arrange: ReturnType<typeof useArrange>; region: LiveRegion; trace: LiveTrace | null;
+  panelRef?: RefObject<HTMLElement | null>;
+  /** Leave without moving: the verb closes the panel. */
+  onClose?: () => void;
+}) {
   const own = arrange.movable(region);
   const p = arrange.pending && arrange.pending.region === region.index ? arrange.pending : own;
   if (!p) return null;
   const home = p.kind === 'item' && trace ? trace.collections?.find((c) => c.id === p.home.collection) ?? null : null;
   const others = home && trace ? targetsFor(trace, home.id).filter((c) => c.id !== (p.kind === 'item' ? p.at.collection : '')) : [];
   const moving = !!arrange.pending;
-  // Open where the site itself can move it; where the order is in a template, closed until asked.
+  const arrows = (e: KeyboardEvent): void => {
+    if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey || (e.target as Element).closest('.select')) return;
+    const s: Step | null = e.key === 'ArrowUp' ? 'up' : e.key === 'ArrowDown' ? 'down' : e.key === 'ArrowLeft' ? 'previous' : e.key === 'ArrowRight' ? 'next' : null;
+    if (s) { e.preventDefault(); e.stopPropagation(); arrange.step(region, s); }
+    else if (e.key === 'Escape' && !moving && onClose) { e.preventDefault(); e.stopPropagation(); onClose(); }
+  };
   return (
-    <Disclosure title="Move" open={p.kind === 'item' || moving} summary={p.kind === 'item' && home ? `${p.at.index + 1} of ${placesIn(trace?.collections?.find((c) => c.id === p.at.collection) ?? home, p.item)}` : 'by a note for an agent'}>
+    <section className="live-move" aria-label="Move" ref={panelRef as RefObject<HTMLElement>} onKeyDown={arrows}>
       <p className="small">{arrange.describe(p)}.</p>
       {p.kind === 'item' && home ? (
         <p className="faint small">{home.changes === 'configuration' ? 'Its order is site configuration: moving it says what it changes before it saves.' : home.revisions === false ? 'Saved as content.' : 'Saved as content, as a new revision.'}</p>
@@ -335,8 +350,8 @@ export function MoveSection({ arrange, region, trace }: { arrange: ReturnType<ty
           <Button size="s" tone="quiet" icon="undo" onClick={arrange.cancel}>Put it back</Button>
         </div>
       ) : null}
-      <p className="faint small">Keys: Alt+↑ and Alt+↓ move it{others.length ? ', Alt+Shift+← and → take it to another place' : ''}; Enter saves, Escape puts it back.</p>
-    </Disclosure>
+      <p className="faint small">Keys: ↑ and ↓ move it{others.length ? ', ← and → take it to another place' : ''} (Alt with them anywhere in its details); Enter saves, Escape puts it back.</p>
+    </section>
   );
 }
 

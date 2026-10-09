@@ -1,24 +1,23 @@
-// What the site helper's trace says about a chosen part, in the Inspector:
-// who made it and the hooks that shaped it, its data, every way to edit it,
-// its cache, its cost and queries, its revisions and who may see it. The most
-// used open by default; the rest open on request and say in one line what
-// they hold.
+// What the site helper's trace says about a chosen part, in the Inspector's
+// "Why it looks like this": who made it and the hooks that shaped it, its
+// data, its cache, its cost and queries, its revisions and who may see it.
+// Each opens on request and says in one line what it holds. Every way to edit
+// the part is in the Inspector's Edit menu (EDIT_KIND names them there).
 import type { EditTarget, LiveTrace, TracePart, TraceStep } from '@shared/live-trace';
 import { partQueries } from '@shared/live-lens';
 import { ago } from '../../lib/format';
 import { Button, CopyButton, Disclosure } from '../ui';
 import { OWNER_LABEL, maxAge, ms, ownerClass, where } from './trace-format';
 
-const EDIT_KIND: Record<EditTarget['kind'], string> = {
+export const EDIT_KIND: Record<EditTarget['kind'], string> = {
   field: 'Field', property: 'Property', 'block-attributes': 'Block settings', config: 'Configuration', option: 'Site option', meta: 'Post meta',
   props: 'Component props', 'menu-link': 'Menu link', 'template-override': 'Template override',
 };
 
-/** Its source and owner, and the chain of hooks that shaped it, slowest marked. For the Made by section. */
-export function TraceMadeBy({ part, edits, onEdit }: { part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void }) {
+/** Its source and owner, and the chain of hooks that shaped it, slowest marked. For the Made by section; making an override is in the Edit menu. */
+export function TraceMadeBy({ part }: { part: TracePart }) {
   const chain = part.chain ?? [];
   const slow = chain.reduce((m, s) => Math.max(m, s.ms ?? 0), 0);
-  const override = (part.edits ?? []).map((id) => edits.get(id)).find((e): e is EditTarget => !!e && e.kind === 'template-override' && !e.why);
   return (
     <div className="live-trace-made">
       {part.source ? (
@@ -44,7 +43,6 @@ export function TraceMadeBy({ part, edits, onEdit }: { part: TracePart; edits: M
               </li>
             ))}
           </ul>
-          {override ? <div className="live-actions"><Button size="s" icon="file" onClick={() => onEdit(override)}>Create override…</Button></div> : null}
         </div>
       ) : null}
     </div>
@@ -69,29 +67,6 @@ function ChainStep({ step, slowest }: { step: TraceStep; slowest: boolean }) {
         </span>
       ) : null}
     </li>
-  );
-}
-
-/** Every way to change the part, one click each; what cannot be changed here says why. */
-export function TraceEdits({ part, edits, onEdit }: { part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void }) {
-  const list = (part.edits ?? []).map((id) => edits.get(id)).filter((e): e is EditTarget => !!e);
-  if (!list.length) return null;
-  const open = list.filter((e) => !e.why).length;
-  return (
-    <Disclosure title="Edit" open summary={`${open} here${list.length > open ? `, ${list.length - open} not` : ''}`}>
-      <ul className="live-edit-list">
-        {list.map((e) => (
-          <li key={e.id}>
-            <div className="live-edit-what">
-              <span className="small">{e.label}</span>
-              <span className="faint small">{EDIT_KIND[e.kind]}{e.via === 'native-form' ? ' · the site’s own form' : ''}{e.revisions ? ' · saved as a revision' : ''}</span>
-              {e.why ? <span className="small faint">{e.why}</span> : null}
-            </div>
-            {e.why ? null : <Button size="s" icon="pencil" onClick={() => onEdit(e)} aria-label={`Edit ${e.label}`}>Edit</Button>}
-          </li>
-        ))}
-      </ul>
-    </Disclosure>
   );
 }
 

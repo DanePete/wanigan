@@ -28,6 +28,8 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     move: async () => ({ ok: false, error: nothing }),
     insert: async () => ({ ok: false, error: nothing }),
     undo: async () => ({ ok: false, error: nothing }),
+    // A part chosen in the tree, as the picked element (live-page.ts).
+    choose: async () => null,
     // Local and Live (live-compare.ts).
     compareShot: async () => { throw new Error(nothing); },
     // Go to (live-find.ts): the key from the page never comes.

@@ -1,17 +1,17 @@
-// A site's hosted environments in the live view: the tabs (Local, then Dev,
-// Test, Live as the host names them) and, in the site settings, what the
-// project's files name, kept, renamed or added by the owner. Opening one sends
-// requests to that site, only when the owner does; it opens read-only.
+// A site's hosted environments in the live view: the site menu at the left of
+// the bar (Local, then Dev, Test, Live as the host names them, Compare beside
+// them, and the site settings) and, in the site settings, what the project's
+// files name, kept, renamed or added by the owner. Opening one sends requests
+// to that site, only when the owner does; it opens read-only.
 import { useState, type FormEvent } from 'react';
 import type { LiveSite } from '@shared/live';
 import type { LiveEnv, LiveEnvCandidate, LiveEnvs } from '@shared/live-envs';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, call, forProject, useQuery } from '../../lib/api';
-import { Button, Segmented, useToast } from '../ui';
+import { Icon } from '../icons';
+import { MenuButton, type MenuItem } from '../Menu';
+import { Button, useToast } from '../ui';
 import '../../styles/live-compare.css';
-
-/** The tab value of the local site; environments are tabs by their id. */
-export const LOCAL = 'local';
 
 /** A project's environments, kept and found, refetched when the site's settings change. */
 export function useEnvs(projectId: string, on = true): LiveEnvs | null {
@@ -23,15 +23,47 @@ export const HOSTED_NOTE = 'Opening a hosted environment, or comparing with it, 
   + 'It opens read-only, in a private session of its own: no cookies shared with your local site, never the helper’s token, '
   + 'its certificate checked as any browser would, and nothing sent that could change it.';
 
-export function EnvTabs({ envs, value, onChange }: { envs: readonly LiveEnv[]; value: string | null; onChange: (id: string | null) => void }) {
-  const options = [
-    { value: LOCAL, label: 'Local', hint: 'The site on this Mac, following the agents' },
-    ...envs.map((e) => ({ value: e.id, label: e.name, hint: `${e.url} · read-only` })),
-  ];
+const SHOW = 'Show this page on';
+
+/**
+ * The site menu: which environment the page is shown on, Compare beside them,
+ * and the site settings, in one place at the left of the bar. Beside a
+ * terminal (`compact`) it holds the settings alone.
+ */
+export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, compact = false }: {
+  envs: readonly LiveEnv[];
+  /** The environment shown, or null for the local site. */
+  shown: LiveEnv | null;
+  onShow: (id: string | null) => void;
+  /** Whether Compare can open, and why not when it cannot. */
+  compare: { can: boolean; why: string; with: string | null };
+  onCompare: () => void;
+  onSettings: () => void;
+  compact?: boolean;
+}) {
+  const items: MenuItem[] = [];
+  if (!compact) {
+    items.push({ id: 'local', group: SHOW, kind: 'radio', checked: !shown, label: 'Local', detail: 'This Mac, following the agents', run: () => onShow(null) });
+    for (const e of envs) {
+      const host = (() => { try { return new URL(e.url).host; } catch { return e.url; } })();
+      items.push({ id: `env-${e.id}`, group: SHOW, kind: 'radio', checked: shown?.id === e.id, label: e.name, detail: `${host} · read-only`, run: () => onShow(e.id) });
+    }
+    items.push({
+      id: 'compare', group: 'Compare', icon: 'compare', keys: ['Shift', 'C'], disabled: !compare.can,
+      label: compare.with ? `Compare Local with ${compare.with}…` : 'Compare Local with a hosted environment…',
+      detail: compare.can ? 'Wipe, onion skin, difference, flip, side by side' : compare.why, run: onCompare,
+    });
+  }
+  items.push({ id: 'settings', group: 'This site', icon: 'settings', label: 'Site settings…', detail: 'Its address, the helper, the hosted environments', run: onSettings });
+  const name = shown?.name ?? 'Local';
   return (
-    <div className="live-envs">
-      <Segmented<string> size="s" label="Environment" value={value ?? LOCAL} options={options} onChange={(v) => onChange(v === LOCAL ? null : v)} />
-    </div>
+    <MenuButton className="btn-quiet btn-s live-site-menu" items={items} width={340} notes={envs.length && !compact ? { [SHOW]: HOSTED_NOTE } : undefined}
+      label={compact ? 'Site settings' : `Site: ${name} shown. Environments, Compare and Site settings`}
+      title={compact ? 'Site settings' : 'The environments to show this page on, Compare, and the site settings'}>
+      <Icon name={compact ? 'settings' : shown ? 'open' : 'desktop'} size={14} />
+      {compact ? null : <span>{name}</span>}
+      <Icon name="down" size={12} />
+    </MenuButton>
   );
 }
 
@@ -46,7 +78,7 @@ export function EnvironmentSettings({ project, site }: { project: ProjectSummary
   };
   const remove = async (env: LiveEnv): Promise<void> => {
     const done = await attempt(() => call('live.removeEnv', { projectId: project.id, id: env.id }), (m) => toast(m, 'error'));
-    if (done) toast(`${env.name} is no longer a tab.`);
+    if (done) toast(`${env.name} is no longer in the site menu.`);
   };
   const keepAll = async (list: readonly LiveEnvCandidate[]): Promise<void> => {
     const taken = new Set((data?.envs ?? []).map((e) => e.name.toLowerCase()));
@@ -63,7 +95,7 @@ export function EnvironmentSettings({ project, site }: { project: ProjectSummary
   return (
     <section className="live-env-settings" aria-label="Hosted environments">
       <h3 className="live-section-title">Hosted environments</h3>
-      <p className="small">Tabs beside Local, showing the same page on Dev, Test or Live, and what Compare lays over your local site.</p>
+      <p className="small">In the site menu beside Local, showing the same page on Dev, Test or Live, and what Compare lays over your local site.</p>
       <p className="faint small">{HOSTED_NOTE}</p>
       {envs.length ? (
         <ul className="live-env-list" aria-label="Kept environments">

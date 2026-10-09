@@ -1,14 +1,22 @@
-// A chosen part of the live page: where it sits, what made it and whose code
-// that is, where to change it in the site's own admin, and changing it by hand.
-// A hand edit is tried in the page first. Words save straight to the owner's
-// own template only when they appear there exactly once; anything else
-// becomes a note for an agent, with the exact change attached. Styles are
-// never written by hand: what was tried goes to the agent as intent.
+// A chosen part of the live page, however it was chosen (picked on the page or
+// in the Layers tree): four verbs first, then the note to an agent, then why it
+// looks as it does, folded.
 //
-// With the site helper's trace, it also says what the trace knows of the part
-// (PartTrace.tsx): the hooks that shaped it, its data, every way to edit it,
-// its cache, cost, revisions and access; and it moves it (Arrange.tsx).
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+// - Edit ▾ is the one place for every way of changing it, grouped by where the
+//   change is saved: in the site (the trace's edit targets in a sheet beside
+//   the part, the admin page), on the page (retyping its words, trying a
+//   style), and in code (its template in the code editor, an override).
+// - Move opens where it is and moves it (Arrange.tsx); Code opens what made it
+//   in the code editor; Alone shows it with nothing around it.
+// - A hand edit is tried in the page first. Words save straight to the owner's
+//   own template only when they appear there exactly once; anything else
+//   becomes a note for an agent, with the exact change attached. Styles are
+//   never written by hand: what was tried goes to the agent as intent.
+//
+// With the site helper's trace, "Why it looks like this" also says what the
+// trace knows of the part (PartTrace.tsx): the hooks that shaped it, its data,
+// its cache, cost, revisions and access.
+import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import type { LiveComponent, LiveFound, LivePick, LivePlatform, LiveRegion, LiveSite } from '@shared/live';
 import { partFor, type LiveTraceAnswer, type PartIndex } from '@shared/live-lens';
 import type { EditTarget, LiveTrace } from '@shared/live-trace';
@@ -19,23 +27,32 @@ import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call } from '../../lib/api';
 import { liveBridge } from '../../lib/live';
 import { Icon } from '../icons';
-import { Button, IconButton, useToast } from '../ui';
+import { MenuButton, type MenuItem } from '../Menu';
+import { Button, Disclosure, IconButton, useToast } from '../ui';
 import { KIND_ICON } from './Layers';
 import { NoteComposer, draftFor } from './Notes';
 import { MoveSection, type useArrange } from './Arrange';
-import { TraceAccess, TraceCache, TraceCost, TraceData, TraceEdits, TraceHistory, TraceMadeBy } from './PartTrace';
+import { EDIT_KIND, TraceAccess, TraceCache, TraceCost, TraceData, TraceHistory, TraceMadeBy } from './PartTrace';
 import { TraceNote } from './TraceNote';
-import { EditButton, openInEditor, relativeTo } from '../../editor/EditButton';
+import { openInEditor, relativeTo, type EditorTarget } from '../../editor/EditButton';
 import type { StyleChange } from './note-store';
 
-export interface Selection { region: LiveRegion | null; pick: LivePick | null }
+export interface Selection {
+  region: LiveRegion | null;
+  pick: LivePick | null;
+  /** Chosen in the tree (its element made the picked one) rather than pointed at: the part is the same whoever chose it. */
+  how?: 'pick' | 'tree';
+}
+
+/** The four verbs, for the live view's keys (E, M, ., ⇧A). Each does what its button does, or nothing when it is off. */
+export interface InspectorVerbs { edit: () => void; move: () => void; code: () => void; alone: () => void }
 
 const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contributed', core: 'Drupal core' };
 
 const near = (root: string, abs: string): string => (abs.startsWith(`${root}/`) ? abs.slice(root.length + 1) : abs);
 
 export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose, onSaved,
-  site, answer, trace, parts, arrange, onEdit }: {
+  site, answer, trace, parts, arrange, onEdit, verbs }: {
   project: ProjectSummary;
   platform: LivePlatform | null;
   selection: Selection;
@@ -63,8 +80,11 @@ export function Inspector({ project, platform, selection, regions, components, d
   arrange: ReturnType<typeof useArrange>;
   /** Open an edit target in a sheet beside the part. */
   onEdit: (target: EditTarget, region: LiveRegion | null) => void;
+  /** Filled with what the verbs do, for the live view's keys. */
+  verbs?: MutableRefObject<InspectorVerbs | null>;
 }) {
   const live = liveBridge();
+  const toast = useToast();
   const { region, pick } = selection;
   const chain = useMemo(() => {
     if (!region) return [];
@@ -78,13 +98,19 @@ export function Inspector({ project, platform, selection, regions, components, d
     return nameOf(r, r.component ? components.get(r.component)?.name ?? null : null, p ? { label: p.label, kind: p.kind } : null);
   };
   const name = region ? called(region) : null;
+  const title = name?.title ?? (pick ? `<${pick.tag}>` : 'Part');
   const [words, setWords] = useState<{ before: string; after: string } | null>(null);
   /** The template the old words were found in, for the note that takes them to an agent. */
   const [wordsFile, setWordsFile] = useState<string | null>(null);
   const [style, setStyle] = useState<StyleChange[]>([]);
   const [styling, setStyling] = useState(false);
-  const key = `${region?.index ?? ''}:${pick?.selector ?? ''}`;
-  useEffect(() => { setWords(null); setWordsFile(null); setStyle([]); setStyling(false); }, [key]);
+  const [moving, setMoving] = useState(false);
+  const movePanel = useRef<HTMLElement | null>(null);
+  const editOpen = useRef<(() => void) | null>(null);
+  const aloneOpen = useRef<(() => void) | null>(null);
+  // A part pointed at keeps its own element; one chosen in the tree is the same part whichever element stands for it.
+  const key = `${region?.index ?? ''}:${selection.how === 'tree' && region ? '' : pick?.selector ?? ''}`;
+  useEffect(() => { setWords(null); setWordsFile(null); setStyle([]); setStyling(false); setMoving(false); }, [key]);
 
   const go = (path: string): void => {
     if (!page || !live) return;
@@ -95,22 +121,78 @@ export function Inspector({ project, platform, selection, regions, components, d
   const content = chain.map((r) => ({ r, e: entityOf(r) })).find((x) => x.e?.id);
   // Already alone (the helper's own page): nothing more to take it out of.
   const isAlone = (() => { try { return new URL(page ?? '').pathname.startsWith('/_wanigan/piece/'); } catch { return false; } })();
-  const alone = helper && !isAlone ? alonePaths(chain).filter((a) => platform !== 'wordpress' || a.path.startsWith('/_wanigan/piece/entity/post/')) : [];
+  const alone = helper && !isAlone && !readOnly ? alonePaths(chain).filter((a) => platform !== 'wordpress' || a.path.startsWith('/_wanigan/piece/entity/post/')) : [];
   // What the trace says, for this part or the nearest one around it.
   const traced = partFor(chain, parts);
   const edit = (t: EditTarget): void => onEdit(t, traced?.region ?? region);
   const now = region ? regions.find((r) => r.index === region.index) ?? region : null;
+  const component = region?.component ? components.get(region.component) ?? null : null;
+  // At the words pointed at; a part chosen in the tree is found by its own words, when it is only words.
+  const code = codeOf(region, component, docroot, project, (selection.how === 'tree' ? pick?.own : pick?.text) ?? null);
+  const canMove = !readOnly && !!now && !!arrange.movable(now);
+  const showMove = !!now && (moving || arrange.pending?.region === now.index);
+  const cms = platform === 'wordpress' ? 'WordPress' : 'Drupal';
+
+  /* ── Edit ▾: every way to change it, by where the change is saved ── */
+  const targets = traced && trace && !readOnly ? (traced.part.edits ?? []).map((id) => parts.edits.get(id)).filter((e): e is EditTarget => !!e) : [];
+  const override = targets.find((e) => e.kind === 'template-override' && !e.why) ?? null;
+  const editItems: MenuItem[] = [];
+  if (!readOnly) {
+    const inSite = `In the site · saved by ${cms} as you`;
+    for (const e of targets.filter((t) => t.kind !== 'template-override')) {
+      editItems.push({
+        id: `target-${e.id}`, group: inSite, icon: 'pencil', label: e.label, disabled: !!e.why,
+        detail: e.why ?? `${EDIT_KIND[e.kind]}${e.via === 'native-form' ? ', in the site’s own form beside it' : ', beside it'}${e.revisions ? ' · a new revision' : ''}`,
+        run: () => edit(e),
+      });
+    }
+    if (admin) {
+      editItems.push({ id: 'admin', group: inSite, icon: 'settings', label: adminLabel(admin.r), detail: 'Its admin page, here in the live view', run: () => go(admin.path as string) });
+    }
+    if (pick && live) {
+      const onPage = 'On the page · tried first, nothing saved yet';
+      editItems.push({
+        id: 'words', group: onPage, icon: 'pencil', label: 'Retype the words', disabled: !pick.own,
+        detail: pick.own ? 'Enter keeps them, Escape puts them back; then saved, or sent with the note' : 'Pick the words themselves (an element with only text in it) to retype them',
+        run: () => { void live.editText().then((change) => { if (change) setWords(change); }); },
+      });
+      editItems.push({ id: 'style', group: onPage, icon: 'brush', label: 'Try a style', kind: 'check', checked: styling, detail: 'On this page only: it goes to an agent as intent', run: () => setStyling((v) => !v) });
+    }
+  }
+  const inCode = 'In code';
+  if (code) editItems.push({ id: 'code', group: inCode, icon: 'code', label: code.path.split('/').pop() as string, detail: `${code.whose} · opens in the code editor`, keys: ['.'], run: () => openInEditor(code) });
+  if (override) editItems.push({ id: 'override', group: inCode, icon: 'file', label: 'Create override…', detail: `${override.label}: a copy for this part only, in your theme`, run: () => edit(override) });
+
+  const openCode = (): void => { if (code) openInEditor(code); };
+  const startMove = (): void => {
+    if (!canMove) return;
+    setMoving((v) => !v || arrange.pending?.region === now?.index);
+  };
+  // Opened, Move takes the keyboard: its arrows move the part at once.
+  useEffect(() => { if (moving) movePanel.current?.querySelector<HTMLElement>('button.live-up')?.focus(); }, [moving]);
+  const showAlone = (): void => {
+    if (alone.length === 1) go((alone[0] as { path: string }).path);
+    else if (alone.length > 1) aloneOpen.current?.();
+  };
+  if (verbs) {
+    verbs.current = {
+      edit: () => { if (editItems.some((i) => !i.disabled)) editOpen.current?.(); else toast(readOnly ? 'This environment is read-only: nothing here can change it.' : `Nothing says how to change ${title} here. Tell an agent instead.`); },
+      move: () => { if (canMove) startMove(); else toast(readOnly ? 'This environment is read-only: nothing here can move it.' : `${title} cannot be moved here.`); },
+      code: () => { if (code) openCode(); else toast(codeWhyNot(region, docroot)); },
+      alone: () => { if (alone.length) showAlone(); else toast(aloneWhyNot(helper, isAlone, readOnly)); },
+    };
+  }
 
   return (
     <div className="live-inspector"
-      // A move under way takes Alt+arrows, Enter and Escape first (Arrange.tsx).
-      onKeyDownCapture={(e) => { arrange.keys(e, now); }}
+      // A move under way takes Alt+arrows, Enter and Escape first (Arrange.tsx); an open list keeps its own keys.
+      onKeyDownCapture={(e) => { if (!(e.target as Element).closest?.('[role="menu"], .sel-list')) arrange.keys(e, now); }}
       onKeyDown={(e) => { if (!e.defaultPrevented && e.key === 'Escape' && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLSelectElement)) onClose(); }}>
       <div className="live-side-head">
         <div className="live-inspector-title">
           {name ? <Icon name={KIND_ICON[name.icon]} size={16} /> : <Icon name="pick" size={16} />}
           <div>
-            <h2 className="live-side-title" tabIndex={-1}>{name?.title ?? (pick ? `<${pick.tag}>` : 'Part')}</h2>
+            <h2 className="live-side-title" tabIndex={-1}>{title}</h2>
             {name?.kind ? <p className="faint small">{name.kind}</p> : null}
           </div>
         </div>
@@ -126,82 +208,127 @@ export function Inspector({ project, platform, selection, regions, components, d
         </nav>
       ) : null}
 
-      {pick ? (
-        <section className="live-section" aria-label="What you picked">
-          <p className="small"><span className="mono">&lt;{pick.tag}&gt;</span>{pick.text ? <> “{pick.text.slice(0, 160)}”</> : null}</p>
-          <p className="mono small faint live-selector" title={pick.selector}>{pick.selector}</p>
-        </section>
+      <div className="live-verbs" role="group" aria-label={`What to do with ${title}`}>
+        <MenuButton className="live-verb" label={`Edit ${title}: every way, in one menu`} items={editItems} openRef={editOpen} width={340}
+          disabled={!editItems.length} title={editItems.length ? 'Every way to change it, by where the change is saved (E)' : readOnly ? 'This environment is read-only' : 'Nothing says how to change it here: tell an agent'}>
+          <Icon name="pencil" size={16} />
+          <span className="live-verb-name">Edit <Icon name="down" size={12} /></span>
+          <kbd aria-hidden="true">E</kbd>
+        </MenuButton>
+        <button type="button" className="btn live-verb" aria-pressed={showMove} aria-keyshortcuts="M" disabled={!canMove} onClick={startMove}
+          title={canMove ? 'Move it: up, down, or to another place it may go (M)' : readOnly ? 'This environment is read-only' : 'Nothing says it can be moved here'}>
+          <Icon name="move" size={16} />
+          <span className="live-verb-name">Move</span>
+          <kbd aria-hidden="true">M</kbd>
+        </button>
+        <button type="button" className="btn live-verb" aria-keyshortcuts="." disabled={!code} onClick={openCode}
+          title={code ? `Open ${code.path} in the code editor (.)` : codeWhyNot(region, docroot)}>
+          <Icon name="code" size={16} />
+          <span className="live-verb-name">Code</span>
+          <kbd aria-hidden="true">.</kbd>
+        </button>
+        {alone.length > 1 ? (
+          <MenuButton className="live-verb" label={`Show ${title} alone`} openRef={aloneOpen} align="end" width={300} title="Show it with nothing around it (⇧A)"
+            items={alone.map((a) => ({ id: a.path, label: a.label, icon: 'alone' as const, detail: 'In your theme, with nothing around it; Back returns to the page', run: () => go(a.path) }))}>
+            <Icon name="alone" size={16} />
+            <span className="live-verb-name">Alone <Icon name="down" size={12} /></span>
+            <kbd aria-hidden="true">⇧A</kbd>
+          </MenuButton>
+        ) : (
+          <button type="button" className="btn live-verb" aria-keyshortcuts="Shift+A" disabled={!alone.length} onClick={showAlone}
+            title={alone.length ? `${alone[0]?.label}: in your theme, with nothing around it (⇧A)` : aloneWhyNot(helper, isAlone, readOnly)}>
+            <Icon name="alone" size={16} />
+            <span className="live-verb-name">Alone</span>
+            <kbd aria-hidden="true">⇧A</kbd>
+          </button>
+        )}
+      </div>
+
+      {showMove && now ? <MoveSection arrange={arrange} region={now} trace={trace} panelRef={movePanel} onClose={() => setMoving(false)} /> : null}
+      {words && pick ? (
+        <WordsChange words={words} pick={pick} project={project} helper={helper} onFound={setWordsFile}
+          onSaved={() => { setWords(null); onSaved(); }} onUndo={() => { setWords(null); void live?.reload(); }} />
       ) : null}
+      {styling && pick ? <StylePanel pick={pick} onChange={setStyle} onDone={() => setStyling(false)} /> : null}
 
-      {region ? <Alike region={region} regions={regions} /> : null}
-
-      {region ? (
-        <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme} words={pick?.text ?? null}>
-          {traced ? (
-            <>
-              {traced.inherited ? <p className="faint small">From the trace of {traced.part.label}, around it:</p> : null}
-              <TraceMadeBy part={traced.part} edits={parts.edits} onEdit={edit} />
-            </>
-          ) : answer?.state === 'ok' ? null : <TraceNote compact answer={answer} site={site} project={project} />}
-        </MadeBy>
-      ) : (
-        <p className="faint small">Nothing around it says what made it. Notes still tell an agent where it is on the page.</p>
-      )}
-
-      {/* A hosted environment is read-only: nothing here edits or moves it. */}
-      {readOnly ? null : traced && trace ? (
-        <div className="live-trace-sections">
-          <TraceEdits part={traced.part} edits={parts.edits} onEdit={edit} />
-          {now ? <MoveSection arrange={arrange} region={now} trace={trace} /> : null}
-          <TraceData part={traced.part} edits={parts.edits} onEdit={edit} />
-          <TraceCache part={traced.part} />
-          <TraceCost part={traced.part} trace={trace} />
-          <TraceHistory part={traced.part} />
-          <TraceAccess part={traced.part} user={trace.user} />
-        </div>
-      ) : now ? <div className="live-trace-sections"><MoveSection arrange={arrange} region={now} trace={trace} /></div> : null}
-
-      {!readOnly && (admin || content || alone.length) ? (
-        <section className="live-section" aria-label="Change it in the site">
-          <h3 className="live-section-title">In the site</h3>
-          {content?.e ? <p className="small">Shows {content.e.type.replace(/_/g, ' ')} {content.e.id}{content.e.bundle ? ` (${content.e.bundle.replace(/_/g, ' ')})` : ''}.</p> : null}
-          <div className="live-actions">
-            {admin ? (
-              <Button size="s" icon="pencil" onClick={() => go(admin.path as string)}>{adminLabel(admin.r)}</Button>
-            ) : null}
-            {alone.map((a) => <Button key={a.path} size="s" tone="quiet" icon="eye" onClick={() => go(a.path)}>{a.label}</Button>)}
-          </div>
-          <p className="faint small">
-            {admin ? 'Opens it here, in the live view. Content you change there is the site’s own, saved by Drupal.' : ''}
-            {alone.length ? `${admin ? ' ' : ''}Alone, it shows in your theme with nothing around it; Back returns to the page.` : ''}
-          </p>
-        </section>
-      ) : null}
-
-      {pick && live && !readOnly ? (
-        <section className="live-section" aria-label="Change it by hand">
-          <h3 className="live-section-title">By hand</h3>
-          <div className="live-actions">
-            <Button size="s" icon="pencil" disabled={!pick.own}
-              title={pick.own ? 'Retype the words on the page: Enter keeps them, Escape puts them back' : 'Pick the words themselves (an element with only text in it) to retype them'}
-              onClick={async () => { const change = await live.editText(); if (change) setWords(change); }}>
-              Edit the words
-            </Button>
-            <Button size="s" icon="brush" tone={styling ? 'primary' : 'plain'} aria-pressed={styling} onClick={() => setStyling((v) => !v)}>Adjust the style</Button>
-          </div>
-          {words ? <WordsChange words={words} pick={pick} project={project} helper={helper} onFound={setWordsFile}
-            onSaved={() => { setWords(null); onSaved(); }} onUndo={() => { setWords(null); void live.reload(); }} /> : null}
-          {styling ? <StylePanel pick={pick} onChange={setStyle} /> : null}
-        </section>
-      ) : null}
-
-      <section className="live-section" aria-label="Tell an agent">
+      <section className="live-section live-tell" aria-label="Tell an agent">
         <h3 className="live-section-title">Tell an agent</h3>
         <NoteComposer key={key} project={project} components={components} prefer={prefer}
           draft={{ ...draftFor(page ?? pick?.url ?? '', { regions: pick ? pick.regions : chain, pick }), words: words ? { ...words, file: wordsFile } : null, style }} />
       </section>
+
+      {region ? <Alike region={region} regions={regions} /> : null}
+
+      <section className="live-section live-why" aria-label="Why it looks like this">
+        <h3 className="live-section-title">Why it looks like this</h3>
+        {region ? (
+          <MadeBy region={region} component={component} project={project} docroot={docroot} theme={theme} content={content?.e ?? null}
+            summary={madeBySummary(region, component, traced?.part ?? null)}>
+            {traced ? (
+              <>
+                {traced.inherited ? <p className="faint small">From the trace of {traced.part.label}, around it:</p> : null}
+                <TraceMadeBy part={traced.part} />
+              </>
+            ) : answer?.state === 'ok' ? null : <TraceNote compact answer={answer} site={site} project={project} />}
+          </MadeBy>
+        ) : (
+          <p className="faint small">Nothing around it says what made it. Notes still tell an agent where it is on the page.</p>
+        )}
+        {/* A hosted environment is read-only: its trace is not the local site's. */}
+        {!readOnly && traced && trace ? (
+          <>
+            <TraceData part={traced.part} edits={parts.edits} onEdit={edit} />
+            <TraceCache part={traced.part} />
+            <TraceCost part={traced.part} trace={trace} />
+            <TraceHistory part={traced.part} />
+            <TraceAccess part={traced.part} user={trace.user} />
+          </>
+        ) : null}
+        {pick ? (
+          <Disclosure title="The element" summary={`<${pick.tag}>`}>
+            <p className="small"><span className="mono">&lt;{pick.tag}&gt;</span>{pick.text ? <> “{pick.text.slice(0, 160)}”</> : null}</p>
+            <p className="mono small faint live-selector" title={pick.selector}>{pick.selector}</p>
+          </Disclosure>
+        ) : null}
+      </section>
     </div>
   );
+}
+
+/** The file Code opens: the part's template, or its component's, inside the project; where the picked words are. */
+function codeOf(region: LiveRegion | null, component: LiveComponent | null, docroot: string | null, project: ProjectSummary, words: string | null): (EditorTarget & { whose: string }) | null {
+  if (!region) return null;
+  const root = project.path;
+  const twig = component?.files.find((f) => f.endsWith('.twig')) ?? null;
+  const fromComponent = component && twig ? relativeTo(root, `${component.dir}/${twig}`) : null;
+  if (fromComponent) return { projectId: project.id, path: fromComponent, find: words, whose: `Component ${component?.name ?? region.component}` };
+  const fromTemplate = region.file && docroot ? relativeTo(root, `${docroot}/${region.file}`) : null;
+  const origin = originOf(region.file);
+  if (fromTemplate) return { projectId: project.id, path: fromTemplate, find: words, whose: origin ? ORIGIN[origin] : 'Its template' };
+  return null;
+}
+
+function codeWhyNot(region: LiveRegion | null, docroot: string | null): string {
+  if (!region) return 'Nothing around it says which file made it';
+  if (region.file && !docroot) return 'The site’s folder is not known, so its template cannot be opened';
+  if (region.file) return 'Its template is outside the project’s folder';
+  return 'The page does not say which file made it';
+}
+
+function aloneWhyNot(helper: boolean, isAlone: boolean, readOnly: boolean): string {
+  if (readOnly) return 'A hosted environment shows parts only in its own pages';
+  if (isAlone) return 'It is shown alone already: Back returns to the page';
+  if (!helper) return 'Showing a part alone needs the site helper';
+  return 'Nothing around it can be shown alone';
+}
+
+/** What Made by holds, in one line, for its closed heading. */
+function madeBySummary(region: LiveRegion, component: LiveComponent | null, part: { source?: { file: string }; chain?: unknown[] } | null): string {
+  const file = component ? component.id : region.file ? region.file.split('/').pop() ?? region.file
+    : region.component ?? part?.source?.file.split('/').pop() ?? region.block?.split('@')[0] ?? region.view ?? region.entity ?? null;
+  const origin = originOf(region.file);
+  const hooks = part?.chain?.length ? `${part.chain.length} ${part.chain.length === 1 ? 'hook' : 'hooks'}` : null;
+  return [file, origin ? ORIGIN[origin].toLowerCase() : null, hooks].filter(Boolean).join(' · ') || 'not said';
 }
 
 /** The helper's pages that show a part of this chain alone: a piece of content, a component, a block, sample content. */
@@ -242,24 +369,27 @@ function adminLabel(r: LiveRegion): string {
   return 'Open in the admin';
 }
 
-/** What made a part: its component's folder and files, or its template and whose code it is, and how to change it here only. */
-function MadeBy({ region, component, docroot, project, theme, words, children }: {
+/**
+ * What made a part: its component's folder and files, or its template and
+ * whose code it is, the content it shows, and how to change someone else's
+ * template here only. Folded: what to do with the part comes first.
+ */
+function MadeBy({ region, component, docroot, project, theme, content, summary, children }: {
   region: LiveRegion; component: LiveComponent | null; docroot: string | null; project: ProjectSummary; theme: string | null;
-  /** The words picked on the page: the code editor opens the template where it writes them. */
-  words: string | null;
+  /** The piece of content it shows, nearest first. */
+  content: ReturnType<typeof entityOf>;
+  summary: string;
   /** What the site helper's trace adds. */
   children?: ReactNode;
 }) {
   const origin = originOf(region.file);
   const template = region.file && docroot ? `${docroot}/${region.file}` : null;
-  // In the code editor: the template (at the picked words when it writes them), or a component's own files.
-  const templatePath = template ? relativeTo(project.path, template) : null;
+  // A component's own files open in the code editor (Code opens its template).
   const componentPath = (file: string): string | null => (component ? relativeTo(project.path, `${component.dir}/${file}`) : null);
-  const componentTwig = component?.files.find((f) => f.endsWith('.twig')) ?? null;
   const options = overrides(region);
   return (
-    <section className="live-section" aria-label="What made it">
-      <h3 className="live-section-title">Made by</h3>
+    <Disclosure title="Made by" summary={summary}>
+      {content?.id ? <p className="small">Shows {content.type.replace(/_/g, ' ')} {content.id}{content.bundle ? ` (${content.bundle.replace(/_/g, ' ')})` : ''}.</p> : null}
       {component ? (
         <div className="live-made">
           <span className="mono small">{component.id}</span>
@@ -283,7 +413,6 @@ function MadeBy({ region, component, docroot, project, theme, words, children }:
             </ul>
           ) : null}
           <div className="live-actions">
-            {componentTwig && componentPath(componentTwig) ? <EditButton tone="plain" label="Edit code" target={{ projectId: project.id, path: componentPath(componentTwig) as string, find: words }} /> : null}
             <Button size="s" tone="quiet" icon="folder" onClick={() => void bridge().openPath(component.dir)}>Show in Finder</Button>
           </div>
         </div>
@@ -297,7 +426,6 @@ function MadeBy({ region, component, docroot, project, theme, words, children }:
           {region.hook ? <span className="faint small">Theme hook {region.hook}</span> : null}
           {template ? (
             <div className="live-actions">
-              {templatePath ? <EditButton tone="plain" label="Edit code" target={{ projectId: project.id, path: templatePath, find: words }} /> : null}
               <Button size="s" tone="quiet" icon="file" onClick={() => void bridge().openPath(template)}>Show in Finder</Button>
             </div>
           ) : null}
@@ -314,16 +442,17 @@ function MadeBy({ region, component, docroot, project, theme, words, children }:
               <li key={f}><span className="mono small">{overrideDir(region, theme)}{f}</span>{i === 0 ? <span className="faint small"> (only parts exactly like this one)</span> : null}</li>
             ))}
           </ul>
-          <p className="faint small">Then clear Drupal’s cache. A note to an agent below says the same.</p>
+          <p className="faint small">Then clear Drupal’s cache. A note to an agent above says the same.</p>
         </div>
       ) : null}
       {!region.file && !component && !region.component && !children ? (
         <p className="faint small">{[region.entity && `Content ${region.entity}`, region.block && `Block ${region.block}`, region.view && `View ${region.view}`, region.element && `Elementor ${region.element}`].filter(Boolean).join(' · ') || 'The page does not say which file made it.'}</p>
       ) : null}
       {children}
-    </section>
+    </Disclosure>
   );
 }
+
 
 /**
  * New words, tried on the page: where they can be saved (the owner's own
@@ -405,7 +534,7 @@ function WordsChange({ words, pick, project, helper, onFound, onSaved, onUndo }:
           <>
             <p className="small">
               {field && !plain ? `These words are part of the ${fieldName} field, which holds ${/^text/.test(kind) ? `formatted text (${kind})` : `a ${kind.replace(/_/g, ' ')} value, not plain words`}: typed on the page, its structure or formatting could be lost. Change it in Drupal, or let an agent do it.` : found?.at.refused ?? (content
-                ? `No template writes those words: they are content, stored with ${content.type.replace(/_/g, ' ')} ${content.id}. Change them in Drupal (Edit ${content.type.replace(/_/g, ' ')} ${content.id} above), or let an agent do it.`
+                ? `No template writes those words: they are content, stored with ${content.type.replace(/_/g, ' ')} ${content.id}. Change them in Drupal (Edit ${content.type.replace(/_/g, ' ')} ${content.id} in Edit), or let an agent do it.`
                 : 'No template on this page writes those words: they come from content, configuration or a variable.')}
             </p>
             <p className="faint small">A note below takes the new words with it, and says where they were found.</p>
@@ -451,7 +580,7 @@ function hexOf(css: string): string | null {
 
 const pxOf = (css: string): string => (/^-?[\d.]+px$/.test(css) ? String(Math.round(Number.parseFloat(css) * 10) / 10) : '');
 
-function StylePanel({ pick, onChange }: { pick: LivePick; onChange: (changes: StyleChange[]) => void }) {
+function StylePanel({ pick, onChange, onDone }: { pick: LivePick; onChange: (changes: StyleChange[]) => void; onDone?: () => void }) {
   const live = liveBridge();
   const [values, setValues] = useState<Record<string, string>>({});
   const changes = (next: Record<string, string>): StyleChange[] =>
@@ -500,7 +629,8 @@ function StylePanel({ pick, onChange }: { pick: LivePick; onChange: (changes: St
       </div>
       <div className="live-actions">
         <Button size="s" tone="quiet" icon="undo" onClick={reset} disabled={!Object.keys(values).length}>Reset</Button>
-        <span className="faint small">Tried on this page only. Add a note to have an agent make it in the theme’s own styles.</span>
+        {onDone ? <Button size="s" tone="quiet" icon="check" onClick={onDone}>Done</Button> : null}
+        <span className="faint small">Tried on this page only. The note below takes it to an agent, to make in the theme’s own styles.</span>
       </div>
     </div>
   );
