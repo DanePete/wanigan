@@ -4,7 +4,9 @@
 // page), sandboxed and context-isolated, with no preload: the main process
 // injects out/renderer/live-page.js into an isolated world and reads its
 // answers directly. It stays on the site's own host; anything else opens in the
-// default browser. Design: docs/design/2026-10-08-live-view.md.
+// default browser. A hosted environment (Dev, Test, Live) shows in a private
+// session of its own instead: read-only, never with the helper's token, its
+// certificate judged by Chromium alone. Design: docs/design/2026-10-08-live-view.md.
 import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -13,6 +15,7 @@ import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainIn
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
+import { envId, hostedPage } from './live-compare-request.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
 const WORLD = 4242;
@@ -41,6 +44,13 @@ export interface LiveViewWiring {
   now(projectId: string): LiveViewNow | null;
   /** What the owner's view's console logged since its page loaded, with when; null when it is not on this project. */
   logged(projectId: string): TimedProblem[] | null;
+  /**
+   * The session a capture of a project's page runs in, prepared as the view's own are: the local site's (its login,
+   * certificate trust and the helper's token), or a hosted environment's private one. `url` must be https for `env`.
+   */
+  partition(projectId: string, env: string | null, url: string, token: string | null): string;
+  /** The page script, for reading what made each part of a captured page; null when this build has none. */
+  pageScript(): string | null;
 }
 
 export interface RenderOptions {
@@ -133,6 +143,15 @@ function partitionFor(projectId: string): string {
   return `persist:wanigan-live-${projectId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)}`;
 }
 
+/**
+ * A hosted environment's session: one per environment, never the local site's, and in memory only (no
+ * `persist:`), so nothing it is given outlives the app and no cookie crosses between Local and Live.
+ */
+function hostedPartitionFor(projectId: string, env: string): string {
+  const safe = (v: string): string => v.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+  return `wanigan-live-env-${safe(projectId)}-${safe(env)}`;
+}
+
 function bounds(raw: unknown): LiveBounds | null {
   if (!raw || typeof raw !== 'object') return null;
   const b = raw as Record<string, unknown>;
@@ -149,6 +168,8 @@ export function wireLiveView(options: {
 }): LiveViewWiring {
   let view: WebContentsView | null = null;
   let projectId: string | null = null;
+  /** The hosted environment the view shows; null: the local site. */
+  let env: string | null = null;
   let base: string | null = null;
   let attached = false;
   let lastError: LiveViewState['error'] = null;
@@ -168,24 +189,30 @@ export function wireLiveView(options: {
     if (!w || w.isDestroyed()) return;
     const wc = view?.webContents;
     const state: LiveViewState = wc && !wc.isDestroyed() ? {
-      projectId, url: wc.getURL() || base, title: wc.getTitle(), loading: wc.isLoading(),
+      projectId, env, url: wc.getURL() || base, title: wc.getTitle(), loading: wc.isLoading(),
       canGoBack: wc.navigationHistory.canGoBack(), canGoForward: wc.navigationHistory.canGoForward(), error: lastError,
       logged: logged.length,
-    } : { projectId: null, url: null, title: '', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 };
+    } : { projectId: null, env: null, url: null, title: '', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 };
     w.webContents.send('live:state', state);
   };
 
   /**
    * Lock a project's session down once: no permissions, no downloads, no new
    * windows. Certificates are Chromium's verdict, except that one the owner's
-   * own mkcert authority issued for this project's site is trusted here.
+   * own mkcert authority issued for this project's site is trusted here. A hosted environment's session gets
+   * none of that: Chromium's own certificate verdict, no token, and only requests that cannot change a site.
    */
-  const prepare = (ses: Session, partition: string, id: string): void => {
+  const prepare = (ses: Session, partition: string, id: string, hosted = false): void => {
     if (prepared.has(partition)) return;
     prepared.add(partition);
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     ses.setPermissionCheckHandler(() => false);
     ses.on('will-download', (event) => event.preventDefault());
+    if (hosted) {
+      // Read-only: a form cannot be sent and nothing can be saved from here; what a page loads by POST stays empty.
+      ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) }));
+      return;
+    }
     // The helper's token goes with the pages the view itself loads (and its frames), never with the page's own
     // fetches: a script on the page cannot borrow it to call the helper.
     ses.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -241,6 +268,7 @@ export function wireLiveView(options: {
     }
     view = null;
     projectId = null;
+    env = null;
     base = null;
     attached = false;
     covered = false;
@@ -248,10 +276,10 @@ export function wireLiveView(options: {
     logged = [];
   };
 
-  const create = (id: string): WebContentsView => {
-    const partition = partitionFor(id);
+  const create = (id: string, hosted: string | null): WebContentsView => {
+    const partition = hosted ? hostedPartitionFor(id, hosted) : partitionFor(id);
     const ses = session.fromPartition(partition);
-    prepare(ses, partition, id);
+    prepare(ses, partition, id, hosted !== null);
     const v = new WebContentsView({
       webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, spellcheck: false },
     });
@@ -298,19 +326,23 @@ export function wireLiveView(options: {
 
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
 
-  ipcMain.handle('live:show', async (event, rawProject: unknown, rawUrl: unknown, rawBounds: unknown, rawToken: unknown) => {
+  ipcMain.handle('live:show', async (event, rawProject: unknown, rawUrl: unknown, rawBounds: unknown, rawToken: unknown, rawEnv: unknown) => {
     if (!ok(event)) return false;
-    if (typeof rawProject === 'string' && rawProject) {
+    const hosted = envId(rawEnv);
+    if ((rawEnv !== null && rawEnv !== undefined && !hosted)) return false;
+    // The helper's token is the local site's: a hosted environment never sees it, nor changes what the local view keeps.
+    if (typeof rawProject === 'string' && rawProject && !hosted) {
       if (typeof rawToken === 'string' && /^[0-9a-f]{16,128}$/.test(rawToken)) tokens.set(rawProject, rawToken); else tokens.delete(rawProject);
     }
     const w = options.window();
-    const url = liveUrl(rawUrl);
+    const url = hosted ? hostedPage(rawUrl) : liveUrl(rawUrl);
     const b = bounds(rawBounds);
     if (!w || w.isDestroyed() || typeof rawProject !== 'string' || !rawProject || !url || !b) return false;
-    if (projectId !== rawProject) {
+    if (projectId !== rawProject || env !== hosted) {
       drop();
-      view = create(rawProject);
+      view = create(rawProject, hosted);
       projectId = rawProject;
+      env = hosted;
     }
     const v = view as WebContentsView;
     if (!attached) { w.contentView.addChildView(v); attached = true; }
@@ -319,7 +351,7 @@ export function wireLiveView(options: {
     covered = false;
     if (!base || !sameSite(base, url) || !v.webContents.getURL()) {
       base = url;
-      hosts.set(rawProject, new URL(url).hostname);
+      if (!hosted) hosts.set(rawProject, new URL(url).hostname);
       lastError = null;
       void v.webContents.loadURL(url).catch(() => {});
     }
@@ -402,7 +434,7 @@ export function wireLiveView(options: {
   ipcMain.handle('live:cancelPick', async (event) => { if (options.trusted(event)) await run('window.__wl && window.__wl.cancelPick()', null); });
   // The site helper's own routes, asked through the view's session (so as the user logged in there), with the token.
   ipcMain.handle('live:helper', async (event, action: unknown, rawBody: unknown) => {
-    if (!ok(event) || !view || !base || !projectId) return null;
+    if (!ok(event) || !view || !base || !projectId || env) return null;
     const token = tokens.get(projectId);
     if (!token) return null;
     const origin = new URL(view.webContents.getURL() || base).origin;
@@ -438,7 +470,7 @@ export function wireLiveView(options: {
   ipcMain.handle('live:mutations', async (event) => (ok(event) ? run<number>('window.__wl ? window.__wl.mutations() : 0', 0) : 0));
   ipcMain.handle('live:picked', async (event) => (ok(event) ? run<LivePick | null>('window.__wl ? window.__wl.picked() : null', null) : null));
   ipcMain.handle('live:style', async (event, raw: unknown) => {
-    if (!ok(event) || !raw || typeof raw !== 'object') return null;
+    if (!ok(event) || env || !raw || typeof raw !== 'object') return null;
     const values = Object.fromEntries(Object.entries(raw as Record<string, unknown>)
       .filter((e): e is [string, string] => /^[a-z-]{1,40}$/.test(e[0]) && typeof e[1] === 'string' && STYLE_VALUE.test(e[1]))
       .slice(0, 30));
@@ -446,7 +478,7 @@ export function wireLiveView(options: {
   });
   ipcMain.handle('live:unstyle', async (event) => (ok(event) ? run<Record<string, string> | null>('window.__wl ? window.__wl.unstyle() : null', null) : null));
   ipcMain.handle('live:editText', async (event) => {
-    if (!ok(event)) return null;
+    if (!ok(event) || env) return null;
     view?.webContents.focus();
     return run<{ before: string; after: string } | null>('window.__wl ? window.__wl.editText() : null', null);
   });
@@ -601,5 +633,18 @@ export function wireLiveView(options: {
     };
   };
 
-  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null) };
+  const partitionOf = (id: string, hosted: string | null, url: string, token: string | null): string => {
+    if (hosted) {
+      const partition = hostedPartitionFor(id, hosted);
+      prepare(session.fromPartition(partition), partition, id, true);
+      return partition;
+    }
+    const partition = partitionFor(id);
+    prepare(session.fromPartition(partition), partition, id);
+    if (!hosts.has(id)) hosts.set(id, new URL(url).hostname);
+    if (token && /^[0-9a-f]{16,128}$/.test(token)) tokens.set(id, token);
+    return partition;
+  };
+
+  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script };
 }

@@ -28,6 +28,7 @@ import type { Skills } from './skills.ts';
 import { skillsHandlers } from './skills-handlers.ts';
 import type { Live } from './live.ts';
 import type { LiveAgent } from './live-agent.ts';
+import type { LiveEnvironments } from './live-envs.ts';
 import type { Mcp } from './mcp.ts';
 import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
@@ -61,7 +62,7 @@ export function createHandlers(
   chat: Chat,
   more: {
     skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints;
-    local: LocalModels; phone: Phone; live: Live; liveAgent: LiveAgent; boardViews: BoardViews;
+    local: LocalModels; phone: Phone; live: Live; liveAgent: LiveAgent; boardViews: BoardViews; liveEnvs: LiveEnvironments;
   },
 ): Handlers {
   /** The project a caller may touch: any for the owner, its own for a session. */
@@ -321,6 +322,11 @@ export function createHandlers(
     'live.host': () => ({ ok: true }),
     'live.answer': (p) => more.liveAgent.answer(p),
     'live.looks': (p) => more.liveAgent.looks(p),
+    'live.envs': (p) => more.liveEnvs.list(str(p.projectId, 'project')),
+    'live.setEnv': (p) => more.liveEnvs.set(str(p.projectId, 'project'), { id: p.id, name: p.name, url: p.url }),
+    'live.removeEnv': (p) => more.liveEnvs.remove(str(p.projectId, 'project'), str(p.id, 'environment')),
+    'live.mask': (p) => more.liveEnvs.mask(str(p.projectId, 'project'), { path: p.path, width: p.width, rect: p.rect, label: p.label }),
+    'live.unmask': (p) => more.liveEnvs.unmask(str(p.projectId, 'project'), str(p.id, 'area')),
     'sessions.models': (p) => more.models.catalogue(oneOf(p.provider, PROVIDERS, 'agent'), p.accountId ? str(p.accountId, 'account') : null, p.projectId ? str(p.projectId, 'project') : null),
     'sessions.input': (p) => { sessions.input(str(p.id, 'session'), p.data); return { ok: true }; },
     'sessions.resize': (p) => { sessions.resize(str(p.id, 'session'), p.cols, p.rows); return { ok: true }; },

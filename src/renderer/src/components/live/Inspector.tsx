@@ -23,7 +23,7 @@ const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contr
 
 const near = (root: string, abs: string): string => (abs.startsWith(`${root}/`) ? abs.slice(root.length + 1) : abs);
 
-export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, onSelect, onClose, onSaved }: {
+export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose, onSaved }: {
   project: ProjectSummary;
   platform: LivePlatform | null;
   selection: Selection;
@@ -37,6 +37,8 @@ export function Inspector({ project, platform, selection, regions, components, d
   prefer: string | null;
   /** The site has Wanigan's helper: fields can be saved and pieces shown alone. */
   helper: boolean;
+  /** A hosted environment: point at parts and tell an agent, but nothing here changes the site. */
+  readOnly?: boolean;
   onSelect: (region: LiveRegion) => void;
   onClose: () => void;
   /** Words were saved: the page should show them. */
@@ -106,7 +108,7 @@ export function Inspector({ project, platform, selection, regions, components, d
         <p className="faint small">Nothing around it says what made it. Notes still tell an agent where it is on the page.</p>
       )}
 
-      {admin || content || alone.length ? (
+      {!readOnly && (admin || content || alone.length) ? (
         <section className="live-section" aria-label="Change it in the site">
           <h3 className="live-section-title">In the site</h3>
           {content?.e ? <p className="small">Shows {content.e.type.replace(/_/g, ' ')} {content.e.id}{content.e.bundle ? ` (${content.e.bundle.replace(/_/g, ' ')})` : ''}.</p> : null}
@@ -123,7 +125,7 @@ export function Inspector({ project, platform, selection, regions, components, d
         </section>
       ) : null}
 
-      {pick && live ? (
+      {pick && live && !readOnly ? (
         <section className="live-section" aria-label="Change it by hand">
           <h3 className="live-section-title">By hand</h3>
           <div className="live-actions">

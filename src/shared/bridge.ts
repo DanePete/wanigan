@@ -1,6 +1,7 @@
 // What the renderer can reach: `window.wanigan`. In the app it is the preload
 // bridge; in the browser test harness it is the same shape over HTTP.
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
+import type { CompareWidth } from './live-compare.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -30,6 +31,8 @@ export interface LiveBounds { x: number; y: number; width: number; height: numbe
 /** What the live view is showing, as the app reports it. */
 export interface LiveViewState {
   projectId: string | null;
+  /** The hosted environment shown (read-only, in its own private session); null or absent: the local site. */
+  env?: string | null;
   url: string | null;
   title: string;
   loading: boolean;
@@ -43,6 +46,41 @@ export interface LiveViewState {
 
 export type LiveTone = 'edit' | 'hover' | 'pick';
 
+/** A full-page picture of one page, taken for a comparison. */
+export interface LiveCompareRequest {
+  projectId: string;
+  /** The page, on the local site or on the hosted environment. */
+  url: string;
+  /** The hosted environment's id; null for the local site. */
+  env: string | null;
+  /** CSS pixels wide. */
+  width: CompareWidth;
+  /** The local site helper's token (never sent to a hosted environment). */
+  token: string | null;
+  /** Also read what made each part of the page (the local side, to name what changed). */
+  scan: boolean;
+}
+
+export type LiveCompareShot =
+  | {
+    /** PNG, base64. */
+    data: string;
+    /** Pixels of the image (the CSS size times the screen's scale). */
+    width: number;
+    height: number;
+    cssWidth: number;
+    /** How tall the page is, in CSS pixels, up to the limit. */
+    cssHeight: number;
+    /** The page was taller than the limit and is shown down to it. */
+    cut: boolean;
+    /** The address the page ended up at, after any redirect. */
+    url: string;
+    /** The HTTP status the page answered with (0 when unknown). */
+    status: number;
+    regions: LiveRegion[];
+  }
+  | { error: string };
+
 /**
  * The live view: the owner's local site laid over a placeholder in the window.
  * In the app the main process owns it (src/main/live-view.ts); the UI sweep's
@@ -51,9 +89,10 @@ export type LiveTone = 'edit' | 'hover' | 'pick';
 export interface LiveBridge {
   /**
    * Show a project's site over the placeholder. False when the live view is off or the address is refused.
-   * `token` is the site helper's, sent with the view's own page loads to that site.
+   * `token` is the site helper's, sent with the view's own page loads to that site. `env` shows a hosted
+   * environment instead: https only, read-only, in its own private session, never with a token.
    */
-  show(projectId: string, url: string, bounds: LiveBounds, token?: string | null): Promise<boolean>;
+  show(projectId: string, url: string, bounds: LiveBounds, token?: string | null, env?: string | null): Promise<boolean>;
   /** The placeholder moved or changed size. */
   bounds(bounds: LiveBounds): void;
   hide(): Promise<void>;
@@ -96,6 +135,8 @@ export interface LiveBridge {
   helperChanged(): Promise<number | null>;
   /** Save words to a plain text field through the site helper, as the user logged in in the view. */
   helperSave(field: string, before: string, after: string): Promise<{ ok: boolean; error: string | null; label: string | null }>;
+  /** A full-page picture of a page, local or hosted, at a comparison's width, in a hidden window. */
+  compareShot(request: LiveCompareRequest): Promise<LiveCompareShot>;
   /** Whether this build carries the page script (regions, outlines, picking). */
   hasScript(): Promise<boolean>;
   onState(listener: (state: LiveViewState) => void): () => void;

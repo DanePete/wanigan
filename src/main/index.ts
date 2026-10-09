@@ -10,6 +10,7 @@ import { corePaths } from '../core/paths.ts';
 import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
+import { wireLiveCompare } from './live-compare.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
@@ -128,6 +129,8 @@ function wireBridge(): void {
   // Switching the live view off takes it away at once, not at the next navigation.
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;
+  // Pictures for Compare (local against a hosted environment): only on the owner's click.
+  wireLiveCompare({ trusted, enabled: () => appSettings?.store.get().liveView === true, view: () => liveView });
   const shots = wireLiveShots({ client: () => core.get(), settings: () => appSettings?.store.get() ?? null, shoot: (...a) => view.shoot(...a) });
   // Agents' looks at the live view (wanigan mcp), relayed by the core: answered from a hidden window, never the owner's view.
   const agentLooks = wireLiveAgent({

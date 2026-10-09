@@ -467,6 +467,36 @@ export const MIGRATIONS: readonly string[] = [
   -- that one began.
   ALTER TABLE sessions ADD COLUMN relayed INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- A site's hosted environments (Dev, Test, Live), kept by the owner: tabs in
+  -- the live view, opened read-only. "found" says which file of the project
+  -- named the address; null when the owner typed it. And the parts of a page
+  -- the owner told comparisons to ignore (a carousel, a timestamp): a
+  -- rectangle of the local page at one width, on one page (path) or every page.
+  CREATE TABLE live_envs (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    name       TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    found      TEXT,
+    position   INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX live_envs_by_project ON live_envs (project_id, position);
+  CREATE TABLE live_masks (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    path       TEXT,
+    width      INTEGER NOT NULL,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    w          INTEGER NOT NULL,
+    h          INTEGER NOT NULL,
+    label      TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX live_masks_by_project ON live_masks (project_id, created_at);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

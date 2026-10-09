@@ -144,6 +144,32 @@ WordPress and other sites can each be on or off.
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
   as wrong (its own error messages, its console).
+- **Local and Live.** Tabs beside Local for the site's hosted environments
+  (Dev, Test, Live, as the host names them), each showing the same page. Found
+  in the project's own files (Drush and WP-CLI aliases, ddev's and Lando's
+  Pantheon settings with `pantheon.yml`, Stage File Proxy's origin, environment
+  variables in ddev or compose files, a README's tables), each saying which
+  file; only the ones you keep (or type) become tabs. A hosted environment is
+  **read-only**: its own private session (no cookies shared with your local
+  site), never the helper's token, its certificate checked as any browser
+  would, and only requests that read (GET, HEAD, OPTIONS), so no form can be
+  sent and nothing in the view can change it (what a page loads by POST stays
+  empty); no hand edits and no helper there. Pointing at parts and notes still
+  work.
+- **Compare.** The page you are on, taken whole on Local and on a hosted
+  environment at the same width (phone, tablet or desktop), lined up row by row
+  so a section only one side has is a striped band rather than everything below
+  it marked as changed. Slider, onion skin, difference, flip and side by side;
+  each changed area boxed, counted and named by the local part it overlaps.
+  Keys: ← → or Space flip, S O D T for the modes, J and K for the next and
+  previous change, 1 2 3 for the widths, I to ignore a change (a slideshow, a
+  clock), remembered for the site. Content that differs usually means the local
+  database is older, not that the code changed, and it says so.
+- **What reaches a hosted site.** Opening a hosted environment's tab, or
+  pressing Compare, sends requests to that site, only when you do it. Wanigan
+  asks it for nothing in the background (while its tab is open, the page loads
+  what it loads, as in any browser), and the local site's helper token never
+  goes there.
 - **Agents see it too.** Every agent session is handed Wanigan's own MCP
   server, `wanigan mcp`, with six read-only tools: `live_status`, `live_look`
   (a page and its parts, named the way Layers names them, with a picture only
@@ -484,6 +510,10 @@ verification results and the behavior that remains unverified.
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.
+- Local and Live: finding environments, keeping them, the lining-up and
+  difference maths and the viewer (with two pictures the UI sweep draws) are
+  tested. Opening a real hosted site in its tab and taking both pictures in the
+  app's hidden windows have not been seen end to end yet.
 - On your phone: proven in a phone-sized browser against the real phone
   gateway, with a stand-in Tailscale. A real phone through a real Tailscale
   address, and a notification arriving on one, have not been seen yet: a Mac

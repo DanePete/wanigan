@@ -19,6 +19,7 @@ import { Reviews } from './review.ts';
 import { Phone, type PhoneOptions } from './phone/phone.ts';
 import { Live } from './live.ts';
 import { LiveAgent } from './live-agent.ts';
+import { LiveEnvironments } from './live-envs.ts';
 import { LocalModels, type LocalModelsOptions } from './local-models.ts';
 import { Models, type CodexModelReader } from './models.ts';
 import { Tokens } from './tokens.ts';
@@ -201,6 +202,7 @@ export class Core {
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
         attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live, liveAgent: this.liveAgent,
         boardViews: new BoardViews(ctx, this.board),
+        liveEnvs: new LiveEnvironments(ctx, this.board),
       });
       this.server = new CoreServer({
         socketPath: this.paths.socket,
