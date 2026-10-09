@@ -39,7 +39,11 @@ export type LayerChange =
   | { type: 'style'; values: Partial<Record<LayerProperty, string>> }
   | { type: 'token'; name: string; value: string }
   | { type: 'text'; value: string }
-  | { type: 'image'; asset: string; alt: string | null };
+  | { type: 'image'; asset: string; alt: string | null }
+  /** A component, block or pattern from the site's palette, at a place in a collection, with the props chosen for it. */
+  | { type: 'insert'; entry: string; collection: string; index: number; props: Record<string, string | number | boolean> }
+  /** The placed item the target names, taken out of its collection (never deleted). */
+  | { type: 'remove'; collection: string };
 
 export type LayerState = 'draft' | 'implemented' | 'verified' | 'retired' | 'orphaned';
 
@@ -165,7 +169,27 @@ function layerChange(raw: unknown): LayerChange | string {
       if (typeof c.asset !== 'string' || !/^[a-f0-9]{16,64}\.(?:jpe?g|png|webp|gif|avif|svg)$/.test(c.asset)) return 'An image change needs an asset Wanigan keeps.';
       return { type: 'image', asset: c.asset, alt: typeof c.alt === 'string' ? c.alt.slice(0, 1000) : null };
     }
-    default: return 'A change is style, token, text or image.';
+    case 'insert': {
+      const ref = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 && v.length <= 200 && !/[\u0000-\u001f]/.test(v) ? v : null);
+      const entry = ref(c.entry), collection = ref(c.collection);
+      if (!entry || !collection) return 'An insert needs the palette entry and the collection it goes into.';
+      if (!Number.isInteger(c.index) || (c.index as number) < 0 || (c.index as number) > 10_000) return 'An insert needs the place in its collection.';
+      const props: Record<string, string | number | boolean> = {};
+      if (c.props && typeof c.props === 'object') {
+        for (const [k, v] of Object.entries(c.props as Record<string, unknown>).slice(0, 100)) {
+          if (!/^[a-z_][a-z0-9_]{0,63}$/i.test(k)) return `${k.slice(0, 60)} is not a prop name.`;
+          if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) props[k] = v;
+          else if (typeof v === 'string' && v.length <= 10_000) props[k] = v;
+          else return `The prop ${k} is not a string, number or yes/no.`;
+        }
+      }
+      return { type: 'insert', entry, collection, index: c.index as number, props };
+    }
+    case 'remove': {
+      const collection = typeof c.collection === 'string' && c.collection.length > 0 && c.collection.length <= 200 ? c.collection : null;
+      return collection ? { type: 'remove', collection } : 'A removal needs the collection the item is taken out of.';
+    }
+    default: return 'A change is style, token, text, image, insert or remove.';
   }
 }
 

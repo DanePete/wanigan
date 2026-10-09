@@ -76,3 +76,18 @@ test('a value that slipped past the edit check still cannot break out of the she
   const css = compileLayer([edit({ id: 'e1', change: { type: 'style', values: { color: 'red; } body { display: none' } } })], []);
   assert.equal(css, '');
 });
+
+test('adding and removing a component are edits too, checked like the rest', () => {
+  const at = { kind: 'component', name: 'acme:card', path: [2] };
+  const insert = layerEdit({ id: 'e1', target: at, scope: 'this', breakpoint: 'all', change: { type: 'insert', entry: 'sdc:acme:card', collection: 'c.lb.node-12.0.first', index: 1, props: { heading: 'Paddles', featured: true, columns: 3 } } });
+  assert.equal(insert.refused, null);
+  assert.deepEqual(insert.edit?.change, { type: 'insert', entry: 'sdc:acme:card', collection: 'c.lb.node-12.0.first', index: 1, props: { heading: 'Paddles', featured: true, columns: 3 } });
+  const why = (change: unknown): string => layerEdit({ id: 'e1', target: at, scope: 'this', breakpoint: 'all', change }).refused ?? '';
+  assert.match(why({ type: 'insert', entry: 'sdc:acme:card', collection: 'c1', index: -1 }), /place/);
+  assert.match(why({ type: 'insert', entry: 'sdc:acme:card', collection: 'c1', index: 0, props: { 'bad name': 'x' } }), /not a prop name/);
+  assert.match(why({ type: 'insert', entry: 'sdc:acme:card', collection: 'c1', index: 0, props: { items: ['a'] } }), /not a string, number or yes\/no/);
+  assert.equal(layerEdit({ id: 'e2', target: at, scope: 'this', breakpoint: 'all', change: { type: 'remove', collection: 'c.r.sidebar' } }).refused, null);
+  assert.match(why({ type: 'remove' }), /collection/);
+  // Neither is CSS: the preview sheet leaves them to the page script.
+  assert.equal(compileLayer([layerEdit({ id: 'e2', target: at, scope: 'this', breakpoint: 'all', change: { type: 'remove', collection: 'c.r.sidebar' } }).edit as LayerEdit], []), '');
+});
