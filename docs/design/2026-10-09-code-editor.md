@@ -6,7 +6,9 @@ highlighting, save, and watch the page follow. It also opens from the Changes
 view, from a turn's diff, and with ⌘P anywhere in a project.
 
 Asked for by the owner on 9 October 2026, with breadcrumbs and Back and
-Forward added the same day ("so you can go back and forth easier").
+Forward added the same day ("so you can go back and forth easier"), and the
+same day again as a **Code** tab in a project's tab bar, not only behind ⌘J,
+⌘P and the Edit buttons.
 
 ## The editor: CodeMirror 6
 
@@ -134,6 +136,61 @@ files) and `git`, so Changes refetches.
   is saved or thrown away, and comes back when the file opens again (with
   Compare when the file changed meanwhile).
 
+### The Code tab
+
+A project's tab bar has **Code** after Changes (G then E: E for editor, since
+C is Changes; nothing else after G uses it). It is in `PROJECT_VIEWS`
+(`src/shared/views.ts`), so the router, the G-then-key shortcuts, the shortcut
+sheet, the palette, the app's Go menu and the UI crawl list it on their own.
+
+- **The same editor, never a second.** The tab has no body of its own: the
+  drawer (`EditorDrawer`, mounted once in `App.tsx`) is told it is on the
+  page and fills the project's view area under the project's bar and banners.
+  It is the same React tree in both places (each child keeps its slot), so the
+  CodeMirror view, every open file, its undo history and any unsaved text are
+  the drawer's own. The sweep proves it by the identity of the editor's DOM
+  node across the switch.
+- **The drawer gives way, and comes back as it was.** While the tab shows, the
+  store's `page` flag is on and the drawer's `open` is left alone: opening a
+  file from the tab (the tree, ⌘P, Back) never opens the drawer behind it. On
+  leaving, the drawer is open or closed, as high, docked beneath or beside, as
+  it was before, and scrolled where it was: `CodeSurface` keeps a scroll
+  snapshot per layout, read before the new size is drawn, and puts it back
+  (or, if the text changed meanwhile, keeps the cursor in view). A drawer that
+  was closed while the tab showed opens later with the cursor's line in view,
+  not at the tab's scroll offset, which means nothing at the drawer's height.
+- **The project's files beside it** (`src/renderer/src/editor/FileTree.tsx`):
+  a tree read one folder at a time through `files.dir`, the same call and the
+  same confinement as the breadcrumbs' menus (nothing of git's own, no link
+  out of the root), folders first. Installed code (vendor, node_modules) is
+  listed but quieter, and opens read-only like any other route to it. The tree
+  follows the open file: its root is the checkout that file is in (the
+  project folder or a card's worktree), its folders open and it is scrolled
+  to, and it is marked (`aria-selected`). Open folders are kept per checkout
+  while the window is open, read again when the tab shows, and again when a
+  save, an agent's edit or a git change says something may have been added or
+  removed.
+- **Keys**: the WAI-ARIA tree pattern (one row in the Tab order; ↑ ↓ Home End
+  move; → opens a folder, then steps into it; ← closes it, then steps out).
+  Enter opens a file as ⌘P does, the cursor going into it; Space opens it and
+  keeps the keys in the tree, for looking through files one after another;
+  typing a name jumps to the next row starting with it. A letter typed in the
+  tree is the tree's: it is never also C (a new card) or G then a view.
+- **Nothing open**: one line, "No file open. Find one by name ⌘P, or choose
+  one from the files." Both are buttons; the second puts the keys on the tree.
+- **Everything else as in the drawer**: tabs, Save, Revert, quick open, find,
+  go to line, breadcrumbs, Back and Forward (from the tree too). The drawer's
+  own Dock and Hide buttons are left off the tab: the tab bar is the way out.
+- **⌘J on the Code tab** puts the editor away: back to the view (or session)
+  of this project shown before the tab, the Board if there was none, with the
+  drawer closed. ⌘J means "show or hide the code editor"; on the tab it is
+  shown, so ⌘J hides it, and bringing the drawer up under the view just left
+  would show it again. Pressed again there, ⌘J opens the drawer on the same
+  file, so ⌘J twice moves the file from the tab to the drawer. The place
+  before the tab is remembered by the router (`beforeCode`), per project.
+- **The menu**: Go › Code (G then E) comes from `PROJECT_VIEWS`, after
+  Changes, tested in `src/main/menu.test.ts`; View › Code Editor stays ⌘J.
+
 ### Breadcrumbs, Back and Forward
 
 Above the text: Back, Forward and Recent places, then the file's folders, the
@@ -172,6 +229,7 @@ buttons over it, the two buttons, and a long press or right-click on either
   worked in.
 - **⌘P** (and Go › Open File…, and ⌘K): quick open over the project, or over
   the card's worktree the Changes view shows.
+- **The Code tab**: the project's files beside the editor (above).
 - **`openInEditor({ projectId, cardId?, path, line?, col?, find? })`** from
   `src/renderer/src/editor/store.ts`, for any other surface.
 
@@ -180,7 +238,8 @@ editor convention, and Push still shows what it sends before anything goes.
 
 ## Not built
 
-- Creating, renaming or deleting files from the editor.
+- Creating, renaming or deleting files from the editor or the Code tab's tree.
+- Dragging the tree wider, or hiding it on the tab.
 - Searching the contents of every file (quick open finds files by name).
 - Language servers (go to definition, PHP diagnostics).
 - Two files side by side, or one file in two places.

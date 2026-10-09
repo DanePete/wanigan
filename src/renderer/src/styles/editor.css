@@ -196,6 +196,174 @@
   display: none;
 }
 
+/* ── the Code tab: the same drawer, as the project's view ──────────────── */
+
+/* The project's bar and banners stay; the editor beneath them is the view. */
+.work > .view-code {
+  flex: none;
+}
+
+.editor-drawer[data-mode='page'] {
+  display: grid;
+  flex: 1 1 0;
+  grid-template-columns: var(--code-tree-w) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  border-top: 0;
+}
+
+.editor-drawer[data-mode='page'] > .code-tree {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+.editor-drawer[data-mode='page'] > .editor-head,
+.editor-drawer[data-mode='page'] > .editor-body {
+  grid-column: 2;
+}
+
+/* Nothing open: one line, where the text would be. */
+.code-empty {
+  margin: auto;
+  padding: var(--space-6);
+  color: var(--muted);
+  text-align: center;
+}
+
+.code-empty .keycaps {
+  vertical-align: middle;
+}
+
+.code-tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--rail);
+}
+
+.code-tree-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: calc(var(--space-8) + var(--space-1));
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.code-tree-head .btn-icon {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.code-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font: 600 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-tree-note {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.code-tree-note p {
+  margin: 0;
+}
+
+.code-tree-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.code-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--space-6);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * var(--space-3));
+  color: var(--muted);
+  font: 400 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.code-tree-row:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.code-tree-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--water);
+}
+
+/* The file open in the editor. */
+.code-tree-row.open-file {
+  background: var(--water-soft);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--water);
+}
+
+.code-tree-row.open-file:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--water);
+}
+
+/* Installed code (vendor, node_modules): listed, quieter; it opens read-only. */
+.code-tree-row.installed {
+  color: var(--faint);
+}
+
+.code-tree-twist {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--space-3);
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.code-tree-row[aria-expanded='true'] > .code-tree-twist {
+  transform: rotate(90deg);
+}
+
+.code-tree-icon {
+  flex: none;
+  color: var(--faint);
+}
+
+.code-tree-row.open-file .code-tree-icon {
+  color: var(--water);
+}
+
+.code-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-tree-aside {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
 /* Closed with files still open: one line that brings it back. */
 .editor-collapsed {
   display: flex;

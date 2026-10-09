@@ -30,9 +30,12 @@ test('the Go menu has every view, each with its chord', () => {
   const go = menu('Go');
   const want: Record<string, string> = {
     'Needs You': 'G then N', Running: 'G then R', Board: 'G then B', List: 'G then L', Sessions: 'G then S',
-    Changes: 'G then C', Decisions: 'G then D', Activity: 'G then A',
+    Changes: 'G then C', Code: 'G then E', Decisions: 'G then D', Activity: 'G then A',
   };
   for (const [label, sublabel] of Object.entries(want)) assert.equal(find(label, go).sublabel, sublabel, label);
+  // The project's views in the tab bar's order, Code after Changes, read from the one list of views.
+  const views = go.map((i) => i.label).filter((l) => ['Board', 'List', 'Sessions', 'History', 'Changes', 'Code', 'Decisions', 'Activity'].includes(l ?? ''));
+  assert.deepEqual(views, ['Board', 'List', 'Sessions', 'History', 'Changes', 'Code', 'Decisions', 'Activity']);
   find('Accounts', go);
   find('Settings', go);
   assert.equal(find('Page of the Site…', go).accelerator, 'CmdOrCtrl+Shift+Space');
@@ -40,7 +43,8 @@ test('the Go menu has every view, each with its chord', () => {
   assert.equal(find('Orbit API (OA)', go).accelerator, 'CmdOrCtrl+2');
   click(find('Needs You', go));
   click(find('Orbit API (OA)', go));
-  assert.deepEqual(sent, ['command go-needs', 'go #/p/OA/board']);
+  click(find('Code', go));
+  assert.deepEqual(sent, ['command go-needs', 'go #/p/OA/board', 'command go-code']);
 });
 
 test('only the first nine projects get a chord', () => {

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { CardStatus } from '@shared/model';
 import { useOrbLabRoute } from './orb/lab-route';
 import { bridge, useQuery } from './lib/api';
-import { LIVE_VIEW, PROJECT_VIEWS, gitHref, href, navigate, openCard, parse, useLocation, type Route } from './lib/router';
+import { LIVE_VIEW, PROJECT_VIEWS, beforeCode, gitHref, href, navigate, openCard, parse, useLocation, type Route } from './lib/router';
 import { INTENT_TAB, requestGit, type GitIntent } from './lib/git-intent';
 import { Rail } from './shell/Rail';
 import { useRail } from './lib/rail';
@@ -30,7 +30,7 @@ import { GoToHost } from './components/live/GoTo';
 import { openGoTo } from './lib/live-goto';
 import { ShortcutSheet } from './dialogs/ShortcutSheet';
 import { EditorDrawer } from './editor/EditorDrawer';
-import { openQuickOpen, toggleEditor } from './editor/store';
+import { openQuickOpen, setEditorOpen, toggleEditor } from './editor/store';
 import { COMMAND_IDS, matchKey, type CommandId } from '@shared/shortcuts';
 import { windowTitle } from '@shared/views';
 
@@ -150,8 +150,9 @@ function Shell() {
           <Missing loading={projects.loading} what="this session" />
         )}
         </ViewBoundary>
+        {/* On the project's Code tab this same drawer is the view (the project's bar above it): one editor, never a second. */}
         <ViewBoundary name="The code editor" compact>
-          <EditorDrawer project={project ?? null} />
+          <EditorDrawer project={project ?? null} page={route.name === 'project' && route.view === 'code'} />
         </ViewBoundary>
         </div>
       </main>
@@ -239,10 +240,19 @@ function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
         openQuickOpen(shown.route.name === 'project' && shown.route.view === 'changes' ? shown.branch : null);
         return true;
       }
-      case 'toggle-editor':
-        if (!currentProject()) return false;
+      case 'toggle-editor': {
+        const current = currentProject();
+        if (!current) return false;
+        const shown = parse(location.hash).route;
+        if (shown.name === 'project' && shown.view === 'code') {
+          // On the Code tab the editor is the view, so ⌘J puts it away: back to where you were, the drawer closed.
+          setEditorOpen(false);
+          location.hash = beforeCode(current);
+          return true;
+        }
         toggleEditor();
         return true;
+      }
       case 'live-goto':
         // A page of the open project's site (components/live/GoTo.tsx); the same chord closes it.
         if (!currentProject()) return false;

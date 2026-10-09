@@ -36,7 +36,7 @@ const GIT_ICON: Record<GitCommandId, IconName> = {
 };
 
 const VIEW_ICON: Record<ProjectView, IconName> = {
-  board: 'board', list: 'list', sessions: 'sessions', history: 'history', changes: 'file', decisions: 'decisions', activity: 'activity', live: 'live',
+  board: 'board', list: 'list', sessions: 'sessions', history: 'history', changes: 'file', code: 'code', decisions: 'decisions', activity: 'activity', live: 'live',
 };
 
 /** What agents said, searched by the core once three characters are typed and typing pauses. */

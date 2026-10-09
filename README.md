@@ -255,13 +255,20 @@ throwaway home, against the real `wanigan mcp`:
 
 Change files by hand without leaving Wanigan: a drawer beneath the view (or
 beside it) with a real editor, CodeMirror 6, loaded the first time you open a
-file.
+file. The project's **Code** tab (G then E) shows the same editor as the whole
+view, beside the project's files.
 
 - **Opens from where you are.** ⌘P finds any file in the project by a few
   letters of its name or path (`name:42` for a line). **Edit** on a file in
   Changes or in a turn's diff; **Edit code** on a part picked in the live view
   opens its template where it writes the words you picked. ⌘J shows or hides
   the drawer.
+- **The Code tab.** The project's folders as a tree beside the editor, read a
+  folder at a time, with the open file marked; arrows walk it, Enter opens a
+  file, Space opens it and keeps your place in the tree, typing a name jumps to
+  it. It is the drawer's own editor and files, not a second one: the drawer
+  steps aside while the tab shows and comes back as you left it. ⌘J on the tab
+  puts the editor away and goes back to the view you came from.
 - **An editor, not a text box.** Highlighting for PHP, Twig (with the HTML,
   CSS and JavaScript around it), CSS and Sass, JavaScript and TypeScript, YAML,
   JSON, Markdown, XML, shell, TOML and .env files; folding, bracket matching,
@@ -421,7 +428,7 @@ Releases), or download the newest from there once.
 | **Needs you** | Permission prompts, reviews, questions from agents, failed or interrupted sessions, usage limits, Claude Code's and Codex's (a Claude Code conversation continues on another account in one click), finished turns: ranked, across every project, and announced in the window or as a notification. Reply to a finished turn or answer a question in place; a permission row shows exactly what is asked, with hidden or lookalike characters spelled out. |
 | **Accounts** | Claude Code and Codex accounts found in supported config locations, with who each is signed in as according to the CLI. Each project picks its own. |
 | **Pause** | Per project: no new sessions or claims, and live agents are asked to wrap up. Nothing running is killed. |
-| **Code editor** | A drawer beneath any project view: open with ⌘P, Edit in Changes or a turn's diff, or Edit code on a part in the live view; breadcrumbs and Back and Forward; a save never lands over an agent's change, and the live view follows it. |
+| **Code editor** | A drawer beneath any project view, or the project's Code tab beside its files: open with ⌘P, the tab's tree, Edit in Changes or a turn's diff, or Edit code on a part in the live view; breadcrumbs and Back and Forward; a save never lands over an agent's change, and the live view follows it. |
 | **Changes** | A project's uncommitted git changes, or everything one card's branch changed: syntax colour for PHP, Twig, YAML, JS/TS, CSS and more, unified or side by side, a Viewed mark per file, J/K between files, and notes on lines sent to the agent as one message. |
 | **Branches** | A card can work on its own branch in its own git worktree, so agents never share a checkout; merge it back with one button that refuses rather than forces. |
 | **AI review** | On request, Claude Code checks a card against its criteria with read-only tools and cites file-and-quote proof; Wanigan checks every quote against the file. Advice only. |

@@ -83,6 +83,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Move to the breadcrumbs', group: 'In the code editor', keys: ['Mod', 'Shift', '.'] },
   { id: null, label: 'Wrap long lines, or not', group: 'In the code editor', keys: ['Alt', 'Z'] },
   { id: null, label: 'Leave the editor', group: 'In the code editor', keys: ['Esc', 'Tab'], sequence: true },
+  // The Code tab's files (editor/FileTree.tsx): arrows walk them, Enter opens a file as ⌘P does, typing jumps to a name.
+  { id: null, label: 'Open a file from the Code tab’s files, keeping the keys there', group: 'In the code editor', keys: ['Space'] },
   // The board handles these itself (views/Board.tsx); they are listed so the sheet is whole.
   { id: null, label: 'Next card down', group: 'On the board', keys: ['J'], alt: [['↓']] },
   { id: null, label: 'Next card up', group: 'On the board', keys: ['K'], alt: [['↑']] },

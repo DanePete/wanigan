@@ -1,9 +1,10 @@
 // The code editor's state in the window: which files are open in each
-// project, which one shows, whether the drawer is open, which are unsaved,
-// and each project's Back and Forward. Plain data with a subscription, so the
-// drawer, the tabs and any surface that opens a file (the live view, Changes,
-// a turn's diff, quick open) share one editor. The editor itself (CodeMirror)
-// loads only when a file is first shown: see code/.
+// project, which one shows, whether the drawer is open, whether the Code tab
+// is showing it instead, which are unsaved, and each project's Back and
+// Forward. Plain data with a subscription, so the drawer, the Code tab, the
+// tabs and any surface that opens a file (the live view, Changes, a turn's
+// diff, quick open, the Code tab's files) share one editor. The editor itself
+// (CodeMirror) loads only when a file is first shown: see code/.
 import { useSyncExternalStore } from 'react';
 import { EMPTY_NAV, canBack, canForward, navBack, navForget, navForward, navGo, navJump, type NavHistory, type NavSpot } from '@shared/nav-history';
 
@@ -53,7 +54,14 @@ interface State {
   tabs: EditorTab[];
   /** The file showing in each project, by key. */
   active: Record<string, string>;
+  /** The drawer is open (beneath or beside a view). */
   open: boolean;
+  /**
+   * A project's Code tab is showing: the editor is the view itself. The drawer
+   * gives way while it shows, and `open` is left as it was, so the drawer comes
+   * back as it was when the tab is left.
+   */
+  page: boolean;
   unsaved: ReadonlySet<string>;
   nav: Record<string, NavHistory>;
   reveal: Reveal | null;
@@ -64,7 +72,7 @@ interface State {
   quick: { cardKey: string | null } | null;
 }
 
-let state: State = { tabs: [], active: {}, open: false, unsaved: new Set(), nav: {}, reveal: null, focusEditor: 0, focusCrumbs: 0, quick: null };
+let state: State = { tabs: [], active: {}, open: false, page: false, unsaved: new Set(), nav: {}, reveal: null, focusEditor: 0, focusCrumbs: 0, quick: null };
 const listeners = new Set<() => void>();
 let seq = 0;
 let surface: SurfaceHandle | null = null;
@@ -96,12 +104,16 @@ export function attachSurface(handle: SurfaceHandle | null): void {
 
 export const currentSurface = (): SurfaceHandle | null => surface;
 
+/** Show the editor: open the drawer, unless the Code tab is showing it already. */
+const shown = (): boolean => (state.page ? state.open : true);
+
 /**
  * Open a file in the code editor, at a line or at some words when given, and
  * show the editor. Any part of the app may call this; it is a jump Back will
- * return from.
+ * return from. The cursor goes into the file unless `focus` is false (the Code
+ * tab's files, opened with Space, keep the keyboard).
  */
-export function openInEditor(target: EditorTarget, { record = true }: { record?: boolean } = {}): void {
+export function openInEditor(target: EditorTarget, { record = true, focus = true }: { record?: boolean; focus?: boolean } = {}): void {
   const key = tabKey(target.projectId, target.cardId ?? null, target.path);
   const tabs = state.tabs.some((t) => t.key === key)
     ? state.tabs
@@ -109,12 +121,12 @@ export function openInEditor(target: EditorTarget, { record = true }: { record?:
   set({
     tabs,
     active: { ...state.active, [target.projectId]: key },
-    open: true,
+    open: shown(),
     reveal: {
       key, line: target.line ?? null, col: target.col ?? null, find: target.find?.trim() || null,
       from: record ? surface?.spot(target.projectId) ?? null : null, record, seq: ++seq,
     },
-    focusEditor: state.focusEditor + 1,
+    focusEditor: state.focusEditor + (focus ? 1 : 0),
   });
 }
 
@@ -147,12 +159,12 @@ export function forgetPlaces(projectId: string, key: string): void {
 }
 
 export function showTab(projectId: string, key: string): void {
-  if (state.active[projectId] === key && state.open) return;
+  if (state.active[projectId] === key && (state.open || state.page)) return;
   const tab = state.tabs.find((t) => t.key === key);
   if (!tab) return;
   // Switching files is a jump too: Back returns to the file before.
   const from = surface?.spot(projectId) ?? null;
-  set({ active: { ...state.active, [projectId]: key }, open: true, reveal: { key, line: null, col: null, find: null, from, record: true, seq: ++seq } });
+  set({ active: { ...state.active, [projectId]: key }, open: shown(), reveal: { key, line: null, col: null, find: null, from, record: true, seq: ++seq } });
 }
 
 /** Close a file's tab (after the drawer has asked about unsaved changes). The next one along shows. */
@@ -182,6 +194,11 @@ export function setEditorOpen(open: boolean): void {
   if (state.open !== open) set({ open });
 }
 
+/** The Code tab shows (or no longer shows) the editor as its view. */
+export function setEditorPage(page: boolean): void {
+  if (state.page !== page) set({ page });
+}
+
 /** ⌘J: show the editor (and put the cursor in it), or hide it. */
 export function toggleEditor(): void {
   if (state.open) { set({ open: false }); return; }
@@ -198,7 +215,7 @@ export function closeQuickOpen(): void {
 }
 
 export function focusBreadcrumbs(): void {
-  set({ open: true, focusCrumbs: state.focusCrumbs + 1 });
+  set({ open: shown(), focusCrumbs: state.focusCrumbs + 1 });
 }
 
 export function revealDone(at: number): void {

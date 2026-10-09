@@ -121,8 +121,10 @@ function plan(w) {
     { name: 'Running › Watch', hash: '#/running', storage: { 'wanigan.running.layout': 'watch' }, ready: '.watch-tile .xterm-rows' },
     ...w.projects.flatMap((p) => PROJECT_VIEWS.map((v) => ({
       name: `${p.name} › ${v.label}`, hash: `#/p/${p.key}/${v.view}`,
-      // The project's own bar (its tabs, Pause, settings) is crawled once, with the board.
-      scope: v.view === 'board' ? 'main .view' : 'main .view-body',
+      // The project's own bar (its tabs, Pause, settings) is crawled once, with the board. The Code tab's
+      // body is the code editor itself, with the project's files beside it (editor/EditorDrawer.tsx).
+      scope: v.view === 'board' ? 'main .view' : v.view === 'code' ? 'main .editor-drawer' : 'main .view-body',
+      ...(v.view === 'code' ? { ready: '.code-tree [role="treeitem"]' } : {}),
     }))),
     // The git workbench's other tabs, a card's own checkout, the merge stopped in NS-13's, and Push.
     { name: `${ns.name} › Changes › Commits`, hash: `#/p/${ns.key}/changes/commits`, scope: 'main .view-body', ready: '.commit-row' },
@@ -655,7 +657,14 @@ function keyChecks(w) {
     'Push the branch (shows what goes first)': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Alt+p'], expect: shows('.dialog .push-commits li') }],
     // The code editor: ⌘P and ⌘J anywhere in a project; the rest with a file open from Changes, the cursor in it.
     'Open a file of the open project': [{ at: board, keys: ['Meta+p'], expect: shows('.quick-open .quick-open-option') }],
-    'Show or hide the code editor': [{ at: board, keys: ['Meta+j'], expect: shows('.editor-drawer:not([hidden])') }],
+    'Show or hide the code editor': [
+      { at: board, keys: ['Meta+j'], expect: shows('.editor-drawer:not([hidden])') },
+      // On the Code tab the editor is the view: ⌘J puts it away, back to the view before (the board, after a reload), the drawer closed.
+      { at: `#/p/${ns}/code`, ready: '.code-tree [role="treeitem"]', keys: ['Meta+j'], expect: focused((b) => location.hash === b && !document.querySelector('.editor-drawer:not([hidden])'), board) },
+    ],
+    'Open a file from the Code tab’s files, keeping the keys there': [{ at: `#/p/${ns}/code`, ready: '.code-tree [role="treeitem"]',
+      setup: async (page) => { await page.focus('.code-tree [data-path="package.json"]'); }, keys: ['Space'],
+      expect: focused(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'package.json' && document.activeElement?.getAttribute('data-path') === 'package.json') }],
     'Save the file': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.type(' '); }, keys: ['Meta+s'], expect: shows('.editor-tab.active:not(.unsaved)') }],
     'Find and replace': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+f'], expect: shows('.cm-panel.cm-search') }],
     'Go to a line': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Control+g'], expect: shows('.cm-panel.cm-goto-line') }],
