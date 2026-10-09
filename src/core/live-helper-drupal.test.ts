@@ -124,3 +124,35 @@ test('every PHP file passes php -l', (t) => {
     }
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
+
+test('a move\'s index is the item\'s place in the target once moved, from 0 to its other items, and nothing past', (t) => {
+  const bin = which('php', process.env.PATH ?? '');
+  if (!bin) { t.skip('PHP is not installed here'); return; }
+  const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-moves-'));
+  try {
+    writeFileSync(join(folder, 'Moves.php'), files['src/Edit/Moves.php'] ?? '');
+    const script = [
+      '<?php',
+      `require ${JSON.stringify(join(folder, 'Moves.php'))};`,
+      'use Drupal\\wanigan_live\\Edit\\Moves;',
+      'echo json_encode([',
+      "  Moves::place(['A', 'B', 'C'], ['A', 'B', 'C'], 'B', 2),",
+      "  Moves::place(['A', 'B', 'C'], ['A', 'B', 'C'], 'B', 0),",
+      "  Moves::place(['X', 'Y'], ['X', 'Y'], 'B', 1),",
+      "  Moves::place(['X', 'Y'], ['X', 'Y'], 'B', 2),",
+      "  Moves::place(['A', 'H', 'B', 'C'], ['A', 'B', 'C'], 'C', 1),",
+      "  Moves::place([], [], 'B', 0),",
+      "  [Moves::placeExists(['A', 'B', 'C'], 'B', 2), Moves::placeExists(['A', 'B', 'C'], 'B', 3), Moves::placeExists(['X', 'Y'], 'B', 2), Moves::placeExists(['X', 'Y'], 'B', 3), Moves::placeExists(['X', 'Y'], NULL, 2), Moves::placeExists(['X', 'Y'], NULL, 3), Moves::placeExists([], 'B', -1)],",
+      ']);',
+    ].join('\n');
+    writeFileSync(join(folder, 'check.php'), script);
+    const [b2, b0, into1, append, hidden, empty, fits] = JSON.parse(execFileSync(bin, [join(folder, 'check.php')], { encoding: 'utf8' })) as unknown[];
+    assert.deepEqual(b2, ['A', 'C', 'B'], 'B to 2 in [A, B, C]');
+    assert.deepEqual(b0, ['B', 'A', 'C'], 'B to 0 in [A, B, C]');
+    assert.deepEqual(into1, ['X', 'B', 'Y'], 'B into [X, Y] at 1');
+    assert.deepEqual(append, ['X', 'Y', 'B'], 'an index equal to the target\'s length appends');
+    assert.deepEqual(hidden, ['A', 'H', 'C', 'B'], 'an item the page does not show keeps its place');
+    assert.deepEqual(empty, ['B'], 'into an empty collection');
+    assert.deepEqual(fits, [true, false, true, false, true, false, false], 'from 0 to the target\'s other items, nothing past');
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});

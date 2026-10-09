@@ -109,8 +109,12 @@ revision the page would not show.
 
 Each move first checks the collection is still as the trace saw it (the full
 order, including items the page does not show) and answers 409 with the
-current order otherwise. Items not shown keep their places: an item moved to
-index N among the shown items goes before the shown item now at N.
+current order otherwise. An index is the item's position in the target
+collection once the move is made, counting from 0: moving B in [A, B, C] to 2
+gives [A, C, B], to 0 gives [B, A, C]; into another collection [X, Y] at 1
+gives [X, B, Y], and at 2 (the number of the target's other items) appends.
+Anything past that is refused (400), as is an insert's index past the
+collection's length. Items the page does not show keep their places.
 
 | Collection | What a move saves |
 |---|---|

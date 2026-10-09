@@ -890,8 +890,8 @@ final class Moves {
     if (!isset($from['items'][$item])) {
       return [404, self::refuse('That is not in this collection.')];
     }
-    if (!is_int($index) || $index < 0) {
-      return [400, self::refuse('Where to? (an index, from 0)')];
+    if (!is_int($index) || !self::placeExists(array_keys($to['items']), $item, $index)) {
+      return [400, self::refuse('That place is not in the collection: an index from 0 to the number of its other items.')];
     }
     $across = $from_id !== $to_id;
     if ($from['kind'] !== $to['kind'] || ($across && !in_array($from['kind'], ['region-blocks', 'menu', 'layout'], TRUE))
@@ -920,8 +920,8 @@ final class Moves {
     if (!$collection || !$entry) {
       return [404, self::refuse('That page has no such collection, or nothing by that name to insert.')];
     }
-    if (!is_int($index) || $index < 0) {
-      return [400, self::refuse('Where? (an index, from 0)')];
+    if (!is_int($index) || !self::placeExists(array_keys($collection['items']), NULL, $index)) {
+      return [400, self::refuse('That place is not in the collection: an index from 0 to the number of its items.')];
     }
     if ($collection['kind'] === 'region-blocks' && $entry['kind'] === 'block') {
       return $this->placeBlock($collection, $entry['plugin'], $index);
@@ -1469,10 +1469,22 @@ final class Moves {
   }
 
   /**
-   * Where an item goes in a full order when it is to be at $index among the
-   * items the page shows; the ones it does not show keep their places.
+   * Whether an index is a place in the target collection once the move is
+   * made: its position there, counting from 0, so from 0 to the number of the
+   * target's other items (which appends). Anything past that is refused.
    */
-  private static function place(array $full, array $shown, string $key, int $index): array {
+  public static function placeExists(array $target_items, ?string $item, int $index): bool {
+    $others = count(array_filter(array_map('strval', $target_items), static fn ($part) => $part !== $item));
+    return $index >= 0 && $index <= $others;
+  }
+
+  /**
+   * Where an item goes in a full order when it is to be at $index among the
+   * items the page shows, once moved (moving B in [A, B, C] to 2 gives
+   * [A, C, B]; into [X, Y] at 1 gives [X, B, Y]); the ones the page does not
+   * show keep their places.
+   */
+  public static function place(array $full, array $shown, string $key, int $index): array {
     $full = array_values(array_filter($full, static fn ($k) => (string) $k !== $key));
     $shown = array_values(array_filter($shown, static fn ($k) => (string) $k !== $key && in_array((string) $k, $full, TRUE)));
     $index = min($index, count($shown));
