@@ -19,7 +19,6 @@ import { CoreError } from '../shared/protocol.ts';
 import type { Board } from './board.ts';
 import { readBoundedFile } from './bounded-file.ts';
 import type { Ctx } from './context.ts';
-import { detect } from './live.ts';
 import { names } from './safe-fs.ts';
 
 const MAX_FILE = 256 * 1024;
@@ -40,9 +39,9 @@ export class LiveEnvironments {
   list(projectId: unknown): LiveEnvs {
     const project = this.project(projectId);
     const envs = this.envs(project.id);
-    const { root, local } = this.local(project);
+    const { root, chosen } = this.local(project);
     const found = detectEnvs(root);
-    const hosts = local.flatMap((u) => { try { return [new URL(u).hostname]; } catch { return []; } });
+    const hosts = chosen ? [new URL(chosen).hostname] : [];
     return {
       projectId: project.id,
       envs,
@@ -61,7 +60,8 @@ export class LiveEnvironments {
     const project = this.project(projectId);
     const name = envName(params.name);
     if (name.refused !== null) throw new CoreError('invalid', name.refused);
-    const url = hostedUrl(params.url);
+    // Typed by the owner, an address on this Mac can be a copy of the site; only the Local tab's own is refused below.
+    const url = hostedUrl(params.url, { onThisMac: true });
     if (url.refused !== null) throw new CoreError('invalid', url.refused);
     const envs = this.envs(project.id);
     const id = params.id === undefined || params.id === null ? null : String(params.id);
@@ -70,8 +70,8 @@ export class LiveEnvironments {
     if (others.some((e) => e.name.toLowerCase() === name.name.toLowerCase())) throw new CoreError('invalid', `There is already an environment called ${name.name}.`);
     const same = others.find((e) => e.url === url.url);
     if (same) throw new CoreError('invalid', `${same.name} already has that address.`);
-    const { root, local } = this.local(project);
-    if (local.some((u) => sameSite(u, url.url))) throw new CoreError('invalid', 'That is the local site’s own address: it is the Local tab.');
+    const { root, chosen } = this.local(project);
+    if (chosen && sameSite(chosen, url.url)) throw new CoreError('invalid', 'That is the Local tab’s own address. A copy of the site on this Mac needs a name of its own (another host name or port).');
     const candidate = detectEnvs(root).find((c) => c.url === url.url);
     const found = candidate ? `${candidate.file}: ${candidate.why}` : null;
     if (id) {
@@ -132,11 +132,13 @@ export class LiveEnvironments {
     return rows.map((r) => ({ id: r.id, path: r.path, width: r.width, rect: { x: r.x, y: r.y, width: r.w, height: r.h }, label: r.label }));
   }
 
-  /** The folder the local site serves, and the local site's own addresses (chosen and found). */
-  private local(project: { id: string; path: string }): { root: string; local: string[] } {
+  /**
+   * The folder the local site serves, and the Local tab's own address. Only that address is not an environment:
+   * another name the project's ddev serves can be a copy of the site with Live's database (the demo sites have one).
+   */
+  private local(project: { id: string; path: string }): { root: string; chosen: string | null } {
     const row = this.ctx.db.prepare('SELECT url, served_path FROM live_sites WHERE project_id = ?').get(project.id) as { url: string | null; served_path: string | null } | undefined;
-    const root = row?.served_path ?? project.path;
-    return { root, local: [...(row?.url ? [row.url] : []), ...detect(root).candidates.map((c) => c.url)] };
+    return { root: row?.served_path ?? project.path, chosen: row?.url ?? null };
   }
 
   private project(id: unknown): { id: string; path: string } {

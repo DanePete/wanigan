@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  composePairs, ddevPantheonProject, drush8Aliases, drushAliases, envName, envRank, envVariables, hostedUrl, isLocalHost,
+  composePairs, ddevPantheonProject, drush8Aliases, drushAliases, envName, envRank, envVariables, hostedUrl, isLocalHost, loopbackAddress,
   landoPantheonSite, pagePath, pantheonEnvs, pantheonSite, rankCandidates, readmeEnvs, samePage, stageFileProxy, wpCliAliases,
 } from './live-envs.ts';
 
@@ -13,9 +13,14 @@ test('a hosted address is https, with no credentials, no query and not this Mac'
   assert.match(hostedUrl('http://www.acme.example').refused ?? '', /must be https/);
   assert.match(hostedUrl('https://editor:hunter2@www.acme.example').refused ?? '', /user name and password/);
   assert.match(hostedUrl('https://www.acme.example/?token=abc').refused ?? '', /query/);
+  // Found in a project's files, an address on this Mac is the local site or a tool's, not another environment.
   for (const local of ['https://localhost:8443', 'https://acme.ddev.site', 'https://acme.lndo.site', 'https://127.0.0.1', 'https://intranet']) {
     assert.match(hostedUrl(local).refused ?? '', /on this Mac/, local);
+    // Typed by the owner, it may be a copy of the site on this Mac (Live's database under another name): the core
+    // refuses only the Local tab's own address.
+    assert.equal(hostedUrl(local, { onThisMac: true }).refused, null, local);
   }
+  assert.match(hostedUrl('http://localhost:8080', { onThisMac: true }).refused ?? '', /must be https/);
   assert.match(hostedUrl('').refused ?? '', /Type/);
   assert.match(hostedUrl('ftp://acme.example').refused ?? '', /https/);
   assert.equal(isLocalHost('dev-acme.pantheonsite.io'), false);
@@ -174,4 +179,19 @@ test('candidates in tab order, one per address, without the local site or what i
   assert.deepEqual(ranked.map((x) => x.name), ['Dev', 'Staging', 'Live', 'Ci'], 'Dev, test stages, Live, then the rest; a kept address is not offered again');
   assert.equal(envRank('Production'), 2);
   assert.deepEqual(rankCandidates([c('Live', 'https://www.acme.example/')], { hosts: ['www.acme.example'], urls: [] }), [], 'the local site’s own host is not hosted');
+});
+
+test('the site’s own domain comes before the address its host gives it', () => {
+  const c = (name: string, url: string, file = 'x') => ({ name, url, file, why: 'test' });
+  // pantheon.yml gives live-acme.pantheonsite.io (often frozen, or redirecting); Stage File Proxy names the real domain.
+  const ranked = rankCandidates([
+    c('Dev', 'https://dev-acme.pantheonsite.io/', 'pantheon.yml'), c('Live', 'https://live-acme.pantheonsite.io/', 'pantheon.yml'),
+    c('Live', 'https://www.acme.example/', 'web/sites/default/settings.local.php'),
+  ], { hosts: [], urls: [] });
+  assert.deepEqual(ranked.map((x) => x.url), ['https://dev-acme.pantheonsite.io/', 'https://www.acme.example/', 'https://live-acme.pantheonsite.io/']);
+});
+
+test('an address is this Mac’s own only when it is loopback', () => {
+  for (const a of ['127.0.0.1', '127.1.2.3', '::1', '[::1]', '::ffff:127.0.0.1']) assert.equal(loopbackAddress(a), true, a);
+  for (const a of ['10.0.0.5', '192.168.1.20', '0.0.0.0', '::', '128.0.0.1', '127.0.0.1.example.com', '::ffff:10.0.0.1', '']) assert.equal(loopbackAddress(a), false, a);
 });

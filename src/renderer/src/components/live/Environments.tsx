@@ -21,7 +21,8 @@ export function useEnvs(projectId: string, on = true): LiveEnvs | null {
 /** What a hosted environment is, in one line: said wherever one can be opened. */
 export const HOSTED_NOTE = 'Opening a hosted environment, or comparing with it, sends requests to that site, only when you do. '
   + 'It opens read-only, in a private session of its own: no cookies shared with your local site, never the helper’s token, '
-  + 'its certificate checked as any browser would, and nothing sent that could change it.';
+  + 'its certificate checked as any browser would (or, for a copy of the site on this Mac, by your own mkcert authority, '
+  + 'as the Local tab is), and nothing sent that could change it.';
 
 export function EnvTabs({ envs, value, onChange }: { envs: readonly LiveEnv[]; value: string | null; onChange: (id: string | null) => void }) {
   const options = [

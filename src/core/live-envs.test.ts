@@ -119,13 +119,13 @@ describe('kept environments', () => {
     await assert.rejects(t.owner.call('live.setEnv', { projectId, id: 'nope', name: 'X', url: 'https://x.acme.example' }), /No such environment/);
   });
 
-  test('only https, no credentials, no query, never this Mac or the local site', async () => {
+  test('only https, no credentials, no query, never the Local tab’s own address', async () => {
     const no = (url: string, why: RegExp) => assert.rejects(t.owner.call('live.setEnv', { projectId, name: 'Other', url }), why);
     await no('http://www.acme.example', /must be https/);
     await no('https://admin:secret@www.acme.example', /user name and password/);
     await no('https://www.acme.example/?key=1', /query/);
-    await no('https://localhost:8443', /on this Mac/);
-    await no('https://acme.ddev.site', /on this Mac/);
+    await no('https://acme.ddev.site', /the Local tab’s own address/);
+    await no('https://ACME.ddev.site/', /the Local tab’s own address/);
     await assert.rejects(t.owner.call('live.setEnv', { projectId, name: 'Local', url: 'https://www.acme.example' }), /Local is the site on this Mac/);
     assert.equal((await t.owner.call('live.envs', { projectId })).envs.length, 3, 'nothing refused was kept');
   });
@@ -162,5 +162,43 @@ describe('kept environments', () => {
       agent.close();
       await t.owner.call('sessions.stop', { id: s.id });
     }
+  });
+});
+
+describe('a copy of the site on this Mac', () => {
+  // Like a project whose ddev also serves a copy with Live's database under another name (the demo sites do).
+  const NORTHWIND: Record<string, string> = {
+    '.ddev/config.yaml': 'name: northwind\ntype: drupal11\ndocroot: web\nadditional_fqdns:\n  - northwind-live.127.0.0.1.nip.io\n',
+    'drush/sites/self.site.yml': 'live:\n  uri: https://northwind-live.127.0.0.1.nip.io\n',
+    'web/core/lib/Drupal.php': '<?php',
+  };
+  let t: TestCore;
+  let projectId: string;
+
+  before(async () => {
+    t = await testCore();
+    for (const [name, text] of Object.entries(NORTHWIND)) {
+      mkdirSync(join(t.projectDir, name, '..'), { recursive: true });
+      writeFileSync(join(t.projectDir, name), text);
+    }
+    projectId = (await t.owner.call('projects.add', { path: t.projectDir })).id;
+    await t.owner.call('live.setSite', { projectId, url: 'https://northwind.ddev.site/' });
+  });
+  after(async () => { await t?.close(); });
+
+  test('is offered and kept: another name the project’s ddev serves, or an address typed on this Mac', async () => {
+    const before = await t.owner.call('live.envs', { projectId });
+    assert.deepEqual(before.candidates.map((c) => [c.name, c.url]), [['Live', 'https://northwind-live.127.0.0.1.nip.io/']], 'the drush alias names it');
+    const kept = await t.owner.call('live.setEnv', { projectId, name: 'Live', url: 'https://northwind-live.127.0.0.1.nip.io/' });
+    assert.deepEqual(kept.envs.map((e) => [e.name, e.url]), [['Live', 'https://northwind-live.127.0.0.1.nip.io/']]);
+    const typed = await t.owner.call('live.setEnv', { projectId, name: 'Copy', url: 'https://localhost:8443' });
+    assert.ok(typed.envs.some((e) => e.name === 'Copy' && e.url === 'https://localhost:8443/'));
+  });
+
+  test('is never the Local tab itself, and still https with nothing secret in the address', async () => {
+    const no = (url: string, why: RegExp) => assert.rejects(t.owner.call('live.setEnv', { projectId, name: 'Other', url }), why);
+    await no('https://northwind.ddev.site/', /the Local tab’s own address/);
+    await no('http://localhost:8080', /must be https/);
+    await no('https://admin:secret@localhost:8443', /user name and password/);
   });
 });
