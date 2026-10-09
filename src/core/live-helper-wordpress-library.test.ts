@@ -132,7 +132,15 @@ function serialize_block($b) {
   return $content === '' ? "<!-- wp:$name $attrs/-->" : "<!-- wp:$name $attrs-->" . $content . "<!-- /wp:$name -->";
 }
 function serialize_blocks($bs) { return implode('', array_map('serialize_block', $bs)); }
-function do_blocks($markup) { return '<div class="rendered">' . htmlspecialchars($markup) . '</div>'; }
+// A dynamic block written as one self-closing comment is rendered by its own callback with no saved markup, as core
+// does; anything else is shown as the markup it is.
+function do_blocks($markup) {
+  if (preg_match('#^<!-- wp:([a-z0-9/-]+)(?: (\{.*\}))? /-->$#', $markup, $m)) {
+    $t = WP_Block_Type_Registry::get_instance()->get_registered($m[1]);
+    if ($t && $t->is_dynamic()) return (string) call_user_func($t->render_callback, isset($m[2]) ? json_decode($m[2], true) : array(), '');
+  }
+  return '<div class="rendered">' . htmlspecialchars($markup) . '</div>';
+}
 // Registries.
 final class WP_Block_Type {
   public $name; public $title = ''; public $category = null; public $description = ''; public $attributes = array(); public $example = null; public $styles = array();
@@ -254,7 +262,9 @@ if (getenv('WL_DO') === 'library') {
 if (getenv('WL_DO') === 'piece') {
   WP_Block_Type_Registry::$types = array(
     'acme/card' => new WP_Block_Type('acme/card', array('title' => 'Card', 'example' => array('attributes' => array('heading' => 'Spring sale'), 'innerBlocks' => array(array('name' => 'core/paragraph', 'attributes' => array('content' => 'Inside')), array('nope' => 1))), 'editor_script_handles' => array('acme-card-editor'))),
-    'acme/latest' => new WP_Block_Type('acme/latest', array('title' => 'Latest', 'render_callback' => function () { return ''; }, 'example' => array('attributes' => array('count' => 3)))),
+    'acme/latest' => new WP_Block_Type('acme/latest', array('title' => 'Latest', 'render_callback' => function ($a) { return '<ul class="latest"><li>' . $a['count'] . ' newest posts</li></ul>'; }, 'example' => array('attributes' => array('count' => 3)))),
+    // Dynamic only in name: its callback reworks the markup its editor script saved, so from attributes alone it is empty.
+    'acme/button' => new WP_Block_Type('acme/button', array('title' => 'Button', 'render_callback' => function ($a, $content) { return str_replace('<a ', '<a data-reworked ', $content); }, 'example' => array('attributes' => array('text' => 'Book a trip')), 'editor_script_handles' => array('acme-button-editor'))),
     'core/paragraph' => new WP_Block_Type('core/paragraph', array('title' => 'Paragraph')),
     'core/block' => new WP_Block_Type('core/block', array('title' => 'Pattern', 'render_callback' => function () { return ''; })),
   );
@@ -270,6 +280,8 @@ if (getenv('WL_DO') === 'piece') {
   };
   $out['pattern'] = $page('pattern:northwind/hero');
   $out['dynamic'] = $page('block:acme/latest');
+  $out['reworks'] = $page('block:acme/button');
+  $out['noExample'] = $page('block:core/paragraph');
   $out['static'] = $page('style:acme/card:outline');
   $out['posted'] = $page('block:acme/card', '<!-- wp:acme/card {"heading":"Spring sale"} --><h3>Spring sale</h3><!-- /wp:acme/card -->');
   $out['other'] = $page('block:acme/card', '<!-- wp:core/html --><script>x</script><!-- /wp:core/html -->');
@@ -368,11 +380,16 @@ describe('version 4 of the WordPress helper, under a stand-in WordPress', { skip
     const [pattern] = out.pattern!;
     assert.match(pattern, /<main class="wanigan-live-piece" data-wanigan-piece="ready" style="padding:24px"><div class="rendered">&lt;!-- wp:paragraph --&gt;&lt;p&gt;Hero/);
     assert.match(pattern, /<!-- head -->.*<body class="wanigan-live-piece error404"><div class="wp-site-blocks">.*<!-- foot -->/s, 'in the theme’s own head and foot');
-    assert.match(out.dynamic![0], /data-wanigan-piece="ready" style="padding:24px"><div class="rendered">&lt;!-- wp:acme\/latest \{&quot;count&quot;:3\} \/--&gt;/, 'core renders a dynamic block from its example’s attributes');
+    assert.match(out.dynamic![0], /data-wanigan-piece="ready" style="padding:24px"><ul class="latest"><li>3 newest posts<\/li><\/ul>/, 'core renders a dynamic block from its example’s attributes');
+    const [reworks, reworkScripts] = out.reworks!;
+    assert.match(reworks, /data-wanigan-piece="serializing"/, 'a callback that only reworks saved markup draws nothing from attributes, so its editor script writes the markup');
+    assert.ok(reworkScripts.includes('acme-button-editor'));
     const [serializing, scripts] = out.static!;
     assert.match(serializing, /data-wanigan-piece="serializing"/);
     assert.match(serializing, /<form id="wanigan-live-serialize" method="post" action="\/_wanigan\/piece\/library" hidden>/);
-    assert.match(serializing, /wp\.blocks\.serialize\(\[make\(\{"name":"acme\/card","attributes":\{"heading":"Spring sale","className":"is-style-outline"\},"innerBlocks":\[\{"name":"core\/paragraph","attributes":\{"content":"Inside"\},"innerBlocks":\[\]\}\]\}\)\]\)/, 'the example with the style’s class, a malformed inner block left out');
+    assert.match(serializing, /wp\.blocks\.serialize\(\[top\(\{"name":"acme\/card","attributes":\{"heading":"Spring sale","className":"is-style-outline"\},"innerBlocks":\[\{"name":"core\/paragraph","attributes":\{"content":"Inside"\},"innerBlocks":\[\]\}\],"jsExample":false,"style":"outline"\}\)\]\)/, 'the example with the style’s class, a malformed inner block left out');
+    assert.match(out.noExample![0], /"name":"core\/paragraph","attributes":\{\},"innerBlocks":\[\],"jsExample":true,"style":null/, 'no example on the server: the page uses the block type’s own, from its editor script');
+    assert.match(out.noExample![0], /wp\.blocks\.getBlockFromExample\(s\.name,t\.example\)/);
     assert.deepEqual(scripts, ['wp-blocks', 'wp-block-library', 'acme-card-editor'], 'core’s block library and the block’s own editor script');
     assert.match(out.posted![0], /data-wanigan-piece="ready" style="padding:24px"><div class="rendered">&lt;!-- wp:acme\/card \{&quot;heading&quot;:&quot;Spring sale&quot;\} --&gt;&lt;h3&gt;Spring sale/, 'the markup posted back is rendered by core');
     assert.match(out.other![0], /data-wanigan-piece="failed".*The markup sent back is not this block\./s, 'only the block asked for is rendered');

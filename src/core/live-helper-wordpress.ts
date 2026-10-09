@@ -3049,13 +3049,27 @@ final class Wanigan_Live {
 			}
 			$markup = $posted;
 		}
-		if ($markup === null && self::server_renders($spec)) $markup = serialize_block(self::spec_block($spec));
+		if ($markup === null && self::server_renders($spec)) {
+			$html = do_blocks(serialize_block(self::spec_block($spec)));
+			// A block whose render callback only reworks its saved markup (core/button adds a class to it) draws nothing
+			// from its attributes alone: its own editor script writes that markup instead, as for a static block.
+			if (self::draws($html)) {
+				self::piece_page($html, null);
+				return;
+			}
+		}
 		if ($markup === null) {
 			self::serialize_page($spec);
 			return;
 		}
 		// Rendered before wp_head(), as a block theme renders its template: what the blocks enqueue is printed.
 		self::piece_page(do_blocks($markup), null);
+	}
+
+	/** Whether rendered markup shows anything: words, or an element that is seen without them. */
+	private static function draws(string $html): bool {
+		if (preg_match('#<(img|svg|video|iframe|picture|canvas|input|button|select|textarea|hr)\b#i', $html)) return true;
+		return trim(html_entity_decode(wp_strip_all_tags($html), ENT_QUOTES)) !== '';
 	}
 
 	/** What an entry renders: a pattern's markup, or a block's name, attributes and inner blocks. */
@@ -3082,7 +3096,8 @@ final class Wanigan_Live {
 		$attrs = isset($example['attributes']) && is_array($example['attributes']) ? $example['attributes'] : array();
 		if ($style !== null) $attrs['className'] = trim((isset($attrs['className']) ? $attrs['className'] . ' ' : '') . 'is-style-' . $style);
 		$inner = isset($example['innerBlocks']) && is_array($example['innerBlocks']) ? self::spec_inner($example['innerBlocks'], 0) : array();
-		return array('name' => $name, 'attributes' => $attrs, 'innerBlocks' => $inner, 'markup' => null);
+		// Many core blocks declare their example only in their editor script, not in block.json: the server has none.
+		return array('name' => $name, 'attributes' => $attrs, 'innerBlocks' => $inner, 'markup' => null, 'example' => is_array($type->example), 'style' => $style);
 	}
 
 	/** An example's inner blocks as name, attributes and inner blocks: bounded, nothing else. */
@@ -3144,14 +3159,17 @@ final class Wanigan_Live {
 			$type = WP_Block_Type_Registry::get_instance()->get_registered($name);
 			if ($type) foreach ((array) $type->editor_script_handles as $handle) wp_enqueue_script($handle);
 		}
-		$data = wp_json_encode(array('name' => $spec['name'], 'attributes' => (object) $spec['attributes'], 'innerBlocks' => self::spec_json($spec['innerBlocks'])), JSON_HEX_TAG | JSON_UNESCAPED_SLASHES);
+		$data = wp_json_encode(array('name' => $spec['name'], 'attributes' => (object) $spec['attributes'], 'innerBlocks' => self::spec_json($spec['innerBlocks']), 'jsExample' => empty($spec['example']), 'style' => isset($spec['style']) ? $spec['style'] : null), JSON_HEX_TAG | JSON_UNESCAPED_SLASHES);
 		$form = '<form id="wanigan-live-serialize" method="post" action="' . esc_url(add_query_arg(array())) . '" hidden><input type="hidden" name="markup" value=""></form><p class="wanigan-live-why" style="font:15px/1.5 system-ui,sans-serif"></p>';
 		$script = '<script>window.addEventListener("load",function(){var main=document.querySelector("[data-wanigan-piece]");'
 			. 'var fail=function(why){main.setAttribute("data-wanigan-piece","failed");var p=document.querySelector(".wanigan-live-why");if(p)p.textContent="This piece did not render on its own. "+why;};'
 			. 'try{if(!window.wp||!wp.blocks)return fail("WordPress’s block scripts did not load here.");'
 			. 'if(!wp.blocks.getBlockType("core/paragraph")&&wp.blockLibrary&&wp.blockLibrary.registerCoreBlocks)wp.blockLibrary.registerCoreBlocks();'
 			. 'var make=function(s){if(!wp.blocks.getBlockType(s.name))throw new Error(s.name+" is not registered by its editor scripts here.");return wp.blocks.createBlock(s.name,s.attributes||{},(s.innerBlocks||[]).map(make));};'
-			. 'var form=document.getElementById("wanigan-live-serialize");form.elements.markup.value=wp.blocks.serialize([make(' . $data . ')]);form.submit();'
+			// No example on the server: the block type's own, as the inserter previews it, with the style asked for in place of its own.
+			. 'var top=function(s){var t=wp.blocks.getBlockType(s.name);if(!s.jsExample||!t||!t.example||!wp.blocks.getBlockFromExample)return make(s);'
+			. 'var b=wp.blocks.getBlockFromExample(s.name,t.example);if(s.style){b.attributes.className=((b.attributes.className||"").replace(/(^|\\s)is-style-\\S+/g,"")+" is-style-"+s.style).trim();}return b;};'
+			. 'var form=document.getElementById("wanigan-live-serialize");form.elements.markup.value=wp.blocks.serialize([top(' . $data . ')]);form.submit();'
 			. '}catch($e){fail(String($e&&$e.message||$e));}});</script>';
 		self::piece_page($form, null, 'serializing', $script);
 	}
