@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LiveSite } from '../shared/live.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer } from '../shared/live-library.ts';
-import { askLibrary, libraryWhy, pictureFile, wireLiveLibrary, type PieceCapture } from './live-library.ts';
+import { askLibrary, captureInWindow, libraryWhy, pictureFile, wireLiveLibrary, type PieceCapture } from './live-library.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -156,4 +156,12 @@ test('without the live view, the window’s trust, a current helper or a sound r
     assert.deepEqual(site.seen.length, 0, 'nothing reached the site');
     assert.equal(fine.captured.length + old.captured.length, 0);
   } finally { for (const w of [off, untrusted, old, fine]) w.done(); await site.close(); }
+});
+
+test('a hidden window is given a page before the debugger acts on it: the first Emulation command on an empty one crashes Electron', () => {
+  // Windows cannot be opened under this test runner; the crash was reproduced end to end on a demo site, and this
+  // keeps the line that stops it from being moved below the attach.
+  const src = captureInWindow.toString();
+  const blank = src.indexOf("loadURL('about:blank')"), attach = src.indexOf("attach('1.3')");
+  assert.ok(blank > 0 && attach > blank, 'about:blank is loaded before the debugger attaches');
 });

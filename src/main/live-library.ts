@@ -171,6 +171,10 @@ export const captureInWindow: PieceCapture = async (o) => {
   };
   const cdp = wc.debugger;
   try {
+    // A window that has loaded nothing has no page for the protocol to act on: the first Emulation command sent to
+    // one crashes Electron's main process (EXC_BAD_ACCESS, seen on 9 October 2026 on the first library picture).
+    // An empty page first gives it one.
+    await wc.loadURL('about:blank');
     cdp.attach('1.3');
     await cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width: o.width, height: screen, deviceScaleFactor: 1, mobile: o.width < 600 });
     await cdp.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
