@@ -1,7 +1,7 @@
 {
   "name": "wanigan",
   "productName": "Wanigan",
-  "version": "2.0.0-beta.3",
+  "version": "2.0.0-beta.4",
   "private": true,
   "description": "A local production desk for coding agents: a board per project, real terminal sessions, and one place that says what needs you.",
   "author": "Dead North LLC",

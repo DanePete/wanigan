@@ -11,11 +11,11 @@ added from Wanigan 1 and the OnTour Production Hub, and why, is in
 
 ## Try it
 
-This source tree targets Wanigan 2 beta.3, a limited beta for macOS on Apple
+This source tree targets Wanigan 2 beta.4, a limited beta for macOS on Apple
 silicon. Its scope is the existing project boards, terminal sessions, saved
 work and **Needs you** workflow. The known limits below still apply.
 
-[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.3),
+[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.4),
 then drag Wanigan 2.app to Applications. The app is ad-hoc signed and not notarized;
 macOS may require approval in Privacy & Security before opening it.
 Verification status and remaining acceptance checks are recorded in
@@ -24,7 +24,7 @@ Verification status and remaining acceptance checks are recorded in
 The independent review ran on macOS 26.5 with stand-in agents. It did not
 repeat the historical real-CLI scenario described below.
 
-You can also build from source. The commands below select the beta.3 tag to
+You can also build from source. The commands below select the beta.4 tag to
 match the download; `main` may contain a
 different version.
 You need:
@@ -38,7 +38,7 @@ You need:
   for Jev (Settings › Jev).
 
 ```sh
-git clone --branch v2.0.0-beta.3 https://github.com/DanePete/wanigan.git
+git clone --branch v2.0.0-beta.4 https://github.com/DanePete/wanigan.git
 cd wanigan
 nvm install
 npm install           # also compiles SQLite and node-pty for Electron
