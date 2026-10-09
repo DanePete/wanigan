@@ -84,7 +84,8 @@ export function wireLiveInspect(options: {
   run: <T>(code: string, fallback: T) => Promise<T>;
 }): { hooks: LiveViewHooks } {
   /** The view's last page as the site sent it: where from, and its trace id (null when it sent none). */
-  let latest: { webContentsId: number; url: string; id: string | null } | null = null;
+  /** The view's last page load: its trace id, and whether a helper said it answers to another Wanigan. */
+  let latest: { webContentsId: number; url: string; id: string | null; other: boolean } | null = null;
   /** The last trace read for the view: what edit targets are checked against. */
   let held: { projectId: string; webContentsId: number; origin: string; trace: LiveTrace } | null = null;
   /** A lens is painted: Escape in the page takes it away. */
@@ -116,7 +117,7 @@ export function wireLiveInspect(options: {
         const cur = options.current();
         if (!cur || details.resourceType !== 'mainFrame' || details.webContentsId !== cur.webContents.id || !sameSite(cur.base, details.url)) return;
         const id = header(details.responseHeaders, 'x-wanigan-trace');
-        latest = { webContentsId: cur.webContents.id, url: details.url, id: id && TRACE_ID.test(id) ? id : null };
+        latest = { webContentsId: cur.webContents.id, url: details.url, id: id && TRACE_ID.test(id) ? id : null, other: header(details.responseHeaders, 'x-wanigan-helper') === 'other' };
       });
     },
     view(wc: WebContents | null) {
@@ -203,6 +204,7 @@ export function wireLiveInspect(options: {
     const page = cur?.webContents.getURL();
     if (!cur || !page || !sameSite(cur.base, page)) return { state: 'none' };
     if (!cur.token) return { state: 'no-helper' };
+    if (latest && latest.webContentsId === cur.webContents.id && !latest.id && latest.other) return { state: 'other' };
     if (!latest || latest.webContentsId !== cur.webContents.id || !latest.id) return { state: 'missing' };
     const { id, url } = latest;
     const origin = new URL(url).origin;

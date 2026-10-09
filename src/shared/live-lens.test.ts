@@ -140,6 +140,10 @@ test('what the owner is told when there is no trace, and the one next step', () 
   assert.equal(traceNote({ state: 'ok', trace }, helper, 'drupal'), null);
   assert.equal(traceNote(null, null, 'drupal')?.next, 'install-helper');
   assert.equal(traceNote({ state: 'missing' }, { outdated: true }, 'drupal')?.title, 'Update the helper to see this');
+  const other = traceNote({ state: 'other' }, { outdated: false }, 'wordpress');
+  assert.equal(other?.title, 'This site’s helper answers to another Wanigan');
+  assert.equal(other?.next, 'install-helper', 'setting it up again here is the way out');
+  assert.match(other?.body ?? '', /WordPress helper here was set up by another Wanigan/);
   assert.equal(traceNote({ state: 'missing' }, helper, 'wordpress')?.next, 'reload');
   assert.equal(traceNote({ state: 'expired' }, helper, 'drupal')?.next, 'reload');
   assert.equal(traceNote({ state: 'down', error: 'connection refused' }, helper, 'drupal')?.next, 'start-site');

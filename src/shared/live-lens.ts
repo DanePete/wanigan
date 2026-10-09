@@ -19,6 +19,8 @@ export type LiveTraceAnswer =
   | { state: 'no-helper' }
   /** The page arrived without an X-Wanigan-Trace header: a cached copy, or a page the platform did not render. */
   | { state: 'missing' }
+  /** The site's helper answers to another Wanigan (set up from another Mac, a reinstall or a test), so it ignored this one. */
+  | { state: 'other' }
   /** The helper no longer keeps that render's trace (it keeps them ten minutes). */
   | { state: 'expired' }
   /** The helper refused: the token, or the user logged in in the view may not see traces. */
@@ -71,6 +73,7 @@ export function traceNote(answer: LiveTraceAnswer | null, helper: { outdated: bo
   }
   switch (answer?.state ?? 'none') {
     case 'none': return { title: 'No trace yet', body: 'The trace arrives once the page has loaded.', next: null };
+    case 'other': return { title: 'This site’s helper answers to another Wanigan', body: `The ${cms} helper here was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Setting it up again gives it this Wanigan’s key; the other Wanigan would then need to do the same.`, next: 'install-helper' };
     case 'missing': return { title: 'This page came without a trace', body: `${cms} sends one with every page it renders for the live view. A copy from the browser’s cache, a file served directly, or an error page carries none.`, next: 'reload' };
     case 'expired': return { title: 'This render’s trace is gone', body: 'The helper keeps a page’s trace for ten minutes. Reloading renders it again, with a new trace.', next: 'reload' };
     case 'refused': return { title: 'The helper would not give the trace', body: `It answered ${(answer as { status: number }).status}. Traces are for a user who may administer the site: log in as one in the live view, then reload.`, next: 'log-in' };

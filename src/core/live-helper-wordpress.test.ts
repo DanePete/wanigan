@@ -154,7 +154,8 @@ echo json_encode(array_map(function ($c) { return Wanigan_Live::place($c[0], $c[
   test('without the token, or with another, it adds only the change counter and prints nothing', () => {
     for (const token of [undefined, 'f'.repeat(48)]) {
       const r = load('/about/', token);
-      assert.deepEqual(r.hooks.sort(), [...COUNTER].sort());
+      // Another Wanigan's key also gets one header saying a helper is here and answers to another Wanigan.
+      assert.deepEqual(r.hooks.sort(), [...COUNTER, ...(token ? ['send_headers'] : [])].sort());
       assert.equal(r.output, '');
       assert.equal(r.savequeries, false, 'queries are not saved for anyone else');
       assert.equal(r.handler, false, 'no error handler for anyone else');

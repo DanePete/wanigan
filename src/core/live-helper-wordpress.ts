@@ -4313,6 +4313,12 @@ final class Wanigan_Live {
 	}
 }
 
+// Another Wanigan's key: say only that a helper is here and answers to another Wanigan, so this one can ask its
+// owner to set it up again instead of showing a page without a trace.
+if (!wanigan_live_on() && isset($_SERVER['HTTP_X_WANIGAN_LIVE']) && (string) $_SERVER['HTTP_X_WANIGAN_LIVE'] !== '') {
+	add_action('send_headers', function () { header('X-Wanigan-Helper: other'); });
+}
+
 if (wanigan_live_on()) {
 	Wanigan_Live::boot();
 
