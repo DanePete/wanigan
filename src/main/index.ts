@@ -11,6 +11,7 @@ import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveShots } from './live-shots.ts';
+import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
 import { menuTemplate, type MenuProject } from './menu.ts';
@@ -128,6 +129,10 @@ function wireBridge(): void {
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;
   const shots = wireLiveShots({ client: () => core.get(), settings: () => appSettings?.store.get() ?? null, shoot: (...a) => view.shoot(...a) });
+  // Agents' looks at the live view (wanigan mcp), relayed by the core: answered from a hidden window, never the owner's view.
+  const agentLooks = wireLiveAgent({
+    client: () => core.get(), settings: () => appSettings?.store.get() ?? null, view, windowOpen: () => !!win && !win.isDestroyed(),
+  });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };
     if (typeof method !== 'string' || !OWNER_METHODS.has(method)) {
@@ -173,6 +178,8 @@ function wireBridge(): void {
   ipcMain.handle('app:alertsSeen', (event, keys: unknown) => { if (trusted(event)) notifier.seen(alertKeys(keys)); });
   ipcMain.handle('app:alertsDismissed', (event, keys: unknown) => { if (trusted(event)) notifier.dismissed(alertKeys(keys)); });
   core.onEvent((event, data) => {
+    // A question for the app, not news for the window.
+    if (event === 'liveAsk') { agentLooks.onEvent(event, data); return; }
     win?.webContents.send('core:event', event, data);
     if (event === 'needs' || event === 'sessions' || event === 'board') notifier.schedule();
     appSettings?.onCoreEvent(event);
@@ -182,7 +189,7 @@ function wireBridge(): void {
   core.onProblem((problem) => win?.webContents.send('core:problem', problem));
   core.onStatus((status) => {
     win?.webContents.send('core:status', status);
-    if (status === 'connected') { notifier.schedule(); appSettings?.onCoreConnected(); refreshMenu(); }
+    if (status === 'connected') { notifier.schedule(); appSettings?.onCoreConnected(); refreshMenu(); agentLooks.onConnected(); }
   });
 }
 

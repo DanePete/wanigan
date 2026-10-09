@@ -9,8 +9,9 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type Session } from 'electron';
+import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session } from 'electron';
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
+import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
@@ -30,6 +31,45 @@ export interface LiveViewWiring {
    * trust, the helper's token). Null when the page did not load or drew nothing.
    */
   shoot(projectId: string, url: string, token: string | null): Promise<{ data: string; width: number; height: number } | null>;
+  /**
+   * A page of a project's site rendered for an agent, in a hidden window in
+   * the live view's session: never the owner's own view, which stays where it
+   * is. Its regions as the page script reads them, and a picture when asked.
+   */
+  render(projectId: string, url: string, token: string | null, options: RenderOptions): Promise<RenderedPage | { error: string }>;
+  /** What the owner's view shows now, if it is on this project's site; null when there is no view. */
+  now(projectId: string): LiveViewNow | null;
+  /** What the owner's view's console logged since its page loaded, with when; null when it is not on this project. */
+  logged(projectId: string): TimedProblem[] | null;
+}
+
+export interface RenderOptions {
+  /** CSS pixels wide, and the first screen's height. */
+  width: number;
+  screenHeight: number;
+  capture: LiveCapture;
+  /** The part to crop to and read the style of, by its id. */
+  part: string | null;
+  /** Read the page's regions and their words. */
+  scan: boolean;
+}
+
+export interface RenderedPage {
+  url: string;
+  title: string;
+  width: number;
+  /** The document's height in CSS pixels. */
+  height: number;
+  regions: LiveRegion[];
+  texts: Record<string, string>;
+  partFound: boolean | null;
+  style: Record<string, string> | null;
+  /** This load's own messages, console and failed requests. */
+  problems: LiveProblem[];
+  /** The picture, at the screen's scale, and what of the page it shows (CSS pixels). */
+  image: NativeImage | null;
+  imageRect: { x: number; y: number; width: number; height: number } | null;
+  cut: boolean;
 }
 
 /** Screenshots are a desktop page: this many CSS pixels wide, and as tall as the page up to a limit. */
@@ -40,6 +80,7 @@ const SHOT_LOAD_MS = 30_000;
 const SHOT_SETTLE_MS = 1_500;
 
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
+const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return 'another address'; } };
 
 let pageScript: string | null | undefined;
 
@@ -111,7 +152,11 @@ export function wireLiveView(options: {
   let base: string | null = null;
   let attached = false;
   let lastError: LiveViewState['error'] = null;
-  let logged: LiveProblem[] = [];
+  /** The view is stepped aside for something over it (a dialog). */
+  let covered = false;
+  let logged: TimedProblem[] = [];
+  /** Hidden windows rendering for an agent, by webContents id: what their requests reported. */
+  const collecting = new Map<number, LiveProblem[]>();
   const prepared = new Set<string>();
   /** The host each project's view may load, for its certificate check. */
   const hosts = new Map<string, string>();
@@ -151,6 +196,18 @@ export function wireLiveView(options: {
       }
       callback({ requestHeaders: details.requestHeaders });
     });
+    // Requests that failed, for an agent reading a page in a hidden window (never the owner's view, which records none).
+    const failed = (wcId: number | undefined, text: string): void => {
+      const list = wcId === undefined ? undefined : collecting.get(wcId);
+      if (list && list.length < 40) list.push({ level: 'error', text: text.slice(0, 400), source: 'network' });
+    };
+    const path = (url: string): string => { try { const u = new URL(url); return `${u.host === hosts.get(id) ? '' : u.host}${u.pathname}`; } catch { return url.slice(0, 200); } };
+    ses.webRequest.onCompleted((details) => {
+      if (details.statusCode >= 400) failed(details.webContentsId, `${details.statusCode} ${details.method} ${path(details.url)}`);
+    });
+    ses.webRequest.onErrorOccurred((details) => {
+      if (details.error !== 'net::ERR_ABORTED') failed(details.webContentsId, `${details.error} ${details.method} ${path(details.url)}`);
+    });
     ses.setCertificateVerifyProc((request, callback) => {
       if (request.errorCode === 0) { callback(0); return; }
       const host = hosts.get(id);
@@ -186,6 +243,7 @@ export function wireLiveView(options: {
     projectId = null;
     base = null;
     attached = false;
+    covered = false;
     lastError = null;
     logged = [];
   };
@@ -216,7 +274,7 @@ export function wireLiveView(options: {
       // Electron's own advice to app developers is not the site's problem.
       if ((details.level !== 'error' && details.level !== 'warning') || details.message.includes('Electron Security Warning')) return;
       const where = details.sourceId ? ` (${details.sourceId.replace(/^https?:\/\/[^/]+/, '')}:${details.lineNumber})` : '';
-      logged = [...logged, { level: details.level, text: `${details.message.slice(0, 400)}${where}`, source: 'console' as const }].slice(-MAX_CONSOLE);
+      logged = [...logged, { level: details.level, text: `${details.message.slice(0, 400)}${where}`, source: 'console' as const, at: Date.now() }].slice(-MAX_CONSOLE);
       send();
     });
     for (const name of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'] as const) {
@@ -258,6 +316,7 @@ export function wireLiveView(options: {
     if (!attached) { w.contentView.addChildView(v); attached = true; }
     v.setBounds(b);
     v.setVisible(true);
+    covered = false;
     if (!base || !sameSite(base, url) || !v.webContents.getURL()) {
       base = url;
       hosts.set(rawProject, new URL(url).hostname);
@@ -280,6 +339,7 @@ export function wireLiveView(options: {
     if (view && attached && w && !w.isDestroyed()) { w.contentView.removeChildView(view); attached = false; }
   });
 
+  const isCovered = (value: boolean): void => { covered = value; };
   // A dialog over the view: a native view draws above the page, so it steps aside and leaves its last frame.
   ipcMain.handle('live:cover', async (event, covered: unknown) => {
     if (!options.trusted(event) || !view) return null;
@@ -287,9 +347,11 @@ export function wireLiveView(options: {
       let frame: string | null = null;
       try { frame = (await view.webContents.capturePage()).toDataURL(); } catch { frame = null; }
       view.setVisible(false);
+      isCovered(true);
       return frame;
     }
     view.setVisible(true);
+    isCovered(false);
     return null;
   });
 
@@ -401,51 +463,143 @@ export function wireLiveView(options: {
     }
   });
 
-  const shoot = async (id: string, rawUrl: string, token: string | null): Promise<{ data: string; width: number; height: number } | null> => {
+  /**
+   * Load a page of a project's site in a hidden window in the live view's own
+   * session (its login, its certificate trust, the helper's token), never
+   * leaving the site, and read it: its height, its regions and their words,
+   * what it reported, and a picture of the first screen, the whole page (the
+   * window grown to it, as the before and after shots are) or one part.
+   */
+  const render = async (id: string, rawUrl: string, token: string | null, opts: RenderOptions): Promise<RenderedPage | { error: string }> => {
     const url = liveUrl(rawUrl);
-    if (!url || !options.enabled()) return null;
+    if (!url) return { error: 'That is not an address Wanigan opens.' };
+    if (!options.enabled()) return { error: 'The live view is off: the owner switches it on in Settings › Live view.' };
     const partition = partitionFor(id);
     prepare(session.fromPartition(partition), partition, id);
     if (!hosts.has(id)) hosts.set(id, new URL(url).hostname);
     if (token && /^[0-9a-f]{16,128}$/.test(token)) tokens.set(id, token);
+    const width = Math.max(320, Math.min(2560, Math.round(opts.width)));
+    const screen = Math.max(400, Math.min(2000, Math.round(opts.screenHeight)));
     const w = new BrowserWindow({
-      show: false, width: SHOT_WIDTH, height: 900, useContentSize: true, enableLargerThanScreen: true, paintWhenInitiallyHidden: true,
+      show: false, width, height: screen, useContentSize: true, enableLargerThanScreen: true, paintWhenInitiallyHidden: true,
       webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
     });
     const wc = w.webContents;
+    const problems: LiveProblem[] = [];
+    collecting.set(wc.id, problems);
+    let left: string | null = null;
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    wc.on('will-navigate', (event, next) => { if (!sameSite(url, next)) event.preventDefault(); });
+    // Never off the site: a link, a redirect or a script that would leave is stopped, and said.
+    const stay = (event: { preventDefault(): void }, next: string): void => { if (!sameSite(url, next)) { event.preventDefault(); left ??= next; } };
+    wc.on('will-navigate', stay);
+    wc.on('will-redirect', stay);
+    wc.on('console-message', (details) => {
+      if ((details.level !== 'error' && details.level !== 'warning') || details.message.includes('Electron Security Warning') || problems.length >= 40) return;
+      const where = details.sourceId ? ` (${details.sourceId.replace(/^https?:\/\/[^/]+/, '')}:${details.lineNumber})` : '';
+      problems.push({ level: details.level, text: `${details.message.slice(0, 400)}${where}`, source: 'console' });
+    });
     wc.setAudioMuted(true);
+    const isolated = async <T>(code: string, fallback: T): Promise<T> => {
+      try { return (await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }], true)) as T; } catch { return fallback; }
+    };
     try {
       // Never the browser's cached copy: a page sent with max-age would make the after the before again.
       const fresh = { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' };
       const loaded = await Promise.race([wc.loadURL(url, fresh).then(() => true, () => false), pause(SHOT_LOAD_MS).then(() => false)]);
-      if (!loaded) return null;
+      if (left) return { error: `The page sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
+      if (!loaded) return { error: `The page did not load within ${SHOT_LOAD_MS / 1000} seconds, or failed to load: ${url}` };
+      if (!sameSite(url, wc.getURL())) return { error: 'The page left the site; Wanigan does not follow it.' };
       await pause(SHOT_SETTLE_MS);
-      // A page grows as it settles at its new size (late content, images that load once in view): grow the window
-      // to the page, and again, until the height holds.
       const measure = async (): Promise<number> => {
         const tall = Number(await wc.executeJavaScript('Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0, document.scrollingElement ? document.scrollingElement.scrollHeight : 0))'));
-        return Math.max(600, Math.min(SHOT_MAX_HEIGHT, Number.isFinite(tall) ? tall : 900));
+        return Number.isFinite(tall) && tall > 0 ? tall : screen;
       };
-      let height = 900;
-      for (let round = 0; round < 4; round++) {
-        const next = await measure();
-        if (next === height && round > 0) break;
-        height = next;
-        w.setContentSize(SHOT_WIDTH, height);
-        await pause(round === 0 ? 1_200 : 600);
+      let height = await measure();
+      let shown = screen;
+      if (opts.capture === 'page') {
+        // A page grows as it settles at its new size (late content, images that load once in view): grow the window
+        // to the page, and again, until the height holds.
+        shown = 0;
+        for (let round = 0; round < 4; round++) {
+          const next = Math.max(600, Math.min(SHOT_MAX_HEIGHT, height));
+          if (next === shown && round > 0) break;
+          shown = next;
+          w.setContentSize(width, shown);
+          await pause(round === 0 ? 1_200 : 600);
+          height = await measure();
+        }
       }
-      const image = await wc.capturePage();
-      if (image.isEmpty()) return null;
-      const size = image.getSize();
-      return { data: image.toPNG().toString('base64'), width: size.width, height: size.height };
-    } catch {
-      return null;
+      let regions: LiveRegion[] = [];
+      let texts: Record<string, string> = {};
+      let part: LiveRegion | null = null;
+      let style: Record<string, string> | null = null;
+      const code = script();
+      if (code && (opts.scan || opts.part)) {
+        try { await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]); } catch { /* read below as nothing */ }
+        regions = cleanRegions(await isolated<unknown>('window.__wl ? window.__wl.scan() : []', [])).slice(0, MAX_SCAN);
+        texts = Object.fromEntries(Object.entries(await isolated<Record<string, string>>('window.__wl ? window.__wl.texts(200) : {}', {}))
+          .filter((e): e is [string, string] => typeof e[1] === 'string'));
+        part = opts.part ? regionById(regions, opts.part) : null;
+        if (part) style = await isolated<Record<string, string> | null>(`window.__wl ? window.__wl.styleOf(${part.index}) : null`, null);
+        const own = await isolated<{ level?: unknown; text?: unknown }[]>('window.__wl ? window.__wl.problems() : []', []);
+        if (Array.isArray(own)) {
+          for (const p of own.slice(0, 20)) problems.unshift({ level: p.level === 'warning' ? 'warning' : 'error', text: String(p.text).slice(0, 400), source: 'page' });
+        }
+      }
+      let image: NativeImage | null = null;
+      let imageRect: RenderedPage['imageRect'] = null;
+      let cut = false;
+      if (opts.capture === 'screen') {
+        image = await wc.capturePage();
+        imageRect = { x: 0, y: 0, width, height: Math.min(screen, height) };
+        cut = height > screen;
+      } else if (opts.capture === 'page') {
+        image = await wc.capturePage();
+        imageRect = { x: 0, y: 0, width, height: shown };
+        cut = height > shown;
+      } else if (opts.capture === 'part' && part) {
+        // Scrolled to, not grown to: growing the window would change a page that sizes itself to the screen.
+        const pad = 8;
+        const top = Math.max(0, part.rect.y - pad);
+        const scrolled = Number(await wc.executeJavaScript(`(window.scrollTo(0, ${top}), Math.round(window.scrollY))`)) || 0;
+        await pause(300);
+        const x = Math.max(0, part.rect.x - pad);
+        const y = Math.max(0, top - scrolled);
+        const rect = { x, y, width: Math.max(1, Math.min(width - x, part.rect.width + pad * 2)), height: Math.max(1, Math.min(screen - y, part.rect.height + pad * 2)) };
+        image = await wc.capturePage(rect);
+        imageRect = { x, y: top, width: rect.width, height: rect.height };
+        cut = part.rect.height + pad * 2 > rect.height;
+      }
+      if (image?.isEmpty()) image = null;
+      return {
+        url: wc.getURL(), title: wc.getTitle(), width, height, regions, texts,
+        partFound: opts.part ? !!part : null, style, problems, image, imageRect: image ? imageRect : null, cut,
+      };
+    } catch (error) {
+      return { error: `The page could not be read: ${(error as Error).message}` };
     } finally {
+      collecting.delete(wc.id);
       w.destroy();
     }
   };
 
-  return { release: drop, shoot };
+  const shoot = async (id: string, rawUrl: string, token: string | null): Promise<{ data: string; width: number; height: number } | null> => {
+    const page = await render(id, rawUrl, token, { width: SHOT_WIDTH, screenHeight: 900, capture: 'page', part: null, scan: false });
+    if ('error' in page || !page.image) return null;
+    const size = page.image.getSize();
+    return { data: page.image.toPNG().toString('base64'), width: size.width, height: size.height };
+  };
+
+  const now = (id: string): LiveViewNow | null => {
+    const wc = view?.webContents;
+    if (!view || !wc || wc.isDestroyed()) return null;
+    const showing = projectId === id;
+    const b = view.getBounds();
+    return {
+      showing, visible: showing && attached && !covered, url: showing ? wc.getURL() || base : null, title: showing ? wc.getTitle() : '',
+      width: showing && b.width > 0 ? b.width : null, height: showing && b.height > 0 ? b.height : null, loading: showing && wc.isLoading(),
+    };
+  };
+
+  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null) };
 }

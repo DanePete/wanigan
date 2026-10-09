@@ -504,6 +504,49 @@ export function livePage(): void {
     e.finish(keep && after && after !== e.before ? { before: e.before, after } : null);
   }
 
+  /* ── what an agent reads (the app's hidden window, never the owner's view) ─ */
+
+  /** The words a region shows, as far as `max` characters: its text, not its scripts or styles. */
+  function textOf(r: Region, max: number): string {
+    const root = r.el ?? r.range?.commonAncestorContainer ?? null;
+    if (!root) return '';
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let out = '';
+    for (let n = walker.nextNode(); n && out.length < max; n = walker.nextNode()) {
+      if (r.range && !r.range.intersectsNode(n)) continue;
+      const parent = n.parentElement;
+      if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName) || parent.closest(`#${HOST_ID}`)) continue;
+      const t = words(n.textContent);
+      if (t) out += `${out ? ' ' : ''}${t}`;
+    }
+    return out.slice(0, max);
+  }
+
+  /** Each region's words from the last scan, by index, cut short: how an agent tells one teaser from the next. */
+  function texts(max: number): Record<number, string> {
+    const out: Record<number, string> = {};
+    const cap = Math.max(0, Math.min(400, Math.floor(max)));
+    for (const r of regions) {
+      const t = textOf(r, cap);
+      if (t) out[r.index] = t;
+    }
+    return out;
+  }
+
+  /** A region's key computed styles: its element's, or for a template's output, the first element in it. */
+  function styleOf(index: number): Record<string, string> | null {
+    const r = regions[index];
+    if (!r) return null;
+    let el: Element | null = r.el;
+    if (!el && r.range) {
+      const walker = document.createTreeWalker(r.range.commonAncestorContainer, NodeFilter.SHOW_ELEMENT);
+      for (let n = walker.nextNode(); n && !el; n = walker.nextNode()) {
+        try { if (r.range.isPointInRange(n, 0)) el = n as Element; } catch { /* a node the range cannot place */ }
+      }
+    }
+    return el ? computed(el) : null;
+  }
+
   /* ── the page's own state ────────────────────────────────────────────── */
 
   /** What the site itself says is wrong: Drupal's error and warning messages, WordPress's notices, PHP's own. */
@@ -543,7 +586,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText,
+    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, styleOf,
     cancelEdit: () => endEdit(false),
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,

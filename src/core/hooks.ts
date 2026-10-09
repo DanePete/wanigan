@@ -44,7 +44,12 @@ printf '%s %s\\n%s' "$WANIGAN_TOKEN" "$1" "$body" | /usr/bin/nc -U -w 3 "$WANIGA
 exit 0
 `;
 
-export function writeHookFiles(dataDir: string): HookFiles {
+/**
+ * Claude Code's settings for every session: Wanigan's hooks, and `allow` for
+ * the live view's own tools (each by name, all read-only), so looking at the
+ * page does not stop the agent to ask.
+ */
+export function writeHookFiles(dataDir: string, allow: readonly string[] = []): HookFiles {
   const dir = join(dataDir, 'hooks');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const relay = join(dir, 'relay.sh');
@@ -57,7 +62,7 @@ export function writeHookFiles(dataDir: string): HookFiles {
     hooks[event] = [TOOL_EVENTS.has(event) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }];
   }
   const claudeSettingsFile = join(dir, 'claude-settings.json');
-  writeFileSync(claudeSettingsFile, `${JSON.stringify({ hooks }, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(claudeSettingsFile, `${JSON.stringify({ hooks, ...(allow.length ? { permissions: { allow: [...allow] } } : {}) }, null, 2)}\n`, { mode: 0o600 });
   return { relay, claudeSettings: claudeSettingsFile };
 }
 
@@ -102,12 +107,13 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * switched off) are copied in at each launch, and their own skill folders are
  * linked in, so Gemini reads them where they are.
  * Their own extensions and global GEMINI.md stay in their own home and are not
- * loaded here.
+ * loaded here. Wanigan's own MCP server (the live view's tools), when given,
+ * is added beside theirs and wins its name.
  */
 /** Where Wanigan's Gemini home is, in its data folder. */
 export const geminiHomeDir = (dataDir: string): string => join(dataDir, 'gemini-home');
 
-export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string): string {
+export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string, agentServers: Record<string, unknown> | null = null): string {
   const home = geminiHomeDir(dataDir);
   const dir = join(home, '.gemini');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -115,13 +121,18 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
   const selectedType = typeof (own?.security as { auth?: { selectedType?: unknown } } | undefined)?.auth?.selectedType === 'string'
     ? (own!.security as { auth: { selectedType: string } }).auth.selectedType
     : typeof own?.selectedAuthType === 'string' ? own.selectedAuthType as string : null;
-  const mcpServers = own && isRecord(own.mcpServers)
-    ? Object.fromEntries(Object.entries(own.mcpServers).filter(([, server]) => geminiNotCopied(server) === null)) : null;
+  const ownServers = own && isRecord(own.mcpServers)
+    ? Object.fromEntries(Object.entries(own.mcpServers).filter(([, server]) => geminiNotCopied(server) === null)) : {};
+  const agentNames = agentServers ? Object.keys(agentServers) : [];
+  const servers = { ...ownServers, ...(agentServers ?? {}) };
+  const mcpServers = Object.keys(servers).length ? servers : null;
   const ownLists = own && isRecord(own.mcp) ? own.mcp : null;
   const lists: Record<string, string[]> = {};
   for (const key of ['allowed', 'excluded']) {
     const listed = ownLists ? names(ownLists, key) : null;
-    if (listed) lists[key] = listed;
+    // Gemini loads only the allowed names when there is a list (canLoadServer):
+    // Wanigan's own server is always among them, and never excluded.
+    if (listed) lists[key] = key === 'allowed' ? [...new Set([...listed, ...agentNames])] : listed.filter((n) => !agentNames.includes(n));
   }
   const mcp = Object.keys(lists).length ? lists : null;
   const hooks: Record<string, unknown[]> = {};

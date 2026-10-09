@@ -380,7 +380,7 @@ test('the real exact-cap queue leaves five bytes for HTTP termination when a str
   assert.deepEqual(t.counts(), { streams: 0, events: 0, data: 0 });
 });
 
-test('a phone stream carries board news but never the live view’s edits, site settings, hand edits or screenshots, nor saved board views', async () => {
+test('a phone stream carries board news but never the live view’s edits, site settings, hand edits, screenshots or agents’ looks, nor saved board views', async () => {
   const t = await fixture();
   try {
     const phone = await t.pair('Live check');
@@ -392,6 +392,8 @@ test('a phone stream carries board news but never the live view’s edits, site 
       listener('liveEdits', { projectId: 'p' });
       listener('liveShots', { cardId: 'c' });
       listener('boardViews', { projectId: 'p' });
+      listener('liveAsk', { id: 'a', kind: 'render', projectId: 'p', sessionId: 's', site: { url: 'https://acme.ddev.site/', platform: 'drupal' }, url: 'https://acme.ddev.site/secret-page' });
+      listener('liveLooks', { projectId: 'p', cardId: 'c', sessionId: 's' });
       listener('board', { projectId: 'p', cardId: null });
     }
     await waitFor('the board event to arrive', () => peer.text.includes('"event":"board"'), 2_000);
@@ -400,6 +402,8 @@ test('a phone stream carries board news but never the live view’s edits, site 
     assert.ok(!peer.text.includes('"event":"liveEdits"') && !peer.text.includes('"event":"liveShots"'), 'no hand edits or screenshots');
     assert.ok(!peer.text.includes('"event":"boardViews"'), 'no saved board views: a phone may not read them');
     assert.ok(!peer.text.includes('secret.twig'), 'no paths from this Mac');
+    assert.ok(!peer.text.includes('"event":"liveAsk"') && !peer.text.includes('secret-page'), 'no agent’s question for the app');
+    assert.ok(!peer.text.includes('"event":"liveLooks"'), 'no evidence of an agent’s looks');
   } finally {
     await t.close();
   }

@@ -18,6 +18,7 @@ import { History, type HistoryLimits } from './history.ts';
 import { Reviews } from './review.ts';
 import { Phone, type PhoneOptions } from './phone/phone.ts';
 import { Live } from './live.ts';
+import { LiveAgent } from './live-agent.ts';
 import { LocalModels, type LocalModelsOptions } from './local-models.ts';
 import { Models, type CodexModelReader } from './models.ts';
 import { Tokens } from './tokens.ts';
@@ -31,6 +32,7 @@ import { createHandlers, dispatch, type Handlers } from './handlers.ts';
 import { computeNeeds } from './needs.ts';
 import { setGitEnvironment } from './git.ts';
 import { geminiHomeDir, writeGeminiHome, writeHookFiles } from './hooks.ts';
+import { CLAUDE_ALLOW, geminiMcpServers, writeAgentMcp } from './agent-mcp.ts';
 import { CoreServer } from './server.ts';
 import { Sessions } from './sessions.ts';
 import { Skills } from './skills.ts';
@@ -92,6 +94,8 @@ export interface CoreOptions {
   build?: string | null;
   /** The daemon exits after an idle replacement has shut its core down. */
   onIdleStop?: () => void;
+  /** Test seam: how long an agent's look at the live view waits for the app. */
+  liveWaitMs?: Partial<Record<'status' | 'render' | 'problems' | 'diff', number>>;
 }
 
 export class Core {
@@ -112,6 +116,7 @@ export class Core {
   readonly local: LocalModels;
   readonly phone: Phone;
   readonly live: Live;
+  readonly liveAgent: LiveAgent;
   private readonly demo: boolean;
   readonly handlers: Handlers;
   readonly server: CoreServer;
@@ -137,13 +142,16 @@ export class Core {
       this.accounts = new Accounts(ctx, { neutralDir: join(options.dataDir, 'probe'), ...options.accounts });
       mkdirSync(join(options.dataDir, 'probe'), { recursive: true });
       this.attachments = new Attachments(ctx, options.dataDir);
-      const hookFiles = writeHookFiles(options.dataDir);
+      // The live view's tools reach agents through the `wanigan` shim, so only a core that writes one hands them out.
+      const agentMcp = options.cli ? writeAgentMcp(options.dataDir, join(this.paths.bin, 'wanigan')) : null;
+      const hookFiles = writeHookFiles(options.dataDir, agentMcp ? CLAUDE_ALLOW : []);
       this.checkpoints = new Checkpoints(ctx, this.board, { dataDir: options.dataDir });
       this.local = new LocalModels(ctx, { home: options.accounts?.home ?? homedir(), ...options.local });
       this.sessions = new Sessions(ctx, this.board, {
         checkpoints: this.checkpoints,
         localModels: this.local,
-        geminiHome: () => writeGeminiHome(options.dataDir, hookFiles.relay, options.accounts?.home ?? homedir()),
+        geminiHome: () => writeGeminiHome(options.dataDir, hookFiles.relay, options.accounts?.home ?? homedir(), agentMcp ? geminiMcpServers(agentMcp) : null),
+        agentMcp,
         dataDir: options.dataDir,
         briefingLimits: options.briefingLimits,
         accounts: this.accounts,
@@ -166,6 +174,8 @@ export class Core {
         home, neutralDir: join(options.dataDir, 'probe'), limits: readLimits, ...(options.mcpBinaries ? { binaries: options.mcpBinaries } : {}),
       });
       this.live = new Live(ctx, this.board, options.dataDir);
+      // Only the app answers an agent's look at the live view; the server knows which connection that is.
+      this.liveAgent = new LiveAgent(ctx, this.board, this.live, { hosts: () => this.server?.liveHostCount ?? 0, ...(options.liveWaitMs ? { waitMs: options.liveWaitMs } : {}) });
       this.phone = new Phone(ctx, {
         dataDir: options.dataDir,
         rendererDir: options.phone?.rendererDir ?? null,
@@ -189,7 +199,7 @@ export class Core {
       }, this.chat, {
         skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts, geminiHomeDir(options.dataDir)),
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
-        attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live,
+        attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live, liveAgent: this.liveAgent,
         boardViews: new BoardViews(ctx, this.board),
       });
       this.server = new CoreServer({
@@ -275,6 +285,7 @@ export class Core {
     this.reviews.stopAll();
     this.chat.stopAll();
     this.local.stopAll();
+    this.liveAgent.stop();
     await this.phone.stop();
     stopHeadless();
     await this.sessions.stopAll();

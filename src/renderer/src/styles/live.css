@@ -889,6 +889,16 @@
   gap: var(--space-2);
 }
 
+/* ── what a card's agents looked at in the live view ─────────────────────── */
+
+.live-looks .evidence li > span:first-of-type {
+  line-height: var(--leading);
+}
+
+.live-look-refused > span {
+  color: var(--muted);
+}
+
 /* ── a card's before and after ───────────────────────────────────────────── */
 
 .live-shots {

@@ -177,7 +177,8 @@ test('Ollama, or NVIDIA PAIR at its address, is offered when running and never d
     assert.deepEqual(codex.map((m) => m.value), ['local/ollama/qwen3.6:27b-coding', 'local/ollama/gpt-oss:20b']);
     const project = await t.owner.call('projects.add', { path: t.projectDir });
     const s = await t.owner.call('sessions.start', { projectId: project.id, provider: 'codex', model: 'local/ollama/gpt-oss:20b' });
-    const replay = await until(() => t.owner.call('sessions.watch', { id: s.id }).then((w) => w.replay), (r) => /ARGS=/.test(r));
+    // The launch line is long (lifecycle flags, the MCP server, the briefing): wait for the stand-in to have echoed all of it.
+    const replay = await until(() => t.owner.call('sessions.watch', { id: s.id }).then((w) => w.replay), (r) => /ARGS=/.test(r) && /-m gpt-oss:20b/.test(r));
     assert.match(replay, /--oss --local-provider ollama -m gpt-oss:20b/);
     await assert.rejects(
       t.owner.call('sessions.start', { projectId: project.id, provider: 'codex', model: 'local/ollama/not-there:1b' }),

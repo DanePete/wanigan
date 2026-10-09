@@ -31,6 +31,7 @@ import type { Ctx } from './context.ts';
 import { cleanEnv, folderMissing, isDir, loginPath, notInstalled, requireCli, which } from './environment.ts';
 import type { CodexHooks } from './codex-hooks.ts';
 import { claudeSettings, geminiChatSaved, type HookFiles } from './hooks.ts';
+import { claudeMcpArgs, codexMcpArgs, type AgentMcp } from './agent-mcp.ts';
 import { ensureWorktree, restoreWorktree, type EnsuredWorktree } from './worktrees.ts';
 import { STARTUP_MS } from './needs.ts';
 import { LIVE_SQL, SESSION_COLUMNS, toAsks, toSession, toSessionEvent, type SessionEventRow, type SessionRow } from './records.ts';
@@ -132,6 +133,8 @@ export interface SessionsOptions {
   codexHooks?: CodexHooks | null;
   /** Records each agent session's folder when it starts and when each turn ends. */
   checkpoints?: Checkpoints;
+  /** The live view's tools (`wanigan mcp`), handed to Claude Code and Codex at launch; null when there is no shim to run. */
+  agentMcp?: AgentMcp | null;
 }
 
 export type DataListener = (sessionId: string, seq: number, data: string) => void;
@@ -420,7 +423,8 @@ export class Sessions {
       // Codex is briefed at launch: its SessionStart hook, when it has one,
       // fires only as the first turn begins.
       if (params.resume) args.push('resume');
-      args.push(...CODEX_LIFECYCLE_ARGS, ...(hooked?.args ?? []), '--config', codexBriefing(briefing ?? this.briefingText(project.id, card?.id ?? null, 'codex')));
+      args.push(...CODEX_LIFECYCLE_ARGS, ...(hooked?.args ?? []), ...(this.options.agentMcp ? codexMcpArgs(this.options.agentMcp) : []),
+        '--config', codexBriefing(briefing ?? this.briefingText(project.id, card?.id ?? null, 'codex')));
       if (params.resume) args.push(params.resume);
     }
     // Gemini restarts itself with the same arguments when the owner trusts a new
@@ -435,7 +439,7 @@ export class Sessions {
       const conversation = params.resume ? ['--resume', params.resume]
         : params.fork ? ['--resume', params.fork, '--fork-session', '--session-id', conversationId as string]
           : ['--session-id', conversationId as string];
-      args.push('--settings', claudeSettings(this.options.hookFiles), ...conversation);
+      args.push('--settings', claudeSettings(this.options.hookFiles), ...(this.options.agentMcp ? claudeMcpArgs(this.options.agentMcp) : []), ...conversation);
       // Named after its card, so Claude's own /resume picker, prompt box and
       // terminal title say what it works on (`-n, --name`, in 2.1.292's --help).
       if (card) args.push('--name', clip(`${card.key} ${card.title}`, NAME_MAX));

@@ -1,6 +1,7 @@
 import { Branch, ProjectChanges } from './CardGit';
 import { AiReviewSection } from './CardReview';
 import { CardShots } from '../components/live/Shots';
+import { CardLooks } from '../components/live/Looks';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CARD_TYPES, COLUMNS, LIVE_STATES, PRIORITIES, type CardDetail, type CardType, type Priority, type Session } from '@shared/model';
 import { attempt, bridge, call, useQuery } from '../lib/api';
@@ -129,6 +130,8 @@ function CardBody({ card, projectKey, projectPath, jevMode, sessionMap, onClose,
         : card.status === 'review' || card.status === 'working' ? <ProjectChanges projectId={card.projectId} projectKey={projectKey} /> : null}
 
       <CardShots card={card} />
+
+      <CardLooks card={card} />
 
       {card.evidence.length ? (
         <section className="drawer-section">

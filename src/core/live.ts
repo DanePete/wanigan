@@ -323,6 +323,18 @@ export class Live {
     return { docroot, components: docroot ? findComponents(docroot) : [] };
   }
 
+  /**
+   * Where the project's site is on this Mac: the project folder, and the
+   * folder the page names its templates from (Drupal's docroot, WordPress's
+   * root), in the checkout the site serves. Reads only.
+   */
+  roots(projectId: string): { project: string; docroot: string | null } {
+    const project = this.project(projectId);
+    const row = this.row(project.id);
+    const root = row?.served_path ?? project.path;
+    return { project: project.path, docroot: findDocroot(root, detect(root).ddev?.docroot ?? null) ?? wordpressRoot(root) };
+  }
+
   /** Where some words on the page are in one of the site's templates. */
   findText(projectId: string, file: unknown, text: unknown): LiveFound {
     const { path, refused } = this.template(projectId, file);

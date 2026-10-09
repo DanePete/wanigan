@@ -194,7 +194,7 @@ test('a database from before saved views opens with its data, and gains them', (
   try {
     const file = join(dir, 'wanigan.db');
     const before = MIGRATIONS.findIndex((m) => /CREATE TABLE board_views/.test(m));
-    assert.equal(before, MIGRATIONS.length - 1, 'saved views are the newest migration, appended at the end');
+    assert.ok(before > 0, 'saved views are a migration of their own, appended after what had shipped');
     const old = new Database(file);
     old.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
     for (const m of MIGRATIONS.slice(0, before)) old.exec(m);

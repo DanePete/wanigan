@@ -438,6 +438,28 @@ export const MIGRATIONS: readonly string[] = [
     UNIQUE (project_id, name_key)
   );
   `,
+  `
+  -- Every call an agent made to the live view's tools (wanigan mcp), answered
+  -- or refused: which session and card, which tool, the page and width it
+  -- read, and a few words on what it asked and what came back. Evidence that
+  -- the agent looked, shown where its card is reviewed. A session keeps its
+  -- newest 500.
+  CREATE TABLE live_looks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    card_id    TEXT REFERENCES cards(id),
+    tool       TEXT NOT NULL,
+    page       TEXT,
+    width      INTEGER,
+    asked      TEXT NOT NULL,
+    said       TEXT NOT NULL,
+    ok         INTEGER NOT NULL CHECK (ok IN (0, 1)),
+    at         INTEGER NOT NULL
+  );
+  CREATE INDEX live_looks_by_card ON live_looks (card_id, at);
+  CREATE INDEX live_looks_by_session ON live_looks (session_id, at);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

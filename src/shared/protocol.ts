@@ -12,6 +12,7 @@ import type { PairingCode, PhoneDevice, PhoneStatus } from './phone.ts';
 import type { SessionCheckpoints, TurnChanges } from './checkpoints.ts';
 import type { SkillCopyPlan, SkillRead, SkillTarget, SkillsListing } from './skills.ts';
 import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveSite } from './live.ts';
+import type { LiveAsk, LiveLook, LiveToolResult } from './live-agent.ts';
 import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } from './mcp.ts';
 import type { ConversationUsage } from './tokens.ts';
 import type { SaidSearch } from './said.ts';
@@ -316,6 +317,31 @@ export interface Methods {
   'live.edits': { params: { projectId: string }; result: LiveEdit[] };
   /** Put back what a hand edit replaced, if the file is still as the edit left it. */
   'live.revert': { params: { id: string }; result: LiveEdit };
+  /*
+   * Agents seeing the live view: a session's `wanigan mcp` tools. The core
+   * confines each to the session's own project and its local site (a path on
+   * it, never another address), bounds the width, asks the app (`liveAsk`,
+   * answered with `live.answer`), and records every call as evidence for the
+   * card. Nothing here edits anything.
+   */
+  /** Whether the live view is on, the site, the page the owner is looking at and its width, and whether the window is open. */
+  'live.status': { params: Record<string, never>; result: LiveToolResult };
+  /** A page of the site rendered in the app's hidden window: its parts as Layers names them, and a picture only when asked for. */
+  'live.look': { params: { path?: string | null; width?: number | null; image?: boolean; fullPage?: boolean; part?: string | null; all?: boolean }; result: LiveToolResult };
+  /** Parts of a page matching words: a name, a template or component, or what the part shows. */
+  'live.find': { params: { query: string; path?: string | null; width?: number | null }; result: LiveToolResult };
+  /** One part as the Inspector shows it, by the id live.look or live.find gave. */
+  'live.part': { params: { id: string; path?: string | null; width?: number | null; image?: boolean }; result: LiveToolResult };
+  /** What the page reports as wrong: a fresh load, and what the owner's view logged (since the session's turn began, when asked). */
+  'live.problems': { params: { path?: string | null; width?: number | null; sinceTurn?: boolean }; result: LiveToolResult };
+  /** The card's page now against its screenshot from before the session worked, or from its last turn: each changed area, and the edited file that explains it. */
+  'live.diff': { params: { since?: 'start' | 'turn' }; result: LiveToolResult };
+  /** The app answers the live view's questions on this connection (the core counts it). */
+  'live.host': { params: Record<string, never>; result: { ok: true } };
+  /** The app's answer to a `liveAsk`, or why it could not answer. False when nothing waits for it any more. */
+  'live.answer': { params: { id: string; result?: unknown; error?: string | null }; result: { ok: boolean } };
+  /** What agents looked at in the live view, for a card or one session, newest first. */
+  'live.looks': { params: { cardId?: string | null; sessionId?: string | null }; result: LiveLook[] };
   'sessions.input': { params: { id: string; data: string }; result: { ok: true } };
   'sessions.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } };
   /** The PTY's size comes with the replay; null once the session has ended. */
@@ -563,6 +589,15 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.saveText': ['owner'],
   'live.edits': ['owner'],
   'live.revert': ['owner'],
+  'live.status': ['session'],
+  'live.look': ['session'],
+  'live.find': ['session'],
+  'live.part': ['session'],
+  'live.problems': ['session'],
+  'live.diff': ['session'],
+  'live.host': ['owner'],
+  'live.answer': ['owner'],
+  'live.looks': ['owner'],
   'sessions.input': ['owner', 'phone'],
   'sessions.resize': ['owner', 'phone'],
   'sessions.watch': ['owner', 'phone'],
@@ -659,6 +694,10 @@ export interface Events {
   'liveShots': { cardId: string };
   /** Words were saved by hand to a template, or put back. */
   'liveEdits': { projectId: string };
+  /** An agent's live view tool needs the app: render a page, read the view. Only the app answers (`live.answer`). */
+  'liveAsk': LiveAsk;
+  /** An agent looked at the live view: what a card shows as evidence changed. */
+  'liveLooks': { projectId: string; cardId: string | null; sessionId: string };
   /** A composer's waiting files changed; `key` is `attachKey` of where they wait. */
   'attachments': { key: string };
   /** Terminal output, only to connections watching that session. */

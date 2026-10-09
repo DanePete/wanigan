@@ -4,7 +4,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import packageJson from '../../package.json' with { type: 'json' };
 import { CoreClient } from '../client/client.ts';
+import { serveMcp } from './mcp.ts';
 import { CARD_TYPES, type CardSummary, type CardType } from '../shared/model.ts';
 import type { EvidenceInput } from '../shared/protocol.ts';
 
@@ -23,6 +25,8 @@ const HELP = `wanigan — your project's board
   wanigan ask KEY "question"             ask the owner; it shows up in their Needs you
   wanigan criteria KEY "criterion"       add an acceptance criterion
   wanigan decisions                      this project's decisions in force
+  wanigan mcp                            the live view's tools, as an MCP server on stdin and stdout
+                                         (Wanigan hands it to the agent when it starts a session)
 
   --json                                 machine-readable output
 
@@ -102,6 +106,21 @@ async function run(argv: string[]): Promise<number> {
   const out = (value: unknown, text: () => string): void => {
     process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${text()}\n`);
   };
+  // The agent's CLI runs this as its MCP server: it speaks only protocol on stdout, and reaches the core as the session.
+  if (command === 'mcp') {
+    await serveMcp({
+      input: process.stdin,
+      output: process.stdout,
+      version: packageJson.version,
+      connect: async () => {
+        if (!inSession()) throw new Error('The live view’s tools work only inside a session Wanigan started: WANIGAN_SOCKET and WANIGAN_TOKEN are not set here.');
+        return CoreClient.connect(process.env.WANIGAN_SOCKET as string, process.env.WANIGAN_TOKEN as string).catch((error: NodeJS.ErrnoException) => {
+          throw error.code === 'ENOENT' || error.code === 'ECONNREFUSED' ? new Error('Wanigan’s core is not running, so the live view cannot be read now.') : error;
+        });
+      },
+    });
+    return 0;
+  }
   const note = flags.get('note')?.[0];
   const client = await connectClient(flags);
   try {
