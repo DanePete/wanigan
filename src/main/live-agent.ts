@@ -13,10 +13,11 @@ import type { Method } from '../shared/protocol.ts';
 import type { LiveViewWiring, RenderedPage } from './live-view.ts';
 import type { LiveSiteAiAnswer } from '../shared/live-ai.ts';
 import { askSiteAi } from './live-site-ai.ts';
+import { askLibrary, libraryWhy } from './live-library.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
-const KINDS = new Set(['status', 'render', 'problems', 'diff', 'ai']);
+const KINDS = new Set(['status', 'render', 'problems', 'diff', 'ai', 'library']);
 /** Why the site's AI could not be read, in the agent's words. */
 const AI_WHY: Record<Exclude<LiveSiteAiAnswer['state'], 'ok'>, string> = {
   'no-helper': 'The site helper is not installed, and the site’s AI is read through it.',
@@ -90,6 +91,15 @@ export function wireLiveAgent(options: {
       if (answer.state !== 'ok') throw new Error(answer.state === 'down' ? `${AI_WHY.down} (${answer.error})` : AI_WHY[answer.state]);
       return answer.ai;
     }
+    if (ask.kind === 'library') {
+      // The helper's component library, the same way: its own route, the view's session, its token; nothing rendered.
+      const helper = await token(ask.projectId);
+      const ses = options.sessionFor?.(ask.projectId, ask.site.url) ?? null;
+      if (!helper || !ses) throw new Error(libraryWhy({ state: 'no-helper' }));
+      const answer = await askLibrary((url, init) => ses.fetch(url, init), new URL(ask.site.url).origin, helper);
+      if (answer.state !== 'ok') throw new Error(libraryWhy(answer));
+      return answer.library;
+    }
     const where = ask.kind === 'diff' && ask.shot ? { url: ask.shot.url, source: 'card' as LiveSource, width: SHOT_WIDTH, screen: SCREEN } : target(ask);
     // The core checked this address; it is checked again here, against the site, before anything loads it.
     if (!sameSite(ask.site.url, where.url)) throw new Error('Only pages of this project’s own site are opened.');
@@ -147,7 +157,7 @@ export function wireLiveAgent(options: {
         await answer(ask.id, { error: (error as Error).message || 'The live view could not answer.' });
       }
     };
-    if (ask.kind === 'status' || ask.kind === 'ai') { void run(); return; }
+    if (ask.kind === 'status' || ask.kind === 'ai' || ask.kind === 'library') { void run(); return; }
     queue = queue.then(run, run);
   };
 

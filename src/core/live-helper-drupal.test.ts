@@ -25,8 +25,8 @@ function declared(text: string): string | null {
 
 const classes = new Map(php.map(([f, t]) => [declared(t), { file: f, text: t }]));
 
-test('this Wanigan writes helper version 3, and its info file says so under the mark', () => {
-  assert.equal(DRUPAL_HELPER_VERSION, 3);
+test('this Wanigan writes helper version 4, and its info file says so under the mark', () => {
+  assert.equal(DRUPAL_HELPER_VERSION, 4);
   const info = files[`${DRUPAL_HELPER_MODULE}.info.yml`] ?? '';
   assert.ok(info.startsWith(DRUPAL_HELPER_MARK));
   assert.match(info, new RegExp(`# wanigan-helper-version: ${DRUPAL_HELPER_VERSION}\\n`));
@@ -51,7 +51,7 @@ test('every class the services, routes and the service provider name is one the 
     assert.ok(found, `route class ${cls}`);
     assert.match(found.text, new RegExp(`function ${method}\\(`), `${cls}::${method}`);
   }
-  for (const route of ['wanigan_live.trace', 'wanigan_live.edit', 'wanigan_live.edit_done', 'wanigan_live.move', 'wanigan_live.insert', 'wanigan_live.undo', 'wanigan_live.find', 'wanigan_live.ai']) {
+  for (const route of ['wanigan_live.trace', 'wanigan_live.edit', 'wanigan_live.edit_done', 'wanigan_live.move', 'wanigan_live.insert', 'wanigan_live.remove', 'wanigan_live.undo', 'wanigan_live.find', 'wanigan_live.ai', 'wanigan_live.components']) {
     assert.match(routing, new RegExp(`^${route.replace('.', '\\.')}:\\n`, 'm'), route);
   }
   // Every route answers only the live view's token.

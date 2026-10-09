@@ -2,8 +2,8 @@
 // that change them (a content entity's own form display narrowed to one
 // field, a block's or a menu link's own form, Layout Builder's own page), a
 // template copied into the active theme on the owner's word, and moving,
-// inserting and undoing in collections through core's own save paths. PHP
-// source. Contract: src/shared/live-trace.ts.
+// inserting, taking out and undoing in collections through core's own save
+// paths. PHP source. Contract: src/shared/live-trace.ts.
 
 const TARGETS = String.raw`<?php
 
@@ -14,6 +14,7 @@ use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\Entity\EntityFormDisplay;
 use Drupal\Core\Entity\Entity\EntityViewDisplay;
+use Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem;
 use Drupal\Core\Plugin\Context\Context;
 use Drupal\Core\Plugin\Context\ContextDefinition;
 use Drupal\Core\Plugin\Context\EntityContext;
@@ -175,6 +176,32 @@ final class Targets {
     }
     if (!$entity->get($name)->access('edit')) {
       return 'The user you are logged in as in the live view may not change this field.';
+    }
+    return NULL;
+  }
+
+  /**
+   * Why an item cannot be taken out of a content entity's field here, or
+   * NULL. Beyond fieldWhy(): on content that keeps no revisions, a reference
+   * whose field type tracks what it points at can take that with it once
+   * nothing refers to it (FileFieldItemList::postSave() lowers a file's usage
+   * on such an update, and a file no longer used can be removed; other
+   * reference types delete what only they held). Core's plain entity
+   * reference does neither, and content that keeps revisions keeps the item
+   * in the revision before.
+   */
+  public static function removeWhy(ContentEntityInterface $entity, string $name): ?string {
+    if ($why = self::fieldWhy($entity, $name)) {
+      return $why;
+    }
+    if ($entity->getEntityType()->isRevisionable()) {
+      return NULL;
+    }
+    $definition = $entity->getFieldDefinition($name);
+    $type = \Drupal::service('plugin.manager.field.field_type')->getDefinition($definition->getType(), FALSE);
+    $class = is_array($type) ? ($type['class'] ?? '') : '';
+    if ($definition->getType() !== 'entity_reference' && is_string($class) && is_a($class, EntityReferenceItem::class, TRUE)) {
+      return 'This content keeps no revisions, and taking this item out could let the site delete what it points to (a file nothing uses any more, or content only this item held). Wanigan leaves it in.';
     }
     return NULL;
   }
@@ -658,7 +685,7 @@ final class EditController extends ControllerBase {
   }
 
   /**
-   * POST /_wanigan/move, /_wanigan/insert, /_wanigan/undo.
+   * POST /_wanigan/move, /_wanigan/insert, /_wanigan/remove, /_wanigan/undo.
    */
   public function move(Request $request): JsonResponse {
     return $this->moves($request, 'move');
@@ -666,6 +693,10 @@ final class EditController extends ControllerBase {
 
   public function insert(Request $request): JsonResponse {
     return $this->moves($request, 'insert');
+  }
+
+  public function remove(Request $request): JsonResponse {
+    return $this->moves($request, 'remove');
   }
 
   public function undo(Request $request): JsonResponse {
@@ -846,14 +877,15 @@ namespace Drupal\wanigan_live\Edit;
 
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\Entity\EntityViewDisplay;
+use Drupal\Core\Entity\RevisionableInterface;
 use Drupal\Core\Entity\RevisionLogInterface;
 use Drupal\Core\Menu\MenuTreeParameters;
 use Drupal\wanigan_live\Trace\Marks;
 use Drupal\wanigan_live\Trace\TraceStore;
 
 /**
- * Moving, inserting and undoing in a trace's collections, through the save
- * path core itself uses for each:
+ * Moving, inserting, taking out and undoing in a trace's collections,
+ * through the save path core itself uses for each:
  * - field items: the entity API (FieldItemList values, entity validation, a
  *   new revision by the logged-in user, ContentEntityBase::save());
  * - blocks in regions: block config entities' region and weight, ordered as
@@ -868,6 +900,14 @@ use Drupal\wanigan_live\Trace\TraceStore;
  * Each first checks the collection is still as the trace saw it, and answers
  * 409 with the order as it is now when it is not. An undo puts things back
  * only while they are as the move left them.
+ *
+ * Taking an item out never deletes what it showed. A field item's reference
+ * and a Layout Builder component go (kept by the revision before, and by the
+ * undo record); a block placement and a menu link are switched off as their
+ * own forms do it (Block::disable(), the link's Enabled), so they are kept.
+ * An inline block is taken out only where Layout Builder keeps its block
+ * content (InlineBlockEntityOperations::removeUnusedForEntityOnSave() deletes
+ * it from a layout without revisions).
  */
 final class Moves {
 
@@ -932,6 +972,28 @@ final class Moves {
     return [422, self::refuse('That cannot go there.')];
   }
 
+  public function remove(array $body): array {
+    [$refusal, $private] = $this->trace($body);
+    if ($refusal) {
+      return $refusal;
+    }
+    $c = $private['collections'][(string) ($body['collection'] ?? '')] ?? NULL;
+    $item = (string) ($body['item'] ?? '');
+    if (!$c) {
+      return [404, self::refuse('That page has no such collection.')];
+    }
+    if (!isset($c['items'][$item])) {
+      return [404, self::refuse('That is not in this collection.')];
+    }
+    return match ($c['kind']) {
+      'field-items' => $this->removeItem($c, $item),
+      'region-blocks' => $this->switchOffBlock($c, $item),
+      'menu' => $this->switchOffLink($c, $item),
+      'layout' => $this->removeComponent($c, $item),
+      default => [422, self::refuse('Nothing is taken out of this here.')],
+    };
+  }
+
   public function undo(array $body): array {
     $record = is_string($body['undo'] ?? NULL) ? $this->store->takeUndo($body['undo']) : NULL;
     if ($record === NULL) {
@@ -940,6 +1002,8 @@ final class Moves {
     return match ($record['kind']) {
       'field-items' => $this->undoItems($record),
       'blocks' => $this->undoBlocks($record),
+      'block-off' => $this->undoBlockOff($record),
+      'link-off' => $this->undoLinkOff($record),
       'menu' => $this->undoLinks($record),
       'display' => $this->undoDisplay($record),
       'layout' => $this->undoLayout($record),
@@ -993,7 +1057,32 @@ final class Moves {
     return $this->saveItems($entity, $c['field'], $values, $current, 'Added in Wanigan’s live view');
   }
 
-  private function saveItems(ContentEntityInterface $entity, string $field, array $values, array $before, string $message): array {
+  /**
+   * Takes one item out of a field, by the delta the page showed it at: its
+   * reference or value goes, and the undo record keeps it to put it back.
+   */
+  private function removeItem(array $c, string $item): array {
+    $entity = self::active($c['type'], $c['id'], $c['langcode']);
+    if ($entity === NULL || !$entity->hasField($c['field'])) {
+      return [404, self::refuse('There is no such content, or it has no such field.')];
+    }
+    if ($why = Targets::removeWhy($entity, $c['field'])) {
+      return [403, self::refuse($why)];
+    }
+    $current = self::identities($entity, $c['field']);
+    if ($current !== $c['order']) {
+      return self::changed($c, $current);
+    }
+    $delta = $c['deltas'][$item] ?? NULL;
+    if (!is_int($delta) || ($current[$delta] ?? NULL) !== (string) $c['items'][$item]) {
+      return [409, self::refuse('That item is not where the page showed it. Reload it, and try again.')];
+    }
+    $values = $entity->get($c['field'])->getValue();
+    $taken = array_splice($values, $delta, 1);
+    return $this->saveItems($entity, $c['field'], $values, $current, 'Taken out in Wanigan’s live view', [$current[$delta] => $taken]);
+  }
+
+  private function saveItems(ContentEntityInterface $entity, string $field, array $values, array $before, string $message, array $restore = []): array {
     $entity->set($field, $values);
     self::revision($entity, $message . ': ' . $entity->getFieldDefinition($field)->getLabel() . '.');
     $violations = $entity->validate()->filterByFields(array_values(array_diff(array_keys($entity->getFieldDefinitions()), [$field])));
@@ -1002,7 +1091,7 @@ final class Moves {
     }
     $entity->save();
     $after = self::identities($entity, $field);
-    $token = $this->store->keepUndo(['kind' => 'field-items', 'type' => $entity->getEntityTypeId(), 'id' => (string) $entity->id(), 'langcode' => $entity->language()->getId(), 'field' => $field, 'before' => $before, 'after' => $after]);
+    $token = $this->store->keepUndo(['kind' => 'field-items', 'type' => $entity->getEntityTypeId(), 'id' => (string) $entity->id(), 'langcode' => $entity->language()->getId(), 'field' => $field, 'before' => $before, 'after' => $after, 'restore' => $restore]);
     $answer = ['ok' => TRUE, 'undo' => $token];
     if ($entity->getEntityType()->isRevisionable()) {
       $answer['revision'] = (string) $entity->getRevisionId();
@@ -1026,6 +1115,12 @@ final class Moves {
     $values = $entity->get($r['field'])->getValue();
     foreach ($entity->get($r['field']) as $delta => $item) {
       $queue[Marks::identity($item)][] = $values[$delta];
+    }
+    // What a removal took out, put back at its place.
+    foreach ($r['restore'] ?? [] as $identity => $taken) {
+      foreach ($taken as $value) {
+        $queue[$identity][] = $value;
+      }
     }
     $restored = [];
     foreach ($r['before'] as $identity) {
@@ -1183,6 +1278,45 @@ final class Moves {
     return [200, ['ok' => TRUE]];
   }
 
+  /**
+   * Takes a block off the pages that show its region the way the block
+   * layout's own Disable does (Block::disable()): the placement is kept,
+   * switched off, with its settings and visibility, in Block layout.
+   */
+  private function switchOffBlock(array $c, string $item): array {
+    $storage = \Drupal::entityTypeManager()->getStorage('block');
+    $block_id = (string) $c['items'][$item];
+    $block = $storage->load($block_id);
+    if (!$block) {
+      return [404, self::refuse('That block is no longer placed.')];
+    }
+    if (!$block->access('update')) {
+      return [403, self::refuse('The user you are logged in as may not change where blocks are placed.')];
+    }
+    $now = self::regionOrder($c['theme'], $c['region']);
+    if ($now !== $c['order']) {
+      return self::changed($c, $now);
+    }
+    if (!$block->status()) {
+      return [409, self::refuse('That block is already switched off.')];
+    }
+    $block->disable()->save();
+    $token = $this->store->keepUndo(['kind' => 'block-off', 'id' => $block_id, 'theme' => $c['theme'], 'region' => $c['region'], 'order' => self::regionOrder($c['theme'], $c['region'])]);
+    return [200, ['ok' => TRUE, 'undo' => $token]];
+  }
+
+  private function undoBlockOff(array $r): array {
+    $block = \Drupal::entityTypeManager()->getStorage('block')->load($r['id']);
+    if (!$block || !$block->access('update')) {
+      return [403, self::refuse('That block cannot be switched back on here.')];
+    }
+    if ($block->status() || $block->getRegion() !== $r['region'] || self::regionOrder($r['theme'], $r['region']) !== $r['order']) {
+      return [409, self::refuse('The blocks changed since: putting it back would undo that too.')];
+    }
+    $block->enable()->save();
+    return [200, ['ok' => TRUE]];
+  }
+
   private static function regionOrder(string $theme, string $region): array {
     $types = \Drupal::entityTypeManager();
     $blocks = $types->getStorage('block')->loadByProperties(['theme' => $theme, 'region' => $region]);
@@ -1268,6 +1402,50 @@ final class Moves {
         $manager->updateDefinition($id, ['parent' => $parent, 'weight' => $weight]);
       }
     }
+    return [200, ['ok' => TRUE]];
+  }
+
+  /**
+   * Takes a link out of the menu the way the menu's own form does when its
+   * Enabled box is cleared (MenuLinkManager::updateDefinition(), which saves
+   * a content link's entity or a static link's override): the link is kept.
+   */
+  private function switchOffLink(array $c, string $item): array {
+    $manager = \Drupal::service('plugin.manager.menu.link');
+    $plugin = (string) $c['items'][$item];
+    if (!$manager->hasDefinition($plugin)) {
+      return [404, self::refuse('That link is no longer in the menu.')];
+    }
+    $now = self::levelOrder($c['menu'], $c['parent']);
+    if ($now !== $c['order']) {
+      return self::changed($c, $now);
+    }
+    $url = $manager->createInstance($plugin)->getEditRoute();
+    if ($url === NULL || !$url->access()) {
+      return [403, self::refuse('The user you are logged in as may not change this link, or it is written in code with no form.')];
+    }
+    if (empty($manager->getDefinition($plugin)['enabled'])) {
+      return [409, self::refuse('That link is already switched off.')];
+    }
+    foreach ($manager->getChildIds($plugin) as $child) {
+      if ($manager->hasDefinition($child) && !empty($manager->getDefinition($child)['enabled'])) {
+        return [422, self::refuse('It has links under it, and switching it off would hide them too. Move or take those out first, or change it in the menu’s own form.')];
+      }
+    }
+    $manager->updateDefinition($plugin, ['enabled' => FALSE]);
+    $token = $this->store->keepUndo(['kind' => 'link-off', 'plugin' => $plugin, 'menu' => $c['menu'], 'parent' => $c['parent'], 'order' => self::levelOrder($c['menu'], $c['parent'])]);
+    return [200, ['ok' => TRUE, 'undo' => $token]];
+  }
+
+  private function undoLinkOff(array $r): array {
+    $manager = \Drupal::service('plugin.manager.menu.link');
+    if (!$manager->hasDefinition($r['plugin'])) {
+      return [404, self::refuse('That link is gone.')];
+    }
+    if (!empty($manager->getDefinition($r['plugin'])['enabled']) || self::levelOrder($r['menu'], $r['parent']) !== $r['order']) {
+      return [409, self::refuse('The menu changed since: putting it back would undo that too.')];
+    }
+    $manager->updateDefinition($r['plugin'], ['enabled' => TRUE]);
     return [200, ['ok' => TRUE]];
   }
 
@@ -1408,6 +1586,38 @@ final class Moves {
     $token = $this->store->keepUndo(['kind' => 'layout', 'type' => $from['type'], 'id' => $from['id'], 'viewMode' => $from['viewMode'], 'storageId' => $from['storageId'], 'before' => $before, 'after' => $after]);
     $answer = ['ok' => TRUE, 'undo' => $token];
     if ($storage->getStorageType() === 'overrides' && ($entity = $storage->getContextValue('entity')) && $entity->getEntityType()->isRevisionable()) {
+      $answer['revision'] = (string) $entity->getRevisionId();
+    }
+    return [200, $answer];
+  }
+
+  /**
+   * Takes a component out of its section as RemoveBlockForm does
+   * (Section::removeComponent()), saved as Layout Builder's form saves.
+   */
+  private function removeComponent(array $c, string $item): array {
+    $storage = $this->layout($c);
+    if (is_array($storage) && isset($storage[0])) {
+      return $storage;
+    }
+    $section = $storage->getSection($c['delta']);
+    $now = array_map('strval', array_keys($section->getComponentsByRegion($c['region'])));
+    if ($now !== $c['order']) {
+      return self::changed($c, $now);
+    }
+    $uuid = (string) $c['items'][$item];
+    $component = $section->getComponent($uuid);
+    $entity = $storage->getStorageType() === 'overrides' ? $storage->getContextValue('entity') : NULL;
+    if (str_starts_with($component->getPluginId(), 'inline_block:') && !$entity instanceof RevisionableInterface) {
+      return [422, self::refuse('Layout Builder deletes the content of an inline block taken out of a layout without revisions, so it is not taken out here. Remove it in Layout Builder if that is what you want.')];
+    }
+    $before = array_map(static fn ($section) => $section->toArray(), $storage->getSections());
+    $section->removeComponent($uuid);
+    self::saveLayout($storage, 'Taken out in Wanigan’s live view');
+    $after = array_map(static fn ($section) => $section->toArray(), $storage->getSections());
+    $token = $this->store->keepUndo(['kind' => 'layout', 'type' => $c['type'], 'id' => $c['id'], 'viewMode' => $c['viewMode'], 'storageId' => $c['storageId'], 'before' => $before, 'after' => $after]);
+    $answer = ['ok' => TRUE, 'undo' => $token];
+    if ($entity instanceof ContentEntityInterface && $entity->getEntityType()->isRevisionable()) {
       $answer['revision'] = (string) $entity->getRevisionId();
     }
     return [200, $answer];

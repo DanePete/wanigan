@@ -15,6 +15,7 @@ import {
 import { diffText, findText, lookText, pageAt, partText, pathOf, problemsText, statusText, type TextContext } from '../shared/live-agent-text.ts';
 import { isStylesheet } from '../shared/live.ts';
 import { parseSiteAi, siteAiText } from '../shared/live-ai.ts';
+import { LIBRARY_KINDS, libraryText, parseLibrary, type LibraryKind } from '../shared/live-library.ts';
 import type { Session } from '../shared/model.ts';
 import { CoreError } from '../shared/protocol.ts';
 import type { Board } from './board.ts';
@@ -22,7 +23,7 @@ import type { Ctx } from './context.ts';
 import type { Live } from './live.ts';
 
 /** How long the core waits for the app: a status is read at once; a page loads (up to 30 s), settles and is read. */
-const WAIT_MS: Record<LiveAskKind, number> = { status: 5_000, render: 60_000, problems: 60_000, diff: 90_000, ai: 20_000 };
+const WAIT_MS: Record<LiveAskKind, number> = { status: 5_000, render: 60_000, problems: 60_000, diff: 90_000, ai: 20_000, library: 30_000 };
 /** Abilities listed to an agent at most: a site with more says how many were left out. */
 const MAX_ABILITIES = 150;
 /** Pages a session may have the app reading at once, and all sessions together. */
@@ -205,6 +206,33 @@ export class LiveAgent {
           ? `no AI API in Drupal core; ${saving}`
           : `${connected} AI ${connected === 1 ? 'connector' : 'connectors'} set up, ${ai.abilities?.length ?? 0} abilities; ${saving}`,
       };
+    });
+  }
+
+  /**
+   * What the project's site can place, as its own core lists it through the site helper: Drupal's single-directory
+   * components and placeable blocks, WordPress's block types, patterns and block styles; with a query, the entries
+   * matching every word; with a kind, one kind; with an id, one entry in full (its props schema, slots, files). Read-only
+   * and free: nothing is rendered or saved.
+   */
+  library(session: Session, p: { query?: unknown; kind?: unknown; id?: unknown }): Promise<LiveToolResult> {
+    const query = typeof p.query === 'string' ? p.query.replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY) : '';
+    const id = typeof p.id === 'string' ? p.id.trim().slice(0, 300) : '';
+    const kind = p.kind === undefined || p.kind === null || p.kind === '' ? null : p.kind;
+    const asked = [id && `entry ${id}`, query && `“${query}”`, kind && `${String(kind)}s`].filter(Boolean).join(', ');
+    return this.record(session, 'live_library', asked, async () => {
+      if (kind !== null && !(LIBRARY_KINDS as readonly unknown[]).includes(kind)) throw new CoreError('invalid', `kind is one of ${LIBRARY_KINDS.join(', ')}.`);
+      const site = this.siteFor(session);
+      if (site.platform !== 'drupal' && site.platform !== 'wordpress') {
+        throw new CoreError('refused', 'This project’s site is not set as Drupal or WordPress, so there is no core registry of components to read.');
+      }
+      if (!this.live.site(session.projectId).helper) {
+        throw new CoreError('refused', 'The site helper is not installed, and the component library is read through it. The owner installs it from the project’s Live tab.');
+      }
+      const lib = parseLibrary(await this.ask('library', this.base(session, site.url, site.platform, {})));
+      if (!lib) throw new CoreError('refused', 'The site helper’s component library could not be read.');
+      const out = libraryText(lib, { query: query || null, kind: kind as LibraryKind | null, entry: id || null });
+      return { result: { text: out.text, structured: out.structured, image: null }, page: null, width: null, said: out.said };
     });
   }
 

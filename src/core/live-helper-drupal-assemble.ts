@@ -546,18 +546,30 @@ final class TraceBuilder {
       elseif (($p['meta']['field']['rendered'] ?? 0) !== ($p['meta']['field']['count'] ?? 0)) {
         $collection['why'] = 'The page shows ' . $p['meta']['field']['rendered'] . ' of this field’s ' . $p['meta']['field']['count'] . ' items, so they cannot be put in order here.';
       }
+      $remove_why = Targets::removeWhy($entity, $name);
+      $collection['removes'] = $remove_why === NULL;
+      if ($remove_why !== NULL) {
+        $collection['removeWhy'] = $remove_why;
+      }
+      // A reusable custom block is one piece of content shown wherever it is
+      // placed: a change to it shows on all of those pages.
+      if ($entity->getEntityTypeId() === 'block_content' && method_exists($entity, 'isReusable') && $entity->isReusable()) {
+        $collection['shows'] = 'every page that shows the custom block “' . $entity->label() . '”';
+      }
       $identities = [];
       foreach ($entity->get($name) as $item) {
         $identities[] = Marks::identity($item);
       }
       $parts = [];
+      $deltas = [];
       foreach ($items as $delta => $part) {
         $parts[$part] = $this->recorder->parts[$part]['item']['identity'];
+        $deltas[$part] = (int) $delta;
       }
       if ($entry = $this->fieldItemEntry($field_part, $entity, $name, count($identities))) {
         $collection['inserts'] = [$entry];
       }
-      $this->private['collections'][$id] = ['kind' => 'field-items', 'type' => $entity->getEntityTypeId(), 'id' => (string) $entity->id(), 'langcode' => $entity->language()->getId(), 'field' => $name, 'order' => $identities, 'items' => $parts];
+      $this->private['collections'][$id] = ['kind' => 'field-items', 'type' => $entity->getEntityTypeId(), 'id' => (string) $entity->id(), 'langcode' => $entity->language()->getId(), 'field' => $name, 'order' => $identities, 'items' => $parts, 'deltas' => $deltas];
       $out[] = $collection;
     }
   }
@@ -621,6 +633,7 @@ final class TraceBuilder {
     $may = $blocks ? reset($blocks)->access('update') : \Drupal::entityTypeManager()->getAccessControlHandler('block')->createAccess();
     $ids = array_map(static fn ($r) => 'c.r.' . $r, $regions);
     $inserts = $this->blockPalette();
+    $theme_label = (string) (\Drupal::service('theme_handler')->listInfo()[$this->theme]->info['name'] ?? $this->theme);
     foreach ($regions as $region) {
       $id = 'c.r.' . $region;
       $collection = [
@@ -630,6 +643,9 @@ final class TraceBuilder {
         'items' => array_keys($block_parts[$region] ?? []),
         'movesTo' => array_values(array_diff($ids, [$id])),
         'changes' => 'configuration',
+        // A placement shows wherever its region does, as its visibility settings allow.
+        'shows' => 'every page shown in the ' . $theme_label . ' theme that its visibility settings allow',
+        'removes' => $may,
       ];
       if (isset($region_parts[$region])) {
         $collection['part'] = $region_parts[$region];
@@ -639,6 +655,7 @@ final class TraceBuilder {
       }
       if (!$may) {
         $collection['why'] = 'The user you are logged in as may not change where blocks are placed.';
+        $collection['removeWhy'] = $collection['why'];
       }
       $this->private['collections'][$id] = ['kind' => 'region-blocks', 'theme' => $this->theme, 'region' => $region, 'order' => array_keys($by_region[$region] ?? []), 'items' => $block_parts[$region] ?? []];
       $out[] = $collection;
@@ -740,8 +757,13 @@ final class TraceBuilder {
         if ($parent === '') {
           $collection['part'] = $menu_part;
         }
+        if (!$content) {
+          $collection['shows'] = 'everywhere the ' . (string) $this->recorder->parts[$menu_part]['label'] . ' shows';
+        }
+        $collection['removes'] = $why === NULL;
         if ($why) {
           $collection['why'] = $why;
+          $collection['removeWhy'] = $why;
         }
         $this->private['collections'][$id] = ['kind' => 'menu', 'menu' => $menu, 'parent' => (string) $parent, 'order' => \Drupal\wanigan_live\Edit\Moves::levelOrder($menu, (string) $parent), 'items' => $items];
         $out[] = $collection;
@@ -808,6 +830,8 @@ final class TraceBuilder {
       elseif (!$display->access('update')) {
         $collection['why'] = 'The user you are logged in as may not change how this content is displayed.';
       }
+      $collection['removes'] = FALSE;
+      $collection['removeWhy'] = 'A field is hidden from a display on its Manage display page, not taken out here.';
       // Every item of this bundle shows its own page with this display when
       // it is the full view; a teaser's reach is not countable here.
       if (in_array($view_mode, ['full', 'default'], TRUE) && $entity->hasLinkTemplate('canonical')) {
@@ -864,6 +888,7 @@ final class TraceBuilder {
       elseif (\Drupal::service('layout_builder.tempstore_repository')->has($storage)) {
         $why = 'This layout has changes not yet saved in Layout Builder: save or discard them there first.';
       }
+      $reach = $override ? NULL : self::sharedLayoutReach($entity);
       $ids = [];
       foreach ($storage->getSections() as $delta => $section) {
         foreach ($section->getLayout()->getPluginDefinition()->getRegionNames() as $region) {
@@ -887,13 +912,43 @@ final class TraceBuilder {
           if ($override) {
             $collection['revisions'] = $entity->getEntityType()->isRevisionable();
           }
+          elseif ($reach !== NULL) {
+            $collection['reach'] = $reach;
+          }
+          else {
+            $collection['shows'] = 'every ' . Describe::entityLabel($entity, '') . ' of this kind without its own layout';
+          }
+          $collection['removes'] = $why === NULL;
           if ($why) {
             $collection['why'] = $why;
+            $collection['removeWhy'] = $why;
           }
           $this->private['collections'][$id] = ['kind' => 'layout', 'type' => $type, 'id' => $entity_id, 'viewMode' => $view_mode, 'storage' => $storage->getStorageType(), 'storageId' => $storage->getStorageId(), 'delta' => $delta, 'region' => $region, 'order' => $order, 'items' => $items];
           $out[] = $collection;
         }
       }
+    }
+  }
+
+  /**
+   * How many items of an entity's bundle show the default layout (those
+   * without their own, when core's override field is there to tell), or NULL
+   * when that cannot be counted.
+   */
+  private static function sharedLayoutReach(ContentEntityInterface $entity): ?int {
+    try {
+      $type = $entity->getEntityType();
+      $query = \Drupal::entityTypeManager()->getStorage($entity->getEntityTypeId())->getQuery()->accessCheck(FALSE)->count();
+      if ($type->hasKey('bundle')) {
+        $query->condition($type->getKey('bundle'), $entity->bundle());
+      }
+      if ($entity->hasField('layout_builder__layout')) {
+        $query->notExists('layout_builder__layout');
+      }
+      return (int) $query->execute();
+    }
+    catch (\Throwable) {
+      return NULL;
     }
   }
 

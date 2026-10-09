@@ -18,7 +18,7 @@
 // docs/research/2026-10-09-wordpress-core-live-trace.md.
 // Design: docs/design/2026-10-08-live-view.md.
 
-export const WORDPRESS_HELPER_VERSION = 3;
+export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
 /** A line of the file: how Wanigan knows a file of that name is its own. */
 export const WORDPRESS_HELPER_MARK = '// Written by Wanigan for its live view.';
@@ -119,7 +119,7 @@ final class Wanigan_Live {
 	const KEEP = 20;
 	const TTL = 600;
 	const MAX_JSON = 4000000;
-	const LIMITS = array('parts' => 4000, 'edits' => 4000, 'hooks' => 5000, 'queries' => 2000, 'assets' => 500, 'logs' => 500, 'chain' => 200, 'variables' => 200, 'preview' => 400, 'collections' => 1000, 'palette' => 1000, 'saves' => 200, 'runs' => 100, 'connectors' => 100, 'abilities' => 500);
+	const LIMITS = array('library' => 2000, 'parts' => 4000, 'edits' => 4000, 'hooks' => 5000, 'queries' => 2000, 'assets' => 500, 'logs' => 500, 'chain' => 200, 'variables' => 200, 'preview' => 400, 'collections' => 1000, 'palette' => 1000, 'saves' => 200, 'runs' => 100, 'connectors' => 100, 'abilities' => 500);
 	/** Keys whose values are never shown. */
 	const SECRET = '/pass|pwd|secret|token|nonce|auth|cookie|salt|session|api[_-]?key|private[_-]?key|credential|signature|hash/i';
 
@@ -218,13 +218,16 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|undo|find|ai)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
 			// It runs no admin_init and no admin screen; it answers JSON at wp_loaded and stops. Only for a logged-in
 			// user, who has a menu: plugins that hide wp-admin send an anonymous admin request to a 404 page.
 			if ($m[1] === 'find' && !defined('WP_ADMIN') && self::logged_in_cookie()) define('WP_ADMIN', true);
+			// blocks.php register_block_type_from_metadata(): the only place a block's block.json path is known, which
+			// the component library names.
+			if ($m[1] === 'components') add_filter('block_type_metadata', array(self::class, 'block_json'), PHP_INT_MAX);
 			add_action('wp_loaded', array(self::class, 'route'), PHP_INT_MAX);
 			return;
 		}
@@ -2374,6 +2377,9 @@ final class Wanigan_Live {
 			$why = $info['why'];
 			if (!$why && !self::round_trips($l['store'])) $why = 'Writing these blocks back would change other parts of ' . $info['label'] . ' (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged).';
 			if ($why) $c['why'] = $why;
+			$c['removes'] = !$why;
+			if ($why) $c['removeWhy'] = $why;
+			if ($info['changes'] === 'configuration' || !empty($info['shared'])) $c['shows'] = 'every page that uses ' . $info['label'];
 			$holder_node = $l['parent'] ? self::node($l['store'], $l['parent']) : null;
 			$c['_private'] = array('type' => 'blocks', 'store' => $l['store'], 'parent' => $l['parent'], 'holder' => $holder_node ? $holder_node['blockName'] : null, 'paths' => $l['paths'], 'fps' => $fps, 'hash' => md5($tree['content']));
 			$out[] = $c;
@@ -2399,6 +2405,9 @@ final class Wanigan_Live {
 			$moves = array_values(array_diff($sidebar_ids, array($sidebar_ids[$id])));
 			if ($moves) $c['movesTo'] = $moves;
 			if ($w = self::cannot('edit_theme_options', 'change widgets')) $c['why'] = $w;
+			$c['removes'] = !isset($c['why']);
+			if (isset($c['why'])) $c['removeWhy'] = $c['why'];
+			$c['shows'] = 'every page that shows the widget area ' . $parts[$id]['label'];
 			$c['_private'] = array('type' => 'widgets', 'sidebar' => $m['sidebar'], 'widgets' => $widgets, 'state' => isset($all[$m['sidebar']]) ? array_values((array) $all[$m['sidebar']]) : array());
 			$out[] = $c;
 		}
@@ -2424,6 +2433,9 @@ final class Wanigan_Live {
 				if ($moves) $c['movesTo'] = $moves;
 				foreach ($palette as $e) if ($e['kind'] === 'menu-link') $c['inserts'][] = $e['id'];
 				if ($w = self::cannot('edit_theme_options', 'change menus')) $c['why'] = $w;
+				$c['removes'] = !isset($c['why']);
+				if (isset($c['why'])) $c['removeWhy'] = $c['why'];
+				$c['shows'] = 'everywhere ' . $parts[$id]['label'] . ' shows';
 				$ids = array();
 				foreach ($items as $it) $ids[$it] = self::$meta[$it]['item'];
 				$object = get_queried_object();
@@ -2498,6 +2510,8 @@ final class Wanigan_Live {
 				$route = rest_get_route_for_post($post);
 				if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves blocks here.';
 				$info = array('content' => $post->post_content, 'route' => $route, 'post' => $post->ID, 'label' => $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”', 'noun' => $noun, 'changes' => 'content', 'revisions' => post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post), 'why' => $why);
+				// A synced pattern (core's wp_block) is one post shown in every post, template and part that uses it.
+				if ($post->post_type === 'wp_block') $info['shared'] = true;
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
@@ -2902,6 +2916,252 @@ final class Wanigan_Live {
 		return substr(md5($s), 0, 10);
 	}
 
+
+	/* ── the component library ──────────────────────────────────────────── */
+
+	/**
+	 * GET /_wanigan/components (src/shared/live-library.ts): what the site can place, from core's registries only:
+	 * WP_Block_Type_Registry (each block type with its example), WP_Block_Patterns_Registry, and the block styles a
+	 * block type declares or WP_Block_Styles_Registry holds. Each with how /_wanigan/piece/library pictures it alone.
+	 * Keyed by a hash of the definitions and the modification times of the files they name.
+	 */
+	private static function components(): void {
+		$entries = array();
+		$stamp = array(get_stylesheet(), get_template());
+		$counts = array('block' => 0, 'pattern' => 0, 'style' => 0);
+		$skipped = array();
+		$truncated = false;
+		$budget = 3000000;
+		$add = function (array $e) use (&$entries, &$truncated) {
+			if (count($entries) >= self::LIMITS['library']) {
+				$truncated = true;
+				return;
+			}
+			$entries[] = $e;
+		};
+		$piece = function (string $id) { return '/_wanigan/piece/library?entry=' . rawurlencode($id); };
+		$registry = class_exists('WP_Block_Styles_Registry') ? WP_Block_Styles_Registry::get_instance()->get_all_registered() : array();
+		$types = WP_Block_Type_Registry::get_instance()->get_all_registered();
+		ksort($types);
+		foreach ($types as $type) {
+			$counts['block']++;
+			$file = isset(self::$block_json[$type->name]) ? self::$block_json[$type->name] : null;
+			$files = array();
+			foreach ($file ? array($file, dirname($file) . '/render.php') : array() as $f) {
+				$rel = self::rel($f);
+				if ($rel !== null && is_file($f)) $files[$rel] = (int) @filemtime($f);
+			}
+			$w = $file ? self::whose($file) : null;
+			$by = $w && $w[1] !== '' ? $w[1] : (string) strtok($type->name, '/');
+			$e = array('id' => 'block:' . $type->name, 'kind' => 'block', 'label' => $type->title ? (string) $type->title : $type->name, 'by' => $by, 'owner' => $w ? $w[0] : 'unknown');
+			if ($type->category) $e['category'] = (string) $type->category;
+			if ($type->description) $e['description'] = self::cut(wp_strip_all_tags((string) $type->description), 500);
+			$props = array();
+			foreach ((array) $type->attributes as $name => $def) {
+				if (is_array($def)) $props[$name] = self::attribute_schema($def);
+			}
+			if ($props) {
+				$json = (string) wp_json_encode(array('type' => 'object', 'properties' => $props));
+				if (strlen($json) <= 16000 && strlen($json) <= $budget) {
+					$e['props'] = array('type' => 'object', 'properties' => $props);
+					$budget -= strlen($json);
+				}
+			}
+			if (!empty($type->parent)) $e['blocks'] = array_values((array) $type->parent);
+			elseif (!empty($type->ancestor)) $e['blocks'] = array_values((array) $type->ancestor);
+			if ($files) $e['files'] = array_keys($files);
+			$why = self::unpictured($type);
+			$e['picture'] = $why ? array('from' => 'none', 'why' => $why) : array('from' => is_array($type->example) ? 'example' : 'defaults', 'piece' => $piece('block:' . $type->name));
+			$add($e);
+			$styles = array();
+			foreach ((array) $type->styles as $style) if (is_array($style) && !empty($style['name'])) $styles[$style['name']] = $style;
+			foreach (isset($registry[$type->name]) ? (array) $registry[$type->name] : array() as $style) if (is_array($style) && !empty($style['name'])) $styles[$style['name']] = $style;
+			foreach ($styles as $style) {
+				$counts['style']++;
+				$sid = 'style:' . $type->name . ':' . $style['name'];
+				$se = array('id' => $sid, 'kind' => 'style', 'label' => (isset($style['label']) && $style['label'] !== '' ? (string) $style['label'] : (string) $style['name']) . ' (' . $e['label'] . ')', 'by' => $by, 'blocks' => array($type->name));
+				// block.json writes isDefault; register_block_style() is_default.
+				if (!empty($style['is_default']) || !empty($style['isDefault'])) $se['description'] = 'The block’s default style.';
+				$se['picture'] = $why ? array('from' => 'none', 'why' => $why) : array('from' => $e['picture']['from'], 'piece' => $piece($sid));
+				$add($se);
+			}
+			$stamp[] = array('block', $type->name, $type->title, $type->category, $type->attributes, $type->example, $type->parent, $type->ancestor, $type->supports, $styles, $files);
+		}
+		$patterns = WP_Block_Patterns_Registry::get_instance()->get_all_registered();
+		usort($patterns, function ($a, $b) { return strcmp((string) $a['name'], (string) $b['name']); });
+		foreach ($patterns as $pattern) {
+			if (empty($pattern['name'])) continue;
+			if (isset($pattern['inserter']) && !$pattern['inserter']) {
+				$skipped['patterns hidden from the inserter'] = (isset($skipped['patterns hidden from the inserter']) ? $skipped['patterns hidden from the inserter'] : 0) + 1;
+				continue;
+			}
+			$counts['pattern']++;
+			$file = isset($pattern['filePath']) && is_string($pattern['filePath']) ? $pattern['filePath'] : null;
+			$w = $file ? self::whose($file) : null;
+			$rel = $file ? self::rel($file) : null;
+			$e = array('id' => 'pattern:' . $pattern['name'], 'kind' => 'pattern', 'label' => isset($pattern['title']) ? (string) $pattern['title'] : $pattern['name'], 'by' => $w && $w[1] !== '' ? $w[1] : (string) strtok($pattern['name'], '/'), 'owner' => $w ? $w[0] : 'unknown');
+			if (!empty($pattern['description'])) $e['description'] = self::cut(wp_strip_all_tags((string) $pattern['description']), 500);
+			if (!empty($pattern['categories'])) $e['category'] = implode(', ', array_map('strval', (array) $pattern['categories']));
+			if (!empty($pattern['blockTypes'])) $e['blocks'] = array_values(array_map('strval', (array) $pattern['blockTypes']));
+			if ($rel !== null) $e['files'] = array($rel);
+			$e['picture'] = array('from' => 'as-written', 'piece' => $piece('pattern:' . $pattern['name']));
+			$add($e);
+			$stamp[] = array('pattern', $pattern['name'], isset($pattern['title']) ? $pattern['title'] : null, md5(isset($pattern['content']) ? (string) $pattern['content'] : ''), $rel, $file ? (int) @filemtime($file) : null);
+		}
+		foreach (array(get_stylesheet_directory() . '/theme.json', get_template_directory() . '/theme.json') as $f) if (is_file($f)) $stamp[] = array('theme.json', self::rel($f), (int) @filemtime($f));
+		$out = array('version' => 1, 'platform' => 'wordpress', 'hash' => md5((string) wp_json_encode($stamp)), 'at' => (int) round(microtime(true) * 1000), 'theme' => get_stylesheet(), 'entries' => $entries, 'counts' => $counts);
+		if ($skipped) $out['skipped'] = $skipped;
+		if ($truncated) $out['truncated'] = true;
+		self::answer($out);
+	}
+
+	/** Why a block type is not pictured alone, or null: it shows something else by reference, or only core places it. */
+	private static function unpictured($type): ?string {
+		$by_reference = array('core/block' => 'a synced pattern', 'core/pattern' => 'a pattern', 'core/template-part' => 'a template part');
+		if (isset($by_reference[$type->name])) return 'It shows ' . $by_reference[$type->name] . ' by reference: that is pictured on its own.';
+		if (in_array($type->name, array('core/missing', 'core/freeform', 'core/legacy-widget', 'core/widget-group'), true)) return 'WordPress uses it for content it cannot otherwise show; it is not placed by itself.';
+		if (isset($type->supports['inserter']) && $type->supports['inserter'] === false) return 'It is not offered in the block inserter: WordPress or a plugin places it itself.';
+		return null;
+	}
+
+	/**
+	 * /_wanigan/piece/library?entry=…: one library entry alone in the active theme. A pattern as written; a block
+	 * type's example (its attributes and inner blocks, else its defaults), with a style's class for a block style.
+	 * PHP cannot run a static block's save(), which writes its markup, so for one of those the page loads the block's
+	 * own editor scripts, has them serialize the example (wp.blocks.serialize), and posts the markup back here, where
+	 * core renders it (do_blocks()). The piece says data-wanigan-piece="ready" once drawn, or "failed" and why.
+	 */
+	public static function library_piece(): void {
+		status_header(200);
+		nocache_headers();
+		$spec = self::piece_spec(isset($_GET['entry']) ? (string) wp_unslash($_GET['entry']) : '');
+		if (is_wp_error($spec)) {
+			self::piece_page(null, $spec->get_error_message());
+			return;
+		}
+		$markup = $spec['markup'];
+		if ($markup === null && isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['markup'])) {
+			$posted = (string) wp_unslash($_POST['markup']);
+			$blocks = array_values(array_filter(parse_blocks($posted), function ($b) { return !empty($b['blockName']); }));
+			if (count($blocks) !== 1 || $blocks[0]['blockName'] !== $spec['name']) {
+				self::piece_page(null, 'The markup sent back is not this block.');
+				return;
+			}
+			$markup = $posted;
+		}
+		if ($markup === null && self::server_renders($spec)) $markup = serialize_block(self::spec_block($spec));
+		if ($markup === null) {
+			self::serialize_page($spec);
+			return;
+		}
+		// Rendered before wp_head(), as a block theme renders its template: what the blocks enqueue is printed.
+		self::piece_page(do_blocks($markup), null);
+	}
+
+	/** What an entry renders: a pattern's markup, or a block's name, attributes and inner blocks. */
+	private static function piece_spec(string $entry) {
+		if (strpos($entry, 'pattern:') === 0) {
+			$pattern = WP_Block_Patterns_Registry::get_instance()->get_registered(substr($entry, 8));
+			if (!$pattern) return new WP_Error('wanigan', 'That pattern is not registered any more.');
+			return array('name' => null, 'attributes' => array(), 'innerBlocks' => array(), 'markup' => (string) $pattern['content']);
+		}
+		$style = null;
+		if (preg_match('#^style:(.+):([A-Za-z0-9_-]+)$#', $entry, $m)) {
+			$name = $m[1];
+			$style = $m[2];
+		} elseif (strpos($entry, 'block:') === 0) {
+			$name = substr($entry, 6);
+		} else {
+			return new WP_Error('wanigan', 'There is no such entry in the library.');
+		}
+		$type = WP_Block_Type_Registry::get_instance()->get_registered($name);
+		if (!$type) return new WP_Error('wanigan', 'That block type is not registered any more.');
+		$why = self::unpictured($type);
+		if ($why) return new WP_Error('wanigan', $why);
+		$example = is_array($type->example) ? $type->example : array();
+		$attrs = isset($example['attributes']) && is_array($example['attributes']) ? $example['attributes'] : array();
+		if ($style !== null) $attrs['className'] = trim((isset($attrs['className']) ? $attrs['className'] . ' ' : '') . 'is-style-' . $style);
+		$inner = isset($example['innerBlocks']) && is_array($example['innerBlocks']) ? self::spec_inner($example['innerBlocks'], 0) : array();
+		return array('name' => $name, 'attributes' => $attrs, 'innerBlocks' => $inner, 'markup' => null);
+	}
+
+	/** An example's inner blocks as name, attributes and inner blocks: bounded, nothing else. */
+	public static function spec_inner(array $list, int $depth): array {
+		$out = array();
+		if ($depth > 8) return $out;
+		foreach (array_slice($list, 0, 50) as $b) {
+			if (!is_array($b) || empty($b['name']) || !is_string($b['name'])) continue;
+			$out[] = array('name' => $b['name'], 'attributes' => isset($b['attributes']) && is_array($b['attributes']) ? $b['attributes'] : array(), 'innerBlocks' => isset($b['innerBlocks']) && is_array($b['innerBlocks']) ? self::spec_inner($b['innerBlocks'], $depth + 1) : array());
+		}
+		return $out;
+	}
+
+	/** Every block type an example is made of. */
+	public static function spec_names(array $spec): array {
+		$out = array($spec['name']);
+		foreach ($spec['innerBlocks'] as $b) $out = array_merge($out, self::spec_names($b));
+		return array_values(array_unique($out));
+	}
+
+	/** Whether core renders all of an example from attributes alone (every block in it dynamic). */
+	private static function server_renders(array $spec): bool {
+		foreach (self::spec_names($spec) as $name) {
+			$t = WP_Block_Type_Registry::get_instance()->get_registered($name);
+			if (!$t || !$t->is_dynamic()) return false;
+		}
+		return true;
+	}
+
+	/** An example as a parsed block, for serialize_block(): void delimiters, inner blocks at null placeholders. */
+	public static function spec_block(array $spec): array {
+		$inner = array_map(array(self::class, 'spec_block'), $spec['innerBlocks']);
+		return array('blockName' => $spec['name'], 'attrs' => $spec['attributes'], 'innerBlocks' => $inner, 'innerHTML' => '', 'innerContent' => array_fill(0, count($inner), null));
+	}
+
+	/** The piece page: the theme's head and foot around the rendered piece, or why it did not render. */
+	private static function piece_page(?string $html, ?string $why, string $state = 'ready', string $extra = ''): void {
+		echo '<!DOCTYPE html><html ' . get_language_attributes() . '><head><meta charset="' . esc_attr(get_bloginfo('charset')) . '"><meta name="viewport" content="width=device-width, initial-scale=1">';
+		wp_head();
+		echo '</head><body class="' . esc_attr(implode(' ', get_body_class('wanigan-live-piece'))) . '"><div class="wp-site-blocks">';
+		if ($why !== null) echo '<main data-wanigan-piece="failed" style="padding:24px;font:15px/1.5 system-ui,sans-serif"><p><strong>This piece did not render on its own.</strong></p><p class="wanigan-live-why">' . esc_html($why) . '</p></main>';
+		else echo '<main class="wanigan-live-piece" data-wanigan-piece="' . esc_attr($state) . '" style="padding:24px">' . $html . '</main>';
+		echo '</div>';
+		wp_footer();
+		echo $extra . '</body></html>';
+	}
+
+	/**
+	 * The page that has a static block's own editor scripts write its markup: core's block library and the
+	 * server's block definitions (as the block editor bootstraps them, edit-form-blocks.php), each block type's
+	 * editor scripts, then wp.blocks.createBlock() and serialize() on the example, posted back here.
+	 */
+	private static function serialize_page(array $spec): void {
+		require_once ABSPATH . 'wp-admin/includes/post.php';
+		wp_enqueue_script('wp-blocks');
+		wp_enqueue_script('wp-block-library');
+		wp_add_inline_script('wp-blocks', 'wp.blocks.unstable__bootstrapServerSideBlockDefinitions(' . wp_json_encode(get_block_editor_server_block_settings(), JSON_HEX_TAG | JSON_UNESCAPED_SLASHES) . ');');
+		foreach (self::spec_names($spec) as $name) {
+			$type = WP_Block_Type_Registry::get_instance()->get_registered($name);
+			if ($type) foreach ((array) $type->editor_script_handles as $handle) wp_enqueue_script($handle);
+		}
+		$data = wp_json_encode(array('name' => $spec['name'], 'attributes' => (object) $spec['attributes'], 'innerBlocks' => self::spec_json($spec['innerBlocks'])), JSON_HEX_TAG | JSON_UNESCAPED_SLASHES);
+		$form = '<form id="wanigan-live-serialize" method="post" action="' . esc_url(add_query_arg(array())) . '" hidden><input type="hidden" name="markup" value=""></form><p class="wanigan-live-why" style="font:15px/1.5 system-ui,sans-serif"></p>';
+		$script = '<script>window.addEventListener("load",function(){var main=document.querySelector("[data-wanigan-piece]");'
+			. 'var fail=function(why){main.setAttribute("data-wanigan-piece","failed");var p=document.querySelector(".wanigan-live-why");if(p)p.textContent="This piece did not render on its own. "+why;};'
+			. 'try{if(!window.wp||!wp.blocks)return fail("WordPress’s block scripts did not load here.");'
+			. 'if(!wp.blocks.getBlockType("core/paragraph")&&wp.blockLibrary&&wp.blockLibrary.registerCoreBlocks)wp.blockLibrary.registerCoreBlocks();'
+			. 'var make=function(s){if(!wp.blocks.getBlockType(s.name))throw new Error(s.name+" is not registered by its editor scripts here.");return wp.blocks.createBlock(s.name,s.attributes||{},(s.innerBlocks||[]).map(make));};'
+			. 'var form=document.getElementById("wanigan-live-serialize");form.elements.markup.value=wp.blocks.serialize([make(' . $data . ')]);form.submit();'
+			. '}catch($e){fail(String($e&&$e.message||$e));}});</script>';
+		self::piece_page($form, null, 'serializing', $script);
+	}
+
+	/** Inner blocks for the page's script: attributes as objects, even when empty. */
+	private static function spec_json(array $list): array {
+		$out = array();
+		foreach ($list as $b) $out[] = array('name' => $b['name'], 'attributes' => (object) $b['attributes'], 'innerBlocks' => self::spec_json($b['innerBlocks']));
+		return $out;
+	}
 
 	/* ── Go to: the site's destinations ─────────────────────────────────── */
 
@@ -3614,7 +3874,7 @@ final class Wanigan_Live {
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|undo|find|ai)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -3623,6 +3883,7 @@ final class Wanigan_Live {
 			if ($route === 'trace' && !$post) self::serve_trace($arg);
 			if ($route === 'find' && !$post) self::find();
 			if ($route === 'ai' && !$post) self::site_ai();
+			if ($route === 'components' && !$post) self::components();
 			if ($route === 'edit' && !$post && $arg === 'done') self::edit_done();
 			if ($route === 'edit' && !$post) self::edit_form($arg);
 			if (!$post) self::answer(array('ok' => false, 'error' => 'That route takes a POST.'), 405);
@@ -3634,6 +3895,7 @@ final class Wanigan_Live {
 			if ($route === 'edit') self::edit_save($arg, $body);
 			if ($route === 'move') self::move($body, false);
 			if ($route === 'insert') self::move($body, true);
+			if ($route === 'remove') self::remove($body);
 			if ($route === 'undo') self::undo($body);
 		} catch (Throwable $e) {
 			self::answer(array('ok' => false, 'error' => 'WordPress stopped with an error: ' . $e->getMessage()), 500);
@@ -3860,7 +4122,9 @@ final class Wanigan_Live {
 	/** wp-includes/rest-api.php rest_do_request(): a REST request inside this one, as the logged-in user. */
 	private static function rest(string $method, string $route, array $params) {
 		$request = new WP_REST_Request($method, $route);
-		$request->set_body_params($params);
+		// class-wp-rest-request.php get_parameter_order(): a GET reads its query, the others their body too.
+		if ($method === 'GET') $request->set_query_params($params);
+		else $request->set_body_params($params);
 		$response = rest_do_request($request);
 		if ($response->is_error()) {
 			$error = $response->as_error();
@@ -3916,13 +4180,15 @@ final class Wanigan_Live {
 			default:
 				$result = new WP_Error('wanigan', 'Wanigan cannot move that.');
 		}
+		self::saved($result);
+	}
+
+	/** A write's answer: refused (409, with the order now when the collection changed), or saved with an undo token. */
+	private static function saved($result): void {
 		if (is_wp_error($result)) {
 			$data = $result->get_error_data();
 			$out = array('ok' => false, 'error' => $result->get_error_message());
-			if (is_array($data) && isset($data['items'])) {
-				$out['items'] = $data['items'];
-				self::answer($out, 409);
-			}
+			if (is_array($data) && isset($data['items'])) $out['items'] = $data['items'];
 			self::answer($out, 409);
 		}
 		wanigan_live_changed();
@@ -3931,6 +4197,137 @@ final class Wanigan_Live {
 		$out = array('ok' => true, 'undo' => $token);
 		if (isset($result['revision'])) $out['revision'] = (string) $result['revision'];
 		self::answer($out);
+	}
+
+	/* taking out */
+
+	/**
+	 * POST /_wanigan/remove: one item taken out of its collection, the reverse of insert, through the API that
+	 * stores it. Only the placement goes: a block's markup from a post, template or template part (an attachment,
+	 * synced pattern, template part or post it showed stays); a widget to Inactive widgets with its settings, as the
+	 * Widgets screen keeps one; a menu item, whose page stays, which undo makes again.
+	 */
+	private static function remove(array $body): void {
+		$stored = self::load(isset($body['trace']) ? (string) $body['trace'] : '');
+		if (!$stored) self::answer(array('ok' => false, 'error' => 'That page was shown more than ten minutes ago (or to another user): reload it and try again.'), 409);
+		$c = self::collection($stored, isset($body['collection']) ? (string) $body['collection'] : '');
+		if (!$c) self::answer(array('ok' => false, 'error' => 'That is not a collection on this page.'), 404);
+		if (empty($c['public']['removes'])) self::answer(array('ok' => false, 'error' => !empty($c['public']['removeWhy']) ? $c['public']['removeWhy'] : 'Nothing is taken out of this here.'), 403);
+		$item = isset($body['item']) ? (string) $body['item'] : '';
+		if (!in_array($item, $c['public']['items'], true)) self::answer(array('ok' => false, 'error' => 'That item is not in the collection.'), 400);
+		switch ($c['private']['type']) {
+			case 'blocks':
+				$result = self::remove_block($c, $item);
+				break;
+			case 'widgets':
+				$result = self::remove_widget($c, $item);
+				break;
+			case 'menu':
+				$result = self::remove_menu_item($c, $item);
+				break;
+			default:
+				$result = new WP_Error('wanigan', 'Wanigan cannot take that out.');
+		}
+		self::saved($result);
+	}
+
+	/** A block out of a post, template or template part's markup (and the whitespace beside it), saved as a move is. */
+	private static function remove_block(array $c, string $item) {
+		$fp = $c['private'];
+		$info = self::fresh_store($fp['store']);
+		if (is_wp_error($info)) return $info;
+		if (md5($info['content']) !== $fp['hash']) {
+			return new WP_Error('wanigan', 'This ' . $info['noun'] . ' changed since the page was shown.', array('items' => self::current_items($info['content'], $fp)));
+		}
+		$blocks = parse_blocks($info['content']);
+		if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', 'Writing this ' . $info['noun'] . '’s blocks back would change other parts of it, so Wanigan does not save it.');
+		$path = isset($fp['paths'][$item]) ? $fp['paths'][$item] : null;
+		$node = $path !== null ? self::node_in($blocks, $path) : null;
+		if (!$node || md5(serialize_block($node)) !== $fp['fps'][$item]) return new WP_Error('wanigan', 'That block is not where it was.', array('items' => self::current_items($info['content'], $fp)));
+		$content = serialize_blocks(self::remove_at($blocks, $path));
+		$saved = self::save_store($fp['store'], $info, $content);
+		if (is_wp_error($saved)) return $saved;
+		$undo = array('type' => 'blocks', 'store' => $fp['store'], 'before' => $info['content'], 'after' => md5($content), 'reset' => $info['post'] === null && strpos($fp['store'], 'post:') !== 0);
+		$out = array('undo' => $undo);
+		if (isset($saved['revision'])) $out['revision'] = $saved['revision'];
+		return $out;
+	}
+
+	/** widgets.php wp_set_sidebars_widgets(): a widget out of its area into wp_inactive_widgets, its settings kept. */
+	private static function remove_widget(array $c, string $item) {
+		if (!current_user_can('edit_theme_options')) return new WP_Error('wanigan', 'Your WordPress user cannot change widgets (edit_theme_options).');
+		$all = wp_get_sidebars_widgets();
+		$area = $c['private']['sidebar'];
+		$now = isset($all[$area]) ? array_values((array) $all[$area]) : array();
+		if ($now !== $c['private']['state']) {
+			$items = array();
+			$by = array_flip($c['private']['widgets']);
+			foreach ($now as $w) if (isset($by[$w])) $items[] = $by[$w];
+			return new WP_Error('wanigan', 'The widgets here changed since the page was shown.', array('items' => $items));
+		}
+		$wid = $c['private']['widgets'][$item];
+		$inactive = isset($all['wp_inactive_widgets']) ? array_values((array) $all['wp_inactive_widgets']) : array();
+		$before = array($area => $now, 'wp_inactive_widgets' => $inactive);
+		$all[$area] = array_values(array_diff($now, array($wid)));
+		$all['wp_inactive_widgets'] = array_merge(array($wid), $inactive);
+		wp_set_sidebars_widgets($all);
+		return array('undo' => array('type' => 'widgets', 'before' => $before, 'after' => array($area => $all[$area], 'wp_inactive_widgets' => $all['wp_inactive_widgets'])));
+	}
+
+	/**
+	 * A menu item deleted through /wp/v2/menu-items, as the Menus screen's Remove does: the page or term it linked
+	 * to stays. Its fields are kept for undo, which makes it again in its place. One with items under it is left
+	 * alone: they would be left without a parent.
+	 */
+	private static function remove_menu_item(array $c, string $item) {
+		if (!current_user_can('edit_theme_options')) return new WP_Error('wanigan', 'Your WordPress user cannot change menus (edit_theme_options).');
+		$menu = $c['private']['menu'];
+		$state = self::menu_state($menu);
+		if ($state !== $c['private']['state']) {
+			$items = array();
+			$by = array_flip($c['private']['items']);
+			$order = $state;
+			uasort($order, function ($a, $b) { return $a[1] - $b[1]; });
+			foreach ($order as $iid => $s) if ($s[0] === $c['private']['parent'] && isset($by[$iid])) $items[] = $by[$iid];
+			return new WP_Error('wanigan', 'This menu changed since the page was shown.', array('items' => $items));
+		}
+		$iid = (int) $c['private']['items'][$item];
+		foreach ($state as $s) {
+			if ($s[0] === $iid) return new WP_Error('wanigan', 'It has links under it, and they would be left without a parent. Move or take those out first, or change it in Appearance › Menus.');
+		}
+		$kept = self::rest('GET', '/wp/v2/menu-items/' . $iid, array('context' => 'edit'));
+		if (is_wp_error($kept)) return $kept;
+		$meta = self::menu_item_meta($iid);
+		$gone = self::rest('DELETE', '/wp/v2/menu-items/' . $iid, array('force' => true));
+		if (is_wp_error($gone)) return $gone;
+		return array('undo' => array('type' => 'menu', 'menu' => $menu, 'before' => $state, 'after' => self::menu_state($menu), 'created' => null, 'deleted' => array('id' => $iid, 'fields' => self::menu_item_fields((array) $kept), 'meta' => $meta)));
+	}
+
+	/**
+	 * A menu item's other post meta, as stored, for undo to put back: what /wp/v2/menu-items does not make again
+	 * (the item's own _menu_item_* fields it does), such as a theme's or plugin's settings for that item.
+	 */
+	public static function menu_item_meta(int $iid): array {
+		$out = array();
+		foreach ((array) get_post_meta($iid) as $key => $values) {
+			$key = (string) $key;
+			if (strpos($key, '_menu_item_') === 0 || in_array($key, array('_edit_lock', '_edit_last', '_wp_old_slug', '_wp_old_date'), true)) continue;
+			$out[$key] = array_map('maybe_unserialize', (array) $values);
+		}
+		return $out;
+	}
+
+	/** What /wp/v2/menu-items needs to make a menu item again, from its own answer in the edit context. */
+	public static function menu_item_fields(array $d): array {
+		$out = array();
+		foreach (array('type', 'status', 'parent', 'attr_title', 'classes', 'description', 'menu_order', 'object', 'object_id', 'target', 'xfn', 'menus') as $k) {
+			if (array_key_exists($k, $d)) $out[$k] = $d[$k];
+		}
+		// Only a custom link keeps its own address; any other is the address of what it links to.
+		if (isset($d['type']) && $d['type'] === 'custom' && isset($d['url'])) $out['url'] = $d['url'];
+		if (isset($d['title']) && is_array($d['title']) && isset($d['title']['raw'])) $out['title'] = $d['title']['raw'];
+		elseif (isset($d['title']) && is_string($d['title'])) $out['title'] = $d['title'];
+		return $out;
 	}
 
 	/**
@@ -4292,6 +4689,20 @@ final class Wanigan_Live {
 					$r = self::rest('DELETE', '/wp/v2/menu-items/' . (int) $u['created'], array('force' => true));
 					if (is_wp_error($r)) $result = $r;
 				}
+				if (!$result && !empty($u['deleted'])) {
+					// A removed item is made again; its new id takes the old one's place in the order.
+					$made = self::rest('POST', '/wp/v2/menu-items', $u['deleted']['fields']);
+					if (is_wp_error($made)) $result = $made;
+					else {
+						// Its other meta, as it was stored (add_post_meta() unslashes and serializes again).
+						foreach (isset($u['deleted']['meta']) ? (array) $u['deleted']['meta'] : array() as $key => $values) {
+							foreach ((array) $values as $value) add_post_meta((int) $made['id'], wp_slash($key), wp_slash($value));
+						}
+						$before = array();
+						foreach ($u['before'] as $iid => $s) $before[(int) $iid === (int) $u['deleted']['id'] ? (int) $made['id'] : $iid] = $s;
+						$u['before'] = $before;
+					}
+				}
 				if (!$result) {
 					foreach ($u['before'] as $iid => $s) {
 						$r = self::rest('POST', '/wp/v2/menu-items/' . $iid, array('menu_order' => $s[1], 'parent' => $s[0]));
@@ -4375,8 +4786,16 @@ if (wanigan_live_on()) {
 		if ($m[1] === 'changed') wp_send_json(array('changed' => (int) get_option('wanigan_live_changes', 0)));
 		wp_send_json(array('ok' => false, 'error' => 'This WordPress helper saves through /_wanigan/edit: reload the live view.'), 409);
 	}, 0);
+	// A piece is shown alone: no admin bar over it, decided before core sets the bar up (_wp_admin_bar_init, also on
+	// template_redirect at 0).
+	if (preg_match('#/_wanigan/piece/#', (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH))) add_filter('show_admin_bar', '__return_false', PHP_INT_MAX);
 	add_action('template_redirect', function () {
 		$path = (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+		// One entry of the component library alone (helper version 4).
+		if (preg_match('#/_wanigan/piece/library/?$#', $path)) {
+			Wanigan_Live::library_piece();
+			exit;
+		}
 		if (!preg_match('#/_wanigan/piece/entity/post/(\d+)/?$#', $path, $m)) return;
 		$post = get_post((int) $m[1]);
 		if (!$post || ($post->post_status !== 'publish' && !current_user_can('read_post', $post->ID))) {

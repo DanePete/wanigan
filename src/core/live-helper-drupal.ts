@@ -3,8 +3,9 @@
 // traces what made each part of a page through Drupal core's own render,
 // theme, hook, database and logging paths (a LiveTrace, src/shared/live-trace.ts),
 // offers each part's edit through core's own forms, moves and inserts in the
-// collections core can reorder, answers the "Go to" launcher
-// (src/shared/live-find.ts), shows one piece alone, saves words to a plain
+// collections core can reorder (and takes a placed item out of them), lists
+// what the site can place (src/shared/live-library.ts), answers the "Go to"
+// launcher (src/shared/live-find.ts), shows one piece alone, saves words to a plain
 // text field as the logged-in user, and counts cache tag invalidations so the
 // view can reload when content changes. None of it acts unless the request
 // carries the token Wanigan keeps in Drupal's state (wanigan_live.token) and
@@ -18,8 +19,9 @@ import { DRUPAL_ASSEMBLE_FILES } from './live-helper-drupal-assemble.ts';
 import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
 import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
 import { DRUPAL_AI_FILES } from './live-helper-drupal-ai.ts';
+import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
 
-export const DRUPAL_HELPER_VERSION = 3;
+export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
 /** The first line of the module's .info.yml: how Wanigan knows a folder of that name is its own. */
 export const DRUPAL_HELPER_MARK = '# Written by Wanigan for its live view.';
@@ -94,7 +96,7 @@ wanigan_live.piece:
     b: ''
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
-    kind: 'entity|sample|component|block'
+    kind: 'entity|sample|component|block|plugin'
   options:
     no_cache: TRUE
 wanigan_live.trace:
@@ -144,6 +146,15 @@ wanigan_live.insert:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
     no_cache: TRUE
+wanigan_live.remove:
+  path: '/_wanigan/remove'
+  methods: [POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::remove'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
 wanigan_live.undo:
   path: '/_wanigan/undo'
   methods: [POST]
@@ -157,6 +168,14 @@ wanigan_live.ai:
   path: '/_wanigan/ai'
   defaults:
     _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::ai'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.components:
+  path: '/_wanigan/components'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::components'
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
@@ -349,6 +368,7 @@ use Drupal\\Core\\Entity\\ContentEntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
 use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
+use Drupal\\wanigan_live\\Library\\Library;
 use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
 use Symfony\\Component\\HttpFoundation\\Request;
@@ -388,6 +408,14 @@ final class LiveController extends ControllerBase {
     $finder = new Finder();
     $query = trim((string) $request->query->get('q', ''));
     return $this->json($query !== '' ? $finder->search($query, (int) $request->query->get('limit', 50)) : $finder->index());
+  }
+
+  /**
+   * What the site can place, from core's own registries (src/shared/
+   * live-library.ts ComponentLibrary).
+   */
+  public function components(): JsonResponse {
+    return $this->json(Library::build());
   }
 
   /**
@@ -494,16 +522,17 @@ final class LiveController extends ControllerBase {
         break;
 
       case 'component':
-        $component = \\Drupal::service('plugin.manager.sdc')->find($a);
-        $props = [];
-        foreach ($component->metadata->schema['properties'] ?? [] as $prop => $schema) {
-          $examples = $schema['examples'] ?? NULL;
-          if ($examples === NULL) {
-            continue;
-          }
-          // An array prop's examples are its items; any other prop's are each a whole value.
-          $props[$prop] = (($schema['type'] ?? '') === 'array' || !is_array($examples) || !array_is_list($examples)) ? $examples : $examples[0];
+        // A library picture: the component's schema examples, else its
+        // defaults, else a placeholder for each required prop
+        // (Library::exampleProps()); slots from their own examples.
+        try {
+          $component = \\Drupal::service('plugin.manager.sdc')->find($a);
         }
+        catch (\\Throwable $e) {
+          throw new NotFoundHttpException();
+        }
+        $definition = $component->getPluginDefinition();
+        [$props] = Library::exampleProps(is_array($definition['props'] ?? NULL) ? $definition['props'] : []);
         $slots = [];
         foreach ($component->metadata->slots ?? [] as $slot => $info) {
           if (isset($info['examples'][0]) && is_string($info['examples'][0])) {
@@ -515,6 +544,39 @@ final class LiveController extends ControllerBase {
         $sample = TRUE;
         break;
 
+      case 'plugin':
+        // A block plugin from the block library, built as Layout Builder
+        // builds one (BlockComponentRenderArray::onBuildRender()) with its
+        // own default configuration: no placement is made or saved.
+        $manager = \\Drupal::service('plugin.manager.block');
+        if (!$manager->hasDefinition($a)) {
+          throw new NotFoundHttpException();
+        }
+        $block = $manager->createInstance($a, []);
+        if ($why = $this->contextsFor($block)) {
+          return $this->failedPiece($why);
+        }
+        $access = $block->access($this->currentUser(), TRUE);
+        if (!$access->isAllowed()) {
+          return $this->failedPiece((string) $this->t('The user you are logged in as may not see this block.'));
+        }
+        $content = $block->build();
+        $build = [
+          '#theme' => 'block',
+          '#configuration' => $block->getConfiguration(),
+          '#plugin_id' => $block->getPluginId(),
+          '#base_plugin_id' => $block->getBaseId(),
+          '#derivative_plugin_id' => $block->getDerivativeId(),
+        ];
+        if (isset($content['#attributes'])) {
+          $build['#attributes'] = $content['#attributes'];
+          unset($content['#attributes']);
+        }
+        $build['content'] = $content;
+        $title = (string) $block->label();
+        $sample = TRUE;
+        break;
+
       default:
         $block = $types->getStorage('block')->load($a);
         if (!$block || !$block->access('view')) {
@@ -523,8 +585,10 @@ final class LiveController extends ControllerBase {
         $build = $types->getViewBuilder('block')->view($block);
         $title = (string) $block->label();
     }
+    // A library picture is the piece alone: the sample notice is for the owner looking at it in the view.
+    $picture = $request->query->get('picture') === '1';
     $content = [
-      'notice' => $sample ? [
+      'notice' => $sample && !$picture ? [
         '#markup' => Markup::create('<p class="wanigan-live-sample" style="display:inline-block;margin:0 0 16px;padding:2px 10px;border-radius:999px;background:#fff;color:#1b2430;box-shadow:0 0 0 1px rgba(0,0,0,.12);font:600 12px/1.6 system-ui,sans-serif;letter-spacing:.04em;text-transform:uppercase">' . $this->t('Sample content') . '</p>'),
       ] : [],
       'piece' => $build,
@@ -533,9 +597,45 @@ final class LiveController extends ControllerBase {
       return \\Drupal::service('bare_html_page_renderer')->renderBarePage($content, $title, 'wanigan_live_piece', ['#show_messages' => FALSE]);
     }
     catch (\\Throwable $e) {
-      $message = htmlspecialchars($e->getMessage(), ENT_QUOTES);
-      return new Response('<!DOCTYPE html><meta charset="utf-8"><body style="font:15px/1.5 system-ui,sans-serif;padding:24px"><p><strong>' . $this->t('This piece did not render on its own.') . '</strong></p><p>' . $message . '</p></body>', 200);
+      return $this->failedPiece($e->getMessage());
     }
+  }
+
+  /**
+   * A piece that did not render, saying why, marked so a picture of it is
+   * not mistaken for the piece.
+   */
+  private function failedPiece(string $why): Response {
+    $message = htmlspecialchars($why, ENT_QUOTES);
+    return new Response('<!DOCTYPE html><meta charset="utf-8"><body style="font:15px/1.5 system-ui,sans-serif;padding:24px"><main data-wanigan-piece="failed"><p><strong>' . $this->t('This piece did not render on its own.') . '</strong></p><p class="wanigan-live-why">' . $message . '</p></main></body>', 200);
+  }
+
+  /**
+   * Gives a block plugin the contexts it needs from what core has at run
+   * time (the current user, the language), as ContextHandler matches them;
+   * why not, when a page would have to give one (a node, a term).
+   */
+  private function contextsFor(mixed $block): ?string {
+    if (!method_exists($block, 'getContextDefinitions')) {
+      return NULL;
+    }
+    $repository = \\Drupal::service('context.repository');
+    $handler = \\Drupal::service('context.handler');
+    $available = NULL;
+    foreach ($block->getContextDefinitions() as $name => $definition) {
+      if (!$definition->isRequired()) {
+        continue;
+      }
+      $available ??= $repository->getRuntimeContexts(array_keys($repository->getAvailableContexts()));
+      foreach ($handler->getMatchingContexts($available, $definition) as $context) {
+        if ($context->hasContextValue()) {
+          $block->setContext($name, $context);
+          continue 2;
+        }
+      }
+      return (string) $this->t('It shows the @what of the page it is placed on, so it has nothing to show alone.', ['@what' => (string) $definition->getDataType()]);
+    }
+    return NULL;
   }
 
   /**
@@ -570,7 +670,7 @@ const PIECE_TEMPLATE = `{#
  * One piece of the site alone, for Wanigan's live view.
  */
 #}
-<main class="wanigan-live-piece" style="padding:24px">
+<main class="wanigan-live-piece" data-wanigan-piece="ready" style="padding:24px">
   {{ page.content }}
 </main>
 `;
@@ -592,4 +692,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_EDIT_FILES,
   ...DRUPAL_FIND_FILES,
   ...DRUPAL_AI_FILES,
+  ...DRUPAL_LIBRARY_FILES,
 };

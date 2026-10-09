@@ -107,3 +107,20 @@ test('what a save runs is kept only where a target or a collection names a save 
   assert.deepEqual(t?.ai, { client: true, supports: true, connected: ['Acme AI'] });
   assert.equal(parseTrace({ ...base, ai: { client: true, supports: true, connected: [] } })?.ai, undefined, 'core’s AI Client is WordPress’s');
 });
+
+test('helper 4 says what can be taken out of a collection, why not, and where configuration shows', () => {
+  const t = parseTrace({
+    ...base,
+    parts: [...base.parts, { id: 'b1', kind: 'block', label: 'Search' }],
+    collections: [
+      { id: 'c1', kind: 'region-blocks', label: 'Sidebar', items: ['b1'], changes: 'configuration', removes: true, shows: 'every page shown in the Acme theme' },
+      { id: 'c2', kind: 'region-blocks', label: 'Footer', items: [], changes: 'configuration', removes: true, removeWhy: 'The user may not.' },
+      { id: 'c3', kind: 'region-blocks', label: 'Header', items: [], changes: 'configuration', removes: 'yes', shows: 'x'.repeat(400) },
+    ],
+  });
+  const [c1, c2, c3] = t?.collections ?? [];
+  assert.deepEqual([c1?.removes, c1?.removeWhy, c1?.shows], [true, undefined, 'every page shown in the Acme theme']);
+  assert.deepEqual([c2?.removes, c2?.removeWhy], [false, 'The user may not.'], 'a reason why not wins over a yes');
+  assert.equal(c3?.removes, undefined, 'only a boolean is a yes or no');
+  assert.equal(c3?.shows?.length, 300, 'where it shows is bounded');
+});

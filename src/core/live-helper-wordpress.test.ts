@@ -30,7 +30,7 @@ test('the plugin carries its token, version, mark and where WordPress sits in th
   assert.ok(src.includes(` * Version: ${WORDPRESS_HELPER_VERSION}\n`));
   assert.ok(src.includes(`const WANIGAN_LIVE_TOKEN = '${TOKEN}';`));
   assert.ok(src.includes("const WANIGAN_LIVE_SITE_DIR = 'web';"));
-  assert.equal(WORDPRESS_HELPER_VERSION, 3, 'a helper installed by an older Wanigan reads as outdated');
+  assert.equal(WORDPRESS_HELPER_VERSION, 4, 'a helper installed by an older Wanigan reads as outdated');
   assert.ok(!/__WANIGAN_[A-Z_]+__/.test(src), 'every placeholder is filled');
   assert.ok(wordpressHelper(TOKEN, '/web/').includes("WANIGAN_LIVE_SITE_DIR = 'web';"), 'slashes around the folder are dropped');
   assert.ok(wordpressHelper(TOKEN).includes("WANIGAN_LIVE_SITE_DIR = '';"));
@@ -78,6 +78,11 @@ test('it stays within PHP 7.4, WordPress 7.1’s minimum, where a must-use plugi
   assert.ok(!/:\s*(mixed|static|never)\b/.test(src), 'no PHP 8 return types');
   assert.ok(!/function\s*\([^)]*\b(int|string|array|bool)\s*\|/.test(src), 'no union types');
   assert.ok(!src.includes('#['), 'no attributes');
+  // PHP 8.0 also parses these, and 7.4 stops at each.
+  assert.ok(!/,\s*\)\s*(\{|use\b|:\s*\??[A-Za-z])/.test(src), 'no trailing comma in a parameter or use list');
+  assert.ok(!/\b[A-Za-z_]\w*\(\s*[a-z_]\w*\s*:(?![:/])/.test(src.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")), 'no named arguments');
+  assert.ok(!/(\?\?|\?|=>|[^=!<>]=|&&|\|\|)\s*throw\b/.test(src), 'no throw expression');
+  assert.ok(!/\w\(\s*\.\.\.\s*\)/.test(src), 'no first-class callable');
 });
 
 describe('loaded under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {
@@ -172,7 +177,7 @@ echo json_encode(array_map(function ($c) { return Wanigan_Live::place($c[0], $c[
 
   test('with the token, its JSON routes and the REST API are not traced, and only the Go to index runs as an admin request', () => {
     const LOGGED_IN = { cookie: 'wordpress_logged_in_0123abcd' };
-    for (const uri of ['/_wanigan/trace/0123456789abcdef', '/_wanigan/edit/post-1-title', '/_wanigan/move', '/_wanigan/find?q=x']) {
+    for (const uri of ['/_wanigan/trace/0123456789abcdef', '/_wanigan/edit/post-1-title', '/_wanigan/move', '/_wanigan/remove', '/_wanigan/components', '/_wanigan/find?q=x']) {
       const r = load(uri, TOKEN, undefined, LOGGED_IN);
       assert.ok(!r.hooks.includes('all'), uri);
       assert.ok(r.hooks.includes('wp_loaded'), uri);

@@ -48,6 +48,27 @@
 //   during it, as provider and model ids and ability names; no prompt text,
 //   no response text. A body with `"noSiteAi": true` asks the helper to stop
 //   core's AI Client for that one save (`wp_ai_client_prevent_prompt`).
+//
+// Helper version 4 adds taking a placed item out, and the component library:
+//
+// - `POST /_wanigan/remove` with `{ "trace", "collection", "item" }` takes one
+//   item out of a collection whose `removes` is true: the reverse of insert,
+//   through the same core save paths and with the same answers (409 with the
+//   order now, an undo token, a revision). Only the placement or reference
+//   goes, never the content, block content, media or attachment it showed: a
+//   field item's reference, a Layout Builder component, a block in post,
+//   template or template part markup. A Drupal block placement and menu link
+//   are switched off (their own forms' Enabled), so they are kept; a WordPress
+//   widget goes to Inactive widgets with its settings; a WordPress menu item
+//   is deleted (its page is not), and undo makes it again. A collection that
+//   is configuration says where it shows (`reach` in pages when it can count
+//   them, otherwise `shows`), so the window asks first. Undo puts it back.
+// - `GET /_wanigan/components` answers the ComponentLibrary of
+//   src/shared/live-library.ts: what can be placed, from core's registries
+//   only, bounded, keyed by a hash of the definitions and their files' mtimes.
+// - `/_wanigan/piece/...` renders one library entry alone, at the path the
+//   library names for it, with example props; the rendered piece says it is
+//   `data-wanigan-piece="ready"` (or `"failed"`, with why) once it is drawn.
 
 export const TRACE_VERSION = 1;
 
@@ -261,6 +282,12 @@ export interface TraceCollection {
   why?: string;
   /** The TraceSave a move or an insert here runs: what else runs when it is saved. */
   saves?: string;
+  /** Helper 4: an item can be taken out of it (`POST /_wanigan/remove`); only its placement or reference goes. */
+  removes?: boolean;
+  /** Helper 4: why nothing can be taken out of it here, when nothing can. */
+  removeWhy?: string;
+  /** Helper 4: where a change here shows when it is shared (configuration, or content shown in many places) and its pages cannot be counted: "every page shown in the Acme theme". */
+  shows?: string;
 }
 
 /** Something that can be inserted into a collection: a block, a component, a pattern, a field item. */
@@ -523,6 +550,9 @@ export function parseTrace(raw: unknown): LiveTrace | null {
       if (num(c.reach) !== undefined) out.reach = num(c.reach);
       const why = str(c.why, 500); if (why) out.why = why;
       const save = savesOf(c.saves); if (save) out.saves = save;
+      if (typeof c.removes === 'boolean') out.removes = c.removes;
+      const removeWhy = str(c.removeWhy, 500); if (removeWhy) { out.removeWhy = removeWhy; out.removes = false; }
+      const shows = str(c.shows, 300); if (shows) out.shows = shows;
       return out;
     }, 'collections', truncated);
     // A move target must be a collection this trace knows.
