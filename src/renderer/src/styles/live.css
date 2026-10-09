@@ -795,11 +795,11 @@
   gap: var(--space-2);
 }
 
-/* The four verbs on a chosen part: Edit ▾, Move, Code, Alone, each with its key. */
+/* The five verbs on a chosen part: Edit ▾, Move, Code, Alone, Take out, each with its key. */
 .live-verbs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-1);
 }
 
 .live-verb {
@@ -835,6 +835,20 @@
 .live-verb[aria-expanded='true'] {
   border-color: var(--water-line);
   background: var(--water-soft);
+}
+
+/* Why the chosen part cannot be taken out, once Take out is pressed: said, with the one thing to do when there is one. */
+.live-out-why {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-out-why p {
+  margin: 0;
 }
 
 /* What the Move verb opens: where the part is, and the steps. */

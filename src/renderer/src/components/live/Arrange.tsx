@@ -13,11 +13,16 @@
 //   saves and Escape puts it back, each step said aloud. In the panel its Move
 //   verb opens, the arrows alone do it.
 // - The palette (Add) places an entry by dragging it onto the page, by
-//   choosing it and clicking where it goes, or by naming the place.
+//   choosing it and clicking where it goes, or by naming the place. The
+//   component library (Library.tsx) places through the same palette entries.
+// - Taking an item out (the Inspector's Take out) goes through here too: out
+//   of anything shared it says where it shows and asks first; out of one
+//   page's own content it is saved at once. Either way only the placement or
+//   reference goes, a toast offers Undo, and the page is read back.
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import {
-  announce, buildSpec, collectionOf, moveNotice, placesIn, requestText, stepMove, targetsFor,
-  type ArrangeDrop, type ArrangeSpec, type LiveInsert, type LiveMove, type LiveMoveSaved, type Step,
+  announce, buildSpec, checkInsert, checkRemove, collectionOf, moveNotice, placesIn, removeNotice, requestText, stepMove, targetsFor,
+  type ArrangeDrop, type ArrangeSpec, type LiveInsert, type LiveMove, type LiveMoveSaved, type LiveRemove, type Step,
 } from '@shared/live-arrange';
 import type { PartIndex } from '@shared/live-lens';
 import type { LiveRegion } from '@shared/live';
@@ -125,7 +130,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   /** `back` says what Undo did: "Search is back where it was." */
   const undo = useCallback(async (token: string, back: string): Promise<void> => {
     if (!live) return;
-    const check = await checks.prepareUndo(token, back.replace(/ is (back where it was|taken out again)\.$/, ''));
+    const check = await checks.prepareUndo(token, back.replace(/ is (back where it was|taken out again|back)\.$/, ''));
     const r = await live.undo(token);
     checks.settle(check, { ok: r.ok, ai: r.ai });
     if (r.ok) { toast(back); say(back); } else toast(r.error ?? 'It could not be put back.', 'error');
@@ -169,6 +174,9 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     const into = coll(insert.collection);
     const entry = trace?.palette?.find((p) => p.id === insert.entry);
     if (!live || !into || !entry) return;
+    // Checked here as the main process checks it, so a place that does not take it is said before anything is asked.
+    const checked = checkInsert(trace, insert);
+    if (typeof checked === 'string') { toast(checked, 'error'); say(checked); return; }
     const notice = moveNotice(into, cms);
     const first = notice.confirm ? notice.confirm.replace(/^This moves the block/, 'This adds the block').replace(/^This moves the widget/, 'This adds the widget') : null;
     const answer = await confirmWrite(`Add ${entry.label}?`, 'Add it', [into.id], first);
@@ -178,6 +186,26 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
     done(r, `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, `${entry.label} is taken out again.`);
   }, [live, trace, cms, done, checks]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Take one item out of its collection. Out of anything shared (configuration, or content shown in many places) it
+   * says where it shows and asks first, and nothing is saved until the owner says so; out of one page's own content it
+   * is saved at once. The first write into a save that runs code beyond core says whose, as every write does.
+   */
+  const saveRemove = useCallback(async (remove: LiveRemove): Promise<void> => {
+    const from = coll(remove.collection);
+    if (!live || !from) return;
+    const checked = checkRemove(trace, remove);
+    if (typeof checked === 'string') { toast(checked, 'error'); say(checked); return; }
+    const notice = removeNotice(from, cms);
+    const name = label(remove.item);
+    const answer = await confirmWrite(`Take ${name} out?`, 'Take it out', [from.id], notice.confirm);
+    if (answer === 'no') { say(`Not taken out. ${name} stays where it is.`); return; }
+    const check = await checks.prepare('remove', name, watchedIn([from.id]));
+    const r = await live.remove(checked, answer === 'without-ai' ? { noSiteAi: true } : undefined);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
+    done(r, `Took ${name} out of ${from.label}`, notice.saved, name, `${name} is back.`);
+  }, [live, trace, cms, done, say, checks, toast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A part whose order is in a template: pictures of the order now and the order wanted, as a note for an agent. */
   const request = useCallback(async (region: number, ref: number, place: 'before' | 'after', previewed: boolean): Promise<void> => {
@@ -340,7 +368,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   useEffect(() => { setPending(null); }, [trace]);
 
   return {
-    spec, placing, setPlacing, pending, movable, step, commit, cancel, keys, said, saveInsert, describe,
+    spec, placing, setPlacing, pending, movable, step, commit, cancel, keys, said, saveInsert, saveRemove, describe,
     asking: asking ? (
       <Dialog title={asking.title} onClose={() => { asking.resolve('no'); setAsking(null); }}
         footer={(
@@ -470,7 +498,7 @@ export function PaletteTab({ arrange, trace }: { arrange: ReturnType<typeof useA
 }
 
 /** Placing by naming the place: which collection, and where in it. The keyboard's way, and anyone's. */
-function PlaceBy({ entry, into, labelOf, onPlace }: { entry: PaletteEntry; into: TraceCollection[]; labelOf: (part: string) => string; onPlace: (i: LiveInsert) => void }) {
+export function PlaceBy({ entry, into, labelOf, onPlace }: { entry: PaletteEntry; into: TraceCollection[]; labelOf: (part: string) => string; onPlace: (i: LiveInsert) => void }) {
   const [collection, setCollection] = useState(into[0]?.id ?? '');
   const c = into.find((x) => x.id === collection);
   const [index, setIndex] = useState(c?.items.length ?? 0);

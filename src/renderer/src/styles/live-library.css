@@ -1,0 +1,315 @@
+/*
+  The site's component library, in the live view's side panel
+  (components/live/Library.tsx): the list by kind, each entry with a small
+  picture, and one entry's details with its pictures at a desktop's and a
+  phone's width side by side, at the same scale.
+*/
+
+.live-library,
+.live-library-list,
+.live-library-detail {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.live-library p {
+  margin: 0;
+}
+
+.live-library > *,
+.live-library-list > *,
+.live-library-detail > * {
+  min-width: 0;
+}
+
+.live-library .search-field {
+  width: auto;
+}
+
+.live-library-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-library-count {
+  margin-left: var(--space-1);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-library-entries,
+.live-library-uses,
+.live-library-props,
+.live-library-files {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One entry: its picture, its name and where it comes from, and Place when the page takes it. */
+.live-library-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.live-library-entry[draggable='true'] {
+  cursor: grab;
+}
+
+.live-library-entry:hover {
+  border-color: var(--line-strong);
+}
+
+.live-library-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-library-open:hover .live-library-name {
+  text-decoration: underline;
+}
+
+.live-library-what {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.live-library-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.live-library-desc {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--muted);
+}
+
+/* A desktop's width, made small: the top of the piece, where it starts. */
+.live-library-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-12) * 2);
+  height: calc(var(--space-12) + var(--space-3));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--faint);
+}
+
+.live-library-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.live-library-thumb.none {
+  border-style: dashed;
+}
+
+.live-library-thumb.waiting {
+  color: var(--line-strong);
+}
+
+/* ── one entry ───────────────────────────────────────────────────────── */
+
+.live-library-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.live-library-detail-title {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.live-library-detail-title .live-side-title {
+  overflow-wrap: anywhere;
+}
+
+.live-library-pictures {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+/* Columns in proportion to the widths pictured (set where they are drawn), so both are at one scale. */
+.live-library-shots {
+  display: grid;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.live-library-shot {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-library-shot-open {
+  display: block;
+  max-height: calc(var(--space-12) * 5);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  cursor: zoom-in;
+}
+
+.live-library-shot-open img {
+  display: block;
+  width: 100%;
+}
+
+.live-library-shot-why {
+  min-height: calc(var(--space-12) + var(--space-3));
+  padding: var(--space-2);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-s);
+  overflow-wrap: anywhere;
+}
+
+/* No picture, and why: said, not alarmed. */
+.live-library-nopicture,
+.live-library-why {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.live-library-nopicture > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--faint);
+}
+
+.live-library-large {
+  max-height: 70vh;
+  overflow: auto;
+  text-align: center;
+}
+
+.live-library-large img {
+  max-width: 100%;
+  border: 1px solid var(--line);
+}
+
+.live-library-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.live-library-facts dt {
+  color: var(--muted);
+}
+
+.live-library-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.live-library-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.live-library-id .btn-icon,
+.live-library-files .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.live-library-add {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-library-uses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+/* A part of the page that is this entry: pointing at it outlines it on the page, choosing it opens it in Layers. */
+.live-library-use {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--water);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.live-library-use:hover {
+  text-decoration: underline;
+}
+
+.live-library-use:disabled {
+  color: var(--faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+.live-library-prop {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+}
+
+.live-library-prop:first-child {
+  border-top: 0;
+}
+
+.live-library-prop .mono {
+  overflow-wrap: anywhere;
+}
+
+.live-library-files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.live-library-files .lib-tag {
+  overflow-wrap: anywhere;
+}
