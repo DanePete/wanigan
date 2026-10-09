@@ -125,3 +125,44 @@ test('Gemini resumes its conversation only once it saved one', async () => {
     assert.match(replay, new RegExp(`ARGS=--resume ${id}`));
   } finally { await t.close(); }
 });
+
+test('Gemini’s tokens come from the chat file its own hook named, inside Wanigan’s Gemini home, and nowhere else', async () => {
+  const t = await testCore({ launcher });
+  try {
+    const project = await t.owner.call('projects.add', { path: t.projectDir });
+    const card = await t.owner.call('cards.create', { projectId: project.id, type: 'task', title: 'Count Gemini' });
+    const { session, token } = await gemini(t, { cardId: card.id });
+    assert.deepEqual(await t.owner.call('sessions.tokens', { id: session.id }), { usage: null, note: null }, 'nothing named, nothing spent');
+    // The chat file Gemini CLI 0.46 wrote itself (fixtures/gemini-0.46-chat.jsonl), where it writes it.
+    const id = '3535bc22-1d0e-4c4f-9a7b-5e6f7a8b9c0d';
+    const chats = join(t.core.paths.dataDir, 'gemini-home', '.gemini', 'tmp', 'site', 'chats');
+    mkdirSync(chats, { recursive: true });
+    const chat = join(chats, `session-2026-10-09T14-14-${id.slice(0, 8)}.jsonl`);
+    writeFileSync(chat, readFileSync(join(import.meta.dirname, 'fixtures', 'gemini-0.46-chat.jsonl')));
+    await relay(t.core, token, 'BeforeAgent', { session_id: id, transcript_path: chat, prompt: 'what is this' });
+    await waitFor('the chat file', async () => (await t.owner.call('sessions.get', { id: session.id })).session.transcriptPath === chat);
+    let tokens = await t.owner.call('sessions.tokens', { id: session.id });
+    assert.equal(tokens.note, null);
+    assert.deepEqual(tokens.usage && [tokens.usage.source, tokens.usage.requests, tokens.usage.input, tokens.usage.output, tokens.usage.cacheRead, tokens.usage.context],
+      ['gemini', 2, 8_500, 73, 8_000, 8_300]);
+    // A subagent's chat sits in a folder named for the conversation: it adds to the total, never to context.
+    mkdirSync(join(chats, id), { recursive: true });
+    writeFileSync(join(chats, id, 'codebase_investigator-1.jsonl'), `${JSON.stringify({ id: 's1', type: 'gemini', content: '', model: 'gemini-2.5-flash', tokens: { input: 1_000, output: 10, cached: 0, thoughts: 0, tool: 0, total: 1_010 } })}\n`);
+    tokens = await t.owner.call('sessions.tokens', { id: session.id });
+    assert.equal(tokens.usage?.subagents, 1);
+    assert.equal(tokens.usage?.input, 9_500);
+    assert.equal(tokens.usage?.context, 8_300);
+    const onCard = await t.owner.call('cards.tokens', { id: card.id });
+    assert.deepEqual([onCard.sessions, onCard.uncounted, onCard.usage?.requests], [1, 0, 3]);
+
+    // A hook that names a file anywhere else is not followed.
+    const elsewhere = join(t.dir, 'elsewhere.jsonl');
+    writeFileSync(elsewhere, readFileSync(chat));
+    await relay(t.core, token, 'BeforeAgent', { session_id: id, transcript_path: elsewhere, prompt: 'again' });
+    await waitFor('the new path', async () => (await t.owner.call('sessions.get', { id: session.id })).session.transcriptPath === elsewhere);
+    tokens = await t.owner.call('sessions.tokens', { id: session.id });
+    assert.equal(tokens.usage, null);
+    assert.match(tokens.note ?? '', /outside Wanigan’s Gemini home/);
+    assert.equal((await t.owner.call('cards.tokens', { id: card.id })).uncounted, 1);
+  } finally { await t.close(); }
+});

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { CodexTally, UsageTally, mergeUsage, shortTokens, tokensUsed } from './tokens.ts';
+import { CodexTally, GeminiTally, UsageTally, mergeUsage, shortTokens, tokensUsed } from './tokens.ts';
 
 const reply = (id: string, usage: Record<string, number>, extra: Record<string, unknown> = {}) => JSON.stringify({
   type: 'assistant', uuid: `u-${id}-${Math.random()}`, message: { id, model: 'claude-opus-5-5', role: 'assistant', content: [], usage }, ...extra,
@@ -125,6 +127,64 @@ test('a card’s Claude and Codex conversations add up as one count', () => {
   assert.equal(tokensUsed(both!), 1_030 + 2_030);
   assert.equal(mergeUsage(null, codex.total())?.source, 'codex');
   assert.equal(mergeUsage(null, null), null);
+});
+
+// A chat file Gemini CLI 0.46 wrote itself, run with its --fake-responses flag
+// (no model, no login): a read_file call whose reply line is written twice
+// (again once its tool call is added), then a streamed answer whose last chunk
+// carried the usage. Paths are a throwaway folder.
+const GEMINI_CHAT = readFileSync(join(import.meta.dirname, '..', 'core', 'fixtures', 'gemini-0.46-chat.jsonl'), 'utf8');
+
+test('Gemini: each reply counted once by id, cached input apart, thoughts as output, context what the latest request sent', () => {
+  const t = new GeminiTally();
+  for (const line of GEMINI_CHAT.split('\n')) t.addLine(line);
+  const u = t.total();
+  assert.equal(u.source, 'gemini');
+  assert.equal(u.requests, 2, 'the reply written twice counts once');
+  assert.deepEqual([u.input, u.output, u.cacheRead, u.cacheWrite], [8_200 + (8_300 - 8_000), 24 + 9 + 40, 8_000, 0]);
+  assert.equal(tokensUsed(u), 8_224 + 8_349, 'all of it is each reply’s totalTokenCount');
+  assert.equal(u.context, 8_300, 'the latest request’s prompt, cached part included');
+  assert.equal(u.model, 'gemini-3.5-flash', 'the model Gemini recorded, not the one asked for');
+  assert.equal(u.contextWindow, null, 'Gemini’s chat file does not say its window');
+});
+
+test('Gemini: a rewritten history and a rewind change no reply’s cost; subagents count but are never context', () => {
+  const t = new GeminiTally();
+  const reply = (id: string, input: number, extra: Record<string, unknown> = {}) => JSON.stringify({ id, type: 'gemini', content: '', model: 'gemini-2.5-pro', tokens: { input, output: 10, cached: 0, thoughts: 0, tool: 2, total: input + 12 }, ...extra });
+  t.addLine(reply('a', 100));
+  t.addLine(reply('b', 300));
+  t.addLine(JSON.stringify({ $rewindTo: 'b' }));
+  // History rewritten after compression: the old replies keep their tokens and ids.
+  t.addLine(JSON.stringify({ $set: { messages: [JSON.parse(reply('a', 100)), { id: 'u', type: 'user', content: 'x' }] } }));
+  t.addLine(reply('c', 50));
+  t.add(JSON.parse(reply('sub', 9_000)), false);
+  t.subagents = 1;
+  const u = t.total();
+  assert.equal(u.requests, 4);
+  assert.equal(u.input, 100 + 300 + 50 + 9_000 + 4 * 2, 'tool-use prompt tokens are input');
+  assert.equal(u.context, 50, 'the latest main reply, never a subagent');
+  assert.equal(u.subagents, 1);
+});
+
+test('Gemini: user, info and error lines, replies without tokens and broken usage are skipped, never guessed', () => {
+  const t = new GeminiTally();
+  t.addLine(JSON.stringify({ id: 'e', type: 'error', content: '[API Error: An unknown error occurred.]' }));
+  t.addLine(JSON.stringify({ id: 'g', type: 'gemini', content: 'hi', tokens: null }));
+  t.addLine(JSON.stringify({ id: 'h', type: 'gemini', content: 'hi', tokens: { input: -1, output: 3 } }));
+  t.addLine(JSON.stringify({ id: 'i', type: 'gemini', content: 'hi', tokens: { input: 5, output: '3' } }));
+  t.addLine('{"id":"j","type":"gemini","tokens":{"input":');
+  assert.equal(t.total().requests, 0);
+  assert.equal(t.total().context, null);
+});
+
+test('a card’s Claude, Codex and Gemini conversations add up as one count', () => {
+  const claude = new UsageTally();
+  claude.addLine(reply('m1', { input_tokens: 10, output_tokens: 20 }));
+  const gemini = new GeminiTally();
+  for (const line of GEMINI_CHAT.split('\n')) gemini.addLine(line);
+  const both = mergeUsage(claude.total(), gemini.total());
+  assert.equal(both?.source, 'mixed');
+  assert.equal(tokensUsed(both!), 30 + 8_224 + 8_349);
 });
 
 test('short counts', () => {

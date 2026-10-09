@@ -6,7 +6,7 @@ import { shortTokens, tokensUsed } from '@shared/tokens';
 import { useQuery } from '../lib/api';
 
 const FROM: Record<ConversationUsage['source'], string> = {
-  claude: 'Claude Code’s transcript', codex: 'Codex’s rollout', mixed: 'Claude Code’s transcripts and Codex’s rollouts',
+  claude: 'Claude Code’s transcript', codex: 'Codex’s rollout', gemini: 'Gemini CLI’s chat file', mixed: 'each agent’s own record',
 };
 
 function breakdown(u: ConversationUsage, what: string): string {
@@ -41,7 +41,7 @@ export function CardTokens({ cardId }: { cardId: string }) {
   const q = useQuery('cards.tokens', { id: cardId }, ['sessions']);
   const t = q.data;
   if (!t || (!t.usage && !t.uncounted)) return null;
-  const skipped = t.uncounted ? `${t.uncounted} ${t.uncounted === 1 ? 'session' : 'sessions'} not counted: a Codex thread not yet known, or a conversation not saved yet.` : '';
+  const skipped = t.uncounted ? `${t.uncounted} ${t.uncounted === 1 ? 'session' : 'sessions'} not counted: a Codex thread not yet known, a conversation not saved yet, or a Gemini chat outside Wanigan’s Gemini home.` : '';
   if (!t.usage) return <span className="faint small" title={skipped}>tokens not counted</span>;
   const what = t.sessions === 1 ? 'this card’s conversation' : `this card’s ${t.sessions} conversations`;
   return (

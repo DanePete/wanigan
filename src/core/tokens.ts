@@ -7,11 +7,17 @@
 //
 // A Codex session is counted once its own hook has said which thread it is on
 // (sessions.ts). Guessing a thread by folder and time would be a guess.
+//
+// A Gemini CLI session is counted from the chat file its own BeforeAgent hook
+// named (`transcript_path`), and only when that file is inside Wanigan's Gemini
+// home: a hook names a path, and Wanigan reads no other. Its subagents' chats
+// sit in a folder named for the conversation beside it.
+import { realpathSync } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { Account, Session } from '../shared/model.ts';
 import type { CardTokens, SessionTokens } from '../shared/protocol.ts';
-import { CodexTally, mergeUsage, UsageTally, type ConversationUsage } from '../shared/tokens.ts';
+import { CodexTally, GeminiTally, mergeUsage, UsageTally, type ConversationUsage } from '../shared/tokens.ts';
 import { rolloutIn, transcriptPath, type Accounts } from './accounts.ts';
 
 type Json = Record<string, unknown>;
@@ -25,15 +31,19 @@ const MAX_SUBAGENTS = 200;
 export const MAX_FILES = 256;
 
 export const CODEX_UNCOUNTED = 'Codex hasn’t said which thread this session is on, so its tokens aren’t counted.';
+export const GEMINI_UNCOUNTED = 'Gemini CLI named a chat file outside Wanigan’s Gemini home, so its tokens aren’t counted.';
 
 export class Tokens {
   private readonly files = new Map<string, Seen>();
   /** The read of each file under way, so the next waits for it. */
   private readonly reading = new Map<string, Promise<Json[]>>();
   private readonly accounts: Accounts;
+  /** Wanigan's Gemini home (GEMINI_CLI_HOME): the only place a Gemini chat is read from. */
+  private readonly geminiHome: string | null;
 
-  constructor(accounts: Accounts) {
+  constructor(accounts: Accounts, geminiHome: string | null = null) {
     this.accounts = accounts;
+    this.geminiHome = geminiHome;
   }
 
   async ofSession(session: Session): Promise<SessionTokens> {
@@ -42,6 +52,13 @@ export class Tokens {
       if (!session.conversationId) return { usage: null, note: CODEX_UNCOUNTED };
       const rollout = await this.rollout(session);
       return { usage: rollout ? await this.codexUsage(rollout) : null, note: null };
+    }
+    if (session.provider === 'gemini') {
+      // Before its first prompt Gemini has spent nothing and named no file.
+      if (!session.transcriptPath) return { usage: null, note: null };
+      const chats = await this.geminiChats(session);
+      if (chats === 'outside') return { usage: null, note: GEMINI_UNCOUNTED };
+      return { usage: chats ? await this.geminiUsage(chats) : null, note: null };
     }
     const files = await this.transcripts(session);
     // Nothing saved yet is nothing to count, not a failure to count.
@@ -59,8 +76,20 @@ export class Tokens {
     let claude = false;
     let counted = 0;
     let uncounted = 0;
+    let gemini: ConversationUsage | null = null;
+    const geminiTally = new GeminiTally();
     for (const s of sessions) {
       if (s.provider === 'shell') continue;
+      if (s.provider === 'gemini') {
+        const chats = await this.geminiChats(s);
+        if (!chats || chats === 'outside') { uncounted++; continue; }
+        counted++;
+        // A resumed conversation writes on in the same file: each reply once, by id.
+        await this.feedGemini(geminiTally, { main: read.has(chats.main) ? null : chats.main, subagents: chats.subagents.filter((f) => !read.has(f)) });
+        for (const f of [chats.main, ...chats.subagents]) read.add(f);
+        gemini = geminiTally.total();
+        continue;
+      }
       if (s.provider === 'codex') {
         const rollout = await this.rollout(s);
         if (!rollout) { uncounted++; continue; }
@@ -77,7 +106,40 @@ export class Tokens {
       for (const f of [files.main, ...files.subagents]) read.add(f);
       await this.feed(tally, fresh);
     }
-    return { usage: counted ? mergeUsage(claude ? tally.total() : null, codex) : null, sessions: counted, uncounted };
+    return { usage: counted ? mergeUsage(mergeUsage(claude ? tally.total() : null, codex), gemini) : null, sessions: counted, uncounted };
+  }
+
+  /**
+   * The chat file a Gemini session's hook named, and its subagents' chats.
+   * Null while it does not exist (nothing saved, nothing spent); 'outside'
+   * when it is not a chat file inside Wanigan's Gemini home, which is never read.
+   */
+  private async geminiChats(s: Session): Promise<{ main: string; subagents: string[] } | 'outside' | null> {
+    if (!this.geminiHome || !s.transcriptPath) return null;
+    let main: string;
+    try { main = realpathSync(s.transcriptPath); } catch { return null; }
+    let tmp: string;
+    try { tmp = realpathSync(join(this.geminiHome, '.gemini', 'tmp')); } catch { return 'outside'; }
+    if (!main.endsWith('.jsonl') || !main.startsWith(tmp + sep) || !(await stat(main).then((f) => f.isFile(), () => false))) return 'outside';
+    const dir = s.conversationId ? join(dirname(main), s.conversationId) : null;
+    const names = dir ? await readdir(dir).catch(() => [] as string[]) : [];
+    const subagents = names.filter((n) => n.endsWith('.jsonl')).sort().slice(0, MAX_SUBAGENTS).map((n) => join(dir as string, n));
+    return { main, subagents };
+  }
+
+  private async geminiUsage(chats: { main: string; subagents: string[] }): Promise<ConversationUsage> {
+    const tally = new GeminiTally();
+    await this.feedGemini(tally, chats);
+    return tally.total();
+  }
+
+  private async feedGemini(tally: GeminiTally, files: { main: string | null; subagents: string[] }): Promise<void> {
+    if (files.main) for (const l of await this.lines(files.main, geminiLine)) tally.add(l, true);
+    for (const f of files.subagents) {
+      const replies = await this.lines(f, geminiLine);
+      if (replies.length) tally.subagents++;
+      for (const l of replies) tally.add(l, false);
+    }
   }
 
   /** The rollout of the Codex thread a session is on, inside its account's CODEX_HOME, once it exists. */
@@ -187,6 +249,24 @@ function codexLine(line: string): Json | null {
   if (l.type === 'event_msg' && p.type === 'task_started') return { type: l.type, payload: { type: p.type, turn_id: p.turn_id } };
   if (l.type === 'event_msg' && p.type === 'token_count' && p.info) return { type: l.type, payload: { type: p.type, info: p.info } };
   return null;
+}
+
+/** Just what counting needs from a Gemini chat line (see GeminiTally), so the cache stays small. */
+function geminiLine(line: string): Json | null {
+  if (!line.includes('"tokens"')) return null;
+  let l: Json;
+  try { l = JSON.parse(line) as Json; } catch { return null; }
+  const keep = (m: unknown): Json | null => {
+    const r = m && typeof m === 'object' ? m as Json : null;
+    return r && r.type === 'gemini' && r.tokens && typeof r.tokens === 'object' ? { id: r.id, type: r.type, model: r.model, tokens: r.tokens } : null;
+  };
+  const set = l.$set && typeof l.$set === 'object' ? l.$set as Json : null;
+  const messages = Array.isArray(set?.messages) ? set.messages : Array.isArray(l.messages) ? l.messages : null;
+  if (messages) {
+    const kept = messages.map(keep).filter((m): m is Json => m !== null);
+    return kept.length ? { $set: { messages: kept } } : null;
+  }
+  return keep(l);
 }
 
 /** Just what counting needs from an assistant line, so the cache stays small. */

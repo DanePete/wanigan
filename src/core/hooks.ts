@@ -98,8 +98,11 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * so Gemini asks neither again; their own extensions, MCP servers and global
  * GEMINI.md stay in their own home and are not loaded here.
  */
+/** Where Wanigan's Gemini home is, in its data folder. */
+export const geminiHomeDir = (dataDir: string): string => join(dataDir, 'gemini-home');
+
 export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string): string {
-  const home = join(dataDir, 'gemini-home');
+  const home = geminiHomeDir(dataDir);
   const dir = join(home, '.gemini');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const own = readJson(join(ownerHome, '.gemini', 'settings.json'));
