@@ -3,7 +3,8 @@
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
 import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
-import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved } from './live-arrange.ts';
+import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveWriteOptions } from './live-arrange.ts';
+import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { Need } from './model.ts';
@@ -157,19 +158,23 @@ export interface LiveBridge {
 
   /** The shown page's trace from the site helper, or why there is none. */
   trace(): Promise<LiveTraceAnswer>;
+  /** The site's AI as its core reports it (connectors and where their keys come from, abilities, what saving runs): read-only, free. */
+  siteAi(): Promise<LiveSiteAiAnswer>;
   /** Paint a lens over the page: regions by their index from the last scan. An empty list takes it away. Returns how many it painted. */
   paint(items: LivePaint[]): Promise<number>;
   /** Give the keyboard back to the window (after a pick in the page). */
   focusWindow(): Promise<void>;
   /** Where a region from the last scan is in the view now, in CSS pixels of the view; null when it is not on the page. */
   where(index: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  /** What regions from the last scan show, as short hashes (null: not on the page): compared across a write and its reload. */
+  fingerprints(indexes: number[]): Promise<Record<number, string | null>>;
   /** Open the site's own form for an edit target of the page's trace, laid over a sheet at `bounds` (window CSS pixels). */
   editOpen(target: string, bounds: LiveBounds): Promise<{ ok: boolean; error: string | null }>;
   /** The sheet moved or changed size. */
   editBounds(bounds: LiveBounds): void;
   editClose(): Promise<void>;
   /** Save a new value for an edit target the window draws a form for; the page reloads with it. */
-  editSave(target: string, value: unknown): Promise<LiveEditSaved>;
+  editSave(target: string, value: unknown, options?: LiveWriteOptions): Promise<LiveEditSaved>;
   /** A sheet's form saved (the page reloads with it), or the sheet closed. */
   onEdited(listener: (edited: LiveEdited) => void): () => void;
   /** A key pressed in the page that the window acts on: Escape, while a lens is on. */
@@ -181,9 +186,9 @@ export interface LiveBridge {
   preview(item: number, ref: number, place: 'before' | 'after' | 'into'): Promise<boolean>;
   unpreview(): Promise<void>;
   /** Save a move through the site helper; the page reloads with it. */
-  move(move: LiveMove): Promise<LiveMoveSaved>;
+  move(move: LiveMove, options?: LiveWriteOptions): Promise<LiveMoveSaved>;
   /** Insert a palette entry through the site helper; the page reloads with it. */
-  insert(insert: LiveInsert): Promise<LiveMoveSaved>;
+  insert(insert: LiveInsert, options?: LiveWriteOptions): Promise<LiveMoveSaved>;
   /** Put back a move or insert, by the token the site gave for it. */
   undo(token: string): Promise<LiveMoveSaved>;
   /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */

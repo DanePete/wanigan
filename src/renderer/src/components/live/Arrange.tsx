@@ -20,20 +20,31 @@ import {
 } from '@shared/live-arrange';
 import type { PartIndex } from '@shared/live-lens';
 import type { LiveRegion } from '@shared/live';
-import type { LiveTrace, PaletteEntry, TraceCollection } from '@shared/live-trace';
+import { aiClientSentence, SAVE_CAVEAT, savesSentence, savesSignature } from '@shared/live-ai';
+import { saveOf, type LiveTrace, type PaletteEntry, type TraceCollection, type TraceSave } from '@shared/live-trace';
 import type { Layer } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { liveBridge } from '../../lib/live';
 import { Select } from '../Select';
 import { Button, Dialog, Disclosure, useToast } from '../ui';
 import { addNote } from './note-store';
+import { SavesNote } from './SiteAi';
+import type { WriteChecks, WriteSnapshot } from './write-checks';
 
 type At = { collection: string; index: number };
 export type Pending =
   | { kind: 'item'; item: string; label: string; region: number; home: At; at: At }
   | { kind: 'loose'; region: number; label: string; group: { region: number; label: string }[]; home: number; at: number };
 
-interface Asking { title: string; text: string; action: string; resolve: (yes: boolean) => void }
+/** The owner's answer to a question before a write: go ahead, don't, or go ahead with WordPress core's AI Client stopped. */
+type Answer = 'yes' | 'no' | 'without-ai';
+interface Asking { title: string; text: string; action: string; alt: string | null; resolve: (answer: Answer) => void }
+
+/**
+ * Sets of code on a save path the owner was shown and went ahead with, while this window is open: a drop saves at
+ * once, so the first one into a save that runs code beyond core asks; the same set does not ask again.
+ */
+const acknowledged = new Set<string>();
 
 /** A rectangle around several, padded; null when there are none. */
 function around(boxes: ({ x: number; y: number; width: number; height: number } | null)[], pad = 8) {
@@ -43,7 +54,7 @@ function around(boxes: ({ x: number; y: number; width: number; height: number } 
   return { x, y, width: Math.max(...list.map((b) => b.x + b.width)) + pad - x, height: Math.max(...list.map((b) => b.y + b.height)) + pad - y };
 }
 
-export function useArrange({ project, platform, trace, parts, regions, layers, enabled, page, onSaved }: {
+export function useArrange({ project, platform, trace, parts, regions, layers, enabled, page, checks, onSaved }: {
   project: ProjectSummary;
   platform: 'drupal' | 'wordpress' | 'site' | null;
   trace: LiveTrace | null;
@@ -53,6 +64,8 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   /** Whether the page may be armed now (not loading, picking or editing; arranging switched on). */
   enabled: boolean;
   page: string;
+  /** Every move, insert and undo is read back once the page reloads with it. */
+  checks: WriteChecks;
   /** Something was moved or inserted: its label, for the Changed lens. */
   onSaved: (label: string) => void;
 }) {
@@ -64,15 +77,58 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   const [asking, setAsking] = useState<Asking | null>(null);
   const cms = platform === 'wordpress' ? 'wordpress' : 'drupal';
   const say = useCallback((text: string) => setSaid((was) => (was === text ? `${text} ` : text)), []);
-  const ask = (title: string, text: string, action: string): Promise<boolean> => new Promise((resolve) => setAsking({ title, text, action, resolve }));
+  const ask = (title: string, text: string, action: string, alt: string | null = null): Promise<Answer> => new Promise((resolve) => setAsking({ title, text, action, alt, resolve }));
   const label = (part: string): string => parts.parts.get(part)?.label ?? part;
   const coll = (id: string): TraceCollection | undefined => trace?.collections?.find((c) => c.id === id);
+  /** What the page showed before a drag moved anything on it (the page shows a drop at once, before it is saved). */
+  const baseline = useRef<WriteSnapshot | null>(null);
+
+  /** The regions a write into these collections changes: each one's own part, else whatever holds its items. */
+  const watchedIn = (ids: string[]): LiveRegion[] => {
+    const at = new Map(regions.map((r) => [r.index, r]));
+    const out: LiveRegion[] = [];
+    for (const id of ids) {
+      const c = coll(id);
+      if (!c) continue;
+      const own = c.part ? parts.regionsOf.get(c.part) ?? [] : [];
+      const holders = own.length ? own : c.items.flatMap((i) => parts.regionsOf.get(i) ?? []).map((ix) => at.get(ix)?.parent ?? null).filter((x): x is number => x !== null);
+      for (const ix of holders) { const r = at.get(ix); if (r) out.push(r); }
+    }
+    return out;
+  };
+
+  /**
+   * Before a write into these collections: a configuration change is said and asked, as before; and the first
+   * write into a save that runs code beyond core says whose, once for each set of that code while Wanigan is
+   * open. On WordPress with core's AI Client, the answer may be to go ahead with it stopped for this one write.
+   */
+  const confirmWrite = async (title: string, action: string, ids: string[], first: string | null): Promise<Answer> => {
+    const saves = [...new Set(ids.map((id) => saveOf(trace, coll(id))).filter((s): s is TraceSave => !!s && s.runs.length > 0))];
+    const keys = saves.map((s) => `${project.id}|${savesSignature(s)}`);
+    const fresh = keys.some((k) => !acknowledged.has(k));
+    if (!first && !fresh) return 'yes';
+    const alt = trace?.ai?.client ? `${action} without the site’s AI Client` : null;
+    const text = [
+      first,
+      ...(fresh ? saves.map((s) => savesSentence(s)) : []),
+      fresh ? SAVE_CAVEAT : null,
+      fresh ? aiClientSentence(trace?.ai) : null,
+      alt ? `“${alt}” stops WordPress core’s AI Client for this one save; a plugin that calls a provider on its own is not stopped.` : null,
+      fresh ? 'Wanigan says this once for each set of code while it is open.' : null,
+    ].filter(Boolean).join(' ');
+    const answer = await ask(title, text, action, alt);
+    if (answer !== 'no') for (const k of keys) acknowledged.add(k);
+    return answer;
+  };
 
   /** `back` says what Undo did: "Search is back where it was." */
   const undo = useCallback(async (token: string, back: string): Promise<void> => {
-    const r = await live?.undo(token);
-    if (r?.ok) { toast(back); say(back); } else toast(r?.error ?? 'It could not be put back.', 'error');
-  }, [live, toast, say]);
+    if (!live) return;
+    const check = await checks.prepareUndo(token, back.replace(/ is (back where it was|taken out again)\.$/, ''));
+    const r = await live.undo(token);
+    checks.settle(check, { ok: r.ok, ai: r.ai });
+    if (r.ok) { toast(back); say(back); } else toast(r.error ?? 'It could not be put back.', 'error');
+  }, [live, toast, say, checks]);
 
   const done = useCallback((r: LiveMoveSaved, what: string, saved: string, name: string, back: string): void => {
     if (r.ok) {
@@ -87,7 +143,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     if (!r.conflict) void live?.unpreview();
   }, [live, toast, say, undo, onSaved]);
 
-  /** Save a move the page or the keyboard made; a configuration move is said and asked first. */
+  /** Save a move the page or the keyboard made; a configuration move, or code beyond core on its save, is said and asked first. */
   const saveMove = useCallback(async (move: LiveMove): Promise<void> => {
     const from = coll(move.collection);
     const to = coll(move.to.collection);
@@ -95,22 +151,32 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     const notice = moveNotice(to.changes === 'configuration' ? to : from, cms);
     const name = label(move.item);
     const where = `${move.to.index + 1} of ${placesIn(to, move.item)} in ${to.label}`;
-    if (notice.confirm && !(await ask(`Move ${name} to ${where}?`, notice.confirm, 'Move it'))) {
+    const ids = [...new Set([from.id, to.id])];
+    const answer = await confirmWrite(`Move ${name} to ${where}?`, 'Move it', ids, notice.confirm);
+    if (answer === 'no') {
       await live.unpreview();
       say(`Not moved. ${name} stays where it was.`);
       return;
     }
-    done(await live.move(move), `Moved ${name} to ${where}`, notice.saved, name, `${name} is back where it was.`);
-  }, [live, cms, done, say]); // eslint-disable-line react-hooks/exhaustive-deps
+    const check = baseline.current ? checks.fromSnapshot(baseline.current, 'move', name, watchedIn(ids)) : await checks.prepare('move', name, watchedIn(ids));
+    const r = await live.move(move, answer === 'without-ai' ? { noSiteAi: true } : undefined);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
+    done(r, `Moved ${name} to ${where}`, notice.saved, name, `${name} is back where it was.`);
+  }, [live, cms, done, say, checks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveInsert = useCallback(async (insert: LiveInsert): Promise<void> => {
     const into = coll(insert.collection);
     const entry = trace?.palette?.find((p) => p.id === insert.entry);
     if (!live || !into || !entry) return;
     const notice = moveNotice(into, cms);
-    if (notice.confirm && !(await ask(`Add ${entry.label}?`, notice.confirm.replace(/^This moves the block/, 'This adds the block').replace(/^This moves the widget/, 'This adds the widget'), 'Add it'))) return;
-    done(await live.insert(insert), `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, `${entry.label} is taken out again.`);
-  }, [live, trace, cms, done]); // eslint-disable-line react-hooks/exhaustive-deps
+    const first = notice.confirm ? notice.confirm.replace(/^This moves the block/, 'This adds the block').replace(/^This moves the widget/, 'This adds the widget') : null;
+    const answer = await confirmWrite(`Add ${entry.label}?`, 'Add it', [into.id], first);
+    if (answer === 'no') return;
+    const check = baseline.current ? checks.fromSnapshot(baseline.current, 'insert', entry.label, watchedIn([into.id])) : await checks.prepare('insert', entry.label, watchedIn([into.id]));
+    const r = await live.insert(insert, answer === 'without-ai' ? { noSiteAi: true } : undefined);
+    checks.settle(check, { ok: r.ok, ai: r.ai, undo: r.ok ? r.undo : null });
+    done(r, `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, `${entry.label} is taken out again.`);
+  }, [live, trace, cms, done, checks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A part whose order is in a template: pictures of the order now and the order wanted, as a note for an agent. */
   const request = useCallback(async (region: number, ref: number, place: 'before' | 'after', previewed: boolean): Promise<void> => {
@@ -156,6 +222,9 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     let alive = true;
     void (async () => {
       while (alive) {
+        // What the page shows before anything is dragged on it: a drop is shown moved before it is saved.
+        baseline.current = await checks.snapshot(watchedIn(s.collections.map((c) => c.id)));
+        if (!alive) return;
         const drop = await live.arrange(s);
         if (!alive) return;
         if (!drop) { if (s.placing) setPlacing(null); return; }
@@ -164,7 +233,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
       }
     })();
     return () => { alive = false; void live.disarm(); };
-  }, [live, key, enabled, pending, onDrop]);
+  }, [live, key, enabled, pending, onDrop, checks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── the keyboard ─────────────────────────────────────────────────────── */
 
@@ -272,11 +341,12 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   return {
     spec, placing, setPlacing, pending, movable, step, commit, cancel, keys, said, saveInsert, describe,
     asking: asking ? (
-      <Dialog title={asking.title} onClose={() => { asking.resolve(false); setAsking(null); }}
+      <Dialog title={asking.title} onClose={() => { asking.resolve('no'); setAsking(null); }}
         footer={(
           <>
-            <Button tone="quiet" onClick={() => { asking.resolve(false); setAsking(null); }}>Cancel</Button>
-            <Button tone="primary" data-autofocus onClick={() => { asking.resolve(true); setAsking(null); }}>{asking.action}</Button>
+            <Button tone="quiet" onClick={() => { asking.resolve('no'); setAsking(null); }}>Cancel</Button>
+            {asking.alt ? <Button tone="quiet" onClick={() => { asking.resolve('without-ai'); setAsking(null); }}>{asking.alt}</Button> : null}
+            <Button tone="primary" data-autofocus onClick={() => { asking.resolve('yes'); setAsking(null); }}>{asking.action}</Button>
           </>
         )}>
         <p>{asking.text}</p>
@@ -316,7 +386,10 @@ export function MoveSection({ arrange, region, trace }: { arrange: ReturnType<ty
     <Disclosure title="Move" open={p.kind === 'item' || moving} summary={p.kind === 'item' && home ? `${p.at.index + 1} of ${placesIn(trace?.collections?.find((c) => c.id === p.at.collection) ?? home, p.item)}` : 'by a note for an agent'}>
       <p className="small">{arrange.describe(p)}.</p>
       {p.kind === 'item' && home ? (
-        <p className="faint small">{home.changes === 'configuration' ? 'Its order is site configuration: moving it says what it changes before it saves.' : home.revisions === false ? 'Saved as content.' : 'Saved as content, as a new revision.'}</p>
+        <>
+          <p className="faint small">{home.changes === 'configuration' ? 'Its order is site configuration: moving it says what it changes before it saves.' : home.revisions === false ? 'Saved as content.' : 'Saved as content, as a new revision.'}</p>
+          <SavesNote save={saveOf(trace, home)} ai={trace?.ai} />
+        </>
       ) : <p className="faint small">Its order is written in the template: moving it makes a note for an agent, with pictures of the order now and the order wanted.</p>}
       <div className="live-actions">
         <Button size="s" tone="quiet" icon="chevron" className="live-up" onClick={() => arrange.step(region, 'up')}>Move up</Button>

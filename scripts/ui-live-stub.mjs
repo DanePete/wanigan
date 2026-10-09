@@ -71,7 +71,7 @@ export function trace() {
       { id: 'p-copyright', kind: 'block', label: 'Copyright', source: yours('templates/block--copyright.html.twig', 1), cache: { tags: ['block_content:4'], contexts: [], maxAge: 'permanent' }, cost: { ms: 0.4 } },
     ],
     edits: [
-      { id: 'e-title', kind: 'field', label: 'Title (node 12)', via: 'native-form', revisions: true },
+      { id: 'e-title', kind: 'field', label: 'Title (node 12)', via: 'native-form', revisions: true, saves: 'entity:node' },
       {
         id: 'e-hero', kind: 'props', label: 'Hero props', via: 'schema', revisions: true,
         schema: {
@@ -123,11 +123,17 @@ export function trace() {
       { id: 'pal-newsletter', kind: 'block', label: 'Newsletter signup', by: 'acme_events' },
       { id: 'pal-quote', kind: 'component', label: 'Quote', by: 'acme', description: 'A pull quote with its source.' },
     ],
+    // What saving runs besides core (made up): a custom module on content and on block placements; paragraphs, core alone.
+    saves: [
+      { id: 'entity:node', label: 'Saving a content item (node)', core: 14, runs: [{ by: 'acme_events', name: 'Acme Events', kind: 'module', owner: 'yours', hooks: ['node_presave', 'entity_update'], callbacks: ['acme_events_node_presave', 'acme_events_entity_update'] }] },
+      { id: 'entity:block', label: 'Saving a block (block)', core: 6, runs: [{ by: 'acme_events', name: 'Acme Events', kind: 'module', owner: 'yours', hooks: ['config.save'], callbacks: ['Drupal\\acme_events\\Listener::onSave'] }] },
+      { id: 'entity:paragraph', label: 'Saving a paragraph (paragraph)', core: 3, runs: [] },
+    ],
     collections: [
-      { id: 'c-header', kind: 'region-blocks', label: 'Header blocks', part: 'p-header', items: ['p-branding', 'p-menu'], changes: 'configuration', reach: 41 },
-      { id: 'c-sidebar', kind: 'region-blocks', label: 'Sidebar blocks', part: 'p-sidebar', items: ['p-search', 'p-news', 'p-hours'], movesTo: ['c-footer'], inserts: ['pal-cta', 'pal-newsletter'], changes: 'configuration', reach: 41 },
-      { id: 'c-footer', kind: 'region-blocks', label: 'Footer blocks', part: 'p-footer', items: ['p-copyright'], movesTo: ['c-sidebar'], inserts: ['pal-cta', 'pal-newsletter'], changes: 'configuration', reach: 41 },
-      { id: 'c-paras', kind: 'field-items', label: 'Paragraphs on Article 12', items: ['p-para-1', 'p-para-2'], inserts: ['pal-quote'], changes: 'content', revisions: true },
+      { id: 'c-header', kind: 'region-blocks', label: 'Header blocks', part: 'p-header', items: ['p-branding', 'p-menu'], changes: 'configuration', reach: 41, saves: 'entity:block' },
+      { id: 'c-sidebar', kind: 'region-blocks', label: 'Sidebar blocks', part: 'p-sidebar', items: ['p-search', 'p-news', 'p-hours'], movesTo: ['c-footer'], inserts: ['pal-cta', 'pal-newsletter'], changes: 'configuration', reach: 41, saves: 'entity:block' },
+      { id: 'c-footer', kind: 'region-blocks', label: 'Footer blocks', part: 'p-footer', items: ['p-copyright'], movesTo: ['c-sidebar'], inserts: ['pal-cta', 'pal-newsletter'], changes: 'configuration', reach: 41, saves: 'entity:block' },
+      { id: 'c-paras', kind: 'field-items', label: 'Paragraphs on Article 12', items: ['p-para-1', 'p-para-2'], inserts: ['pal-quote'], changes: 'content', revisions: true, saves: 'entity:paragraph' },
     ],
   };
 }
@@ -181,7 +187,11 @@ export function liveStub(f) {
 
   const layoutAt = layout;
   const wireAt = wireframe;
-  window.__wgLive = { answer: { state: 'ok', trace: f.trace }, outdated: false, calls: [], drops: [] };
+  window.__wgLive = {
+    answer: { state: 'ok', trace: f.trace }, outdated: false, calls: [], drops: [], printGen: 0, unchanged: false,
+    // What the helper says of the site's AI: a Drupal site, so core has no AI API, and what saving runs.
+    siteAi: { state: 'ok', ai: { version: 1, platform: 'drupal', coreAi: false, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false }, saves: f.trace.saves } },
+  };
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
   const site = (projectId) => ({
     projectId, url: 'https://acme.example.test/', platform: 'drupal', servedPath: null, servedCard: null, candidates: [], ddev: null,
@@ -234,6 +244,17 @@ export function liveStub(f) {
   };
   const state = () => ({ projectId, url: 'https://acme.example.test/', title: 'Acme Bakery', loading: false, canGoBack: false, canGoForward: false, error: null, logged: 0 });
   const tell = () => { for (const l of listeners.state) l(state()); };
+  // A write the site saved: the page reloads (loading, then loaded), and its trace and what it shows change with it,
+  // unless the sweep asks for a write that changes nothing.
+  const written = (target = null, value = undefined) => {
+    const w = window.__wgLive;
+    if (!w.unchanged) {
+      w.printGen += 1;
+      const t = w.answer.trace;
+      if (t && target) w.answer = { state: 'ok', trace: { ...t, id: t.id.slice(0, 15) + ((parseInt(t.id.slice(15), 16) + 1) % 16).toString(16), edits: t.edits.map((e) => (e.id === target ? { ...e, value } : e)) } };
+    }
+    setTimeout(() => { for (const l of listeners.state) l({ ...state(), loading: true }); setTimeout(tell, 40); }, 10);
+  };
   window.wanigan.live = {
     async show(id, url, b) {
       projectId = id;
@@ -281,19 +302,26 @@ export function liveStub(f) {
     async paint(items) { shown.paint = items; draw(); return items.length; },
     async focusWindow() {},
     async where(index) { const r = regions[index]; return r ? r.rect : null; },
+    // What each region shows, hashed: the same until a write changes the page (or, to test a write that changes nothing, never).
+    async fingerprints(indexes) { return Object.fromEntries(indexes.map((i) => [i, `r${i}-${window.__wgLive.printGen}`])); },
+    async siteAi() { window.__wgLive.calls.push('siteAi'); return window.__wgLive.siteAi; },
     async editOpen(target) { window.__wgLive.calls.push(`editOpen ${target}`); return { ok: true, error: null }; },
     editBounds() {},
     async editClose() {},
-    async editSave(target, value) { window.__wgLive.calls.push(`editSave ${target} ${JSON.stringify(value)}`); return { ok: true, error: null, revision: '215' }; },
+    async editSave(target, value, options) {
+      window.__wgLive.calls.push(`editSave ${target} ${JSON.stringify(value)}${options?.noSiteAi ? ' noSiteAi' : ''}`);
+      written(target, value);
+      return { ok: true, error: null, revision: '215', ai: null };
+    },
     onEdited(l) { listeners.edited.add(l); return () => listeners.edited.delete(l); },
     onKey(l) { listeners.key.add(l); return () => listeners.key.delete(l); },
     arrange(spec) { arranging?.(null); window.__wgLive.spec = spec; return new Promise((resolve) => { arranging = resolve; window.__wgLive.drop = (d) => { arranging = null; resolve(d); }; }); },
     async disarm() { const a = arranging; arranging = null; a?.(null); },
     async preview(item, ref, place) { window.__wgLive.calls.push(`preview ${item} ${place} ${ref}`); return true; },
     async unpreview() { window.__wgLive.calls.push('unpreview'); },
-    async move(m) { window.__wgLive.calls.push(`move ${JSON.stringify(m)}`); return window.__wgLive.moveAnswer ?? { ok: true, undo: 'u-1', revision: null }; },
-    async insert(i) { window.__wgLive.calls.push(`insert ${JSON.stringify(i)}`); return { ok: true, undo: 'u-2', revision: null }; },
-    async undo(t) { window.__wgLive.calls.push(`undo ${t}`); return { ok: true, undo: null, revision: null }; },
+    async move(m) { window.__wgLive.calls.push(`move ${JSON.stringify(m)}`); const a = window.__wgLive.moveAnswer ?? { ok: true, undo: 'u-1', revision: null }; if (a.ok) written(); return a; },
+    async insert(i) { window.__wgLive.calls.push(`insert ${JSON.stringify(i)}`); written(); return { ok: true, undo: 'u-2', revision: null }; },
+    async undo(t) { window.__wgLive.calls.push(`undo ${t}`); written(); return { ok: true, undo: null, revision: null }; },
   };
 }
 

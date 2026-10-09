@@ -4,6 +4,7 @@
 // trace, and where an edit sheet sits beside a part. Pure, so the window, the
 // main process and the tests read it the same way.
 import type { LiveRegion } from './live.ts';
+import type { SaveAi } from './live-ai.ts';
 import { nameOf, originOf } from './live-names.ts';
 import type { EditKind, EditTarget, LiveTrace, PartKind, TracePart, TraceQuery } from './live-trace.ts';
 
@@ -36,6 +37,11 @@ export interface LiveEdited {
   saved: boolean;
   /** Why the sheet could not show the form, when it could not. */
   error: string | null;
+  /**
+   * The sheet closed without the site saying it saved, but the site's content changed while it was open (a form
+   * that saves without leaving the page, like WordPress's block editor): the page was reloaded with it.
+   */
+  changed?: boolean;
 }
 
 /** What saving a schema edit came to. */
@@ -44,6 +50,8 @@ export interface LiveEditSaved {
   error: string | null;
   /** The revision the save made, when the site keeps them. */
   revision: string | null;
+  /** WordPress: what the site's own AI did during the save, as core reported it; null when the helper did not listen. */
+  ai?: SaveAi | null;
 }
 
 export type TraceStep = 'reload' | 'update-helper' | 'install-helper' | 'update-wanigan' | 'log-in' | 'start-site' | null;

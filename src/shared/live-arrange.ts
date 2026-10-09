@@ -9,6 +9,7 @@
 // once the move is made, counting from 0: moving the third of four items to the
 // top is index 0; into another collection of two, after both, is index 2.
 import type { LiveRegion } from './live.ts';
+import type { SaveAi } from './live-ai.ts';
 import type { PartIndex } from './live-lens.ts';
 import type { Layer } from './live-tree.ts';
 import type { LiveTrace, PaletteEntry, TraceCollection } from './live-trace.ts';
@@ -18,9 +19,13 @@ export interface LiveInsert { collection: string; index: number; entry: string }
 
 /** What a move or an insert came to: saved (with a token that undoes it), or why not. */
 export type LiveMoveSaved =
-  | { ok: true; undo: string | null; revision: string | null }
+  /** `ai`: WordPress, what the site's own AI did during the save, as core reported it. */
+  | { ok: true; undo: string | null; revision: string | null; ai?: SaveAi | null }
   /** `conflict`: the collection changed since the page was traced; `items` is its order now, when the site said. */
-  | { ok: false; error: string; conflict: boolean; items: string[] | null };
+  | { ok: false; error: string; conflict: boolean; items: string[] | null; ai?: SaveAi | null };
+
+/** What the owner chose for one write: `noSiteAi` stops WordPress core's AI Client while it runs. */
+export interface LiveWriteOptions { noSiteAi?: boolean }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const id = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 && v.length <= 200 ? v : null);

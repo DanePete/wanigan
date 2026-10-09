@@ -4,17 +4,27 @@
 // live view's session (live-view.ts `render`), so the owner's own view never
 // moves. Only the project's own site is ever opened: the core checked the
 // address, and this checks it again against the site before loading it.
-import type { NativeImage } from 'electron';
+import type { NativeImage, Session } from 'electron';
 import { changedAreas } from '../shared/live-diff.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import { IMAGE_MAX, SHOT_WIDTH, type LiveAsk, type LiveImage, type LiveSource } from '../shared/live-agent.ts';
 import { liveFor, type AppSettings } from '../shared/settings.ts';
 import type { Method } from '../shared/protocol.ts';
 import type { LiveViewWiring, RenderedPage } from './live-view.ts';
+import type { LiveSiteAiAnswer } from '../shared/live-ai.ts';
+import { askSiteAi } from './live-site-ai.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
-const KINDS = new Set(['status', 'render', 'problems', 'diff']);
+const KINDS = new Set(['status', 'render', 'problems', 'diff', 'ai']);
+/** Why the site's AI could not be read, in the agent's words. */
+const AI_WHY: Record<Exclude<LiveSiteAiAnswer['state'], 'ok'>, string> = {
+  'no-helper': 'The site helper is not installed, and the site’s AI is read through it.',
+  outdated: 'The site helper is older than this Wanigan and cannot say what AI the site runs. The owner updates it from the project’s Live tab.',
+  refused: 'The site refused to say what AI it runs.',
+  down: 'The site did not answer.',
+  unreadable: 'The site helper’s answer could not be read.',
+};
 const SCREEN = 900;
 const PLATFORM: Record<string, string> = { drupal: 'Drupal', wordpress: 'WordPress', site: 'other' };
 
@@ -22,6 +32,8 @@ export function wireLiveAgent(options: {
   client: () => Promise<Client>;
   settings: () => AppSettings | null;
   view: Pick<LiveViewWiring, 'render' | 'now' | 'logged'>;
+  /** A project's view session (live-view.ts), for asking the site helper's own routes. */
+  sessionFor?: (projectId: string, url: string) => Pick<Session, 'fetch'> | null;
   /** Wanigan's window is open. */
   windowOpen: () => boolean;
   log?: (line: string) => void;
@@ -69,6 +81,15 @@ export function wireLiveAgent(options: {
     }
     const refused = refusal(ask);
     if (refused) throw new Error(refused);
+    if (ask.kind === 'ai') {
+      // The helper's own route on the site's origin, through the view's session, with its token: nothing is rendered.
+      const helper = await token(ask.projectId);
+      const ses = options.sessionFor?.(ask.projectId, ask.site.url) ?? null;
+      if (!helper || !ses) throw new Error(AI_WHY['no-helper']);
+      const answer = await askSiteAi((url, init) => ses.fetch(url, init), new URL(ask.site.url).origin, helper);
+      if (answer.state !== 'ok') throw new Error(answer.state === 'down' ? `${AI_WHY.down} (${answer.error})` : AI_WHY[answer.state]);
+      return answer.ai;
+    }
     const where = ask.kind === 'diff' && ask.shot ? { url: ask.shot.url, source: 'card' as LiveSource, width: SHOT_WIDTH, screen: SCREEN } : target(ask);
     // The core checked this address; it is checked again here, against the site, before anything loads it.
     if (!sameSite(ask.site.url, where.url)) throw new Error('Only pages of this project’s own site are opened.');
@@ -126,7 +147,7 @@ export function wireLiveAgent(options: {
         await answer(ask.id, { error: (error as Error).message || 'The live view could not answer.' });
       }
     };
-    if (ask.kind === 'status') { void run(); return; }
+    if (ask.kind === 'status' || ask.kind === 'ai') { void run(); return; }
     queue = queue.then(run, run);
   };
 

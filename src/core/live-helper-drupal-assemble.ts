@@ -52,6 +52,22 @@ final class TraceBuilder {
     }
     $this->libraries($parts);
     $collections = $this->collections();
+    // What saving each edit target, and each move or insert, runs besides core.
+    $saves = [];
+    foreach ($this->edits as $id => $target) {
+      $type = SaveCode::forTarget($id, $this->private['edits'][$id] ?? []);
+      if ($type !== NULL && ($save = SaveCode::forEntityType($type))) {
+        $this->edits[$id]['saves'] = $save['id'];
+        $saves[$save['id']] = $save;
+      }
+    }
+    foreach ($collections as $i => $collection) {
+      $type = SaveCode::forCollection($this->private['collections'][$collection['id']] ?? [], $collection['changes']);
+      if ($type !== NULL && ($save = SaveCode::forEntityType($type))) {
+        $collections[$i]['saves'] = $save['id'];
+        $saves[$save['id']] = $save;
+      }
+    }
     $account = \Drupal::currentUser();
     $trace = [
       'version' => 1,
@@ -81,6 +97,7 @@ final class TraceBuilder {
       }, $this->recorder->logs),
       'collections' => $collections,
       'palette' => array_values($this->palette),
+      'saves' => array_slice(array_values($saves), 0, 200),
     ];
     if ($this->recorder->partsCut) {
       $this->truncated[] = 'parts';

@@ -16,6 +16,8 @@ import { samePage } from '@shared/live-envs';
 import { diagnose, type LiveStatus } from '@shared/live-site';
 import { nameOf, themeOf } from '@shared/live-names';
 import { lensView, partIndex, type LensId, type LiveTraceAnswer } from '@shared/live-lens';
+import type { LiveSiteAiAnswer, SaveAi } from '@shared/live-ai';
+import type { WriteCheck } from '@shared/live-check';
 import type { EditTarget } from '@shared/live-trace';
 import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
@@ -40,6 +42,7 @@ import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
 import { RequestTab } from './live/Request';
 import { TraceNote } from './live/TraceNote';
 import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
+import { useWriteChecks } from './live/write-checks';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import { openInEditor, relativeTo } from '../editor/EditButton';
 import '../styles/live.css';
@@ -217,7 +220,9 @@ type Banner =
   | { kind: 'waiting'; file: string }
   | { kind: 'reloaded' }
   | { kind: 'content'; cms: string }
-  | { kind: 'restless' };
+  | { kind: 'restless' }
+  /** A write read back after its reload, or what the site's AI did during it: `warn` when it needs the owner. */
+  | { kind: 'write'; text: string; warn: boolean };
 
 const fileName = (path: string): string => path.split('/').pop() ?? path;
 
@@ -230,6 +235,7 @@ function bannerText(n: Banner): string {
     case 'reloaded': return 'A turn ended without editing a file: reloaded, in case it changed content.';
     case 'content': return `Content changed in ${n.cms}: reloaded.`;
     case 'restless': return 'The site keeps changing its content on its own, so reloading for content changes has stopped until the page is reloaded.';
+    case 'write': return n.text;
   }
 }
 
@@ -297,8 +303,22 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [arrangeOn, setArrangeOn] = useState(readArrange);
   const stageRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<HTMLDivElement>(null);
+  // Every write is read back once the page reloads with it (live/write-checks.ts).
+  const traceIdRef = useRef<string | null>(null);
+  traceIdRef.current = traceData?.id ?? null;
+  const currentTraceId = useCallback(() => traceIdRef.current, []);
+  const sayWrite = useCallback((text: string, warn: boolean, toastIt: boolean): void => {
+    setBanner({ kind: 'write', text, warn });
+    if (toastIt) toast(text, warn ? 'error' : 'info');
+  }, [toast]);
+  /** Until when the site's change counter moving is the live view's own write, not someone else's. */
+  const ownWriteUntil = useRef(0);
+  const wrote = useCallback(() => { ownWriteUntil.current = Date.now() + 8_000; }, []);
+  const checks = useWriteChecks({ live, scan: scanned, traceId: currentTraceId, say: sayWrite, written: wrote });
+  /** What an edit sheet's parts showed when it opened: the save is read back against it. */
+  const editCheck = useRef<Promise<WriteCheck> | null>(null);
   const arrange = useArrange({
-    project, platform: site.platform, trace: traceData, parts, regions, layers, page: view?.url ?? url,
+    project, platform: site.platform, trace: traceData, parts, regions, layers, page: view?.url ?? url, checks,
     enabled: arrangeOn && hasScript && !compact && !picking && !editing && !view?.loading && !view?.error,
     onSaved: (label) => setSaved((was) => ({ ...was, parts: new Set([...was.parts, label.replace(/^(Moved|Added) /, '').split(',')[0] as string]) })),
   });
@@ -306,8 +326,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const fetchTrace = useCallback(async (): Promise<void> => {
     if (!helperSite) { setTrace(null); return; }
     if (!site.helper || !site.token) { setTrace({ state: 'no-helper' }); return; }
-    setTrace(await live.trace());
-  }, [live, helperSite, site.helper, site.token]);
+    const answer = await live.trace();
+    setTrace(answer);
+    await checks.traced(answer);
+  }, [live, helperSite, site.helper, site.token, checks]);
+  // The site's AI as its core reports it, read once the helper has traced a page (the view is up by then).
+  const [siteAi, setSiteAi] = useState<LiveSiteAiAnswer | null>(null);
+  const readSiteAi = useCallback((): void => { void live.siteAi().then(setSiteAi); }, [live]);
+  useEffect(() => { setSiteAi(null); }, [site.token]);
+  useEffect(() => { if (trace?.state === 'ok' && !siteAi && !envId) readSiteAi(); }, [trace?.state, siteAi, envId, readSiteAi]);
   // Go to: Shift+Space here or in the page, and the bar's button (components/live/GoTo.tsx).
   const goTo = useGoToKeys(project.id);
 
@@ -387,13 +414,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (s.projectId !== project.id || (s.env ?? null) !== hostedRef.current) return;
     setView(s);
     if (s.url) setAddress(s.url);
-    if (s.loading) { setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); return; }
+    if (s.loading) { setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); checks.loading(); return; }
     if (!s.error) {
       const wanted = outlineAfterLoad.current;
       outlineAfterLoad.current = null;
       void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); void fetchTrace(); return refreshProblems(); });
     }
-  }), [live, project.id, scanAndOutline, watchLate, refreshProblems, fetchTrace]);
+  }), [live, project.id, scanAndOutline, watchLate, refreshProblems, fetchTrace, checks]);
 
   useEffect(() => { if (view && !view.loading) void refreshProblems(); }, [view?.logged, refreshProblems]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -471,6 +498,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       if (stopped || queue.current.timer !== null) return;
       void live.helperChanged().then((n) => {
         if (n === null || n < 0) return;
+        // The live view's own write moved the counter: that page reloaded already, and its read-back is said.
+        if (Date.now() < ownWriteUntil.current) { last = n; return; }
         if (last !== null && n !== last) {
           recent = [...recent.filter((t) => Date.now() - t < 60_000), Date.now()];
           if (recent.length > CONTENT_RELOADS_A_MINUTE) { stopped = true; setBanner({ kind: 'restless' }); return; }
@@ -509,12 +538,29 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const openEdit = (target: EditTarget, region: LiveRegion | null): void => {
     void live.cancelEdit();
     setEditing({ target, region });
+    // What the parts it changes show now: the page does not change while the sheet is open over it.
+    const shown = [...parts.parts.values()].filter((p) => p.edits?.includes(target.id)).flatMap((p) => parts.regionsOf.get(p.id) ?? []);
+    const watched = regions.filter((r) => shown.includes(r.index) || (!shown.length && region?.index === r.index));
+    editCheck.current = checks.prepare(target.via === 'schema' ? 'edit' : 'form', target.label, watched,
+      target.via === 'schema' ? { id: target.id, sent: undefined, old: target.value } : undefined);
   };
-  const editSaved = (target: EditTarget, revision: string | null): void => {
+  const editSaved = (target: EditTarget, revision: string | null, ai: SaveAi | null = null, sent: unknown = undefined): void => {
     setEditing(null);
     setSaved((was) => ({ ...was, ids: new Set([...was.ids, target.id]), labels: new Set([...was.labels, target.label]) }));
-    toast(`Saved ${target.label}${revision ? `, as revision ${revision}` : ''}. The page shows it now.`);
+    toast(`Saved ${target.label}${revision ? `, as revision ${revision}` : ''}. Reloading to check the page shows it.`);
+    const prepared = editCheck.current;
+    editCheck.current = null;
+    if (prepared) void prepared.then((c) => checks.settle(c.target ? { ...c, target: { ...c.target, sent } } : c, { ok: true, ai }));
   };
+  // A site's own form that saved without leaving the page (WordPress's block editor): the page reloaded when it closed.
+  useEffect(() => live.onEdited((e) => {
+    if (!e.changed) return;
+    const prepared = editCheck.current;
+    editCheck.current = null;
+    setSaved((was) => ({ ...was, labels: new Set([...was.labels, e.label]) }));
+    if (prepared) void prepared.then((c) => checks.settle(c, { ok: true }));
+    else setBanner({ kind: 'write', text: `${site.platform === 'wordpress' ? 'WordPress' : 'Drupal'} saved changes while its form was open: reloaded.`, warn: false });
+  }), [live, checks, site.platform]);
   const point = (indexes: number[] | null): void => { if (indexes) void live.outline(indexes.slice(0, 200), null, 'hover'); else hover(null); };
   const flipArrange = (): void => {
     setArrangeOn((v) => {
@@ -633,7 +679,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           onReload={() => void live.reload(true)} onEdit={onEdit} stageRef={stageRef} deviceRef={deviceRef}>
           {/* A hosted environment is read-only: no edit sheet opens over it. */}
           {editing && !env ? (
-            <EditSheet request={editing} stage={stageRef} device={deviceRef} cms={cms} onClose={() => setEditing(null)} onSaved={editSaved} />
+            <EditSheet request={editing} stage={stageRef} device={deviceRef} cms={cms} onClose={() => setEditing(null)} trace={traceData} onSaved={editSaved} />
           ) : null}
         </LiveStage>
         {compact ? (
@@ -667,12 +713,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                 <span className="faint">{HOSTED_NOTE}</span>
               </div>
             ) : null}
-            {banner && shownTab === 'layers' && !alone && !env ? <p className="live-note small" role="status">{bannerText(banner)}</p> : null}
+            {banner && shownTab === 'layers' && !alone && !env ? <p className={`live-note small${banner.kind === 'write' && banner.warn ? ' warn' : ''}`} role={banner.kind === 'write' && banner.warn ? 'alert' : 'status'}>{bannerText(banner)}</p> : null}
             {shownTab === 'layers' ? (
               selection ? (
                 <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
                   theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect} onSaved={wordsSaved}
-                  site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} />
+                  site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit}
+                  siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} />
               ) : (
                 <>
                   {regions.length ? (

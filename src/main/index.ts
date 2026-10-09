@@ -144,6 +144,7 @@ function wireBridge(): void {
   // Agents' looks at the live view (wanigan mcp), relayed by the core: answered from a hidden window, never the owner's view.
   const agentLooks = wireLiveAgent({
     client: () => core.get(), settings: () => appSettings?.store.get() ?? null, view, windowOpen: () => !!win && !win.isDestroyed(),
+    sessionFor: (id, url) => view.sessionFor(id, url),
   });
   // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
   wireLiveFind({

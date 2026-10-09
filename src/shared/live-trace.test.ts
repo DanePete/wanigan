@@ -82,3 +82,28 @@ test('a part keeps the libraries it attached, bounded, and nothing that is not a
   assert.equal(t?.parts[0]?.libraries?.length, 100, 'the list is bounded');
   assert.equal(t?.parts[1]?.libraries, undefined, 'not a list: dropped');
 });
+
+test('what a save runs is kept only where a target or a collection names a save the trace describes', () => {
+  const t = parseTrace({
+    ...base,
+    platform: 'wordpress',
+    edits: [{ ...base.edits[0], saves: 'post:page' }, { id: 'e2', kind: 'field', label: 'Excerpt', via: 'native-form', saves: 'post:ghost' }],
+    parts: [{ ...base.parts[0], edits: ['e1', 'e2'] }, { id: 'b1', kind: 'block', label: 'Search' }],
+    collections: [{ id: 'c1', kind: 'post-blocks', label: 'Blocks of Home', items: ['b1'], changes: 'content', saves: 'post:page' }],
+    saves: [
+      { id: 'post:page', label: 'Saving a Page', core: 9, runs: [{ by: 'acme-seo', name: 'Acme SEO', kind: 'plugin', owner: 'plugin', hooks: ['save_post', 7], callbacks: ['acme_seo_on_save'] }, { kind: 'plugin' }, { by: 'x', kind: 'gadget', owner: 'nobody', hooks: 'save_post' }] },
+      { id: 'no-label' },
+    ],
+    ai: { client: true, supports: true, connected: ['Acme AI', 3] },
+  });
+  assert.deepEqual(t?.saves?.map((s) => s.id), ['post:page']);
+  assert.deepEqual(t?.saves?.[0]?.runs, [
+    { by: 'acme-seo', name: 'Acme SEO', kind: 'plugin', owner: 'plugin', hooks: ['save_post'], callbacks: ['acme_seo_on_save'] },
+    { by: 'x', kind: 'unknown', owner: 'unknown', hooks: [] },
+  ], 'a runner with no name is dropped; an unknown kind or owner is said as unknown');
+  assert.equal(t?.edits[0]?.saves, 'post:page');
+  assert.equal(t?.edits[1]?.saves, undefined, 'a save the trace does not describe is dropped');
+  assert.equal(t?.collections?.[0]?.saves, 'post:page');
+  assert.deepEqual(t?.ai, { client: true, supports: true, connected: ['Acme AI'] });
+  assert.equal(parseTrace({ ...base, ai: { client: true, supports: true, connected: [] } })?.ai, undefined, 'core’s AI Client is WordPress’s');
+});

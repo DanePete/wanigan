@@ -17,8 +17,9 @@ import { DRUPAL_BUILD_FILES } from './live-helper-drupal-build.ts';
 import { DRUPAL_ASSEMBLE_FILES } from './live-helper-drupal-assemble.ts';
 import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
 import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
+import { DRUPAL_AI_FILES } from './live-helper-drupal-ai.ts';
 
-export const DRUPAL_HELPER_VERSION = 2;
+export const DRUPAL_HELPER_VERSION = 3;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
 /** The first line of the module's .info.yml: how Wanigan knows a folder of that name is its own. */
 export const DRUPAL_HELPER_MARK = '# Written by Wanigan for its live view.';
@@ -148,6 +149,14 @@ wanigan_live.undo:
   methods: [POST]
   defaults:
     _controller: '\\Drupal\\wanigan_live\\Edit\\EditController::undo'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.ai:
+  path: '/_wanigan/ai'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::ai'
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
@@ -329,6 +338,7 @@ use Drupal\\Core\\Entity\\ContentEntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
 use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
+use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
 use Symfony\\Component\\HttpFoundation\\Request;
 use Symfony\\Component\\HttpFoundation\\Response;
@@ -367,6 +377,24 @@ final class LiveController extends ControllerBase {
     $finder = new Finder();
     $query = trim((string) $request->query->get('q', ''));
     return $this->json($query !== '' ? $finder->search($query, (int) $request->query->get('limit', 50)) : $finder->index());
+  }
+
+  /**
+   * The site's AI as core can report it (src/shared/live-ai.ts SiteAi).
+   * Drupal core has no AI API, so it is what saving each kind of content
+   * runs besides core: where a contributed module's AI would spend.
+   */
+  public function ai(): JsonResponse {
+    return $this->json([
+      'version' => 1,
+      'platform' => 'drupal',
+      'coreAi' => FALSE,
+      'supports' => NULL,
+      'connectors' => NULL,
+      'abilities' => NULL,
+      'watches' => ['prompts' => FALSE, 'abilities' => FALSE],
+      'saves' => SaveCode::site(),
+    ]);
   }
 
   /**
@@ -552,4 +580,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_ASSEMBLE_FILES,
   ...DRUPAL_EDIT_FILES,
   ...DRUPAL_FIND_FILES,
+  ...DRUPAL_AI_FILES,
 };

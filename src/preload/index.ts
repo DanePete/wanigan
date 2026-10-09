@@ -42,13 +42,15 @@ const live: LiveBridge = {
   },
   // The helper's trace, lenses and editing in place (src/main/live-inspect.ts).
   trace: () => ipcRenderer.invoke('live:trace') as ReturnType<LiveBridge['trace']>,
+  siteAi: () => ipcRenderer.invoke('live:siteAi') as ReturnType<LiveBridge['siteAi']>,
   paint: (items) => ipcRenderer.invoke('live:paint', items) as Promise<number>,
   where: (index) => ipcRenderer.invoke('live:where', index) as ReturnType<LiveBridge['where']>,
+  fingerprints: (indexes) => ipcRenderer.invoke('live:fingerprints', indexes) as ReturnType<LiveBridge['fingerprints']>,
   focusWindow: () => ipcRenderer.invoke('live:focusWindow') as Promise<void>,
   editOpen: (target, bounds) => ipcRenderer.invoke('live:editOpen', target, bounds) as ReturnType<LiveBridge['editOpen']>,
   editBounds: (bounds) => ipcRenderer.send('live:editBounds', bounds),
   editClose: () => ipcRenderer.invoke('live:editClose') as Promise<void>,
-  editSave: (target, value) => ipcRenderer.invoke('live:editSave', target, value) as ReturnType<LiveBridge['editSave']>,
+  editSave: (target, value, options) => ipcRenderer.invoke('live:editSave', target, value, options ?? null) as ReturnType<LiveBridge['editSave']>,
   onEdited(listener) {
     const handler = (_e: IpcRendererEvent, edited: LiveEdited): void => listener(edited);
     ipcRenderer.on('live:edited', handler);
@@ -63,8 +65,8 @@ const live: LiveBridge = {
   disarm: () => ipcRenderer.invoke('live:disarm') as Promise<void>,
   preview: (item, ref, place) => ipcRenderer.invoke('live:preview', item, ref, place) as Promise<boolean>,
   unpreview: () => ipcRenderer.invoke('live:unpreview') as Promise<void>,
-  move: (move) => ipcRenderer.invoke('live:move', move) as ReturnType<LiveBridge['move']>,
-  insert: (insert) => ipcRenderer.invoke('live:insert', insert) as ReturnType<LiveBridge['insert']>,
+  move: (move, options) => ipcRenderer.invoke('live:move', move, options ?? null) as ReturnType<LiveBridge['move']>,
+  insert: (insert, options) => ipcRenderer.invoke('live:insert', insert, options ?? null) as ReturnType<LiveBridge['insert']>,
   undo: (token) => ipcRenderer.invoke('live:undo', token) as ReturnType<LiveBridge['undo']>,
   // The Go to launcher (src/main/live-find.ts).
   find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
