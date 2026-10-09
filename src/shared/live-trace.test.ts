@@ -53,3 +53,24 @@ test('unknown kinds are dropped and long lists are cut and said to be', () => {
   assert.equal(t?.parts.length, TRACE_LIMITS.parts - 1);
   assert.deepEqual(t?.truncated, ['parts']);
 });
+
+test('collections keep only their own parts, known palette entries and known move targets', () => {
+  const t = parseTrace({
+    ...base,
+    parts: [...base.parts, { id: 'b1', kind: 'block', label: 'Search' }, { id: 'b2', kind: 'block', label: 'Menu' }],
+    palette: [{ id: 'pal-hero', kind: 'component', label: 'Hero', by: 'acme' }, { id: 'pal-bad', kind: 'gadget', label: 'x' }],
+    collections: [
+      { id: 'c-sidebar', kind: 'region-blocks', label: 'Sidebar blocks', items: ['b1', 'b2', 'ghost'], movesTo: ['c-footer', 'c-nowhere', 'c-sidebar'], inserts: ['pal-hero', 'pal-bad'], changes: 'configuration', reach: 41 },
+      { id: 'c-footer', kind: 'region-blocks', label: 'Footer blocks', items: [], changes: 'configuration' },
+      { id: 'c-odd', kind: 'region-blocks', label: 'No changes field', items: [] },
+    ],
+  });
+  assert.deepEqual(t?.palette?.map((p) => p.id), ['pal-hero']);
+  assert.equal(t?.collections?.length, 2, 'a collection that does not say what it changes is dropped');
+  const side = t?.collections?.[0];
+  assert.deepEqual(side?.items, ['b1', 'b2'], 'an item that is not a part of the trace is dropped');
+  assert.deepEqual(side?.movesTo, ['c-footer'], 'unknown and self move targets are dropped');
+  assert.deepEqual(side?.inserts, ['pal-hero']);
+  assert.equal(side?.changes, 'configuration');
+  assert.equal(side?.reach, 41);
+});
