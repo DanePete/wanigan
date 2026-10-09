@@ -11,8 +11,11 @@ import { Button, Dialog, useToast } from '../ui';
 
 const GIVES: Record<'drupal' | 'wordpress', string[]> = {
   drupal: [
-    'Names content, fields, blocks and views exactly, even where Twig debug cannot.',
-    'Saves words you retype on the page to plain text fields, as the user you are logged in as in the live view.',
+    'Shows what made every part of the page, read through Drupal core: its template and the suggestions it could have used, the preprocess and alter hooks that shaped it (each with its time and what it changed), its variables, cache tags and queries.',
+    'Edits any field where it shows, in Drupal’s own form for that one field, saved as a new revision by the user you are logged in as in the live view.',
+    'Moves blocks between regions, menu links, a field’s items and a display’s fields by dragging, through core, each with Undo, and says first when a move changes configuration every page shares.',
+    'Copies a template into your theme to override it, only when you ask.',
+    'Finds any page fast with Go to: admin pages and their tabs, content, terms, users and media.',
     'Shows one piece alone: a piece of content, a component with its examples, a block, or sample content where there is none yet.',
     'Reloads the view when content changes in Drupal (an agent running drush, an editor saving), not only when files change.',
   ],
@@ -32,7 +35,7 @@ export function HelperOffer({ site, project }: { site: LiveSite; project: Projec
   return (
     <div className="live-helper-offer">
       <p className="small">
-        {plan.kind === 'drupal' ? 'Name every piece exactly, save words to content, show a piece alone, and follow content changes too.'
+        {plan.kind === 'drupal' ? 'See what made every part, edit and move content through Drupal’s own forms, find any page, and follow content changes too.'
           : 'Name the template file behind every part, show a post alone, and follow content changes too.'}
       </p>
       <Button size="s" icon="plug" onClick={() => setOpen(true)}>Set up the {NAME[plan.kind]} helper…</Button>
@@ -76,7 +79,7 @@ export function HelperSettings({ site, project }: { site: LiveSite; project: Pro
       ) : (
         <>
           <p className="faint small">
-            {plan.kind === 'drupal' ? 'A small development-only module that lets the live view name every piece exactly, save words to content, show a piece alone and follow content changes.'
+            {plan.kind === 'drupal' ? 'A development-only module that lets the live view show what made every part, edit and move content through Drupal’s own forms, find any page and follow content changes.'
               : 'One development-only plugin file that lets the live view name the template file behind every part, show a post alone and follow content changes.'}
           </p>
           <div className="live-actions"><Button size="s" icon="plug" onClick={() => setOpen(true)}>Set up the {NAME[plan.kind]} helper…</Button></div>
