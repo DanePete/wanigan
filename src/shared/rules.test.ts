@@ -9,7 +9,7 @@ test('project keys come from the name and never collide', () => {
   assert.equal(projectKeyFrom('Northstar Storefront', new Set()), 'NS');
   assert.equal(projectKeyFrom('orbit-api', new Set()), 'OA');
   assert.equal(projectKeyFrom('fieldnotes', new Set()), 'FIE');
-  assert.equal(projectKeyFrom('StillOnTour', new Set()), 'SOT');
+  assert.equal(projectKeyFrom('SummerOutdoorTrips', new Set()), 'SOT');
   assert.equal(projectKeyFrom('Northstar Storefront', new Set(['NS'])), 'NS2');
   assert.equal(projectKeyFrom('2048 clone', new Set()), 'P2C');
 });

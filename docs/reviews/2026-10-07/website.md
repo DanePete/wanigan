@@ -31,7 +31,7 @@ Published to **https://wanigan.ai** through `npm run deploy:cloudflare` after th
 
 ## Preparation record (before publication)
 
-Prepared in `/Users/dane/Projects/drupal/wanigan/marketing`, branch `codex-review-site`.
+Prepared in `~/Projects/drupal/wanigan/marketing`, branch `codex-review-site`.
 Commit: `da97080` — Add dated release notes and prepare alpha 2 site update.
 
 No deployment or website push performed. The download record remains v2.0.0-alpha.1, unchanged byte-for-byte. `.claude/` remains untracked and untouched. The two original scrollable-code accessibility changes in `components/Sections.tsx` were preserved and committed with narrow, explained lint exceptions.
@@ -53,7 +53,7 @@ Node 22.23.2 selected with nvm use.
 - `npm run typecheck`: pass.
 - `npm run lint`: pass with one pre-existing warning, `video/worker.ts:16` anonymous default export. Normal lint initially failed discovering the untracked `.claude` worktrees' own configurations and rejecting the owner's keyboard focus additions. The command now excludes `.claude` before configuration discovery, and the two named scrollable code regions have local, explained rule exceptions.
 - `WANIGAN_SOURCE=/private/tmp/wanigan-site-committed-engine npm run build`: pass. This intentionally unavailable source selects and cryptographically verifies the committed engine; no Wanigan 1 source or runtime data was read. Prerender requires localhost permission outside the sandbox.
-- `env -u ELECTRON_RUN_AS_NODE WANIGAN_SOURCE=/Users/dane/Projects/drupal/wanigan-2 npm run test:companion`: pass. Its separate Electron test uses a temporary profile, no Wanigan main process. 8,144 particles moved; rain/pause passed; zero GPU errors.
+- `env -u ELECTRON_RUN_AS_NODE WANIGAN_SOURCE=~/Projects/drupal/wanigan-2 npm run test:companion`: pass. Its separate Electron test uses a temporary profile, no Wanigan main process. 8,144 particles moved; rain/pause passed; zero GPU errors.
 - `npm run check:site -- --label=ready --output=/private/tmp/wanigan-site-review/check-final`: pass. Full log: `check-final.log`. Both themes, 1440/390 layouts, keyboard release navigation, dates, pending/current notes links, same-origin requests, no cookies/console errors, images, heading/accessibility names, video lazy loading, reduced motion, WebGPU fallback, Mac/non-Mac download behavior. Added 320/560/768-width checks all show zero overflow.
 - `git diff --check`: pass.
 
