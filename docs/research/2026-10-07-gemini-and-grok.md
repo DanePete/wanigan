@@ -59,6 +59,40 @@ folder question raised and answered, the first hook through the relay, the id
 learnt, nothing printed in Gemini's window). A real model turn needs a Gemini
 login and has not been run.
 
+### 9 October 2026: MCP, skills, tokens and the usage limit
+
+Read in 0.46.0's bundle and run with a throwaway home, no login, no model:
+`gemini mcp` and `gemini skills` with no network, full turns with
+`--fake-responses`, and the interactive CLI against a fake Gemini API on
+127.0.0.1 (`GOOGLE_GEMINI_BASE_URL`, a made-up key, a sandbox refusing any
+other connection).
+
+- **MCP** (run): `mcpServers` in `~/.gemini/settings.json` and a project's
+  `.gemini/settings.json` (comments allowed). None load in a folder Gemini
+  does not trust, user ones included. `gemini mcp add` defaults to project
+  scope, overwrites a same-named server and exits 0; `remove` exits 0 when
+  nothing was removed. In an untrusted folder `add --scope project` wrote the
+  file back with only its MCP servers (the theme and the other server were
+  gone) and `remove` found nothing; `GEMINI_CLI_TRUST_WORKSPACE=true` makes
+  both behave, without writing any trust. `gemini mcp enable|disable` cannot
+  find a server in 0.46 (it looks up the wrong keys). Wanigan hands no MCP
+  server of its own to any agent, so there was none to hand Gemini.
+- **Skills** (run): `~/.gemini/skills`, `~/.agents/skills`, and a trusted
+  project's `.gemini/skills` and `.agents/skills`; one level deep; frontmatter
+  `name` and `description` both required; each skill is also a slash command.
+  Links in Wanigan's Gemini home to the owner's folders are followed.
+- **Tokens** (run, fake responses): each reply is a chat line with `tokens`
+  from its last usage chunk; a reply is written again when its tool calls
+  arrive; `input` includes the cached part.
+- **Usage limit** (run, fake API answering 429): no hook and no record says
+  it. The CLI draws a dialog, "Usage limit reached for all Pro models.",
+  "Access resets at 11:09 AM CDT." when the API gave a retry delay,
+  "/stats model for usage details", "/model to switch models.", and asks to
+  keep trying, switch model or stop. Stop ends the turn with AfterAgent and
+  `prompt_response` "[no response text]"; the chat file records "[API Error:
+  An unknown error occurred.]". Wanigan reads the dialog's exact words
+  (`src/shared/limits.ts`); `scripts/gemini-fake-api-check.ts` repeats this.
+
 ## Grok Build
 
 xAI's installer was not run: the session's safety check refused it as code from

@@ -151,10 +151,11 @@ its tools and what it asks you through hooks. Gemini takes hooks only from its
 own settings, so Wanigan keeps a Gemini home in its data folder
 (`GEMINI_CLI_HOME`) holding Wanigan's hooks; your own `~/.gemini` is never
 written. Your sign-in stays where Gemini keeps it, and your chosen sign-in
-method and trusted folders are copied in. Your own skills (`~/.gemini/skills`
-and `~/.agents/skills`) are linked in, so Gemini reads them where they are, and
-the Skills view lists them with each project's `.gemini/skills` and
-`.agents/skills`. Your own Gemini extensions, MCP servers and global
+method, trusted folders and MCP servers are copied in as each session starts.
+Your own skills (`~/.gemini/skills` and `~/.agents/skills`) are linked in, so
+Gemini reads them where they are. The Skills and MCP views list Gemini's with
+each project's `.gemini/skills`, `.agents/skills` and `.gemini/settings.json`,
+and add or copy to them on your click. Your own Gemini extensions and global
 `GEMINI.md` live in your home and are not loaded there.
 
 - In a folder Gemini has not been told to trust, it asks first, and loads no
@@ -389,12 +390,15 @@ verification results and the behavior that remains unverified.
   Codex's start-of-turn hook was seen in the scenario run.
 - Gemini CLI: proven with the installed 0.46 up to its first hook (folder trust
   answered, the hook through the relay, its conversation id learnt); a real
-  model turn needs a Gemini login and has not been run. MCP servers are not
-  offered for it; its skills are listed and copied by Gemini's own rules, not
-  yet seen used in a real turn. Its usage limit and token count were proven with the
-  installed CLI against a fake Gemini API on this Mac
-  (`scripts/gemini-fake-api-check.ts`); a real account's limit and a real
-  model's usage numbers have not been seen.
+  model turn needs a Gemini login and has not been run. Its usage limit and
+  token count were proven with the installed CLI against a fake Gemini API on
+  this Mac (`scripts/gemini-fake-api-check.ts`); a real account's limit and a
+  real model's usage numbers have not been seen. Its MCP servers and skills are
+  listed, added and copied by Gemini's own rules, and Gemini itself, pointed at
+  Wanigan's Gemini home, lists and connects to them; none has been used in a
+  real turn, the store's Gemini commands are Wanigan's translations (not
+  checked against each publisher), and the MCP view has no connection check
+  for Gemini.
 - Grok Build: not yet an agent. Its installer was not run (it verifies nothing
   it downloads); what its binary says is in the research note, and its hook
   events are translated and tested, waiting for it to be installed and seen

@@ -1,7 +1,8 @@
 // Hook wiring for agent CLIs. Wanigan writes these files into its own data
 // directory and passes them on the command line; nothing goes into a repository.
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseJsonc } from '../shared/jsonc.ts';
 
 export interface HookFiles {
   relay: string;
@@ -95,9 +96,11 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * one, so this is how hooks reach it without touching the owner's ~/.gemini or
  * a project. The login stays where it is (macOS Keychain). The owner's chosen
  * sign-in method and trusted folders are copied in (read, never written back),
- * so Gemini asks neither again, and their own skill folders are linked in, so
- * Gemini reads them where they are. Their own extensions and global GEMINI.md
- * stay in their own home and are not loaded here.
+ * so Gemini asks neither again; their MCP servers (with the settings that allow
+ * or leave them out, and those switched off) are copied in at each launch, and
+ * their own skill folders are linked in, so Gemini reads them where they are.
+ * Their own extensions and global GEMINI.md stay in their own home and are not
+ * loaded here.
  */
 /** Where Wanigan's Gemini home is, in its data folder. */
 export const geminiHomeDir = (dataDir: string): string => join(dataDir, 'gemini-home');
@@ -125,8 +128,16 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
     },
     // The title says Ready, Working or Action Required: what covers a refusal or a cancel, which no hook reports.
     ui: { dynamicWindowTitle: true },
+    // The owner's own MCP servers and the lists that allow or leave them out,
+    // as their own Gemini would load them (the MCP view lists the same file).
+    ...(own && isRecord(own.mcpServers) ? { mcpServers: own.mcpServers } : {}),
+    ...(own && isRecord(own.mcp) ? { mcp: own.mcp } : {}),
   };
   atomicWrite(join(dir, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
+  // Servers the owner switched off in a session (/mcp disable) stay off; none switched off, none here.
+  const enablement = readJson(join(ownerHome, '.gemini', 'mcp-server-enablement.json'));
+  if (enablement) atomicWrite(join(dir, 'mcp-server-enablement.json'), `${JSON.stringify(enablement, null, 2)}\n`);
+  else rmSync(join(dir, 'mcp-server-enablement.json'), { force: true });
   const trusted = join(ownerHome, '.gemini', 'trustedFolders.json');
   if (existsSync(trusted) && !existsSync(join(dir, 'trustedFolders.json'))) {
     const folders = readJson(trusted);
@@ -171,14 +182,16 @@ export function geminiChatSaved(home: string, sessionId: string): boolean {
   }
 }
 
+/** A JSON object as Gemini reads one (comments allowed), or null. */
 function readJson(file: string): Record<string, unknown> | null {
   try {
-    const v = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-    return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+    return parseJsonc(readFileSync(file, 'utf8'));
   } catch {
     return null;
   }
 }
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 function atomicWrite(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.tmp`;

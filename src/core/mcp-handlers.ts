@@ -22,6 +22,9 @@ function addParams(p: unknown): McpAddParams {
   const v = (p ?? {}) as Record<string, unknown>;
   const scope = v.scope;
   if (scope !== 'user' && scope !== 'local' && scope !== 'project') throw new CoreError('invalid', 'The scope must be user, local or project.');
+  // Gemini CLI has one sign-in, so it is named instead of an account.
+  if (v.agent === 'gemini') return { catalogId: str(v.catalogId, 'server'), agent: 'gemini', accountId: null, scope, projectId: optional(v.projectId, 'project') };
+  if (v.agent !== undefined) throw new CoreError('invalid', 'Which agent?');
   return { catalogId: str(v.catalogId, 'server'), accountId: str(v.accountId, 'account'), scope, projectId: optional(v.projectId, 'project') };
 }
 
