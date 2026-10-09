@@ -9,11 +9,15 @@ open an issue first so we can agree on the shape before you build it.
 Follow [Try it](README.md#try-it) in the README. Then:
 
 ```sh
-npm test            # typecheck, unit and integration tests, UI sweep and control crawl
+npm test            # typecheck, unit and integration tests, UI and phone sweeps
+npm run test:release  # npm test, then the control crawl: before a release
 npm run smoke:app   # the real Electron app: core, window, a terminal, the CLI, outliving a quit
 ```
 
-`npm test` must pass before a pull request. If you touched the app's startup,
+`npm test` must pass before a pull request. The control crawl presses every
+reachable control in the demo and takes the better part of an hour, so it runs
+for releases: `npm run test:release` locally, and CI runs it for a `v*` tag or
+when started by hand. If you touched the app's startup,
 the core process or packaging, run the smoke test too.
 
 `npm run dev` rebuilds the main process, the core and the CLI as you edit. The

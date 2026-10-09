@@ -348,7 +348,8 @@ flags.
 ## Tests
 
 ```sh
-npm test            # typecheck, unit + integration tests, UI sweep and control crawl
+npm test            # typecheck, unit + integration tests, UI and phone sweeps
+npm run test:release  # npm test, then the control crawl (before a release)
 npm run smoke:app   # the real Electron app: core, window, a terminal, the CLI, outliving a quit
 node scripts/app-smoke.mjs --app "release/mac-arm64/Wanigan 2.app"   # the same against a packaged build
 npm run scenario    # the whole workflow in the real app on a throwaway shop site; no model is called
