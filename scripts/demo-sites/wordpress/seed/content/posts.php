@@ -20,7 +20,7 @@ return array(
 		'content'  => static fn () =>
 			p( 'The car said minus three when we pulled into the Birch Hollow lot at seven, and the thermometer clipped to my pack agreed within half a degree. It was the first real frost of the season: not the thin silver on the windscreen we had been scraping all week, but the kind that gets into the ground and stays there until noon.', array( 'dropCap' => true ) )
 			. p( 'Birch Hollow is the loop we walk when we want to see what a season is doing. It is six and a half kilometres, it climbs about as much as a church tower, and it runs through the same stand of paper birch for most of its length, so changes show up against a steady background. This morning everything on the path was rimed white: the fallen leaves, the bracken, the boards over the wet ground by the beaver pond.' )
-			. img( 'birch-hollow', 'Plate 12 — The birch stand above the beaver pond, twenty to eight.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
+			. img( 'route-birch-hollow', 'Sheet 1 — The loop, walked clockwise from the lot: the climb first, the boardwalk last.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. h( 2, 'What changed overnight' )
 			. p( 'Frost changes the sound of a trail more than its look. The leaves that had been soft and quiet on Wednesday cracked like paper. We could hear a red squirrel working on a cone thirty metres off, and the creek under the second footbridge, a murmur all summer, was suddenly the loudest thing in the valley. The air was that still.' )
 			. items(
@@ -51,7 +51,6 @@ return array(
 		'excerpt'  => 'Seven days of readings from the cabin wall: a slow fall in pressure, one wet Thursday, and a northwest wind that arrived on Friday night and took ten degrees with it.',
 		'content'  => static fn () =>
 			p( 'This was the week autumn arrived properly, and it arrived on a wind. Monday and Tuesday were the tail of a warm September: still air, haze over Tamarack Lake, and the barometer drifting down so slowly that we did not notice until Wednesday.' )
-			. img( 'chart-wind-change', 'The week on one sheet: pressure in black, temperature in ember, rain in blue.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. table(
 				array( 'Day', 'High °C', 'Low °C', 'Wind', 'hPa', 'Sky', 'Notes' ),
 				array(
@@ -86,9 +85,9 @@ return array(
 			p( 'The Cedar River ford is the reason most people turn back on the valley route. In spring it runs waist-deep and fast enough to knock you over; even in an ordinary August it is a cold, slippery crossing on stones you cannot see. This year, after six weeks with barely any rain, we found it at the lowest we have recorded.', array( 'dropCap' => true ) )
 			. gallery(
 				array(
-					array( 'river-ford', 'The ford from the east bank' ),
-					array( 'gallery-shore', 'The gravel bar downstream' ),
+					array( 'gallery-shore', 'The bar downstream, dry for the first time' ),
 					array( 'gallery-landing', 'Where the trail leaves the water' ),
+					array( 'route-cedar-ford', 'The route, crossing at the riffle' ),
 				),
 				array(
 					'columns' => 3,
@@ -143,7 +142,7 @@ return array(
 		'excerpt'  => 'The kit that goes in the pack for every walk above the trees, whatever the forecast says, and the one thing we have argued about for years.',
 		'content'  => static fn () =>
 			p( 'A day on Basswood Ridge is not an expedition. You are never more than a few hours from a road. But the ridge is open, the weather comes in from the west faster than you can see it, and the walk out from the far end is long. So the same ten things go in the pack every time, and come out at the end of the day whether we used them or not.' )
-			. img( 'kit-day', 'The day kit, laid out on the cabin floor before the Basswood traverse.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
+			. img( 'route-basswood-ridge', 'Sheet 2 — The Basswood traverse, the walk this kit is packed for.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. h( 2, 'The list' )
 			. items(
 				array(
@@ -202,7 +201,7 @@ return array(
 			. p( 'I walked the boardwalk alone at a quarter past five. I could see perhaps fifteen metres. The boards ran out ahead of me into nothing, and the cattails on either side were grey shapes, then outlines, then gone.' )
 			. p( 'Sound behaves strangely in fog. Everything seems closer and more muffled at once. A bittern was booming somewhere to the north, that deep, pumping note like someone blowing across a bottle, and a heron called from what I would have sworn was straight ahead, then flew up out of the reeds behind me.' )
 			. pullquote( 'A heron called from what I would have sworn was straight ahead, then flew up out of the reeds behind me.' )
-			. img( 'kettle-marsh', 'Plate 27 — Kettle Marsh boardwalk, twenty past five, 9 August.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
+			. img( 'route-kettle-marsh', 'Sheet 4 — The boardwalk loop. The fog fills the basin up to about the 300 m contour.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. p( 'The fog lifted the way it always does there: not by thinning, but by rising. At ten to six there was a gap of clear air above the water, a metre deep and getting deeper, with the fog sitting on top of it like a ceiling. Then the sun found the top of the ceiling and it was gone in ten minutes, and it was only a marsh again, loud with red-winged blackbirds, the boards steaming.' )
 			. p( 'I stayed until the last of it had burned off the far end, and walked back along boards that had been a road into nowhere an hour before.' ),
 	),
@@ -294,6 +293,7 @@ return array(
 				null,
 				''
 			)
+			. img( 'route-tamarack-ice', 'Sheet 5 — The ice route across Tamarack Lake. The narrows between the islands never freeze hard.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. h( 2, 'Sound' )
 			. p( 'A frozen lake is noisy. On a cold, clear night the ice booms and pings and sends long whistling cracks from one shore to the other, a sound like a stretched wire being plucked. It is alarming the first time and almost always harmless: it is the ice contracting as it cools, and loud ice is usually cold, thick ice. The sound to worry about is the quiet, wet one underfoot.' )
 			. h( 2, 'The rule' )
@@ -394,7 +394,7 @@ return array(
 		'excerpt'  => 'A snapped pole section in the meadow, a repair sleeve that had ridden in the kit for four years unused, and the six steps that had the tent back up in ten minutes.',
 		'content'  => static fn () =>
 			p( 'The pole went with a crack like a dry stick, in a gust, as I was feeding it through the sleeve. One section split for about five centimetres at the ferrule end. It was getting dark, it was going to rain, and the tent was a heap of nylon on the grass.' )
-			. img( 'kit-repair', 'The repair kit: everything in it has been used at least once, except the spare buckle.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
+			. img( 'night-meadow', 'Plate 33 — Night Sky Meadow, an hour after the repair. The tape held.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. h( 2, 'The repair' )
 			. items(
 				array(
@@ -451,7 +451,7 @@ return array(
 					array( '50%', h( 3, 'What we leave out' ) . items( array( 'How we felt about it, mostly', 'Anything we did not see ourselves', 'Guesses dressed as measurements', 'Bird names we are not sure of' ) ) ),
 				)
 			)
-			. img( 'kit-notebook', 'The notebook kit. The hand lens is for lichens; the ruler is for needle ice.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) ),
+			. p( 'The kit itself is small: the notebook, two pencils, an eraser, a short ruler for measuring needle ice and snow, a thermometer, and a hand lens for lichens. It all fits in a chest pocket.' ),
 	),
 
 	'quiet-week-then-frost' => array(
@@ -507,7 +507,7 @@ return array(
 				),
 				array( 'ordered' => true )
 			)
-			. img( 'weather-front', 'Plate 19 — The front, about ten minutes before it arrived.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
+			. img( 'gallery-shore', 'Plate 20 — The beach where we waited it out, an hour afterwards.', array( 'align' => 'wide', 'className' => 'is-style-plate' ) )
 			. p( 'The first gust reached us twenty minutes after Maren first pointed. The lake went from glass to whitecaps in less than a minute, the temperature dropped by what felt like ten degrees, and the rain came across the water in a wall we could see coming. It lasted forty minutes. Then it was over, the air was cool and clean, and the lake was flat again by the time we paddled back.' )
 			. quote( 'The time to get off the water is when you first see it, not when you first feel it.', 'Maren, on the beach' ),
 	),
