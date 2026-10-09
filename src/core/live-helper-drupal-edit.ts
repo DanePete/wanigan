@@ -1085,26 +1085,83 @@ final class Moves {
     return [200, ['ok' => TRUE, 'undo' => $token]];
   }
 
+  /**
+   * Saves the region and weights that give an order, re-saving as few block
+   * config entities as it can (each save re-normalises its settings, as the
+   * block layout form's saves do).
+   */
   private static function applyBlocks(array $order, string $region, string $moved): void {
-    $storage = \Drupal::entityTypeManager()->getStorage('block');
-    foreach ($order as $weight => $id) {
-      $block = $storage->load($id);
+    $types = \Drupal::entityTypeManager();
+    $storage = $types->getStorage('block');
+    $blocks = $storage->loadMultiple($order);
+    $class = $types->getDefinition('block')->getClass();
+    $weights = [];
+    foreach ($order as $id) {
+      $weights[$id] = isset($blocks[$id]) ? (int) $blocks[$id]->getWeight() : 0;
+    }
+    $sorts = static function (array $weights) use ($blocks, $class): array {
+      $list = [];
+      foreach ($weights as $id => $weight) {
+        $clone = clone $blocks[$id];
+        $list[$id] = $clone->setWeight($weight);
+      }
+      uasort($list, [$class, 'sort']);
+      return array_map('strval', array_keys($list));
+    };
+    foreach (self::weights($order, $weights, $moved, $sorts) as $id => $weight) {
+      $blocks[$id]->setWeight($weight);
+    }
+    foreach ($order as $id) {
+      $block = $blocks[$id] ?? NULL;
       if (!$block) {
         continue;
       }
-      $changed = FALSE;
       if ($id === $moved && $block->getRegion() !== $region) {
         $block->setRegion($region);
-        $changed = TRUE;
       }
-      if ((int) $block->getWeight() !== $weight) {
-        $block->setWeight($weight);
-        $changed = TRUE;
-      }
-      if ($changed) {
+      $original = $storage->loadUnchanged($id);
+      if ($original === NULL || $original->getRegion() !== $block->getRegion() || (int) $original->getWeight() !== (int) $block->getWeight()) {
         $block->save();
       }
     }
+  }
+
+  /**
+   * Weights that sort into $order by the platform's own sort, changing only
+   * the moved item's when a weight between its neighbours does it, and
+   * otherwise numbering them all from 0.
+   */
+  private static function weights(array $order, array $current, string $moved, callable $sorts): array {
+    $at = array_search($moved, $order, TRUE);
+    $prev = $at > 0 ? $current[$order[$at - 1]] : NULL;
+    $next = $at < count($order) - 1 ? $current[$order[$at + 1]] : NULL;
+    if ($prev === NULL && $next === NULL) {
+      $candidates = [$current[$moved]];
+    }
+    elseif ($prev === NULL) {
+      $candidates = [$next, $next - 1];
+    }
+    elseif ($next === NULL) {
+      $candidates = [$prev, $prev + 1];
+    }
+    else {
+      $candidates = range($prev, min($next, $prev + 50));
+    }
+    array_unshift($candidates, $current[$moved]);
+    foreach (array_unique($candidates) as $weight) {
+      $try = $current;
+      $try[$moved] = $weight;
+      if ($sorts($try) === array_map('strval', $order)) {
+        return $weight === $current[$moved] ? [] : [$moved => $weight];
+      }
+    }
+    $all = [];
+    foreach ($order as $i => $id) {
+      if ($current[$id] !== $i) {
+        $all[$id] = $i;
+      }
+    }
+    return $all;
   }
 
   private function undoBlocks(array $r): array {
@@ -1159,12 +1216,28 @@ final class Moves {
       return self::changed($to, $now_to);
     }
     $order = self::place($now_to, array_map('strval', array_values($to['items'])), $plugin, $index);
+    $definitions = [];
+    $weights = [];
+    foreach ($order as $id) {
+      $definitions[$id] = $manager->getDefinition($id);
+      $weights[$id] = (int) $definitions[$id]['weight'];
+    }
+    // Sorted as MenuLinkTreeManipulators::generateIndexAndSort() sorts.
+    $sorts = static function (array $weights) use ($manager): array {
+      $sorted = [];
+      foreach ($weights as $id => $weight) {
+        $sorted[(50000 + $weight) . ' ' . $manager->createInstance($id)->getTitle() . ' ' . $id] = (string) $id;
+      }
+      ksort($sorted);
+      return array_values($sorted);
+    };
+    $new = self::weights($order, $weights, $plugin, $sorts);
     $changes = [];
-    foreach ($order as $weight => $id) {
-      $definition = $manager->getDefinition($id);
+    foreach ($order as $id) {
+      $definition = $definitions[$id];
       $values = [];
-      if ((int) $definition['weight'] !== $weight) {
-        $values['weight'] = $weight;
+      if (isset($new[$id])) {
+        $values['weight'] = $new[$id];
       }
       if ($id === $plugin && (string) $definition['parent'] !== $to['parent']) {
         $values['parent'] = $to['parent'];
