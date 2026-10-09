@@ -443,6 +443,12 @@
   font-size: var(--text-sm);
 }
 
+/* A Gemini server Wanigan's sessions do not get, and why. Not amber: nothing waits on the owner. */
+.mcp-elsewhere {
+  max-width: 72ch;
+  color: var(--muted);
+}
+
 .mcp-status.tone-ok {
   color: var(--green);
 }

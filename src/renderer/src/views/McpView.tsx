@@ -156,11 +156,13 @@ function ServerRow({ server: s, result, project, onRemove }: { server: McpServer
           <span className="lib-tag">{s.transport === 'unknown' ? '?' : s.transport}</span>
           <span className="lib-tag" title={scopeHint(s)}>{scope}</span>
           {!s.enabled ? <span className="lib-tag">off</span> : null}
+          {s.notInWanigan ? <span className="lib-tag">not in Wanigan’s sessions</span> : null}
         </p>
         <p className="mcp-target mono" title={s.target}>{s.target}</p>
         {pairs.length ? <p className="mcp-pairs mono">{pairs.join('   ')}</p> : null}
         {result ? <p className={`mcp-status tone-${result.tone}`}>{result.status}{result.issue ? <span className="faint"> — {result.issue}</span> : null}</p> : null}
         {s.note ? <p className="faint small">{s.note}</p> : null}
+        {s.notInWanigan ? <p className="mcp-elsewhere small">{s.notInWanigan}</p> : null}
         {s.scope === 'local' && s.folder && !project ? <p className="faint small">For <span className="mono">{s.folder}</span></p> : null}
       </div>
       <div className="mcp-actions">

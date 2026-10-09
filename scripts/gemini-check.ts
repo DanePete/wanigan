@@ -8,7 +8,7 @@
 //
 //   node scripts/run-electron-node.mjs scripts/gemini-check.ts
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Core } from '../src/core/core.ts';
@@ -33,7 +33,9 @@ for await (const line of createInterface({ input: process.stdin })) {
 }
 `);
 mkdirSync(join(home, '.gemini'), { recursive: true });
-writeFileSync(join(home, '.gemini', 'settings.json'), `{\n  // the pretend owner's\n  "mcpServers": { "acme-tools": { "command": "node", "args": [${JSON.stringify(server)}] } }\n}\n`);
+// A second server with a key written into its settings, which Wanigan must not copy.
+const INLINE_KEY = 'acme-not-a-real-key-0123456789abcdef';
+writeFileSync(join(home, '.gemini', 'settings.json'), `{\n  // the pretend owner's\n  "mcpServers": {\n    "acme-tools": { "command": "node", "args": [${JSON.stringify(server)}] },\n    "acme-inline": { "command": "node", "args": [${JSON.stringify(server)}], "env": { "ACME_API_KEY": "${INLINE_KEY}" } }\n  }\n}\n`);
 mkdirSync(join(home, '.agents', 'skills', 'acme-release'), { recursive: true });
 writeFileSync(join(home, '.agents', 'skills', 'acme-release', 'SKILL.md'), '---\nname: acme-release\ndescription: Cut a release of the Acme storefront.\n---\n\nTag it, then write the notes.\n');
 const results: string[] = [];
@@ -97,6 +99,10 @@ try {
   results.push(/✓ acme-tools: node .*acme-tools\.mjs \(stdio\) - Connected/.test(mcp)
     ? 'Gemini in Wanigan’s home lists the owner’s MCP server, copied in, and connects to it'
     : `FAIL: gemini mcp list in Wanigan’s home said: ${mcp.trim().split('\n').slice(-12).join(' | ')}`);
+  const copied = readFileSync(join(base, 'data', 'gemini-home', '.gemini', 'settings.json'), 'utf8');
+  results.push(!/acme-inline/.test(mcp) && !copied.includes(INLINE_KEY)
+    ? 'the server with a key written into its settings was not copied: Gemini in Wanigan’s home does not list it, and the key is not in Wanigan’s data folder'
+    : 'FAIL: the server with an inline key reached Wanigan’s Gemini home');
   const skills = asGemini('skills', 'list');
   results.push(/acme-release \[Enabled\][\s\S]*Location:\s+\S*gemini-home\/\.agents\/skills\/acme-release\/SKILL\.md/.test(skills)
     ? 'Gemini in Wanigan’s home finds the owner’s skill through the link to ~/.agents/skills'

@@ -64,6 +64,8 @@ export interface McpServer {
   note: string | null;
   /** The store entry it matches, if any. */
   catalogId: string | null;
+  /** Gemini CLI only: why Wanigan's Gemini sessions do not get this server (it holds a value that could be a secret), or null when they do. */
+  notInWanigan?: string | null;
 }
 
 export interface McpGroup {
@@ -400,6 +402,94 @@ export function redactText(text: string): string {
   return text
     .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)]+/gi, (u) => redactUrl(u))
     .split(/(\s+)/).map((w) => (/\s/.test(w) || !looksSecret(w.replace(/[.,;:]+$/, '')) ? w : HIDDEN)).join('');
+}
+
+/* ── what Wanigan's Gemini sessions may be given ───────────────────────── */
+
+/** A setting's name that says its value is a credential. */
+const CREDENTIAL_KEY = /(token|secret|passw|pwd|api[-_]?key|apikey|key$|auth|credential|cookie|bearer|signature|session|private)/i;
+/** Settings of a Gemini server that hold no credential by what they are (names, numbers, choices). */
+const PLAIN_FIELDS = new Set(['type', 'timeout', 'trust', 'description', 'includeTools', 'excludeTools', 'cwd', 'tcp', 'authProviderType', 'targetAudience', 'targetServiceAccount']);
+
+/**
+ * A value Gemini CLI fills in from the environment, holding nothing itself:
+ * empty, or only `$NAME` / `${NAME}` references (optionally after Bearer,
+ * Basic or Token). Gemini 0.46 expands those in every string of its settings
+ * (resolveEnvVarsInString, seen run); `${NAME:-default}` is refused here,
+ * because its default is a literal written into the file.
+ */
+function fromEnvironment(value: unknown): boolean {
+  return typeof value === 'string' && (value === '' || (!hasFallback(value) && onlyReferences(value)));
+}
+
+/** Whether an address carries something that could be a credential: a password or name in it, a credential-named or token-like query value, a token-like path part. */
+function addressHoldsSecret(raw: string): boolean {
+  if (hasFallback(raw)) return true;
+  let url: URL;
+  try { url = new URL(raw.replace(REFERENCE, 'wanigan-ref')); } catch { return true; }
+  if ((url.username && url.username !== 'wanigan-ref') || (url.password && url.password !== 'wanigan-ref')) return true;
+  for (const [k, v] of url.searchParams) if (v !== 'wanigan-ref' && (CREDENTIAL_KEY.test(k) || looksSecret(v))) return true;
+  return url.pathname.split('/').some((part) => looksSecret(safeDecode(part)));
+}
+
+/**
+ * Why a Gemini MCP server is not copied into Wanigan's Gemini home, in plain
+ * words, or null when it may be. Wanigan reads, copies and stores no
+ * credential, so a server goes in only when nothing in it could be one: its
+ * env and headers come from the environment, its command line and address
+ * hold nothing token-like, and no other setting does. When in doubt it stays
+ * out. The value is never repeated.
+ */
+export function geminiNotCopied(raw: unknown): string | null {
+  const out = (what: string, fix = 'move it into an environment variable and write $NAME in its place') =>
+    `Not in Wanigan’s Gemini sessions: ${what}, and Wanigan copies nothing that could be a secret. To use it there, ${fix}.`;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out('Wanigan could not read its entry', 'check the entry in settings.json');
+  const r = raw as Record<string, unknown>;
+  for (const field of ['env', 'headers'] as const) {
+    const values = r[field];
+    if (values === undefined) continue;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return out(`its ${field} is not a list of names and values`, 'check the entry in settings.json');
+    for (const [name, value] of Object.entries(values)) {
+      if (fromEnvironment(value)) continue;
+      return field === 'env'
+        ? out(`its environment variable ${name} is written into the file`, `set ${name} in your environment and write "$${name}" in settings.json instead`)
+        : out(`its ${name} header is written into the file`, `put the value in an environment variable and write it as a reference, such as "Bearer $TOKEN"`);
+    }
+  }
+  const args = r.args ?? [];
+  if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) return out('its arguments are not a list of words', 'check the entry in settings.json');
+  if (r.command !== undefined && typeof r.command !== 'string') return out('its command is not a word', 'check the entry in settings.json');
+  const line = [...(typeof r.command === 'string' ? [r.command] : []), ...(args as string[])];
+  if (redactArgs(line).some((a, i) => a !== line[i])) return out('its command line holds what looks like a key, token or password');
+  for (const key of ['url', 'httpUrl']) {
+    if (r[key] === undefined) continue;
+    if (typeof r[key] !== 'string' || addressHoldsSecret(r[key] as string)) return out('its address holds what looks like a key, token or password');
+  }
+  const handled = new Set(['env', 'headers', 'args', 'command', 'url', 'httpUrl']);
+  const visit = (value: unknown, path: string[]): string | null => {
+    if (typeof value === 'string') {
+      const key = path[path.length - 1] ?? '';
+      const named = !PLAIN_FIELDS.has(path[0] ?? '') && CREDENTIAL_KEY.test(key);
+      // An OAuth tokenUrl or authorizationUrl is an address, judged as one.
+      const address = /^https?:\/\//i.test(value);
+      const secret = address ? addressHoldsSecret(value)
+        : (named && !fromEnvironment(value)) || (looksSecret(value) && !onlyReferences(value));
+      return secret ? path.join('.') : null;
+    }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        const found = visit(v, [...path, k]);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  for (const [key, value] of Object.entries(r)) {
+    if (handled.has(key)) continue;
+    const found = visit(value, [key]);
+    if (found) return out(`its ${found} setting holds what looks like a credential`);
+  }
+  return null;
 }
 
 /** A shell-ready rendering of an argument list, for showing and for typing into a terminal. */

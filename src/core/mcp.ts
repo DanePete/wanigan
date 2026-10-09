@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  MCP_CATALOG, catalogMatch, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin,
+  MCP_CATALOG, catalogMatch, geminiNotCopied, pair, parseClaudeMcpList, redactArgs, redactText, redactUrl, shellJoin,
   type McpAddParams, type McpAgent, type McpCatalogEntry, type McpCheck, type McpGroup, type McpListing, type McpPair,
   type McpPlan, type McpScope, type McpServer, type McpTransport,
 } from '../shared/mcp.ts';
@@ -169,7 +169,9 @@ export class Mcp {
       command: `${inherited}${env ? `${env.name}=${env.value} ` : ''}${shellJoin(argv)}`,
       effect: project
         ? `Writes “${name}” into ${project.name}’s .gemini/settings.json (project scope). Gemini CLI loads it there once it trusts the folder, and git will see the change. Gemini changes a project’s settings properly only when it trusts the folder, so this one command runs as trusted; nothing is added to your trusted folders.`
-        : `Adds “${name}” to ${display(file, this.options.home)} (user scope): Gemini CLI can use it in every folder it trusts, in Wanigan’s sessions too.`,
+        : hasKey
+          ? `Adds “${name}” to ${display(file, this.options.home)} (user scope): Gemini CLI can use it in every folder it trusts. With your key written into that file, Wanigan’s Gemini sessions do not get it; to use it there, put the key in an environment variable and write $NAME in its place.`
+          : `Adds “${name}” to ${display(file, this.options.home)} (user scope): Gemini CLI can use it in every folder it trusts, in Wanigan’s sessions too.`,
       file: display(file, this.options.home),
       mode: hasKey ? 'terminal' : 'run',
       why: hasKey ? `It needs ${entry.key?.what}. Put yours in place of ${entry.key?.placeholder}, then press Return. Wanigan deletes this terminal’s record when it closes; your shell’s own history may still keep the line.` : null,
@@ -455,7 +457,7 @@ export class Mcp {
         group: {
           id: hash('gemini\0user'), agent: 'gemini' as const, title: 'Gemini CLI', account: null, projectId: null, where: display(geminiFile, home), check: null,
           note: problem ? `Wanigan could not read this file (${problem}), so some servers cannot be listed.`
-            : 'Wanigan’s Gemini sessions get these too: they are copied into its Gemini home as each one starts.',
+            : 'Wanigan’s Gemini sessions get these too, copied into its Gemini home as each one starts, except any that hold a value that could be a secret (marked).',
         },
         found: Object.entries(servers.value).map(([name, raw]) => this.geminiServer({ name, raw, scope: 'user', file: geminiFile, projectId: null, projectPath: null, off: lists.off(name) })),
       };
@@ -564,6 +566,8 @@ export class Mcp {
       enabled: !s.off,
       note: notes.length ? notes.join(' ') : null,
       catalogId: catalogMatch({ url, command, args }),
+      // The user file is what Wanigan copies into its Gemini home (hooks.ts); a project's file Gemini reads where it is.
+      notInWanigan: s.scope === 'user' ? geminiNotCopied(s.raw) : null,
     };
     return { server, configName: s.name, account: null, projectPath: s.projectPath };
   }

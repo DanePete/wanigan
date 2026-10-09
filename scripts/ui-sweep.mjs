@@ -1124,6 +1124,10 @@ try {
     await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
     await page.waitForSelector('.mcp-row:has-text("northstar-search")', { timeout: 3000 }).catch(() => failures.push(`${theme}: the MCP view does not list Gemini CLI’s servers`));
     if (await page.$('.mcp-row:has-text("drupal-db")')) failures.push(`${theme}: the Gemini CLI filter shows a Claude Code server`);
+    // A server with a key written into its settings is not copied into Wanigan's Gemini home, and says why.
+    const elsewhere = await page.textContent('.mcp-row:has-text("northstar-search") .mcp-elsewhere').catch(() => '');
+    if (!/^Not in Wanigan’s Gemini sessions: its environment variable SEARCH_API_KEY is written into the file/.test(elsewhere ?? '')) failures.push(`${theme}: a Gemini server holding a key inline does not say it is kept out of Wanigan’s sessions (${(elsewhere ?? '').slice(0, 80)})`);
+    if (await page.$('.mcp-row:has-text("context7") .mcp-elsewhere')) failures.push(`${theme}: a Gemini server with nothing secret in it is marked as kept out`);
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-mcp-gemini.png`) });
 

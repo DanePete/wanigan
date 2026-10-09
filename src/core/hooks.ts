@@ -3,6 +3,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseJsonc } from '../shared/jsonc.ts';
+import { geminiNotCopied } from '../shared/mcp.ts';
 
 export interface HookFiles {
   relay: string;
@@ -96,9 +97,10 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * one, so this is how hooks reach it without touching the owner's ~/.gemini or
  * a project. The login stays where it is (macOS Keychain). The owner's chosen
  * sign-in method and trusted folders are copied in (read, never written back),
- * so Gemini asks neither again; their MCP servers (with the settings that allow
- * or leave them out, and those switched off) are copied in at each launch, and
- * their own skill folders are linked in, so Gemini reads them where they are.
+ * so Gemini asks neither again; their MCP servers that hold nothing that could
+ * be a credential (with the lists that allow or leave servers out, and those
+ * switched off) are copied in at each launch, and their own skill folders are
+ * linked in, so Gemini reads them where they are.
  * Their own extensions and global GEMINI.md stay in their own home and are not
  * loaded here.
  */
@@ -113,6 +115,15 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
   const selectedType = typeof (own?.security as { auth?: { selectedType?: unknown } } | undefined)?.auth?.selectedType === 'string'
     ? (own!.security as { auth: { selectedType: string } }).auth.selectedType
     : typeof own?.selectedAuthType === 'string' ? own.selectedAuthType as string : null;
+  const mcpServers = own && isRecord(own.mcpServers)
+    ? Object.fromEntries(Object.entries(own.mcpServers).filter(([, server]) => geminiNotCopied(server) === null)) : null;
+  const ownLists = own && isRecord(own.mcp) ? own.mcp : null;
+  const lists: Record<string, string[]> = {};
+  for (const key of ['allowed', 'excluded']) {
+    const listed = ownLists ? names(ownLists, key) : null;
+    if (listed) lists[key] = listed;
+  }
+  const mcp = Object.keys(lists).length ? lists : null;
   const hooks: Record<string, unknown[]> = {};
   for (const event of GEMINI_EVENTS) {
     // Gemini's hook timeout is in milliseconds.
@@ -128,15 +139,20 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
     },
     // The title says Ready, Working or Action Required: what covers a refusal or a cancel, which no hook reports.
     ui: { dynamicWindowTitle: true },
-    // The owner's own MCP servers and the lists that allow or leave them out,
-    // as their own Gemini would load them (the MCP view lists the same file).
-    ...(own && isRecord(own.mcpServers) ? { mcpServers: own.mcpServers } : {}),
-    ...(own && isRecord(own.mcp) ? { mcp: own.mcp } : {}),
+    // The owner's own MCP servers, as their own Gemini would load them, but
+    // only those holding nothing that could be a credential (geminiNotCopied):
+    // Wanigan reads, copies and stores no credential. The MCP view marks the
+    // rest. And the lists that allow or leave servers out, which are names.
+    ...(mcpServers ? { mcpServers } : {}),
+    ...(mcp ? { mcp } : {}),
   };
   atomicWrite(join(dir, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
   // Servers the owner switched off in a session (/mcp disable) stay off; none switched off, none here.
+  // Only names and their switch are copied.
   const enablement = readJson(join(ownerHome, '.gemini', 'mcp-server-enablement.json'));
-  if (enablement) atomicWrite(join(dir, 'mcp-server-enablement.json'), `${JSON.stringify(enablement, null, 2)}\n`);
+  const switches = enablement ? Object.fromEntries(Object.entries(enablement).flatMap(([name, state]) =>
+    (isRecord(state) && typeof state.enabled === 'boolean' ? [[name, { enabled: state.enabled }]] : []))) : {};
+  if (Object.keys(switches).length) atomicWrite(join(dir, 'mcp-server-enablement.json'), `${JSON.stringify(switches, null, 2)}\n`);
   else rmSync(join(dir, 'mcp-server-enablement.json'), { force: true });
   const trusted = join(ownerHome, '.gemini', 'trustedFolders.json');
   if (existsSync(trusted) && !existsSync(join(dir, 'trustedFolders.json'))) {
@@ -192,6 +208,12 @@ function readJson(file: string): Record<string, unknown> | null {
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** A list of server names, or null when the setting is not one. */
+function names(settings: Record<string, unknown>, key: string): string[] | null {
+  const v = settings[key];
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v as string[] : null;
+}
 
 function atomicWrite(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.tmp`;

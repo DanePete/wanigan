@@ -102,7 +102,9 @@ describe('gemini mcp', () => {
     "legacy": { "url": "https://legacy.example.test/sse", "type": "sse" },
     "older-http": { "httpUrl": "https://mcp.notion.com/mcp" },
     "old-tools": { "command": "npx", "args": ["@acme/old-tools"] },
-    "quiet": { "command": "npx", "args": ["@playwright/mcp@latest"] }
+    "quiet": { "command": "npx", "args": ["@playwright/mcp@latest"] },
+    "ref-tools": { "command": "node", "args": ["tools.js", "--token", "$ACME_TOKEN"], "env": { "ACME_API_KEY": "\${ACME_API_KEY}" } },
+    "ref-remote": { "url": "https://mcp.example.test/mcp", "type": "http", "headers": { "Authorization": "Bearer $ACME_REMOTE_TOKEN" } }
   }
 }
 `);
@@ -202,6 +204,8 @@ describe('gemini mcp', () => {
   test('a server that needs a key is finished by the owner in a terminal', async () => {
     const { plan } = await t.owner.call('mcp.add', { catalogId: 'github', agent: 'gemini', scope: 'project', projectId, preview: true });
     assert.equal(plan.mode, 'terminal');
+    const mine = (await t.owner.call('mcp.add', { catalogId: 'github', agent: 'gemini', scope: 'user', preview: true })).plan;
+    assert.match(mine.effect, /Wanigan’s Gemini sessions do not get it/, 'a key written into the file keeps it out of Wanigan’s sessions, and the plan says so');
     assert.match(plan.command, /--header 'Authorization: Bearer YOUR_GITHUB_PAT'/);
     await assert.rejects(t.owner.call('mcp.add', { catalogId: 'github', agent: 'gemini', scope: 'project', projectId }), /finishes in a terminal/);
   });
@@ -227,13 +231,32 @@ describe('gemini mcp', () => {
     assert.deepEqual(userFile().ui, { theme: 'Dracula' });
   });
 
-  test('a Gemini session gets the owner’s servers, allow and leave-out lists and switched-off servers, copied in; the owner’s files are untouched', async () => {
+  test('a server that holds a value inline is not copied for Wanigan’s Gemini sessions, and the listing says why without the value', async () => {
+    await refresh();
+    for (const name of ['acme-tools', 'github']) {
+      const s = server(name);
+      assert.match(s.notInWanigan ?? '', /^Not in Wanigan’s Gemini sessions: /, name);
+      assert.ok(SECRETS.every((secret) => !(s.notInWanigan ?? '').includes(secret)));
+    }
+    assert.match(server('acme-tools').notInWanigan ?? '', /environment variable ACME_API_KEY is written into the file.*"\$ACME_API_KEY"/);
+    assert.match(server('github').notInWanigan ?? '', /its Authorization header is written into the file/);
+    for (const name of ['ref-tools', 'ref-remote', 'old-tools', 'older-http']) assert.equal(server(name).notInWanigan, null, `${name} is copied`);
+    const user = listing.groups.find((g) => g.agent === 'gemini' && g.projectId === null)!;
+    assert.match(user.note ?? '', /except any that hold a value that could be a secret/);
+    assert.equal(servers().filter((s) => s.agent === 'gemini' && s.scope === 'project').every((s) => s.notInWanigan === null), true, 'a project’s file is read where it is, never copied');
+  });
+
+  test('a Gemini session gets the owner’s servers that hold no inline secret, the allow and leave-out lists and switched-off servers; the owner’s files are untouched', async () => {
     const owned = readFileSync(join(home, '.gemini', 'settings.json'), 'utf8');
     // What a Gemini session's launch does first (gemini.test.ts launches one).
     const { writeGeminiHome } = await import('./hooks.ts');
     const geminiHome = writeGeminiHome(join(fixture, 'data'), join(fixture, 'data', 'hooks', 'relay.sh'), home);
-    const written = JSON.parse(readFileSync(join(geminiHome, '.gemini', 'settings.json'), 'utf8'));
-    assert.deepEqual(Object.keys(written.mcpServers), Object.keys(userFile().mcpServers));
+    const text = readFileSync(join(geminiHome, '.gemini', 'settings.json'), 'utf8');
+    const written = JSON.parse(text);
+    assert.deepEqual(Object.keys(written.mcpServers).sort(), Object.keys(userFile().mcpServers).filter((n) => !['acme-tools', 'github'].includes(n)).sort());
+    assert.deepEqual(written.mcpServers['ref-tools'], { command: 'node', args: ['tools.js', '--token', '$ACME_TOKEN'], env: { ACME_API_KEY: '${ACME_API_KEY}' } }, 'references are copied as written, for Gemini to fill in');
+    assert.deepEqual(written.mcpServers['ref-remote'].headers, { Authorization: 'Bearer $ACME_REMOTE_TOKEN' });
+    for (const secret of SECRETS) assert.ok(!text.includes(secret), `${secret.slice(0, 6)}… is not in Wanigan’s data folder`);
     assert.deepEqual(written.mcp, { excluded: ['Old-Tools'] });
     assert.deepEqual(written.security.auth, { selectedType: 'oauth-personal' }, 'read through its comment');
     assert.ok(written.hooks.SessionStart, 'Wanigan’s hooks are still its own');

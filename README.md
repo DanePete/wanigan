@@ -150,10 +150,12 @@ Gemini CLI runs in a terminal like Claude Code and Codex, and reports its turns,
 its tools and what it asks you through hooks. Gemini takes hooks only from its
 own settings, so Wanigan keeps a Gemini home in its data folder
 (`GEMINI_CLI_HOME`) holding Wanigan's hooks; your own `~/.gemini` is never
-written. Your sign-in stays where Gemini keeps it, and your chosen sign-in
-method, trusted folders and MCP servers are copied in as each session starts.
-Your own skills (`~/.gemini/skills` and `~/.agents/skills`) are linked in, so
-Gemini reads them where they are. The Skills and MCP views list Gemini's with
+written. Your sign-in stays where Gemini keeps it. As each session starts,
+your chosen sign-in method, trusted folders and MCP servers are copied in, but
+only servers holding nothing that could be a credential: a key written into a
+server's settings keeps it out (the MCP view says so; write it as `$NAME` from
+your environment to use it). Your own skills (`~/.gemini/skills` and
+`~/.agents/skills`) are linked in, so Gemini reads them where they are. The Skills and MCP views list Gemini's with
 each project's `.gemini/skills`, `.agents/skills` and `.gemini/settings.json`,
 and add or copy to them on your click. Your own Gemini extensions and global
 `GEMINI.md` live in your home and are not loaded there.
