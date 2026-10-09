@@ -1126,7 +1126,13 @@ input[type='radio'] {
 
 .disclosure {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   border-top: 1px solid var(--line);
+}
+
+.disclosure > * {
+  min-width: 0;
 }
 
 .disclosure-head {

@@ -68,7 +68,7 @@ export function LensStrip({ view, only, onOnly, onHover, onClose, note }: {
   );
 }
 
-/** Paint a lens on the page in Wanigan's own token colours, again whenever the page, the lens or the theme changes. */
+/** Paint a lens on the page in Wanigan's own lens colours (tokens.css), again whenever the page, the lens or the theme changes. */
 export function usePaintLens(view: LensView, only: string | null): void {
   const live = liveBridge();
   const { resolved } = useTheme();

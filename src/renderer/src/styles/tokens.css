@@ -137,6 +137,17 @@
   --lane-4: #9fb3c4;
   --lane-5: #dccb94;
 
+  /*
+    Lens hues: what a lens paints over the owner's own site, in both themes
+    alike. Mid-tone, so a part reads on a light page or a dark one; kept clear
+    of the four meanings (never amber, red, green or water).
+  */
+  --lens-teal: #129a91;
+  --lens-cobalt: #4170d8;
+  --lens-violet: #8f55d6;
+  --lens-slate: #6b7c8c;
+  --lens-magenta: #c4458c;
+
   --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--water);
   --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25);
   --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.55), 0 2px 10px rgb(0 0 0 / 0.35);

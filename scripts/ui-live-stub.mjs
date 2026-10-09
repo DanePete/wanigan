@@ -171,7 +171,10 @@ export function liveStub(f) {
       const depth = p.parent ? 1 : 0;
       const fill = depth ? '#e3e7ea' : p.part === 'p-hero' ? '#cfd8de' : '#eef1f3';
       return `<rect x="${x + 0.5}" y="${y + 0.5}" width="${bw - 1}" height="${bh - 1}" rx="4" fill="${fill}" stroke="#c4ccd2"/>`
-        + `<text x="${x + 12}" y="${y + 24}" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#5b6770">${p.label}</text>`;
+        // A part holding others is named in its top right corner, clear of what it holds.
+      + (layout(w).some((c) => c.parent === p.part)
+        ? `<text x="${x + bw - 12}" y="${y + 20}" text-anchor="end" font-family="-apple-system, system-ui, sans-serif" font-size="12" fill="#7a868f">${p.label}</text>`
+        : `<text x="${x + 12}" y="${y + 24}" font-family="-apple-system, system-ui, sans-serif" font-size="13" fill="#5b6770">${p.label}</text>`);
     }).join('');
     return `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#ffffff"/>${boxes}</svg>`)}`;
   }

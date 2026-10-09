@@ -309,7 +309,7 @@ export function MoveSection({ arrange, region, trace }: { arrange: ReturnType<ty
   const others = home && trace ? targetsFor(trace, home.id).filter((c) => c.id !== (p.kind === 'item' ? p.at.collection : '')) : [];
   const moving = !!arrange.pending;
   return (
-    <Disclosure title="Move" open summary={arrange.describe(p)}>
+    <Disclosure title="Move" open summary={p.kind === 'item' && home ? `${p.at.index + 1} of ${placesIn(trace?.collections?.find((c) => c.id === p.at.collection) ?? home, p.item)}` : 'a note for an agent'}>
       <p className="small">{arrange.describe(p)}.</p>
       {p.kind === 'item' && home ? (
         <p className="faint small">{home.changes === 'configuration' ? 'Its order is site configuration: moving it says what it changes before it saves.' : home.revisions === false ? 'Saved as content.' : 'Saved as content, as a new revision.'}</p>

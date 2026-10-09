@@ -112,7 +112,8 @@ export function layersOf(regions: readonly LiveRegion[], options: {
       };
       if (group.length === 1) return one(first);
       // A run of one kind is named by its kind, not by its first ("Event ×3", not one event's title ×3).
-      const kind = nameOf(first, first.component ? options.componentName?.(first.component) ?? null : null);
+      const markup = nameOf(first, first.component ? options.componentName?.(first.component) ?? null : null);
+      const kind = markup.icon === 'content' ? { ...markup, title: markup.title.replace(/ \d+$/, '') } : markup;
       return { key: `group ${first.index}`, region: first, name: kind, regions: group, children: group.map(one), merged: [] };
     });
   };

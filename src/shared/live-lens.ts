@@ -167,12 +167,12 @@ export const LENSES = [
 export type LensId = (typeof LENSES)[number]['id'];
 
 /**
- * The colours a lens paints with: tokens.css's syntax hues (the commit
- * graph's lanes), which stay clear of the four meanings. Amber is never one: on
- * a lens it would say "needs you" about a template. Water marks what an edit
+ * The colours a lens paints with: tokens.css's lens hues, mid-tone so they
+ * read over any page, and clear of the four meanings. Amber is never one: on a
+ * lens it would say "needs you" about a template. Water marks what an edit
  * changed, as the outlines always have.
  */
-export type LensTone = 'lane-0' | 'lane-1' | 'lane-2' | 'lane-3' | 'lane-4' | 'lane-5' | 'water';
+export type LensTone = 'lens-teal' | 'lens-cobalt' | 'lens-violet' | 'lens-slate' | 'lens-magenta' | 'water';
 
 export interface LensClass {
   id: string;
@@ -188,31 +188,31 @@ export interface LensClass {
 
 const CLASSES: Record<Exclude<LensId, 'structure'>, LensClass[]> = {
   owner: [
-    { id: 'yours', label: 'Yours', hint: 'Your theme or your own module: yours to change', tone: 'lane-1', fill: 0.14 },
-    { id: 'theme', label: 'A theme', hint: 'A theme the path cannot place: yours, or the parent of yours', tone: 'lane-0', fill: 0.1 },
-    { id: 'contrib', label: 'Contributed', hint: 'A contributed module or plugin: change it by overriding, not in place', tone: 'lane-2', fill: 0.1 },
-    { id: 'core', label: 'Core', hint: 'The platform itself: override it in your theme', tone: 'lane-4', fill: 0.08 },
+    { id: 'yours', label: 'Yours', hint: 'Your theme or your own module: yours to change', tone: 'lens-teal', fill: 0.14 },
+    { id: 'theme', label: 'A theme', hint: 'A theme the path cannot place: yours, or the parent of yours', tone: 'lens-cobalt', fill: 0.1 },
+    { id: 'contrib', label: 'Contributed', hint: 'A contributed module or plugin: change it by overriding, not in place', tone: 'lens-violet', fill: 0.1 },
+    { id: 'core', label: 'Core', hint: 'The platform itself: override it in your theme', tone: 'lens-slate', fill: 0.08 },
   ],
   cache: [
-    { id: 'permanent', label: 'Kept', hint: 'Cached until something it depends on changes (its cache tags)', tone: 'lane-1', fill: 0.1 },
-    { id: 'max-age', label: 'Expires', hint: 'Cached for a set time (max-age)', tone: 'lane-0', fill: 0.12 },
-    { id: 'uncacheable', label: 'Never cached', hint: 'Built again for every request (max-age 0)', tone: 'lane-3', fill: 0.16 },
-    { id: 'placeholder', label: 'Filled in late', hint: 'A placeholder the platform fills after the cached page (lazy builder, BigPipe)', tone: 'lane-5', fill: 0.16 },
+    { id: 'permanent', label: 'Kept', hint: 'Cached until something it depends on changes (its cache tags)', tone: 'lens-teal', fill: 0.1 },
+    { id: 'max-age', label: 'Expires', hint: 'Cached for a set time (max-age)', tone: 'lens-cobalt', fill: 0.12 },
+    { id: 'uncacheable', label: 'Never cached', hint: 'Built again for every request (max-age 0)', tone: 'lens-magenta', fill: 0.16 },
+    { id: 'placeholder', label: 'Filled in late', hint: 'A placeholder the platform fills after the cached page (lazy builder, BigPipe)', tone: 'lens-violet', fill: 0.16 },
   ],
   cost: [
-    { id: 'heavy', label: 'Heavy', hint: '50 ms or more, or 20 or more queries, in this render', tone: 'lane-2', fill: 0.34 },
-    { id: 'notable', label: 'Notable', hint: '10 ms or more, or 5 or more queries', tone: 'lane-2', fill: 0.18 },
-    { id: 'light', label: 'Light', hint: 'Under 10 ms and under 5 queries: not painted', tone: 'lane-2', fill: 0 },
+    { id: 'heavy', label: 'Heavy', hint: '50 ms or more, or 20 or more queries, in this render', tone: 'lens-violet', fill: 0.26 },
+    { id: 'notable', label: 'Notable', hint: '10 ms or more, or 5 or more queries', tone: 'lens-violet', fill: 0.13 },
+    { id: 'light', label: 'Light', hint: 'Under 10 ms and under 5 queries: not painted', tone: 'lens-violet', fill: 0 },
   ],
   editable: [
-    { id: 'content', label: 'Content', hint: 'Fields, titles, menu links: saved by the site, as you', tone: 'lane-1', fill: 0.14 },
-    { id: 'settings', label: 'Settings', hint: 'Block, component and site settings', tone: 'lane-0', fill: 0.12 },
-    { id: 'template', label: 'Template', hint: 'An override of its template, made in your theme', tone: 'lane-5', fill: 0.12 },
-    { id: 'refused', label: 'Not here', hint: 'The helper says why it cannot be edited here', tone: 'lane-4', fill: 0, dashed: true },
+    { id: 'content', label: 'Content', hint: 'Fields, titles, menu links: saved by the site, as you', tone: 'lens-teal', fill: 0.14 },
+    { id: 'settings', label: 'Settings', hint: 'Block, component and site settings', tone: 'lens-cobalt', fill: 0.12 },
+    { id: 'template', label: 'Template', hint: 'An override of its template, made in your theme', tone: 'lens-violet', fill: 0.12 },
+    { id: 'refused', label: 'Not here', hint: 'The helper says why it cannot be edited here', tone: 'lens-slate', fill: 0, dashed: true },
   ],
   changed: [
     { id: 'edited', label: 'An agent’s edit', hint: 'Made by a file the last edit changed', tone: 'water', fill: 0.12 },
-    { id: 'saved', label: 'Saved by hand', hint: 'Shows something you saved here', tone: 'lane-1', fill: 0.14 },
+    { id: 'saved', label: 'Saved by hand', hint: 'Shows something you saved here', tone: 'lens-teal', fill: 0.14 },
   ],
 };
 

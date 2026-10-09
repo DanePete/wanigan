@@ -78,8 +78,13 @@ try {
     for (const want of ['acme_preprocess_node', 'Create override…', 'Hero props', 'Fresh bread, every morning', 'node:12', '62.4 ms', 'Spring wording', 'Allowed']) {
       if (!inspector.includes(want)) fail(t(`inspector: "${want}" is not shown`));
     }
+    const sideways = await page.locator('.live-side').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    if (sideways) fail(t('inspector: the side panel is wider than itself'));
+    await page.locator('.live-side').evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
     await shot('inspector');
-    await page.locator('.live-side').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.locator('.live-side').evaluate((el) => { el.scrollTop = el.clientHeight * 0.8; });
+    await shot('inspector-data');
+    await page.locator('.live-side').evaluate((el) => { el.scrollTop = el.clientHeight * 1.6; });
     await shot('inspector-more');
 
     // Moving by the keyboard: Alt+↓ on a block of the sidebar, said aloud; Escape puts it back.

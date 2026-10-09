@@ -399,6 +399,26 @@
   flex-shrink: 0;
 }
 
+/* It scrolls down, never sideways: long paths and queries wrap inside it. */
+.live-side {
+  overflow-x: hidden;
+}
+
+.live-inspector > *,
+.live-trace-sections > *,
+.disclosure-body > *,
+.live-request > *,
+.live-side-block > * {
+  min-width: 0;
+}
+
+.live-query .mono,
+.live-chain-step .mono,
+.live-history .small,
+.live-var dt .mono {
+  overflow-wrap: anywhere;
+}
+
 .live-tree {
   list-style: none;
   margin: 0 calc(-1 * var(--space-2));

@@ -69,6 +69,14 @@ test('a part only the helper names is called by its label, and is never grouped 
   assert.deepEqual(layers.map((l) => l.name.title), ['Hours', 'Map']);
 });
 
+test('a run of one kind is named by its kind, whatever the trace calls each', () => {
+  const teasers = [1, 2, 3].map((n) => region(n, { entity: `node:event:5${n}:teaser`, part: `t${n}`, rect: { x: n * 100, y: 0, width: 90, height: 90 } }));
+  const layers = layersOf(teasers, { partName: (id) => ({ label: `Event called ${id}`, kind: 'entity' }) });
+  assert.equal(layers.length, 1);
+  assert.equal(layers[0]?.name.title, 'Event', 'not “Event 51”, nor the first one’s own label');
+  assert.deepEqual(layers[0]?.children.map((l) => l.name.title), ['Event called t1', 'Event called t2', 'Event called t3']);
+});
+
 test('the Owner lens: yours, contributed, core, from the trace or else the template’s path', () => {
   const owner = lensView('owner', { regions, trace });
   const count = Object.fromEntries(owner.classes.map((c) => [c.id, c.count]));
