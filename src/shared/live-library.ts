@@ -330,3 +330,23 @@ export function libraryText(lib: ComponentLibrary, opts: { query?: string | null
     said: query || kind ? `${hits.length} of ${lib.entries.length} entries${query ? ` for “${query.slice(0, 60)}”` : ''}` : totals.map((t) => count(t.n, t.k)).join(', ') || 'an empty library',
   };
 }
+
+/* ── from the library to a place on the page ────────────────────────────── */
+
+/**
+ * The trace's palette entry that inserts a library entry (live-arrange.ts checkInsert), or why there is none. The
+ * helpers name them differently: Drupal's palette is `pal.b.<plugin id>` for the library's `block:<plugin id>`;
+ * WordPress's palette uses the library's own ids for block types and patterns. Drupal core places no
+ * single-directory component alone (it renders inside a template or a field that uses it), and a block style is a
+ * way a block looks, not something placed.
+ */
+export function paletteEntryFor(entry: LibraryEntry, platform: 'drupal' | 'wordpress'): { id: string } | { why: string } {
+  if (entry.kind === 'style') return { why: 'A block style is how a block looks: choose it on a block of that type, not as something placed.' };
+  if (platform === 'drupal') {
+    if (entry.kind === 'component') return { why: 'Drupal core places a component only inside a template or a field that uses it, not on its own.' };
+    if (entry.kind === 'block' && entry.id.startsWith('block:')) return { id: `pal.b.${entry.id.slice('block:'.length)}` };
+    return { why: 'This site’s helper has no way to place it.' };
+  }
+  if (entry.kind === 'block' || entry.kind === 'pattern') return { id: entry.id };
+  return { why: 'This site’s helper has no way to place it.' };
+}

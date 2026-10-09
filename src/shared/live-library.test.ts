@@ -3,7 +3,7 @@
 // and the words an agent gets. Made-up entries (acme, northwind) only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIBRARY_LIMITS, libraryText, parseLibrary, piecePath, pictureRequest, PICTURES_AT_ONCE, type ComponentLibrary } from './live-library.ts';
+import { LIBRARY_LIMITS, libraryText, paletteEntryFor, parseLibrary, piecePath, pictureRequest, PICTURES_AT_ONCE, type ComponentLibrary, type LibraryEntry } from './live-library.ts';
 
 const HASH = '0123456789abcdef0123456789abcdef';
 
@@ -103,4 +103,13 @@ test('an agent reads the library counted by kind, narrowed by words or kind, or 
   const none = libraryText(lib, { entry: 'sdc:acme:cards' });
   assert.match(none.text, /No entry has the id sdc:acme:cards\. Close: sdc:acme:card, /, 'the closest first');
   assert.equal(none.structured.entry, null);
+});
+
+test('a library entry is placed through the trace palette entry its helper names for it, or says why it cannot be', () => {
+  const e = (id: string, kind: LibraryEntry['kind']): LibraryEntry => ({ id, kind, label: id, picture: { from: 'none', why: 'x' } });
+  assert.deepEqual(paletteEntryFor(e('block:system_branding_block', 'block'), 'drupal'), { id: 'pal.b.system_branding_block' });
+  assert.match((paletteEntryFor(e('sdc:acme:card', 'component'), 'drupal') as { why: string }).why, /inside a template or a field/);
+  assert.deepEqual(paletteEntryFor(e('block:core/paragraph', 'block'), 'wordpress'), { id: 'block:core/paragraph' });
+  assert.deepEqual(paletteEntryFor(e('pattern:acme/hero', 'pattern'), 'wordpress'), { id: 'pattern:acme/hero' });
+  assert.match((paletteEntryFor(e('style:core/button:outline', 'style'), 'wordpress') as { why: string }).why, /how a block looks/);
 });
