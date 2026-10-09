@@ -143,6 +143,47 @@ view**, where Drupal, WordPress and other sites can each be on or off.
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
   as wrong (its own error messages, its console).
+- **Agents see it too.** Every agent session is handed Wanigan's own MCP
+  server, `wanigan mcp`, with six read-only tools: `live_status`, `live_look`
+  (a page and its parts, named the way Layers names them, with a picture only
+  when asked), `live_find`, `live_part` (what the Inspector shows: whose code
+  it is, the override to create, the admin link), `live_problems`, and
+  `live_diff` (what changed since the session's last turn, each changed area
+  matched to the edited file that explains it, or said to be unexplained).
+  Pages are rendered in a hidden window, so your own view never moves, and
+  only the project's own local site is ever opened. Every call shows on the
+  card, under **Looked at the live view**.
+
+#### What each agent gets, and what has been seen working
+
+Checked on 9 October 2026 without a sign-in or a model call, each CLI in a
+throwaway home, against the real `wanigan mcp`:
+
+- **Claude Code 2.1.293**: `--mcp-config` with a file in Wanigan's data folder,
+  beside your own servers. Seen: `claude mcp list` and `get` connect, agree on
+  protocol 2025-11-25 (after a `server/discover` probe the server answers as
+  unknown) and list the six tools; started with Wanigan's exact flags and no
+  sign-in, it loaded the server, listed its tools and resources, and stopped at
+  "Not logged in". Wanigan's settings file allows the six tools by name, so a
+  look does not stop the agent to ask; Claude Code skips an invalid rule rather
+  than the whole file (read from its binary), but a tool running unasked has
+  not been seen in a signed-in session.
+- **Codex 0.155.1**: `--config mcp_servers.wanigan.…` for that launch, with
+  `env_vars` naming the session's socket and token (without it Codex passes
+  the server neither: seen). Seen through its app-server's
+  `mcpServerStatus/list`: connected, protocol 2025-06-18, six tools marked
+  read-only, three resources. Not seen: whether Codex asks before calling them,
+  and whether its sandbox lets the server reach Wanigan's socket in a real
+  session.
+- **Gemini CLI 0.46**: in Wanigan's own Gemini home, trusted, with the socket
+  and token passed by name (Gemini hides variables named like tokens from an
+  MCP server otherwise). Seen: `gemini mcp list` connects (protocol 2025-11-25)
+  and the token reaches the server. A Gemini session listing the tools needs a
+  sign-in and has not been seen.
+- With no real agent has a tool call been seen through a model's turn, or a
+  look at a real site; the tools' answers are tested against a real core with a
+  stand-in for the app. No installed CLI subscribes to MCP resources, so the
+  server does not offer subscriptions.
 
 ### Gemini CLI
 
@@ -290,6 +331,10 @@ wanigan ask NS-12 "Cart drawer too, or only the cart page?"
 Claude Code is told this, its card and the project's decisions when it starts
 (a `SessionStart` hook); Codex is told the same at launch.
 
+`wanigan mcp` is the same command as an MCP server, which Wanigan hands each
+agent CLI when it starts a session: the live view's tools (see Live view).
+Nothing is written into the project for it.
+
 Search (⌘K) finds projects, cards, sessions and commands, and what agents said
 in their sessions' recorded output.
 
@@ -380,8 +425,8 @@ verification results and the behavior that remains unverified.
 - Gemini CLI: proven with the installed 0.46 up to its first hook (folder trust
   answered, the hook through the relay, its conversation id learnt); a real
   model turn needs a Gemini login and has not been run. Its usage limit is not
-  detected, its tokens are not counted, and MCP servers and skills are not
-  offered for it.
+  detected, its tokens are not counted, and your MCP servers and skills are
+  not offered for it (Wanigan's own live view server is).
 - Grok Build: not yet an agent. Its installer was not run (it verifies nothing
   it downloads); what its binary says is in the research note, and its hook
   events are translated and tested, waiting for it to be installed and seen
@@ -395,7 +440,10 @@ verification results and the behavior that remains unverified.
   sites, not by the UI sweeps, which have no view to lay
   over a page. Not built yet: Serve this card (switching which checkout ddev
   serves), a component's props form, saving WordPress content by hand, and
-  Layout Builder and Canvas pieces by their own ids.
+  Layout Builder and Canvas pieces by their own ids. Agents' looks at it
+  (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
+  connecting and listing the tools, as above, not yet seen calling one in a
+  real turn.
 - On your phone: proven in a phone-sized browser against the real phone
   gateway, with a stand-in Tailscale. A real phone through a real Tailscale
   address, and a notification arriving on one, have not been seen yet: a Mac
