@@ -32,3 +32,13 @@ test('anything else is read back by what the watched parts show after the reload
   assert.deepEqual(judge(check, null, [null, null]), { kind: 'unseen' }, 'gone from the page: not called a success or a failure');
   assert.deepEqual(judge({ ...check, watched: [] }, null, []), { kind: 'unseen' });
 });
+
+test('a removal is read back by what held the item: changed is taken out, the same is said plainly, and nothing to watch is not a success claimed', () => {
+  const sidebar = page[4]!;
+  const check: WriteCheck = { kind: 'remove', what: 'Search', traceId: null, watched: [{ region: sidebar, print: 's1' }], scan: page };
+  assert.equal(verdictText(check, judge(check, null, ['s2'])).text, 'Search: taken out, and the page shows the change after reloading.');
+  const same = verdictText(check, judge(check, null, ['s1']));
+  assert.equal(same.tone, 'warn');
+  assert.match(same.text, /^The site said it took out Search, but after reloading that part of the page shows exactly what it did before\./);
+  assert.equal(verdictText({ ...check, watched: [] }, judge({ ...check, watched: [] }, null, [])).text, 'Search: taken out. Nothing on the reloaded page says what held it, so Wanigan could not check the page.');
+});

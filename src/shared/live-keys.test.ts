@@ -26,10 +26,12 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Phone, tablet or full width: width-phone', 'Phone, tablet or full width: width-tablet', 'Phone, tablet or full width: width-full',
     'Previous or next tab of the side panel: tab-previous', 'Previous or next tab of the side panel: tab-next',
     'Compare Local with a hosted environment: compare',
+    'The site’s component library: library',
     'Every way to edit the chosen part: edit',
     'Move the chosen part: move',
     'The chosen part’s code, in the code editor: code',
     'Show the chosen part alone: alone',
+    'Take the chosen part out of the page: take-out',
     'Add the note to the notes (in the note box): add',
     'Send the note now, or the notes waiting: send',
   ]);
@@ -72,6 +74,9 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
   assert.equal(liveKey({ key: 'l', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain L is the board’s');
   assert.equal(liveKey({ key: 'c', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain C is a new card');
   assert.equal(liveKey({ key: 'a', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null);
+  assert.equal(liveKey({ key: 'x', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain X archives on the board');
+  assert.equal(liveKey({ key: 'X', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'take-out');
+  assert.equal(liveKey({ key: 'B', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'library');
   assert.equal(liveKey({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null);
   assert.equal(liveKey({ key: 'P', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'pick', 'Caps Lock still picks');
   assert.ok(isSendKey({ key: 'Enter', shiftKey: true, metaKey: false, ctrlKey: true, altKey: false }, false));
@@ -80,7 +85,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
 });
 
 test('the page gives up only the keys that need no chosen part, and the window handles every key', () => {
-  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'compare']);
+  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'compare', 'library']);
   assert.ok(isLiveKeyId('compare') && !isLiveKeyId('goto') && !isLiveKeyId(null));
   const live = readFileSync(resolve(import.meta.dirname, '../renderer/src/components/Live.tsx'), 'utf8');
   for (const k of LIVE_KEYS) assert.ok(live.includes(`case '${k.id}'`), `the live view does not handle ${k.id}`);

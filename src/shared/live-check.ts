@@ -1,4 +1,4 @@
-// Reading a write back. Every edit, move, insert and undo through the live view
+// Reading a write back. Every edit, move, insert, removal and undo through the live view
 // reloads the page and traces it again; a write the site called a success is
 // then checked against the new render, because "saved" is not "shows". A schema
 // edit is checked by the value the new trace holds for it (the site's own read
@@ -8,7 +8,8 @@
 import { sameRegion, type LiveRegion } from './live.ts';
 import type { LiveTrace } from './live-trace.ts';
 
-export type WriteKind = 'edit' | 'form' | 'move' | 'insert' | 'undo';
+/** `remove`: one item taken out of its collection, read back by what holds it. */
+export type WriteKind = 'edit' | 'form' | 'move' | 'insert' | 'remove' | 'undo';
 
 /** A write about to be made, or made: what to check once the page reloads with a new trace. */
 export interface WriteCheck {
@@ -75,11 +76,13 @@ const shown = (v: unknown): string => {
   return text.length > 120 ? `${text.slice(0, 119)}…` : text;
 };
 
-const VERB: Record<WriteKind, string> = { edit: 'saved', form: 'saved', move: 'moved', insert: 'added', undo: 'put back' };
+const VERB: Record<WriteKind, string> = { edit: 'saved', form: 'saved', move: 'moved', insert: 'added', remove: 'taken out', undo: 'put back' };
 
 /** The verdict in the owner's words; `tone` says whether it needs them. */
 export function verdictText(check: WriteCheck, verdict: CheckVerdict): { tone: 'ok' | 'warn'; text: string } {
   const verb = VERB[check.kind];
+  // "The site said it took out Search": the one verb whose past is not its participle.
+  const did = check.kind === 'remove' ? 'took out' : verb;
   switch (verdict.kind) {
     case 'landed':
       return { tone: 'ok', text: verdict.by === 'value' ? `${check.what}: ${verb}, and the site holds it after reloading.` : `${check.what}: ${verb}, and the page shows the change after reloading.` };
@@ -89,10 +92,13 @@ export function verdictText(check: WriteCheck, verdict: CheckVerdict): { tone: '
       return {
         tone: 'warn',
         text: verdict.by === 'value'
-          ? `The site said it ${verb} ${check.what}, but after reloading it holds the old value. Code that runs on the save, or a cache, may have put it back.`
-          : `The site said it ${verb} ${check.what}, but after reloading that part of the page shows exactly what it did before. If what changed shows there, something kept it from showing: a cache, or code that runs on the save.`,
+          ? `The site said it ${did} ${check.what}, but after reloading it holds the old value. Code that runs on the save, or a cache, may have put it back.`
+          : `The site said it ${did} ${check.what}, but after reloading that part of the page shows exactly what it did before. If what changed shows there, something kept it from showing: a cache, or code that runs on the save.`,
       };
     case 'unseen':
-      return { tone: 'ok', text: `${check.what}: ${verb}. It is not on the reloaded page, so Wanigan could not check that it shows.` };
+      // What is taken out is watched by what holds it: gone from the page is what it should be, so it is not what is said.
+      return check.kind === 'remove'
+        ? { tone: 'ok', text: `${check.what}: ${verb}. Nothing on the reloaded page says what held it, so Wanigan could not check the page.` }
+        : { tone: 'ok', text: `${check.what}: ${verb}. It is not on the reloaded page, so Wanigan could not check that it shows.` };
   }
 }
