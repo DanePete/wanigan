@@ -67,7 +67,12 @@ const live: LiveBridge = {
   unpreview: () => ipcRenderer.invoke('live:unpreview') as Promise<void>,
   move: (move, options) => ipcRenderer.invoke('live:move', move, options ?? null) as ReturnType<LiveBridge['move']>,
   insert: (insert, options) => ipcRenderer.invoke('live:insert', insert, options ?? null) as ReturnType<LiveBridge['insert']>,
+  remove: (remove, options) => ipcRenderer.invoke('live:remove', remove, options ?? null) as ReturnType<LiveBridge['remove']>,
   undo: (token) => ipcRenderer.invoke('live:undo', token) as ReturnType<LiveBridge['undo']>,
+  // The component library (src/main/live-library.ts).
+  library: (projectId, options) => ipcRenderer.invoke('live:library', projectId, options ?? null) as ReturnType<LiveBridge['library']>,
+  libraryPictures: (projectId, entries, options) => ipcRenderer.invoke('live:libraryPictures', projectId, entries, options ?? null) as ReturnType<LiveBridge['libraryPictures']>,
+  libraryPicture: (projectId, entry, width) => ipcRenderer.invoke('live:libraryPicture', projectId, entry, width) as ReturnType<LiveBridge['libraryPicture']>,
   // The Go to launcher (src/main/live-find.ts).
   find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
   findHere: (projectId) => ipcRenderer.invoke('live:findHere', projectId) as ReturnType<LiveBridge['findHere']>,

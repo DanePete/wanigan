@@ -213,6 +213,35 @@ describe('an agent’s look at the live view', () => {
     assert.equal((await looks())[0]!.ok, false, 'a refusal is evidence too');
   });
 
+  test('the component library comes from the helper through the app, narrowed as asked, and each call is kept as evidence', async () => {
+    answer = (ask) => (ask.kind === 'library' ? {
+      result: {
+        version: 1, platform: 'drupal', hash: '0123456789abcdef', theme: 'acme', counts: { component: 1, block: 1 },
+        entries: [
+          { id: 'sdc:acme:hero', kind: 'component', label: 'Hero banner', by: 'acme', owner: 'yours', props: { type: 'object', required: ['heading'], properties: { heading: { type: 'string' } } }, required: ['heading'], picture: { from: 'placeholders', piece: '/_wanigan/piece/component/acme%3Ahero?picture=1' } },
+          { id: 'block:system_branding_block', kind: 'block', label: 'Site branding', by: 'system', owner: 'core', picture: { from: 'settings', piece: '/_wanigan/piece/plugin/system_branding_block?picture=1' } },
+        ],
+      },
+    } : null);
+    const all = await agent.call('live.library', {});
+    const ask = asks.at(-1)!;
+    assert.deepEqual([ask.kind, ask.projectId, ask.sessionId, ask.url, ask.site.url], ['library', projectId, sessionId, null, SITE]);
+    assert.match(all.text, /^What this Drupal site can place, as its core lists it \(pieces render in the acme theme\): 1 component, 1 block\.$/m);
+    assert.match(all.text, /^- sdc:acme:hero — Hero banner \(acme, yours\) \[props: heading\*\]$/m);
+    const one = await agent.call('live.library', { id: 'sdc:acme:hero' });
+    assert.match(one.text, /"required": \[\n\s+"heading"/);
+    const blocks = await agent.call('live.library', { kind: 'block', query: 'branding' });
+    assert.deepEqual((blocks.structured.entries as { id: string }[]).map((e) => e.id), ['block:system_branding_block']);
+    await assert.rejects(agent.call('live.library', { kind: 'widget' }), /kind is one of component, block, pattern, style/);
+    const [refusedKind, narrowed, byId, listed] = await looks();
+    assert.deepEqual([refusedKind!.tool, refusedKind!.ok], ['live_library', false]);
+    assert.deepEqual([narrowed!.asked, narrowed!.said], ['“branding”, blocks', '1 of 2 entries for “branding”']);
+    assert.deepEqual([byId!.asked, byId!.said, byId!.page], ['entry sdc:acme:hero', 'sdc:acme:hero', null]);
+    assert.deepEqual([listed!.tool, listed!.ok, listed!.said], ['live_library', true, '1 component, 1 block']);
+    answer = (ask) => (ask.kind === 'library' ? { error: 'The site helper is older than this Wanigan and has no component library. Update it from the project’s Live tab.' } : null);
+    await assert.rejects(agent.call('live.library', {}), /has no component library/);
+  });
+
   test('the real shim, run as an agent CLI runs it, answers MCP as this session', async () => {
     answer = (ask) => (ask.kind === 'render' ? { result: rendered() } : null);
     const child = spawn(join(t.core.paths.bin, 'wanigan'), ['mcp'], {
@@ -264,7 +293,7 @@ test('every agent is handed the live view’s server at launch, and nothing abou
     assert.deepEqual(JSON.parse(readFileSync(config, 'utf8')), { mcpServers: { wanigan: { type: 'stdio', command: shim, args: ['mcp'] } } }, 'the shim, no token');
     const settings = JSON.parse(readFileSync(join(t.core.paths.dataDir, 'hooks', 'claude-settings.json'), 'utf8')) as { permissions: { allow: string[] } };
     assert.deepEqual(settings.permissions.allow, CLAUDE_ALLOW);
-    assert.deepEqual(CLAUDE_ALLOW, ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai'].map((n) => `mcp__wanigan__${n}`));
+    assert.deepEqual(CLAUDE_ALLOW, ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai', 'live_library'].map((n) => `mcp__wanigan__${n}`));
 
     const codex = await t.owner.call('sessions.start', { projectId: project.id, provider: 'codex' });
     const codexLine = await waitFor('codex', () => /ARGS=.*developer_instructions=.*$/m.exec(t.core.sessions.replay(codex.id).replay)?.[0]);

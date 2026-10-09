@@ -5,7 +5,7 @@ import { partIndex } from './live-lens.ts';
 import { layersOf } from './live-tree.ts';
 import { parseTrace, type LiveTrace } from './live-trace.ts';
 import {
-  announce, arrangeDrop, arrangeSpec, buildSpec, checkInsert, checkMove, collectionOf, moveNotice, movedOrders, requestText, stepMove, targetsFor, undoToken,
+  announce, arrangeDrop, arrangeSpec, buildSpec, checkInsert, checkMove, checkRemove, collectionOf, moveNotice, movedOrders, removeNotice, requestText, stepMove, targetsFor, undoToken,
 } from './live-arrange.ts';
 
 const trace = parseTrace({
@@ -119,4 +119,40 @@ test('the spec: collections with the regions that show their items, and template
   assert.deepEqual(spec.groups.map((g) => g.map((m) => m.region)), [[0, 3], [4, 5]], 'items in a collection are never a request');
   assert.deepEqual(spec.placing, { entry: 'pal-cta', label: 'Call to action' });
   assert.equal(requestText('Logo', 'Site name', 'after', false), 'Move Logo after Site name. Its order is written in the template, not in a collection the site can reorder, so change it there. The pictures show the page now and the order wanted.');
+});
+
+test('a removal is checked: an item the page shows, of a collection the helper says takes items out', () => {
+  const t = parseTrace({
+    version: 1, platform: 'drupal', id: 'cccccccccccccccc', url: '/', at: 1, total: { ms: 10 },
+    parts: [{ id: 'search', kind: 'block', label: 'Search' }, { id: 'pa', kind: 'entity', label: 'Hero paragraph' }, { id: 'hours', kind: 'block', label: 'Hours' }],
+    collections: [
+      { id: 'c-side', kind: 'region-blocks', label: 'Sidebar blocks', items: ['search'], changes: 'configuration', removes: true, shows: 'every page shown in the Acme theme that its visibility settings allow' },
+      { id: 'c-paras', kind: 'field-items', label: 'Paragraphs on Article 12', items: ['pa'], changes: 'content', revisions: true, removes: true },
+      { id: 'c-foot', kind: 'region-blocks', label: 'Footer blocks', items: ['hours'], changes: 'configuration', removes: true, removeWhy: 'The user you are logged in as may not change where blocks are placed.' },
+      { id: 'c-old', kind: 'menu', label: 'Main menu', items: [], changes: 'configuration' },
+    ],
+  }) as LiveTrace;
+  assert.deepEqual(checkRemove(t, { collection: 'c-side', item: 'search' }), { collection: 'c-side', item: 'search' });
+  assert.equal(checkRemove(t, { collection: 'c-side', item: 'pa' }), 'This page’s trace has no such item to take out. Reload it, then try again.');
+  assert.equal(checkRemove(t, { collection: 'c-foot', item: 'hours' }), 'The user you are logged in as may not change where blocks are placed.', 'its own reason, said as it is');
+  assert.equal(t.collections?.find((c) => c.id === 'c-foot')?.removes, false, 'a reason means nothing is taken out, whatever else it says');
+  assert.match(checkRemove(t, { collection: 'c-old', item: 'x' }) as string, /no such item/);
+  assert.equal(checkRemove(t, { collection: 'c-side' }), 'That is not a removal.');
+  assert.equal(checkRemove(null, {}), 'There is no trace for this page yet. Reload it, then try again.');
+  // A helper older than version 4 says nothing of removing: asked to update, never guessed at.
+  const old = parseTrace({ version: 1, platform: 'wordpress', id: 'dddddddddddddddd', url: '/', at: 1, total: { ms: 1 }, parts: [{ id: 'b', kind: 'block', label: 'B' }], collections: [{ id: 'c', kind: 'post-blocks', label: 'Blocks of page “Home”', items: ['b'], changes: 'content' }] }) as LiveTrace;
+  assert.match(checkRemove(old, { collection: 'c', item: 'b' }) as string, /does not take items out of Blocks of page “Home”\. Update the helper/);
+});
+
+test('what a removal says first and after: configuration asks with where it shows, and both say what stays', () => {
+  const drupal = removeNotice({ id: 'c-side', kind: 'region-blocks', label: 'Sidebar blocks', items: [], changes: 'configuration', shows: 'every page shown in the Acme theme that its visibility settings allow' }, 'drupal');
+  assert.equal(drupal.confirm, 'This takes the block off every page that shows this region (every page shown in the Acme theme that its visibility settings allow). The placement is switched off, not deleted, and stays in Block layout; a custom block’s content stays in the block library. Export configuration (drush config:export) to keep it in code.');
+  assert.match(drupal.saved, /^Taken out of the site’s configuration\. The placement is switched off/);
+  const counted = removeNotice({ id: 'c-l', kind: 'layout', label: 'Content', items: [], changes: 'configuration', reach: 12, shows: 'ignored when pages are counted' }, 'drupal');
+  assert.match(counted.confirm!, /^This takes the block out of the layout for every page that uses it \(12 pages\)\. Only the component goes/);
+  const post = removeNotice({ id: 'c-p', kind: 'post-blocks', label: 'Blocks of page', items: [], changes: 'content', revisions: true }, 'wordpress');
+  assert.deepEqual(post, { confirm: null, saved: 'Taken out, as a new revision. Only the block goes from the markup: media, reusable blocks and posts it showed stay.' });
+  const menu = removeNotice({ id: 'c-m', kind: 'menu', label: 'Primary', items: [], changes: 'configuration', shows: 'everywhere Primary shows' }, 'wordpress');
+  assert.match(menu.confirm!, /\(everywhere Primary shows\)\. The menu item is deleted; the page it linked to stays\. It is saved in the database/);
+  assert.match(removeNotice({ id: 'c-w', kind: 'widgets', label: 'Sidebar', items: [], changes: 'configuration' }, 'wordpress').confirm!, /goes to Inactive widgets, with its settings/);
 });

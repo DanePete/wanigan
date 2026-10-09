@@ -281,7 +281,7 @@ describe('the Drupal helper, before anything is written', () => {
     assert.match(site.token ?? '', /^[0-9a-f]{48}$/);
     assert.ok(readFileSync(file, 'utf8').includes(`WANIGAN_LIVE_TOKEN = '${site.token}'`));
     assert.ok(readFileSync(file, 'utf8').includes("WANIGAN_LIVE_SITE_DIR = '';"), 'WordPress is the project’s own folder');
-    assert.deepEqual([site.helper?.version, site.helper?.outdated], [3, false]);
+    assert.deepEqual([site.helper?.version, site.helper?.outdated], [4, false]);
     // A helper an older Wanigan wrote says this one writes a newer one.
     t.core.db.prepare('UPDATE live_sites SET helper = ? WHERE project_id = ?').run(JSON.stringify({ kind: 'wordpress', version: 1 }), projectId);
     assert.equal((await t.owner.call('live.site', { projectId })).helper?.outdated, true);

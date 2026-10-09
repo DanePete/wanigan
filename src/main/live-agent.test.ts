@@ -146,3 +146,24 @@ test('the site’s AI is asked of the helper’s own route on the site, with its
   off.wiring.onEvent('liveAsk', off.ask({ id: 'ai3', kind: 'ai' }));
   assert.match(String((await off.answered('ai3')).error), /The live view is off/);
 });
+
+test('the component library is asked of the helper’s own route on the site, with its token, and nothing is rendered', async () => {
+  const asked: { url: string; token: string; redirect: string | undefined }[] = [];
+  let reply = (): Response => new Response(JSON.stringify({
+    version: 1, platform: 'drupal', hash: '0123456789abcdef', counts: { component: 1 },
+    entries: [{ id: 'sdc:acme:card', kind: 'component', label: 'Card', picture: { from: 'example', piece: '/_wanigan/piece/component/acme%3Acard?picture=1' }, secret: 'never-kept' }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const a = app({ fetch: async (url, init) => { asked.push({ url, token: (init.headers as Record<string, string>)['X-Wanigan-Live']!, redirect: init.redirect }); return reply(); } });
+  a.wiring.onEvent('liveAsk', a.ask({ id: 'lib1', kind: 'library' }));
+  const answer = await a.answered('lib1');
+  assert.deepEqual(asked, [{ url: 'https://acme.ddev.site/_wanigan/components', token: 'f'.repeat(32), redirect: 'error' }]);
+  assert.equal(a.renders.length, 0, 'nothing is rendered: the helper lists it');
+  const lib = answer.result as { entries: Record<string, unknown>[] };
+  assert.deepEqual(lib.entries[0], { id: 'sdc:acme:card', kind: 'component', label: 'Card', picture: { from: 'example', piece: '/_wanigan/piece/component/acme%3Acard?picture=1' } }, 'what the contract does not name is dropped');
+  reply = () => new Response('<html>Not found</html>', { status: 404 });
+  a.wiring.onEvent('liveAsk', a.ask({ id: 'lib2', kind: 'library' }));
+  assert.match(String((await a.answered('lib2')).error), /older than this Wanigan and has no component library/);
+  const off = app({ settings: { liveView: false }, fetch: async () => reply() });
+  off.wiring.onEvent('liveAsk', off.ask({ id: 'lib3', kind: 'library' }));
+  assert.match(String((await off.answered('lib3')).error), /The live view is off/);
+});

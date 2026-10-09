@@ -16,6 +16,8 @@ import type { LiveTrace, PaletteEntry, TraceCollection } from './live-trace.ts';
 
 export interface LiveMove { collection: string; item: string; to: { collection: string; index: number } }
 export interface LiveInsert { collection: string; index: number; entry: string }
+/** One item taken out of its collection (helper 4): the placement or reference goes, never what it showed. */
+export interface LiveRemove { collection: string; item: string }
 
 /** What a move or an insert came to: saved (with a token that undoes it), or why not. */
 export type LiveMoveSaved =
@@ -92,6 +94,22 @@ export function checkInsert(trace: LiveTrace | null, raw: unknown): LiveInsert |
   return { collection, index: index as number, entry };
 }
 
+/**
+ * A removal the window asked for, checked against the trace: one item the page shows, of a collection the helper
+ * says can have items taken out (helper 4). Its own `removeWhy` is said as it is.
+ */
+export function checkRemove(trace: LiveTrace | null, raw: unknown): LiveRemove | string {
+  if (!trace) return 'There is no trace for this page yet. Reload it, then try again.';
+  if (!isObj(raw)) return 'That is not a removal.';
+  const collection = id(raw.collection), item = id(raw.item);
+  if (!collection || !item) return 'That is not a removal.';
+  const from = trace.collections?.find((c) => c.id === collection);
+  if (!from || !from.items.includes(item)) return 'This page’s trace has no such item to take out. Reload it, then try again.';
+  if (from.removeWhy) return from.removeWhy;
+  if (from.removes !== true) return `The site helper does not take items out of ${from.label}. Update the helper from the Live tab, then try again.`;
+  return { collection, item };
+}
+
 /** An undo token the site gave: opaque, short, plain. */
 export function undoToken(raw: unknown): string | null {
   return typeof raw === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(raw) ? raw : null;
@@ -151,6 +169,52 @@ export function moveNotice(c: TraceCollection, platform: 'drupal' | 'wordpress')
     ? 'Export configuration (drush config:export) to keep it in code.'
     : 'It is saved in the database, not in your theme’s code.';
   return { confirm: `${SHARED[c.kind]}${pages}. ${keep}`, saved: 'Saved to the site’s configuration.' };
+}
+
+/* ── what a removal takes, and what it keeps ───────────────────────────── */
+
+const SHARED_REMOVE: Record<TraceCollection['kind'], string> = {
+  'field-items': 'This takes the item out of the field for this content wherever it shows',
+  'region-blocks': 'This takes the block off every page that shows this region',
+  'post-blocks': 'This takes the block out of the post wherever the post shows',
+  layout: 'This takes the block out of the layout for every page that uses it',
+  menu: 'This takes the link out of the menu everywhere it shows',
+  widgets: 'This takes the widget off every page that shows this area',
+  display: 'This hides the field for all content shown with this display',
+};
+
+/** What stays when an item is taken out, as each platform does it (live-trace.ts, helper 4). */
+function kept(c: TraceCollection, platform: 'drupal' | 'wordpress'): string {
+  switch (c.kind) {
+    case 'field-items': return 'Only the reference goes: the content, media or file it pointed to stays.';
+    case 'region-blocks': return platform === 'drupal'
+      ? 'The placement is switched off, not deleted, and stays in Block layout; a custom block’s content stays in the block library.'
+      : 'Only the block goes from the markup: posts, media, reusable blocks and template parts it showed stay.';
+    case 'post-blocks': return 'Only the block goes from the markup: media, reusable blocks and posts it showed stay.';
+    case 'layout': return 'Only the component goes from the layout: the content, media and reusable block content it showed stay.';
+    case 'menu': return platform === 'drupal'
+      ? 'The link is switched off in the menu, not deleted.'
+      : 'The menu item is deleted; the page it linked to stays.';
+    case 'widgets': return 'The widget goes to Inactive widgets, with its settings.';
+    case 'display': return 'The field’s values stay; only its place in the display goes.';
+  }
+}
+
+/**
+ * What to say about a removal before it saves, and after. Taking an item out of configuration is said first and
+ * asked about, with where it shows (pages counted, or the helper's words); out of content it is just saved, as a
+ * revision where the site keeps them. Either way it says what stays.
+ */
+export function removeNotice(c: TraceCollection, platform: 'drupal' | 'wordpress'): { confirm: string | null; saved: string } {
+  const stays = kept(c, platform);
+  if (c.changes === 'content') {
+    return { confirm: null, saved: `${c.revisions === false ? 'Taken out.' : 'Taken out, as a new revision.'} ${stays}` };
+  }
+  const where = c.reach !== undefined ? ` (${c.reach === 1 ? '1 page' : `${c.reach} pages`})` : c.shows ? ` (${c.shows})` : '';
+  const keep = platform === 'drupal'
+    ? 'Export configuration (drush config:export) to keep it in code.'
+    : 'It is saved in the database, not in your theme’s code.';
+  return { confirm: `${SHARED_REMOVE[c.kind]}${where}. ${stays} ${keep}`, saved: `Taken out of the site’s configuration. ${stays}` };
 }
 
 /* ── what the page is told it may drag ─────────────────────────────────── */

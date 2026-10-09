@@ -3,7 +3,8 @@
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
 import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
-import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveWriteOptions } from './live-arrange.ts';
+import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveRemove, LiveWriteOptions } from './live-arrange.ts';
+import type { LibraryPicturesAnswer, LiveLibraryAnswer } from './live-library.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
@@ -189,8 +190,18 @@ export interface LiveBridge {
   move(move: LiveMove, options?: LiveWriteOptions): Promise<LiveMoveSaved>;
   /** Insert a palette entry through the site helper; the page reloads with it. */
   insert(insert: LiveInsert, options?: LiveWriteOptions): Promise<LiveMoveSaved>;
-  /** Put back a move or insert, by the token the site gave for it. */
+  /** Take one item out of its collection through the site helper: only its placement or reference goes. The page reloads with it. */
+  remove(remove: LiveRemove, options?: LiveWriteOptions): Promise<LiveMoveSaved>;
+  /** Put back a move, insert or removal, by the token the site gave for it. */
   undo(token: string): Promise<LiveMoveSaved>;
+  /* The component library (src/main/live-library.ts; the helpers' contract is src/shared/live-library.ts). */
+
+  /** What a project's site can place, from its core's registries through the helper, or why not. Kept a minute unless refreshed. */
+  library(projectId: string, options?: { refresh?: boolean }): Promise<LiveLibraryAnswer>;
+  /** Pictures of library entries rendered alone, at 390 and 1440 px (or the widths given): paths in Wanigan's data folder, kept by the library's hash. */
+  libraryPictures(projectId: string, entries: string[], options?: { widths?: number[]; refresh?: boolean }): Promise<LibraryPicturesAnswer>;
+  /** A kept picture of an entry at a width, as base64 PNG; null when there is none for the library as it is now. */
+  libraryPicture(projectId: string, entry: string, width: number): Promise<string | null>;
   /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
 
   /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */

@@ -65,11 +65,11 @@ test('the protocol version a client asks for is answered when this server speaks
   await s.done;
 });
 
-test('tools/list gives seven read-only tools whose schemas name only what each takes', async () => {
+test('tools/list gives eight read-only tools whose schemas name only what each takes', async () => {
   const s = server();
   const list = await s.ask(1, 'tools/list');
   const tools = list.result?.tools as { name: string; description: string; inputSchema: { properties: Record<string, unknown>; required?: string[] }; annotations: Record<string, unknown> }[];
-  assert.deepEqual(tools.map((t) => t.name), ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai']);
+  assert.deepEqual(tools.map((t) => t.name), ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai', 'live_library']);
   for (const t of tools) {
     assert.equal(t.annotations.readOnlyHint, true, t.name);
     assert.equal(t.annotations.destructiveHint, false, t.name);
@@ -79,6 +79,8 @@ test('tools/list gives seven read-only tools whose schemas name only what each t
   assert.deepEqual(Object.keys(tools[1]!.inputSchema.properties), ['path', 'width', 'image', 'full_page', 'part', 'all']);
   assert.deepEqual(tools[2]!.inputSchema.required, ['query']);
   assert.deepEqual(tools[3]!.inputSchema.required, ['id']);
+  assert.deepEqual(Object.keys(tools[7]!.inputSchema.properties), ['query', 'kind', 'id'], 'the library takes a query, a kind or one id, none required');
+  assert.equal(tools[7]!.inputSchema.required, undefined);
   s.end();
   await s.done;
 });
@@ -126,14 +128,14 @@ test('outside a session it still lists its tools, and says plainly why a call ca
   input.end();
   await done;
   const replies = lines.map((l) => JSON.parse(l) as Reply);
-  assert.equal((replies.find((r) => r.id === 1)!.result!.tools as unknown[]).length, 7);
+  assert.equal((replies.find((r) => r.id === 1)!.result!.tools as unknown[]).length, 8);
   assert.deepEqual(replies.find((r) => r.id === 2)!.result, { content: [{ type: 'text', text: 'The live view’s tools work only inside a session Wanigan started.' }], isError: true });
 });
 
 test('resources read the same as the tools; bad input gets JSON-RPC errors, not silence', async () => {
   const s = server();
   const list = await s.ask(1, 'resources/list');
-  assert.deepEqual((list.result?.resources as { uri: string }[]).map((r) => r.uri), ['wanigan://live/status', 'wanigan://live/page', 'wanigan://live/problems', 'wanigan://live/site-ai']);
+  assert.deepEqual((list.result?.resources as { uri: string }[]).map((r) => r.uri), ['wanigan://live/status', 'wanigan://live/page', 'wanigan://live/problems', 'wanigan://live/site-ai', 'wanigan://live/components']);
   const read = await s.ask(2, 'resources/read', { uri: 'wanigan://live/page' });
   assert.deepEqual(read.result, { contents: [{ uri: 'wanigan://live/page', mimeType: 'text/plain', text: 'read live.look' }] });
   assert.equal((await s.ask(3, 'resources/read', { uri: 'file:///etc/passwd' })).error?.code, -32002);
@@ -143,7 +145,7 @@ test('resources read the same as the tools; bad input gets JSON-RPC errors, not 
   s.send('[1,2]');
   await new Promise((ok) => setTimeout(ok, 30));
   assert.deepEqual(s.replies.filter((r) => r.id === null).map((r) => r.error?.code), [-32700, -32600]);
-  assert.equal(TOOLS.length, 7);
+  assert.equal(TOOLS.length, 8);
   s.end();
   await s.done;
 });

@@ -18,12 +18,13 @@
 // - Moving parts by hand (live-arrange.ts): the page script shows handles and
 //   where a drag would land, and answers a drop; a move or an insert is checked
 //   against the trace here, posted to the helper, and its undo token kept, so
-//   only an undo the site gave can be asked for.
+//   only an undo the site gave can be asked for. Taking an item out (helper 4)
+//   is checked and posted the same way; only its placement or reference goes.
 import { WebContentsView, ipcMain, type BrowserWindow, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
 import type { LiveBounds } from '../shared/bridge.ts';
 import { sameSite } from '../shared/live.ts';
 import { boxOf, paintItems, type LiveEditSaved, type LiveEdited, type LiveTraceAnswer } from '../shared/live-lens.ts';
-import { arrangeDrop, arrangeSpec, checkInsert, checkMove, undoToken, type ArrangeDrop, type LiveMoveSaved } from '../shared/live-arrange.ts';
+import { arrangeDrop, arrangeSpec, checkInsert, checkMove, checkRemove, undoToken, type ArrangeDrop, type LiveMoveSaved } from '../shared/live-arrange.ts';
 import { parseSaveAi, type LiveSiteAiAnswer } from '../shared/live-ai.ts';
 import { checkValue } from '../shared/live-schema.ts';
 import { askSiteAi } from './live-site-ai.ts';
@@ -174,7 +175,7 @@ export function wireLiveInspect(options: {
   };
 
   /** What a move, an insert or an undo came to, from the helper's answer. A 409 is the collection having changed meanwhile. */
-  const moved = (cur: LiveCurrent, r: { status: number; answer: Record<string, unknown> | null; error: string | null }): LiveMoveSaved => {
+  const moved = (cur: LiveCurrent, r: { status: number; answer: Record<string, unknown> | null; error: string | null }, done = 'moved'): LiveMoveSaved => {
     // What the site's own AI did during it, as core reported it: said whether the save went through or not.
     const ai = parseSaveAi(r.answer?.ai);
     if (r.answer?.ok === true) {
@@ -187,7 +188,7 @@ export function wireLiveInspect(options: {
     if (r.status === 409) {
       // What the page shows is out of date: show the order as it is now.
       if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: false, conflict: true, items, error: 'It changed on the site since this page was shown, so nothing was moved. The page now shows the order as it is.', ai };
+      return { ok: false, conflict: true, items, error: `It changed on the site since this page was shown, so nothing was ${done}. The page now shows the order as it is.`, ai };
     }
     const said = typeof r.answer?.error === 'string' ? r.answer.error.slice(0, 500) : null;
     return {
@@ -435,6 +436,17 @@ export function wireLiveInspect(options: {
     const insert = checkInsert(h.trace, raw);
     if (typeof insert === 'string') return refused(insert);
     return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert, ...noSiteAi(rawOptions) }));
+  });
+
+  // Taking one item out of its collection: checked against the trace, then the helper's own remove route.
+  ipcMain.handle('live:remove', async (event, raw: unknown, rawOptions: unknown): Promise<LiveMoveSaved> => {
+    const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
+    if (!ok(event)) return refused('The live view is off.');
+    const h = holding();
+    if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
+    const remove = checkRemove(h.trace, raw);
+    if (typeof remove === 'string') return refused(remove);
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/remove', { trace: h.trace.id, ...remove, ...noSiteAi(rawOptions) }), 'taken out');
   });
 
   ipcMain.handle('live:undo', async (event, raw: unknown): Promise<LiveMoveSaved> => {

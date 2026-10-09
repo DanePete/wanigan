@@ -13,6 +13,7 @@ import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
 import { wireLiveInspect } from './live-inspect.ts';
 import { wireLiveFind } from './live-find.ts';
+import { wireLiveLibrary } from './live-library.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
@@ -145,6 +146,11 @@ function wireBridge(): void {
   const agentLooks = wireLiveAgent({
     client: () => core.get(), settings: () => appSettings?.store.get() ?? null, view, windowOpen: () => !!win && !win.isDestroyed(),
     sessionFor: (id, url) => view.sessionFor(id, url),
+  });
+  // The component library: what the site can place, from the helper, and a picture of each kept in the data folder.
+  wireLiveLibrary({
+    ipc: ipcMain, trusted, enabled: () => appSettings?.store.get().liveView === true, client: () => core.get(), dataDir,
+    sessionFor: (id, url) => view.sessionFor(id, url), partition: (id, url, token) => view.partition(id, null, url, token),
   });
   // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
   wireLiveFind({

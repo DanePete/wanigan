@@ -340,6 +340,8 @@ export interface Methods {
   /** The card's page now against its screenshot from before the session worked, or from its last turn: each changed area, and the edited file that explains it. */
   'live.diff': { params: { since?: 'start' | 'turn' }; result: LiveToolResult };
   'live.siteAi': { params: Record<string, never>; result: LiveToolResult };
+  /** What the site can place, from its core's registries through the helper: all of it, matching a query or of a kind, or one entry in full by id. */
+  'live.library': { params: { query?: string | null; kind?: string | null; id?: string | null }; result: LiveToolResult };
   /** The app answers the live view's questions on this connection (the core counts it). */
   'live.host': { params: Record<string, never>; result: { ok: true } };
   /** The app's answer to a `liveAsk`, or why it could not answer. False when nothing waits for it any more. */
@@ -641,6 +643,7 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.problems': ['session'],
   'live.diff': ['session'],
   'live.siteAi': ['session'],
+  'live.library': ['session'],
   'live.host': ['owner'],
   'live.answer': ['owner'],
   'live.looks': ['owner'],
