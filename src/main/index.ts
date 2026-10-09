@@ -11,12 +11,13 @@ import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
-import { wireLiveInspect } from './live-inspect.ts';
+import { askTrace, wireLiveInspect } from './live-inspect.ts';
+import { wireLiveLayer } from './live-layer.ts';
 import { wireLiveFind } from './live-find.ts';
 import { wireLiveLibrary } from './live-library.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
-import { wireLiveView, type LiveViewWiring } from './live-view.ts';
+import { wireLiveView, type LiveViewHooks, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
 import { menuTemplate, type MenuProject } from './menu.ts';
 import { createUpdateMenu } from './update-menu.ts';
@@ -135,7 +136,15 @@ function wireBridge(): void {
     current: () => liveView?.current() ?? null,
     run: <T>(code: string, fallback: T) => (liveView ? liveView.run(code, fallback) : Promise.resolve(fallback)),
   });
-  liveView = wireLiveView({ window: () => win, trusted, enabled: liveEnabled, hooks: inspect.hooks });
+  // The design layer hears of each view as the inspector does: it applies the layer after every load.
+  let layerHooks: LiveViewHooks | null = null;
+  liveView = wireLiveView({
+    window: () => win, trusted, enabled: liveEnabled,
+    hooks: {
+      session: (ses, id) => inspect.hooks.session?.(ses, id),
+      view: (wc, id) => { inspect.hooks.view?.(wc, id); layerHooks?.view?.(wc, id); },
+    },
+  });
   // Switching the live view off takes it away at once, not at the next navigation.
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;
@@ -152,6 +161,14 @@ function wireBridge(): void {
     ipc: ipcMain, trusted, enabled: () => appSettings?.store.get().liveView === true, client: () => core.get(), dataDir,
     sessionFor: (id, url) => view.sessionFor(id, url), partition: (id, url, token) => view.partition(id, null, url, token),
   });
+  // The design layer: the project's edits shown on the page, keyed, made real and verified (the log is the core's).
+  layerHooks = wireLiveLayer({
+    ipc: ipcMain, trusted, enabled: liveEnabled, client: () => core.get(), dataDir,
+    current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback), trace: () => inspect.trace(),
+    helperSave: (field, before, after) => view.helperSave(field, before, after),
+    partition: (id, url, token) => view.partition(id, null, url, token), sessionFor: (id, url) => view.sessionFor(id, url),
+    askTrace, pageScript: () => view.pageScript(),
+  }).hooks;
   // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
   wireLiveFind({
     ipc: ipcMain, openExternal: (url) => shell.openExternal(url), window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true, settings: () => appSettings?.store.get() ?? null,

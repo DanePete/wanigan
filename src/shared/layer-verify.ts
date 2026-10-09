@@ -24,6 +24,8 @@ export const MAX_VERIFY_WIDTHS = 4;
 export const ZONE_MARGIN = 8;
 /** Differences said per step and width, largest first; the counts are always whole. */
 export const MAX_RECTS = 40;
+/** A verdict says at most this many differences; the first failing step's, in width order. */
+export const MAX_DIFFERENCES = 300;
 /** Step 1's differences said per width. */
 const MAX_ELEMENT_DIFFERENCES = 100;
 
@@ -219,7 +221,7 @@ export function judge(found: readonly WidthFindings[]): { ok: boolean; failed: V
       if (step === 'pixels' && !withinNoise(w.pixels.near, w.noise)) { failed = true; differences.push(...w.pixels.near.differences); }
       if (step === 'rest' && !withinNoise(w.pixels.rest, w.noise)) { failed = true; differences.push(...w.pixels.rest.differences); }
     }
-    if (failed) return { ok: false, failed: step, differences };
+    if (failed) return { ok: false, failed: step, differences: differences.slice(0, MAX_DIFFERENCES) };
   }
   return { ok: true, failed: null, differences: [] };
 }
@@ -315,7 +317,7 @@ export function parseVerdict(raw: unknown): LayerVerdict | null {
   if (!Array.isArray(v.widths) || v.widths.length < 1 || v.widths.length > 8 || !v.widths.every((w) => count(w, 10_000))) return null;
   const noise = v.noise && typeof v.noise === 'object' ? v.noise as Record<string, unknown> : null;
   if (!noise || !count(noise.maxDiff, 255) || !count(noise.pixels)) return null;
-  if (!Array.isArray(v.differences) || v.differences.length > 300) return null;
+  if (!Array.isArray(v.differences) || v.differences.length > MAX_DIFFERENCES) return null;
   const differences = v.differences.map(difference);
   if (differences.some((d) => d === null)) return null;
   if (!Array.isArray(v.pictures) || v.pictures.length > 8) return null;

@@ -35,7 +35,7 @@ export type LayerProperty = (typeof LAYER_PROPERTIES)[number];
  * Who an edit is for. What the trace says the part is (its PartIdentity, helper 4), and the element inside it the
  * owner chose (a CSS path from the part's own root element; null for the part itself). Markup no helper explains has
  * only a `selector` from the document, and its edit is fragile: said so in the tray, and orphaned rather than
- * guessed when it stops matching. `textHash` is the element's own words when the edit was made (layerTextHash): a
+ * guessed when it stops matching. `textHash` is the element's whole text when the edit was made (layerTextHash of its textContent, descendants' words too, folded; null when it has none): a
  * target that now resolves to other words is orphaned, never applied to whatever sits in its place.
  */
 export interface LayerTarget {
