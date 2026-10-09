@@ -389,7 +389,8 @@ Status:
 
 Verified by hand against the owner's own local sites (Drupal 11; WordPress) on 9 Oct 2026: the
 real app driven with Playwright, every step a whole-window screenshot. The UI sweeps do not reach it: their bridge has
-no view to lay over the page, and nothing there serves a site.
+no view to lay over the page, and nothing there serves a site. Local and Live is the exception: the sweep plays the
+view with a stub (`scripts/ui-live-stub.mjs`) that draws two pictures of a made-up page for Compare.
 
 | Feature | The claim | Test | Status |
 |---|---|---|---|
@@ -407,6 +408,14 @@ no view to lay over the page, and nothing there serves a site.
 | Content changes followed | The helper's count of cache tag invalidations (Drupal) or content saves (WordPress) reloads the view; a site that keeps changing stops it. | the owner's sites by hand (drush, wp-cli) | manual |
 | Before and after | A session's first before, its last after, a card's newest twelve; full page at 1440 CSS pixels, past the browser's cache; changed areas boxed. | `core/live.test.ts` › "a card’s before and after" (2 tests); a renamed term found as one area | partial (the capture needs a window) |
 | Not on phones | A phone's stream carries no live view edits, site settings, hand edits or screenshots. | `core/phone/gateway-sse-safety.test.ts` › "a phone stream carries board news but never the live view’s…" | added |
+| Hosted environments found | Drush 9 and 8 aliases, WP-CLI aliases, ddev's Pantheon provider, Lando's Pantheon recipe or a variable with `pantheon.yml` (Pantheon's dev-, test-, live- addresses), Stage File Proxy's origin (settings or exported config), ddev `web_environment` and compose variables named for an environment, a README's tables and lists; each with its file; never a `.env` file, never a link out of the project. | `shared/live-envs.test.ts` (11 tests); `core/live-envs.test.ts` › "every environment the project’s files name…", "a WordPress project’s WP-CLI aliases…" | added |
+| Environments kept | Only kept or typed ones are tabs, Dev, Test, Live order; https only, no credentials or query, never this Mac or the local site, each name and address once; owner only. | `core/live-envs.test.ts` › "kept environments" (7 tests) | added |
+| Hosted is read-only | Its own in-memory session per environment, never the helper's token (view and capture), Chromium's own certificate verdict, only GET, HEAD and OPTIONS sent; hand edits, tried styles and the helper refused there. | `main/live-compare-request.test.ts` (2 tests); `scripts/ui-sweep.mjs` › "the hosted tab was shown as…"; the session rules by reading `main/live-view.ts` | partial (the native session handlers are not run by a test) |
+| Compare: lining up | Rows fingerprinted and lined up with patience diff; a section one side has alone is a striped band, not changed pixels; blank rows anchor nothing; ignored areas do not stop rows lining up. | `shared/live-compare.test.ts` › "a section only the hosted page has…", "blank rows anchor nothing…", "a taller block…", "an ignored area…", "an item added to a list whose items look alike…" | added |
+| Compare: what differs | YIQ colour distance (pixelmatch's), lone pixels as noise, areas boxed (the card's before and after use the same boxes), each named by the local part it overlaps most, the smallest of equals; a one-sided band by the part that holds every place it could sit. | `shared/live-compare.test.ts` › "a changed block…", "a lone differing pixel…", "a change is named by the local part…" | added |
+| Compare: the viewer | Slider, onion skin, difference, flip, side by side; ← → Space, S O D T, J K, 1 2 3, I and Shift-I; on the shortcut sheet; the note that content differences usually mean an older local database. | `shared/live-compare.test.ts` › "the viewer’s keys", "the shortcut sheet lists exactly the viewer’s keys…"; `scripts/ui-sweep.mjs` › "Local and Live" (two made-up pictures drawn in the sweep, both themes) | added |
+| Ignored areas | Per site, at one width, on one page or every page; the core keeps them; removed by id. | `core/live-envs.test.ts` › "ignored areas…"; `scripts/ui-sweep.mjs` › "ignoring the clock…" | added |
+| Compare: the pictures | Both sides full-page in hidden windows at the same width, local in the view's session (with the helper's token), hosted in its private one; only on the owner's Compare. | `main/live-compare-request.test.ts`; not run against a real site | manual (needs the app and a hosted site) |
 
 ## The demo
 
