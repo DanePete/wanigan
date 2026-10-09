@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type RefObject } from 'react';
-import { CARD_TYPES, COLUMNS, LIVE_STATES, PRIORITIES, type CardSummary, type CardType, type Priority, type ProjectSummary, type Provider } from '@shared/model';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactElement, type RefObject } from 'react';
+import { CARD_TYPES, COLUMNS, LIVE_STATES, PRIORITIES, PROVIDERS, type CardSummary, type CardType, type Priority, type ProjectSummary, type Provider } from '@shared/model';
+import { MAX_VIEW_FILTER, readBoardView, type BoardAgent, type BoardSort, type BoardView, type SavedBoardView } from '@shared/board-views';
 import { attempt, call, forProject, useQuery } from '../lib/api';
 import { href, navigate, openCard, useLocation } from '../lib/router';
 import { PROVIDER_LABEL, STATE_LABEL, STATUS_LABEL, TYPE_LABEL, duration, plural } from '../lib/format';
@@ -11,18 +12,23 @@ import { JevChip, JevStrip } from '../components/Jev';
 import { HowItWorks } from './HowItWorks';
 import { Select } from '../components/Select';
 import { orbPlay } from '../components/Orb';
+import { SavedViews } from './SavedViews';
 
 type Column = (typeof COLUMNS)[number];
-type Sort = 'manual' | 'priority' | 'newest' | 'oldest' | 'stuck' | 'jev';
-type Agent = 'any' | Provider | 'none';
 
-const SORTS: readonly { value: Sort; label: string; detail?: string }[] = [
+const SORTS: readonly { value: BoardSort; label: string; detail?: string }[] = [
   { value: 'manual', label: 'Your order', detail: 'Drag cards to arrange them' },
   { value: 'priority', label: 'Priority' },
   { value: 'newest', label: 'Newest' },
   { value: 'oldest', label: 'Oldest' },
   { value: 'stuck', label: 'Longest in column' },
   { value: 'jev', label: 'Jev: matters most' },
+];
+
+const AGENTS: readonly { value: BoardAgent; label: string }[] = [
+  { value: 'any', label: 'Any agent' },
+  ...PROVIDERS.map((p) => ({ value: p, label: PROVIDER_LABEL[p] })),
+  { value: 'none', label: 'No agent on it' },
 ];
 
 /** What an empty column says: what it is for, at the moment it has nothing. */
@@ -55,15 +61,37 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
   const cards = useQuery('cards.list', { projectId: project.id }, ['board', 'sessions'], forProject(project.id));
   const toast = useToast();
   const { card: openKey } = useLocation();
-  // Each board opens the way it was left: its filter, types and order.
+  // Each board opens the way it was left: its filter, types and order, and the saved view it was set from.
   const remembered = useMemo(() => readView(project.id), [project.id]);
-  const [filter, setFilter] = useState(remembered.filter);
-  const [types, setTypes] = useState<ReadonlySet<CardType>>(new Set(remembered.types));
-  const [sort, setSort] = useState<Sort>(remembered.sort);
-  const [priority, setPriority] = useState<Priority | 'any'>(remembered.priority);
-  const [agent, setAgent] = useState<Agent>(remembered.agent);
+  const [filter, setFilter] = useState(remembered.view.filter);
+  const [types, setTypes] = useState<ReadonlySet<CardType>>(new Set(remembered.view.types));
+  const [sort, setSort] = useState<BoardSort>(remembered.view.sort);
+  const [priority, setPriority] = useState<Priority | 'any'>(remembered.view.priority);
+  const [agent, setAgent] = useState<BoardAgent>(remembered.view.agent);
+  const [applied, setApplied] = useState<string | null>(remembered.applied);
   const [how, setHow] = useState(false);
-  useEffect(() => { writeView(project.id, { filter, types: [...types], sort, priority, agent }); }, [project.id, filter, types, sort, priority, agent]);
+  const current = useMemo<BoardView>(() => ({ filter, types: CARD_TYPES.filter((t) => types.has(t)), sort, priority, agent }), [filter, types, sort, priority, agent]);
+  useEffect(() => { writeView(project.id, current, applied); }, [project.id, current, applied]);
+  const views = useQuery('boardViews.list', { projectId: project.id }, ['boardViews'], forProject(project.id));
+  const apply = useCallback((saved: SavedBoardView): void => {
+    const v = saved.view;
+    setFilter(v.filter); setTypes(new Set(v.types)); setSort(v.sort); setPriority(v.priority); setAgent(v.agent); setApplied(saved.id);
+  }, []);
+  // 1–9 on the board apply the saved views in their order, as the panel lists them.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || !/^[1-9]$/.test(e.key)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.closest('.xterm, .drawer, .chat, [role="dialog"], [role="listbox"]'))) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      const saved = views.data?.[Number(e.key) - 1];
+      if (!saved) return;
+      e.preventDefault();
+      apply(saved);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [views.data, apply]);
   const filtering = Boolean(filter.trim()) || types.size > 0 || priority !== 'any' || agent !== 'any';
   const clear = (): void => { setFilter(''); setTypes(new Set()); setPriority('any'); setAgent('any'); };
   const [allDone, setAllDone] = useState(false);
@@ -220,7 +248,7 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
         <label className="search-field">
           <Icon name="search" size={14} />
           <span className="visually-hidden">Filter cards</span>
-          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter cards" />
+          <input value={filter} maxLength={MAX_VIEW_FILTER} onChange={(e) => setFilter(e.target.value)} placeholder="Filter cards" />
         </label>
         <div className="chips" role="group" aria-label="Card types">
           {CARD_TYPES.map((t) => (
@@ -242,22 +270,14 @@ export function Board({ project, setDialog }: { project: ProjectSummary; setDial
           onChange={setPriority}
           options={[{ value: 'any', label: 'Any priority' }, ...PRIORITIES.map((p) => ({ value: p, label: `P${p}`, detail: PRIORITY_MEANING[p] }))]}
         />
-        <Select<Agent>
-          label="Agent"
-          size="s"
-          value={agent}
-          onChange={setAgent}
-          options={[
-            { value: 'any', label: 'Any agent' }, { value: 'claude', label: 'Claude Code' }, { value: 'codex', label: 'Codex' },
-            { value: 'shell', label: 'Shell' }, { value: 'none', label: 'No agent on it' },
-          ]}
-        />
+        <Select<BoardAgent> label="Agent" size="s" value={agent} onChange={setAgent} options={AGENTS} />
         {filtering ? <button type="button" className="linkish small" onClick={clear}>Clear</button> : null}
         <span className="board-count faint small" aria-live="polite">
           {cards.data ? `${plural(open, 'open card')}${filtering ? ` · ${matching} matching` : ''}` : ''}
         </span>
         <div className="toolbar-end">
-          <Select<Sort> label="Order" size="s" value={sort} onChange={setSort} options={SORTS} />
+          <SavedViews projectId={project.id} views={views} current={current} appliedId={applied} onApply={apply} setApplied={setApplied} />
+          <Select<BoardSort> label="Order" size="s" value={sort} onChange={setSort} options={SORTS} />
           <button type="button" className="how-btn" onClick={() => setHow(true)}>
             <span className="how-q" aria-hidden="true">?</span>How this works
           </button>
@@ -451,26 +471,18 @@ function showColumn(column: Column): void {
   window.setTimeout(() => el.classList.remove('flash'), 1800);
 }
 
-
-interface BoardView { filter: string; types: CardType[]; sort: Sort; priority: Priority | 'any'; agent: Agent }
-
-function readView(projectId: string): BoardView {
+/** The board as it was left in this window, and the saved view it was last set from (a convenience; the views themselves are the core's). */
+function readView(projectId: string): { view: BoardView; applied: string | null } {
   try {
-    const v = JSON.parse(localStorage.getItem(`wanigan.board.${projectId}`) ?? '{}') as Partial<BoardView>;
-    return {
-      filter: typeof v.filter === 'string' ? v.filter : '',
-      types: Array.isArray(v.types) ? v.types.filter((t): t is CardType => (CARD_TYPES as readonly string[]).includes(t)) : [],
-      sort: SORTS.some((s) => s.value === v.sort) ? v.sort as Sort : 'manual',
-      priority: PRIORITIES.includes(v.priority as Priority) ? v.priority as Priority : 'any',
-      agent: v.agent === 'claude' || v.agent === 'codex' || v.agent === 'shell' || v.agent === 'none' ? v.agent : 'any',
-    };
+    const raw = JSON.parse(localStorage.getItem(`wanigan.board.${projectId}`) ?? '{}') as { applied?: unknown } | null;
+    return { view: readBoardView(raw), applied: typeof raw?.applied === 'string' ? raw.applied : null };
   } catch {
-    return { filter: '', types: [], sort: 'manual', priority: 'any', agent: 'any' };
+    return { view: readBoardView(null), applied: null };
   }
 }
 
-function writeView(projectId: string, view: BoardView): void {
-  try { localStorage.setItem(`wanigan.board.${projectId}`, JSON.stringify(view)); } catch { /* a convenience only */ }
+function writeView(projectId: string, view: BoardView, applied: string | null): void {
+  try { localStorage.setItem(`wanigan.board.${projectId}`, JSON.stringify({ ...view, applied })); } catch { /* a convenience only */ }
 }
 
 /**
