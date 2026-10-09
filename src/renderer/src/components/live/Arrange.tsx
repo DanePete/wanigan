@@ -13,7 +13,7 @@
 //   saves and Escape puts it back, each step said aloud.
 // - The palette (Add) places an entry by dragging it onto the page, by
 //   choosing it and clicking where it goes, or by naming the place.
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   announce, buildSpec, collectionOf, moveNotice, placesIn, requestText, stepMove, targetsFor,
   type ArrangeDrop, type ArrangeSpec, type LiveInsert, type LiveMove, type LiveMoveSaved, type Step,
@@ -145,8 +145,9 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   }, [saveMove, saveInsert, request]);
 
   // Arm the page with what may be dragged; each drop is handled, then the page is armed again.
-  const spec: ArrangeSpec = buildSpec(trace, parts, layers, placing);
-  const key = JSON.stringify(spec);
+  const spec: ArrangeSpec = useMemo(() => buildSpec(trace, parts, layers, placing), [trace, parts, layers, placing]);
+  // The page is armed again only when what it may drag changed, not on every render.
+  const key = useMemo(() => JSON.stringify(spec), [spec]);
   const specRef = useRef(spec);
   specRef.current = spec;
   useEffect(() => {

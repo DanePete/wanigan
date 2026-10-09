@@ -116,6 +116,11 @@ export function wireLiveInspect(options: {
       painting = false;
       undos = [];
       if (!wc) return;
+      // A new page is not the old page's trace: nothing is checked against it until the new one is read. Undo
+      // tokens stay: a save reloads the page, and its Undo must still work after.
+      wc.on('did-start-navigation', (details) => {
+        if (details.isMainFrame && !details.isSameDocument) held = null;
+      });
       // Escape in the page, while a lens is on, takes the lens away; the page still hears it.
       wc.on('before-input-event', (_e, input) => {
         if (painting && input.type === 'keyDown' && input.key === 'Escape') tell('live:key', 'Escape');
