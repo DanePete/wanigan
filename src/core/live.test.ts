@@ -279,11 +279,34 @@ describe('the Drupal helper, before anything is written', () => {
     assert.equal(site.helper?.kind, 'wordpress');
     assert.match(site.token ?? '', /^[0-9a-f]{48}$/);
     assert.ok(readFileSync(file, 'utf8').includes(`WANIGAN_LIVE_TOKEN = '${site.token}'`));
+    assert.ok(readFileSync(file, 'utf8').includes("WANIGAN_LIVE_SITE_DIR = '';"), 'WordPress is the project’s own folder');
+    assert.deepEqual([site.helper?.version, site.helper?.outdated], [2, false]);
+    // A helper an older Wanigan wrote says this one writes a newer one.
+    t.core.db.prepare('UPDATE live_sites SET helper = ? WHERE project_id = ?').run(JSON.stringify({ kind: 'wordpress', version: 1 }), projectId);
+    assert.equal((await t.owner.call('live.site', { projectId })).helper?.outdated, true);
     assert.ok(readFileSync(join(t.projectDir, '.git', 'info', 'exclude'), 'utf8').split('\n').includes('/wp-content/mu-plugins/wanigan-live.php'));
     const gone = await t.owner.call('live.removeHelper', { projectId });
     assert.equal(gone.helper, null);
     assert.equal(existsSync(file), false);
     assert.ok(!readFileSync(join(t.projectDir, '.git', 'info', 'exclude'), 'utf8').includes('wanigan-live.php'));
+  });
+
+  test('a WordPress in a docroot folder is told where it sits, so its trace names files from the project’s root', async () => {
+    const w = await testCore();
+    try {
+      const id = (await w.owner.call('projects.add', { path: w.projectDir })).id;
+      mkdirSync(join(w.projectDir, '.ddev'), { recursive: true });
+      writeFileSync(join(w.projectDir, '.ddev', 'config.yaml'), 'name: northwind\ntype: wordpress\ndocroot: web\n');
+      mkdirSync(join(w.projectDir, 'web', 'wp-content'), { recursive: true });
+      writeFileSync(join(w.projectDir, 'web', 'wp-config.php'), '<?php');
+      await w.owner.call('live.setSite', { projectId: id, url: 'https://northwind.ddev.site/', platform: 'wordpress' });
+      const plan = (await w.owner.call('live.site', { projectId: id })).helperPlan;
+      assert.equal(plan?.folder, join(w.projectDir, 'web', 'wp-content', 'mu-plugins'));
+      await w.owner.call('live.installHelper', { projectId: id });
+      assert.ok(readFileSync(join(plan?.folder ?? '', 'wanigan-live.php'), 'utf8').includes("WANIGAN_LIVE_SITE_DIR = 'web';"));
+      await w.owner.call('live.removeHelper', { projectId: id });
+      assert.equal(existsSync(join(plan?.folder ?? '', 'wanigan-live.php')), false);
+    } finally { await w.close(); }
   });
 
   test('the exclude line goes into the repository’s own exclude file, once, and comes out again', async () => {

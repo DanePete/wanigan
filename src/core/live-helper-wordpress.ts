@@ -1303,7 +1303,15 @@ final class Wanigan_Live {
 	public static function error($level, $message, $file = '', $line = 0) {
 		$reporting = error_reporting();
 		// An @-suppressed error: PHP 8 leaves only fatal levels on (4437), PHP 7 none.
-		if ($reporting !== 0 && $reporting !== 4437 && self::$collecting) {
+		// _doing_it_wrong() and the _deprecated_*() family trigger_error() what wrong() has already logged, with their
+		// call site.
+		$reported = false;
+		if ($level === E_USER_NOTICE || $level === E_USER_DEPRECATED || $level === E_USER_WARNING) {
+			foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8) as $f) {
+				if (isset($f['function']) && (strpos($f['function'], '_doing_it_wrong') === 0 || strpos($f['function'], '_deprecated_') === 0)) $reported = true;
+			}
+		}
+		if (!$reported && $reporting !== 0 && $reporting !== 4437 && self::$collecting) {
 			$levels = array(E_WARNING => 'warning', E_USER_WARNING => 'warning', E_CORE_WARNING => 'warning', E_COMPILE_WARNING => 'warning', E_NOTICE => 'notice', E_USER_NOTICE => 'notice', E_DEPRECATED => 'info', E_USER_DEPRECATED => 'info', E_RECOVERABLE_ERROR => 'error', E_USER_ERROR => 'error');
 			$lv = isset($levels[$level]) ? $levels[$level] : 'warning';
 			$prefix = ($level === E_DEPRECATED || $level === E_USER_DEPRECATED) ? 'Deprecated: ' : '';
