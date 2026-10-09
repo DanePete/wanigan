@@ -22,6 +22,16 @@
 //   saves a `via: 'schema'` target after the helper validates the value
 //   against the schema it gave; it answers `{ "ok": true, "revision"?: "…" }`
 //   or `{ "ok": false, "error": "…" }`, and checks the user may edit it.
+// - `POST /_wanigan/move` with JSON `{ "trace", "collection", "item", "to":
+//   { "collection", "index" } }` moves one item of a TraceCollection (to
+//   another index, or into a collection listed in its `movesTo`) through the
+//   platform's own API, as the logged-in user. `POST /_wanigan/insert` with
+//   `{ "trace", "collection", "index", "entry" }` inserts a palette entry. Both
+//   refuse with HTTP 409 and `{ "ok": false, "error", "items" }` (the current
+//   order) when the collection changed since the trace, and otherwise answer
+//   `{ "ok": true, "undo": "<token>", "revision"?: "…" }`. `POST /_wanigan/undo`
+//   with `{ "undo": "<token>" }` puts it back, only while nothing else has
+//   changed it since; a helper keeps undo tokens for 10 minutes.
 //
 // Everything past a part's id, kind and label is optional: a helper reports
 // what its platform knows, and nothing it would have to guess. Values shown to
@@ -30,7 +40,7 @@
 export const TRACE_VERSION = 1;
 
 /** Bounds a helper applies before answering, which parseTrace applies again. */
-export const TRACE_LIMITS = { parts: 4000, edits: 4000, hooks: 5000, queries: 2000, assets: 500, logs: 500, chain: 200, variables: 200, preview: 400 } as const;
+export const TRACE_LIMITS = { parts: 4000, edits: 4000, hooks: 5000, queries: 2000, assets: 500, logs: 500, chain: 200, variables: 200, preview: 400, collections: 1000, palette: 1000 } as const;
 
 export type TraceOwner = 'yours' | 'contrib' | 'core' | 'plugin' | 'theme' | 'unknown';
 
@@ -161,6 +171,47 @@ export interface TraceLog {
   source?: TraceSource;
 }
 
+export const COLLECTION_KINDS = ['field-items', 'region-blocks', 'post-blocks', 'layout', 'menu', 'widgets', 'display'] as const;
+export type CollectionKind = (typeof COLLECTION_KINDS)[number];
+
+/**
+ * Parts whose order or place the platform itself can change: a multi-value
+ * field's items, the blocks in a region or a post, a layout region's
+ * components, a menu's links, a display's fields. What the drag-and-drop in the
+ * live view moves; an order written into a template's code is not one.
+ */
+export interface TraceCollection {
+  id: string;
+  kind: CollectionKind;
+  /** "Paragraphs on Article 12", "Sidebar blocks", "Main menu". */
+  label: string;
+  /** The part holding the items, when there is one. */
+  part?: string;
+  /** Part ids of the items, in their current order. */
+  items: string[];
+  /** Other collections an item may move into: other regions, other layout regions. */
+  movesTo?: string[];
+  /** Palette entry ids that can be inserted here. */
+  inserts?: string[];
+  /** What a move saves: content (a new revision when the platform keeps them) or configuration (shared by every page that uses it, and exported to stay in code). */
+  changes: 'content' | 'configuration';
+  revisions?: boolean;
+  /** How many pages a configuration change shows on, when the helper can count them. */
+  reach?: number;
+  /** Why it cannot be reordered here, when it cannot. */
+  why?: string;
+}
+
+/** Something that can be inserted into a collection: a block, a component, a pattern, a field item. */
+export interface PaletteEntry {
+  id: string;
+  kind: 'block' | 'component' | 'pattern' | 'field-item' | 'menu-link';
+  label: string;
+  description?: string;
+  /** The module, plugin or theme that provides it. */
+  by?: string;
+}
+
 export interface LiveTrace {
   version: typeof TRACE_VERSION;
   platform: 'drupal' | 'wordpress';
@@ -178,6 +229,8 @@ export interface LiveTrace {
   queries?: TraceQuery[];
   assets?: TraceAsset[];
   logs?: TraceLog[];
+  collections?: TraceCollection[];
+  palette?: PaletteEntry[];
   /** The lists a bound cut short. */
   truncated?: string[];
 }
@@ -331,6 +384,38 @@ export function parseTrace(raw: unknown): LiveTrace | null {
       const src = source(l.source);
       return { level: l.level as TraceLog['level'], message, ...(src ? { source: src } : {}) };
     }, 'logs', truncated);
+  }
+  const partIds = new Set(parts.map((p) => p.id));
+  if (Array.isArray(raw.palette)) {
+    trace.palette = list(raw.palette, TRACE_LIMITS.palette, (e): PaletteEntry | null => {
+      if (!isObj(e) || !['block', 'component', 'pattern', 'field-item', 'menu-link'].includes(e.kind as string)) return null;
+      const pid = str(e.id, 200), label = str(e.label, 300);
+      if (!pid || !label) return null;
+      const description = str(e.description, 500), by = str(e.by, 200);
+      return { id: pid, kind: e.kind as PaletteEntry['kind'], label, ...(description ? { description } : {}), ...(by ? { by } : {}) };
+    }, 'palette', truncated);
+  }
+  const paletteIds = new Set((trace.palette ?? []).map((e) => e.id));
+  if (Array.isArray(raw.collections)) {
+    const collections = list(raw.collections, TRACE_LIMITS.collections, (c): TraceCollection | null => {
+      if (!isObj(c) || !COLLECTION_KINDS.includes(c.kind as CollectionKind)) return null;
+      const cid = str(c.id, 200), label = str(c.label, 300);
+      if (!cid || !label || (c.changes !== 'content' && c.changes !== 'configuration') || !Array.isArray(c.items)) return null;
+      // Items are parts of this trace; anything else is dropped, never guessed at.
+      const items = c.items.filter((i): i is string => typeof i === 'string' && partIds.has(i)).slice(0, TRACE_LIMITS.parts);
+      const out: TraceCollection = { id: cid, kind: c.kind as CollectionKind, label, items, changes: c.changes };
+      const part = str(c.part, 200); if (part && partIds.has(part)) out.part = part;
+      if (Array.isArray(c.movesTo)) out.movesTo = c.movesTo.filter((m): m is string => typeof m === 'string' && m !== cid).slice(0, 200);
+      if (Array.isArray(c.inserts)) out.inserts = c.inserts.filter((e): e is string => typeof e === 'string' && paletteIds.has(e)).slice(0, TRACE_LIMITS.palette);
+      if (typeof c.revisions === 'boolean') out.revisions = c.revisions;
+      if (num(c.reach) !== undefined) out.reach = num(c.reach);
+      const why = str(c.why, 500); if (why) out.why = why;
+      return out;
+    }, 'collections', truncated);
+    // A move target must be a collection this trace knows.
+    const collectionIds = new Set(collections.map((c) => c.id));
+    for (const c of collections) if (c.movesTo) c.movesTo = c.movesTo.filter((m) => collectionIds.has(m));
+    trace.collections = collections;
   }
   if (truncated.size) trace.truncated = [...truncated];
   return trace;
