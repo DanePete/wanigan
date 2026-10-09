@@ -1246,7 +1246,6 @@
 }
 
 .live-chain-head,
-.live-chain-source,
 .live-query-head,
 .live-asset-head,
 .live-hook-name {
@@ -1261,6 +1260,19 @@
 .live-chain-source .mono,
 .live-hook-name .mono {
   overflow-wrap: anywhere;
+}
+
+/* A path and its copy button stay on one line; the path wraps inside it. */
+.live-chain-source {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.live-chain-source .mono {
+  flex: 1;
+  min-width: 0;
 }
 
 .live-chain-source .btn-icon,
@@ -1654,4 +1666,8 @@
 /* In the Live tab a toast keeps to the side panel: the site's view draws over the stage, and an Undo there could not be reached. */
 body:has(.live-side) .toasts .toast {
   max-width: calc(var(--live-side-w) - 2 * var(--space-4));
+}
+
+.live-stat dd.faint {
+  font-weight: 400;
 }

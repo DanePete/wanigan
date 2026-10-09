@@ -204,6 +204,7 @@ export function liveStub(f) {
   let regions = [];
   let shown = { outline: [], paint: [] };
   let arranging = null;
+  let reflow = 0;
   const toRegions = (w) => {
     const list = layoutAt(w);
     const at = new Map(list.map((p, i) => [p.part, i]));
@@ -248,7 +249,14 @@ export function liveStub(f) {
       setTimeout(tell, 30);
       return true;
     },
-    bounds(b) { bounds = b; if (host) { host.style.left = `${b.x}px`; host.style.top = `${b.y}px`; host.style.width = `${b.width}px`; host.style.height = `${b.height}px`; } },
+    // The page reflows to a new width, as a site would, and says so: the window scans it again.
+    bounds(b) {
+      const wider = !bounds || b.width !== bounds.width;
+      bounds = b;
+      if (!host) return;
+      host.style.left = `${b.x}px`; host.style.top = `${b.y}px`; host.style.width = `${b.width}px`; host.style.height = `${b.height}px`;
+      if (wider) { regions = toRegions(b.width); draw(); clearTimeout(reflow); reflow = setTimeout(tell, 60); }
+    },
     async hide() { host?.remove(); host = null; },
     async cover(covered) { if (host) host.style.visibility = covered ? 'hidden' : 'visible'; return covered && bounds ? wireAt(bounds.width, bounds.height) : null; },
     async reload() { setTimeout(tell, 30); },

@@ -48,20 +48,26 @@ export function RequestTab({ answer, site, project, parts, onPoint }: {
 }
 
 function Totals({ trace: t }: { trace: LiveTrace }) {
-  const stats: [string, string][] = [
-    ['Time', ms(t.total.ms)],
-    ['Queries', t.total.queries !== undefined ? `${t.total.queries}${t.total.queryMs !== undefined ? ` · ${ms(t.total.queryMs)}` : ''}` : '—'],
-    ['Memory', t.total.memoryBytes !== undefined ? bytes(t.total.memoryBytes) : '—'],
-    ['Hooks', t.total.hooks !== undefined ? String(t.total.hooks) : String(t.hooks?.length ?? '—')],
+  const stats: [string, string, string | null][] = [
+    ['Time', ms(t.total.ms), null],
+    ['Queries', t.total.queries !== undefined ? String(t.total.queries) : '—', t.total.queryMs !== undefined ? ms(t.total.queryMs) : null],
+    ['Memory', t.total.memoryBytes !== undefined ? bytes(t.total.memoryBytes) : '—', null],
+    ['Hooks', t.total.hooks !== undefined ? String(t.total.hooks) : String(t.hooks?.length ?? '—'), null],
   ];
   return (
     <div className="live-totals">
       <dl className="live-stats">
-        {stats.map(([k, v]) => <div key={k} className="live-stat"><dt className="faint small">{k}</dt><dd>{v}</dd></div>)}
+        {stats.map(([k, v, sub]) => (
+          <div key={k} className="live-stat">
+            <dt className="faint small">{k}</dt>
+            <dd>{v}</dd>
+            {sub ? <dd className="faint small">{sub}</dd> : null}
+          </div>
+        ))}
       </dl>
       <p className="faint small">
-        {t.platform === 'drupal' ? 'Drupal' : 'WordPress'} rendered <span className="mono">{t.url}</span> {t.at ? ago(t.at) : ''}
-        {t.user ? <> for {t.user.name}{t.user.roles.length ? ` (${t.user.roles.join(', ')})` : ''}</> : null}: {t.parts.length} parts. Measured in that render, on this Mac.
+        <span className="mono">{t.url}</span>, rendered by {t.platform === 'drupal' ? 'Drupal' : 'WordPress'}{t.at ? ` ${ago(t.at)}` : ''}
+        {t.user ? ` for ${t.user.name}${t.user.roles.length ? ` (${t.user.roles.join(', ')})` : ''}` : ''}, in {t.parts.length} parts. Measured in that render, on this Mac.
       </p>
     </div>
   );

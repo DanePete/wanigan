@@ -68,16 +68,17 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   const label = (part: string): string => parts.parts.get(part)?.label ?? part;
   const coll = (id: string): TraceCollection | undefined => trace?.collections?.find((c) => c.id === id);
 
-  const undo = useCallback(async (token: string, what: string): Promise<void> => {
+  /** `back` says what Undo did: "Search is back where it was." */
+  const undo = useCallback(async (token: string, back: string): Promise<void> => {
     const r = await live?.undo(token);
-    if (r?.ok) { toast(`Put ${what} back.`); say(`Put ${what} back.`); } else toast(r?.error ?? 'It could not be put back.', 'error');
+    if (r?.ok) { toast(back); say(back); } else toast(r?.error ?? 'It could not be put back.', 'error');
   }, [live, toast, say]);
 
-  const done = useCallback((r: LiveMoveSaved, what: string, saved: string): void => {
+  const done = useCallback((r: LiveMoveSaved, what: string, saved: string, name: string, back: string): void => {
     if (r.ok) {
-      onSaved(what);
+      onSaved(name);
       const token = r.undo;
-      toast(`${what}: ${saved}`, 'info', token ? { action: { label: 'Undo', run: () => void undo(token, what) } } : undefined);
+      toast(`${what}. ${saved}`, 'info', token ? { action: { label: 'Undo', run: () => void undo(token, back) } } : undefined);
       say(`${what}: ${saved}`);
       return;
     }
@@ -92,13 +93,14 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     const to = coll(move.to.collection);
     if (!live || !from || !to) return;
     const notice = moveNotice(to.changes === 'configuration' ? to : from, cms);
-    const what = `${label(move.item)}, ${move.to.index + 1} of ${placesIn(to, move.item)} in ${to.label}`;
-    if (notice.confirm && !(await ask(`Move ${label(move.item)}?`, notice.confirm, 'Move it'))) {
+    const name = label(move.item);
+    const where = `${move.to.index + 1} of ${placesIn(to, move.item)} in ${to.label}`;
+    if (notice.confirm && !(await ask(`Move ${name} to ${where}?`, notice.confirm, 'Move it'))) {
       await live.unpreview();
-      say(`Not moved. ${label(move.item)} stays where it was.`);
+      say(`Not moved. ${name} stays where it was.`);
       return;
     }
-    done(await live.move(move), `Moved ${what}`, notice.saved);
+    done(await live.move(move), `Moved ${name} to ${where}`, notice.saved, name, `${name} is back where it was.`);
   }, [live, cms, done, say]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveInsert = useCallback(async (insert: LiveInsert): Promise<void> => {
@@ -107,7 +109,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
     if (!live || !into || !entry) return;
     const notice = moveNotice(into, cms);
     if (notice.confirm && !(await ask(`Add ${entry.label}?`, notice.confirm.replace(/^This moves the block/, 'This adds the block').replace(/^This moves the widget/, 'This adds the widget'), 'Add it'))) return;
-    done(await live.insert(insert), `Added ${entry.label}, ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved);
+    done(await live.insert(insert), `Added ${entry.label} at ${insert.index + 1} of ${into.items.length + 1} in ${into.label}`, notice.saved, entry.label, `${entry.label} is taken out again.`);
   }, [live, trace, cms, done]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** A part whose order is in a template: pictures of the order now and the order wanted, as a note for an agent. */
@@ -188,7 +190,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   }, [live, parts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const describe = useCallback((p: Pending): string => {
-    if (p.kind === 'loose') return `${p.label}, ${p.at + 1} of ${p.group.length}: its order is in the template, so Enter makes a note for an agent`;
+    if (p.kind === 'loose') return `${p.label}, ${p.at + 1} of ${p.group.length}, in the template’s order`;
     const target = coll(p.at.collection);
     return target ? announce(p.label, p.at.index, placesIn(target, p.item), target.label) : p.label;
   }, [trace]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -308,8 +310,9 @@ export function MoveSection({ arrange, region, trace }: { arrange: ReturnType<ty
   const home = p.kind === 'item' && trace ? trace.collections?.find((c) => c.id === p.home.collection) ?? null : null;
   const others = home && trace ? targetsFor(trace, home.id).filter((c) => c.id !== (p.kind === 'item' ? p.at.collection : '')) : [];
   const moving = !!arrange.pending;
+  // Open where the site itself can move it; where the order is in a template, closed until asked.
   return (
-    <Disclosure title="Move" open summary={p.kind === 'item' && home ? `${p.at.index + 1} of ${placesIn(trace?.collections?.find((c) => c.id === p.at.collection) ?? home, p.item)}` : 'a note for an agent'}>
+    <Disclosure title="Move" open={p.kind === 'item' || moving} summary={p.kind === 'item' && home ? `${p.at.index + 1} of ${placesIn(trace?.collections?.find((c) => c.id === p.at.collection) ?? home, p.item)}` : 'by a note for an agent'}>
       <p className="small">{arrange.describe(p)}.</p>
       {p.kind === 'item' && home ? (
         <p className="faint small">{home.changes === 'configuration' ? 'Its order is site configuration: moving it says what it changes before it saves.' : home.revisions === false ? 'Saved as content.' : 'Saved as content, as a new revision.'}</p>
@@ -352,12 +355,6 @@ export function PaletteTab({ arrange, trace }: { arrange: ReturnType<typeof useA
         <input type="search" placeholder="Filter" value={query} onChange={(e) => setQuery(e.target.value)} />
       </label>
       <p className="faint small">Drag one onto the page, or choose Place and click where it goes. Escape stops.</p>
-      {arrange.placing ? (
-        <p className="live-note small" role="status">
-          Placing {arrange.placing.label}: the page shows where it would go.
-          <Button size="s" tone="quiet" onClick={() => arrange.setPlacing(null)}>Stop</Button>
-        </p>
-      ) : null}
       <ul className="live-palette-list">
         {shown.map((p) => {
           const into = takes(p.id);

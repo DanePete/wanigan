@@ -68,7 +68,12 @@ export function Inspector({ project, platform, selection, regions, components, d
     return [now, ...ancestors(regions, now.index)];
   }, [region, regions]);
   const crumbs = chain.slice(1).filter((r) => !nameOf(r).wrapper).reverse();
-  const name = region ? nameOf(region, region.component ? components.get(region.component)?.name ?? null : null) : null;
+  /** What a region is called, by the helper's label when the trace has one. */
+  const called = (r: LiveRegion) => {
+    const p = parts.byRegion.get(r.index);
+    return nameOf(r, r.component ? components.get(r.component)?.name ?? null : null, p ? { label: p.label, kind: p.kind } : null);
+  };
+  const name = region ? called(region) : null;
   const [words, setWords] = useState<{ before: string; after: string } | null>(null);
   /** The template the old words were found in, for the note that takes them to an agent. */
   const [wordsFile, setWordsFile] = useState<string | null>(null);
@@ -101,7 +106,7 @@ export function Inspector({ project, platform, selection, regions, components, d
         <div className="live-inspector-title">
           {name ? <Icon name={KIND_ICON[name.icon]} size={16} /> : <Icon name="pick" size={16} />}
           <div>
-            <h2 className="live-side-title" tabIndex={-1}>{traced && !traced.inherited ? traced.part.label : name?.title ?? (pick ? `<${pick.tag}>` : 'Part')}</h2>
+            <h2 className="live-side-title" tabIndex={-1}>{name?.title ?? (pick ? `<${pick.tag}>` : 'Part')}</h2>
             {name?.kind ? <p className="faint small">{name.kind}</p> : null}
           </div>
         </div>
@@ -111,7 +116,7 @@ export function Inspector({ project, platform, selection, regions, components, d
       {crumbs.length ? (
         <nav className="live-crumbs small" aria-label="Where it sits">
           {crumbs.map((r) => (
-            <button key={r.index} type="button" className="live-crumb" onClick={() => onSelect(r)}>{nameOf(r, r.component ? components.get(r.component)?.name ?? null : null).title}</button>
+            <button key={r.index} type="button" className="live-crumb" onClick={() => onSelect(r)}>{called(r).title}</button>
           ))}
           <span className="live-crumb here" aria-current="true">{name?.title ?? pick?.tag}</span>
         </nav>
@@ -125,8 +130,6 @@ export function Inspector({ project, platform, selection, regions, components, d
       ) : null}
 
       {region ? <Alike region={region} regions={regions} /> : null}
-
-      {now ? <MoveSection arrange={arrange} region={now} trace={trace} /> : null}
 
       {region ? (
         <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme}>
@@ -144,13 +147,14 @@ export function Inspector({ project, platform, selection, regions, components, d
       {traced && trace ? (
         <div className="live-trace-sections">
           <TraceEdits part={traced.part} edits={parts.edits} onEdit={edit} />
+          {now ? <MoveSection arrange={arrange} region={now} trace={trace} /> : null}
           <TraceData part={traced.part} edits={parts.edits} onEdit={edit} />
           <TraceCache part={traced.part} />
           <TraceCost part={traced.part} trace={trace} />
           <TraceHistory part={traced.part} />
           <TraceAccess part={traced.part} user={trace.user} />
         </div>
-      ) : null}
+      ) : now ? <div className="live-trace-sections"><MoveSection arrange={arrange} region={now} trace={trace} /></div> : null}
 
       {admin || content || alone.length ? (
         <section className="live-section" aria-label="Change it in the site">

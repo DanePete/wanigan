@@ -567,7 +567,8 @@ export function livePage(): void {
       root.appendChild(el('div', `position:absolute;${css}background:${DRAG};border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.9);`));
     }
     if (d) {
-      const what = d.from.kind === 'loose' ? 'A note for an agent: its order is in the template' : l?.kind === 'collection' ? `${l.c.label}, ${l.index + 1}` : 'Not here';
+      const of = (c: SpecCollection): number => c.items.filter((i) => d.from.kind !== 'item' || i.part !== d.from.part).length + 1;
+      const what = d.from.kind === 'loose' ? 'A note for an agent: its order is in the template' : l?.kind === 'collection' ? `${l.index + 1} of ${of(l.c)} in ${l.c.label}` : 'Not here';
       const ghost = el('div', `position:absolute;left:${d.pointer.x + 14}px;top:${d.pointer.y + 10}px;max-width:280px;padding:6px 10px;border-radius:7px;`
         + `background:rgba(15,20,25,0.92);color:#fff;font:500 12px/16px -apple-system,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,0.3);`);
       ghost.appendChild(el('div', 'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', d.label));

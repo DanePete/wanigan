@@ -233,6 +233,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const root = site.servedPath ?? project.path;
   const components = useMemo(() => new Map((siteParts.data?.components ?? []).map((c) => [c.id, c])), [siteParts.data]);
   const componentsRef = useRef(components);
+  const partsRef = useRef(partIndex([], null));
   componentsRef.current = components;
   const scanned = useRef<LiveRegion[]>([]);
   const selected = useRef<Selection | null>(null);
@@ -242,6 +243,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [trace, setTrace] = useState<LiveTraceAnswer | null>(null);
   const traceData = trace?.state === 'ok' ? trace.trace : null;
   const parts = useMemo(() => partIndex(regions, traceData), [regions, traceData]);
+  partsRef.current = parts;
   const partName = useCallback((id: string) => { const p = parts.parts.get(id); return p ? { label: p.label, kind: p.kind } : null; }, [parts]);
   const layers = useMemo(() => layersOf(regions, { componentName: (id) => components.get(id)?.name ?? null, partName }), [regions, components, partName]);
   const [lens, setLens] = useState<LensId>('structure');
@@ -291,9 +293,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     return !!c && inFolder(c.dir, path);
   }, []);
 
-  /** What a part is called on the page's outline: its name, and the file that made it. */
+  /** What a part is called on the page's outline: its name (the helper's, when the trace has one), and the file that made it. */
   const labelOf = useCallback((r: LiveRegion): string => {
-    const name = nameOf(r, r.component ? componentsRef.current.get(r.component)?.name ?? null : null).title;
+    const part = partsRef.current.byRegion.get(r.index);
+    const name = nameOf(r, r.component ? componentsRef.current.get(r.component)?.name ?? null : null, part ? { label: part.label, kind: part.kind } : null).title;
     return r.file ? `${name} · ${fileName(r.file)}` : r.component ? `${name} · ${r.component}` : name;
   }, []);
 
