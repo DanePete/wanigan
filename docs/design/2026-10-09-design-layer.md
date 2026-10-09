@@ -330,15 +330,28 @@ token for the site) instead of trying values on the page. A style edit's
 "Make it real" goes to an agent as intent, as before; a text edit's saves
 through the helper and then verifies.
 
-## Still to prove
+## Proven, and what it changed
 
-The research settled the approach; these need a probe before they are relied on:
+Probed on 9 October 2026 in Wanigan's own Electron against made-up fixtures
+and the two demo sites; the measurements are in
+`docs/research/2026-10-09-design-layer-probes.md`.
 
-- Whether DevTools virtual time works in Electron (to freeze clocks and timers).
-- Whether full-page capture through Electron's debugger is reliable at every
-  width, and whether GPU and software rendering differ on macOS.
-- Where Chromium puts a DevTools-edited rule in the cascade.
-- Whether Sass maps a declaration written by a mixin to the mixin or to its
-  `@include`.
-- How each CMS orders its stylesheets on a real page, which decides where a
-  native rule lands.
+- **Freezing a page.** DevTools virtual time does not freeze this Electron
+  (animation frames and CSS animations run on, and two of its modes stop the
+  page loading). An injected clock, with every animation finished or
+  cancelled, gives identical pixels across loads.
+- **Full-page capture.** Exact sizes at every width, one device pixel per CSS
+  pixel through the debugger, once the hidden window has a page (the first
+  Emulation command on an empty one crashes the app). With GPU rendering, a
+  capture taller than 16,384 px repeats the page from the top: pages are
+  taken in clips of at most 8,192 px. Scrollbars are hidden while capturing,
+  and both renders of a comparison come from the same process and mode.
+- **Where an edited rule lands.** A rule edited through the protocol keeps
+  its place in the cascade (order, specificity, layer, media). An injected
+  author sheet ranks before every page sheet; the preview sheet is therefore
+  injected at user origin, where its `!important` wins.
+- **Sass.** A declaration written by a mixin maps to the mixin's body, not
+  its `@include`; Chromium does not fetch maps, so Wanigan reads them.
+- **Stylesheet order.** On both demos every sheet is in the head, the
+  theme's after core's, and none carries a source map (Drupal's aggregation
+  strips them).
