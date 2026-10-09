@@ -38,6 +38,13 @@ const live: LiveBridge = {
     ipcRenderer.on('live:state', handler);
     return () => { ipcRenderer.off('live:state', handler); };
   },
+  // The Go to launcher (src/main/live-find.ts).
+  find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
+  findHere: (projectId) => ipcRenderer.invoke('live:findHere', projectId) as ReturnType<LiveBridge['findHere']>,
+  awaitGoto: () => ipcRenderer.invoke('live:awaitGoto') as ReturnType<LiveBridge['awaitGoto']>,
+  gotoFocus: () => ipcRenderer.invoke('live:gotoFocus') as Promise<boolean>,
+  gotoReturn: () => ipcRenderer.invoke('live:gotoReturn') as Promise<void>,
+  openInBrowser: (projectId, path) => ipcRenderer.invoke('live:openInBrowser', projectId, path) as Promise<boolean>,
 };
 
 const bridge: WaniganBridge = {

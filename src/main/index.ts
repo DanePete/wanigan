@@ -10,6 +10,7 @@ import { corePaths } from '../core/paths.ts';
 import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
+import { wireLiveFind } from './live-find.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
@@ -128,6 +129,12 @@ function wireBridge(): void {
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;
   const shots = wireLiveShots({ client: () => core.get(), settings: () => appSettings?.store.get() ?? null, shoot: (...a) => view.shoot(...a) });
+  // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
+  wireLiveFind({
+    ipc: ipcMain, openExternal: (url) => shell.openExternal(url), window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true, settings: () => appSettings?.store.get() ?? null,
+    client: () => core.get(), current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback),
+    sessionFor: (id, url) => view.sessionFor(id, url),
+  });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };
     if (typeof method !== 'string' || !OWNER_METHODS.has(method)) {

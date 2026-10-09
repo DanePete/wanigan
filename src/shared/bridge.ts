@@ -1,6 +1,7 @@
 // What the renderer can reach: `window.wanigan`. In the app it is the preload
 // bridge; in the browser test harness it is the same shape over HTTP.
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
+import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -99,6 +100,21 @@ export interface LiveBridge {
   /** Whether this build carries the page script (regions, outlines, picking). */
   hasScript(): Promise<boolean>;
   onState(listener: (state: LiveViewState) => void): () => void;
+
+  /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
+
+  /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */
+  find(projectId: string, query?: string, options?: { refresh?: boolean }): Promise<LiveFindAnswer>;
+  /** What the page shown is, when the view shows this project's site; null otherwise. */
+  findHere(projectId: string): Promise<LiveHere | null>;
+  /** Wait for Shift+Space on the page, while nothing there is typed into: 'goto', or null when a newer wait or a new page replaced it. */
+  awaitGoto(): Promise<'goto' | null>;
+  /** The launcher takes the keyboard; true when the view's page had it. */
+  gotoFocus(): Promise<boolean>;
+  /** Give the keyboard back to the view's page. */
+  gotoReturn(): Promise<void>;
+  /** Open a path of a project's site in the default browser (never with the helper's token). */
+  openInBrowser(projectId: string, path: string): Promise<boolean>;
 }
 
 export interface WaniganBridge {

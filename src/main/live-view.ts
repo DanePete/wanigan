@@ -9,7 +9,7 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type Session } from 'electron';
+import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 
@@ -30,6 +30,25 @@ export interface LiveViewWiring {
    * trust, the helper's token). Null when the page did not load or drew nothing.
    */
   shoot(projectId: string, url: string, token: string | null): Promise<{ data: string; width: number; height: number } | null>;
+  /** What the view shows now, for what is built on it (live-find.ts); null when there is no view. */
+  current(): LiveCurrent | null;
+  /** Run code in the page script's isolated world (putting the script in first); `fallback` when it cannot. */
+  run<T>(code: string, fallback: T): Promise<T>;
+  /**
+   * A project's view session, locked down as the view's own (its certificate
+   * trust for the site's host), for asking the site's helper as the user
+   * logged in there when no view of it is shown. Null for an address that is not one.
+   */
+  sessionFor(projectId: string, url: string): Session | null;
+}
+
+/** The live view as it is now: its page, the site it may show, and the helper's token for that site. */
+export interface LiveCurrent {
+  projectId: string;
+  webContents: WebContents;
+  /** The site's address, as the owner set it: what the view may stay on. */
+  base: string;
+  token: string | null;
 }
 
 /** Screenshots are a desktop page: this many CSS pixels wide, and as tall as the page up to a limit. */
@@ -447,5 +466,18 @@ export function wireLiveView(options: {
     }
   };
 
-  return { release: drop, shoot };
+  const current = (): LiveCurrent | null => (view && !view.webContents.isDestroyed() && projectId && base
+    ? { projectId, webContents: view.webContents, base, token: tokens.get(projectId) ?? null } : null);
+
+  const sessionFor = (id: string, rawUrl: string): Session | null => {
+    const url = liveUrl(rawUrl);
+    if (!url) return null;
+    const partition = partitionFor(id);
+    const ses = session.fromPartition(partition);
+    prepare(ses, partition, id);
+    if (!hosts.has(id)) hosts.set(id, new URL(url).hostname);
+    return ses;
+  };
+
+  return { release: drop, shoot, current, run, sessionFor };
 }
