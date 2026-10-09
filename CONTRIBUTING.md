@@ -26,6 +26,14 @@ older cores that cannot confirm this also require a decision.
 
 ## The rules that matter here
 
+**Never expose a real site.** Sites people run (clients' or your own, anything
+but Wanigan and its demo) never appear in the repository, a commit message, a
+pull request, a release, the website or a post: no screenshots, names, paths,
+hostnames, IDs or page text. Test against one locally if you need to, but
+fixtures are made up (acme, northwind, example.test), and screenshots show the
+demo or are left out. Before a push, grep the diff for real names and open every
+image in it.
+
 **Tests never touch your real machine.** `testCore()` in
 `src/core/test-support.ts` gives each test a real core in a temporary folder,
 with a fake home, stand-in `claude`, `codex` and shell agents, and the real hook
