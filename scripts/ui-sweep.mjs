@@ -2102,6 +2102,7 @@ async function liveSiteStates() {
           onState: (l) => { listeners.add(l); return () => listeners.delete(l); },
         };
       }, { pages: { [acmeProject.id]: refused('acme.ddev.site'), [nwProject.id]: refused('northwind.ddev.site') } });
+      await context.addInitScript(LIVE_DEFAULTS);
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
