@@ -10,6 +10,7 @@ import { CoreError } from '../shared/protocol.ts';
 import { Accounts, type Prober, type UsageReader } from './accounts.ts';
 import { AgentFolders, type AgentFolderLimits } from './agent-folders.ts';
 import { Board } from './board.ts';
+import { BoardViews } from './board-views.ts';
 import type { BriefingLimits } from './briefing.ts';
 import { configReadLimits, type ConfigReadLimits } from './config-read.ts';
 import { Checkpoints } from './checkpoints.ts';
@@ -189,6 +190,7 @@ export class Core {
         skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts),
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
         attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live,
+        boardViews: new BoardViews(ctx, this.board),
       });
       this.server = new CoreServer({
         socketPath: this.paths.socket,

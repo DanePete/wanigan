@@ -16,6 +16,7 @@ import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } fro
 import type { ConversationUsage } from './tokens.ts';
 import type { SaidSearch } from './said.ts';
 import type { Attachment, AttachTo } from './attachments.ts';
+import type { BoardView, SavedBoardView } from './board-views.ts';
 import type {
   BranchPullRequest, Branches, CommitDetail, ConflictFile, DiffArea, GitLog, GitStatus, LastCommit, MergePreview, MergeResult, PullResult, PushPlan,
   StashEntry, StashFile,
@@ -375,6 +376,18 @@ export interface Methods {
   'decisions.update': { params: { id: string; title?: string; body?: string }; result: Decision };
   'decisions.remove': { params: { id: string }; result: { ok: true } };
 
+  /** The views of a project's board the owner saved by name, oldest first (the order of their keys, 1–9). */
+  'boardViews.list': { params: { projectId: string }; result: SavedBoardView[] };
+  /**
+   * Save the board's view under a name. The name is one line, at most 60
+   * characters, and unique on the board in any case; the view names only card
+   * types, orders, priorities and agents the board knows. A board keeps at most 30.
+   */
+  'boardViews.save': { params: { projectId: string; name: string; view: BoardView }; result: SavedBoardView };
+  /** Rename a saved view, or make it show `view` (the board as it is now): at least one of the two. */
+  'boardViews.update': { params: { id: string; name?: string; view?: BoardView }; result: SavedBoardView };
+  'boardViews.remove': { params: { id: string }; result: { ok: true } };
+
   'agent.status': { params: Record<string, never>; result: AgentStatus };
 
   /** Jev, TypeSafe's decision model. The key goes in and is never sent back out. */
@@ -578,6 +591,10 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'decisions.add': ['owner'],
   'decisions.update': ['owner'],
   'decisions.remove': ['owner'],
+  'boardViews.list': ['owner'],
+  'boardViews.save': ['owner'],
+  'boardViews.update': ['owner'],
+  'boardViews.remove': ['owner'],
   'agent.status': ['session'],
   'jev.status': ['owner'],
   'jev.setKey': ['owner'],
@@ -614,6 +631,8 @@ export interface Events {
   'sessions': { projectId: string; sessionId: string };
   'needs': Record<string, never>;
   'decisions': { projectId: string };
+  /** A project's saved board views changed: one was saved, renamed, updated or deleted. */
+  'boardViews': { projectId: string };
   /** A Talk to Wanigan conversation changed (an answer arrived); projectId null is every project's. */
   'chat': { projectId: string | null };
   /**
