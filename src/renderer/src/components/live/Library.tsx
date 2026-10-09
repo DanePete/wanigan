@@ -288,8 +288,8 @@ function EntryRow({ entry, place, quiet, platform, thumb, arrange, watch, onChoo
         </span>
       </button>
       {place.ok ? (
-        <Button size="s" icon="plus" aria-pressed={placing} aria-label={`Place ${entry.label}: click where it goes on the page`}
-          onClick={() => arrange.setPlacing(placing ? null : place.palette)}>Place</Button>
+        <Button size="s" tone={placing ? 'primary' : 'plain'} icon="plus" aria-pressed={placing} aria-label={`Place ${entry.label}: click where it goes on the page`}
+          onClick={() => arrange.setPlacing(placing ? null : place.palette)}>{placing ? 'Placing…' : 'Place'}</Button>
       ) : null}
     </li>
   );
@@ -505,6 +505,8 @@ function Files({ files, project, site }: { files: string[]; project: ProjectSumm
       .then((found) => { if (current) setHere(new Map(found)); });
     return () => { current = false; };
   }, [files, root]);
+  // Said once when none of them is here (the site serves another checkout, or its root is not the project's).
+  const allAway = files.length > 1 && files.every((f) => here.has(f) && !here.get(f));
   return (
     <ul className="live-library-files">
       {files.map((f) => (
@@ -516,9 +518,10 @@ function Files({ files, project, site }: { files: string[]; project: ProjectSumm
             ) : <span className="lib-tag mono">{f}</span>}
             <CopyButton text={f} label={`Copy ${f.split('/').pop()}’s path`} what="the path" />
           </span>
-          {here.has(f) && !here.get(f) ? <span className="faint small">Not in the folder this project’s site serves, so it cannot open here.</span> : null}
+          {!allAway && here.has(f) && !here.get(f) ? <span className="faint small">Not in the folder this project’s site serves, so it cannot open here.</span> : null}
         </li>
       ))}
+      {allAway ? <li className="faint small">None of these is in the folder this project’s site serves, so they cannot open here.</li> : null}
     </ul>
   );
 }
