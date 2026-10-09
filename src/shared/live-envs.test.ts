@@ -181,6 +181,16 @@ test('candidates in tab order, one per address, without the local site or what i
   assert.deepEqual(rankCandidates([c('Live', 'https://www.acme.example/')], { hosts: ['www.acme.example'], urls: [] }), [], 'the local site’s own host is not hosted');
 });
 
+test('the site’s own domain comes before the address its host gives it', () => {
+  const c = (name: string, url: string, file = 'x') => ({ name, url, file, why: 'test' });
+  // pantheon.yml gives live-acme.pantheonsite.io (often frozen, or redirecting); Stage File Proxy names the real domain.
+  const ranked = rankCandidates([
+    c('Dev', 'https://dev-acme.pantheonsite.io/', 'pantheon.yml'), c('Live', 'https://live-acme.pantheonsite.io/', 'pantheon.yml'),
+    c('Live', 'https://www.acme.example/', 'web/sites/default/settings.local.php'),
+  ], { hosts: [], urls: [] });
+  assert.deepEqual(ranked.map((x) => x.url), ['https://dev-acme.pantheonsite.io/', 'https://www.acme.example/', 'https://live-acme.pantheonsite.io/']);
+});
+
 test('an address is this Mac’s own only when it is loopback', () => {
   for (const a of ['127.0.0.1', '127.1.2.3', '::1', '[::1]', '::ffff:127.0.0.1']) assert.equal(loopbackAddress(a), true, a);
   for (const a of ['10.0.0.5', '192.168.1.20', '0.0.0.0', '::', '128.0.0.1', '127.0.0.1.example.com', '::ffff:10.0.0.1', '']) assert.equal(loopbackAddress(a), false, a);

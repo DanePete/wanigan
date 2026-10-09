@@ -374,5 +374,16 @@ export function rankCandidates(found: readonly LiveEnvCandidate[], skip: { hosts
     seen.add(c.url);
     out.push(c);
   }
-  return out.map((c, i) => ({ c, i })).sort((x, y) => envRank(x.c.name) - envRank(y.c.name) || x.i - y.i).map((x) => x.c).slice(0, 24);
+  // One environment named twice (Live from pantheon.yml, and Live from Stage File Proxy's origin): the site's own
+  // domain first. Pantheon's live-….pantheonsite.io is often frozen or redirects; the domain the project names is the
+  // site. The two trade places among their own positions, so every other candidate keeps its order.
+  const hostGiven = (c: LiveEnvCandidate): number => (/\.pantheonsite\.io$/i.test(new URL(c.url).hostname) ? 1 : 0);
+  const slot = new Map<LiveEnvCandidate, number>();
+  const byName = new Map<string, number[]>();
+  out.forEach((c, i) => byName.set(c.name.toLowerCase(), [...(byName.get(c.name.toLowerCase()) ?? []), i]));
+  for (const indexes of byName.values()) {
+    const members = indexes.map((i) => out[i] as LiveEnvCandidate).sort((x, y) => hostGiven(x) - hostGiven(y));
+    members.forEach((c, k) => slot.set(c, indexes[k] as number));
+  }
+  return [...out].sort((x, y) => envRank(x.name) - envRank(y.name) || (slot.get(x) ?? 0) - (slot.get(y) ?? 0)).slice(0, 24);
 }
