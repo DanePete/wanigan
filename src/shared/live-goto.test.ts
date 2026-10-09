@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { FindItem } from './live-find.ts';
 import {
   HALF_LIFE_MS, MAX_VISITS, addressOf, directJump, editDistance, frecency, frecencyBoost, groupRanked, guessKind, hereItem,
-  idsFromClasses, idsFromPath, kindGroup, matchItem, prepare, rank, readVisits, remember, withoutNoise, type Visit,
+  idsFromClasses, idsFromPath, kindGroup, matchItem, pageTitle, prepare, rank, readVisits, remember, withoutNoise, type Visit,
 } from './live-goto.ts';
 
 // A made-up site: Acme's pages, admin and structure, as a helper would list them.
@@ -71,6 +71,14 @@ test('once something matches well, scattered letters elsewhere are left out', ()
   // With nothing good, the weak are all there is, and are kept.
   const weak = rank(ACME, 'cnfg', opts());
   assert.equal(withoutNoise(weak).length, weak.length);
+});
+
+test('an equal match goes to what changed last', () => {
+  const items: FindItem[] = [
+    { id: 'node:1', kind: 'content', label: 'Spring sale', url: '/a', changed: 1_000 },
+    { id: 'node:2', kind: 'content', label: 'Spring open house', url: '/b', changed: 9_000 },
+  ];
+  assert.deepEqual(rank(items, 'spring', { prepared: prepare, visits: new Map(), now: 10_000 }).map((r) => r.item.id), ['node:2', 'node:1']);
 });
 
 test('trail and path match too, below the label', () => {
@@ -169,4 +177,12 @@ test('a path without a kind is admin under the admin, a page elsewhere; addresse
   assert.equal(addressOf('https://acme.example.test', '/about'), 'https://acme.example.test/about');
   assert.equal(addressOf('https://acme.example.test', '//elsewhere.example'), null);
   assert.equal(addressOf(null, '/about'), null);
+});
+
+test('a page’s title is read without the site name after it', () => {
+  assert.equal(pageTitle('News | Acme'), 'News');
+  assert.equal(pageTitle('Spring open house — Acme Corporation'), 'Spring open house');
+  assert.equal(pageTitle('Q3 results – Acme'), 'Q3 results');
+  assert.equal(pageTitle('Re-imagining widgets - Acme'), 'Re-imagining widgets - Acme', 'a hyphen is part of too many titles');
+  assert.equal(pageTitle('Home'), 'Home');
 });

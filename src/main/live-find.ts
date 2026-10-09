@@ -14,7 +14,7 @@
 //   (`live.site`), never taken from the window.
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Session } from 'electron';
 import { FIND_LIMIT, parseFind, samePath, type FindResult } from '../shared/live-find.ts';
-import { idsFromClasses, idsFromPath, type KnownPage, type LiveFindAnswer, type LiveHere } from '../shared/live-goto.ts';
+import { idsFromClasses, idsFromPath, pageTitle, type KnownPage, type LiveFindAnswer, type LiveHere } from '../shared/live-goto.ts';
 import { sameSite, type LivePlatform, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { liveFor, type AppSettings } from '../shared/settings.ts';
@@ -122,7 +122,7 @@ export function wireLiveFind(options: {
     };
     try {
       const entries = cur.webContents.navigationHistory.getAllEntries();
-      for (const e of [...entries].reverse().slice(0, MAX_KNOWN)) add(pathOf(base, e.url), e.title, 'history');
+      for (const e of [...entries].reverse().slice(0, MAX_KNOWN)) add(pathOf(base, e.url), pageTitle(e.title), 'history');
     } catch { /* no history to read */ }
     if (links) {
       const found = await options.run<unknown>('window.__wl && window.__wl.gotoLinks ? window.__wl.gotoLinks() : []', []);

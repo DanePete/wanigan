@@ -449,7 +449,8 @@ const KIND_ORDER: readonly FindKind[] = ['content', 'admin', 'structure', 'setti
 /**
  * Destinations that match a query, best first: the match (label above the
  * words it goes by, word starts and acronyms above letters in the middle), then
- * how often and how lately each was chosen. Ties go to the shorter label.
+ * how often and how lately each was chosen. Ties go to what changed last, then
+ * to the shorter label.
  */
 export function rank<T extends FindItem>(items: readonly T[], query: string, opts: {
   prepared: (item: T) => Prepared;
@@ -465,7 +466,7 @@ export function rank<T extends FindItem>(items: readonly T[], query: string, opt
     const v = opts.visits.get(item.id) ?? opts.visits.get(`path:${item.url}`);
     out.push({ item, match, score: match.quality + (v ? frecencyBoost(frecency(v, opts.now)) : 0) });
   }
-  return out.sort((a, b) => b.score - a.score || a.item.label.length - b.item.label.length
+  return out.sort((a, b) => b.score - a.score || (b.item.changed ?? 0) - (a.item.changed ?? 0) || a.item.label.length - b.item.label.length
     || KIND_ORDER.indexOf(a.item.kind) - KIND_ORDER.indexOf(b.item.kind) || a.item.label.localeCompare(b.item.label));
 }
 
@@ -648,6 +649,16 @@ export function groupRanked<T extends FindItem>(ranked: readonly Ranked<T>[], gr
 /** A path guessed as a kind when the helper did not say: the site's admin is admin, anything else a page. */
 export function guessKind(path: string): FindKind {
   return /^\/(admin|wp-admin|user\/\d+\/edit)(\/|$|\?)/.test(path) ? 'admin' : 'content';
+}
+
+/**
+ * A page's title without the site's name a theme adds after it ("News | Acme"
+ * is News): a bar, an en or em dash or a middle dot, then a short name. A
+ * hyphen is left alone, being part of too many titles.
+ */
+export function pageTitle(title: string): string {
+  const m = /^(.+?)\s+[|–—·]\s+[^|–—·]{1,40}$/.exec(title.trim());
+  return m ? (m[1] as string).trim() : title.trim();
 }
 
 /** The full address of a path on a site. Null when it is not a same-origin path. */
