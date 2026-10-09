@@ -148,7 +148,7 @@ export class LiveAgent {
   diff(session: Session, p: { since?: unknown }): Promise<LiveToolResult> {
     if (p.since !== undefined && p.since !== null && p.since !== 'start' && p.since !== 'turn') throw new CoreError('invalid', 'since is "start" (this session’s first screenshot) or "turn" (its last turn that changed files).');
     const since = p.since === 'start' ? 'start' : 'turn';
-    return this.record(session, 'live_diff', since === 'start' ? 'since it began' : 'since its last turn', async () => {
+    return this.record(session, 'live_diff', since === 'start' ? 'from before it began' : 'from its last turn', async () => {
       const site = this.siteFor(session);
       if (!session.cardId) throw new CoreError('refused', 'This session has no card, and before and after screenshots are kept per card, so there is nothing to compare with.');
       const shots = this.live.shots(session.cardId).filter((s) => s.sessionId === session.id);

@@ -72,6 +72,38 @@ async function main(): Promise<void> {
       });
       return;
     }
+    // Test-only: what an agent looked at in the live view, kept as the core keeps it (live_looks), so the
+    // sweep can draw a card's review without an app to render pages. Once per session; an edit comes first.
+    if (req.method === 'POST' && url.pathname === '/test/looks') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        try {
+          const { sessionId } = JSON.parse(body) as { sessionId: string };
+          const s = core.sessions.get(sessionId);
+          if (!core.db.prepare('SELECT 1 FROM live_looks WHERE session_id = ?').get(s.id)) {
+            const now = Date.now();
+            const min = (n: number): number => now - n * 60_000;
+            const event = core.db.prepare("INSERT INTO session_events (session_id, at, event, tool, summary, path) VALUES (?, ?, 'PostToolUse', 'Edit', 'Edit free-shipping.html.twig', ?)")
+              .run(s.id, min(10), `${s.cwd}/templates/free-shipping.html.twig`);
+            core.db.prepare('INSERT INTO session_edits (session_id, event_id, at, path) VALUES (?, ?, ?, ?)').run(s.id, Number(event.lastInsertRowid), min(10), `${s.cwd}/templates/free-shipping.html.twig`);
+            const look = core.db.prepare('INSERT INTO live_looks (session_id, project_id, card_id, tool, page, width, asked, said, ok, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            for (const [tool, page, width, asked, said, ok, at] of [
+              ['live_status', '/cart', 1280, '', 'on; the owner is on /cart at 1280 px', 1, min(14)],
+              ['live_look', '/cart', 375, 'pictured the first screen', '12 parts, with a picture', 1, min(9)],
+              ['live_find', '/cart', 375, '“free shipping”', 'one part found', 1, min(8)],
+              ['live_problems', '/cart', 375, 'since its turn began', 'no problems', 1, min(6)],
+              ['live_diff', '/cart', 1440, 'from its last turn', '1 area changed, explained by free-shipping.html.twig', 1, min(2)],
+            ] as const) look.run(s.id, s.projectId, s.cardId, tool, page, width, asked, said, ok, at);
+            core.bus.emit('liveLooks', { projectId: s.projectId, cardId: s.cardId, sessionId: s.id });
+          }
+          res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: String(error) }));
+        }
+      });
+      return;
+    }
     // Test-only: where the phone gateway listens once phone access is on.
     if (url.pathname === '/test/phone') {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ port: core.phone.listeningPort }));

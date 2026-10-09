@@ -206,6 +206,35 @@ try {
       await page.screenshot({ path: join(out, `${theme}-${name}.png`) });
     }
 
+    // What the review card's agent looked at in the live view, as its drawer lists it: calm, each look in words,
+    // and whether it came after the session's last edit. The rows are the core's own (seeded as it keeps them).
+    {
+      await page.evaluate(async (body) => { await fetch('/test/looks', { method: 'POST', body: JSON.stringify(body) }); }, { sessionId: shipping?.id });
+      await page.goto(`${base}#/p/${ns}/board?card=${ns}-7`);
+      await page.waitForSelector('.drawer .live-looks li', { timeout: 8000 }).catch(() => failures.push(`${theme}/looks: the review card lists no looks`));
+      const rows = await page.$$eval('.drawer .live-looks li', (items) => items.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+      const expected = [
+        /^Claude compared \/cart at 1440 px with its screenshot from its last turn, after its last edit: 1 area changed, explained by free-shipping\.html\.twig/,
+        /^Claude checked \/cart at 375 px for problems, since its turn began, after its last edit: no problems/,
+        /^Claude searched \/cart at 375 px for “free shipping”, after its last edit: one part found/,
+        /^Claude looked at \/cart at 375 px, pictured the first screen, after its last edit: 12 parts, with a picture/,
+        /^Claude checked the live view, then edited one more file: on; the owner is on \/cart at 1280 px/,
+      ];
+      if (rows.length !== expected.length || !expected.every((re, i) => re.test(rows[i] ?? ''))) failures.push(`${theme}/looks: the drawer says ${JSON.stringify(rows)}`);
+      const amber = await page.$$eval('.drawer .live-looks *', (els) => {
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--amber)';
+        document.body.appendChild(probe);
+        const tone = getComputedStyle(probe).color;
+        probe.remove();
+        return els.some((el) => getComputedStyle(el).color === tone || getComputedStyle(el).backgroundColor === tone);
+      });
+      if (amber) failures.push(`${theme}/looks: a look is drawn in amber, which means "needs you"`);
+      await page.$eval('.drawer .live-looks', (el) => el.scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(out, `${theme}-board-drawer-looks.png`) });
+    }
+
     // The git workbench, read-only here (the live section at the end changes it, once).
     // Every expectation is the core's own answer, asked through the same bridge.
     {
