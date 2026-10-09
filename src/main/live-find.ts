@@ -12,6 +12,7 @@
 //   the owner's Refresh.
 // - The project's address, platform, helper and token are read from the core
 //   (`live.site`), never taken from the window.
+import { createHash } from 'node:crypto';
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, Session } from 'electron';
 import { FIND_LIMIT, parseFind, samePath, type FindResult } from '../shared/live-find.ts';
 import { idsFromClasses, idsFromPath, pageTitle, type KnownPage, type LiveFindAnswer, type LiveHere } from '../shared/live-goto.ts';
@@ -35,7 +36,10 @@ const STALE_MS = 3 * 60_000;
 const MAX_KNOWN = 40;
 
 /** The helper's index for one project's site, as last read. */
-interface Held { origin: string; result: FindResult; changed: number | null; at: number }
+interface Held { origin: string; result: FindResult; changed: number | null; at: number; who: string }
+
+/** A site's login cookies: Drupal's session (SESS…, SSESS…) and WordPress's logged-in cookie. */
+const LOGIN_COOKIE = /^(S?SESS[0-9a-f]+|wordpress_logged_in_.*)$/i;
 
 /** A response's body as text, refused past `max` bytes rather than read whole. */
 async function readBounded(res: Response, max: number): Promise<string | null> {
@@ -200,10 +204,18 @@ export function wireLiveFind(options: {
       const n = r.body && typeof r.body === 'object' ? (r.body as { changed?: unknown }).changed : null;
       return typeof n === 'number' && Number.isFinite(n) ? n : null;
     };
+    // Who is logged in to the site in the view: the index lists what that user may open, so
+    // logging in or out (in the view) asks for it again. Only a hash of the login cookies is kept.
+    const who = await (async (): Promise<string> => {
+      const jar = (ses as { cookies?: { get(filter: { url: string }): Promise<{ name: string; value: string }[]> } }).cookies;
+      const all = jar ? await jar.get({ url: origin }).catch(() => []) : [];
+      const login = all.filter((c) => LOGIN_COOKIE.test(c.name)).map((c) => `${c.name}=${c.value}`).sort().join(';');
+      return login ? createHash('sha256').update(login).digest('hex') : '';
+    })();
     const kept = held.get(projectId);
     const now = clock();
     let changed: number | null = null;
-    if (kept && kept.origin === origin && !refresh) {
+    if (kept && kept.origin === origin && kept.who === who && !refresh) {
       if (now - kept.at < FRESH_MS) return answer('ready', { origin, platform, result: kept.result, known: await knownPages(projectId, base, false) });
       changed = await changedNow();
       if (changed !== null && changed === kept.changed && now - kept.at < STALE_MS) {
@@ -219,7 +231,7 @@ export function wireLiveFind(options: {
       const t = trouble(r, host);
       return without(t.state, t.message ?? '');
     }
-    held.set(projectId, { origin, result, changed, at: now });
+    held.set(projectId, { origin, result, changed, at: now, who });
     return answer('ready', { origin, platform, result, known: await knownPages(projectId, base, false) });
   });
 

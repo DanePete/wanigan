@@ -40,7 +40,7 @@ const json = (res: ServerResponse, body: unknown, status = 200): void => {
   res.end(JSON.stringify(body));
 };
 
-function wire(site: Partial<LiveSite> & { url: string | null }, over: { enabled?: boolean; now?: () => number; trusted?: boolean } = {}) {
+function wire(site: Partial<LiveSite> & { url: string | null }, over: { enabled?: boolean; now?: () => number; trusted?: boolean; cookies?: () => { name: string; value: string }[] } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const opened: string[] = [];
   const full: LiveSite = {
@@ -57,7 +57,7 @@ function wire(site: Partial<LiveSite> & { url: string | null }, over: { enabled?
     client: async () => ({ callRaw: async (method: string) => { assert.equal(method, 'live.site'); return full; } }),
     current: () => null,
     run: async <T,>(_code: string, fallback: T) => fallback,
-    sessionFor: () => ({ fetch: (input: string | Request, init?: RequestInit) => fetch(input, init) }) as never,
+    sessionFor: () => ({ fetch: (input: string | Request, init?: RequestInit) => fetch(input, init), cookies: { get: async () => over.cookies?.() ?? [] } }) as never,
     ...(over.now ? { now: over.now } : {}),
   });
   const event = { ok: over.trusted ?? true };
@@ -110,6 +110,31 @@ test('the index is kept until the helper’s change counter moves, it grows old,
     assert.equal(finds(), 3, 'old: asked again, whatever the counter says');
     await find('', true);
     assert.equal(finds(), 4, 'Refresh asks again');
+  } finally { await site.close(); }
+});
+
+test('logging in or out in the view asks for the index again: it lists what that user may open', async () => {
+  let jar: { name: string; value: string }[] = [{ name: '_ga', value: 'GA1.1' }];
+  const site = await helperSite((req, res) => {
+    if (req.url === '/_wanigan/changed') return json(res, { changed: 1 });
+    if (req.url === '/_wanigan/find') return json(res, INDEX);
+    json(res, {}, 404);
+  });
+  const finds = (): number => site.seen.filter((s) => s.path === '/_wanigan/find').length;
+  try {
+    const { find } = wire({ url: site.url }, { now: () => 1_000_000, cookies: () => jar });
+    await find();
+    jar = [...jar, { name: '_ga', value: 'GA1.2' }];
+    await find();
+    assert.equal(finds(), 1, 'a cookie that is not a login changes nothing');
+    jar = [...jar, { name: 'SSESSabc123', value: 'logged-in' }];
+    await find();
+    assert.equal(finds(), 2, 'logged in: asked again');
+    await find();
+    assert.equal(finds(), 2, 'still logged in as the same user: kept');
+    jar = jar.filter((c) => !c.name.startsWith('SSESS'));
+    await find();
+    assert.equal(finds(), 3, 'logged out: asked again');
   } finally { await site.close(); }
 });
 
