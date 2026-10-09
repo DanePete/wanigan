@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { LiveComponent, LiveFound, LivePick, LivePlatform, LiveRegion } from '@shared/live';
 import { editPath, entityOf, nameOf, originOf, overrideDir, overrides, type LiveOrigin } from '@shared/live-names';
+import { diagnose, troubleText } from '@shared/live-site';
 import { ancestors, kindKey } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call } from '../../lib/api';
@@ -283,6 +284,14 @@ function WordsChange({ words, pick, project, helper, onFound, onSaved, onUndo }:
   const saveField = async (): Promise<void> => {
     if (!field) return;
     const result = await liveBridge()?.helperSave(field, words.before, words.after);
+    if (result?.failure) {
+      // The site did not answer: say why as the view would (is it running? which certificate?), not Chromium's code alone.
+      const failure = result.failure;
+      const status = await call('live.status', { projectId: project.id }).catch(() => null);
+      const why = status ? diagnose({ host: new URL(failure.url).hostname, status, failure, now: Date.now() }) : null;
+      toast(why ? `Not saved. ${troubleText(why)}` : result.error ?? 'The site did not save it.', 'error');
+      return;
+    }
     if (!result?.ok) { toast(result?.error ?? 'The site did not save it.', 'error'); return; }
     toast(`Saved to ${fieldName} on ${result.label ?? 'the content'}, as a new revision.`);
     onSaved();

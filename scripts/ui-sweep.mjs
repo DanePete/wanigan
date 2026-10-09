@@ -3,7 +3,10 @@
 // errors, error text reaching the screen, page-level horizontal overflow, or a
 // view still loading. Screenshots go to .artifacts/ui/<theme>-<name>.png — look
 // at them; the assertions only catch what was thought of in advance.
-import { mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { X509Certificate } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
@@ -1700,9 +1703,148 @@ try {
     }
     await context.close();
   }
+
+  await liveSiteStates();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');
+}
+
+/*
+ * The live view, when the site is not shown. The harness has no view to lay
+ * over a page, so a stand-in bridge plays it with made-up pages and failures;
+ * the core is real, and asks the gateway's stand-in ddev (never the owner's)
+ * whether each made-up site runs. Two states, in both themes: a paused
+ * WordPress site that ddev's router answered with another project's
+ * certificate (the evening this was built for), and a running Drupal site
+ * whose project keeps a certificate made on another machine.
+ */
+async function liveSiteStates() {
+  const sites = realpathSync(mkdtempSync(join(tmpdir(), 'wg-ui-sites-')));
+  const fixture = readFileSync(join(root, 'src/core/fixtures/live-northwind-wildcard.crt'), 'utf8');
+  const write = (file, text) => { mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, text); };
+  const acme = join(sites, 'acme');
+  write(join(acme, '.ddev', 'config.yaml'), 'name: acme\ntype: wordpress\n');
+  write(join(acme, 'wp-config.php'), "<?php\ndefine('WP_HOME', 'https://acme.ddev.site');\n");
+  const northwind = join(sites, 'northwind');
+  write(join(northwind, '.ddev', 'config.yaml'), 'name: northwind\ntype: drupal11\ndocroot: web\n');
+  write(join(northwind, 'web', 'core', 'lib', 'Drupal.php'), '<?php\n');
+  write(join(northwind, '.ddev', 'stand-in-state'), 'running\n');
+  write(join(northwind, '.ddev', 'traefik', 'certs', 'northwind.crt'), fixture);
+  write(join(northwind, '.ddev', 'traefik', 'certs', 'northwind.key'), 'a stand-in for the key that came with it\n');
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Acme', GIT_AUTHOR_EMAIL: 'dev@example.test', GIT_COMMITTER_NAME: 'Acme', GIT_COMMITTER_EMAIL: 'dev@example.test' };
+  execFileSync('git', ['init', '-q'], { cwd: northwind, env: gitEnv });
+  execFileSync('git', ['add', '.ddev/traefik/certs/northwind.crt'], { cwd: northwind, env: gitEnv });
+  execFileSync('git', ['commit', '-qm', 'Keep the certificate'], { cwd: northwind, env: gitEnv });
+
+  const rpc = async (method, params) => {
+    const r = await (await fetch(new URL('/rpc', base), { method: 'POST', body: JSON.stringify({ method, params }) })).json();
+    if (!r.ok) throw new Error(`${method}: ${r.error.message}`);
+    return r.result;
+  };
+  const acmeProject = await rpc('projects.add', { path: acme });
+  await rpc('live.setSite', { projectId: acmeProject.id, url: 'https://acme.ddev.site/', platform: 'wordpress' });
+  const nwProject = await rpc('projects.add', { path: northwind });
+  await rpc('live.setSite', { projectId: nwProject.id, url: 'https://northwind.ddev.site/', platform: 'drupal' });
+
+  // The certificate as Node reads the fixture: what the main process would hand the view.
+  const x = new X509Certificate(fixture.slice(fixture.indexOf('-----BEGIN')));
+  const presented = {
+    certificate: {
+      subject: { cn: null, o: 'mkcert development certificate', ou: 'pat@northwind-laptop.local (Pat Example)' },
+      issuer: { cn: 'mkcert pat@northwind-laptop.local', o: 'mkcert development CA', ou: 'pat@northwind-laptop.local (Pat Example)' },
+      names: ['*.ddev.site', 'localhost', '*.ddev.local', 'ddev-router', 'northwind.ddev.site', '127.0.0.1'],
+      validFrom: Date.parse(x.validFrom), validTo: Date.parse(x.validTo), fingerprint: x.fingerprint256,
+    },
+    local: false,
+    authority: { cn: 'mkcert sam@acme-mac.local', o: 'mkcert development CA', ou: 'sam@acme-mac.local (Sam Sample)' },
+    caroot: '/Users/sam/Library/Application Support/mkcert',
+    verdict: 'net::ERR_CERT_AUTHORITY_INVALID',
+  };
+  const refused = (host) => ({ code: -202, description: 'ERR_CERT_AUTHORITY_INVALID', url: `https://${host}/`, certificate: presented });
+
+  try {
+    for (const theme of ['dark', 'light']) {
+      write(join(acme, '.ddev', 'stand-in-state'), 'paused\n');
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await context.addInitScript(BRIDGE);
+      await context.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
+      await context.addInitScript(({ pages }) => {
+        window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
+        // What the app's view would report: the page each project's address gives, or why it failed.
+        window.__wgLivePages = pages;
+        const listeners = new Set();
+        let shown = null;
+        const report = () => {
+          if (!shown) return;
+          const failure = window.__wgLivePages[shown.projectId] ?? null;
+          const state = { projectId: shown.projectId, url: shown.url, title: '', loading: false, canGoBack: false, canGoForward: false, error: failure, status: failure ? null : 200, logged: 0 };
+          setTimeout(() => { for (const l of listeners) l(state); }, 50);
+        };
+        const nothing = async () => null;
+        window.wanigan.live = {
+          show: async (projectId, url) => { shown = { projectId, url }; report(); return true; },
+          bounds: () => {}, hide: async () => {}, cover: nothing,
+          reload: async () => { report(); },
+          css: async () => 0, go: async () => true, back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
+          scan: async () => [], outline: async () => 0, clear: async () => {}, pick: nothing, cancelPick: async () => {}, capture: nothing,
+          problems: async () => [], mutations: async () => 0, picked: nothing, style: nothing, unstyle: nothing, editText: nothing, cancelEdit: async () => {},
+          helperChanged: nothing, helperSave: async () => ({ ok: false, error: null, label: null }), hasScript: async () => true,
+          onState: (l) => { listeners.add(l); return () => listeners.delete(l); },
+        };
+      }, { pages: { [acmeProject.id]: refused('acme.ddev.site'), [nwProject.id]: refused('northwind.ddev.site') } });
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+      const panel = () => page.textContent('.live-problem').catch(() => '');
+
+      // Paused: said as that, with Start it, never as the certificate the router answered with.
+      await page.goto(`${base}#/p/${acmeProject.key}/live`);
+      await page.waitForSelector('.live-problem:has-text("This site isn’t running")', { timeout: 10000 })
+        .catch(() => failures.push(`${theme}/live: a paused site was not said to be paused (${errors.join('; ')})`));
+      const paused = await panel();
+      if (!paused.includes('ddev says it is paused.')) failures.push(`${theme}/live: the paused panel does not quote ddev (${paused})`);
+      if (!/ddev’s router answered with a wildcard certificate for \*\.ddev\.site/.test(paused)) failures.push(`${theme}/live: the router’s certificate is not explained`);
+      if (/mkcert -install|does not trust|ERR_CERT/.test(paused)) failures.push(`${theme}/live: a paused site shows certificate advice: ${paused}`);
+      if (!(await page.$('.live-problem[role="status"] button:has-text("Start it")'))) failures.push(`${theme}/live: no Start it for a paused site`);
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: join(out, `${theme}-live-paused.png`) });
+
+      // Start it: the command and its lines while it runs, then the page.
+      await page.evaluate((id) => { window.__wgLivePages[id] = null; }, acmeProject.id);
+      await page.click('.live-problem button:has-text("Start it")');
+      await page.waitForSelector('.live-run:has-text("ddev start is running in")', { timeout: 5000 })
+        .catch(() => failures.push(`${theme}/live: Start it did not show ddev start running`));
+      await page.waitForSelector('.live-run-output:has-text("Starting acme...")', { timeout: 5000 })
+        .catch(() => failures.push(`${theme}/live: ddev’s lines did not show as it ran`));
+      await page.screenshot({ path: join(out, `${theme}-live-starting.png`) });
+      await page.waitForSelector('.live-problem', { state: 'detached', timeout: 15000 })
+        .catch(() => failures.push(`${theme}/live: once ddev said the site was running, the page was not shown`));
+
+      // A running site whose project keeps a certificate made on another machine: which file, whose, what to do.
+      await page.goto(`${base}#/p/${nwProject.key}/live`);
+      await page.waitForSelector('.live-problem:has-text("This project keeps a certificate made on another machine")', { timeout: 10000 })
+        .catch(() => failures.push(`${theme}/live: a committed foreign certificate was not said (${errors.join('; ')})`));
+      const foreign = await panel();
+      for (const want of ['.ddev/traefik/certs/northwind.crt is the certificate presented for northwind.ddev.site, and git tracks it',
+        'the mkcert authority of “pat@northwind-laptop.local (Pat Example)”', 'expired on 1 Jun 2025', 'Remove .ddev/traefik/certs/northwind.crt and .ddev/traefik/certs/northwind.key',
+        'mkcert sam@acme-mac.local', 'ERR_CERT_AUTHORITY_INVALID']) {
+        if (!foreign.includes(want)) failures.push(`${theme}/live: the certificate panel lacks “${want}”`);
+      }
+      if (/mkcert -install|from somewhere else/.test(foreign)) failures.push(`${theme}/live: the old advice is back: ${foreign}`);
+      if (!(await page.$('.live-problem[role="alert"] button:has-text("Restart it")'))) failures.push(`${theme}/live: no Restart it for a committed certificate`);
+      const unnamed = await page.$$eval('.live-problem button', (b) => b.filter((x) => !(x.getAttribute('aria-label') || x.textContent?.trim())).length);
+      if (unnamed) failures.push(`${theme}/live: ${unnamed} buttons in the panel have no name`);
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: join(out, `${theme}-live-foreign-certificate.png`) });
+
+      for (const e of errors) failures.push(`${theme}/live: ${e}`);
+      await context.close();
+    }
+  } finally {
+    rmSync(sites, { recursive: true, force: true });
+  }
 }
 
 if (failures.length) {

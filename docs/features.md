@@ -388,14 +388,20 @@ Status:
 ## Live view
 
 Verified by hand against the owner's own local sites (Drupal 11; WordPress) on 9 Oct 2026: the
-real app driven with Playwright, every step a whole-window screenshot. The UI sweeps do not reach it: their bridge has
-no view to lay over the page, and nothing there serves a site.
+real app driven with Playwright, every step a whole-window screenshot. The UI sweeps do not reach the page itself: their
+bridge has no view to lay over it, and nothing there serves a site. They do show what is said when the site is not
+shown, with a stand-in bridge, a stand-in ddev and made-up sites.
 
 | Feature | The claim | Test | Status |
 |---|---|---|---|
 | Off until switched on | Settings › Live view; Drupal, WordPress and other sites each on or off; switching it off takes the view away. | `main/awake.test.ts` › settings validation; the owner's Drupal site by hand | added |
 | Finding the site | From `.ddev` (overrides in order), `wp-config.php`, a dev script or `.lando.yml`; nothing started, nothing reached. | `core/live.test.ts` › "a ddev Drupal site is found…", "a WordPress site is found…"; `shared/live.test.ts` › ddev configs | added |
 | Certificates | Only one issued by this Mac's mkcert authority for the site's host is trusted beyond Chromium's own verdict. | the owner's Drupal site by hand (mkcert not in the Keychain) | manual (a native session handler) |
+| Is the site running | For a ddev site, `ddev describe -j` in the folder the site serves, as the view opens and again when a page fails or ddev's router answers with an error page; Lando and dev scripts are named from the project's files, never asked or run. Tests and the demo give the core their own PATH, so the owner's ddev is never asked. | `shared/live-site.test.ts` › "ddev describe -j…", "ddev list -j…", "ddev’s failures…" (ddev 1.25.2's JSON, made-up projects); `core/live.test.ts` › "whether the site runs, and starting it" (a stand-in ddev on the test's PATH) | added |
+| Not running is not a certificate problem | A site ddev says is paused or stopped is said as that, before or after the page fails, with ddev's own words; a certificate ddev's router answered with for it is explained as the router's, never as advice to fix trust. | `shared/live-site.test.ts` › "the evening it went wrong…", "a paused or stopped site is said before the page loads…"; `scripts/ui-sweep.mjs` › `live-paused` in both themes | added |
+| Start it | `ddev start` (or `ddev restart`) in the folder the site serves, on the owner's click: the command shown, its lines as they come, one at a time, then the page loads; a failure shows what ddev said. | `core/live.test.ts` › "Start it runs ddev start…", "a restart is one at a time…"; `scripts/ui-sweep.mjs` › `live-starting` | added (a real ddev start from the app not run) |
+| A refused certificate explained | Its issuer (an mkcert authority by the user, machine and name in its unit), the names it covers and its dates; which case: another machine's mkcert, a file the project keeps in `.ddev/traefik/certs` or `.ddev/custom_certs` (and whether git tracks it), ddev's router answering for another project, expired, another name, no mkcert authority on this Mac, or Chromium's own reason. Next steps true for each. | `shared/live-site.test.ts` (certificate cases); `core/live.test.ts` › "a certificate the project keeps where ddev looks…"; `scripts/ui-sweep.mjs` › `live-foreign-certificate` in both themes | added (the main process's certificate capture is native: by hand only) |
+| Same reasons everywhere | A card's screenshots ask first and do not photograph a site that is not running; a screenshot not taken is kept with why, on the card. A helper save the site did not answer says why in the same words. | `main/live-shots.test.ts` (3 tests); `core/live.test.ts` › "a card’s missed before and after" | added |
 | Edits followed | Every file an edit names, Codex's patches included; a reload once quiet, longer for Sass and PHP (opcache); stylesheets swapped in place. | `shared/edits.test.ts`; `core/live.test.ts` › "an agent’s edits, turns and start reach the live view…" | added |
 | What made each part | Twig debug's BEGIN/END, suggestions and component start/end comments, data-component-id, the helpers' marks, Elementor's attributes, nested by containment, in page order. | `shared/live-names.test.ts` (8 tests); `shared/live-tree.test.ts` (6 tests); 83 to 115 regions on the owner's Drupal site, 12 on the WordPress site | added |
 | Overrides | A contrib or core template names the more specific file to create in the owner's theme. | `shared/live-names.test.ts` › "an override…" | added |
@@ -406,7 +412,7 @@ no view to lay over the page, and nothing there serves a site.
 | The WordPress helper | One must-use plugin file with its token, kept out of git, runs nothing; removal deletes it. | the owner's WordPress site end to end by hand | manual (needs a running WordPress) |
 | Content changes followed | The helper's count of cache tag invalidations (Drupal) or content saves (WordPress) reloads the view; a site that keeps changing stops it. | the owner's sites by hand (drush, wp-cli) | manual |
 | Before and after | A session's first before, its last after, a card's newest twelve; full page at 1440 CSS pixels, past the browser's cache; changed areas boxed. | `core/live.test.ts` › "a card’s before and after" (2 tests); a renamed term found as one area | partial (the capture needs a window) |
-| Not on phones | A phone's stream carries no live view edits, site settings, hand edits or screenshots. | `core/phone/gateway-sse-safety.test.ts` › "a phone stream carries board news but never the live view’s…" | added |
+| Not on phones | A phone's stream carries no live view edits, site settings, hand edits, screenshots or ddev output. | `core/phone/gateway-sse-safety.test.ts` › "a phone stream carries board news but never the live view’s…" | added |
 
 ## The demo
 

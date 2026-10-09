@@ -119,8 +119,23 @@ view**, where Drupal, WordPress and other sites can each be on or off.
 
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
-  nothing. A ddev site's certificate is trusted when this Mac's own mkcert
-  authority issued it.
+  nothing on its own. A ddev site's certificate is trusted when this Mac's own
+  mkcert authority issued it.
+- **Says why a site is not shown.** For a ddev site it asks ddev
+  (`ddev describe -j`) whether the site is running, as the view opens and
+  again when a page fails. A paused or stopped site is said as that ("This
+  site isn't running: ddev says it is paused"), never as the certificate ddev's
+  router answers with for it, and **Start it** runs `ddev start` in the
+  project folder on your click, showing its lines, then loads the page. A
+  refused certificate is described as it states itself (who issued it, what it
+  covers, when it expires) and named for what it is: made by another machine's
+  mkcert (naming that authority), kept in the project's `.ddev/traefik/certs`
+  or `.ddev/custom_certs` (naming the file), ddev's router answering for
+  another project, expired, for another name, or this Mac having no mkcert
+  authority yet. Each says what to do; nothing is changed without your click.
+  A Lando site or dev script that does not answer is named, with how it is
+  started; Wanigan does not start those. A card's screenshots and the site
+  helper's saves give the same reasons.
 - **Follows the edits.** When an agent edits a file, the page reloads (or swaps
   only its stylesheets) and the parts that file made are outlined. A session's
   own view says "*file* changed · See it".
@@ -393,7 +408,11 @@ verification results and the behavior that remains unverified.
   neither was run against a real model.
 - Live view: proven by hand on the owner's own local Drupal and WordPress
   sites, not by the UI sweeps, which have no view to lay
-  over a page. Not built yet: Serve this card (switching which checkout ddev
+  over a page (they show its not-running and certificate states with made-up
+  data and a stand-in ddev). Telling a site that is not running from a
+  certificate problem, and Start it, are tested against ddev 1.25's JSON and
+  a stand-in ddev; a real `ddev start` from the app has not been run, and
+  ddev's wording when Docker is not running was read from its binary, not seen. Not built yet: Serve this card (switching which checkout ddev
   serves), a component's props form, saving WordPress content by hand, and
   Layout Builder and Canvas pieces by their own ids.
 - On your phone: proven in a phone-sized browser against the real phone

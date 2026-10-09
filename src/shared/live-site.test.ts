@@ -174,7 +174,8 @@ test('a paused or stopped site is said before the page loads, and a router 404 i
 test('until ddev answers, a failure is not explained', () => {
   const t = diagnose({ host: 'acme.ddev.site', status: null, failure: refused(cert()), now: NOW });
   assert.equal(t?.kind, 'checking');
-  assert.doesNotMatch(everything(t), /mkcert|certificate was made/);
+  assert.equal(t?.chromium, null);
+  assert.doesNotMatch(everything(t), /mkcert|certificate|ERR_CERT/);
 });
 
 test('ddev’s other states: starting, unhealthy, a word Wanigan does not know, and Docker not running', () => {

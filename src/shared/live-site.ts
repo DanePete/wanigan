@@ -323,7 +323,8 @@ export function diagnose(input: LiveTroubleInput): LiveTrouble | null {
   }
   if (!failure) return null;
   if (!status) {
-    return trouble('checking', `Finding out why ${host} did not load`, ['Asking what runs the site whether it is running…'], { chromium: failure.description });
+    // Not even Chromium's words yet: a certificate error shown for a site that turns out not to be running misleads.
+    return trouble('checking', `Finding out why ${host} did not load`, ['Asking what runs the site whether it is running…']);
   }
   const kind = failureKind(failure);
   if (kind === 'certificate') return certificateTrouble(input, status, failure);

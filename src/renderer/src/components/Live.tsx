@@ -9,6 +9,7 @@ import {
   inFolder, isStylesheet, regionMadeBy, sameRegion,
   type LiveCandidate, type LiveEdit, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
 } from '@shared/live';
+import { diagnose } from '@shared/live-site';
 import { nameOf, themeOf } from '@shared/live-names';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
@@ -16,13 +17,13 @@ import { liveBridge, useLiveCovered } from '../lib/live';
 import { navigate } from '../lib/router';
 import { useAppState } from '../lib/settings';
 import { liveFor } from '@shared/settings';
-import { Icon } from './icons';
 import { Inspector, type Selection } from './live/Inspector';
 import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
 import { NoteComposer, NotesTab, draftFor } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
+import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import '../styles/live.css';
 
@@ -588,7 +589,10 @@ function EditsList({ project }: { project: ProjectSummary }) {
 /**
  * The placeholder the app lays its view over. It reports where it is as it
  * moves, steps the view aside while something covers it (showing the last
- * frame instead), narrows to a device's width, and shows why a page did not load.
+ * frame instead), narrows to a device's width, and, when the site is not
+ * shown, says why: what runs the site is asked as the view opens and again
+ * when a page fails, so a site that is not running is said as that, never as
+ * the certificate ddev's router answered with.
  */
 function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
   project: ProjectSummary; url: string; token: string | null; view: LiveViewState | null; width: number | null; onReload: () => void; onEdit: () => void;
@@ -597,8 +601,17 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
   const device = useRef<HTMLDivElement>(null);
   const covered = useLiveCovered();
   const [frame, setFrame] = useState<string | null>(null);
+  const status = useSiteStatus(project.id);
   const error = view?.error ?? null;
-  const hidden = covered || !!error;
+  const host = (() => { try { return new URL(error?.url || view?.url || url).hostname; } catch { return url; } })();
+  const trouble = diagnose({ host, status: status.data ?? null, failure: error, httpStatus: view?.loading ? null : view?.status ?? null, now: Date.now() });
+  const hidden = covered || !!trouble;
+
+  // A page that failed, or a ddev site that answered with an error page: ask again whether it runs.
+  const ddev = status.data?.run.tool === 'ddev';
+  const failedAt = error ? `${error.code} ${error.url}` : ddev && (view?.status ?? 0) >= 400 && !view?.loading ? `http ${view?.status} ${view?.url}` : null;
+  const reloadStatus = status.reload;
+  useEffect(() => { if (failedAt) reloadStatus(); }, [failedAt, reloadStatus]);
 
   useLayoutEffect(() => {
     const el = device.current;
@@ -631,38 +644,13 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
   return (
     <div className={`live-stage${width ? ' narrow' : ''}`}>
       <div className="live-device" ref={device} style={width ? { width } : undefined}>
-        {frame && !error ? <img className="live-frame" src={frame} alt="" /> : null}
+        {frame && !trouble ? <img className="live-frame" src={frame} alt="" /> : null}
       </div>
       {width ? <span className="live-device-size faint small" aria-hidden="true">{width} px</span> : null}
-      {error ? <LoadProblem error={error} url={url} onReload={onReload} onEdit={onEdit} /> : null}
-    </div>
-  );
-}
-
-function LoadProblem({ error, url, onReload, onEdit }: { error: NonNullable<LiveViewState['error']>; url: string; onReload: () => void; onEdit: () => void }) {
-  const host = (() => { try { return new URL(error.url || url).host; } catch { return url; } })();
-  const certificate = /CERT|SSL/i.test(error.description);
-  const nobody = /CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|CONNECTION_FAILED|TIMED_OUT/i.test(error.description);
-  return (
-    <div className="live-problem" role="alert">
-      <Icon name="alert" size={18} />
-      <div>
-        <p className="live-problem-title">
-          {certificate ? `This Mac does not trust ${host}’s certificate` : nobody ? `Nothing answered at ${host}` : `${host} did not load`}
-        </p>
-        <p className="small">
-          {certificate
-            ? 'Wanigan trusts certificates from this Mac’s own mkcert authority (ddev’s). This one is from somewhere else, or mkcert has no authority here yet: run mkcert -install, then reload.'
-            : nobody
-              ? 'Start the site first (for ddev: ddev start in the project folder), then reload.'
-              : 'Chromium gave this reason:'}
-          {' '}<span className="mono faint">{error.description}</span>
-        </p>
-        <div className="live-problem-actions">
-          <Button size="s" icon="refresh" onClick={onReload}>Reload</Button>
-          <Button size="s" tone="quiet" onClick={onEdit}>Change the address</Button>
-        </div>
-      </div>
+      {trouble ? (
+        <SiteTrouble trouble={trouble} status={status.data ?? null} projectId={project.id} onReload={onReload} onCheck={reloadStatus}
+          onStarted={() => { reloadStatus(); onReload(); }} onEdit={onEdit} />
+      ) : null}
     </div>
   );
 }
