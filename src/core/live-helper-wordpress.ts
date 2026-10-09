@@ -940,7 +940,10 @@ final class Wanigan_Live {
 		if (self::$front && $instance instanceof WP_Block) {
 			$i = self::frame_index(spl_object_id($instance));
 			if ($i !== null && self::$stack[$i]['type'] === 'part') {
-				self::$meta[self::$stack[$i]['part']]['bindings'][(string) $attribute] = array('source' => (string) $source, 'args' => is_array($args) ? $args : array(), 'value' => $value);
+				$part = self::$stack[$i]['part'];
+				self::$meta[$part]['bindings'][(string) $attribute] = array('source' => (string) $source, 'args' => is_array($args) ? $args : array(), 'value' => $value);
+				// WP_Block::process_block_bindings() has just given the block the context its source uses (postId).
+				if (is_array($instance->context)) self::$meta[$part]['context'] = $instance->context + (isset(self::$meta[$part]['context']) ? self::$meta[$part]['context'] : array());
 			}
 		}
 		return $value;
