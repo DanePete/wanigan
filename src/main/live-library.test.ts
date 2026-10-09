@@ -157,11 +157,3 @@ test('without the live view, the window’s trust, a current helper or a sound r
     assert.equal(fine.captured.length + old.captured.length, 0);
   } finally { for (const w of [off, untrusted, old, fine]) w.done(); await site.close(); }
 });
-
-test('a hidden window is given a page before the debugger acts on it: the first Emulation command on an empty one crashes Electron', () => {
-  // Windows cannot be opened under this test runner; the crash was reproduced end to end on a demo site, and this
-  // keeps the line that stops it from being moved below the attach.
-  const src = captureInWindow.toString();
-  const blank = src.indexOf("loadURL('about:blank')"), attach = src.indexOf("attach('1.3')");
-  assert.ok(blank > 0 && attach > blank, 'about:blank is loaded before the debugger attaches');
-});

@@ -16,6 +16,8 @@
 //   and decoded, the page settled; the whole piece captured through the
 //   DevTools protocol (Page.captureScreenshot beyond the viewport), never
 //   capturePage, which takes only the viewport. Only the site's own pages load.
+//   The hidden window itself is live-capture.ts's, shared with the design
+//   layer's verification.
 // - Pictures are kept at <data>/live-library/<project>/<hash>/, one PNG for
 //   each entry and width. A new hash means the definitions or their files
 //   changed: the folders of older hashes are removed when the next picture is
@@ -30,6 +32,7 @@ import {
   type ComponentLibrary, type LibraryPicturesAnswer, type LibraryShot, type LiveLibraryAnswer,
 } from '../shared/live-library.ts';
 import type { Method } from '../shared/protocol.ts';
+import { folderOf, inHiddenWindow } from './live-capture.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
@@ -104,7 +107,6 @@ export type PieceCapture = (o: { partition: string; url: string; width: number; 
 
 /** A picture keeps at most this many CSS pixels of a piece's height; below it is cut, and said. */
 export const PICTURE_MAX_HEIGHT = 4_000;
-const LOAD_MS = 30_000;
 /** A piece says when it is drawn; a static WordPress block is serialized by its editor script and posted back first. */
 const DRAWN_MS = 25_000;
 /** The isolated world the capture reads the page from: the page's own scripts cannot reach it. */
@@ -112,23 +114,8 @@ const WORLD = 4243;
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 const originOf = (url: string): string => { try { return new URL(url).origin; } catch { return 'another address'; } };
 
-/** Everything moving stopped, so a picture is the same each time it is taken. */
-const STILL_CSS = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
-
-/** Read in the page once it is drawn: images loaded and decoded, fonts loaded, two frames, then what the piece shows. */
-const SETTLE = `(async () => {
-  const images = Array.from(document.images);
-  for (const img of images) if (img.loading === 'lazy') img.loading = 'eager';
-  const decode = (img) => (img.decode ? img.decode().catch(() => {}) : null);
-  await Promise.race([
-    Promise.all(images.map((img) => (img.complete ? decode(img) : new Promise((done) => {
-      img.addEventListener('load', done, { once: true });
-      img.addEventListener('error', done, { once: true });
-    }).then(() => decode(img))))),
-    new Promise((done) => setTimeout(done, 8000)),
-  ]);
-  if (document.fonts && document.fonts.ready) await Promise.race([document.fonts.ready, new Promise((done) => setTimeout(done, 5000))]);
-  await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+/** Read in the page once it is settled: what the piece shows, and where it ends. */
+const MEASURE = `(() => {
   const piece = document.querySelector('[data-wanigan-piece]');
   const doc = Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0));
   if (!piece) return { doc, bottom: null, inner: 0, shows: false };
@@ -148,80 +135,37 @@ const STATE = `(() => {
 
 /**
  * Render one piece in a hidden window in the project's view session and take it whole, as the design's verification
- * takes a render: see the header of this file.
+ * takes a render: the rules are live-capture.ts's (and the header of this file).
  */
-export const captureInWindow: PieceCapture = async (o) => {
-  // Loaded here, not at the top: the rest of this file runs, and is tested, without Electron's windows.
-  const { BrowserWindow } = await import('electron');
-  const screen = o.width < 600 ? 844 : 900;
-  const w = new BrowserWindow({
-    show: false, width: o.width, height: screen, useContentSize: true, enableLargerThanScreen: true, paintWhenInitiallyHidden: true,
-    webPreferences: { partition: o.partition, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
-  });
-  const wc = w.webContents;
-  let left: string | null = null;
-  const stay = (event: { preventDefault(): void }, next: string): void => { if (!sameSite(o.base, next)) { event.preventDefault(); left ??= next; } };
-  wc.on('will-navigate', stay);
-  wc.on('will-redirect', stay);
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  wc.setAudioMuted(true);
-  wc.setBackgroundThrottling(false);
-  const read = async <T>(code: string, fallback: T): Promise<T> => {
-    try { return (await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }], true)) as T; } catch { return fallback; }
-  };
-  const cdp = wc.debugger;
-  try {
-    // A window that has loaded nothing has no page for the protocol to act on: the first Emulation command sent to
-    // one crashes Electron's main process (EXC_BAD_ACCESS, seen on 9 October 2026 on the first library picture).
-    // An empty page first gives it one.
-    await wc.loadURL('about:blank');
-    cdp.attach('1.3');
-    await cdp.sendCommand('Emulation.setDeviceMetricsOverride', { width: o.width, height: screen, deviceScaleFactor: 1, mobile: o.width < 600 });
-    await cdp.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-    await cdp.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    // Never the browser's cached copy: the piece is drawn as the site's files are now.
-    const fresh = { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache\n' };
-    const loaded = await Promise.race([wc.loadURL(o.url, fresh).then(() => true, () => false), pause(LOAD_MS).then(() => false)]);
-    if (left) return { error: `The piece sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
-    if (!loaded) return { error: `The piece did not load within ${LOAD_MS / 1000} seconds.` };
+export const captureInWindow: PieceCapture = (o) => inHiddenWindow<PieceShot>(
+  { partition: o.partition, url: o.url, base: o.base, width: o.width, what: 'The piece', failed: 'The piece could not be pictured' },
+  async (page) => {
     let said: { state: string | null; why: string; complete: boolean } = { state: null, why: '', complete: false };
     const until = Date.now() + DRAWN_MS;
     while (Date.now() < until) {
-      said = await read(STATE, { state: null, why: '', complete: false });
-      if (said.state === 'ready' || said.state === 'failed' || (said.state === null && said.complete && !wc.isLoading())) break;
+      said = await page.read(STATE, { state: null, why: '', complete: false }, WORLD);
+      if (said.state === 'ready' || said.state === 'failed' || (said.state === null && said.complete && !page.wc.isLoading())) break;
       await pause(250);
     }
+    const left = page.left();
     if (left) return { error: `The piece sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
-    if (!sameSite(o.base, wc.getURL())) return { error: 'The piece left the site; Wanigan does not follow it.' };
+    if (!sameSite(o.base, page.wc.getURL())) return { error: 'The piece left the site; Wanigan does not follow it.' };
     if (said.state === 'failed') return { error: said.why || 'The site could not render it alone.' };
     if (said.state !== 'ready') {
       return { error: said.state === null ? 'The site did not answer with a piece: its helper may be older than this Wanigan.' : 'The piece was not drawn within 25 seconds.' };
     }
-    await wc.insertCSS(STILL_CSS);
-    const measured = await read<{ doc: number; bottom: number | null; inner: number; shows: boolean } | null>(SETTLE, null);
+    await page.settle();
+    const measured = await page.read<{ doc: number; bottom: number | null; inner: number; shows: boolean } | null>(MEASURE, null, WORLD);
     if (!measured) return { error: 'The piece could not be read.' };
     if (!measured.shows && measured.inner < 2) return { error: 'It rendered nothing on its own: it takes what it shows from the page it is placed on.' };
     await pause(300);
     const tall = Math.max(1, measured.bottom ?? measured.doc);
     const height = Math.min(PICTURE_MAX_HEIGHT, tall);
-    const shot = await cdp.sendCommand('Page.captureScreenshot', {
-      format: 'png', captureBeyondViewport: true, fromSurface: true, clip: { x: 0, y: 0, width: o.width, height, scale: 1 },
-    }) as { data?: string };
-    if (!shot.data) return { error: 'The piece could not be pictured.' };
-    return { png: Buffer.from(shot.data, 'base64'), height, cut: tall > height };
-  } catch (error) {
-    return { error: `The piece could not be pictured: ${(error as Error).message}` };
-  } finally {
-    try { if (cdp.isAttached()) cdp.detach(); } catch { /* the window is going anyway */ }
-    w.destroy();
-  }
-};
-
-/** A project id as a folder name: ids are opaque, so only safe characters are kept, and a hash keeps them apart. */
-function folderOf(projectId: string): string {
-  const safe = projectId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
-  return `${safe}-${createHash('sha256').update(projectId).digest('hex').slice(0, 8)}`;
-}
+    const png = await page.shoot(height);
+    if (!png) return { error: 'The piece could not be pictured.' };
+    return { png, height, cut: tall > height };
+  },
+);
 
 /** An entry's picture file at one width: entry ids hold ':' and '/', so the file is named by a hash of the id. */
 export function pictureFile(entry: string, width: number): string {

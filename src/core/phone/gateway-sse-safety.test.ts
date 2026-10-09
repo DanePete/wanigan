@@ -390,6 +390,7 @@ test('a phone stream carries board news but never the live view’s edits, site 
       listener('live', { projectId: 'p', sessionId: 's', cardId: null, paths: ['/Users/x/site/secret.twig'], kind: 'edit', at: 1 });
       listener('liveSite', { projectId: 'p' });
       listener('liveEdits', { projectId: 'p' });
+      listener('liveLayer', { projectId: 'p' });
       listener('liveShots', { cardId: 'c' });
       listener('boardViews', { projectId: 'p' });
       listener('liveAsk', { id: 'a', kind: 'render', projectId: 'p', sessionId: 's', site: { url: 'https://acme.ddev.site/', platform: 'drupal' }, url: 'https://acme.ddev.site/secret-page' });
@@ -402,6 +403,7 @@ test('a phone stream carries board news but never the live view’s edits, site 
     assert.ok(!peer.text.includes('"event":"live"'), 'no edit events');
     assert.ok(!peer.text.includes('"event":"liveSite"'), 'no site settings');
     assert.ok(!peer.text.includes('"event":"liveEdits"') && !peer.text.includes('"event":"liveShots"'), 'no hand edits or screenshots');
+    assert.ok(!peer.text.includes('"event":"liveLayer"'), 'no design layer: its edits name the pages and parts of a site on this Mac');
     assert.ok(!peer.text.includes('"event":"boardViews"'), 'no saved board views: a phone may not read them');
     assert.ok(!peer.text.includes('"event":"liveRun"') && !peer.text.includes('Starting acme'), 'no ddev output');
     assert.ok(!peer.text.includes('"event":"files"') && !peer.text.includes('editor-secret.css'), 'no code editor saves');

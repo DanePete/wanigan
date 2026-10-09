@@ -57,6 +57,12 @@ export interface LiveViewWiring {
   pageScript(): string | null;
   /** What the view shows now, for what is built on it (live-inspect.ts); null when there is no view. */
   current(): LiveCurrent | null;
+  /**
+   * Save words to a plain text field through the site helper (`POST /_wanigan/save`), as the user logged in in the
+   * view: what the window's helperSave and the design layer's implement both do. Null when the view shows no local
+   * site with a helper.
+   */
+  helperSave(field: unknown, before: unknown, after: unknown): Promise<HelperSaved | null>;
   /** Run code in the page script's isolated world (putting the script in first); `fallback` when it cannot. */
   run<T>(code: string, fallback: T): Promise<T>;
   /**
@@ -103,7 +109,12 @@ export interface LiveCurrent {
   /** The site's address, as the owner set it: what the view may stay on. */
   base: string;
   token: string | null;
+  /** The hosted environment the view shows (read-only, never the helper's), or null for the local site. */
+  env: string | null;
 }
+
+/** What a helper save came to: the site's answer, or how it did not answer. */
+export interface HelperSaved { ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null }
 
 /** Where what is built on the view hears of it: a project's session locked down, a view made or gone. */
 export interface LiveViewHooks {
@@ -536,39 +547,56 @@ export function wireLiveView(options: {
     return run<LivePick | null>(`window.__wl && window.__wl.choose ? window.__wl.choose(${JSON.stringify(index)}) : null`, null);
   });
   ipcMain.handle('live:cancelPick', async (event) => { if (options.trusted(event)) await run('window.__wl && window.__wl.cancelPick()', null); });
-  // The site helper's own routes, asked through the view's session (so as the user logged in there), with the token.
-  ipcMain.handle('live:helper', async (event, action: unknown, rawBody: unknown) => {
-    if (!ok(event) || !view || !base || !projectId || env) return null;
+  /** The local site the view shows, with the helper's token for it; null otherwise. */
+  const local = (): { wc: WebContents; origin: string; token: string; id: string } | null => {
+    if (!view || !base || !projectId || env) return null;
     const token = tokens.get(projectId);
-    if (!token) return null;
-    const origin = new URL(view.webContents.getURL() || base).origin;
-    const headers = { 'X-Wanigan-Live': token, Accept: 'application/json' };
-    const id = projectId;
-    let saving = false;
+    return token ? { wc: view.webContents, origin: new URL(view.webContents.getURL() || base).origin, token, id: projectId } : null;
+  };
+
+  const helperSave = async (field: unknown, before: unknown, after: unknown): Promise<HelperSaved | null> => {
+    const site = local();
+    if (!site) return null;
+    if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
     try {
-      if (action === 'changed') {
-        const res = await view.webContents.session.fetch(`${origin}/_wanigan/changed`, { headers, credentials: 'include' });
-        const data = await res.json() as { changed?: unknown };
-        return res.ok && typeof data.changed === 'number' ? data.changed : null;
-      }
-      if (action === 'save' && rawBody && typeof rawBody === 'object') {
-        saving = true;
-        const { field, before, after } = rawBody as Record<string, unknown>;
-        if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.' };
-        const res = await view.webContents.session.fetch(`${origin}/_wanigan/save`, {
-          method: 'POST', credentials: 'include', headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ field, before: before.slice(0, 2_000), after: after.slice(0, 2_000) }),
-        });
-        const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string } | null;
-        return data && typeof data === 'object' ? { ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null }
-          : { ok: false, error: `The site answered ${res.status}.`, label: null };
-      }
+      const res = await site.wc.session.fetch(`${site.origin}/_wanigan/save`, {
+        method: 'POST', credentials: 'include', headers: { 'X-Wanigan-Live': site.token, Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, before: before.slice(0, 2_000), after: after.slice(0, 2_000) }),
+      });
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown } | null;
+      return data && typeof data === 'object' ? {
+        ok: data.ok === true, error: typeof data.error === 'string' ? data.error : null, label: typeof data.label === 'string' ? data.label : null,
+        revision: typeof data.revision === 'string' || typeof data.revision === 'number' ? String(data.revision).slice(0, 100) : null,
+      } : { ok: false, error: `The site answered ${res.status}.`, label: null };
     } catch (error) {
       // Why the site did not answer is said in the view's own words (the window asks the core whether it runs);
       // this is only the fallback.
-      if (!saving) return null;
-      const why = failure(id, failureFrom(error, `${origin}/_wanigan/save`));
+      const why = failure(site.id, failureFrom(error, `${site.origin}/_wanigan/save`));
       return { ok: false, error: `The site did not answer (${why.description}).`, label: null, failure: why };
+    }
+  };
+
+  // The site helper's own routes, asked through the view's session (so as the user logged in there), with the token.
+  ipcMain.handle('live:helper', async (event, action: unknown, rawBody: unknown) => {
+    if (!ok(event)) return null;
+    const site = local();
+    if (!site) return null;
+    if (action === 'changed') {
+      try {
+        const res = await site.wc.session.fetch(`${site.origin}/_wanigan/changed`, { headers: { 'X-Wanigan-Live': site.token, Accept: 'application/json' }, credentials: 'include' });
+        const data = await res.json() as { changed?: unknown };
+        return res.ok && typeof data.changed === 'number' ? data.changed : null;
+      } catch {
+        return null;
+      }
+    }
+    if (action === 'save' && rawBody && typeof rawBody === 'object') {
+      const { field, before, after } = rawBody as Record<string, unknown>;
+      const saved = await helperSave(field, before, after);
+      // The window's answer is as it always was: the revision is the design layer's to keep.
+      if (!saved) return null;
+      const { revision: _revision, ...answer } = saved;
+      return answer;
     }
     return null;
   });
@@ -767,7 +795,7 @@ export function wireLiveView(options: {
   };
 
   const current = (): LiveCurrent | null => (view && !view.webContents.isDestroyed() && projectId && base
-    ? { projectId, webContents: view.webContents, base, token: tokens.get(projectId) ?? null } : null);
+    ? { projectId, webContents: view.webContents, base, token: tokens.get(projectId) ?? null, env } : null);
 
 
   const sessionFor = (id: string, rawUrl: string): Session | null => {
@@ -780,5 +808,5 @@ export function wireLiveView(options: {
     return ses;
   };
 
-  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script, current, run, sessionFor };
+  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script, current, run, sessionFor, helperSave };
 }

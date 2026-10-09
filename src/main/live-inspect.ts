@@ -74,6 +74,44 @@ async function readBounded(res: Response, max: number): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** What can fetch on a view's session: Electron's session.fetch, or a stand-in in tests. */
+export type TraceFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * One render's trace from the site's helper (`GET /_wanigan/trace/<id>`), with the token, never following a redirect:
+ * read bounded, checked by parseTrace, and only when it is that render's. Each way it can fail is named.
+ */
+export async function askTrace(fetch: TraceFetch, origin: string, token: string, id: string): Promise<LiveTraceAnswer> {
+  if (!TRACE_ID.test(id)) return { state: 'missing' };
+  let text: string;
+  try {
+    const res = await fetch(`${origin}/_wanigan/trace/${id}`, {
+      method: 'GET',
+      credentials: 'include',
+      // A helper never redirects these; following one could take the token somewhere else.
+      redirect: 'error',
+      signal: AbortSignal.timeout(FETCH_MS),
+      headers: { 'X-Wanigan-Live': token, Accept: 'application/json' },
+    });
+    if (res.status === 404) return { state: 'expired' };
+    if (res.status === 401 || res.status === 403) return { state: 'refused', status: res.status };
+    if (!res.ok) return { state: 'down', error: `it answered ${res.status}` };
+    text = await readBounded(res, MAX_TRACE_BYTES);
+  } catch (error) {
+    if (error instanceof TooLarge) return { state: 'too-large' };
+    return { state: 'down', error: (error as Error).message || 'no answer' };
+  }
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return { state: 'unreadable', version: null }; }
+  const trace = parseTrace(raw);
+  // A trace for another render is not this page's, however well formed.
+  if (!trace || trace.id !== id) {
+    const version = raw && typeof raw === 'object' && typeof (raw as { version?: unknown }).version === 'number' ? (raw as { version: number }).version : null;
+    return { state: 'unreadable', version };
+  }
+  return { state: 'ok', trace };
+}
+
 export function wireLiveInspect(options: {
   window: () => BrowserWindow | null;
   trusted: (event: IpcMainInvokeEvent) => boolean;
@@ -83,7 +121,7 @@ export function wireLiveInspect(options: {
   current: () => LiveCurrent | null;
   /** Run code in the page script's isolated world (live-view.ts). */
   run: <T>(code: string, fallback: T) => Promise<T>;
-}): { hooks: LiveViewHooks } {
+}): { hooks: LiveViewHooks; trace(): Promise<LiveTraceAnswer> } {
   /** The view's last page as the site sent it: where from, and its trace id (null when it sent none). */
   /** The view's last page load: its trace id, and whether a helper said it answers to another Wanigan. */
   let latest: { webContentsId: number; url: string; id: string | null; other: boolean } | null = null;
@@ -199,8 +237,11 @@ export function wireLiveInspect(options: {
     };
   };
 
-  ipcMain.handle('live:trace', async (event): Promise<LiveTraceAnswer> => {
-    if (!ok(event)) return { state: 'none' };
+  /**
+   * The shown page's trace: the one already held when it is this render's, else asked of the helper (and held).
+   * The window asks for it, and so does the design layer after every load (live-layer.ts).
+   */
+  const trace = async (): Promise<LiveTraceAnswer> => {
     const cur = options.current();
     const page = cur?.webContents.getURL();
     if (!cur || !page || !sameSite(cur.base, page)) return { state: 'none' };
@@ -209,29 +250,15 @@ export function wireLiveInspect(options: {
     if (!latest || latest.webContentsId !== cur.webContents.id || !latest.id) return { state: 'missing' };
     const { id, url } = latest;
     const origin = new URL(url).origin;
-    let text: string;
-    let res: Response;
-    try {
-      res = await ask(cur, origin, `/_wanigan/trace/${id}`);
-      if (res.status === 404) return { state: 'expired' };
-      if (res.status === 401 || res.status === 403) return { state: 'refused', status: res.status };
-      if (!res.ok) return { state: 'down', error: `it answered ${res.status}` };
-      text = await readBounded(res, MAX_TRACE_BYTES);
-    } catch (error) {
-      if (error instanceof TooLarge) return { state: 'too-large' };
-      return { state: 'down', error: (error as Error).message || 'no answer' };
-    }
-    let raw: unknown;
-    try { raw = JSON.parse(text); } catch { return { state: 'unreadable', version: null }; }
-    const trace = parseTrace(raw);
-    // A trace for another render is not this page's, however well formed.
-    if (!trace || trace.id !== id) {
-      const version = raw && typeof raw === 'object' && typeof (raw as { version?: unknown }).version === 'number' ? (raw as { version: number }).version : null;
-      return { state: 'unreadable', version };
-    }
-    held = { projectId: cur.projectId, webContentsId: cur.webContents.id, origin, trace };
-    return { state: 'ok', trace };
-  });
+    const h = held;
+    if (h && h.projectId === cur.projectId && h.webContentsId === cur.webContents.id && h.trace.id === id) return { state: 'ok', trace: h.trace };
+    if (!sameSite(cur.base, origin)) return { state: 'none' };
+    const answer = await askTrace((u, init) => cur.webContents.session.fetch(u, init), origin, cur.token, id);
+    if (answer.state === 'ok') held = { projectId: cur.projectId, webContentsId: cur.webContents.id, origin, trace: answer.trace };
+    return answer;
+  };
+
+  ipcMain.handle('live:trace', async (event): Promise<LiveTraceAnswer> => (ok(event) ? trace() : { state: 'none' }));
 
   // The site's AI as its core reports it: read-only, and free (the helper lists what core knows; nothing is prompted).
   ipcMain.handle('live:siteAi', async (event): Promise<LiveSiteAiAnswer> => {
@@ -462,5 +489,5 @@ export function wireLiveInspect(options: {
     return result.ok || !result.conflict ? result : { ...result, error: 'It changed on the site since, so it was not put back. The page now shows it as it is.' };
   });
 
-  return { hooks };
+  return { hooks, trace };
 }

@@ -783,6 +783,8 @@ export interface Events {
   'liveShots': { cardId: string };
   /** Words were saved by hand to a template, or put back. */
   'liveEdits': { projectId: string };
+  /** A project's design layer changed: an edit was added, discarded, undone, redone or marked (by the window, or by the main process applying or verifying it). */
+  'liveLayer': { projectId: string };
   /** An agent's live view tool needs the app: render a page, read the view. Only the app answers (`live.answer`). */
   'liveAsk': LiveAsk;
   /** An agent looked at the live view: what a card shows as evidence changed. */
