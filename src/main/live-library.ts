@@ -109,6 +109,8 @@ export type PieceCapture = (o: { partition: string; url: string; width: number; 
 export const PICTURE_MAX_HEIGHT = 4_000;
 /** A piece says when it is drawn; a static WordPress block is serialized by its editor script and posted back first. */
 const DRAWN_MS = 25_000;
+/** Hidden windows rendering pieces at once. One at a time took twelve page loads, end to end, for a first batch. */
+export const RENDERS_AT_ONCE = 3;
 /** The isolated world the capture reads the page from: the page's own scripts cannot reach it. */
 const WORLD = 4243;
 const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
@@ -196,8 +198,18 @@ export function wireLiveLibrary(options: {
   const clock = options.now ?? Date.now;
   const capture = options.capture ?? captureInWindow;
   const held = new Map<string, { origin: string; library: ComponentLibrary; at: number }>();
-  /** One render at a time: each loads a whole page in a hidden window. */
-  let queue: Promise<unknown> = Promise.resolve();
+  // Each render loads a whole page in a hidden window: a few run side by side, and the rest wait for a free one.
+  let rendering = 0;
+  const waiting: (() => void)[] = [];
+  const inTurn = async <T>(job: () => Promise<T>): Promise<T> => {
+    if (rendering < RENDERS_AT_ONCE) rendering++;
+    else await new Promise<void>((go) => waiting.push(go));
+    try { return await job(); } finally {
+      // The window is handed straight to the next in line, so a newcomer cannot slip in between and make one more.
+      const next = waiting.shift();
+      if (next) next(); else rendering--;
+    }
+  };
   const root = join(options.dataDir, 'live-library');
 
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
@@ -268,27 +280,30 @@ export function wireLiveLibrary(options: {
     const base = site.url;
     const origin = new URL(base).origin;
     const dir = dirOf(projectId, lib.hash);
-    const shots: LibraryShot[] = [];
+    const token = site.token;
+    // In the order asked, whichever render finishes first.
+    const shots: Promise<LibraryShot>[] = [];
     for (const id of asked.entries) {
       const entry = lib.entries.find((e) => e.id === id);
       for (const width of asked.widths) {
         const none = (error: string): LibraryShot => ({ entry: id, width, path: null, height: null, cached: false, cut: false, error });
-        if (!entry) { shots.push(none('There is no such entry in the site’s library now.')); continue; }
-        if (entry.picture.from === 'none') { shots.push(none(entry.picture.why)); continue; }
+        const now = (shot: LibraryShot): void => { shots.push(Promise.resolve(shot)); };
+        if (!entry) { now(none('There is no such entry in the site’s library now.')); continue; }
+        if (entry.picture.from === 'none') { now(none(entry.picture.why)); continue; }
         const cached = opts.refresh === true ? null : keptShot(dir, id, width);
-        if (cached) { shots.push(cached); continue; }
+        if (cached) { now(cached); continue; }
         const url = `${origin}${entry.picture.piece}`;
         // The helper named the route; it is checked again here, against the site, before anything loads it.
-        if (!sameSite(base, url)) { shots.push(none('That piece is not on this site.')); continue; }
-        const partition = options.partition(projectId, base, site.token);
-        const run = queue.then(() => capture({ partition, url, width, base }));
-        queue = run.catch(() => {});
-        const shot = await run.catch((error: Error) => ({ error: error.message || 'The piece could not be pictured.' }));
-        if ('error' in shot) { shots.push(none(shot.error)); continue; }
-        shots.push({ entry: id, width, path: keep(projectId, lib.hash, id, width, shot), height: shot.height, cached: false, cut: shot.cut, error: null });
+        if (!sameSite(base, url)) { now(none('That piece is not on this site.')); continue; }
+        const partition = options.partition(projectId, base, token);
+        shots.push(inTurn(() => capture({ partition, url, width, base }))
+          .catch((error: Error) => ({ error: error.message || 'The piece could not be pictured.' }))
+          .then((shot): LibraryShot => ('error' in shot
+            ? none(shot.error)
+            : { entry: id, width, path: keep(projectId, lib.hash, id, width, shot), height: shot.height, cached: false, cut: shot.cut, error: null })));
       }
     }
-    return { ok: true, hash: lib.hash, shots };
+    return { ok: true, hash: lib.hash, shots: await Promise.all(shots) };
   });
 
   // A kept picture as base64 PNG, for a window that cannot read the data folder itself.
