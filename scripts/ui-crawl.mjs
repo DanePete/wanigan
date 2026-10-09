@@ -17,7 +17,10 @@ import { chromium } from 'playwright-core';
 import { SHORTCUTS } from '../src/shared/shortcuts.ts';
 import { PROJECT_VIEWS } from '../src/shared/views.ts';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
+import { compareStub } from './ui-compare-stub.mjs';
 import { pageHelpers } from './ui-crawl-page.mjs';
+import { LIVE_STUB } from './ui-goto-stub.mjs';
+import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { crawlTarget } from './ui-crawl-target.mjs';
 import { qualifyStoppedResize } from './ui-crawl-refusals.ts';
 
@@ -214,11 +217,13 @@ function startupFailure(error, surface) {
     problems: [error.message], result: 'fail', note: '', startup: error.gatewayStartup };
 }
 
-async function openPage(browser, base) {
+/** A page on the core at `base`; `standIns` are init scripts that play what the browser lacks (the live view). */
+async function openPage(browser, base, standIns = []) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
   await context.addInitScript(BRIDGE);
   await context.addInitScript(`(${pageHelpers})();`);
+  for (const s of standIns) await context.addInitScript(s);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`page error: ${firstLine(e.message)}`));
@@ -545,6 +550,32 @@ const cardIn = (column) => (page) => page.waitForFunction((c) => document.active
 const nthCardFocused = (column, n) => (page) => page.waitForFunction(([c, i]) => document.activeElement === document.querySelectorAll(`.column-${c} .card`)[i], [column, n], { timeout: 3000 });
 
 /**
+ * The live view's keys need a live view, which the browser has not got: no
+ * Electron view to lay over a page, and no site. A check naming one of these
+ * gets a page with the sweeps' stand-in, which answers from made-up Acme pages
+ * and loads none.
+ */
+const LIVE_STANDINS = {
+  // Go to's launcher, answered by a stand-in Acme site (ui-goto-stub.mjs). It names the project it plays from the tab's storage.
+  goto: {
+    scripts: [LIVE_STUB, LIVE_DEFAULTS, `(() => { const id = sessionStorage.getItem('wanigan.crawl.live-project'); if (id && window.__wgLive) window.__wgLive.projectId = id; })();`],
+    prepare: (page, key) => page.evaluate(async (k) => {
+      sessionStorage.setItem('wanigan.crawl.live-project', (await window.wanigan.call('projects.list', {})).find((p) => p.key === k).id);
+    }, key),
+  },
+  // Compare: Local and a hosted Live drawn on a canvas (ui-compare-stub.mjs). The core keeps the site and the environment.
+  compare: {
+    scripts: [compareStub, LIVE_DEFAULTS],
+    prepare: (page, key) => page.evaluate(async (k) => {
+      const call = (m, p) => window.wanigan.call(m, p);
+      const project = (await call('projects.list', {})).find((p) => p.key === k);
+      await call('live.setSite', { projectId: project.id, url: 'https://acme.ddev.site/', platform: 'drupal' });
+      await call('live.setEnv', { projectId: project.id, name: 'Live', url: 'https://www.acme.example/' });
+    }, key),
+  },
+};
+
+/**
  * One check per key of every shortcut the sheet lists (shared/shortcuts.ts):
  * where it applies, what to press, and what must follow. The crawl fails if
  * the sheet lists a shortcut with no check here.
@@ -561,6 +592,25 @@ function keyChecks(w) {
   };
   const shell = w.sessions.find((s) => s.provider === 'shell' && s.live);
   const inbox = w.cards.filter((c) => c.projectKey === ns && c.status === 'inbox');
+  const live = `#/p/${ns}/live`;
+  /** Local and Live compared, nothing ignored, the keys on the pictures: its changes are the hero, the news list and the footer. */
+  const comparing = (...keys) => async (page) => {
+    await page.evaluate(async (k) => {
+      const call = (m, p) => window.wanigan.call(m, p);
+      const project = (await call('projects.list', {})).find((p) => p.key === k);
+      for (const m of (await call('live.envs', { projectId: project.id })).masks) await call('live.unmask', { projectId: project.id, id: m.id });
+    }, ns);
+    await page.click('.live-bar button:has-text("Compare")');
+    await page.waitForSelector('.cmp-change', { timeout: 10_000 });
+    await page.waitForFunction(() => document.activeElement?.classList.contains('cmp-frame'), null, { timeout: 3000 });
+    for (const k of keys) await page.keyboard.press(k);
+  };
+  const compareMode = (name) => focused((n) => document.querySelector('.cmp-bar [role="radio"][aria-checked="true"]')?.textContent === n, name);
+  const showing = (side) => focused((s) => document.querySelector('.cmp-flip')?.textContent.includes(`Showing ${s}`), side);
+  const atChange = (i) => focused((n) => [...document.querySelectorAll('.cmp-change')].findIndex((e) => e.getAttribute('aria-current') === 'true') === n, i);
+  /** Both pages taken again at this width. */
+  const takenAt = (px) => focused((w) => { const s = window.__wgLive.shots.slice(-2); return s.length === 2 && s.every((r) => r.width === w); }, px);
+  const atWidth = (key, px) => async (page) => { await page.keyboard.press(key); await takenAt(px)(page); await page.waitForSelector('.cmp-change', { timeout: 10_000 }); };
   const checks = {
     'Search and commands': [{ at: board, keys: ['Meta+k'], expect: shows('.palette') }],
     'New session': [{ at: board, keys: ['Meta+t'], expect: shows('.dialog h2:text-is("New session")') }],
@@ -636,6 +686,31 @@ function keyChecks(w) {
     'Send a message to the agent': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer', setup: async (page) => { await page.click('#composer'); await page.keyboard.type(TYPED); }, keys: ['Enter'], expect: focused(() => document.querySelector('#composer')?.value === '') }],
     'New line in a message': [{ at: shell ? `#/p/${shell.projectKey}/s/${shell.id}` : null, ready: '#composer', setup: async (page) => { await page.click('#composer'); await page.keyboard.type('one'); }, keys: ['Shift+Enter'], expect: focused(() => document.querySelector('#composer')?.value === 'one\n') }],
     'Close a dialog': [{ at: board, setup: press('c'), then: '.dialog', keys: ['Escape'], expect: gone('.dialog') }],
+    // Go to: ⌘⇧Space from anywhere in a project; Shift+Space in the live view, pressed on another of its buttons so a
+    // button's own Space can never be what opened it.
+    'A page of the project’s site': [{ standIn: 'goto', at: board, keys: ['Meta+Shift+Space'], expect: shows('.goto [role="option"]') }],
+    'A page of the site, from the live view (not while typing)': [{ standIn: 'goto', at: live, ready: '.live-bar', setup: async (page) => { await page.focus('.live-bar button[aria-label="Site settings"]'); },
+      keys: ['Shift+Space'], expect: shows('.goto [role="option"]') }],
+    // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.
+    'Show Local, or the hosted page': [
+      { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['ArrowRight'], expect: showing('Live') },
+      { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('ArrowRight'), keys: ['ArrowLeft'], expect: showing('Local') },
+    ],
+    'Flip to the other': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('ArrowLeft'), keys: ['Space'], expect: showing('Live') }],
+    Slider: [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('d'), keys: ['s'], expect: compareMode('Slider') }],
+    'Onion skin': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['o'], expect: compareMode('Onion skin') }],
+    Difference: [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['d'], expect: compareMode('Difference') }],
+    'Side by side': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['t'], expect: compareMode('Side by side') }],
+    'Next change': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['j'], expect: atChange(1) }],
+    'Previous change': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('j'), keys: ['k'], expect: atChange(0) }],
+    'Phone, tablet or desktop width': [
+      { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['1'], expect: takenAt(390) },
+      { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['2'], expect: takenAt(768) },
+      { standIn: 'compare', at: live, ready: '.live-bar', setup: async (page) => { await comparing()(page); await atWidth('2', 768)(page); }, keys: ['3'], expect: takenAt(1440) },
+    ],
+    // The footer's clock changes on its own, the change worth ignoring: K from the first change wraps round to it.
+    'Ignore the change on this page': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('k'), keys: ['i'], expect: shows('.cmp-ignored li:has-text("This page")') }],
+    'Ignore the change on every page': [{ standIn: 'compare', at: live, ready: '.live-bar', setup: comparing('k'), keys: ['Shift+I'], expect: shows('.cmp-ignored li:has-text("Every page")') }],
     // Last: these change the board.
     'Accept into Ready (Inbox)': [{ at: board, setup: focusCard('inbox'), keys: ['a'], expect: focused((k) => !!document.querySelector(`.column-ready .card[data-key="${k}"]`), inbox[0]?.key) }],
     'Archive (Inbox)': [{ at: board, setup: focusCard('inbox'), keys: ['x'], expect: focused((k) => !document.querySelector(`.card[data-key="${k}"]`), inbox[1]?.key) }],
@@ -649,14 +724,23 @@ function keyChecks(w) {
 async function crawlKeys(browser) {
   const started = Date.now();
   const records = [];
-  let context, gateway;
+  let gateway;
+  /** One page for the plain window, and one for each live-view stand-in a check names, opened when first needed. */
+  const pages = new Map();
   try {
     const startedGateway = await seeded('Keyboard', 'initial');
     gateway = startedGateway.gateway;
-    const opened = await openPage(browser, startedGateway.base);
-    context = opened.context;
-    const { page, errors } = opened;
-    const world = await readWorld(page);
+    pages.set('', await openPage(browser, startedGateway.base));
+    const world = await readWorld(pages.get('').page);
+    const ns = world.projects.find((p) => p.name.startsWith('Northstar')).key;
+    const pageFor = async (standIn = '') => {
+      if (!pages.has(standIn)) {
+        const opened = await openPage(browser, startedGateway.base, LIVE_STANDINS[standIn].scripts);
+        pages.set(standIn, opened);
+        await LIVE_STANDINS[standIn].prepare(opened.page, ns);
+      }
+      return pages.get(standIn);
+    };
     const checks = keyChecks(world);
     for (const s of SHORTCUTS) {
       const want = 1 + (s.alt?.length ?? 0);
@@ -668,6 +752,7 @@ async function crawlKeys(browser) {
         records.push(rec);
         try {
           if (!c.at) throw new Error('the demo has nowhere this applies');
+          const { page, errors } = await pageFor(c.standIn);
           await page.evaluate((h) => { location.hash = h; }, c.at);
           await page.reload();
           await page.waitForSelector('.rail-projects a', { timeout: 20_000 });
@@ -692,7 +777,7 @@ async function crawlKeys(browser) {
   } catch (error) {
     records.push(startupFailure(error, 'Keyboard'));
   } finally {
-    await context?.close().catch(() => {});
+    for (const { context } of pages.values()) await context.close().catch(() => {});
     gateway?.kill('SIGTERM');
   }
   return { records, ms: Date.now() - started };
