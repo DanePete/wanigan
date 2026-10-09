@@ -15,6 +15,8 @@
 //   message (see limits.ts). Claude may then wait for the reset and carry on by
 //   itself, saying so with the notification types quota_auto_resume_fired,
 //   _stale (the reset came; it waits for Enter) and _disabled (it will not).
+// - Gemini CLI says it hit a limit only on its screen (limits.ts); Wanigan
+//   reads that as its own event, UsageLimit.
 import { usageLimitMessage } from './limits.ts';
 import { CHATTER_TOOL, chatterLine, chatterOf } from './chatter.ts';
 import { NEED_KINDS, type Need, type PermissionAsk, type Provider, type SessionState } from './model.ts';
@@ -71,6 +73,9 @@ export function nextState(prev: SessionState, event: string, input: HookInput): 
       return 'working';
     case 'StopFailure':
       return usageLimitMessage(event, input) ? 'limited' : 'waiting';
+    // Wanigan's own event: Gemini CLI drew its usage-limit dialog.
+    case 'UsageLimit':
+      return 'limited';
     case 'SessionStart':
     case 'Stop':
     // Wanigan's own event: the owner said No or pressed Esc, and Claude Code
@@ -125,6 +130,8 @@ export function activityFor(event: string, input: HookInput): string | null {
       const limit = usageLimitMessage(event, input);
       return limit ? clip(limit, 120) : 'Turn failed';
     }
+    case 'UsageLimit':
+      return typeof input.message === 'string' ? clip(input.message, 120) : 'Hit its usage limit';
     case 'PreCompact':
       return 'Compacting context';
     case 'SessionStart':

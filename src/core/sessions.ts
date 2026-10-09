@@ -16,7 +16,7 @@ import type { LocalModels } from './local-models.ts';
 import { modelArgs } from '../shared/models.ts';
 import { delivery, type Delivery } from '../shared/attachments.ts';
 import { CODEX_LIFECYCLE_ARGS, EMPTY_LINE, scanCodex, typeInto, type TypedLine } from '../shared/codex.ts';
-import { limitResetsAt, usageLimitMessage, whyNotTarget } from '../shared/limits.ts';
+import { GEMINI_NO_RESPONSE, geminiLimit, limitResetsAt, screenWords, usageLimitMessage, whyNotTarget } from '../shared/limits.ts';
 import {
   LIVE_STATES, OWNER, PROVIDERS, SYSTEM, sessionActor,
   type Account, type CardSummary, type CardType, type Project, type Provider, type Session, type SessionEvent, type SessionState,
@@ -59,6 +59,8 @@ const IMAGE_MARKS = /\[Image #(\d+)\]/g;
  * clock may differ from ours.
  */
 const INTERRUPT_CHECKS_MS = [700, 2_500];
+/** Enough of Gemini's output to hold its usage-limit dialog, escapes and borders included. */
+const GEMINI_SCREEN_CHARS = 16_000;
 const CLOCK_SLACK_MS = 1_000;
 
 interface Live {
@@ -100,6 +102,8 @@ interface Live {
   hookWait: NodeJS.Timeout | null;
   /** Gemini has started a turn: past its first screen (sign-in, folder trust), so the composer may type into it. */
   turned?: boolean;
+  /** The end of what Gemini drew, kept to find its usage-limit dialog in (limits.ts). */
+  screen?: string;
   /** Looks in a Claude transcript for an interrupt, after the owner typed mid-turn. */
   interruptChecks?: NodeJS.Timeout[];
 }
@@ -791,7 +795,11 @@ export class Sessions {
     const provider = live?.provider ?? this.row(sessionId).provider;
     const n = normalizeHook(provider ?? '', event, input);
     if (!n) return '';
-    if (live && provider === 'gemini' && n.event === 'UserPromptSubmit') live.turned = true;
+    if (live && provider === 'gemini' && n.event === 'UserPromptSubmit') {
+      live.turned = true;
+      // A limit dialog belongs to the turn it came in: read only from here on.
+      live.screen = '';
+    }
     return this.apply(sessionId, n.event, n.input, true);
   }
 
@@ -813,10 +821,15 @@ export class Sessions {
     // Codex starts its session as the first turn begins, not when it opens, so
     // its SessionStart says nothing about where it is.
     const codexStart = row.provider === 'codex' && event === 'SessionStart';
+    // Gemini stopped at its limit ends the turn with no text: it is still limited,
+    // as Claude is after its StopFailure. A turn that went on (another model,
+    // or the retry got through) ends with what it said.
+    const geminiStopped = row.provider === 'gemini' && prev === 'limited' && event === 'Stop' && input.prompt_response === GEMINI_NO_RESPONSE;
     const state = !live ? prev
       : codexStart ? (prev === 'running' || prev === 'starting' ? 'waiting' : prev)
-        : nextState(prev === 'running' || prev === 'starting' ? 'waiting' : prev, event, input);
-    const activity = codexStart ? null : activityFor(event, input);
+        : geminiStopped ? prev
+          : nextState(prev === 'running' || prev === 'starting' ? 'waiting' : prev, event, input);
+    const activity = codexStart || geminiStopped ? null : activityFor(event, input);
     const now = this.ctx.now();
     const tool = typeof input.tool_name === 'string' ? input.tool_name : null;
     // One agent messaging another: PreToolUse is the moment it was sent (the
@@ -969,6 +982,13 @@ export class Sessions {
       if (prev === 'limited') db.prepare('UPDATE sessions SET limit_since = NULL, limit_resets_at = NULL WHERE id = ?').run(row.id);
       return false;
     }
+    // Gemini's dialog says when, in its own words, read as it was drawn (limits.ts).
+    if (event === 'UsageLimit') {
+      const resetsAt = typeof input.resets_at === 'number' ? input.resets_at : null;
+      if (prev === 'limited' && row.limit_resets_at === resetsAt) return false;
+      db.prepare('UPDATE sessions SET limit_since = ?, limit_resets_at = ? WHERE id = ?').run(now, resetsAt, row.id);
+      return true;
+    }
     const message = usageLimitMessage(event, input);
     // Claude saying the reset came and it waits for Enter is news worth raising again.
     const reset = event === 'Notification' && input.notification_type === 'quota_auto_resume_stale';
@@ -1090,7 +1110,10 @@ export class Sessions {
       else live.watch.tail = text.slice(-16);
     }
     if (live.provider === 'codex') this.codexLifecycle(live, data);
-    if (live.provider === 'gemini') this.geminiTitle(live, data);
+    if (live.provider === 'gemini') {
+      this.geminiTitle(live, data);
+      this.geminiLimit(live, data);
+    }
     live.pending += data;
     live.flush ??= setTimeout(() => this.drain(live), FLUSH_MS);
   }
@@ -1143,6 +1166,22 @@ export class Sessions {
     if (last === null || !live.relayed) return;
     const state = this.row(live.id).state as SessionState;
     if (/^\s*◇/.test(last) && (state === 'working' || state === 'permission')) this.apply(live.id, 'Interrupted', {}, false);
+  }
+
+  /**
+   * Gemini says it hit its usage limit only on screen, in a dialog that asks
+   * whether to keep trying, switch model or stop (limits.ts has its exact
+   * words). It comes in a turn, so it is read only while one is under way.
+   */
+  private geminiLimit(live: Live, data: string): void {
+    live.screen = `${live.screen ?? ''}${data}`.slice(-GEMINI_SCREEN_CHARS);
+    if (!live.relayed || !live.screen.includes('Usage limit reached')) return;
+    const found = geminiLimit(screenWords(live.screen), this.ctx.now());
+    if (!found) return;
+    // Read once: the dialog redrawn as the owner moves through it is the same dialog.
+    live.screen = '';
+    const state = this.row(live.id).state as SessionState;
+    if (state === 'working' || state === 'permission') this.apply(live.id, 'UsageLimit', { message: found.message, resets_at: found.resetsAt }, false);
   }
 
   private codexLifecycle(live: Live, data: string): void {

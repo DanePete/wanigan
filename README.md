@@ -159,7 +159,12 @@ servers and global `GEMINI.md` live in your home and are not loaded there.
 - The composer works from Gemini's second message: its first screen may ask you
   to sign in or to trust the folder, so the first message goes in its terminal.
 - Nothing reports a refused permission or a cancel; its window title going back
-  to Ready does, and Wanigan reads it. Its usage limit is not detected yet.
+  to Ready does, and Wanigan reads it.
+- Nothing reports its usage limit either: Gemini draws a dialog (keep trying,
+  switch model, or stop). Wanigan reads that dialog's exact words in a turn, so
+  the session shows as limited, with the reset Gemini printed, and Needs you
+  sends you to its terminal. Stopping keeps it limited until the next prompt.
+  It is screen text: if Gemini rewords it, Wanigan misses it.
 - Its tokens are counted from its own chat file, the one its hook names inside
   Wanigan's Gemini home: each reply once, cached input apart, thoughts as
   output.
@@ -381,10 +386,11 @@ verification results and the behavior that remains unverified.
   Codex's start-of-turn hook was seen in the scenario run.
 - Gemini CLI: proven with the installed 0.46 up to its first hook (folder trust
   answered, the hook through the relay, its conversation id learnt); a real
-  model turn needs a Gemini login and has not been run. Its usage limit is not
-  detected, and MCP servers and skills are not offered for it. Its token count
-  follows the chat file Gemini 0.46 wrote with fake responses; a real model's
-  usage numbers have not been seen.
+  model turn needs a Gemini login and has not been run. MCP servers and skills
+  are not offered for it. Its usage limit and token count were proven with the
+  installed CLI against a fake Gemini API on this Mac
+  (`scripts/gemini-fake-api-check.ts`); a real account's limit and a real
+  model's usage numbers have not been seen.
 - Grok Build: not yet an agent. Its installer was not run (it verifies nothing
   it downloads); what its binary says is in the research note, and its hook
   events are translated and tested, waiting for it to be installed and seen

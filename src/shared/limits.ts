@@ -45,6 +45,72 @@ export function limitResetsAt(message: string, now = Date.now()): number | null 
   return null;
 }
 
+/**
+ * Gemini CLI 0.46 says it hit a usage limit only on its screen: no hook carries
+ * it, and the chat file records the stopped turn as "[API Error: An unknown
+ * error occurred.]". When a model request fails with its TerminalQuotaError,
+ * useQuotaAndFallback (in its bundle) opens ProQuotaDialog with these lines,
+ * in this order, and asks what to do (keep trying, switch model, stop):
+ *
+ *     Usage limit reached for <all Pro models | the model id>.
+ *     Access resets at <h:mm AM|PM ZONE>.        (only when the API said when)
+ *     /stats model for usage details
+ *     /model to switch models.
+ *
+ * Seen rendered by the installed CLI in a terminal, against a fake Gemini API
+ * on this Mac answering 429 (no model, no login). The match is that whole
+ * block, word for word, after the screen's escapes, box borders and line
+ * breaks are taken out; anything less is not a limit.
+ */
+const GEMINI_LIMIT = /Usage limit reached for (all Pro models|[\w.:-]+)\. (?:Access resets at (\d{1,2}):(\d{2}) ?([AP]M) ([A-Z][A-Za-z]{0,4}(?:[+-]\d{1,2}(?::\d{2})?)?)\. )?\/stats model for usage details \/model to switch models\./;
+
+/**
+ * What Gemini's AfterAgent hook says when its turn produced no text
+ * (fireAfterAgentHookSafe): the turn the owner stopped at the limit.
+ */
+export const GEMINI_NO_RESPONSE = '[no response text]';
+
+/** Terminal output as the words on screen: escapes, box borders and line breaks become single spaces. */
+export function screenWords(raw: string): string {
+  return raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b[()#][0-9A-Za-z]|\u001b[=>78DEHMc]/g, ' ')
+    .replace(/[│┃║╭╮╰╯─━═]/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Gemini's usage-limit dialog in what its terminal drew, or null. `resetsAt`
+ * is the next time this Mac's clock reads the time Gemini printed, and null
+ * when it printed none, or a zone that is not this Mac's (Gemini formats it
+ * in its own zone; a different one would make the time a guess).
+ */
+export function geminiLimit(words: string, now = Date.now()): { message: string; resetsAt: number | null; end: number } | null {
+  const m = GEMINI_LIMIT.exec(words);
+  if (!m) return null;
+  const resetsAt = m[2] && m[3] && m[4] && m[5] ? nextLocal(Number(m[2]), Number(m[3]), m[4], m[5], now) : null;
+  const message = `Usage limit reached for ${m[1]}.${m[2] ? ` Access resets at ${m[2]}:${m[3]} ${m[4]} ${m[5]}.` : ''}`;
+  return { message, resetsAt, end: m.index + m[0].length };
+}
+
+function nextLocal(hour: number, minute: number, half: string, zone: string, now: number): number | null {
+  if (hour < 1 || hour > 12 || minute > 59) return null;
+  const h = (hour % 12) + (half === 'PM' ? 12 : 0);
+  for (const day of [0, 1]) {
+    const at = new Date(now);
+    at.setDate(at.getDate() + day);
+    at.setHours(h, minute, 0, 0);
+    if (at.getTime() < now - 60_000) continue;
+    const local = new Intl.DateTimeFormat('en-US', { hour: 'numeric', timeZoneName: 'short' }).formatToParts(at).find((p) => p.type === 'timeZoneName')?.value;
+    return local === zone ? at.getTime() : null;
+  }
+  return null;
+}
+
 function dayIn(at: number, zone: string): { month: number; day: number } | null {
   try {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, month: 'numeric', day: 'numeric' }).formatToParts(at);

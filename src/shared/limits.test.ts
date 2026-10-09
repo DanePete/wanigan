@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { activityFor, nextState } from './attention.ts';
-import { continueTargets, limitDetail, limitResetsAt, usageLimitMessage, whyNotTarget } from './limits.ts';
+import { continueTargets, geminiLimit, limitDetail, limitResetsAt, screenWords, usageLimitMessage, whyNotTarget } from './limits.ts';
 import type { Account } from './model.ts';
 import { parseUsage } from './usage.ts';
 
@@ -78,4 +80,50 @@ test('a conversation moves only to an account with room, never to the same login
   assert.match(whyNotTarget(personal, personal) ?? '', /already on personal/);
   assert.match(whyNotTarget(accounts[4] as Account, personal) ?? '', /signed out/);
   assert.match(whyNotTarget(accounts[7] as Account, personal) ?? '', /codex account/);
+});
+
+// Gemini CLI 0.46's usage-limit dialog exactly as its terminal drew it (see the fixture's note).
+const DIALOG = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'core', 'fixtures', 'gemini-0.46-limit-dialog.json'), 'utf8')) as { withReset: string; noReset: string };
+/** How Gemini prints a reset (getResetTimeMessage), in this machine's zone, as the CLI on it would. */
+const geminiTime = (at: number): string => new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(at);
+
+test('Gemini: its limit dialog, word for word as drawn, says the limit and when it resets on this Mac’s clock', () => {
+  const now = new Date(2026, 9, 9, 9, 9, 30).getTime();
+  const reset = now + 2 * 3_600_000 - 30_000;
+  const drawn = DIALOG.withReset.replace('11:09 AM CDT', geminiTime(reset));
+  const found = geminiLimit(screenWords(drawn), now);
+  assert.equal(found?.resetsAt, reset);
+  assert.equal(found?.message, `Usage limit reached for all Pro models. Access resets at ${geminiTime(reset).replace(/\s+/g, ' ')}.`);
+  // A time already past today is tomorrow's.
+  const early = geminiLimit(screenWords(DIALOG.withReset.replace('11:09 AM CDT', geminiTime(now - 3_600_000))), now);
+  assert.equal(early?.resetsAt, now - 3_600_000 + 86_400_000 - 30_000);
+  // A daily quota prints no reset: the limit stands, and when it lifts is not known.
+  const daily = geminiLimit(screenWords(DIALOG.noReset), now);
+  assert.equal(daily?.message, 'Usage limit reached for all Pro models.');
+  assert.equal(daily?.resetsAt, null);
+});
+
+test('Gemini: a reset in a zone that is not this Mac’s is not guessed at, and anything short of the whole dialog is not a limit', () => {
+  const now = Date.now();
+  const here = geminiTime(now).split(' ').pop();
+  const elsewhere = here === 'GMT+13' ? 'GMT+12' : 'GMT+13';
+  assert.equal(geminiLimit(screenWords(DIALOG.withReset.replace('CDT', elsewhere).replace(/CDT/g, elsewhere)), now)?.resetsAt, null);
+  assert.equal(geminiLimit(screenWords(DIALOG.withReset.replace('AM CDT', `AM ${elsewhere}`)), now)?.resetsAt, null);
+  for (const near of [
+    'Usage limit reached for all Pro models.',
+    'Usage limit reached for all Pro models. /model to switch models.',
+    'The CLI says "Usage limit reached for all Pro models." then /stats model for usage details',
+    'Usage limit reached for all Pro models. /stats model for usage details /model to switch model',
+    'usage limit reached for all Pro models. /stats model for usage details /model to switch models.',
+    'Usage limit reached for all Pro models. Access resets at soon. /stats model for usage details /model to switch models.',
+  ]) assert.equal(geminiLimit(screenWords(near)), null, near);
+  // Its own words for a model it names, and for Pro.
+  assert.match(geminiLimit(screenWords('│ Usage limit reached for gemini-2.5-flash.   │\r\n│ /stats model for usage details │\r\n│ /model to switch models. │'))?.message ?? '', /gemini-2\.5-flash\.$/);
+});
+
+test('Gemini: a limit is a state of its own, with the dialog’s words as what it is doing', () => {
+  assert.equal(nextState('working', 'UsageLimit', { message: 'Usage limit reached for all Pro models.' }), 'limited');
+  assert.equal(activityFor('UsageLimit', { message: 'Usage limit reached for all Pro models.' }), 'Usage limit reached for all Pro models.');
+  assert.equal(nextState('limited', 'UserPromptSubmit', {}), 'working', 'a new turn lifts it');
+  assert.equal(nextState('limited', 'PreToolUse', {}), 'working', 'so does the turn going on, on another model');
 });

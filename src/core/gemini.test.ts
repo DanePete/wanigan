@@ -166,3 +166,86 @@ test('Gemini’s tokens come from the chat file its own hook named, inside Wanig
     assert.equal((await t.owner.call('cards.tokens', { id: card.id })).uncounted, 1);
   } finally { await t.close(); }
 });
+
+// Gemini CLI 0.46's usage-limit dialog, exactly as its terminal drew it (see the fixture's note).
+const DIALOG = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'gemini-0.46-limit-dialog.json'), 'utf8')) as { withReset: string; noReset: string };
+const state = async (t: TestCore, id: string) => (await t.owner.call('sessions.get', { id })).session;
+/** A stand-in that draws a file's bytes, untouched, when told `draw <file>`; otherwise echoes. */
+const DRAWING_GEMINI = [
+  'stty -echo',
+  'echo "TOKEN=$WANIGAN_TOKEN HOME=${GEMINI_CLI_HOME-unset} ARGS=$*"',
+  'while IFS= read -r line; do',
+  '  case "$line" in',
+  '    "draw "*) cat "${line#draw }" ;;',
+  '    *) printf "%s\\n" "$line" ;;',
+  '  esac',
+  'done',
+].join('\n');
+const drawing = (provider: string) => (provider === 'gemini' ? { file: '/bin/sh', args: ['-c', DRAWING_GEMINI, 'fake-gemini'] } : null);
+/** Gemini draws its dialog in the session's terminal. */
+async function draw(t: TestCore, sessionId: string, bytes: string): Promise<void> {
+  const file = join(t.dir, `dialog-${Math.random().toString(36).slice(2)}.txt`);
+  writeFileSync(file, bytes);
+  await t.owner.call('sessions.input', { id: sessionId, data: `draw ${file}\n` });
+}
+
+test('Gemini’s usage-limit dialog makes the session limited, with its reset, in Needs you; stopping keeps it limited, a new turn lifts it', async () => {
+  const t = await testCore({ launcher: drawing });
+  try {
+    const { session, token } = await gemini(t);
+    await relay(t.core, token, 'SessionStart', { source: 'startup' });
+    // Outside a turn the same words are not a limit (the owner printing a file, say).
+    await draw(t, session.id, DIALOG.noReset);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal((await state(t, session.id)).state, 'waiting');
+
+    await relay(t.core, token, 'BeforeAgent', { prompt: 'hello' });
+    await waitFor('working', async () => (await state(t, session.id)).state === 'working');
+    const reset = Date.now() + 2 * 3_600_000;
+    const time = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(reset);
+    await draw(t, session.id, DIALOG.withReset.replace('11:09 AM CDT', time));
+    // Ink redraws the dialog as the owner moves through it: the same limit.
+    await draw(t, session.id, DIALOG.withReset.replace('11:09 AM CDT', time));
+    const limited = await waitFor('limited', async () => { const s = await state(t, session.id); return s.state === 'limited' ? s : null; });
+    assert.equal(limited.limit?.resetsAt, Math.floor(reset / 60_000) * 60_000, 'the minute Gemini printed, on this Mac’s clock');
+    assert.match(limited.activity ?? '', /^Usage limit reached for all Pro models\. Access resets at/);
+    const need = await waitFor('the need', async () => (await t.owner.call('needs.list', {})).find((n) => n.sessionId === session.id && n.kind === 'limit'));
+    assert.equal(need.provider, 'gemini');
+    assert.match(need.detail ?? '', /^Hit its usage limit\. Resets /);
+    const { events } = await t.owner.call('sessions.get', { id: session.id });
+    assert.equal(events.filter((e) => e.event === 'UsageLimit').length, 1, 'the dialog redrawn is the same limit');
+
+    // The owner picks Stop: Gemini ends the turn with no text, and the limit stands.
+    await relay(t.core, token, 'AfterAgent', { prompt: 'hello', prompt_response: '[no response text]', stop_hook_active: false });
+    await new Promise((r) => setTimeout(r, 200));
+    const stopped = await state(t, session.id);
+    assert.equal(stopped.state, 'limited');
+    assert.match(stopped.activity ?? '', /^Usage limit reached/, 'still what Gemini said');
+    // The window title going back to Ready does not lift it either.
+    await draw(t, session.id, '\x1b]0;◇  Ready (site)\x07');
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal((await state(t, session.id)).state, 'limited');
+    // A new prompt (on another model, or after the reset) is a new turn.
+    await relay(t.core, token, 'BeforeAgent', { prompt: 'try flash' });
+    const after = await waitFor('working', async () => { const s = await state(t, session.id); return s.state === 'working' ? s : null; });
+    assert.equal(after.limit, null);
+  } finally { await t.close(); }
+});
+
+test('Gemini: a limit the owner gets past in its dialog (keep trying, another model) ends as a normal turn', async () => {
+  const t = await testCore({ launcher: drawing });
+  try {
+    const { session, token } = await gemini(t);
+    await relay(t.core, token, 'SessionStart', { source: 'startup' });
+    await relay(t.core, token, 'BeforeAgent', { prompt: 'hello' });
+    await waitFor('working', async () => (await state(t, session.id)).state === 'working');
+    await draw(t, session.id, DIALOG.noReset);
+    const limited = await waitFor('limited', async () => { const s = await state(t, session.id); return s.state === 'limited' ? s : null; });
+    assert.equal(limited.limit?.resetsAt, null, 'a daily quota says no time');
+    assert.match((await t.owner.call('needs.list', {})).find((n) => n.sessionId === session.id)?.detail ?? '', /When it resets is not known/);
+    // The retry got through and Gemini answered.
+    await relay(t.core, token, 'AfterAgent', { prompt: 'hello', prompt_response: 'Hello from the fallback.' });
+    await waitFor('waiting', async () => (await state(t, session.id)).state === 'waiting');
+    assert.equal((await state(t, session.id)).limit, null);
+  } finally { await t.close(); }
+});

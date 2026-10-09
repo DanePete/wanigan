@@ -24,7 +24,8 @@
 //   they are read as the Claude Code tools they are, so what a session is doing
 //   and which files it edited read the same. The original name is kept.
 // - Nothing fires for a refused permission, a cancel or a usage limit: the
-//   window title covers the first two (sessions.ts), the limit is not detected.
+//   window title covers the first two (sessions.ts), and the limit is read
+//   from the dialog Gemini draws (limits.ts).
 import type { HookInput } from './attention.ts';
 
 const GROK_FIELDS: Record<string, string> = {
