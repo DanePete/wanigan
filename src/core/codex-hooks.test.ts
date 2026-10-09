@@ -209,8 +209,9 @@ test('a relayed Codex hook names its thread; tokens, History and resume follow',
     const resumed = await t.owner.call('sessions.resume', { id: s.id });
     const line = await launchLine(t.core, resumed.id);
     assert.match(line, /ARGS=resume --config tui\.notifications=/);
-    // The briefing's escaped newlines become real ones in the stand-in's echo, so the rest is looked for in the whole replay.
-    assert.match(t.core.sessions.replay(resumed.id).replay, / 01a114d3-47f0-7272-8e4b-a8c6b201a02c -m gpt-5\.5 --config model_reasoning_effort="high"\r?\n/);
+    // The briefing's escaped newlines become real ones in the stand-in's echo, so the rest is looked for in the whole
+    // replay, once the stand-in has finished echoing a launch line that is long (hooks, MCP server, briefing).
+    await waitFor('the whole launch line', () => / 01a114d3-47f0-7272-8e4b-a8c6b201a02c -m gpt-5\.5 --config model_reasoning_effort="high"\r?\n/.test(t.core.sessions.replay(resumed.id).replay));
     assert.deepEqual([resumed.conversationId, resumed.transcriptPath, resumed.cwd, resumed.cardId, resumed.model, resumed.effort],
       [T, rollout, t.projectDir, card.id, 'gpt-5.5', 'high']);
     assert.equal((await t.owner.call('sessions.tokens', { id: resumed.id })).usage?.requests, 1, 'counted from the start, before its first hook');

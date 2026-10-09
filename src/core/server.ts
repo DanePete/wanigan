@@ -42,6 +42,8 @@ export class CoreServer {
   private readonly owners = new Set<Socket>();
   /** Which owner connections are watching which session's terminal. */
   private readonly watchers = new Map<string, Set<Socket>>();
+  /** Owner connections that answer the live view's questions for agents: the app (`live.host`). */
+  private readonly liveHosts = new Set<Socket>();
   private lastOwnerSeen = Date.now();
   private active = 0;
   private readonly requests = new WeakMap<Socket, number>();
@@ -68,6 +70,11 @@ export class CoreServer {
 
   get ownerConnections(): number {
     return this.owners.size;
+  }
+
+  /** How many app connections answer the live view's questions now. */
+  get liveHostCount(): number {
+    return this.liveHosts.size;
   }
 
   get idleSince(): number {
@@ -174,6 +181,7 @@ export class CoreServer {
     const cleanup = (): void => {
       unsubscribe?.();
       if (this.owners.delete(socket)) this.lastOwnerSeen = Date.now();
+      this.liveHosts.delete(socket);
       for (const set of this.watchers.values()) set.delete(socket);
     };
     socket.on('close', cleanup);
@@ -212,6 +220,8 @@ export class CoreServer {
         if (method === 'sessions.watch') set.add(socket); else set.delete(socket);
         this.watchers.set(sessionId, set);
       }
+      // Only an owner reaches live.host (ACCESS); the connection answers until it closes.
+      if (method === 'live.host' && !socket.destroyed) this.liveHosts.add(socket);
       // The core owns its shutdown once accepted, even if the window goes away.
       const after = method === 'core.stopIfIdle' && this.stopping ? this.options.onIdleStop : undefined;
       send({ id, result }, after);

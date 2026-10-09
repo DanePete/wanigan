@@ -27,6 +27,7 @@ import type { Sessions } from './sessions.ts';
 import type { Skills } from './skills.ts';
 import { skillsHandlers } from './skills-handlers.ts';
 import type { Live } from './live.ts';
+import type { LiveAgent } from './live-agent.ts';
 import type { Mcp } from './mcp.ts';
 import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
@@ -57,7 +58,7 @@ export function createHandlers(
   ctx: Ctx, board: Board, sessions: Sessions, accounts: Accounts, reviews: Reviews, jev: Jev, history: History,
   info: { version: string; build?: string | null; dataDir: string; claudeBinary: string | null; ghBinary?: string | null; demo: boolean; stopIfIdle: () => Result<'core.stopIfIdle'> },
   chat: Chat,
-  more: { skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints; local: LocalModels; phone: Phone; live: Live },
+  more: { skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints; local: LocalModels; phone: Phone; live: Live; liveAgent: LiveAgent },
 ): Handlers {
   /** The project a caller may touch: any for the owner, its own for a session. */
   const projectFor = (caller: Caller, requested?: string): string => {
@@ -89,10 +90,7 @@ export function createHandlers(
     if (card.status !== 'done') throw new CoreError('refused', 'Approve the card first: only approved work is pushed.');
     return { card, worktree: card.worktree };
   };
-  const sessionId = (caller: Caller): string => {
-    if (caller.role !== 'session') throw new CoreError('forbidden', 'Only a session can do that.');
-    return caller.session.id;
-  };
+  const sessionId = (caller: Caller): string => asSession(caller).id;
   /**
    * The composer a file is for. A session's must be a live agent's (a shell
    * takes none); Talk to Wanigan's is its current conversation, started now if
@@ -307,6 +305,17 @@ export function createHandlers(
     'live.edits': (p) => more.live.edits(str(p.projectId, 'project')),
     'live.revert': (p) => more.live.revert(str(p.id, 'edit')),
     'live.parts': (p) => more.live.parts(str(p.projectId, 'project')),
+    // An agent's live view tools: always the session's own project (the session is the caller).
+    'live.status': (_p, caller) => more.liveAgent.status(asSession(caller)),
+    'live.look': (p, caller) => more.liveAgent.look(asSession(caller), p),
+    'live.find': (p, caller) => more.liveAgent.find(asSession(caller), p),
+    'live.part': (p, caller) => more.liveAgent.part(asSession(caller), p),
+    'live.problems': (p, caller) => more.liveAgent.problems(asSession(caller), p),
+    'live.diff': (p, caller) => more.liveAgent.diff(asSession(caller), p),
+    // The server marks the connection that called it as the app; the answer is all this says.
+    'live.host': () => ({ ok: true }),
+    'live.answer': (p) => more.liveAgent.answer(p),
+    'live.looks': (p) => more.liveAgent.looks(p),
     'sessions.models': (p) => more.models.catalogue(oneOf(p.provider, PROVIDERS, 'agent'), p.accountId ? str(p.accountId, 'account') : null, p.projectId ? str(p.projectId, 'project') : null),
     'sessions.input': (p) => { sessions.input(str(p.id, 'session'), p.data); return { ok: true }; },
     'sessions.resize': (p) => { sessions.resize(str(p.id, 'session'), p.cols, p.rows); return { ok: true }; },
@@ -426,6 +435,11 @@ export async function dispatch(handlers: Handlers, method: string, params: unkno
 }
 
 const ROLE_NAME: Record<Caller['role'], string> = { owner: 'an owner', session: 'a session', phone: 'a phone' };
+
+function asSession(caller: Caller): Session {
+  if (caller.role !== 'session') throw new CoreError('forbidden', 'Only a session can do that.');
+  return caller.session;
+}
 
 function str(v: unknown, field: string): string {
   if (typeof v !== 'string' || !v) throw new CoreError('invalid', `Missing ${field}.`);

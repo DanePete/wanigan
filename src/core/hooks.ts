@@ -42,7 +42,12 @@ printf '%s %s\\n%s' "$WANIGAN_TOKEN" "$1" "$body" | /usr/bin/nc -U -w 3 "$WANIGA
 exit 0
 `;
 
-export function writeHookFiles(dataDir: string): HookFiles {
+/**
+ * Claude Code's settings for every session: Wanigan's hooks, and `allow` for
+ * the live view's own tools (each by name, all read-only), so looking at the
+ * page does not stop the agent to ask.
+ */
+export function writeHookFiles(dataDir: string, allow: readonly string[] = []): HookFiles {
   const dir = join(dataDir, 'hooks');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const relay = join(dir, 'relay.sh');
@@ -55,7 +60,7 @@ export function writeHookFiles(dataDir: string): HookFiles {
     hooks[event] = [TOOL_EVENTS.has(event) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }];
   }
   const claudeSettingsFile = join(dir, 'claude-settings.json');
-  writeFileSync(claudeSettingsFile, `${JSON.stringify({ hooks }, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(claudeSettingsFile, `${JSON.stringify({ hooks, ...(allow.length ? { permissions: { allow: [...allow] } } : {}) }, null, 2)}\n`, { mode: 0o600 });
   return { relay, claudeSettings: claudeSettingsFile };
 }
 
@@ -96,9 +101,10 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * a project. The login stays where it is (macOS Keychain). The owner's chosen
  * sign-in method and trusted folders are copied in (read, never written back),
  * so Gemini asks neither again; their own extensions, MCP servers and global
- * GEMINI.md stay in their own home and are not loaded here.
+ * GEMINI.md stay in their own home and are not loaded here. Wanigan's own MCP
+ * server (the live view's tools) is the one server it names.
  */
-export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string): string {
+export function writeGeminiHome(dataDir: string, relay: string, ownerHome: string, mcpServers: Record<string, unknown> | null = null): string {
   const home = join(dataDir, 'gemini-home');
   const dir = join(home, '.gemini');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -121,6 +127,8 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
     },
     // The title says Ready, Working or Action Required: what covers a refusal or a cancel, which no hook reports.
     ui: { dynamicWindowTitle: true },
+    // Wanigan's own server only (the live view's tools); the owner's servers stay in their own home.
+    ...(mcpServers ? { mcpServers } : {}),
   };
   atomicWrite(join(dir, 'settings.json'), `${JSON.stringify(settings, null, 2)}\n`);
   const trusted = join(ownerHome, '.gemini', 'trustedFolders.json');

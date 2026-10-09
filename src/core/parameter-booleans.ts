@@ -29,6 +29,9 @@ const FIELDS: BooleanParams = {
   'mcp.add': { preview: true },
   'mcp.remove': { preview: true },
   'phone.setControl': { control: true },
+  'live.look': { image: true, fullPage: true, all: true },
+  'live.part': { image: true },
+  'live.problems': { sinceTurn: true },
 };
 
 export function validateBooleans(method: Method, params: object): void {

@@ -53,7 +53,12 @@ test('Gemini starts in Wanigan’s own Gemini home with its hooks and the owner�
     assert.equal(written.hooks.BeforeTool[0].matcher, '*');
     assert.deepEqual(written.security.auth, { selectedType: 'oauth-personal' }, 'signed in the way the owner chose');
     assert.ok(written.security.environmentVariableRedaction.allowed.includes('WANIGAN_TOKEN'), 'the relay’s token survives a redaction setting');
-    assert.equal(written.mcpServers, undefined, 'only what Wanigan needs: not the owner’s servers');
+    assert.deepEqual(Object.keys(written.mcpServers), ['wanigan'], 'only what Wanigan needs: not the owner’s servers');
+    // The live view's tools, with the session's own socket and token expanded by Gemini from its environment (it hides
+    // variables named like tokens from an MCP server otherwise).
+    assert.deepEqual(written.mcpServers.wanigan, {
+      command: join(t.core.paths.bin, 'wanigan'), args: ['mcp'], env: { WANIGAN_SOCKET: '$WANIGAN_SOCKET', WANIGAN_TOKEN: '$WANIGAN_TOKEN' }, timeout: 120_000, trust: true,
+    });
     assert.equal(readFileSync(join(home, '.gemini', 'trustedFolders.json'), 'utf8').trim(), JSON.stringify(JSON.parse(trusted), null, 2), 'folders the owner trusted stay trusted');
     assert.equal(readFileSync(join(own, 'settings.json'), 'utf8'), settings, 'the owner’s settings are untouched');
     assert.equal(readFileSync(join(own, 'trustedFolders.json'), 'utf8'), trusted);
