@@ -12,6 +12,7 @@ import type { PairingCode, PhoneDevice, PhoneStatus } from './phone.ts';
 import type { SessionCheckpoints, TurnChanges } from './checkpoints.ts';
 import type { SkillCopyPlan, SkillRead, SkillTarget, SkillsListing } from './skills.ts';
 import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveSite } from './live.ts';
+import type { LiveEnvs } from './live-envs.ts';
 import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } from './mcp.ts';
 import type { ConversationUsage } from './tokens.ts';
 import type { SaidSearch } from './said.ts';
@@ -315,6 +316,17 @@ export interface Methods {
   'live.edits': { params: { projectId: string }; result: LiveEdit[] };
   /** Put back what a hand edit replaced, if the file is still as the edit left it. */
   'live.revert': { params: { id: string }; result: LiveEdit };
+  /**
+   * A site's hosted environments (Dev, Test, Live) the owner keeps, what the project's files name besides (each with
+   * the file it is in), and the parts of pages comparisons ignore. Reads the project's files; reaches no site.
+   */
+  'live.envs': { params: { projectId: string }; result: LiveEnvs };
+  /** Keep an environment, or rename or readdress one (`id`): https only, no credentials, never the local site. */
+  'live.setEnv': { params: { projectId: string; id?: string | null; name: string; url: string }; result: LiveEnvs };
+  'live.removeEnv': { params: { projectId: string; id: string }; result: LiveEnvs };
+  /** Ignore a rectangle of the local page in comparisons at one width: on one page (its path) or every page (null). */
+  'live.mask': { params: { projectId: string; path: string | null; width: number; rect: { x: number; y: number; width: number; height: number }; label?: string | null }; result: LiveEnvs };
+  'live.unmask': { params: { projectId: string; id: string }; result: LiveEnvs };
   'sessions.input': { params: { id: string; data: string }; result: { ok: true } };
   'sessions.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } };
   /** The PTY's size comes with the replay; null once the session has ended. */
@@ -550,6 +562,11 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.saveText': ['owner'],
   'live.edits': ['owner'],
   'live.revert': ['owner'],
+  'live.envs': ['owner'],
+  'live.setEnv': ['owner'],
+  'live.removeEnv': ['owner'],
+  'live.mask': ['owner'],
+  'live.unmask': ['owner'],
   'sessions.input': ['owner', 'phone'],
   'sessions.resize': ['owner', 'phone'],
   'sessions.watch': ['owner', 'phone'],
@@ -634,7 +651,7 @@ export interface Events {
   'phone': Record<string, never>;
   /** An agent edited files, or a session started or a turn began or ended: the live view follows these. */
   'live': LiveEvent;
-  /** A project's live view settings changed. */
+  /** A project's live view settings changed: its site, its hosted environments or the areas comparisons ignore. */
   'liveSite': { projectId: string };
   /** A card's screenshots changed. */
   'liveShots': { cardId: string };
