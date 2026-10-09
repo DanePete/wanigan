@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
-import { liveStub } from './ui-live-stub.mjs';
+import { compareStub } from './ui-compare-stub.mjs';
 
 const out = join(root, '.artifacts', 'ui');
 mkdirSync(out, { recursive: true });
@@ -1466,13 +1466,13 @@ try {
     }
 
     // Local and Live: the live view's environment tabs and Compare. The browser has no view to lay over a page, so
-    // the stub plays the main process (scripts/ui-live-stub.mjs) and answers Compare with two pictures of a made-up
+    // the stub plays the main process (scripts/ui-compare-stub.mjs) and answers Compare with two pictures of a made-up
     // page it draws itself. Everything it asks the core for is real: the environments, the ignored areas.
     {
       const cmp = await context.newPage();
       cmp.on('pageerror', (e) => errors.push(`compare pageerror: ${e.message}`));
       cmp.on('console', (m) => { if (m.type() === 'error') errors.push(`compare console: ${m.text()}`); });
-      await cmp.addInitScript(liveStub);
+      await cmp.addInitScript(compareStub);
       await cmp.goto(`${base}#/p/${ns}/board`);
       await cmp.waitForSelector('.card');
       const project = await cmp.evaluate(async (key) => (await window.wanigan.call('projects.list', {})).find((p) => p.key === key), ns);

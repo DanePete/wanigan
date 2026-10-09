@@ -22,18 +22,107 @@
 //   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece and
 //   data-wl-field.
 // - Elementor's own data-element_type, data-widget_type and data-id.
+// - The helpers' trace marks: `<!-- wl:part id="p12" -->` … `<!-- /wl:part
+//   id="p12" -->` around each part the page's trace describes
+//   (shared/live-trace.ts). A part around the same content as a region found
+//   another way gives that region its id; a part nothing else found is a region
+//   of its own.
 //
 // Built on its own (live-page-entry.ts → out/renderer/live-page.js) and read
 // as text by the main process, which runs it in an isolated world. It imports
-// nothing.
+// nothing: a shared chunk would be an import statement the page cannot run.
+
+/**
+ * Which region each part of the trace is. Parts and regions are given by the
+ * content they hold, as a key (the same key: the same elements and words,
+ * whatever comments and blank space lie between), and by where their opening
+ * mark is, outermost first. Within one key the outermost part is the
+ * outermost region, the next the next. A part with no region of its own is
+ * `alone`: the page script makes it one.
+ */
+export function pairParts(
+  parts: readonly { id: string; key: string | null; at: number }[],
+  regions: readonly { index: number; key: string | null; at: number }[],
+): { byRegion: Map<number, string>; alone: string[] } {
+  const groups = new Map<string, { index: number; at: number }[]>();
+  for (const r of regions) {
+    if (!r.key) continue;
+    const g = groups.get(r.key);
+    if (g) g.push(r); else groups.set(r.key, [r]);
+  }
+  for (const g of groups.values()) g.sort((a, b) => a.at - b.at || a.index - b.index);
+  const taken = new Map<string, number>();
+  const byRegion = new Map<number, string>();
+  const alone: string[] = [];
+  for (const p of [...parts].sort((a, b) => a.at - b.at)) {
+    const n = p.key ? taken.get(p.key) ?? 0 : 0;
+    const r = p.key ? groups.get(p.key)?.[n] : undefined;
+    if (r && !byRegion.has(r.index)) { byRegion.set(r.index, p.id); taken.set(p.key as string, n + 1); } else alone.push(p.id);
+  }
+  return { byRegion, alone };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/**
+ * Where a dragged item lands among the others of a collection (their boxes
+ * in page order, in view pixels): the slot nearest the pointer, 0 being before
+ * the first, and the line to draw there. Items side by side in a row are
+ * split by the pointer's x, items stacked by its y. Null with nothing to land among.
+ */
+export function dropSlot(pointer: { x: number; y: number }, rects: readonly Box[]): { slot: number; line: Box; across: boolean } | null {
+  if (!rects.length) return null;
+  let best = 0;
+  let nearest = Number.POSITIVE_INFINITY;
+  rects.forEach((r, i) => {
+    const dx = Math.max(r.x - pointer.x, 0, pointer.x - (r.x + r.width));
+    const dy = Math.max(r.y - pointer.y, 0, pointer.y - (r.y + r.height));
+    const d = dx * dx + dy * dy;
+    if (d < nearest) { nearest = d; best = i; }
+  });
+  const r = rects[best] as Box;
+  const prev = rects[best - 1];
+  const next = rects[best + 1];
+  const row = (a: Box | undefined, b: Box): boolean => !!a && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) > Math.min(a.height, b.height) / 2;
+  const across = row(prev, r) || row(next, r);
+  const after = across ? pointer.x > r.x + r.width / 2 : pointer.y > r.y + r.height / 2;
+  const slot = best + (after ? 1 : 0);
+  if (across) {
+    const x = after ? (next && row(next, r) ? (r.x + r.width + next.x) / 2 : r.x + r.width + 2) : (prev && row(prev, r) ? (prev.x + prev.width + r.x) / 2 : r.x - 2);
+    return { slot, line: { x: Math.round(x), y: r.y, width: 0, height: r.height }, across };
+  }
+  const y = after ? (next ? (r.y + r.height + next.y) / 2 : r.y + r.height + 2) : (prev ? (prev.y + prev.height + r.y) / 2 : r.y - 2);
+  return { slot, line: { x: r.x, y: Math.round(y), width: r.width, height: 0 }, across };
+}
+
+/**
+ * The index a slot means in the whole collection, when some items are not on
+ * the page: `positions` are where the shown ones sit among all the others (the
+ * dragged one left out), `count` how many others there are.
+ */
+export function finalIndex(positions: readonly number[], slot: number, count: number): number {
+  if (!positions.length) return count;
+  if (slot < positions.length) return positions[slot] as number;
+  return (positions[positions.length - 1] as number) + 1;
+}
 
 export function livePage(): void {
   type Rect = { x: number; y: number; width: number; height: number };
   type Info = {
     file: string | null; entity: string | null; block: string | null; view: string | null; element: string | null;
-    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[];
+    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[]; part: string | null;
   };
-  type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number };
+  /** `at`: where its opening mark is among the page's marks, for pairing with the trace's parts. */
+  type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number; at: number };
+  type Paint = { index: number; color: string; fill: number; label: string | null; dashed: boolean };
+  type SpecItem = { part: string; region: number | null; label: string };
+  type SpecCollection = { id: string; label: string; container: number | null; items: SpecItem[]; targets: string[]; inserts: string[]; why: string | null };
+  type Member = { region: number; label: string };
+  type Spec = { collections: SpecCollection[]; groups: Member[][]; placing: { entry: string; label: string } | null };
+  /** Where a drag would land now: a place in a collection, or beside a sibling (a request), with the line to draw. */
+  type Landing =
+    | { kind: 'collection'; c: SpecCollection; index: number; line: Box; across: boolean; ref: number | null; place: 'before' | 'after' | 'into' }
+    | { kind: 'sibling'; ref: number; place: 'before' | 'after'; line: Box; across: boolean };
   type Tone = 'edit' | 'pick' | 'hover';
 
   const w = window as unknown as { __wl?: unknown };
@@ -48,6 +137,8 @@ export function livePage(): void {
   const WL_BEGIN = /^\s*wl:begin (file|entity)="([^"]+)"\s*$/;
   const WL_END = /^\s*wl:end (file|entity)="([^"]+)"\s*$/;
   const COMPONENT = /^\s*\S+\s+Component (start|end): ([a-z][\w-]*:[a-z][\w-]*)\s*$/u;
+  const PART_BEGIN = /^\s*wl:part id="([^"]{1,200})"\s*$/;
+  const PART_END = /^\s*\/wl:part id="([^"]{1,200})"\s*$/;
   /** Past this many, a region's parent is not worked out: the page is a runaway, not a site. */
   const MAX_NESTED = 900;
   // Wanigan's water blue for what changed and what is pointed at; a deeper blue for what is being picked. Never amber:
@@ -59,6 +150,18 @@ export function livePage(): void {
   let picked: Element | null = null;
   /** What is drawn, redrawn as the page scrolls, reflows or loads more. */
   let shown: { indexes: number[]; label: string | null; tone: Tone } | null = null;
+  /** A lens over the page: each part filled and outlined in its class's colour, under any outline. */
+  let painted: Paint[] = [];
+  /** Moving parts by hand: what may be dragged, what is under the pointer, and a drag under way. */
+  let arranging: { spec: Spec; resolve: (v: unknown) => void; cleanup: () => void } | null = null;
+  let grab: number | null = null;
+  let dragging: {
+    region: number; label: string; from: { kind: 'item'; c: SpecCollection; part: string } | { kind: 'loose'; group: Member[] } | { kind: 'entry' };
+    pointer: { x: number; y: number }; landing: Landing | null;
+  } | null = null;
+  /** Parts moved on the page to show a new order before it is saved, and where each was. */
+  const previews: { nodes: Node[]; marker: Comment }[] = [];
+  const DRAG = '#2f86c9';
   let hovered: Element | null = null;
   let frame = 0;
   let mutations = 0;
@@ -123,7 +226,7 @@ export function livePage(): void {
   function info(r: Region): Info {
     return {
       file: r.file, entity: r.entity, block: r.block, view: r.view, element: r.element, hook: r.hook,
-      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions,
+      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions, part: r.part,
     };
   }
 
@@ -146,28 +249,63 @@ export function livePage(): void {
     starts.forEach(({ r }, i) => { r.order = i; });
   }
 
+  /** A range around one element. */
+  function nodeRange(el: Element): Range {
+    const range = document.createRange();
+    try { range.selectNode(el); } catch { /* detached */ }
+    return range;
+  }
+
+  const blankNode = (n: Node | undefined): boolean => !!n && (n.nodeType === Node.COMMENT_NODE || (n.nodeType === Node.TEXT_NODE && !/\S/.test(n.nodeValue ?? '')));
+
+  /**
+   * What a range holds, as a key: its ends moved past comments and blank text,
+   * so a part's marks around a template's debug comments, or around a marked
+   * element, give the same key as the template or the element. Null when it
+   * holds nothing but comments and blank space.
+   */
+  function contentKey(range: Range, ids: Map<Node, number>): string | null {
+    const id = (n: Node): number => { let v = ids.get(n); if (v === undefined) { v = ids.size; ids.set(n, v); } return v; };
+    const sc = range.startContainer, ec = range.endContainer;
+    let so = range.startOffset, eo = range.endOffset;
+    if (sc.nodeType !== Node.TEXT_NODE) while (so < sc.childNodes.length && blankNode(sc.childNodes[so])) so++;
+    if (ec.nodeType !== Node.TEXT_NODE) while (eo > 0 && blankNode(ec.childNodes[eo - 1])) eo--;
+    if (sc === ec && so >= eo) return null;
+    return `${id(sc)}:${so}-${id(ec)}:${eo}`;
+  }
+
   function scan(): (Info & { index: number; rect: Rect; parent: number | null; order: number })[] {
     regions = [];
-    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [] };
-    // What has begun and not yet ended, by what will end it: a template's file or a component's id.
-    const open: { key: string; info: Info; begin: Comment }[] = [];
+    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [], part: null };
+    // What has begun and not yet ended, by what will end it: a template's file, a component's id, a trace part's id.
+    const open: { key: string; info: Info; begin: Comment; at: number }[] = [];
+    /** The trace's parts, as ranges, until they are paired with the regions they are. */
+    const parts: { id: string; range: Range; at: number }[] = [];
     const close = (key: string, end: Comment): void => {
       for (let i = open.length - 1; i >= 0; i--) {
         const o = open[i];
         if (!o || o.key !== key) continue;
-        open.splice(i);
+        // A part's marks close only themselves: a template left open inside a part stays open.
+        if (o.info.part) open.splice(i, 1); else open.splice(i);
         const range = document.createRange();
         try { range.setStartAfter(o.begin); range.setEndBefore(end); } catch { return; }
-        regions.push({ ...o.info, index: regions.length, range, el: null, parent: null, order: 0 });
+        if (o.info.part) parts.push({ id: o.info.part, range, at: o.at });
+        else regions.push({ ...o.info, index: regions.length, range, el: null, parent: null, order: 0, at: o.at });
         return;
       }
     };
     let hook: string | null = null;
     let suggested: string[] = [];
+    let seq = 0;
     const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const comment = node as Comment;
       const text = comment.data;
+      const at = seq++;
+      const pb = PART_BEGIN.exec(text);
+      if (pb) { const id = unescape(pb[1] as string); open.push({ key: `part ${id}`, info: { ...blank, part: id }, begin: comment, at }); continue; }
+      const pe = PART_END.exec(text);
+      if (pe) { close(`part ${unescape(pe[1] as string)}`, comment); continue; }
       const h = HOOK.exec(text);
       if (h) { hook = unescape(h[1] as string); suggested = []; continue; }
       if (SUGGESTIONS.test(text)) {
@@ -177,14 +315,14 @@ export function livePage(): void {
       const c = COMPONENT.exec(text);
       if (c) {
         const id = c[2] as string;
-        if (c[1] === 'start') open.push({ key: `component ${id}`, info: { ...blank, component: id }, begin: comment });
+        if (c[1] === 'start') open.push({ key: `component ${id}`, info: { ...blank, component: id }, begin: comment, at });
         else close(`component ${id}`, comment);
         continue;
       }
       const wb = WL_BEGIN.exec(text);
       if (wb) {
         const value = unescape(wb[2] as string);
-        open.push({ key: `${wb[1]} ${value}`, info: wb[1] === 'entity' ? { ...blank, entity: value } : { ...blank, file: value }, begin: comment });
+        open.push({ key: `${wb[1]} ${value}`, info: wb[1] === 'entity' ? { ...blank, entity: value } : { ...blank, file: value }, begin: comment, at });
         continue;
       }
       const we = WL_END.exec(text);
@@ -192,7 +330,7 @@ export function livePage(): void {
       const b = BEGIN.exec(text);
       if (b) {
         const file = unescape(b[1] as string);
-        open.push({ key: `file ${file}`, info: { ...blank, file, hook, suggestions: suggested }, begin: comment });
+        open.push({ key: `file ${file}`, info: { ...blank, file, hook, suggestions: suggested }, begin: comment, at });
         hook = null;
         suggested = [];
         continue;
@@ -207,7 +345,8 @@ export function livePage(): void {
       const type = el.getAttribute('data-element_type');
       const widget = el.getAttribute('data-widget_type');
       const region: Region = {
-        ...blank, index: regions.length, range: null, el, parent: null, order: 0,
+        // A mark on an element sits inside the comments around it: after every comment, for pairing.
+        ...blank, index: regions.length, range: null, el, parent: null, order: 0, at: seq + regions.length,
         entity: el.getAttribute('data-wl-entity'),
         block: el.getAttribute('data-wl-block'),
         view: el.getAttribute('data-wl-view'),
@@ -220,6 +359,18 @@ export function livePage(): void {
       const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field;
       if (only && commented.some((r) => r.component === region.component && contains(r, el))) continue;
       regions.push(region);
+    }
+    if (parts.length) {
+      const ids = new Map<Node, number>();
+      const paired = pairParts(
+        parts.map((p) => ({ id: p.id, key: contentKey(p.range, ids), at: p.at })),
+        regions.map((r) => ({ index: r.index, key: contentKey(r.range ?? nodeRange(r.el as Element), ids), at: r.at })),
+      );
+      for (const [index, id] of paired.byRegion) (regions[index] as Region).part = id;
+      const alone = new Set(paired.alone);
+      for (const p of parts) {
+        if (alone.has(p.id)) regions.push({ ...blank, part: p.id, index: regions.length, range: p.range, el: null, parent: null, order: 0, at: p.at });
+      }
     }
     nest();
     rank();
@@ -261,6 +412,31 @@ export function livePage(): void {
     root.appendChild(b);
   }
 
+  /** `#rrggbb` at an opacity. */
+  function rgba(hex: string, alpha: number): string {
+    const n = Number.parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  }
+
+  /** A part under a lens: filled lightly in its class's colour, outlined, with its number when it has one. Calm on any page. */
+  function paintBox(root: ShadowRoot, rect: DOMRect, p: Paint): void {
+    const b = document.createElement('div');
+    b.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;`
+      + `outline:1.5px ${p.dashed ? 'dashed' : 'solid'} ${p.color};outline-offset:-1px;background:${rgba(p.color, p.fill)};`
+      // A thin dark line inside the colour keeps it readable on a light page and a dark one.
+      + 'box-shadow:inset 0 0 0 2px rgba(0,0,0,0.18);';
+    if (p.label && rect.width > 48 && rect.height > 18) {
+      const n = Number.parseInt(p.color.slice(1), 16);
+      const light = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150;
+      const tag = document.createElement('span');
+      tag.textContent = p.label;
+      tag.style.cssText = 'position:absolute;left:2px;top:2px;max-width:calc(100% - 4px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+        + `font:500 11px/17px -apple-system,system-ui,sans-serif;padding:0 5px;border-radius:3px;color:${light ? '#0b1014' : '#ffffff'};background:${p.color};`;
+      b.appendChild(tag);
+    }
+    root.appendChild(b);
+  }
+
   function labelOf(r: Info): string {
     const parts = [r.file ? r.file.split('/').pop() ?? r.file : null, r.component ? `component ${r.component}` : null, r.entity,
       r.block ? `block ${r.block}` : null, r.view ? `view ${r.view}` : null, r.element];
@@ -270,9 +446,14 @@ export function livePage(): void {
   function draw(): void {
     frame = 0;
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
-    const root = existing ?? (shown || hovered ? host() : null);
+    const root = existing ?? (shown || hovered || painted.length || arranging ? host() : null);
     if (!root) return;
     root.replaceChildren();
+    for (const p of painted) {
+      const r = regions[p.index];
+      const rect = r ? viewRect(r) : null;
+      if (rect && rect.bottom > 0 && rect.top < innerHeight) paintBox(root, rect, p);
+    }
     if (shown) {
       for (const i of shown.indexes) {
         const r = regions[i];
@@ -284,6 +465,310 @@ export function livePage(): void {
       const innermost = around(hovered)[0];
       box(root, hovered.getBoundingClientRect(), innermost ? labelOf(info(innermost)) : hovered.tagName.toLowerCase(), 'pick');
     }
+    if (arranging) drawArrange(root);
+  }
+
+  /* ── moving parts by hand ────────────────────────────────────────────── */
+
+  function el(tag: string, css: string, text?: string): HTMLElement {
+    const e = document.createElement(tag);
+    e.style.cssText = css;
+    if (text) e.textContent = text;
+    return e;
+  }
+
+  const boxOf = (r: DOMRect): Box => ({ x: r.left, y: r.top, width: r.width, height: r.height });
+
+  /** Where a spec collection is on screen: its container, else the box around its items. */
+  function zone(c: SpecCollection, leave: string | null = null): Box | null {
+    const container = c.container !== null && regions[c.container] ? viewRect(regions[c.container] as Region) : null;
+    if (container) return boxOf(container);
+    const boxes = c.items.filter((i) => i.part !== leave && i.region !== null).map((i) => (regions[i.region as number] ? viewRect(regions[i.region as number] as Region) : null)).filter((b): b is DOMRect => !!b);
+    if (!boxes.length) return null;
+    const x = Math.min(...boxes.map((b) => b.left)), y = Math.min(...boxes.map((b) => b.top));
+    return { x, y, width: Math.max(...boxes.map((b) => b.right)) - x, height: Math.max(...boxes.map((b) => b.bottom)) - y };
+  }
+
+  const inside = (p: { x: number; y: number }, b: Box, pad = 0): boolean => p.x >= b.x - pad && p.x <= b.x + b.width + pad && p.y >= b.y - pad && p.y <= b.y + b.height + pad;
+
+  /** Where the pointer would land a drag of `from` now. */
+  function landing(p: { x: number; y: number }): Landing | null {
+    const d = dragging;
+    const spec = arranging?.spec;
+    if (!d || !spec) return null;
+    if (d.from.kind === 'loose') {
+      const others = d.from.group.filter((m) => m.region !== d.region).map((m) => ({ m, b: regions[m.region] ? viewRect(regions[m.region] as Region) : null }))
+        .filter((o): o is { m: Member; b: DOMRect } => !!o.b);
+      const at = dropSlot(p, others.map((o) => boxOf(o.b)));
+      if (!at) return null;
+      const ref = at.slot < others.length ? others[at.slot] as { m: Member } : others[others.length - 1] as { m: Member };
+      return { kind: 'sibling', ref: ref.m.region, place: at.slot < others.length ? 'before' : 'after', line: at.line, across: at.across };
+    }
+    const from = d.from;
+    const allowed = from.kind === 'item'
+      ? spec.collections.filter((c) => from.c.targets.includes(c.id))
+      : spec.collections.filter((c) => !c.why && spec.placing && c.inserts.includes(spec.placing.entry));
+    const leave = from.kind === 'item' ? from.part : null;
+    // The smallest place the pointer is in (a layout region inside another takes it), else one close by.
+    const zones = allowed.map((c) => ({ c, z: zone(c, leave) })).filter((x): x is { c: SpecCollection; z: Box } => !!x.z);
+    const hit = zones.filter((x) => inside(p, x.z)).sort((a, b) => a.z.width * a.z.height - b.z.width * b.z.height)[0]
+      ?? zones.filter((x) => inside(p, x.z, 24))[0];
+    if (!hit) return null;
+    const others = hit.c.items.filter((i) => i.part !== leave);
+    const shown = others.map((i, pos) => ({ i, pos, b: i.region !== null && regions[i.region] ? viewRect(regions[i.region] as Region) : null }))
+      .filter((o): o is { i: SpecItem; pos: number; b: DOMRect } => !!o.b);
+    const at = dropSlot(p, shown.map((o) => boxOf(o.b)));
+    if (!at) {
+      return { kind: 'collection', c: hit.c, index: others.length, line: { x: hit.z.x + 4, y: hit.z.y + 4, width: Math.max(0, hit.z.width - 8), height: 0 }, across: false, ref: hit.c.container, place: 'into' };
+    }
+    const index = finalIndex(shown.map((o) => o.pos), at.slot, others.length);
+    const ref = at.slot < shown.length ? shown[at.slot] as { i: SpecItem } : shown[shown.length - 1] as { i: SpecItem };
+    return { kind: 'collection', c: hit.c, index, line: at.line, across: at.across, ref: ref.i.region, place: at.slot < shown.length ? 'before' : 'after' };
+  }
+
+  function drawArrange(root: ShadowRoot): void {
+    const a = arranging;
+    if (!a) return;
+    const d = dragging;
+    if (!d && !a.spec.placing) {
+      const r = grab !== null ? regions[grab] : undefined;
+      const b = r ? viewRect(r) : null;
+      if (b && b.bottom > 0 && b.top < innerHeight) {
+        root.appendChild(el('div', `position:absolute;left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;box-sizing:border-box;outline:1.5px dashed ${DRAG};outline-offset:-1px;`));
+        const handle = el('div', `position:absolute;left:${Math.max(0, b.left + 4)}px;top:${Math.max(0, b.top + 4)}px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;`
+          + `pointer-events:auto;cursor:grab;border-radius:5px;background:${DRAG};color:#fff;font:700 13px/1 -apple-system,system-ui,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,0.35);touch-action:none;`, '⋮⋮');
+        handle.title = 'Drag to move';
+        handle.addEventListener('pointerdown', (e) => startDrag(e as PointerEvent, grab as number));
+        root.appendChild(handle);
+      }
+      return;
+    }
+    const spec = a.spec;
+    const from = d?.from;
+    const allowed = new Set(from?.kind === 'item' ? from.c.targets : spec.placing ? spec.collections.filter((c) => !c.why && c.inserts.includes(spec.placing!.entry)).map((c) => c.id) : []);
+    if (from?.kind !== 'loose') {
+      for (const c of spec.collections) {
+        const z = zone(c, from?.kind === 'item' ? from.part : null);
+        if (!z || z.y + z.height < 0 || z.y > innerHeight) continue;
+        // Where it may go is outlined; where it may not is dimmed.
+        root.appendChild(el('div', `position:absolute;left:${z.x}px;top:${z.y}px;width:${z.width}px;height:${z.height}px;box-sizing:border-box;`
+          + (allowed.has(c.id) ? `outline:2px dashed ${DRAG};outline-offset:2px;background:rgba(47,134,201,0.06);` : 'background:rgba(20,24,28,0.32);')));
+      }
+    }
+    if (d) {
+      const origin = regions[d.region] ? viewRect(regions[d.region] as Region) : null;
+      if (origin) root.appendChild(el('div', `position:absolute;left:${origin.left}px;top:${origin.top}px;width:${origin.width}px;height:${origin.height}px;background:rgba(255,255,255,0.45);outline:1.5px dashed ${DRAG};outline-offset:-1px;`));
+    }
+    const l = d?.landing ?? null;
+    if (l) {
+      const css = l.across
+        ? `left:${l.line.x - 1.5}px;top:${l.line.y}px;width:3px;height:${l.line.height}px;`
+        : `left:${l.line.x}px;top:${l.line.y - 1.5}px;width:${l.line.width}px;height:3px;`;
+      root.appendChild(el('div', `position:absolute;${css}background:${DRAG};border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.9);`));
+    }
+    if (d) {
+      const of = (c: SpecCollection): number => c.items.filter((i) => d.from.kind !== 'item' || i.part !== d.from.part).length + 1;
+      const what = d.from.kind === 'loose' ? 'A note for an agent: its order is in the template' : l?.kind === 'collection' ? `${l.index + 1} of ${of(l.c)} in ${l.c.label}` : 'Not here';
+      const ghost = el('div', `position:absolute;left:${d.pointer.x + 14}px;top:${d.pointer.y + 10}px;max-width:280px;padding:6px 10px;border-radius:7px;`
+        + `background:rgba(15,20,25,0.92);color:#fff;font:500 12px/16px -apple-system,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,0.3);`);
+      ghost.appendChild(el('div', 'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', d.label));
+      ghost.appendChild(el('div', 'opacity:0.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', what));
+      root.appendChild(ghost);
+    }
+  }
+
+  const reduced = (): boolean => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let scroller = 0;
+
+  /** Near the top or bottom of the view while dragging, the page scrolls, faster the nearer. */
+  function autoScroll(): void {
+    cancelAnimationFrame(scroller);
+    const d = dragging;
+    if (!d) return;
+    const edge = 56;
+    const speed = d.pointer.y < edge ? -(edge - d.pointer.y) : d.pointer.y > innerHeight - edge ? edge - (innerHeight - d.pointer.y) : 0;
+    if (!speed) return;
+    scrollBy(0, Math.max(-24, Math.min(24, speed / (reduced() ? 4 : 2))));
+    d.landing = landing(d.pointer);
+    draw();
+    scroller = requestAnimationFrame(autoScroll);
+  }
+
+  function startDrag(e: PointerEvent, region: number): void {
+    const spec = arranging?.spec;
+    if (!spec || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let from: NonNullable<typeof dragging>['from'] | null = null;
+    let label = '';
+    for (const c of spec.collections) {
+      const item = c.items.find((i) => i.region === region);
+      if (item && c.targets.length) { from = { kind: 'item', c, part: item.part }; label = item.label; break; }
+    }
+    if (!from) {
+      const group = spec.groups.find((g) => g.some((m) => m.region === region));
+      if (group) { from = { kind: 'loose', group }; label = group.find((m) => m.region === region)?.label ?? ''; }
+    }
+    if (!from) return;
+    dragging = { region, label, from, pointer: { x: e.clientX, y: e.clientY }, landing: null };
+    document.documentElement.style.setProperty('cursor', 'grabbing', 'important');
+    document.documentElement.style.setProperty('user-select', 'none', 'important');
+    draw();
+  }
+
+  /** Put a part's nodes before or after another's, or into a container, remembering where they were. */
+  function nodesOf(r: Region): Node[] | null {
+    if (r.el) return r.el.isConnected ? [r.el] : null;
+    const range = r.range;
+    if (!range || range.collapsed || range.startContainer !== range.endContainer || range.startContainer.nodeType === Node.TEXT_NODE) return null;
+    const parent = range.startContainer;
+    const out: Node[] = [];
+    for (let i = range.startOffset; i < range.endOffset; i++) { const n = parent.childNodes[i]; if (n) out.push(n); }
+    return out.length ? out : null;
+  }
+
+  function preview(item: number, ref: number | null, place: 'before' | 'after' | 'into'): boolean {
+    unpreview();
+    const r = regions[item];
+    const target = ref !== null ? regions[ref] : undefined;
+    const nodes = r ? nodesOf(r) : null;
+    if (!nodes || !target || ref === item) return false;
+    const there = nodesOf(target);
+    let parent: Node | null = null;
+    let before: Node | null = null;
+    if (place === 'into') {
+      if (target.el) { parent = target.el; before = null; }
+      else if (target.range && target.range.endContainer.nodeType !== Node.TEXT_NODE) { parent = target.range.endContainer; before = parent.childNodes[target.range.endOffset] ?? null; }
+    } else if (there) {
+      const anchor = place === 'before' ? there[0] as Node : (there[there.length - 1] as Node).nextSibling;
+      parent = (there[0] as Node).parentNode;
+      before = anchor;
+    }
+    if (!parent || nodes.some((n) => n === parent || n.contains(parent as Node))) return false;
+    const marker = document.createComment('wl:was');
+    (nodes[0] as Node).parentNode?.insertBefore(marker, nodes[0] as Node);
+    for (const n of nodes) parent.insertBefore(n, before && nodes.includes(before) ? marker : before);
+    previews.push({ nodes, marker });
+    redraw();
+    return true;
+  }
+
+  /** Put every part moved for a preview back where it was. */
+  function unpreview(): void {
+    while (previews.length) {
+      const p = previews.pop() as { nodes: Node[]; marker: Comment };
+      for (const n of p.nodes) p.marker.parentNode?.insertBefore(n, p.marker);
+      p.marker.remove();
+    }
+    redraw();
+  }
+
+  /**
+   * Let the owner drag what the spec allows: a handle on the part under the
+   * pointer, a line where it would land, the places it may not go dimmed. A
+   * drop shows the new order on the page and answers it; Escape, or arranging
+   * again, answers null. With a palette entry being placed, the pointer (or
+   * a drag from the window) shows where it would go, and a click puts it there.
+   */
+  function arrange(spec: Spec): Promise<unknown> {
+    disarm();
+    if (!regions.length) scan();
+    return new Promise((resolve) => {
+      const items = new Set<number>();
+      for (const c of spec.collections) if (c.targets.length) for (const i of c.items) if (i.region !== null) items.add(i.region);
+      for (const g of spec.groups) for (const m of g) items.add(m.region);
+      const swallowClick = (e: Event): void => { e.preventDefault(); e.stopPropagation(); removeEventListener('click', swallowClick, true); };
+      const finish = (value: unknown): void => {
+        if (!arranging) return;
+        arranging.cleanup();
+        arranging = null;
+        resolve(value);
+      };
+      const answer = (l: Landing, d: NonNullable<typeof dragging>): unknown => {
+        if (d.from.kind === 'item' && l.kind === 'collection') {
+          preview(d.region, l.ref, l.place);
+          return { kind: 'move', move: { collection: d.from.c.id, item: d.from.part, to: { collection: l.c.id, index: l.index } } };
+        }
+        if (d.from.kind === 'loose' && l.kind === 'sibling') {
+          preview(d.region, l.ref, l.place);
+          return { kind: 'request', region: d.region, ref: l.ref, place: l.place };
+        }
+        if (d.from.kind === 'entry' && l.kind === 'collection' && spec.placing) return { kind: 'insert', insert: { collection: l.c.id, index: l.index, entry: spec.placing.entry } };
+        return null;
+      };
+      const move = (e: PointerEvent | DragEvent): void => {
+        const p = { x: e.clientX, y: e.clientY };
+        if (spec.placing && !dragging) dragging = { region: -1, label: spec.placing.label, from: { kind: 'entry' }, pointer: p, landing: null };
+        if (dragging) {
+          dragging.pointer = p;
+          dragging.landing = landing(p);
+          if (e.type === 'dragover' && dragging.landing) e.preventDefault();
+          draw();
+          autoScroll();
+          return;
+        }
+        const at = document.elementFromPoint(p.x, p.y);
+        // Over the handle itself (in Wanigan's overlay), keep the part it is on.
+        if (!at || at.id === HOST_ID) return;
+        const next = around(at).find((r) => items.has(r.index))?.index ?? null;
+        if (next !== grab) { grab = next; draw(); }
+      };
+      const up = (e: PointerEvent | DragEvent): void => {
+        const d = dragging;
+        if (!d) return;
+        if (e.type === 'drop') e.preventDefault();
+        const l = landing({ x: e.clientX, y: e.clientY });
+        // Placing an entry goes on until a click lands it; a drag ends here.
+        if (d.from.kind !== 'entry') { dragging = null; grab = null; document.documentElement.style.removeProperty('cursor'); }
+        document.documentElement.style.removeProperty('user-select');
+        cancelAnimationFrame(scroller);
+        const value = l ? answer(l, d) : null;
+        if (value) { if (e.type === 'pointerup') addEventListener('click', swallowClick, true); finish(value); return; }
+        if (d.from.kind === 'entry') return;
+        draw();
+      };
+      // Escape drops a drag where it began (arranging goes on), or stops placing an entry.
+      const key = (e: KeyboardEvent): void => {
+        if (e.key !== 'Escape' || (!dragging && !spec.placing)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (spec.placing) { finish(null); return; }
+        dragging = null;
+        grab = null;
+        document.documentElement.style.removeProperty('cursor');
+        document.documentElement.style.removeProperty('user-select');
+        cancelAnimationFrame(scroller);
+        draw();
+      };
+      const leave = (): void => { if (dragging?.from.kind === 'entry') { dragging.landing = null; draw(); } };
+      const events: [string, EventListener][] = [
+        ['pointermove', move as EventListener], ['pointerup', up as EventListener], ['keydown', key as EventListener],
+        ['dragover', move as EventListener], ['drop', up as EventListener], ['dragleave', leave as EventListener],
+      ];
+      if (spec.placing) events.push(['click', ((e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }) as EventListener]);
+      for (const [name, fn] of events) addEventListener(name, fn, true);
+      const cleanup = (): void => {
+        for (const [name, fn] of events) removeEventListener(name, fn, true);
+        document.documentElement.style.removeProperty('cursor');
+        document.documentElement.style.removeProperty('user-select');
+        cancelAnimationFrame(scroller);
+        dragging = null;
+        grab = null;
+        redraw();
+      };
+      arranging = { spec, resolve, cleanup };
+      if (spec.placing) document.documentElement.style.setProperty('cursor', 'copy', 'important');
+      draw();
+    });
+  }
+
+  /** Stop arranging; a pending arrange answers null. */
+  function disarm(): void {
+    const a = arranging;
+    if (!a) return;
+    arranging = null;
+    a.cleanup();
+    a.resolve(null);
   }
 
   function redraw(): void {
@@ -296,12 +781,26 @@ export function livePage(): void {
   new MutationObserver((records) => {
     if (records.every((m) => ours(m.target))) return;
     mutations++;
-    if (shown) redraw();
+    if (shown || painted.length) redraw();
   }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
   function clear(): void {
     shown = null;
     redraw();
+  }
+
+  /** Paint a lens over the page (an empty list takes it away). Returns how many parts it painted. */
+  function paint(items: Paint[]): number {
+    painted = items.filter((p) => !!regions[p.index]);
+    draw();
+    return painted.length;
+  }
+
+  /** Where a region is in the view now, in CSS pixels of the view; null when it is not on the page. */
+  function where(index: number): Rect | null {
+    const r = regions[index];
+    const box = r ? viewRect(r) : null;
+    return box ? { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) } : null;
   }
 
   function outline(indexes: number[], label: string | null, tone: Tone = 'edit'): number {
@@ -586,7 +1085,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, styleOf,
+    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, styleOf, paint, where, arrange, disarm, preview, unpreview,
     cancelEdit: () => endEdit(false),
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,

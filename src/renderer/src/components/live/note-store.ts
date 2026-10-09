@@ -21,6 +21,8 @@ export interface LiveNote {
   style: StyleChange[];
   /** A PNG (base64) of the part as it looked. */
   shot: string | null;
+  /** For a part dragged where its order is in a template: a PNG of the order wanted, beside `shot` (the order now). */
+  after?: string | null;
   at: number;
 }
 
@@ -87,6 +89,10 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
       lines.push('   Make it in the site’s own styles, the way this theme already styles things (its classes or CSS), not as an inline style.');
     }
   });
-  if (notes.some((n) => n.shot)) lines.push('', 'A picture of each part, as it looked, is attached in the same order.');
+  if (notes.some((n) => n.shot)) {
+    lines.push('', notes.some((n) => n.after)
+      ? 'A picture of each part, as it looked, is attached in the same order; where a note asks for a new order, a second picture after it shows the order wanted.'
+      : 'A picture of each part, as it looked, is attached in the same order.');
+  }
   return lines.join('\n');
 }

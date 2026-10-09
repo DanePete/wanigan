@@ -11,6 +11,7 @@ import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
+import { wireLiveInspect } from './live-inspect.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
@@ -125,7 +126,14 @@ function createWindow(route = ''): void {
 
 function wireBridge(): void {
   appSettings = wireAppSettings({ core: () => core.get(), window: () => win, trusted, demo });
-  liveView = wireLiveView({ window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true });
+  const liveEnabled = (): boolean => appSettings?.store.get().liveView === true;
+  // The helper's trace, lenses and editing in place, built on the view.
+  const inspect = wireLiveInspect({
+    window: () => win, trusted, enabled: liveEnabled,
+    current: () => liveView?.current() ?? null,
+    run: <T>(code: string, fallback: T) => (liveView ? liveView.run(code, fallback) : Promise.resolve(fallback)),
+  });
+  liveView = wireLiveView({ window: () => win, trusted, enabled: liveEnabled, hooks: inspect.hooks });
   // Switching the live view off takes it away at once, not at the next navigation.
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;

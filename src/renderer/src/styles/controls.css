@@ -726,6 +726,12 @@ input[type='radio'] {
   padding: var(--space-4);
 }
 
+.toast-info:has(.btn) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .toast-error {
   display: flex;
   align-items: center;
@@ -1123,4 +1129,84 @@ input[type='radio'] {
 .drop-over {
   outline: 2px dashed var(--water-line);
   outline-offset: -4px;
+}
+
+/* ── disclosure ──────────────────────────────────────────────────────────── */
+
+.disclosure {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  border-top: 1px solid var(--line);
+}
+
+.disclosure > * {
+  min-width: 0;
+}
+
+.disclosure-head {
+  margin: 0;
+  font: inherit;
+}
+
+.disclosure-head button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--space-8);
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: 600 var(--text-sm) / var(--leading-tight) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure-head button:hover .disclosure-title {
+  color: var(--water);
+}
+
+.disclosure-head button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: var(--radius-s);
+}
+
+.disclosure-twist {
+  flex: none;
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.disclosure.open .disclosure-twist {
+  transform: rotate(90deg);
+}
+
+.disclosure-title {
+  flex: none;
+}
+
+.disclosure-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-weight: 400;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disclosure-body {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3) calc(var(--space-3) + var(--space-2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .disclosure-twist {
+    transition: none;
+  }
 }

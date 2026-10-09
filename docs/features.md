@@ -400,9 +400,12 @@ Status:
 ## Live view
 
 Verified by hand against the owner's own local sites (Drupal 11; WordPress) on 9 Oct 2026: the
-real app driven with Playwright, every step a whole-window screenshot. The UI sweeps do not reach it: their bridge has
-no view to lay over the page, and nothing there serves a site. Local and Live is the exception: the sweep plays the
-view with a stub (`scripts/ui-live-stub.mjs`) that draws two pictures of a made-up page for Compare.
+real app driven with Playwright, every step a whole-window screenshot. The main UI sweep does not reach it: its bridge
+has no view to lay over the page, and nothing there serves a site. Two stand-ins cover what can be shown without one:
+for Local and Live, the main sweep plays the view with `scripts/ui-compare-stub.mjs`, which draws two pictures of a
+made-up page for Compare; and `scripts/live-sweep.mjs` plays it with `scripts/ui-live-stub.mjs` (a wireframe and a
+made-up trace, no website) for what is built on the helper's trace, and runs the built page script in a real Chromium
+page of made-up markup.
 
 | Feature | The claim | Test | Status |
 |---|---|---|---|
@@ -437,6 +440,14 @@ view with a stub (`scripts/ui-live-stub.mjs`) that draws two pictures of a made-
 | Compare: the viewer | Slider, onion skin, difference, flip, side by side; ← → Space, S O D T, J K, 1 2 3, I and Shift-I; on the shortcut sheet; the note that content differences usually mean an older local database. | `shared/live-compare.test.ts` › "the viewer’s keys", "the shortcut sheet lists exactly the viewer’s keys…"; `scripts/ui-sweep.mjs` › "Local and Live" (two made-up pictures drawn in the sweep, both themes) | added |
 | Ignored areas | Per site, at one width, on one page or every page; the core keeps them; removed by id. | `core/live-envs.test.ts` › "ignored areas…"; `scripts/ui-sweep.mjs` › "ignoring the clock…" | added |
 | Compare: the pictures | Both sides full-page in hidden windows at the same width, local in the view's session (with the helper's token), hosted in its private one; only on the owner's Compare. | `main/live-compare-request.test.ts`; not run against a real site | manual (needs the app and a hosted site) |
+| The helper's trace | `X-Wanigan-Trace` read only from the view's own main-frame responses on its site; the trace fetched from that origin with the token, no redirects followed, read to a bound, checked by `parseTrace`, refused when it is another render's. Each state without one (no helper, an old one, missing, expired, refused, unreadable, too large, site down) said with its next step. | `shared/live-lens.test.ts` › "what the owner is told when there is no trace…"; `scripts/live-sweep.mjs` › states | stub only (the helpers that send traces are being written) |
+| Parts tied to regions | `wl:part` comments read into ranges; a part around the same content as a template or a marked element (comments and blank text aside) gives it its id, outermost with outermost; a part nothing else found is a region of its own. | `renderer/src/live-page.test.ts` (4 pairing tests); `scripts/live-sweep.mjs` › the page script in a real page | added (not yet against a helper's markup) |
+| Lenses | Owner, Cache, Cost, Editable, Changed: one at a time, a legend with counts under the bar, a class shown alone on choosing it, Escape back to Structure; painted in mid-tone lens hues, never amber. | `shared/live-lens.test.ts` (one test per lens); `scripts/live-sweep.mjs` › each lens in both themes | stub only |
+| The Inspector from the trace | Source and owner, the hooks that shaped it with times and what each changed, template alternatives with Create override, then Edit, Data, Cache, Cost (its queries, slowest first), History and Access; paths and SQL copy. | `scripts/live-sweep.mjs` › "inspector" | stub only |
+| Editing in place | A native form in a view of the site's session beside the part, closed by `/_wanigan/edit/done` with the page reloaded; a schema target as a form drawn here (strings, numbers, booleans, choices, lists of text, one object of those), checked in main against the trace's schema before it is posted; a site's regular expressions never run. | `shared/live-schema.test.ts` (7 tests); `scripts/live-sweep.mjs` › "edit" | stub only (the routes are the helpers') |
+| The request | Totals; hooks in firing order, filtered by implementer, searched, the five slowest marked; queries slowest first or by caller, each outlining its part; assets; logs. | `shared/live-lens.test.ts` › queries; `scripts/live-sweep.mjs` › "request" | stub only |
+| Moving by hand | A collection item dragged by its handle: a line where it lands, places it cannot go dimmed, the new order shown on the page, then saved through the helper with Undo; a configuration move says what it changes and asks first; a 409 says it changed meanwhile. A part whose order is in a template becomes a note with pictures of the order now and wanted. The keyboard does the same from the Inspector, said aloud. | `shared/live-arrange.test.ts` (8 tests); `renderer/src/live-page.test.ts` › the drop slot; `scripts/live-sweep.mjs` › a real drag in the page script, a keyboard move, Undo, a 409 | stub only (moves need the helpers; multi-select not built) |
+| Adding from the palette | An entry dragged onto the page, placed with a click, or put at a named place; checked against the collection's inserts before it is posted. | `shared/live-arrange.test.ts` › "an insert is checked…"; `scripts/live-sweep.mjs` › "palette" | stub only (a drag from the window into the site's view is not seen working) |
 
 ## The demo
 

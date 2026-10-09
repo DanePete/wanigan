@@ -4,8 +4,14 @@
 // own template only when they appear there exactly once; anything else
 // becomes a note for an agent, with the exact change attached. Styles are
 // never written by hand: what was tried goes to the agent as intent.
-import { useEffect, useMemo, useState } from 'react';
-import type { LiveComponent, LiveFound, LivePick, LivePlatform, LiveRegion } from '@shared/live';
+//
+// With the site helper's trace, it also says what the trace knows of the part
+// (PartTrace.tsx): the hooks that shaped it, its data, every way to edit it,
+// its cache, cost, revisions and access; and it moves it (Arrange.tsx).
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { LiveComponent, LiveFound, LivePick, LivePlatform, LiveRegion, LiveSite } from '@shared/live';
+import { partFor, type LiveTraceAnswer, type PartIndex } from '@shared/live-lens';
+import type { EditTarget, LiveTrace } from '@shared/live-trace';
 import { editPath, entityOf, nameOf, originOf, overrideDir, overrides, type LiveOrigin } from '@shared/live-names';
 import { ancestors, kindKey } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
@@ -15,6 +21,9 @@ import { Icon } from '../icons';
 import { Button, IconButton, useToast } from '../ui';
 import { KIND_ICON } from './Layers';
 import { NoteComposer, draftFor } from './Notes';
+import { MoveSection, type useArrange } from './Arrange';
+import { TraceAccess, TraceCache, TraceCost, TraceData, TraceEdits, TraceHistory, TraceMadeBy } from './PartTrace';
+import { TraceNote } from './TraceNote';
 import type { StyleChange } from './note-store';
 
 export interface Selection { region: LiveRegion | null; pick: LivePick | null }
@@ -23,7 +32,8 @@ const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contr
 
 const near = (root: string, abs: string): string => (abs.startsWith(`${root}/`) ? abs.slice(root.length + 1) : abs);
 
-export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose, onSaved }: {
+export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose, onSaved,
+  site, answer, trace, parts, arrange, onEdit }: {
   project: ProjectSummary;
   platform: LivePlatform | null;
   selection: Selection;
@@ -43,6 +53,14 @@ export function Inspector({ project, platform, selection, regions, components, d
   onClose: () => void;
   /** Words were saved: the page should show them. */
   onSaved: () => void;
+  site: LiveSite;
+  /** The page's trace from the site helper, or why there is none. */
+  answer: LiveTraceAnswer | null;
+  trace: LiveTrace | null;
+  parts: PartIndex;
+  arrange: ReturnType<typeof useArrange>;
+  /** Open an edit target in a sheet beside the part. */
+  onEdit: (target: EditTarget, region: LiveRegion | null) => void;
 }) {
   const live = liveBridge();
   const { region, pick } = selection;
@@ -52,7 +70,12 @@ export function Inspector({ project, platform, selection, regions, components, d
     return [now, ...ancestors(regions, now.index)];
   }, [region, regions]);
   const crumbs = chain.slice(1).filter((r) => !nameOf(r).wrapper).reverse();
-  const name = region ? nameOf(region, region.component ? components.get(region.component)?.name ?? null : null) : null;
+  /** What a region is called, by the helper's label when the trace has one. */
+  const called = (r: LiveRegion) => {
+    const p = parts.byRegion.get(r.index);
+    return nameOf(r, r.component ? components.get(r.component)?.name ?? null : null, p ? { label: p.label, kind: p.kind } : null);
+  };
+  const name = region ? called(region) : null;
   const [words, setWords] = useState<{ before: string; after: string } | null>(null);
   /** The template the old words were found in, for the note that takes them to an agent. */
   const [wordsFile, setWordsFile] = useState<string | null>(null);
@@ -71,15 +94,21 @@ export function Inspector({ project, platform, selection, regions, components, d
   // Already alone (the helper's own page): nothing more to take it out of.
   const isAlone = (() => { try { return new URL(page ?? '').pathname.startsWith('/_wanigan/piece/'); } catch { return false; } })();
   const alone = helper && !isAlone ? alonePaths(chain).filter((a) => platform !== 'wordpress' || a.path.startsWith('/_wanigan/piece/entity/post/')) : [];
+  // What the trace says, for this part or the nearest one around it.
+  const traced = partFor(chain, parts);
+  const edit = (t: EditTarget): void => onEdit(t, traced?.region ?? region);
+  const now = region ? regions.find((r) => r.index === region.index) ?? region : null;
 
   return (
     <div className="live-inspector"
-      onKeyDown={(e) => { if (e.key === 'Escape' && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLSelectElement)) onClose(); }}>
+      // A move under way takes Alt+arrows, Enter and Escape first (Arrange.tsx).
+      onKeyDownCapture={(e) => { arrange.keys(e, now); }}
+      onKeyDown={(e) => { if (!e.defaultPrevented && e.key === 'Escape' && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLSelectElement)) onClose(); }}>
       <div className="live-side-head">
         <div className="live-inspector-title">
           {name ? <Icon name={KIND_ICON[name.icon]} size={16} /> : <Icon name="pick" size={16} />}
           <div>
-            <h2 className="live-side-title">{name?.title ?? (pick ? `<${pick.tag}>` : 'Part')}</h2>
+            <h2 className="live-side-title" tabIndex={-1}>{name?.title ?? (pick ? `<${pick.tag}>` : 'Part')}</h2>
             {name?.kind ? <p className="faint small">{name.kind}</p> : null}
           </div>
         </div>
@@ -89,7 +118,7 @@ export function Inspector({ project, platform, selection, regions, components, d
       {crumbs.length ? (
         <nav className="live-crumbs small" aria-label="Where it sits">
           {crumbs.map((r) => (
-            <button key={r.index} type="button" className="live-crumb" onClick={() => onSelect(r)}>{nameOf(r, r.component ? components.get(r.component)?.name ?? null : null).title}</button>
+            <button key={r.index} type="button" className="live-crumb" onClick={() => onSelect(r)}>{called(r).title}</button>
           ))}
           <span className="live-crumb here" aria-current="true">{name?.title ?? pick?.tag}</span>
         </nav>
@@ -104,9 +133,31 @@ export function Inspector({ project, platform, selection, regions, components, d
 
       {region ? <Alike region={region} regions={regions} /> : null}
 
-      {region ? <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme} /> : (
+      {region ? (
+        <MadeBy region={region} component={region.component ? components.get(region.component) ?? null : null} docroot={docroot} project={project} theme={theme}>
+          {traced ? (
+            <>
+              {traced.inherited ? <p className="faint small">From the trace of {traced.part.label}, around it:</p> : null}
+              <TraceMadeBy part={traced.part} edits={parts.edits} onEdit={edit} />
+            </>
+          ) : answer?.state === 'ok' ? null : <TraceNote compact answer={answer} site={site} project={project} />}
+        </MadeBy>
+      ) : (
         <p className="faint small">Nothing around it says what made it. Notes still tell an agent where it is on the page.</p>
       )}
+
+      {/* A hosted environment is read-only: nothing here edits or moves it. */}
+      {readOnly ? null : traced && trace ? (
+        <div className="live-trace-sections">
+          <TraceEdits part={traced.part} edits={parts.edits} onEdit={edit} />
+          {now ? <MoveSection arrange={arrange} region={now} trace={trace} /> : null}
+          <TraceData part={traced.part} edits={parts.edits} onEdit={edit} />
+          <TraceCache part={traced.part} />
+          <TraceCost part={traced.part} trace={trace} />
+          <TraceHistory part={traced.part} />
+          <TraceAccess part={traced.part} user={trace.user} />
+        </div>
+      ) : now ? <div className="live-trace-sections"><MoveSection arrange={arrange} region={now} trace={trace} /></div> : null}
 
       {!readOnly && (admin || content || alone.length) ? (
         <section className="live-section" aria-label="Change it in the site">
@@ -190,8 +241,10 @@ function adminLabel(r: LiveRegion): string {
 }
 
 /** What made a part: its component's folder and files, or its template and whose code it is, and how to change it here only. */
-function MadeBy({ region, component, docroot, project, theme }: {
+function MadeBy({ region, component, docroot, project, theme, children }: {
   region: LiveRegion; component: LiveComponent | null; docroot: string | null; project: ProjectSummary; theme: string | null;
+  /** What the site helper's trace adds. */
+  children?: ReactNode;
 }) {
   const origin = originOf(region.file);
   const template = region.file && docroot ? `${docroot}/${region.file}` : null;
@@ -243,9 +296,10 @@ function MadeBy({ region, component, docroot, project, theme }: {
           <p className="faint small">Then clear Drupal’s cache. A note to an agent below says the same.</p>
         </div>
       ) : null}
-      {!region.file && !component && !region.component ? (
+      {!region.file && !component && !region.component && !children ? (
         <p className="faint small">{[region.entity && `Content ${region.entity}`, region.block && `Block ${region.block}`, region.view && `View ${region.view}`, region.element && `Elementor ${region.element}`].filter(Boolean).join(' · ') || 'The page does not say which file made it.'}</p>
       ) : null}
+      {children}
     </section>
   );
 }

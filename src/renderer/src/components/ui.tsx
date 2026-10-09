@@ -275,6 +275,44 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
+/* ── disclosure ──────────────────────────────────────────────────────────── */
+
+/**
+ * A section that opens on request: its heading is the button (WAI-ARIA
+ * disclosure), with a quiet summary beside the title so a closed one still
+ * says what is in it.
+ */
+export function Disclosure({ title, summary, open: initial = false, children, className }: {
+  title: string;
+  summary?: ReactNode;
+  open?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(initial);
+  return (
+    <section className={`disclosure${open ? ' open' : ''}${className ? ` ${className}` : ''}`} aria-labelledby={`${id}-head`}>
+      <h3 className="disclosure-head">
+        <button type="button" id={`${id}-head`} aria-expanded={open} aria-controls={`${id}-body`} onClick={() => setOpen((v) => !v)}>
+          <Icon name="chevron" size={12} className="disclosure-twist" />
+          <span className="disclosure-title">{title}</span>
+          {summary ? <span className="disclosure-summary">{summary}</span> : null}
+        </button>
+      </h3>
+      <div className="disclosure-body" id={`${id}-body`} hidden={!open}>{open ? children : null}</div>
+    </section>
+  );
+}
+
+/** Copy some text, and say so. `what` finishes "Copied …" ("the path", "the query"). */
+export function CopyButton({ text, label, what = 'it' }: { text: string; label: string; what?: string }) {
+  const toast = useToast();
+  const copy = (): Promise<void> => navigator.clipboard.writeText(text)
+    .then(() => toast(`Copied ${what}.`), () => toast('The clipboard is not available here. Select the text and copy it yourself.', 'error'));
+  return <IconButton icon="copy" label={label} onClick={copy} />;
+}
+
 /* ── toasts ──────────────────────────────────────────────────────────────── */
 
 export interface ToastAction { label: string; run: () => void }
@@ -283,6 +321,8 @@ type PushToast = (text: string, tone?: Toast['tone'], options?: { action?: Toast
 const ToastContext = createContext<PushToast>(() => {});
 
 const INFO_MS = 3500;
+/** An info toast with an action (Undo) waits longer. */
+const INFO_ACTION_MS = 12_000;
 const MAX_TOASTS = 4;
 
 /**
@@ -307,7 +347,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       }
       return list;
     });
-    if (tone === 'info') setTimeout(() => dismiss(id), INFO_MS);
+    if (tone === 'info') setTimeout(() => dismiss(id), options?.action ? INFO_ACTION_MS : INFO_MS);
   }, [dismiss]);
   return (
     <ToastContext.Provider value={push}>
@@ -323,6 +363,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button type="button" className="toast-x" aria-label="Dismiss" title="Dismiss" onClick={() => dismiss(t.id)}>
                 <Icon name="close" size={14} />
               </button>
+            </div>
+          ) : t.action ? (
+            // A done thing that can be undone: it stays long enough to change one's mind.
+            <div key={t.id} className="toast toast-info">
+              <span className="toast-text">{t.text}</span>
+              <Button size="s" onClick={() => { dismiss(t.id); t.action?.run(); }}>{t.action.label}</Button>
             </div>
           ) : (
             <div key={t.id} className="toast toast-info">{t.text}</div>

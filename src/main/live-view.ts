@@ -11,7 +11,7 @@ import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session } from 'electron';
+import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainInvokeEvent, type NativeImage, type Session, type WebContents } from 'electron';
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
@@ -51,6 +51,10 @@ export interface LiveViewWiring {
   partition(projectId: string, env: string | null, url: string, token: string | null): string;
   /** The page script, for reading what made each part of a captured page; null when this build has none. */
   pageScript(): string | null;
+  /** What the view shows now, for what is built on it (live-inspect.ts); null when there is no view. */
+  current(): LiveCurrent | null;
+  /** Run code in the page script's isolated world (putting the script in first); `fallback` when it cannot. */
+  run<T>(code: string, fallback: T): Promise<T>;
 }
 
 export interface RenderOptions {
@@ -80,6 +84,23 @@ export interface RenderedPage {
   image: NativeImage | null;
   imageRect: { x: number; y: number; width: number; height: number } | null;
   cut: boolean;
+}
+
+/** The live view as it is now: its page, the site it may show, and the helper's token for that site. */
+export interface LiveCurrent {
+  projectId: string;
+  webContents: WebContents;
+  /** The site's address, as the owner set it: what the view may stay on. */
+  base: string;
+  token: string | null;
+}
+
+/** Where what is built on the view hears of it: a project's session locked down, a view made or gone. */
+export interface LiveViewHooks {
+  /** Once per project session, after it is locked down. */
+  session?(ses: Session, projectId: string): void;
+  /** A view was made for a project, or went away (null). */
+  view?(webContents: WebContents | null, projectId: string | null): void;
 }
 
 /** Screenshots are a desktop page: this many CSS pixels wide, and as tall as the page up to a limit. */
@@ -165,6 +186,7 @@ export function wireLiveView(options: {
   trusted: (event: IpcMainInvokeEvent) => boolean;
   /** Whether the owner has the live view switched on. */
   enabled: () => boolean;
+  hooks?: LiveViewHooks;
 }): LiveViewWiring {
   let view: WebContentsView | null = null;
   let projectId: string | null = null;
@@ -240,6 +262,7 @@ export function wireLiveView(options: {
       const host = hosts.get(id);
       callback(host && request.hostname === host && issuedLocally(request.certificate.data, request.hostname) ? 0 : -3);
     });
+    options.hooks?.session?.(ses, id);
   };
 
   const inject = async (): Promise<void> => {
@@ -266,6 +289,7 @@ export function wireLiveView(options: {
       if (attached && w && !w.isDestroyed()) w.contentView.removeChildView(view);
       if (!view.webContents.isDestroyed()) view.webContents.close();
     }
+    if (view) options.hooks?.view?.(null, null);
     view = null;
     projectId = null;
     env = null;
@@ -321,6 +345,7 @@ export function wireLiveView(options: {
       lastError = { code: -1, description: `The page stopped (${details.reason}).`, url: wc.getURL() };
       send();
     });
+    options.hooks?.view?.(wc, id);
     return v;
   };
 
@@ -646,5 +671,8 @@ export function wireLiveView(options: {
     return partition;
   };
 
-  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script };
+  const current = (): LiveCurrent | null => (view && !view.webContents.isDestroyed() && projectId && base
+    ? { projectId, webContents: view.webContents, base, token: tokens.get(projectId) ?? null } : null);
+
+  return { release: drop, shoot, render, now, logged: (id) => (view && projectId === id ? [...logged] : null), partition: partitionOf, pageScript: script, current, run };
 }

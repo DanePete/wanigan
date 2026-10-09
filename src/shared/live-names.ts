@@ -98,8 +98,28 @@ export function fieldOf(r: LiveRegion): { entityType: string; field: string; bun
   return null;
 }
 
-/** What to call a region, from what made it. `componentName` is the component's own name, when the site has it on disk. */
-export function nameOf(r: LiveRegion, componentName?: string | null): PartName {
+/** The icon for each kind of part the site helper reports. */
+const PART_ICON: Record<string, LiveKind> = {
+  template: 'template', component: 'component', block: 'block', entity: 'content', field: 'field', view: 'view', region: 'region',
+  form: 'form', shortcode: 'element', pattern: 'component', menu: 'menu', widget: 'block',
+};
+
+/**
+ * What to call a region, from what made it. `componentName` is the component's
+ * own name, when the site has it on disk; `part` is the site helper's label and
+ * kind for it, from the page's trace, used when the markup says nothing else.
+ */
+export function nameOf(r: LiveRegion, componentName?: string | null, part?: { label: string; kind: string } | null): PartName {
+  const only = !r.component && !r.element && !r.view && !r.block && !r.entity && !r.field && !r.file && !r.hook;
+  if (only && part) {
+    return { title: part.label, kind: `${human(part.kind)} · from the trace`, icon: PART_ICON[part.kind] ?? 'template', origin: null, wrapper: false, small: false };
+  }
+  const named = markupName(r, componentName);
+  // The helper names a part as its site does ("Opening hours", not the block's machine name): its label wins, the rest is the markup's.
+  return part && !named.wrapper ? { ...named, title: part.label } : named;
+}
+
+function markupName(r: LiveRegion, componentName?: string | null): PartName {
   const origin = originOf(r.file);
   if (r.component) {
     const [provider, id] = r.component.split(':');

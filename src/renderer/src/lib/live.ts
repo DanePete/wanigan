@@ -24,6 +24,27 @@ export function useCoversLive(active = true): void {
   }, [active]);
 }
 
+/** How many things cover the live view now: an edit sheet over it knows when something covers the sheet too. */
+export function useLiveCovers(): number {
+  const [count, setCount] = useState(covers);
+  useEffect(() => {
+    const l = (): void => setCount(covers);
+    listeners.add(l);
+    setCount(covers);
+    return () => { listeners.delete(l); };
+  }, []);
+  return count;
+}
+
+/**
+ * A colour token's value as `#rrggbb`, for what is drawn on the site's page
+ * (a lens), where Wanigan's stylesheet does not reach. Null when it is not one.
+ */
+export function tokenColor(name: string): string | null {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(`--${name}`).trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(value) ? value : null;
+}
+
 /** Whether something covers the live view now. */
 export function useLiveCovered(): boolean {
   const [covered, setCovered] = useState(covers > 0);
