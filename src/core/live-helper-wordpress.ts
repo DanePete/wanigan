@@ -210,7 +210,12 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|undo)(/|$)#', $path)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|undo|find)(/|$)#', $path, $m)) {
+			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
+			// pages only in an admin request (many check is_admin() when they load), so this request is one:
+			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
+			// It runs no admin_init and no admin screen; it answers JSON at wp_loaded and stops.
+			if ($m[1] === 'find' && !defined('WP_ADMIN')) define('WP_ADMIN', true);
 			add_action('wp_loaded', array(self::class, 'route'), PHP_INT_MAX);
 			return;
 		}
@@ -2838,18 +2843,304 @@ final class Wanigan_Live {
 		return substr(md5($s), 0, 10);
 	}
 
+
+	/* ── Go to: the site's destinations ─────────────────────────────────── */
+
+	/**
+	 * GET /_wanigan/find: every destination the logged-in user may open (src/shared/live-find.ts). With ?q= it also
+	 * searches posts of every show_ui type and media (titles only: WP_Query's search_columns, 6.2+), terms and users
+	 * by name, at most 50, ahead of the index.
+	 */
+	private static function find(): void {
+		if (!is_user_logged_in()) self::answer(array('ok' => false, 'error' => 'Log in to WordPress in the live view first.'), 403);
+		$user = wp_get_current_user();
+		global $wp_version;
+		$cache = md5(implode('|', array($user->ID, md5(serialize($user->allcaps)), (int) get_option('wanigan_live_changes', 0), md5(serialize(get_option('active_plugins'))), get_stylesheet(), $wp_version, get_locale(), (string) get_option('page_on_front'), (string) get_option('page_for_posts'), (string) filemtime(__FILE__))));
+		$key = 'wanigan_live_f_' . $user->ID;
+		$stored = get_transient($key);
+		if (is_array($stored) && isset($stored['cacheId']) && $stored['cacheId'] === $cache) {
+			$index = $stored['items'];
+		} else {
+			$index = self::find_index();
+			set_transient($key, array('cacheId' => $cache, 'items' => $index), HOUR_IN_SECONDS);
+		}
+		$q = isset($_GET['q']) ? trim(wp_unslash((string) $_GET['q'])) : '';
+		if ($q === '') self::answer(array('cacheId' => $cache, 'items' => $index));
+		$limit = isset($_GET['limit']) ? max(1, min(50, (int) $_GET['limit'])) : 50;
+		$found = self::find_search(self::cut($q, 200), $limit);
+		self::answer(array('cacheId' => $cache, 'items' => array_merge($found['items'], $index), 'total' => $found['total'], 'truncated' => $found['total'] > count($found['items'])));
+	}
+
+	private static function find_index(): array {
+		$items = self::find_admin_menu();
+		$seen = array();
+		foreach ($items as $i) $seen[$i['url']] = true;
+		$add = function ($item) use (&$items, &$seen) {
+			if (!$item || isset($seen[$item['url'] . '#' . $item['id']])) return;
+			$seen[$item['url'] . '#' . $item['id']] = true;
+			$items[] = $item;
+		};
+		// The front page and the posts page (options-reading.php: show_on_front, page_on_front, page_for_posts).
+		$home = self::site_path(home_url('/'));
+		if (get_option('show_on_front') === 'page' && ($front = get_post((int) get_option('page_on_front')))) {
+			$item = self::find_post($front, array());
+			if ($item) {
+				$item['id'] = 'front';
+				$item['label'] = 'Front page: ' . $item['label'];
+				$item['url'] = $home;
+				$add($item);
+			}
+			if ($posts = get_post((int) get_option('page_for_posts'))) {
+				$item = self::find_post($posts, array());
+				if ($item) {
+					$item['label'] = 'Posts page: ' . $item['label'];
+					$add($item);
+				}
+			}
+		} elseif ($home) {
+			$add(array('id' => 'front', 'kind' => 'content', 'label' => 'Front page (latest posts)', 'url' => $home, 'tags' => array('home')));
+		}
+		// The block theme's templates and template parts, in the Site Editor.
+		if (function_exists('wp_is_block_theme') && wp_is_block_theme() && current_user_can('edit_theme_options')) {
+			$add(array('id' => 'site-editor:styles', 'kind' => 'setting', 'label' => 'Styles', 'url' => self::site_path(admin_url('site-editor.php?p=' . rawurlencode('/styles'))), 'trail' => array('Appearance', 'Editor', 'Styles')));
+			foreach (array('wp_template' => 'Template', 'wp_template_part' => 'Template part') as $type => $noun) {
+				foreach (get_block_templates(array(), $type) as $t) {
+					$url = self::site_path(admin_url('site-editor.php?p=' . rawurlencode('/' . $type . '/' . $t->id) . '&canvas=edit'));
+					if (!$url) continue;
+					$item = array('id' => 'template:' . $t->id, 'kind' => 'template', 'label' => $t->title ? (string) $t->title : $t->slug, 'url' => $url, 'type' => $noun, 'edit' => $url, 'tags' => array_values(array_filter(array($t->slug, $t->source === 'custom' ? 'customized' : 'theme', isset($t->area) ? (string) $t->area : null))));
+					if ($t->wp_id && ($post = get_post($t->wp_id))) $item['changed'] = self::ms($post->post_modified_gmt);
+					$add($item);
+				}
+			}
+		}
+		// The most recently changed content of every public or show_ui post type.
+		$types = array_unique(array_merge(get_post_types(array('public' => true)), get_post_types(array('show_ui' => true))));
+		$posts = array();
+		foreach ($types as $type) {
+			if (in_array($type, array('wp_template', 'wp_template_part', 'revision', 'nav_menu_item', 'wp_global_styles', 'wp_font_family', 'wp_font_face', 'customize_changeset', 'oembed_cache', 'user_request', 'custom_css'), true)) continue;
+			$q = new WP_Query(array('post_type' => $type, 'post_status' => $type === 'attachment' ? 'inherit' : array('publish', 'future', 'draft', 'pending', 'private'), 'posts_per_page' => 10, 'orderby' => 'modified', 'order' => 'DESC', 'no_found_rows' => true, 'ignore_sticky_posts' => true, 'update_post_meta_cache' => false, 'update_post_term_cache' => false, 'perm' => 'readable'));
+			foreach ($q->posts as $post) $posts[] = $post;
+		}
+		$revisions = self::latest_revisions($posts);
+		foreach ($posts as $post) $add(self::find_post($post, $revisions));
+		return array_slice($items, 0, 5000);
+	}
+
+	/**
+	 * The wp-admin menu as wp-admin/menu.php builds it: core's entries for this user's capabilities, every plugin's
+	 * add_menu_page() and add_submenu_page() on admin_menu, and wp-admin/includes/menu.php's removal of what the
+	 * user may not open. Links are made as wp-admin/menu-header.php _wp_menu_output() makes them.
+	 */
+	private static function find_admin_menu(): array {
+		if (!is_admin() || !current_user_can('read')) return array();
+		global $menu, $submenu, $_wp_menu_nopriv, $_wp_submenu_nopriv, $_registered_pages, $_parent_pages, $admin_page_hooks, $_wp_real_parent_file, $compat, $_wp_last_object_menu, $_wp_last_utility_menu, $menu_order, $default_menu_order, $pagenow, $typenow, $taxnow, $plugin_page, $hook_suffix, $parent_file, $submenu_file, $self, $title;
+		require_once ABSPATH . 'wp-admin/includes/admin.php';
+		$pagenow = 'index.php';
+		ob_start();
+		try {
+			require ABSPATH . 'wp-admin/menu.php';
+		} catch (Throwable $e) {
+			ob_end_clean();
+			return array(array('id' => 'admin:index.php', 'kind' => 'admin', 'label' => 'Dashboard', 'url' => self::site_path(admin_url('index.php'))));
+		}
+		ob_end_clean();
+		$plugins = wp_normalize_path(WP_PLUGIN_DIR) . '/';
+		$admin = wp_normalize_path(ABSPATH . 'wp-admin') . '/';
+		$file_of = function ($slug) {
+			$pos = strpos($slug, '?');
+			return $pos === false ? $slug : substr($slug, 0, $pos);
+		};
+		$is_plugin_page = function ($slug, $parent) use ($plugins, $admin, $file_of) {
+			$file = $file_of($slug);
+			return get_plugin_page_hook($slug, $parent) || ($slug !== 'index.php' && file_exists($plugins . $file) && !file_exists($admin . $file));
+		};
+		$label = function ($html) {
+			// Counts ride along in spans (Comments 3, Plugins 2); they are not part of the name.
+			$text = preg_replace('#<span[^>]*>.*?</span>#s', '', (string) $html);
+			return trim(html_entity_decode(wp_strip_all_tags($text), ENT_QUOTES));
+		};
+		$kind_of = function ($parent, $slug) {
+			if ($parent === 'options-general.php' || $slug === 'options-general.php' || strpos($slug, 'customize.php') === 0) return 'setting';
+			if (in_array($parent, array('themes.php', 'site-editor.php'), true) || in_array($slug, array('nav-menus.php', 'widgets.php', 'themes.php', 'site-editor.php'), true) || strpos($slug, 'edit-tags.php') === 0) return 'structure';
+			return 'admin';
+		};
+		$out = array();
+		foreach ((array) $menu as $item) {
+			if (empty($item[2]) || (isset($item[4]) && strpos((string) $item[4], 'wp-menu-separator') !== false)) continue;
+			$top = $label($item[0]);
+			$subs = isset($submenu[$item[2]]) ? $submenu[$item[2]] : array();
+			$admin_is_parent = false;
+			if ($subs) {
+				$first = reset($subs);
+				if ($is_plugin_page($first[2], $item[2])) {
+					$admin_is_parent = true;
+					$url = 'admin.php?page=' . $first[2];
+				} else {
+					$url = $first[2];
+				}
+			} elseif ($is_plugin_page($item[2], 'admin.php')) {
+				$admin_is_parent = true;
+				$url = 'admin.php?page=' . $item[2];
+			} else {
+				$url = $item[2];
+			}
+			$path = self::site_path(admin_url($url));
+			if ($path && $top !== '') $out[] = array('id' => 'menu:' . $item[2], 'kind' => $kind_of('', $item[2]), 'label' => $top, 'url' => $path, 'trail' => array($top));
+			$menu_file = $file_of($item[2]);
+			foreach ($subs as $sub) {
+				if (empty($sub[2])) continue;
+				if ($is_plugin_page($sub[2], $item[2])) {
+					$sub_url = ((!$admin_is_parent && file_exists($plugins . $menu_file) && !is_dir($plugins . $item[2])) || file_exists($admin . $menu_file))
+						? add_query_arg(array('page' => $sub[2]), $item[2])
+						: add_query_arg(array('page' => $sub[2]), 'admin.php');
+				} else {
+					$sub_url = $sub[2];
+				}
+				$sub_path = self::site_path(admin_url($sub_url));
+				$name = $label($sub[0]);
+				if (!$sub_path || $name === '') continue;
+				$out[] = array('id' => 'admin:' . $sub_url, 'kind' => $kind_of($item[2], $sub[2]), 'label' => $name, 'url' => $sub_path, 'trail' => array($top, $name), 'tags' => array_values(array_filter(array(isset($sub[3]) ? $label($sub[3]) : null))));
+			}
+		}
+		return $out;
+	}
+
+	/** A post as a destination: where it shows, its edit screen, and what else wp-admin offers for it. */
+	private static function find_post(WP_Post $post, array $revisions): ?array {
+		if (!current_user_can('read_post', $post->ID)) return null;
+		$type = get_post_type_object($post->post_type);
+		if (!$type) return null;
+		$can_edit = current_user_can('edit_post', $post->ID);
+		$edit = $can_edit ? self::site_path((string) get_edit_post_link($post->ID, 'raw')) : null;
+		$viewable = is_post_type_viewable($type) && $post->post_status !== 'trash';
+		$view = $viewable ? self::site_path((string) get_permalink($post)) : null;
+		$url = $view ? $view : $edit;
+		if (!$url) return null;
+		$statuses = array('publish' => 'published', 'inherit' => 'published', 'future' => 'scheduled', 'draft' => 'draft', 'pending' => 'draft', 'auto-draft' => 'draft', 'private' => 'private', 'trash' => 'trash');
+		$item = array('id' => 'post:' . $post->ID, 'kind' => $post->post_type === 'attachment' ? 'media' : 'content', 'label' => $post->post_title !== '' ? wp_strip_all_tags($post->post_title) : '(no title)', 'url' => $url, 'type' => $type->labels->singular_name, 'tags' => array_values(array_filter(array($post->post_type, $post->post_name, (string) $post->ID))));
+		if (isset($statuses[$post->post_status])) $item['status'] = $statuses[$post->post_status];
+		$changed = self::ms($post->post_modified_gmt);
+		if ($changed) $item['changed'] = $changed;
+		$actions = array();
+		if ($edit) {
+			$item['edit'] = $edit;
+			$actions[] = array('label' => 'Edit', 'url' => $edit);
+		}
+		if ($viewable && $can_edit && $post->post_status !== 'publish' && ($preview = self::site_path((string) get_preview_post_link($post)))) $actions[] = array('label' => 'Preview', 'url' => $preview);
+		elseif ($view) $actions[] = array('label' => 'View', 'url' => $view);
+		if ($can_edit && isset($revisions[$post->ID]) && ($r = self::site_path(admin_url('revision.php?revision=' . (int) $revisions[$post->ID])))) $actions[] = array('label' => 'Revisions', 'url' => $r);
+		if ($post->post_status !== 'trash' && current_user_can('delete_post', $post->ID) && ($trash = self::site_path((string) get_delete_post_link($post->ID)))) $actions[] = array('label' => EMPTY_TRASH_DAYS ? 'Trash' : 'Delete permanently', 'url' => $trash);
+		if ($actions) $item['actions'] = $actions;
+		return $item;
+	}
+
+	/** The newest revision of each post, in one query over the revisions core keeps (revision.php). */
+	private static function latest_revisions(array $posts): array {
+		$ids = array();
+		foreach ($posts as $p) if (post_type_supports($p->post_type, 'revisions')) $ids[] = (int) $p->ID;
+		if (!$ids) return array();
+		global $wpdb;
+		$rows = $wpdb->get_results("SELECT post_parent, MAX(ID) AS latest FROM {$wpdb->posts} WHERE post_type = 'revision' AND post_parent IN (" . implode(',', array_unique($ids)) . ') GROUP BY post_parent');
+		$out = array();
+		foreach ((array) $rows as $r) $out[(int) $r->post_parent] = (int) $r->latest;
+		return $out;
+	}
+
+	private static function find_search(string $q, int $limit): array {
+		$items = array();
+		$total = 0;
+		if (ctype_digit($q) && ($post = get_post((int) $q)) && ($item = self::find_post($post, array()))) {
+			$items[] = $item;
+			$total++;
+		}
+		$types = array_values(array_diff(get_post_types(array('show_ui' => true)), array('wp_template', 'wp_template_part', 'wp_navigation', 'wp_global_styles')));
+		$types[] = 'attachment';
+		$statuses = array('publish', 'future', 'draft', 'pending', 'private', 'inherit');
+		if (current_user_can('edit_posts')) $statuses[] = 'trash';
+		$query = new WP_Query(array('s' => $q, 'search_columns' => array('post_title'), 'post_type' => array_unique($types), 'post_status' => $statuses, 'posts_per_page' => $limit, 'ignore_sticky_posts' => true, 'update_post_meta_cache' => false, 'update_post_term_cache' => false, 'perm' => 'readable'));
+		$total += (int) $query->found_posts;
+		$revisions = self::latest_revisions($query->posts);
+		foreach ($query->posts as $post) {
+			if (count($items) >= $limit) break;
+			$item = self::find_post($post, $revisions);
+			if ($item && (!$items || $items[0]['id'] !== $item['id'])) $items[] = $item;
+		}
+		$taxonomies = get_taxonomies(array('show_ui' => true));
+		if ($taxonomies && count($items) < $limit) {
+			$terms = get_terms(array('taxonomy' => array_values($taxonomies), 'name__like' => $q, 'number' => $limit - count($items), 'hide_empty' => false, 'update_term_meta_cache' => false));
+			foreach (is_array($terms) ? $terms : array() as $term) {
+				$total++;
+				$tax = get_taxonomy($term->taxonomy);
+				$edit = current_user_can('edit_term', $term->term_id) ? self::site_path((string) get_edit_term_link($term, $term->taxonomy)) : null;
+				$view = $tax && $tax->public ? self::site_path((string) get_term_link($term)) : null;
+				$url = $view ? $view : $edit;
+				if (!$url) continue;
+				$item = array('id' => 'term:' . $term->taxonomy . ':' . $term->term_id, 'kind' => 'term', 'label' => $term->name, 'url' => $url, 'type' => $tax ? $tax->labels->singular_name : $term->taxonomy, 'tags' => array($term->taxonomy, $term->slug));
+				$actions = array();
+				if ($edit) {
+					$item['edit'] = $edit;
+					$actions[] = array('label' => 'Edit', 'url' => $edit);
+				}
+				if ($view) $actions[] = array('label' => 'View', 'url' => $view);
+				if ($actions) $item['actions'] = $actions;
+				$items[] = $item;
+			}
+		}
+		if (current_user_can('list_users') && count($items) < $limit) {
+			$users = new WP_User_Query(array('search' => '*' . $q . '*', 'search_columns' => array('user_login', 'user_nicename', 'display_name'), 'number' => $limit - count($items), 'count_total' => true, 'fields' => array('ID', 'display_name', 'user_login')));
+			$total += (int) $users->get_total();
+			foreach ($users->get_results() as $u) {
+				$edit = current_user_can('edit_user', $u->ID) ? self::site_path((string) get_edit_user_link($u->ID)) : null;
+				$view = self::site_path((string) get_author_posts_url($u->ID));
+				$url = $edit ? $edit : $view;
+				if (!$url) continue;
+				$item = array('id' => 'user:' . $u->ID, 'kind' => 'user', 'label' => $u->display_name !== '' ? $u->display_name : $u->user_login, 'url' => $url, 'tags' => array($u->user_login));
+				$actions = array();
+				if ($edit) {
+					$item['edit'] = $edit;
+					$actions[] = array('label' => 'Edit', 'url' => $edit);
+				}
+				if ($view) $actions[] = array('label' => 'Posts', 'url' => $view);
+				$item['actions'] = $actions;
+				$items[] = $item;
+			}
+		}
+		return array('items' => array_slice($items, 0, $limit), 'total' => $total);
+	}
+
+	/** A URL on this site as a same-origin path (with its query), or null for anywhere else. */
+	private static function site_path(string $url): ?string {
+		if ($url === '') return null;
+		$parts = wp_parse_url($url);
+		if (!is_array($parts)) return null;
+		if (isset($parts['host'])) {
+			$hosts = array(wp_parse_url(home_url(), PHP_URL_HOST), wp_parse_url(site_url(), PHP_URL_HOST), wp_parse_url(admin_url(), PHP_URL_HOST));
+			if (!in_array($parts['host'], $hosts, true)) return null;
+		}
+		$path = isset($parts['path']) ? $parts['path'] : '/';
+		if ($path === '' || $path[0] !== '/' || strpos($path, '//') === 0) return null;
+		return $path . (isset($parts['query']) ? '?' . $parts['query'] : '');
+	}
+
+	private static function ms($gmt): ?int {
+		if (!is_string($gmt) || $gmt === '' || strpos($gmt, '0000') === 0) return null;
+		$t = strtotime($gmt . ' UTC');
+		return $t ? $t * 1000 : null;
+	}
+
 	/* ── the live view's routes ──────────────────────────────────────────── */
 
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|undo)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|undo|find)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
 		$arg = isset($m[2]) ? $m[2] : '';
 		try {
 			if ($route === 'trace' && !$post) self::serve_trace($arg);
+			if ($route === 'find' && !$post) self::find();
 			if ($route === 'edit' && !$post && $arg === 'done') self::edit_done();
 			if ($route === 'edit' && !$post) self::edit_form($arg);
 			if (!$post) self::answer(array('ok' => false, 'error' => 'That route takes a POST.'), 405);
