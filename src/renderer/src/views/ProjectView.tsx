@@ -20,7 +20,7 @@ export function ProjectView({ project, view, setDialog }: { project: ProjectSumm
   const resume = (): Promise<void> => attempt(() => call('projects.resume', { id: project.id }), (m) => toast(m, 'error'))
     .then((r) => { if (r) toast(`${project.name} resumed.`); });
   return (
-    <section className="view" aria-labelledby="project-title">
+    <section className={`view${view === 'code' ? ' view-code' : ''}`} aria-labelledby="project-title">
       <header className="topbar">
         <div className="topbar-title">
           <ProjectMark projectKey={project.key} />
@@ -70,7 +70,8 @@ export function ProjectView({ project, view, setDialog }: { project: ProjectSumm
       {!project.pathOk ? (
         <div className="banner banner-red">The folder {project.path} is missing. Sessions cannot start here until it is back.</div>
       ) : null}
-      <div className="view-body">
+      {/* The Code tab has no body of its own: the code editor (editor/EditorDrawer.tsx) fills this place, beside the project's files. */}
+      <div className="view-body" hidden={view === 'code'}>
         {view === 'board' ? <Board key={project.id} project={project} setDialog={setDialog} /> : null}
         {view === 'list' ? <ListView project={project} /> : null}
         {view === 'sessions' ? <SessionsView project={project} setDialog={setDialog} /> : null}

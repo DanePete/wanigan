@@ -2,7 +2,7 @@
 // so the router, the key handler, the shortcut sheet and the app menu all read
 // the same list.
 
-export type ProjectView = 'board' | 'list' | 'sessions' | 'history' | 'changes' | 'decisions' | 'activity' | 'live';
+export type ProjectView = 'board' | 'list' | 'sessions' | 'history' | 'changes' | 'code' | 'decisions' | 'activity' | 'live';
 
 export const PROJECT_VIEWS: readonly { view: ProjectView; label: string; key: string }[] = [
   { view: 'board', label: 'Board', key: 'b' },
@@ -10,6 +10,8 @@ export const PROJECT_VIEWS: readonly { view: ProjectView; label: string; key: st
   { view: 'sessions', label: 'Sessions', key: 's' },
   { view: 'history', label: 'History', key: 'h' },
   { view: 'changes', label: 'Changes', key: 'c' },
+  // The code editor as the whole view, beside the project's files (E for editor: C is Changes).
+  { view: 'code', label: 'Code', key: 'e' },
   { view: 'decisions', label: 'Decisions', key: 'd' },
   { view: 'activity', label: 'Activity', key: 'a' },
 ];

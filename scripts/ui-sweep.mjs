@@ -168,6 +168,8 @@ try {
       ['sessions', `#/p/${ns}/sessions`, '.srow'],
       ['history', `#/p/${ns}/history`, '.hrow'],
       ['changes', `#/p/${ns}/changes`, '.dl-add'],
+      // The Code tab with nothing open: the project's files and one line (the editor itself: scripts/editor-sweep.mjs).
+      ['code', `#/p/${ns}/code`, '.code-tree [role="treeitem"]'],
       ['changes-branch', `#/p/${ns}/changes?branch=${ns}-3`, '.dl-add'],
       ['git-commits', `#/p/${ns}/changes/commits`, '.commit-row .graph'],
       ['git-branches', `#/p/${ns}/changes/branches`, '.branch-row'],
@@ -210,6 +212,7 @@ try {
       const titles = {
         needs: /^Needs you — Wanigan$/, running: /^Running — Wanigan$/, board: /^Northstar Storefront · Board — Wanigan$/,
         'board-drawer-review': new RegExp(`^Northstar Storefront · Board · ${ns}-7 — Wanigan$`), list: /^Northstar Storefront · List — Wanigan$/,
+        code: /^Northstar Storefront · Code — Wanigan$/,
         settings: /^Settings — Wanigan$/, session: / · .+ — Wanigan$/,
       };
       if (titles[name] && !titles[name].test(problems.title)) failures.push(`${theme}/${name}: window title is "${problems.title}"`);
@@ -1210,6 +1213,7 @@ try {
         ['narrow-needs', '#/needs', '.needs-headline'],
         ['narrow-session', sessionHref.replace(/^.*#/, '#'), '.xterm-rows'],
         ['narrow-changes', `#/p/${ns}/changes`, '.dl-add'],
+        ['narrow-code', `#/p/${ns}/code`, '.code-tree [role="treeitem"]'],
         ['narrow-git-commits', `#/p/${ns}/changes/commits`, '.commit-view .dl-add'],
         ['narrow-git-branches', `#/p/${ns}/changes/branches`, '.branch-row'],
         ['narrow-git-stashes', `#/p/${ns}/changes/stashes`, '.stash-diffs .dl-add'],

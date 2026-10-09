@@ -44,7 +44,23 @@ test('G then a letter goes somewhere; G then C is Changes, not a new card', () =
   assert.deepEqual(matchKey(key('r'), at({ afterG: true })), { id: 'go-running' });
   assert.deepEqual(matchKey(key('b'), at({ afterG: true })), { id: 'go-board' });
   assert.deepEqual(matchKey(key('c'), at({ afterG: true })), { id: 'go-changes' });
+  assert.deepEqual(matchKey(key('e'), at({ afterG: true })), { id: 'go-code' });
   assert.equal(matchKey(key('z'), at({ afterG: true })), null);
+});
+
+test('the Code tab is G then E, a key no other view or command after G uses', () => {
+  assert.equal(shortcutText(shortcutFor('go-code')!, true), 'G then E');
+  assert.equal(menuSequence('go-code', true), 'G then E');
+  assert.equal(shortcutFor('go-code')?.label, 'Code of the open project');
+  // After G each letter goes to one place only.
+  const afterG = 'abcdefghijklmnopqrstuvwxyz'.split('').flatMap((k) => {
+    const m = matchKey(key(k), at({ afterG: true }));
+    return m && 'id' in m ? [m.id] : [];
+  });
+  assert.equal(new Set(afterG).size, afterG.length, `a place reached by two letters: ${afterG.join(', ')}`);
+  assert.ok(afterG.includes('go-code'));
+  // E alone stays nobody's: a stray E on the board does nothing.
+  assert.equal(matchKey(key('e'), at()), null);
 });
 
 test('every command the keys can produce is listed on the sheet', () => {
@@ -99,6 +115,16 @@ test('the sheet’s Changes keys are the keys the Changes view handles, and none
     // The window's own keys must leave these alone, or one press would do two things.
     assert.equal(matchKey(key(k), at()), null, `${k} is also an app key`);
   }
+});
+
+test('the sheet’s Code tab key is the key its files handle, and the tree takes typed letters before the window does', () => {
+  const tree = readFileSync(resolve(import.meta.dirname, '../renderer/src/editor/FileTree.tsx'), 'utf8');
+  const listed = SHORTCUTS.filter((x) => x.group === 'In the code editor' && /Code tab/.test(x.label));
+  assert.deepEqual(listed.map((s) => s.keys.join()), ['Space']);
+  assert.ok(tree.includes("case ' ': choose(row, true)"), 'the tree does not open a file on Space, keeping the keys');
+  for (const k of ["'ArrowDown'", "'ArrowUp'", "'ArrowRight'", "'ArrowLeft'", "'Home'", "'End'", "'Enter'"]) assert.ok(tree.includes(`case ${k}:`), `the tree does not handle ${k}`);
+  // Typing a name in the tree must not also be C (a new card) or G then a view: the tree prevents the window's handling.
+  assert.ok(/jump\(e\.key, at\);\s*\}\s*e\.preventDefault\(\);/.test(tree), 'a letter typed in the tree reaches the window’s own keys');
 });
 
 test('the sheet’s Commits keys are the keys the Commits tab handles', () => {

@@ -6,17 +6,22 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { indentUnit as indentUnitFacet } from '@codemirror/language';
 import { gotoLine } from '@codemirror/search';
+import type { StateEffect, Text } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import { bridge } from '../../lib/api';
 import { ago } from '../../lib/format';
 import { Icon } from '../../components/icons';
 import { Button, IconButton, useToast } from '../../components/ui';
 import { setPrefs, useEditorPrefs } from '../prefs';
-import { attachSurface, revealDone, useEditor, type EditorTab } from '../store';
+import { attachSurface, editorState, revealDone, useEditor, type EditorTab } from '../store';
 import { Breadcrumbs } from './Breadcrumbs';
 import { Comparison } from './Comparison';
 import { Controller, type Banner, type DocSession } from './controller';
 
-export default function CodeSurface({ tab, rootLabel }: { tab: EditorTab | null; rootLabel: string }) {
+/** Where the editor is: the drawer beneath (or beside) a view, or a project's Code tab. */
+export type SurfaceLayout = 'drawer' | 'page';
+
+export default function CodeSurface({ tab, rootLabel, layout = 'drawer' }: { tab: EditorTab | null; rootLabel: string; layout?: SurfaceLayout }) {
   const toast = useToast();
   const mac = bridge().platform === 'darwin';
   const hintId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
@@ -63,6 +68,34 @@ export default function CodeSurface({ tab, rootLabel }: { tab: EditorTab | null;
   }, [controller, session?.status, session?.tab.key, session?.comparison, editor.focusEditor]);
 
   useEffect(() => { if (controller?.active) void controller.applyPrefs(controller.active); }, [controller, prefs.wrap, prefs.vim, session?.status]);
+
+  // The drawer and the Code tab are this one editor at two sizes. Leaving one keeps where the file showing
+  // was scrolled in it, read while rendering, before the new size is drawn: once drawn, a taller editor has
+  // already lost its place. The next time the editor shows a file in the other (at once, or when a drawer
+  // that was closed opens), it is put back where that file last was there, or, if the text has changed
+  // since or it never was, with the cursor in view. A scroll kept for one size means nothing at the other.
+  const placed = useRef<{ layout: SurfaceLayout; arriving: boolean; kept: Map<string, { doc: Text; scroll: StateEffect<unknown> }> }>(
+    { layout, arriving: false, kept: new Map() },
+  );
+  if (placed.current.layout !== layout) {
+    const leaving = controller?.active;
+    if (controller && leaving?.status === 'ready' && !leaving.comparison) {
+      placed.current.kept.set(`${placed.current.layout}|${leaving.tab.key}`, { doc: controller.view.state.doc, scroll: controller.view.scrollSnapshot() });
+    }
+    placed.current.layout = layout;
+    placed.current.arriving = true;
+  }
+  // After the file is put in the view (the effect above that shows it), so this place is the one that holds.
+  useEffect(() => {
+    const at = placed.current;
+    if (!at.arriving || !controller || !tab || controller.activeKey !== tab.key || session?.status !== 'ready' || session.comparison) return;
+    at.arriving = false;
+    // A jump on its way (a file opened at a line) places the file itself.
+    if (editorState().reveal?.key === tab.key) return;
+    const view = controller.view;
+    const kept = at.kept.get(`${layout}|${tab.key}`);
+    view.dispatch({ effects: kept && kept.doc === view.state.doc ? kept.scroll : EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest' }) });
+  }, [controller, layout, tab, session?.status, session?.comparison]);
 
   const ready = session?.status === 'ready';
   return (

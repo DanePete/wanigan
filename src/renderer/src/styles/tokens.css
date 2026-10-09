@@ -66,6 +66,8 @@
   /* The live view's side panel, and wider for the request behind the page. */
   --live-side-w: 340px;
   --live-side-wide: 440px;
+  /* The Code tab's files, beside the editor. */
+  --code-tree-w: 264px;
   --rail-w-folded: 56px;
   --topbar-h: 52px;
   --drawer-w: min(620px, 92vw);

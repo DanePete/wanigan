@@ -81,10 +81,25 @@ export function openCard(card: string | null): void {
   navigate(parse(location.hash).route, card);
 }
 
+/** The last place in each project that was not its Code tab, by project key: where ⌘J on the Code tab goes back to. */
+const outsideCode = new Map<string, string>();
+
+function remember(at: Location): void {
+  const { route } = at;
+  if (route.name === 'session' || (route.name === 'project' && route.view !== 'code')) outsideCode.set(route.projectKey, location.hash);
+}
+
+/** Where to go from a project's Code tab when the editor is put away: the view (or session) before it, else the board. */
+export function beforeCode(projectKey: string): string {
+  return outsideCode.get(projectKey) ?? href({ name: 'project', projectKey, view: 'board' });
+}
+
 let current = parse(location.hash);
+remember(current);
 const listeners = new Set<() => void>();
 window.addEventListener('hashchange', () => {
   current = parse(location.hash);
+  remember(current);
   for (const l of listeners) l();
 });
 

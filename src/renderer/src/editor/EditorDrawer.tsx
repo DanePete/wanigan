@@ -3,16 +3,24 @@
 // for each open file and a dot on the unsaved ones. Closing an unsaved file
 // asks first. The editor inside loads the first time a file shows, and stays
 // loaded while the window is open, so every file keeps its undo history.
+//
+// On a project's Code tab (`page`) the same drawer is the view: it fills the
+// project's view area beside the project's files, and the drawer's own open
+// or closed, height and dock are left as they were, to come back when the tab
+// is left. One editor, never a second: nothing here remounts between the two.
 // Design: docs/design/2026-10-09-code-editor.md.
-import { Suspense, lazy, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { ProjectSummary } from '@shared/model';
+import { shortcutFor } from '@shared/shortcuts';
 import { bridge, useQuery } from '../lib/api';
 import { Icon } from '../components/icons';
-import { Button, Dialog, Empty, IconButton } from '../components/ui';
+import { Button, Dialog, Empty, IconButton, KeyCaps } from '../components/ui';
+import { ViewBoundary } from '../components/ViewBoundary';
+import { FileTree, focusFileTree } from './FileTree';
 import { MIN_SIZE, setPrefs, useEditorPrefs } from './prefs';
 import { QuickOpen } from './QuickOpen';
 import {
-  closeQuickOpen, closeTab, currentSurface, focusBreadcrumbs, goBack, goForward, openQuickOpen, setEditorOpen, showTab, toggleEditor, useEditor,
+  closeQuickOpen, closeTab, currentSurface, focusBreadcrumbs, goBack, goForward, openQuickOpen, setEditorOpen, setEditorPage, showTab, toggleEditor, useEditor,
   type EditorTab,
 } from './store';
 import '../styles/editor.css';
@@ -20,14 +28,21 @@ import '../styles/editor.css';
 const CodeSurface = lazy(() => import('./code/CodeSurface'));
 const STEP = 24;
 
-export function EditorDrawer({ project }: { project: ProjectSummary | null }) {
+export function EditorDrawer({ project, page = false }: {
+  project: ProjectSummary | null;
+  /** The project's Code tab is showing: the editor is the view. */
+  page?: boolean;
+}) {
   const editor = useEditor();
   const prefs = useEditorPrefs();
   const mac = bridge().platform === 'darwin';
   const tabs = project ? editor.tabs.filter((t) => t.projectId === project.id) : [];
   const activeKey = project ? editor.active[project.id] ?? null : null;
   const active = tabs.find((t) => t.key === activeKey) ?? null;
-  const visible = !!project && editor.open;
+  const onPage = !!project && page;
+  const visible = !!project && (editor.open || onPage);
+  // Before paint, so a file opened from the tab's tree never opens the drawer behind it.
+  useLayoutEffect(() => { setEditorPage(onPage); }, [onPage]);
   const cards = useQuery('cards.list', project && tabs.some((t) => t.cardId) ? { projectId: project.id } : null, ['board']);
   const [closing, setClosing] = useState<EditorTab | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -84,7 +99,7 @@ export function EditorDrawer({ project }: { project: ProjectSummary | null }) {
 
   return (
     <>
-      {project && !editor.open && tabs.length ? (
+      {project && !editor.open && !onPage && tabs.length ? (
         <button type="button" className="editor-collapsed" onClick={() => setEditorOpen(true)} title={`Show the code editor (${mac ? '⌘J' : 'Ctrl+J'})`}>
           <Icon name="code" size={14} />
           <span>Code · {tabs.length === 1 ? (tabs[0]?.path.split('/').pop() ?? '') : `${tabs.length} files`}</span>
@@ -92,10 +107,18 @@ export function EditorDrawer({ project }: { project: ProjectSummary | null }) {
           <kbd>{mac ? '⌘J' : 'Ctrl+J'}</kbd>
         </button>
       ) : null}
-      <section className="editor-drawer" data-dock={prefs.dock} hidden={!visible} aria-label="Code editor"
-        style={prefs.dock === 'bottom' ? { height: prefs.height } : { width: prefs.width }}
+      <section className="editor-drawer" data-mode={onPage ? 'page' : 'drawer'} data-dock={onPage ? undefined : prefs.dock} hidden={!visible} aria-label="Code editor"
+        style={onPage ? undefined : prefs.dock === 'bottom' ? { height: prefs.height } : { width: prefs.width }}
         onKeyDown={onKey} onMouseDown={onMouse} onMouseUp={onMouse}>
-        {project ? <Resizer dock={prefs.dock} size={prefs.dock === 'bottom' ? prefs.height : prefs.width} /> : null}
+        {/* Each child keeps its place in both modes, so the editor below is never mounted again. */}
+        {project && !onPage ? <Resizer dock={prefs.dock} size={prefs.dock === 'bottom' ? prefs.height : prefs.width} /> : null}
+        {project && onPage ? (
+          // Its own boundary: if the files break, the editor beside them (and anything unsaved in it) stays.
+          <ViewBoundary name="The project’s files" compact resetKey={`${project.id}|${active?.cardId ?? ''}`} frame={(panel) => <div className="code-tree">{panel}</div>}>
+            <FileTree key={`${project.id}|${active?.cardId ?? ''}`} projectId={project.id} cardId={active?.cardId ?? null}
+              label={rootLabel(active)} activePath={active?.path ?? null} />
+          </ViewBoundary>
+        ) : null}
         {project ? (
           <header className="editor-head">
             <nav className="editor-tabs" aria-label="Open files">
@@ -128,9 +151,13 @@ export function EditorDrawer({ project }: { project: ProjectSummary | null }) {
                 onClick={() => { if (active) void currentSurface()?.save(active.key); }} />
               <IconButton icon="undo" label="Revert to the saved file" disabled={!active || !editor.unsaved.has(active.key)}
                 onClick={() => { if (active) currentSurface()?.revert(active.key); }} />
-              <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} label={prefs.dock === 'bottom' ? 'Put the editor beside the view' : 'Put the editor beneath the view'}
-                onClick={() => setPrefs({ dock: prefs.dock === 'bottom' ? 'right' : 'bottom' })} />
-              <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} label={`Hide the editor (${mac ? '⌘J' : 'Ctrl+J'})`} onClick={toggleEditor} />
+              {onPage ? null : (
+                <>
+                  <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} label={prefs.dock === 'bottom' ? 'Put the editor beside the view' : 'Put the editor beneath the view'}
+                    onClick={() => setPrefs({ dock: prefs.dock === 'bottom' ? 'right' : 'bottom' })} />
+                  <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} label={`Hide the editor (${mac ? '⌘J' : 'Ctrl+J'})`} onClick={toggleEditor} />
+                </>
+              )}
             </div>
           </header>
         ) : null}
@@ -138,10 +165,17 @@ export function EditorDrawer({ project }: { project: ProjectSummary | null }) {
         <div className="editor-body">
           {loaded ? (
             <Suspense fallback={<p className="editor-placeholder faint">Loading the editor…</p>}>
-              <div className="editor-slot" hidden={!active}><CodeSurface tab={visible ? active : null} rootLabel={rootLabel(active)} /></div>
+              <div className="editor-slot" hidden={!active}><CodeSurface tab={visible ? active : null} rootLabel={rootLabel(active)} layout={onPage ? 'page' : 'drawer'} /></div>
             </Suspense>
           ) : null}
-          {project && !active ? (
+          {project && !active && onPage ? (
+            // The tab with nothing open: one line, and the two ways to open something.
+            <p className="code-empty">
+              No file open. <button type="button" className="linkish" onClick={() => openQuickOpen(null)}>Find one by name</button>{' '}
+              <KeyCaps shortcut={shortcutFor('quick-open')!} mac={mac} />, or{' '}
+              <button type="button" className="linkish" onClick={focusFileTree}>choose one from the files</button>.
+            </p>
+          ) : project && !active ? (
             <Empty title="No file open" action={<Button tone="primary" icon="search" onClick={() => openQuickOpen(null)}>Open a file…</Button>}>
               {mac ? '⌘P' : 'Ctrl+P'} finds any file in {project.name}. Files open here from Changes, from a turn’s changes, and from a part picked in the live view.
             </Empty>

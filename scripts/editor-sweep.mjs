@@ -390,6 +390,186 @@ try {
       await page.waitForSelector('.editor-drawer:not([hidden]) .cm-content', { timeout: 3000 }).catch(() => fail('⌘J did not show the editor again'));
     });
 
+    // The Code tab: the same editor as the project's view, beside its files. A fresh window, so nothing is open yet.
+    await step('code-tab', async () => {
+      await page.goto(`${base}#/p/${ns}/board`);
+      await page.reload();
+      await page.waitForSelector('.card');
+      const tabs = await page.$$eval('.topbar .tabs a', (a) => a.map((x) => x.textContent.replace(/\d+$/, '').trim()));
+      if (tabs.join() !== 'Board,List,Sessions,History,Changes,Code,Decisions,Activity,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
+      const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'title');
+      if (tip !== 'Code (G then E)') fail(`the Code tab's tip is "${tip}"`);
+      // G then E, from the board.
+      await page.keyboard.press('g');
+      await page.keyboard.press('e');
+      await page.waitForFunction((want) => location.hash === want, `#/p/${ns}/code`, { timeout: 3000 }).catch(() => fail('G then E did not go to the Code tab'));
+      await page.waitForSelector('.code-tree [role="treeitem"]', { timeout: 8000 }).catch(() => fail('the Code tab shows no files'));
+      if ((await page.getAttribute('.topbar .tabs a:text-is("Code")', 'aria-current')) !== 'page') fail('the Code tab is not marked as the current view');
+      if (!/^Northstar Storefront · Code — Wanigan$/.test(await page.title())) fail(`the window title is "${await page.title()}"`);
+
+      // Nothing open: one line that says so, offering ⌘P and the files; not an empty pane.
+      const empty = (await page.textContent('.editor-drawer[data-mode="page"] .code-empty').catch(() => '')).replace(/\s+/g, ' ').trim();
+      if (!/^No file open\. Find one by name ⌘P, or choose one from the files\.$/.test(empty)) fail(`with nothing open the tab says "${empty}"`);
+      if (await page.$('.editor-drawer[data-mode="page"] .empty')) fail('with nothing open the tab shows the drawer’s empty panel too');
+      const tree = await page.$eval('.code-tree [role="tree"]', (t) => ({ label: t.getAttribute('aria-label'), rows: [...t.querySelectorAll('[role="treeitem"]')].map((r) => [r.textContent, r.getAttribute('aria-level'), r.getAttribute('aria-expanded')]) }));
+      if (tree.label !== 'Files in Northstar Storefront') fail(`the tree is named "${tree.label}"`);
+      const top = tree.rows.map((r) => r[0]);
+      if (!top.includes('web') || !top.includes('package.json') || top.indexOf('web') > top.indexOf('package.json')) fail(`the top folder lists ${top.join(', ')} (folders first)`);
+      if (tree.rows.some((r) => r[1] !== '1') || tree.rows.find((r) => r[0] === 'web')?.[2] !== 'false') fail('the top rows are not a closed first level of a tree');
+      if (top.includes('.git')) fail('the tree lists git’s own folder');
+      await shot('code-empty');
+
+      // The keyboard: into the tree from the line, a name typed, → to open and step in, Enter to open a file.
+      const focused = () => page.evaluate(() => document.activeElement?.getAttribute('data-path') ?? document.activeElement?.className ?? null);
+      await page.click('.code-empty button:has-text("choose one from the files")');
+      if ((await focused()) !== top[0]) fail(`"choose one from the files" put the keys on ${await focused()}`);
+      await page.keyboard.press('ArrowDown');
+      if ((await focused()) !== top[1]) fail(`↓ went to ${await focused()}`);
+      await page.keyboard.type('web');
+      if ((await focused()) !== 'web') fail(`typing "web" went to ${await focused()}`);
+      for (const dir of ['web/modules', 'web/modules/custom', 'web/modules/custom/northstar_checkout', 'web/modules/custom/northstar_checkout/css', css]) {
+        const parent = dir.slice(0, dir.lastIndexOf('/'));
+        await page.keyboard.press('ArrowRight');
+        await page.waitForSelector(`.code-tree [data-path^="${parent}/"]`, { timeout: 5000 }).catch(() => fail(`→ did not open ${parent}`));
+        if ((await page.getAttribute(`.code-tree [data-path="${parent}"]`, 'aria-expanded')) !== 'true') fail(`${parent} is open but not marked so`);
+        await page.keyboard.press('ArrowRight');
+        if (!(await focused())?.startsWith(`${parent}/`)) fail(`→ on the open ${parent} went to ${await focused()}, not into it`);
+        await page.keyboard.type(dir.slice(parent.length + 1));
+        if ((await focused()) !== dir) fail(`typing its name did not reach ${dir} (${await focused()})`);
+      }
+      await shot('code-tree');
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'pay-button.css', null, { timeout: 8000 }).catch(() => fail('Enter on a file in the tree did not open it'));
+      await page.waitForFunction(() => document.activeElement?.classList.contains('cm-content'), null, { timeout: 3000 }).catch(() => fail('Enter on a file did not put the cursor in it, as ⌘P does'));
+      if ((await page.getAttribute(`.code-tree [data-path="${css}"]`, 'aria-selected')) !== 'true') fail('the open file is not marked in the tree');
+      if ((await page.$$('.editor-drawer')).length !== 1 || (await page.$$('.cm-editor')).length !== 1) fail('the Code tab has a second editor');
+      if (await page.$('.editor-collapsed')) fail('the drawer’s closed bar shows on the Code tab');
+
+      // ← steps out and closes; typing jumps; Space opens a file and keeps the keys in the tree.
+      await page.focus('.code-tree [role="treeitem"][tabindex="0"]');
+      await page.keyboard.press('ArrowLeft');
+      if ((await focused()) !== 'web/modules/custom/northstar_checkout/css') fail(`← from a file went to ${await focused()}`);
+      await page.keyboard.press('ArrowLeft');
+      if ((await page.getAttribute('.code-tree [data-path="web/modules/custom/northstar_checkout/css"]', 'aria-expanded')) !== 'false') fail('← on an open folder did not close it');
+      await page.keyboard.type('templates');
+      await page.keyboard.press('ArrowRight');
+      await page.waitForSelector(`.code-tree [data-path="${twig}"]`, { timeout: 5000 }).catch(() => fail('→ did not open templates'));
+      await page.keyboard.press('ArrowRight');
+      await page.keyboard.press('Space');
+      await page.waitForFunction(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'northstar-pay-button.html.twig', null, { timeout: 8000 }).catch(() => fail('Space on a file did not open it'));
+      await settle();
+      if ((await focused()) !== twig) fail(`Space on a file took the keys to ${await focused()}`);
+
+      // Back and Forward (from the tree too), the breadcrumbs, find, go to line and ⌘P, all on the tab.
+      await page.keyboard.press('Control+Minus');
+      await settle();
+      if ((await activeTab()) !== 'pay-button.css') fail(`Back on the Code tab went to ${await activeTab()}`);
+      await page.keyboard.press('Control+Shift+Minus');
+      await settle();
+      if ((await activeTab()) !== 'northstar-pay-button.html.twig') fail(`Forward on the Code tab went to ${await activeTab()}`);
+      await page.click('.editor-code .cm-content');
+      await page.keyboard.press('Meta+f');
+      await page.waitForSelector('.editor-drawer[data-mode="page"] .cm-panel.cm-search', { timeout: 3000 }).catch(() => fail('⌘F did not open find on the Code tab'));
+      await page.keyboard.press('Escape');
+      await page.click('.editor-code .cm-content');
+      await page.keyboard.press('Control+g');
+      await page.waitForSelector('.editor-drawer[data-mode="page"] .cm-panel.cm-goto-line', { timeout: 3000 }).catch(() => fail('⌃G did not open go to line on the Code tab'));
+      await page.keyboard.press('Escape');
+      const path = await crumbs();
+      if (path.slice(1, 7).join('/') !== twig) fail(`on the Code tab the breadcrumbs read ${path.join(' › ')}`);
+      await page.keyboard.press('Meta+p');
+      await page.waitForSelector('.quick-open', { timeout: 3000 }).catch(() => fail('⌘P did not open quick open on the Code tab'));
+      await page.keyboard.type('routing.yml');
+      await page.waitForSelector('.quick-open-option.active:has-text("northstar_checkout.routing.yml")', { timeout: 5000 });
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.code-tree-row.open-file[data-path="web/modules/custom/northstar_checkout/northstar_checkout.routing.yml"]', { timeout: 8000 })
+        .catch(() => fail('a file opened with ⌘P is not marked in the tree'));
+      if (!page.url().endsWith(`#/p/${ns}/code`)) fail(`⌘P on the Code tab left it for ${page.url()}`);
+      await shot('code-file');
+      const named = await page.$$eval('.editor-drawer[data-mode="page"] button, .editor-drawer[data-mode="page"] [role="treeitem"]', (els) => els
+        .filter((e) => !(e.getAttribute('aria-label') || e.textContent.trim() || e.getAttribute('title'))).map((e) => e.outerHTML.slice(0, 80)));
+      if (named.length) fail(`controls on the Code tab without a name: ${named.join(' | ')}`);
+
+      // Leaving: the drawer was closed before the tab, and stays closed, its files kept. The cursor is left at
+      // the end of the file, which the tab shows whole and the drawer, shorter, has to scroll to.
+      await page.click('.editor-code .cm-content');
+      await page.keyboard.press('Meta+ArrowDown');
+      await page.click('.topbar .tabs a:text-is("Board")');
+      await page.waitForSelector('.editor-collapsed:has-text("3 files")', { timeout: 3000 }).catch(() => fail('leaving the Code tab did not leave the drawer closed with its three files'));
+      if (await page.$('.editor-drawer:not([hidden])')) fail('opening files on the Code tab opened the drawer behind it');
+
+      // The drawer gives way: open beneath the board with unsaved text, then the Code tab, then back.
+      await page.keyboard.press('Meta+j');
+      await page.waitForSelector('.editor-drawer[data-mode="drawer"]:not([hidden]) .cm-content', { timeout: 3000 }).catch(() => fail('⌘J did not open the drawer'));
+      await settle();
+      const cursorLine = await page.evaluate(() => {
+        const line = document.querySelector('.editor-drawer .cm-activeLine')?.getBoundingClientRect();
+        const box = document.querySelector('.editor-drawer .cm-scroller')?.getBoundingClientRect();
+        return !!line && !!box && line.top >= box.top - 1 && line.bottom <= box.bottom + 1;
+      });
+      if (!cursorLine) fail('the drawer opened after the Code tab does not show the line the cursor is on');
+      await page.click('.editor-code .cm-content');
+      await page.keyboard.press('Meta+ArrowDown');
+      await page.keyboard.type(`# ${theme}: typed in the drawer`);
+      await page.waitForSelector('.editor-tab.active.unsaved', { timeout: 3000 });
+      const before = await page.$eval('.editor-drawer', (d) => {
+        window.__codeView = d.querySelector('.cm-editor');
+        return { height: Math.round(d.getBoundingClientRect().height), scrolled: Math.round(d.querySelector('.cm-scroller').scrollTop) };
+      });
+      if (!before.scrolled) fail('the drawer is not scrolled down to the line typed, so coming back scrolled is not tested');
+      await shot('code-drawer-before');
+      await page.click('.topbar .tabs a:text-is("Code")');
+      await page.waitForSelector('.editor-drawer[data-mode="page"]', { timeout: 3000 }).catch(() => fail('the drawer did not give way to the Code tab'));
+      await settle();
+      const onTab = await page.evaluate(() => {
+        const d = document.querySelector('.editor-drawer');
+        const bar = document.querySelector('.topbar').getBoundingClientRect();
+        const r = d.getBoundingClientRect();
+        return { same: d.querySelector('.cm-editor') === window.__codeView, drawers: document.querySelectorAll('.editor-drawer').length, top: Math.round(r.top - bar.bottom), bottom: Math.round(innerHeight - r.bottom), text: [...d.querySelectorAll('.cm-line')].map((l) => l.textContent).join('\n') };
+      });
+      if (!onTab.same || onTab.drawers !== 1) fail('the Code tab is not the drawer’s own editor');
+      if (Math.abs(onTab.top) > 1 || Math.abs(onTab.bottom) > 1) fail(`the editor does not fill the view (${onTab.top}px under the bar, ${onTab.bottom}px above the bottom)`);
+      if (!onTab.text.includes(`# ${theme}: typed in the drawer`) || !(await page.$('.editor-tab.active.unsaved'))) fail('the unsaved text typed in the drawer is not on the Code tab');
+      await shot('code-drawer-gives-way');
+      await page.click('.topbar .tabs a:text-is("Board")');
+      await page.waitForSelector('.editor-drawer[data-mode="drawer"]:not([hidden])', { timeout: 3000 }).catch(() => fail('the drawer did not come back when the Code tab was left'));
+      await settle();
+      const after = await page.$eval('.editor-drawer', (d) => ({
+        height: Math.round(d.getBoundingClientRect().height), scrolled: Math.round(d.querySelector('.cm-scroller').scrollTop), same: d.querySelector('.cm-editor') === window.__codeView,
+      }));
+      if (after.height !== before.height || !after.same) fail(`the drawer came back ${after.height}px high (was ${before.height}), ${after.same ? 'the same' : 'another'} editor`);
+      if (Math.abs(after.scrolled - before.scrolled) > 1) fail(`the drawer came back scrolled to ${after.scrolled}px, not ${before.scrolled}px as it was`);
+      await shot('code-drawer-back');
+      await page.click('.editor-actions button[aria-label="Revert to the saved file"]');
+      await page.waitForSelector('.editor-tab.active:not(.unsaved)', { timeout: 3000 }).catch(() => fail('Revert left the file unsaved'));
+
+      // ⌘J on the Code tab puts the editor away: back to the view before it, the drawer closed.
+      await page.click('.topbar .tabs a:text-is("List")');
+      await page.waitForSelector('.table tbody tr');
+      await page.click('.topbar .tabs a:text-is("Code")');
+      await page.waitForSelector('.editor-drawer[data-mode="page"]');
+      await page.keyboard.press('Meta+j');
+      await page.waitForFunction((want) => location.hash === want, `#/p/${ns}/list`, { timeout: 3000 }).catch(async () => fail(`⌘J on the Code tab went to ${await page.evaluate(() => location.hash)}, not back to List`));
+      await page.waitForSelector('.editor-collapsed', { timeout: 3000 }).catch(() => fail('⌘J on the Code tab left the drawer open'));
+      if (await page.$('.editor-drawer:not([hidden])')) fail('⌘J on the Code tab left the drawer open');
+
+      // A fault in the files takes only the files with it: the editor beside them, and its open file, stay.
+      const quietFrom = errors.length;
+      await page.evaluate(() => {
+        window.__realCall = window.wanigan.call;
+        window.wanigan.call = (m, p) => (m === 'files.dir' ? Promise.resolve({ path: '', entries: 'not a list', cut: false }) : window.__realCall(m, p));
+      });
+      await page.click('.topbar .tabs a:text-is("Code")');
+      await page.waitForSelector('.editor-drawer[data-mode="page"] .code-tree .view-crash', { timeout: 5000 }).catch(() => fail('a fault in the Code tab’s files did not stay in their own panel'));
+      if (!(await page.$('.editor-drawer[data-mode="page"] .editor-code .cm-content')) || (await page.$('.view-crash:has-text("The code editor")'))) fail('a fault in the files took the editor with it');
+      await shot('code-files-fault');
+      await page.evaluate(() => { window.wanigan.call = window.__realCall; });
+      await page.click('.code-tree .view-crash button:has-text("Reload this view")');
+      await page.waitForSelector('.code-tree [role="treeitem"]', { timeout: 5000 }).catch(() => fail('the files did not come back with Reload this view'));
+      // What React reports about the fault it caught is the fault this check made.
+      errors.splice(quietFrom).filter((e) => !/forEach is not a function|The above error occurred|not a list/.test(e)).forEach((e) => errors.push(e));
+    });
+
     // Every control in the drawer has a name.
     const unnamed = await page.$$eval('.editor-drawer button, .editor-drawer input, .editor-drawer [role="separator"]', (els) => els
       .filter((e) => !(e.getAttribute('aria-label') || e.textContent.trim() || e.getAttribute('title')))
