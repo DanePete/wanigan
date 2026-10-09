@@ -101,6 +101,7 @@ export function compareStub() {
     return { data: canvas.toDataURL('image/png').slice('data:image/png;base64,'.length), width: canvas.width, height: canvas.height, cssWidth: W, cssHeight: H, regions };
   }
 
+  let disarming = null;
   window.wanigan.live = {
     show: async (projectId, url, _bounds, token, env) => {
       log.shows.push({ projectId, url, token: token ?? null, env: env ?? null });
@@ -135,6 +136,24 @@ export function compareStub() {
     helperSave: async () => ({ ok: false, error: 'No helper in the sweep.', label: null }),
     hasScript: async () => true,
     onState(listener) { states.add(listener); return () => states.delete(listener); },
+    // What is built on the helper's trace (lenses, edit sheets, moving), quiet here: Compare's sweep has no helper.
+    trace: async () => ({ state: 'no-helper' }),
+    paint: async () => 0,
+    where: async () => null,
+    focusWindow: async () => {},
+    editOpen: async () => ({ ok: false, error: 'No helper in the sweep.' }),
+    editBounds: () => {},
+    editClose: async () => {},
+    editSave: async () => ({ ok: false, error: 'No helper in the sweep.', revision: null }),
+    onEdited: () => () => {},
+    onKey: () => () => {},
+    arrange: () => new Promise((resolve) => { disarming = () => resolve(null); }),
+    disarm: async () => { disarming?.(); disarming = null; },
+    preview: async () => false,
+    unpreview: async () => {},
+    move: async () => ({ ok: false, error: 'No helper in the sweep.' }),
+    insert: async () => ({ ok: false, error: 'No helper in the sweep.' }),
+    undo: async () => ({ ok: false, error: 'No helper in the sweep.' }),
     compareShot: async (request) => {
       log.shots.push(request);
       await new Promise((done) => setTimeout(done, 60));
