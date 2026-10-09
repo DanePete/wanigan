@@ -18,8 +18,10 @@ import { CoreError } from '../../shared/protocol.ts';
  * Events a phone never needs: terminal output arrives only for terminals it
  * watches, and the live view's edits and site settings (paths on this Mac,
  * many a second while an agent works) have nothing on the phone to follow them.
+ * Nor do saved board views: the phone shows a board a column at a time, with
+ * no filters, and may not read the views (they are the owner's, on the Mac).
  */
-const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots']);
+const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots', 'boardViews']);
 
 const MAX_RPC_BODY = 256 * 1024;
 const MAX_PAIR_BODY = 4 * 1024;

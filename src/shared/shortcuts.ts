@@ -75,6 +75,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Open the card', group: 'On the board', keys: ['Enter'] },
   { id: null, label: 'Accept into Ready (Inbox)', group: 'On the board', keys: ['A'] },
   { id: null, label: 'Archive (Inbox)', group: 'On the board', keys: ['X'] },
+  { id: null, label: 'Apply a saved view, by its number', group: 'On the board', keys: ['1–9'] },
   // So does the Changes view (views/git/WorkingTree.tsx, and its commit box).
   { id: null, label: 'Next file', group: 'In Changes', keys: ['J'] },
   { id: null, label: 'Previous file', group: 'In Changes', keys: ['K'] },

@@ -137,6 +137,7 @@ function plan(w) {
     { name: 'Search and commands', hash: board, open: press('Meta+k'), scope: '.palette' },
     { name: 'Keyboard shortcuts', hash: board, open: press('Shift+Slash'), scope: '.dialog', ready: '.shortcuts' },
     { name: 'How this works', hash: board, open: click('.how-btn'), scope: '.dialog', ready: '.how-flow' },
+    { name: 'Saved views', hash: board, open: click('.views-trigger'), scope: '.views-panel', ready: '.views-panel .views-row' },
     { name: 'Talk to Wanigan', hash: board, open: click('.chat-fab'), scope: '.chat' },
     { name: 'Play with Wanigan', hash: '#/needs', open: click('.needs-orb .play-button'), scope: '.play-panel' },
     ...drawers.map((c) => ({
@@ -618,6 +619,9 @@ function keyChecks(w) {
     // Last: these change the board.
     'Accept into Ready (Inbox)': [{ at: board, setup: focusCard('inbox'), keys: ['a'], expect: focused((k) => !!document.querySelector(`.column-ready .card[data-key="${k}"]`), inbox[0]?.key) }],
     'Archive (Inbox)': [{ at: board, setup: focusCard('inbox'), keys: ['x'], expect: focused((k) => !document.querySelector(`.card[data-key="${k}"]`), inbox[1]?.key) }],
+    // After those: the board remembers the view it was set to, and the Inbox keys expect it as seeded.
+    // The demo saves three views on Northstar's board; the first shows its bugs by priority.
+    'Apply a saved view, by its number': [{ at: board, keys: ['1'], expect: shows('.views-trigger.on:has-text("Bugs by priority")') }],
   };
   return checks;
 }
@@ -786,6 +790,38 @@ function checks(w) {
   once('A double Enter records one decision', `#/p/${ns}/decisions`, '.decision', typeInto('#decision-title', 'Only once'), ['Enter', 'Enter'], 'decisions.add');
   once('A double Enter adds one criterion', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#criterion-new', 'Only once'), ['Enter', 'Enter'], 'criteria.add');
   once('A double ⌘Enter comments once', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#comment-new', 'Only once'), ['Meta+Enter', 'Meta+Enter'], 'cards.comment');
+  once('A double Enter saves one board view', board, '.card', async (page) => {
+    await page.click('.views-trigger');
+    await page.waitForSelector('.views-panel .views-save input');
+    await typeInto('.views-panel .views-save input', 'Only once')(page);
+  }, ['Enter', 'Enter'], 'boardViews.save');
+
+  list.push(['Saved views that cannot be read say so, and Retry reads them', async (page) => {
+    await openAt(page, board, { ready: '.card', fail: 'boardViews.list' });
+    await page.click('.views-trigger');
+    await page.waitForSelector('.views-panel');
+    const problems = [];
+    const said = await page.textContent('.views-panel');
+    if (!/could not be read/.test(said)) problems.push(`the panel says “${said.trim().slice(0, 120)}”`);
+    if (/No views saved/.test(said)) problems.push('a list that could not be read reads as empty');
+    if (!(await page.$('.views-save button[type="submit"]:disabled'))) problems.push('Save is offered before the views are known');
+    await failFrom(page, '');
+    await page.click('.views-problem button:has-text("Retry")');
+    if (!(await page.waitForSelector('.views-panel .views-row', { timeout: 3000 }).then(() => true, () => false))) problems.push('Retry did not bring the views back');
+    return problems;
+  }]);
+
+  list.push(['A saved view keeps its words when the core refuses a rename', async (page) => {
+    await openAt(page, board, { ready: '.card' });
+    await page.click('.views-trigger');
+    await page.click('.views-row:first-child button[aria-label^="Rename"]');
+    const input = page.locator('.views-panel .views-edit input');
+    await input.fill('Kept words');
+    await failFrom(page, 'boardViews.update');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
+    return (await input.count()) && (await input.inputValue()) === 'Kept words' ? [] : ['the rename closed, and its words were lost'];
+  }]);
   list.push(['A double click runs a button’s action once', async (page) => {
     await openAt(page, '#/accounts', { ready: '.account' });
     const before = await callCount(page, 'accounts.makeDefault');

@@ -215,6 +215,15 @@
   color: var(--fg);
 }
 
+/* Light fields are white (below): here the box is the field, and the input inside it stays bare. */
+:root[data-theme='light'] .search-field {
+  background: var(--surface);
+}
+
+:root[data-theme='light'] .search-field input {
+  background: none;
+}
+
 /* ── fields ──────────────────────────────────────────────────────────────── */
 
 .field {

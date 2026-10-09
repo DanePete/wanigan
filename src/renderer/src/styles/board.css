@@ -317,8 +317,11 @@
   background-color: var(--surface);
 }
 
+/* Narrower before the toolbar wraps, full width when there is room for it. */
 .board-wrap .search-field {
-  width: 200px;
+  flex: 1 1 150px;
+  width: auto;
+  max-width: 200px;
 }
 
 .board-count {
@@ -500,4 +503,254 @@
 
 :root:not([data-theme='light']) .card:hover {
   background: var(--hover);
+}
+
+/* ── saved views ─────────────────────────────────────────────────────── */
+
+.views-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.views-trigger {
+  max-width: 240px;
+}
+
+.views-trigger.on {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.views-glyph {
+  display: inline-flex;
+  flex: none;
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--faint);
+}
+
+.views-trigger.on .views-glyph {
+  color: var(--water);
+}
+
+.views-changed {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.views-changed::before {
+  content: '· ';
+}
+
+.views-panel {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  max-width: calc(100vw - 2 * var(--space-2));
+  padding: var(--space-2);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  animation: fade var(--dur-fast) var(--ease);
+}
+
+.views-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.views-head h2 {
+  margin: 0;
+  font: 600 var(--text-sm) / var(--lh-sm) var(--font-ui);
+}
+
+.views-keys {
+  font-size: var(--text-xs);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.views-keys kbd {
+  min-width: 16px;
+}
+
+.views-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.views-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding-right: var(--space-1);
+  border-radius: var(--radius-m);
+}
+
+.views-row:hover,
+.views-row:focus-within {
+  background: var(--hover);
+}
+
+.views-row.on {
+  background: var(--water-soft);
+}
+
+.views-apply {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.views-apply:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-m);
+}
+
+.views-check {
+  flex: none;
+  width: 14px;
+  color: var(--water);
+}
+
+.views-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.views-name,
+.views-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.views-name {
+  font-size: var(--text-md);
+  font-weight: 500;
+  line-height: var(--lh-md);
+}
+
+.views-detail {
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  color: var(--muted);
+}
+
+.views-apply kbd {
+  flex: none;
+}
+
+.views-row .btn-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: var(--faint);
+}
+
+.views-row .btn-icon:hover {
+  color: var(--fg);
+}
+
+.views-edit {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+}
+
+.views-edit input,
+.views-save input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.views-confirm-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.views-empty,
+.views-problem p {
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  color: var(--muted);
+}
+
+.views-problem {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.views-problem p {
+  color: var(--red);
+}
+
+.views-problem .btn {
+  margin-left: var(--space-2);
+}
+
+.views-save {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  border-top: 1px solid var(--line);
+}
+
+.views-save label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.views-save-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.views-save-row .btn {
+  height: 30px;
+}
+
+.views-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+  color: var(--faint);
 }

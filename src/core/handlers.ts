@@ -31,6 +31,7 @@ import type { Mcp } from './mcp.ts';
 import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
 import { mcpHandlers } from './mcp-handlers.ts';
+import { boardViewsHandlers, type BoardViews } from './board-views.ts';
 import { gitHandlers, refuseBesideAgents } from './git-handlers.ts';
 import { saidLimit, saidQuery, searchSaid } from './said.ts';
 import { validateBooleans } from './parameter-booleans.ts';
@@ -57,7 +58,10 @@ export function createHandlers(
   ctx: Ctx, board: Board, sessions: Sessions, accounts: Accounts, reviews: Reviews, jev: Jev, history: History,
   info: { version: string; build?: string | null; dataDir: string; claudeBinary: string | null; ghBinary?: string | null; demo: boolean; stopIfIdle: () => Result<'core.stopIfIdle'> },
   chat: Chat,
-  more: { skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints; local: LocalModels; phone: Phone; live: Live },
+  more: {
+    skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints;
+    local: LocalModels; phone: Phone; live: Live; boardViews: BoardViews;
+  },
 ): Handlers {
   /** The project a caller may touch: any for the owner, its own for a session. */
   const projectFor = (caller: Caller, requested?: string): string => {
@@ -113,6 +117,7 @@ export function createHandlers(
   return {
     ...skillsHandlers(more.skills),
     ...mcpHandlers(more.mcp),
+    ...boardViewsHandlers(more.boardViews),
     ...gitHandlers(ctx, board, sessions, accounts, more.checkpoints, { claudeBinary: info.claudeBinary, ghBinary: info.ghBinary }),
     'core.stopIfIdle': () => info.stopIfIdle(),
     'core.hello': (_p, caller) => ({

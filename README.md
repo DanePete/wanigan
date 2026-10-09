@@ -252,6 +252,7 @@ Releases), or download the newest from there once.
 |---|---|
 | **Projects** | A folder you open. It gets a short key (`NS`), its own board, sessions, changes, decisions and history. Nothing is written into it. |
 | **Cards** | Task, bug, feature or idea. Inbox → Ready → Working → Review → Done. Agents file into the Inbox and cannot take a card from it; review needs evidence; only you approve. Each card shows its priority, how long it has sat in its column, who holds it and whether they are running. **How this works** on every board draws the whole flow with live numbers. |
+| **Board views** | Each board reopens with the filter, card types, priority, agent and order it was left in. Save that view under a name and apply it again in one click, or with its number (1–9) on the board. The toolbar names the saved view the board shows and says when you have changed it since, with Update and Revert. Saved views are kept in Wanigan's database, per project, and only you can read or change them. |
 | **Jev** | TypeSafe's decision model reads each new card when enabled: what to do with it, how much it matters, and whether it repeats another card. Advice, unless a project lets it accept confident cards that already have criteria. Each HTTP attempt is counted; cost is estimated from successful responses’ reported usage. Response time varies; the key stays in the core. |
 | **Sessions** | Real terminals. Start one on a card (it takes the card) or on its own for quick work; make it a card later. They run in Wanigan's core, not the window. Pick the model and effort; Claude sessions can opt in to Remote Control, to reach them from the Claude app. |
 | **Attachments** | Paste, drop or pick images and files into a session, a reply in Needs you, or Talk to Wanigan. They are kept in Wanigan's data, never in the project, and reach the agent the way its CLI takes them: Claude Code and Codex attach a pasted image path as an image. |
@@ -363,8 +364,6 @@ verification results and the behavior that remains unverified.
 
 ## Not done yet
 
-- Named, saved board views. (Each board does remember its own filter, types
-  and order.)
 - The earlier development report records real AI review, Draft with Claude,
   Talk to Wanigan and an image attached to a reply in the 7 October 2026
   scenario (Claude Code 2.1.292, Codex 0.155.1). The independent review did not

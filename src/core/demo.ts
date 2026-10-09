@@ -327,6 +327,11 @@ export async function seedDemo(core: Core, base: string, { calm = false }: { cal
   const reopened = await card(ns.id, 'bug', 'Search returns discontinued products', { priority: 1 });
   await run('decisions.add', { projectId: ns.id, title: 'Use pnpm, never npm', body: 'The lockfile is pnpm-lock.yaml; npm rewrites it.' });
   await run('decisions.add', { projectId: ns.id, title: 'No new dependencies without asking' });
+  // Views of the board saved by name: keys 1, 2 and 3 on the board apply them.
+  const view = { filter: '', types: [], sort: 'manual', priority: 'any', agent: 'any' };
+  await run('boardViews.save', { projectId: ns.id, name: 'Bugs by priority', view: { ...view, types: ['bug'], sort: 'priority' } });
+  await run('boardViews.save', { projectId: ns.id, name: 'Checkout', view: { ...view, filter: 'checkout' } });
+  await run('boardViews.save', { projectId: ns.id, name: 'Claude Code’s cards', view: { ...view, agent: 'claude' } });
 
   // A live Claude session on the working card, currently asking permission.
   const s1 = await run<{ id: string; conversationId: string }>('sessions.start', { projectId: ns.id, provider: 'claude', cardId: working.id });

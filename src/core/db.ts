@@ -418,6 +418,26 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX live_edits_by_project ON live_edits (project_id, created_at);
   `,
+  `
+  -- Board views the owner saved by name, per project: the filter, the card
+  -- types (a JSON list), the order, the priority (null is any) and the agent,
+  -- each checked by the core when written (core/board-views.ts). name_key is
+  -- the name as compared, so two views on a board never differ only by case.
+  CREATE TABLE board_views (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL,
+    filter     TEXT NOT NULL DEFAULT '',
+    types      TEXT NOT NULL DEFAULT '[]',
+    sort       TEXT NOT NULL DEFAULT 'manual',
+    priority   INTEGER,
+    agent      TEXT NOT NULL DEFAULT 'any',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (project_id, name_key)
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

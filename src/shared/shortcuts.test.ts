@@ -71,10 +71,12 @@ test('the sheet’s board keys are the keys the board handles', () => {
   for (const s of SHORTCUTS.filter((x) => x.group === 'On the board')) {
     for (const keys of [s.keys, ...(s.alt ?? [])]) {
       const k = keys[0] as string;
-      const code = { '↓': "'ArrowDown'", '↑': "'ArrowUp'", '←': "'ArrowLeft'", '→': "'ArrowRight'", Enter: "'Enter'" }[k] ?? `'${k.toLowerCase()}'`;
+      const code = { '↓': "'ArrowDown'", '↑': "'ArrowUp'", '←': "'ArrowLeft'", '→': "'ArrowRight'", Enter: "'Enter'", '1–9': '/^[1-9]$/.test(e.key)' }[k] ?? `'${k.toLowerCase()}'`;
       assert.ok(board.includes(code), `the board does not handle ${k}`);
     }
   }
+  // The saved views' numbers are the board's: the window's own keys leave a bare digit alone.
+  for (const d of '123456789') assert.equal(matchKey(key(d), at()), null, `${d} is also an app key`);
 });
 
 test('the sheet’s Changes keys are the keys the Changes view handles, and none is an app key', () => {

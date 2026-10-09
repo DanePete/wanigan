@@ -1292,6 +1292,97 @@ try {
     if (await unset.$('.jev-strip')) failures.push(`${theme}/jev: the hidden hint came back`);
     await unset.close();
 
+    // Saved board views: the toolbar names the one the board shows, a number key
+    // applies one, the panel lists them in the core's order with their keys, a
+    // change is said and can be put back, and a view is saved, then deleted
+    // (so the other theme finds the demo's three as seeded).
+    {
+      const views = await context.newPage();
+      views.on('pageerror', (e) => errors.push(`views pageerror: ${e.message}`));
+      views.on('console', (m) => { if (m.type() === 'error') errors.push(`views console: ${m.text()}`); });
+      const fail = (what) => failures.push(`${theme}/saved views: ${what}`);
+      try {
+        await views.goto(`${base}#/p/${ns}/board`);
+        await views.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith('wanigan.board.')) localStorage.removeItem(k); });
+        await views.reload();
+        await views.waitForSelector('.card');
+        await views.waitForTimeout(300);
+        const projectId = await views.evaluate(async (key) => (await window.wanigan.call('projects.list', {})).find((p) => p.key === key)?.id, ns);
+        const stored = await views.evaluate(async (id) => (await window.wanigan.call('boardViews.list', { projectId: id })).map((v) => v.name), projectId);
+        if (stored.join() !== 'Bugs by priority,Checkout,Claude Code’s cards') fail(`the core holds ${stored.join(', ')}`);
+        if ((await views.textContent('.views-trigger')).trim() !== 'Views' || await views.$('.views-trigger.on')) fail('a board that matches no saved view names one');
+        await views.screenshot({ path: join(out, `${theme}-views-closed.png`) });
+
+        // 1 applies the first: only bugs, by priority.
+        await views.keyboard.press('1');
+        await views.waitForSelector('.views-trigger.on:has-text("Bugs by priority")', { timeout: 3000 }).catch(() => fail('1 did not apply the first saved view'));
+        const types = await views.$$eval('.board .card .type', (ts) => [...new Set(ts.map((t) => [...t.classList].find((c) => c.startsWith('type-'))))]);
+        if (types.join() !== 'type-bug') fail(`after 1 the board shows ${types.join(', ')}`);
+        if (!/Priority/.test(await views.textContent('.toolbar-end .select:not(.views-trigger)'))) fail('after 1 the order is not Priority');
+
+        // The panel: the views in order, their keys, the applied one marked and focused.
+        await views.click('.views-trigger');
+        await views.waitForSelector('.views-panel .views-row');
+        await views.waitForTimeout(250);
+        const panel = await views.evaluate(() => ({
+          names: [...document.querySelectorAll('.views-panel .views-name')].map((n) => n.textContent),
+          keys: [...document.querySelectorAll('.views-panel .views-apply kbd')].map((k) => k.textContent),
+          current: document.querySelector('.views-panel [aria-current="true"]')?.getAttribute('aria-label'),
+          focused: document.activeElement?.getAttribute('aria-label'),
+          inside: (() => { const r = document.querySelector('.views-panel').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })(),
+          labelled: [...document.querySelectorAll('.views-panel button, .views-panel input')].every((el) => (el.getAttribute('aria-label') || el.textContent.trim() || (el.id && document.querySelector(`label[for="${el.id}"]`))) ),
+        }));
+        if (panel.names.join() !== stored.join()) fail(`the panel lists ${panel.names.join(', ')}`);
+        if (panel.keys.join() !== '1,2,3') fail(`the panel shows keys ${panel.keys.join(', ')}`);
+        if (panel.current !== 'Bugs by priority' || panel.focused !== 'Bugs by priority') fail(`applied ${panel.current}, focused ${panel.focused}`);
+        if (!panel.inside) fail('the panel does not fit in the window');
+        if (!panel.labelled) fail('a control in the panel has no name');
+        await views.screenshot({ path: join(out, `${theme}-views-open.png`) });
+        await views.keyboard.press('ArrowDown');
+        if ((await views.evaluate(() => document.activeElement?.getAttribute('aria-label'))) !== 'Checkout') fail('↓ did not move to the next view');
+        await views.keyboard.press('Escape');
+        await views.waitForSelector('.views-panel', { state: 'detached', timeout: 2000 }).catch(() => fail('Escape did not close the panel'));
+        if (!(await views.evaluate(() => document.activeElement?.classList.contains('views-trigger')))) fail('closing the panel did not give focus back to its button');
+
+        // Changed since applied: said, with Update and Revert; Revert puts it back.
+        await views.click('.chips button:has-text("Feature")');
+        await views.waitForSelector('.views-changed', { timeout: 2000 }).catch(() => fail('a change from the applied view is not said'));
+        if (!(await views.$('button[aria-label^="Update “Bugs by priority”"]')) || !(await views.$('button[aria-label^="Put the board back to “Bugs by priority”"]'))) fail('no Update or Revert beside a changed view');
+        await views.waitForTimeout(150);
+        await views.screenshot({ path: join(out, `${theme}-views-changed.png`) });
+        await views.click('button[aria-label^="Put the board back"]');
+        await views.waitForSelector('.views-trigger.on:has-text("Bugs by priority")', { timeout: 2000 }).catch(() => fail('Revert did not put the view back'));
+        if (await views.$('.chips button.on:has-text("Feature")')) fail('Revert left Feature on');
+
+        // Save the board as it is, under a new name, then rename and delete it.
+        await views.click('.views-trigger');
+        await views.fill('.views-save input', `  Sweep ${theme}  `);
+        await views.keyboard.press('Enter');
+        await views.waitForSelector(`.views-trigger.on:has-text("Sweep ${theme}")`, { timeout: 3000 }).catch(() => fail('a saved view is not the one shown'));
+        const savedRows = await views.evaluate(async (id) => (await window.wanigan.call('boardViews.list', { projectId: id })).map((v) => [v.name, v.view.types.join('+'), v.view.sort]), projectId);
+        if (JSON.stringify(savedRows.at(-1)) !== JSON.stringify([`Sweep ${theme}`, 'bug', 'priority'])) fail(`the core saved ${JSON.stringify(savedRows.at(-1))}`);
+        await views.click('.views-trigger');
+        await views.click(`.views-row button[aria-label="Rename “Sweep ${theme}”"]`);
+        await views.waitForSelector('.views-edit input');
+        await views.waitForTimeout(150);
+        await views.screenshot({ path: join(out, `${theme}-views-rename.png`) });
+        await views.keyboard.press('Escape');
+        if (!(await views.$('.views-panel')) || await views.$('.views-edit input')) fail('Escape in a rename did not just cancel the rename');
+        await views.click(`.views-row button[aria-label="Delete “Sweep ${theme}”"]`);
+        await views.waitForSelector('.views-confirm');
+        if ((await views.evaluate(() => document.activeElement?.textContent)) !== 'Keep it') fail('the delete confirmation does not start on Keep it');
+        await views.waitForTimeout(150);
+        await views.screenshot({ path: join(out, `${theme}-views-delete.png`) });
+        await views.click('.views-confirm button:has-text("Delete it")');
+        await views.waitForFunction(async (id) => (await window.wanigan.call('boardViews.list', { projectId: id })).length === 3, projectId, { timeout: 3000 })
+          .catch(() => fail('the deleted view is still in the core'));
+        if (await views.$(`.views-trigger:has-text("Sweep ${theme}")`)) fail('the toolbar still names a deleted view');
+      } catch (error) {
+        fail(error.message.split('\n')[0]);
+      }
+      await views.close();
+    }
+
     for (const e of errors) failures.push(`${theme}: ${e}`);
     await context.close();
   }
