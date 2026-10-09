@@ -86,6 +86,10 @@ test('nothing in the helper acts unless a trace is on, or the token is carried',
   const subscriber = classes.get('Drupal\\wanigan_live\\Trace\\TraceSubscriber')?.text ?? '';
   assert.match(subscriber, /\$this->token->carried\(\$request\)/, 'a trace starts only for a request carrying the token');
   assert.match(subscriber, /isMethod\('GET'\)/);
+  // Another Wanigan's key gets one header saying so, and nothing else (no trace, no recording).
+  assert.match(subscriber, /if \(\$this->token->other\(\$event->getRequest\(\)\)\) \{\n\s+\$event->getResponse\(\)->headers->set\('X-Wanigan-Helper', 'other'\);/);
+  const token = classes.get('Drupal\\wanigan_live\\Token')?.text ?? Object.values(files).join('\n');
+  assert.match(token, /public function other\([^)]*\): bool \{[\s\S]*?!hash_equals\(\$token, \$given\)/, 'another key is told apart in constant time');
 });
 
 test('the helper names no contributed or custom module: everything goes through core', () => {

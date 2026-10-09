@@ -138,7 +138,7 @@ export function wireLiveFind(options: {
   };
 
   /** Ask the helper; the status is 0 when nothing answered, with Chromium's reason. */
-  const ask = async (ses: Asker, origin: string, path: string, token: string, max: number, ms: number): Promise<{ status: number; body: unknown; reason: string | null }> => {
+  const ask = async (ses: Asker, origin: string, path: string, token: string, max: number, ms: number): Promise<{ status: number; body: unknown; reason: string | null; other?: boolean }> => {
     try {
       const res = await ses.fetch(`${origin}${path}`, {
         credentials: 'include',
@@ -147,7 +147,7 @@ export function wireLiveFind(options: {
         signal: AbortSignal.timeout(ms),
         headers: { 'X-Wanigan-Live': token, Accept: 'application/json' },
       });
-      if (!res.ok) { await res.body?.cancel().catch(() => {}); return { status: res.status, body: null, reason: null }; }
+      if (!res.ok) { await res.body?.cancel().catch(() => {}); return { status: res.status, body: null, reason: null, other: res.headers.get('x-wanigan-helper') === 'other' }; }
       const text = await readBounded(res, max);
       if (text === null) return { status: res.status, body: null, reason: 'The answer was too large to read.' };
       try { return { status: res.status, body: JSON.parse(text) as unknown, reason: null }; } catch { return { status: res.status, body: null, reason: 'The answer was not JSON.' }; }
@@ -161,7 +161,8 @@ export function wireLiveFind(options: {
    * Why the helper's answer is not one to use, as a state and the owner's words. A 404 is an older helper (one with no
    * /_wanigan/find) only when the site's helper is older: ddev's router answers 404 for a site that is not running too.
    */
-  const trouble = (r: { status: number; reason: string | null }, host: string, helperOutdated: boolean): Pick<LiveFindAnswer, 'state' | 'message'> => {
+  const trouble = (r: { status: number; reason: string | null; other?: boolean }, host: string, helperOutdated: boolean): Pick<LiveFindAnswer, 'state' | 'message'> => {
+    if (r.other) return { state: 'refused', message: 'The helper in this site was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Set it up again here.' };
     if (r.status === 0 && r.reason && DOWN.test(r.reason)) return { state: 'down', message: `Nothing answered at ${host}.` };
     if (r.status === 0 && r.reason && /redirect/i.test(r.reason)) {
       return { state: 'failed', message: `${host} redirected the helper’s request, and Wanigan does not follow it: the helper’s token goes only to the site’s own address.` };

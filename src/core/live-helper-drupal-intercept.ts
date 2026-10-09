@@ -1007,7 +1007,15 @@ final class TraceSubscriber implements EventSubscriberInterface {
 
   public function finish(ResponseEvent $event): void {
     $recorder = Recorder::$on;
-    if ($recorder === NULL || !$event->isMainRequest()) {
+    if (!$event->isMainRequest()) {
+      return;
+    }
+    if ($recorder === NULL) {
+      // Another Wanigan's key: say only that a helper is here and answers to another Wanigan, so this one can ask
+      // its owner to set it up again instead of showing a page without a trace.
+      if ($this->token->other($event->getRequest())) {
+        $event->getResponse()->headers->set('X-Wanigan-Helper', 'other');
+      }
       return;
     }
     Recorder::$on = NULL;

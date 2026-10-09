@@ -300,6 +300,17 @@ final class Token {
     return $token !== '' && $given !== '' && hash_equals($token, $given);
   }
 
+  /**
+   * TRUE when the request carries a Wanigan key that is not this helper's:
+   * another Wanigan set the helper up (another Mac, a reinstall, a test).
+   */
+  public function other(?Request $request = NULL): bool {
+    $request ??= $this->requests->getCurrentRequest();
+    $token = (string) $this->state->get('wanigan_live.token', '');
+    $given = $request ? (string) $request->headers->get('X-Wanigan-Live', '') : '';
+    return $token !== '' && $given !== '' && !hash_equals($token, $given);
+  }
+
 }
 `;
 

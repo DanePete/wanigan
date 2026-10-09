@@ -169,6 +169,17 @@ test('a 404 is an older helper only when the site’s helper is older; from a cu
   } finally { await site.close(); }
 });
 
+test('a helper that answers to another Wanigan is named as such, not as a stopped site', async () => {
+  // The helper tells a key that is not its own apart from none, and says only that.
+  const site = await helperSite((_req, res) => { res.writeHead(404, { 'Content-Type': 'text/html', 'X-Wanigan-Helper': 'other' }); res.end('<p>Page not found</p>'); });
+  try {
+    const a = await wire({ url: site.url }).find();
+    assert.equal(a.state, 'refused');
+    assert.match(a.message ?? '', /set up by another Wanigan/);
+    assert.doesNotMatch(a.message ?? '', /may not be running/);
+  } finally { await site.close(); }
+});
+
 test('a redirect is named as one, not as Chromium’s words', async () => {
   const site = await helperSite((_req, res) => { res.writeHead(302, { Location: '/404/' }); res.end(); });
   try {
