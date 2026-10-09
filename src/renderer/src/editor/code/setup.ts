@@ -67,7 +67,9 @@ const look = EditorView.theme({
   '.cm-panels': { backgroundColor: 'var(--raised)', color: 'var(--fg)', fontFamily: 'var(--font-ui)', fontSize: 'var(--text-sm)' },
   '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--line)' },
   '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--line)' },
-  '.cm-panel.cm-search, .cm-panel.cm-gotoLine': { padding: 'var(--space-2) var(--space-3)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' },
+  '.cm-panel.cm-search, .cm-panel.cm-goto-line': { padding: 'var(--space-2) var(--space-3)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' },
+  // CodeMirror draws Go to line as a dialog: a form holding "Go to line:" with its field, then Go.
+  '.cm-panel.cm-goto-line form, .cm-panel.cm-goto-line label': { display: 'flex', alignItems: 'center', gap: 'var(--space-2)', whiteSpace: 'nowrap' },
   '.cm-panel input, .cm-panel button, .cm-panel label': { fontFamily: 'var(--font-ui)', fontSize: 'var(--text-sm)', margin: '0' },
   '.cm-panel .cm-textfield': {
     backgroundColor: 'var(--sunken)', color: 'var(--fg)', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius-s)',

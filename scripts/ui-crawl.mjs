@@ -608,7 +608,7 @@ function keyChecks(w) {
     'Show or hide the code editor': [{ at: board, keys: ['Meta+j'], expect: shows('.editor-drawer:not([hidden])') }],
     'Save the file': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.type(' '); }, keys: ['Meta+s'], expect: shows('.editor-tab.active:not(.unsaved)') }],
     'Find and replace': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+f'], expect: shows('.cm-panel.cm-search') }],
-    'Go to a line': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Control+g'], expect: shows('.cm-panel.cm-gotoLine') }],
+    'Go to a line': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Control+g'], expect: shows('.cm-panel.cm-goto-line') }],
     'Back to where you were': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); }, keys: ['Control+Minus'],
       expect: focused(() => /^Line 1,/.test(document.querySelector('.editor-status button')?.textContent ?? '')) }],
     'Forward again': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); await page.keyboard.press('Control+Minus'); }, keys: ['Control+Shift+Minus'],
