@@ -9,7 +9,7 @@ import {
   inFolder, isStylesheet, regionMadeBy, sameRegion,
   type LiveCandidate, type LiveEdit, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
 } from '@shared/live';
-import { diagnose } from '@shared/live-site';
+import { diagnose, type LiveStatus } from '@shared/live-site';
 import { nameOf, themeOf } from '@shared/live-names';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
@@ -604,7 +604,11 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
   const status = useSiteStatus(project.id);
   const error = view?.error ?? null;
   const host = (() => { try { return new URL(error?.url || view?.url || url).hostname; } catch { return url; } })();
-  const trouble = diagnose({ host, status: status.data ?? null, failure: error, httpStatus: view?.loading ? null : view?.status ?? null, now: Date.now() });
+  // When the core could not say (it refused or failed), the failure is still explained, from the certificate alone.
+  const known: LiveStatus | null = status.data ?? (status.error ? {
+    projectId: project.id, run: { tool: null, state: null, said: null, start: null, folder: project.path, name: null }, hostnames: [], certificates: [], busy: null, checkedAt: 0,
+  } : null);
+  const trouble = diagnose({ host, status: known, failure: error, httpStatus: view?.loading ? null : view?.status ?? null, now: Date.now() });
   const hidden = covered || !!trouble;
 
   // A page that failed, or a ddev site that answered with an error page: ask again whether it runs.
@@ -648,7 +652,7 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
       </div>
       {width ? <span className="live-device-size faint small" aria-hidden="true">{width} px</span> : null}
       {trouble ? (
-        <SiteTrouble trouble={trouble} status={status.data ?? null} projectId={project.id} onReload={onReload} onCheck={reloadStatus}
+        <SiteTrouble trouble={trouble} status={known} projectId={project.id} onReload={onReload} onCheck={reloadStatus}
           onStarted={() => { reloadStatus(); onReload(); }} onEdit={onEdit} />
       ) : null}
     </div>
