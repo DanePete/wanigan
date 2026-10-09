@@ -2,8 +2,9 @@
 // the page's own scripts cannot see or call it. It reads which template,
 // component, entity, block, view or Elementor element produced each region,
 // outlines regions on request, lets the owner pick an element, previews a hand
-// edit to its words or its style, and swaps stylesheets in place. A preview
-// lives only in this copy of the page: a reload puts the site's own back.
+// edit to its words or its style, finds and tags the design layer's edits and
+// patches their words, and swaps stylesheets in place. A preview lives only in
+// this copy of the page: a reload puts the site's own back.
 //
 // What it reads, all of it the site's own markup:
 // - Drupal's Twig debug comments, as core/themes/engines/twig/twig.engine
@@ -165,6 +166,10 @@ export function livePage(): void {
   let hovered: Element | null = null;
   let frame = 0;
   let mutations = 0;
+  /** The mutation count when the page was last scanned: the design layer scans again only when the page changed since. */
+  let scannedAt = -1;
+  /** Elements whose words the design layer has patched, ever: their changes are the layer's, not the page's. */
+  const layerTouched = new WeakSet<Node>();
   /** Inline styles the owner is trying out, and what each property was before. */
   const tried = new Map<string, string>();
   let editing: { el: HTMLElement; before: string; html: string; finish: (v: unknown) => void } | null = null;
@@ -374,6 +379,7 @@ export function livePage(): void {
     }
     nest();
     rank();
+    scannedAt = mutations;
     const list: (Info & { index: number; rect: Rect; parent: number | null; order: number })[] = [];
     for (const r of regions) if (rectOf(r)) list.push(out(r));
     redraw();
@@ -779,7 +785,7 @@ export function livePage(): void {
   addEventListener('resize', redraw, { passive: true });
   const ours = (n: Node): boolean => (n instanceof Element ? n : n.parentElement)?.closest(`#${HOST_ID}`) != null || (n instanceof Element && n.id === HOST_ID);
   new MutationObserver((records) => {
-    if (records.every((m) => ours(m.target))) return;
+    if (records.every((m) => ours(m.target) || layerTouched.has(m.target instanceof Element ? m.target : (m.target.parentElement ?? m.target)))) return;
     mutations++;
     if (shown || painted.length) redraw();
   }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
@@ -1186,8 +1192,276 @@ export function livePage(): void {
     return links.length;
   }
 
+  /* ── the design layer (src/main/live-layer.ts; the contract is src/shared/design-layer.ts) ── */
+
+  // The main process resolves each edit's identity against the page's trace (which parts it names) and decides;
+  // this finds the elements, tags them with data-wl-edit and patches their words. The layer's stylesheet is the main
+  // process's (insertCSS), and selects only tagged elements. An element's text (all of its words, its descendants'
+  // too, as the site rendered them) is hashed by the main process (layerTextHash), so there is one hash, not two that
+  // could drift apart.
+
+  /** `text`: answer each element's text, for the edit's textHash or its words. */
+  type LayerSpec = { id: string; parts: string[] | null; inner: string | null; selector: string | null; text?: boolean };
+  /** How much of an element's text is read: what a target's hash is taken over, on both sides. */
+  const TEXT_MAX = 500_000;
+  /** Each edit's elements as the last kept layerFind found them, in document order. */
+  let layerFound = new Map<string, Element[]>();
+  /** Elements whose words the layer patched, and exactly what they held before. */
+  const patched = new Map<Element, string>();
+  const NOT_SHOWN = /^(script|style|link|meta|template|noscript)$/i;
+  const STEP_NAME = /^[A-Za-z][A-Za-z0-9-]{0,40}$/;
+  const SAFE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,80}$/;
+  const EDIT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+  /** An element's own words as the site rendered them: a patched element's are what it held before the layer. */
+  function siteWords(el: Element): string | null {
+    const was = patched.get(el);
+    if (was !== undefined) return words(was) || null;
+    return ownText(el);
+  }
+
+  /**
+   * An element's whole text, whitespace folded: its textContent, every word in it and its descendants, without a
+   * script's or a style's (layout-free, so a style edit never changes the text it is keyed by).
+   * `site`: as the site rendered it (the layer's patched words read as what they replaced); else as it shows now.
+   * Null when it has no text at all.
+   */
+  function textOfElement(el: Element, site: boolean): string | null {
+    let out = '';
+    const done = new Set<Element>();
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n && out.length < TEXT_MAX; n = walker.nextNode()) {
+      const parent = n.parentElement;
+      if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName)) continue;
+      const was = site ? patched.get(parent) : undefined;
+      // As textContent joins them: no space added between one node's words and the next's.
+      if (was !== undefined) { if (!done.has(parent)) { done.add(parent); out += was; } continue; }
+      out += n.nodeValue ?? '';
+    }
+    const folded = words(out).slice(0, TEXT_MAX);
+    return folded || null;
+  }
+
+  /** Whether an element holds only words: what a text edit may patch and the helper may save. */
+  const plainWords = (el: Element): boolean => ownText(el) !== null || (patched.has(el) && !el.children.length);
+
+  /** A part's own top-level elements: a marked element, or the elements between its marks. */
+  function rootsOf(r: Region): Element[] {
+    if (r.el) return [r.el];
+    const range = r.range;
+    if (!range) return [];
+    if (range.startContainer === range.endContainer && range.startContainer.nodeType !== Node.TEXT_NODE) {
+      const out: Element[] = [];
+      for (let i = range.startOffset; i < range.endOffset; i++) {
+        const n = range.startContainer.childNodes[i];
+        if (n instanceof Element && !NOT_SHOWN.test(n.localName) && n.id !== HOST_ID) out.push(n);
+      }
+      return out;
+    }
+    const first = elementOf(r);
+    return first ? [first] : [];
+  }
+
+  /** One step of a path: the element's name and which of that name it is among `among`, from 1. */
+  function stepOf(el: Element, among: Element[]): string | null {
+    if (!STEP_NAME.test(el.localName)) return null;
+    const same = among.filter((c) => c.localName === el.localName);
+    return `${el.localName}:nth-of-type(${same.indexOf(el) + 1})`;
+  }
+
+  /**
+   * The path from a part's root to `el`, as `tag:nth-of-type(n)` steps joined by ` > `: null for the part itself
+   * when it has one root; undefined when the element is not inside it or the path cannot be written. A part with
+   * several roots begins its path with which of them it is, counted among the part's roots alone.
+   */
+  function innerPath(roots: Element[], el: Element): string | null | undefined {
+    const steps: string[] = [];
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      if (roots.includes(node)) {
+        if (roots.length > 1) {
+          const s = stepOf(node, roots);
+          if (!s) return undefined;
+          steps.unshift(s);
+        }
+        const path = steps.join(' > ');
+        return !path ? null : path.length <= 500 ? path : undefined;
+      }
+      const parent: Element | null = node.parentElement;
+      const s = parent ? stepOf(node, Array.from(parent.children)) : null;
+      if (!s) return undefined;
+      steps.unshift(s);
+    }
+    return undefined;
+  }
+
+  /** The elements a path reaches from a part's roots (innerPath's reverse). */
+  function underPart(roots: Element[], inner: string | null): Element[] {
+    if (inner === null) return roots;
+    try {
+      if (roots.length === 1) return Array.from((roots[0] as Element).querySelectorAll(`:scope > ${inner}`));
+      const [first, ...rest] = inner.split(' > ');
+      const m = /^([A-Za-z][A-Za-z0-9-]*):nth-of-type\((\d+)\)$/.exec(first ?? '');
+      const root = m ? roots.filter((r) => r.localName === m[1])[Number(m[2]) - 1] : undefined;
+      if (!root) return [];
+      return rest.length ? Array.from(root.querySelectorAll(`:scope > ${rest.join(' > ')}`)) : [root];
+    } catch {
+      return [];
+    }
+  }
+
+  /** A document path for markup no helper names: up to a unique plain id, or from html. Null past 500 characters. */
+  function documentPath(el: Element): string | null {
+    const steps: string[] = [];
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      if (node.id && SAFE_ID.test(node.id) && document.querySelectorAll(`#${node.id}`).length === 1) { steps.unshift(`#${node.id}`); break; }
+      if (node === document.documentElement) { steps.unshift('html'); break; }
+      const parent: Element | null = node.parentElement;
+      const s = parent ? stepOf(node, Array.from(parent.children)) : null;
+      if (!s) return null;
+      steps.unshift(s);
+    }
+    const path = steps.join(' > ');
+    return path && path.length <= 500 ? path : null;
+  }
+
+  /** What the tray calls an element: its name and up to two plain classes (`h2.card__title`). */
+  function elementName(el: Element): string {
+    const classes = Array.from(el.classList).filter((c) => /^[A-Za-z_][A-Za-z0-9_-]{0,40}$/.test(c)).slice(0, 2);
+    return [el.localName, ...classes].join('.');
+  }
+
+  const inDocumentOrder = (a: Element, b: Element): number => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+
+  /**
+   * Find each edit's elements: the regions paired with the parts the main process named, then the path inside each
+   * part's roots; or a document path. Answers how many each found, their whole text as the site rendered it (when
+   * asked), and whether each holds only words. Kept, they are what layerSet tags.
+   */
+  function layerFind(specs: LayerSpec[], keep: boolean): Record<string, { count: number; texts: (string | null)[]; plain: boolean[] }> {
+    if (!regions.length || mutations !== scannedAt) scan();
+    const byPart = new Map<string, Region>();
+    for (const r of regions) if (r.part) byPart.set(r.part, r);
+    const found = new Map<string, Element[]>();
+    const out: Record<string, { count: number; texts: (string | null)[]; plain: boolean[] }> = {};
+    for (const s of specs.slice(0, 2_000)) {
+      if (!s || typeof s.id !== 'string' || !EDIT_ID.test(s.id)) continue;
+      const seen = new Set<Element>();
+      if (Array.isArray(s.parts)) {
+        for (const p of s.parts.slice(0, 4_000)) {
+          const r = byPart.get(p);
+          if (r) for (const el of underPart(rootsOf(r), typeof s.inner === 'string' ? s.inner : null)) seen.add(el);
+        }
+      } else if (typeof s.selector === 'string') {
+        try { for (const el of Array.from(document.querySelectorAll(s.selector))) seen.add(el); } catch { /* not a selector: nothing found */ }
+      }
+      const els = [...seen].filter((el) => el.isConnected && !el.closest(`#${HOST_ID}`)).sort(inDocumentOrder).slice(0, 500);
+      found.set(s.id, els);
+      out[s.id] = { count: els.length, texts: s.text ? els.map((el) => textOfElement(el, true)) : [], plain: els.map(plainWords) };
+    }
+    if (keep) layerFound = found;
+    return out;
+  }
+
+  /** Write words into an element that holds only words, touching its one text node when it has one. */
+  function writeWords(el: Element, text: string): void {
+    if (el.textContent === text) return;
+    layerTouched.add(el);
+    const only = el.childNodes.length === 1 && el.firstChild?.nodeType === Node.TEXT_NODE ? el.firstChild : null;
+    if (only) only.nodeValue = text; else el.textContent = text;
+  }
+
+  /**
+   * Tag the elements the main process accepted (by their place in each edit's last find) with `data-wl-edit`, and
+   * no others; with the layer on, patch the words of text edits on their elements (a later edit's words win), and put
+   * back the words of every element no longer patched. Returns how many elements carry a tag.
+   */
+  function layerSet(set: { tags: Record<string, number[]>; texts: { id: string; value: string }[]; on: boolean }): number {
+    const want = new Map<Element, string[]>();
+    for (const [id, picks] of Object.entries(set.tags ?? {})) {
+      if (!EDIT_ID.test(id) || !Array.isArray(picks)) continue;
+      const els = layerFound.get(id) ?? [];
+      for (const i of picks) { const el = els[i]; if (el?.isConnected) want.set(el, [...(want.get(el) ?? []), id]); }
+    }
+    for (const el of Array.from(document.querySelectorAll('[data-wl-edit]'))) if (!want.has(el)) el.removeAttribute('data-wl-edit');
+    for (const [el, ids] of want) el.setAttribute('data-wl-edit', ids.join(' '));
+    const next = new Map<Element, string>();
+    if (set.on) {
+      for (const t of set.texts ?? []) {
+        if (typeof t?.value !== 'string') continue;
+        for (const [el, ids] of want) if (ids.includes(t.id) && el instanceof HTMLElement && !el.children.length) next.set(el, t.value);
+      }
+    }
+    for (const [el, was] of [...patched]) {
+      if (next.has(el) && el.isConnected) continue;
+      if (el.isConnected) writeWords(el, was);
+      patched.delete(el);
+    }
+    for (const [el, value] of next) {
+      if (!patched.has(el)) patched.set(el, el.textContent ?? '');
+      writeWords(el, value);
+    }
+    redraw();
+    return want.size;
+  }
+
+  /**
+   * The picked element as the layer would key it: the regions around it that carry a trace part, innermost first,
+   * each with the path from that part's roots; a document path for when none is named; its whole text; its computed
+   * values for the properties the main process lists (the layer's own, src/shared/design-layer.ts).
+   */
+  function layerPick(props: string[]): unknown {
+    const el = target();
+    if (!el) return null;
+    if (!regions.length || mutations !== scannedAt) scan();
+    const s = getComputedStyle(el);
+    const values: Record<string, string> = {};
+    for (const p of (Array.isArray(props) ? props : []).slice(0, 60)) if (typeof p === 'string' && /^[a-z-]{1,40}$/.test(p)) values[p] = s.getPropertyValue(p);
+    const parts: { part: string; inner: string | null }[] = [];
+    for (const r of around(el)) {
+      if (!r.part) continue;
+      const inner = innerPath(rootsOf(r), el);
+      if (inner !== undefined) parts.push({ part: r.part, inner });
+    }
+    return { parts, selector: documentPath(el), text: textOfElement(el, true), element: elementName(el), tag: el.localName, values };
+  }
+
+  /** The elements tagged for an edit now, in document order. */
+  const taggedFor = (id: string): Element[] => (EDIT_ID.test(id) ? Array.from(document.querySelectorAll(`[data-wl-edit~="${id}"]`)) : []);
+
+  /** For the verification: every tagged element of these edits, with its computed values, its text as shown and its box in document pixels. */
+  function layerSnap(ids: string[], props: string[]): unknown[] {
+    const out: unknown[] = [];
+    const keys = (Array.isArray(props) ? props : []).filter((p) => typeof p === 'string' && /^[a-z-]{1,40}$/.test(p)).slice(0, 60);
+    for (const id of (Array.isArray(ids) ? ids : []).slice(0, 300)) {
+      taggedFor(id).slice(0, 200).forEach((el, n) => {
+        const s = getComputedStyle(el);
+        const values: Record<string, string> = {};
+        for (const k of keys) values[k] = s.getPropertyValue(k);
+        const text = textOfElement(el, false);
+        if (text !== null) values.text = text.slice(0, 2_000);
+        const b = el.getBoundingClientRect();
+        out.push({ edit: id, n, element: elementName(el), values, box: { x: b.left + scrollX, y: b.top + scrollY, width: b.width, height: b.height } });
+      });
+    }
+    return out;
+  }
+
+  /** For making a text edit real: how many elements it tags, the field the helper marked around the first, and its words as the site has them. */
+  function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean } {
+    const els = taggedFor(id);
+    const el = els[0];
+    if (!el) return { count: 0, field: null, words: null, plain: false };
+    return {
+      count: els.length,
+      field: el.closest('[data-wl-field]')?.getAttribute('data-wl-field') ?? null,
+      words: siteWords(el),
+      plain: el instanceof HTMLElement && !el.children.length,
+    };
+  }
+
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, style, unstyle, editText, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
+    layerFind, layerSet, layerPick, layerSnap, layerOf,
     cancelEdit: () => endEdit(false),
     /** Picking or retyping: the page's keys are those, not the live view's (live-page-goto.ts asks). */
     busy: () => !!picking || !!editing,
