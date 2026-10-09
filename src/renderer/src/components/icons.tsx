@@ -83,8 +83,8 @@ const paths = {
   compare: 'M3.5 4.5h13v11h-13zM10 2.5v15M6 8l-1.5 2L6 12M14 8l1.5 2L14 12',
   move: 'M10 3v14M7 6l3-3 3 3M7 14l3 3 3-3',
   alone: 'M3.5 3.5h13v13h-13zM7 7h6v6H7z',
-  // A part lifted out of the tray it sat in: taken out of its place, not thrown away.
-  takeOut: 'M3.5 9v7.5h13V9M10 13V3.5M7 6.5l3-3 3 3',
+  // A place with its part taken out: the place stays, and so does what it showed (never a bin: nothing is deleted).
+  takeOut: 'M3.5 3.5h13v13h-13zM6.5 10h7',
   undo: 'M7.5 6 4 9.5 7.5 13M4.5 9.5H12a4 4 0 0 1 0 8h-2',
   code: 'M7 6 3 10l4 4M13 6l4 4-4 4M11.2 4.5l-2.4 11',
   save: 'M4 3.5h9.5l2.5 2.5v10.5H4zM7 3.5v4h6v-4M7 16.5v-5h6v5',

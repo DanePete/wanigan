@@ -745,12 +745,16 @@ function keyChecks(w) {
       { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Notes') },
     ],
     'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.dialog .cmp-head') }],
+    'The site’s component library': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+B'], expect: shows('.live-library-entry') }],
     'Every way to edit the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Hero'), keys: ['e'], expect: shows('[role="menu"] [role="menuitem"]:has-text("Hero props")') }],
     'Move the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['m'], expect: shows('.live-move button.live-up') }],
     'The chosen part’s code, in the code editor': [{ standIn: 'pick', at: live, ready: '.live-layer', setup: choose(''), keys: ['.'],
       expect: focused(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'northstar-pay-button.html.twig') }],
     'Show the chosen part alone': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['Shift+A'],
       expect: focused(() => window.__wgLive.calls.some((c) => c.startsWith('go ') && c.includes('/_wanigan/piece/block/acme_search'))) }],
+    // A content item: taken out at once, so the site was asked (the stand-in plays it).
+    'Take the chosen part out of the page': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Quote paragraph'), keys: ['Shift+X'],
+      expect: focused(() => window.__wgLive.calls.includes('remove {"collection":"c-paras","item":"p-para-1"}')) }],
     'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.live-side > .segmented button:has-text("Notes 1")') }],
     'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.

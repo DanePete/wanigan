@@ -105,7 +105,7 @@
   color: var(--muted);
 }
 
-/* A desktop's width, made small: the top of the piece, where it starts. */
+/* A phone's width, made small: the top of the piece, where it starts. */
 .live-library-thumb {
   flex: none;
   display: grid;
@@ -121,10 +121,8 @@
 
 .live-library-thumb img {
   display: block;
+  align-self: start;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top left;
 }
 
 .live-library-thumb.none {
@@ -139,7 +137,7 @@
 
 .live-library-detail-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -303,13 +301,22 @@
 }
 
 .live-library-files li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* A path and its copy button on one line; the path wraps inside it. */
+.live-library-file {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-1);
   min-width: 0;
 }
 
-.live-library-files .lib-tag {
+.live-library-file .lib-tag {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-wrap: anywhere;
+  text-align: left;
 }

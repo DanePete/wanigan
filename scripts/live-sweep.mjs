@@ -475,7 +475,7 @@ try {
       await page.waitForSelector('.live-library-files button.live-file-open', { timeout: 4000 }).catch(() => fail(t('library: none of its files opens')));
       const opens = await page.$$eval('.live-library-files button.live-file-open', (els) => els.map((e) => e.textContent));
       if (opens.join() !== 'web/modules/custom/northstar_checkout/templates/northstar-pay-button.html.twig,web/modules/custom/northstar_checkout/css/pay-button.css') fail(t(`library: the files that open are ${opens.join(', ')}`));
-      if (!(await page.locator('.live-library-files').innerText()).includes('not in this project’s folder')) fail(t('library: a file not in the project does not say so'));
+      if (!(await page.locator('.live-library-files').innerText()).includes('Not in the folder this project’s site serves')) fail(t('library: a file not in the project does not say so'));
       await shot('library-no-picture');
       await backToList();
 
@@ -490,7 +490,8 @@ try {
       await page.waitForSelector('.dialog:has-text("every page that shows this region (41 pages)")', { timeout: 3000 }).catch(() => fail(t('library: adding into shared configuration did not ask first')));
       await page.locator('.dialog button', { hasText: 'Add it' }).click();
       await page.waitForSelector('.toast-info:has-text("Added Call to action")', { timeout: 3000 }).catch(() => fail(t('library: adding did not say so')));
-      if (!(await calls()).includes('insert {"collection":"c-sidebar","index":1,"entry":"pal.b.acme_cta_block"}')) fail(t('library: the insert was not saved through the palette'));
+      const inserted = (await calls()).filter((c) => c.startsWith('insert ')).map((c) => JSON.parse(c.slice(7))).pop();
+      if (inserted?.collection !== 'c-sidebar' || inserted.entry !== 'pal.b.acme_cta_block' || inserted.index !== 1) fail(t(`library: the insert saved was ${JSON.stringify(inserted)}, not the palette's into the sidebar`));
       await page.locator('.toast .toast-x').click().catch(() => {});
 
       // A WordPress library: block types, a pattern and a block style; a style is not placed.

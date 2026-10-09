@@ -40,5 +40,9 @@ test('a removal is read back by what held the item: changed is taken out, the sa
   const same = verdictText(check, judge(check, null, ['s1']));
   assert.equal(same.tone, 'warn');
   assert.match(same.text, /^The site said it took out Search, but after reloading that part of the page shows exactly what it did before\./);
-  assert.equal(verdictText({ ...check, watched: [] }, judge({ ...check, watched: [] }, null, [])).text, 'Search: taken out. Nothing on the reloaded page says what held it, so Wanigan could not check the page.');
+  assert.equal(verdictText(check, judge(check, null, [null])).text, 'Search: taken out. What held it is not on the reloaded page, so Wanigan could not check it.');
+  const none = { ...check, watched: [] };
+  assert.equal(verdictText(none, judge(none, null, [])).text, 'Search: taken out. Nothing on the page showed where it is, so Wanigan could not check the reloaded page.');
+  // Its undo, with nothing to watch either, does not say the item is missing from the page.
+  assert.equal(verdictText({ ...none, kind: 'undo' }, { kind: 'unseen' }).text, 'Search: put back. Nothing on the page showed where it is, so Wanigan could not check the reloaded page.');
 });

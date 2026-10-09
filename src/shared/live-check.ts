@@ -96,9 +96,11 @@ export function verdictText(check: WriteCheck, verdict: CheckVerdict): { tone: '
           : `The site said it ${did} ${check.what}, but after reloading that part of the page shows exactly what it did before. If what changed shows there, something kept it from showing: a cache, or code that runs on the save.`,
       };
     case 'unseen':
+      // Nothing was watched (nothing on the page showed where it goes): that is said, not that it is gone.
+      if (!check.watched.length) return { tone: 'ok', text: `${check.what}: ${verb}. Nothing on the page showed where it is, so Wanigan could not check the reloaded page.` };
       // What is taken out is watched by what holds it: gone from the page is what it should be, so it is not what is said.
       return check.kind === 'remove'
-        ? { tone: 'ok', text: `${check.what}: ${verb}. Nothing on the reloaded page says what held it, so Wanigan could not check the page.` }
+        ? { tone: 'ok', text: `${check.what}: ${verb}. What held it is not on the reloaded page, so Wanigan could not check it.` }
         : { tone: 'ok', text: `${check.what}: ${verb}. It is not on the reloaded page, so Wanigan could not check that it shows.` };
   }
 }

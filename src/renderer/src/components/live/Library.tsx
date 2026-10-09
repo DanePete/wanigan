@@ -43,6 +43,8 @@ const BATCH = Math.min(6, PICTURES_AT_ONCE);
 /** Widest first: the desktop, then the phone, side by side at the same scale. */
 const WIDTHS = [...PICTURE_WIDTHS].sort((a, b) => b - a);
 const WIDTH_NAME: Record<number, string> = { 390: 'Phone', 1440: 'Desktop' };
+/** A row's small picture is the phone's: at that size a desktop's is a thin strip. */
+const THUMB_WIDTH = Math.min(...PICTURE_WIDTHS);
 
 type Shot = { state: 'asking' } | { state: 'ok'; src: string; height: number | null; cut: boolean } | { state: 'none'; why: string };
 const shotKey = (entry: string, width: number): string => `${entry}|${width}`;
@@ -247,7 +249,7 @@ function LibraryList({ lib, query, setQuery, searchRef, searchFirst, trace, read
             <ul className="live-library-entries">
               {g.entries.map((e, i) => (
                 <EntryRow key={e.id} entry={e} place={placed[i] as Placement} quiet={!!shared} platform={lib.platform}
-                  desktop={pictures.shots.get(shotKey(e.id, WIDTHS[0] as number)) ?? null} arrange={arrange} watch={watch} onChoose={onChoose} />
+                  thumb={pictures.shots.get(shotKey(e.id, THUMB_WIDTH)) ?? null} arrange={arrange} watch={watch} onChoose={onChoose} />
               ))}
             </ul>
           </section>
@@ -258,24 +260,26 @@ function LibraryList({ lib, query, setQuery, searchRef, searchFirst, trace, read
   );
 }
 
-function EntryRow({ entry, place, quiet, platform, desktop, arrange, watch, onChoose }: {
+function EntryRow({ entry, place, quiet, platform, thumb, arrange, watch, onChoose }: {
   entry: LibraryEntry; place: Placement;
   /** Its kind's heading already says why it cannot be placed. */
   quiet: boolean;
   platform: 'drupal' | 'wordpress';
-  desktop: Shot | null; arrange: ReturnType<typeof useArrange>;
+  thumb: Shot | null; arrange: ReturnType<typeof useArrange>;
   watch: (el: Element, id: string) => () => void;
   onChoose: (id: string) => void;
 }) {
   const ref = useRef<HTMLLIElement>(null);
   useEffect(() => (ref.current ? watch(ref.current, entry.id) : undefined), [watch, entry.id]);
   const placing = place.ok && arrange.placing?.id === place.palette.id;
-  const who = [entry.by, ownerWords(entry.owner, platform), entry.status && entry.status !== 'stable' ? entry.status : null].filter(Boolean).join(' · ');
+  const owner = ownerWords(entry.owner, platform);
+  // "core · WordPress core" says it twice: the provider is left out when it is core itself.
+  const who = [entry.by === 'core' && entry.owner === 'core' ? null : entry.by, owner, entry.status && entry.status !== 'stable' ? entry.status : null].filter(Boolean).join(' · ');
   return (
     <li ref={ref} className="live-library-entry" data-entry={entry.id} draggable={place.ok}
       onDragStart={(e) => { if (!place.ok) return; e.dataTransfer.setData('text/plain', entry.label); e.dataTransfer.effectAllowed = 'copy'; arrange.setPlacing(place.palette); }}>
       <button type="button" className="live-library-open" aria-label={`${entry.label}, ${KIND_TITLE[entry.kind].one.toLowerCase()}: its details`} onClick={() => onChoose(entry.id)}>
-        <Thumb entry={entry} shot={desktop} />
+        <Thumb entry={entry} shot={thumb} />
         <span className="live-library-what">
           <span className="live-library-name">{entry.label}</span>
           {who ? <span className="faint small">{who}</span> : null}
@@ -291,7 +295,7 @@ function EntryRow({ entry, place, quiet, platform, desktop, arrange, watch, onCh
   );
 }
 
-/** A small picture of an entry at a desktop's width, or what stands in for it. */
+/** A small picture of an entry at a phone's width, or what stands in for it. */
 function Thumb({ entry, shot }: { entry: LibraryEntry; shot: Shot | null }) {
   if (entry.picture.from === 'none') return <span className="live-library-thumb none" title={entry.picture.why}><Icon name="pieces" size={16} /></span>;
   if (shot?.state === 'ok') return <span className="live-library-thumb"><img src={shot.src} alt="" /></span>;
@@ -317,7 +321,7 @@ function EntryDetail({ entry, lib, project, site, trace, parts, regions, arrange
         <IconButton icon="back" label="Back to the library" onClick={onBack} />
         <div className="live-library-detail-title">
           <h2 className="live-side-title" tabIndex={-1} ref={title}>{entry.label}</h2>
-          <p className="faint small">{KIND_TITLE[entry.kind].one}{entry.by ? ` · ${entry.by}` : ''}{owner ? ` · ${owner}` : ''}</p>
+          <p className="faint small">{KIND_TITLE[entry.kind].one}{entry.by && !(entry.by === 'core' && entry.owner === 'core') ? ` · ${entry.by}` : ''}{owner ? ` · ${owner}` : ''}</p>
         </div>
       </div>
 
@@ -505,14 +509,14 @@ function Files({ files, project, site }: { files: string[]; project: ProjectSumm
     <ul className="live-library-files">
       {files.map((f) => (
         <li key={f}>
-          {here.get(f) ? (
-            <button type="button" className="lib-tag mono live-file-open" title={`Open ${f} in the code editor`}
-              onClick={() => openInEditor({ projectId: root.projectId, cardId: root.cardId, path: f })}>{f}</button>
-          ) : (
-            <span className="lib-tag mono" title={here.has(f) ? 'Not in the folder this project’s site serves' : undefined}>{f}</span>
-          )}
-          {here.has(f) && !here.get(f) ? <span className="faint small"> not in this project’s folder</span> : null}
-          <CopyButton text={f} label={`Copy ${f.split('/').pop()}’s path`} what="the path" />
+          <span className="live-library-file">
+            {here.get(f) ? (
+              <button type="button" className="lib-tag mono live-file-open" title={`Open ${f} in the code editor`}
+                onClick={() => openInEditor({ projectId: root.projectId, cardId: root.cardId, path: f })}>{f}</button>
+            ) : <span className="lib-tag mono">{f}</span>}
+            <CopyButton text={f} label={`Copy ${f.split('/').pop()}’s path`} what="the path" />
+          </span>
+          {here.has(f) && !here.get(f) ? <span className="faint small">Not in the folder this project’s site serves, so it cannot open here.</span> : null}
         </li>
       ))}
     </ul>
