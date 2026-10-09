@@ -286,9 +286,20 @@ describe('the Drupal helper, before anything is written', () => {
     t.core.db.prepare('UPDATE live_sites SET helper = ? WHERE project_id = ?').run(JSON.stringify({ kind: 'wordpress', version: 1 }), projectId);
     assert.equal((await t.owner.call('live.site', { projectId })).helper?.outdated, true);
     assert.ok(readFileSync(join(t.projectDir, '.git', 'info', 'exclude'), 'utf8').split('\n').includes('/wp-content/mu-plugins/wanigan-live.php'));
+    // Another Wanigan (another Mac, a reinstall, a test) has no record of it: it says the helper is there, not that there is none.
+    const record = t.core.db.prepare('SELECT helper, token FROM live_sites WHERE project_id = ?').get(projectId) as { helper: string; token: string };
+    t.core.db.prepare('UPDATE live_sites SET helper = NULL, token = NULL WHERE project_id = ?').run(projectId);
+    const other = await t.owner.call('live.site', { projectId });
+    assert.deepEqual([other.helper, other.token, other.found], [null, null, { kind: 'wordpress', version: 4, outdated: false }]);
+    t.core.db.prepare('UPDATE live_sites SET helper = ?, token = ? WHERE project_id = ?').run(record.helper, record.token, projectId);
+    assert.equal((await t.owner.call('live.site', { projectId })).found, null, 'its own helper is not found as another’s');
     const gone = await t.owner.call('live.removeHelper', { projectId });
     assert.equal(gone.helper, null);
+    assert.equal(gone.found, null, 'removed, so nothing is found either');
     assert.equal(existsSync(file), false);
+    writeFileSync(file, '<?php // someone else’s');
+    assert.equal((await t.owner.call('live.site', { projectId })).found, null, 'a file Wanigan did not write is not taken for its helper');
+    rmSync(file);
     assert.ok(existsSync(join(t.projectDir, 'wp-content', 'mu-plugins')), 'the site’s own mu-plugins folder stays');
     assert.ok(!readFileSync(join(t.projectDir, '.git', 'info', 'exclude'), 'utf8').includes('wanigan-live.php'));
   });

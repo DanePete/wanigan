@@ -40,6 +40,11 @@ export interface LiveSite {
   ddev: DdevInfo | null;
   /** The helper Wanigan installed in the site, if any. */
   helper: LiveHelper | null;
+  /**
+   * A helper Wanigan writes is in the site's files, but this Wanigan has no record of setting it up: another Wanigan
+   * did (another Mac, a reinstall, a test), and it answers only to that one's key. Absent or null otherwise.
+   */
+  found?: LiveHelper | null;
   /** What installing the helper would write and run, or why it cannot be installed here; null for a kind of site with no helper. */
   helperPlan: LiveHelperPlan | null;
   /** The token the helper answers to, sent only by the live view's own requests to this site. Null without a helper. */

@@ -229,6 +229,9 @@ test('without a helper, a site, the live view or a trusted window, nothing is as
   const site = await helperSite((_req, res) => json(res, INDEX));
   try {
     assert.equal((await wire({ url: site.url, helper: null, token: null }).find()).state, 'no-helper');
+    // One another Wanigan set up is in the site's files: said so, with the way out, not that there is none.
+    const other = await wire({ url: site.url, helper: null, token: null, found: { kind: 'drupal', version: 4, outdated: false } }).find();
+    assert.deepEqual([other.state, other.message], ['refused', 'The helper in this site was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Set it up again here.']);
     assert.equal((await wire({ url: site.url, platform: 'site' }).find()).state, 'no-helper');
     assert.equal((await wire({ url: null }).find()).state, 'no-site');
     assert.equal((await wire({ url: site.url }, { enabled: false }).find()).state, 'off');

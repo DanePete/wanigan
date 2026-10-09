@@ -197,6 +197,9 @@ export function wireLiveFind(options: {
     const platform: LivePlatform | null = site.platform;
     const without = async (state: LiveFindAnswer['state'], message: string): Promise<LiveFindAnswer> =>
       answer(state, { origin, platform, message, known: await knownPages(projectId, base, true) });
+    if ((!site.helper || !site.token) && site.found && platform !== 'site') {
+      return without('refused', 'The helper in this site was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Set it up again here.');
+    }
     if (!site.helper || !site.token || platform === 'site') {
       return without('no-helper', platform === 'site' ? 'Sites other than Drupal and WordPress have no helper to list their pages.' : 'Wanigan’s helper is not in this site.');
     }

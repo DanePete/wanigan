@@ -64,6 +64,9 @@ export function traceNote(answer: LiveTraceAnswer | null, helper: { outdated: bo
     return { title: 'No trace for this kind of site', body: 'Traces come from the Drupal and WordPress helpers. This site shows what its own markup says, and nothing more.', next: null };
   }
   const cms = platform === 'drupal' ? 'Drupal' : 'WordPress';
+  if (answer?.state === 'other') {
+    return { title: 'This site’s helper answers to another Wanigan', body: `The ${cms} helper here was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Setting it up again gives it this Wanigan’s key; the other Wanigan would then need to do the same.`, next: 'install-helper' };
+  }
   if (!helper || answer?.state === 'no-helper') {
     return { title: 'The site helper is not installed', body: `The ${cms} helper reports what made each part, its cache and cost, the hooks and queries behind the page, and what you can edit here.`, next: 'install-helper' };
   }
@@ -73,7 +76,6 @@ export function traceNote(answer: LiveTraceAnswer | null, helper: { outdated: bo
   }
   switch (answer?.state ?? 'none') {
     case 'none': return { title: 'No trace yet', body: 'The trace arrives once the page has loaded.', next: null };
-    case 'other': return { title: 'This site’s helper answers to another Wanigan', body: `The ${cms} helper here was set up by another Wanigan (another Mac, a reinstall, or a test), so it ignores this one. Setting it up again gives it this Wanigan’s key; the other Wanigan would then need to do the same.`, next: 'install-helper' };
     case 'missing': return { title: 'This page came without a trace', body: `${cms} sends one with every page it renders for the live view. A copy from the browser’s cache, a file served directly, or an error page carries none.`, next: 'reload' };
     case 'expired': return { title: 'This render’s trace is gone', body: 'The helper keeps a page’s trace for ten minutes. Reloading renders it again, with a new trace.', next: 'reload' };
     case 'refused': return { title: 'The helper would not give the trace', body: `It answered ${(answer as { status: number }).status}. Traces are for a user who may administer the site: log in as one in the live view, then reload.`, next: 'log-in' };

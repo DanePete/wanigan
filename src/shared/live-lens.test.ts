@@ -144,6 +144,8 @@ test('what the owner is told when there is no trace, and the one next step', () 
   assert.equal(other?.title, 'This site’s helper answers to another Wanigan');
   assert.equal(other?.next, 'install-helper', 'setting it up again here is the way out');
   assert.match(other?.body ?? '', /WordPress helper here was set up by another Wanigan/);
+  // A Wanigan with no helper of its own, looking at one another set up, is told that, not that there is none.
+  assert.equal(traceNote({ state: 'other' }, null, 'drupal')?.title, 'This site’s helper answers to another Wanigan');
   assert.equal(traceNote({ state: 'missing' }, helper, 'wordpress')?.next, 'reload');
   assert.equal(traceNote({ state: 'expired' }, helper, 'drupal')?.next, 'reload');
   assert.equal(traceNote({ state: 'down', error: 'connection refused' }, helper, 'drupal')?.next, 'start-site');

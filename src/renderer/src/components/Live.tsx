@@ -336,7 +336,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const helperSite = site.platform === 'drupal' || site.platform === 'wordpress';
   const fetchTrace = useCallback(async (): Promise<void> => {
     if (!helperSite) { setTrace(null); return; }
-    if (!site.helper || !site.token) { setTrace({ state: 'no-helper' }); return; }
+    // A helper another Wanigan set up says so, rather than that there is none.
+    if (!site.helper || !site.token) { setTrace(site.found ? { state: 'other' } : { state: 'no-helper' }); return; }
     const answer = await live.trace();
     setTrace(answer);
     await checks.traced(answer);

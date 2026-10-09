@@ -319,7 +319,32 @@ export class Live {
       helper,
       helperPlan: platform === 'drupal' ? this.drupalPlan(root) : platform === 'wordpress' ? wordpressPlan(root) : null,
       token: helper ? row?.token ?? null : null,
+      found: helper ? null : this.foundHelper(platform, root),
     };
+  }
+
+  /**
+   * A helper Wanigan wrote, read from the site's files by its own mark and version line: what a Wanigan that never
+   * set it up can know of one another Wanigan did, since the helper itself says nothing to a request without a key.
+   */
+  private foundHelper(platform: LivePlatform | null, root: string): LiveHelper | null {
+    let kind: 'drupal' | 'wordpress', text: string | null;
+    if (platform === 'drupal') {
+      const plan = this.drupalPlan(root);
+      kind = 'drupal';
+      text = plan.refused ? null : readText(join(plan.folder, `${DRUPAL_HELPER_MODULE}.info.yml`));
+      if (!text?.startsWith(DRUPAL_HELPER_MARK)) return null;
+    } else if (platform === 'wordpress') {
+      const plan = wordpressPlan(root);
+      kind = 'wordpress';
+      text = plan.refused ? null : readText(join(plan.folder, WORDPRESS_HELPER_FILE));
+      if (!text?.includes(WORDPRESS_HELPER_MARK)) return null;
+    } else {
+      return null;
+    }
+    const version = Number((kind === 'drupal' ? /^# wanigan-helper-version: (\d{1,4})$/m : /^ \* Version: (\d{1,4})$/m).exec(text)?.[1] ?? 0);
+    const latest = kind === 'wordpress' ? WORDPRESS_HELPER_VERSION : DRUPAL_HELPER_VERSION;
+    return { kind, version, outdated: version < latest };
   }
 
   /** Choose the address the view opens (null forgets it), and what the site runs on. */
