@@ -10,6 +10,7 @@ import { corePaths } from '../core/paths.ts';
 import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
+import { wireLiveCompare } from './live-compare.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveView, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
@@ -127,6 +128,8 @@ function wireBridge(): void {
   // Switching the live view off takes it away at once, not at the next navigation.
   appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
   const view = liveView;
+  // Pictures for Compare (local against a hosted environment): only on the owner's click.
+  wireLiveCompare({ trusted, enabled: () => appSettings?.store.get().liveView === true, view: () => liveView });
   const shots = wireLiveShots({ client: () => core.get(), settings: () => appSettings?.store.get() ?? null, shoot: (...a) => view.shoot(...a) });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };

@@ -5,7 +5,7 @@ import type { AppState } from '../shared/settings.ts';
 type Reply = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } };
 
 const live: LiveBridge = {
-  show: (projectId, url, bounds, token) => ipcRenderer.invoke('live:show', projectId, url, bounds, token ?? null) as Promise<boolean>,
+  show: (projectId, url, bounds, token, env) => ipcRenderer.invoke('live:show', projectId, url, bounds, token ?? null, env ?? null) as Promise<boolean>,
   bounds: (bounds) => ipcRenderer.send('live:bounds', bounds),
   hide: () => ipcRenderer.invoke('live:hide') as Promise<void>,
   cover: (covered) => ipcRenderer.invoke('live:cover', covered) as Promise<string | null>,
@@ -33,6 +33,7 @@ const live: LiveBridge = {
   unstyle: () => ipcRenderer.invoke('live:unstyle') as ReturnType<LiveBridge['unstyle']>,
   editText: () => ipcRenderer.invoke('live:editText') as ReturnType<LiveBridge['editText']>,
   cancelEdit: () => ipcRenderer.invoke('live:cancelEdit') as Promise<void>,
+  compareShot: (request) => ipcRenderer.invoke('live:compareShot', request) as ReturnType<LiveBridge['compareShot']>,
   onState(listener) {
     const handler = (_e: IpcRendererEvent, state: LiveViewState): void => listener(state);
     ipcRenderer.on('live:state', handler);
