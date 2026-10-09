@@ -169,8 +169,19 @@ test('a 404 is an older helper only when the site’s helper is older; from a cu
   } finally { await site.close(); }
 });
 
-test('each failure is named: a refused token, an error, a bad answer, a site that is not there', async () => {
+test('a redirect is named as one, not as Chromium’s words', async () => {
+  const site = await helperSite((_req, res) => { res.writeHead(302, { Location: '/404/' }); res.end(); });
+  try {
+    const a = await wire({ url: site.url }).find();
+    assert.equal(a.state, 'failed');
+    assert.match(a.message ?? '', /redirected the helper’s request/);
+    assert.doesNotMatch(a.message ?? '', /redirect policy/);
+  } finally { await site.close(); }
+});
+
+test('each failure is named: not logged in, a refused token, an error, a bad answer, a site that is not there', async () => {
   const cases: [string, (res: ServerResponse) => void, LiveFindAnswer['state']][] = [
+    ['not logged in (the WordPress helper lists pages for a logged-in user)', (res) => json(res, {}, 401), 'log-in'],
     ['a refused token', (res) => json(res, {}, 403), 'refused'],
     ['a PHP error', (res) => { res.writeHead(500); res.end('Fatal error'); }, 'failed'],
     ['not JSON', (res) => { res.writeHead(200); res.end('<html>'); }, 'failed'],

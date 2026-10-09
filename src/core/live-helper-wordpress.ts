@@ -214,8 +214,9 @@ final class Wanigan_Live {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
-			// It runs no admin_init and no admin screen; it answers JSON at wp_loaded and stops.
-			if ($m[1] === 'find' && !defined('WP_ADMIN')) define('WP_ADMIN', true);
+			// It runs no admin_init and no admin screen; it answers JSON at wp_loaded and stops. Only for a logged-in
+			// user, who has a menu: plugins that hide wp-admin send an anonymous admin request to a 404 page.
+			if ($m[1] === 'find' && !defined('WP_ADMIN') && self::logged_in_cookie()) define('WP_ADMIN', true);
 			add_action('wp_loaded', array(self::class, 'route'), PHP_INT_MAX);
 			return;
 		}
@@ -284,6 +285,20 @@ final class Wanigan_Live {
 		remove_filter('log_query_custom_data', array(self::class, 'logged'), PHP_INT_MAX);
 		remove_filter('query', array(self::class, 'rows'), PHP_INT_MAX);
 		while (self::$apps) self::finish(array_pop(self::$apps));
+	}
+
+	/**
+	 * Whether the request carries WordPress's logged-in cookie, by name only (who it is, is known at init). The name is
+	 * wp-config.php's LOGGED_IN_COOKIE, or wp_cookie_constants()'s wordpress_logged_in_<hash>, which is defined only
+	 * after must-use plugins load.
+	 */
+	private static function logged_in_cookie(): bool {
+		$name = defined('LOGGED_IN_COOKIE') ? (string) LOGGED_IN_COOKIE : '';
+		foreach (array_keys($_COOKIE) as $k) {
+			$k = (string) $k;
+			if ($name !== '' ? $k === $name : strpos($k, 'wordpress_logged_in_') === 0) return true;
+		}
+		return false;
 	}
 
 	private static function request_path(): string {
@@ -2867,7 +2882,8 @@ final class Wanigan_Live {
 	 * by name, at most 50, ahead of the index.
 	 */
 	private static function find(): void {
-		if (!is_user_logged_in()) self::answer(array('ok' => false, 'error' => 'Log in to WordPress in the live view first.'), 403);
+		// 401, not 403: the token was right (a wrong one never reaches a route); the user is not logged in.
+		if (!is_user_logged_in()) self::answer(array('ok' => false, 'error' => 'Log in to WordPress in the live view first.'), 401);
 		$user = wp_get_current_user();
 		global $wp_version;
 		$cache = md5(implode('|', array($user->ID, md5(serialize($user->allcaps)), (int) get_option('wanigan_live_changes', 0), md5(serialize(get_option('active_plugins'))), get_stylesheet(), $wp_version, get_locale(), (string) get_option('page_on_front'), (string) get_option('page_for_posts'), (string) filemtime(__FILE__))));

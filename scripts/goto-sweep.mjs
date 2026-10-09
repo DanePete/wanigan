@@ -265,12 +265,15 @@ try {
     for (const [state, title, button] of [
       ['no-helper', 'Search the whole site with the helper', 'Set up the Drupal helper…'],
       ['outdated', 'This site’s helper is older than this Wanigan', 'Update the helper…'],
+      // Logging in happens in the view itself, so this notice has nothing to press.
+      ['log-in', 'Log in to search the whole site', null],
       ['down', 'Nothing answered at acme.example.test', 'Try again'],
     ]) {
       await page.evaluate((s) => { window.__wgLive.state = s; }, state);
       await page.click('.live-bar button[aria-label^="Go to a page"]');
       await page.waitForSelector(`.goto-notice:has-text("${title}")`, { timeout: 4000 }).catch(() => fail(state, `no "${title}" notice`));
-      if (!(await page.$(`.goto-notice button:has-text("${button}")`))) fail(state, `no "${button}" button`);
+      if (button && !(await page.$(`.goto-notice button:has-text("${button}")`))) fail(state, `no "${button}" button`);
+      if (!button && await page.$('.goto-notice button')) fail(state, 'a button where there is nothing to press');
       if (state !== 'down' && !(await page.$('.goto-group-head:has-text("Pages the live view knows"), .goto-group-head:has-text("Recent")'))) fail(state, 'the pages the view knows are not offered');
       await shot(state);
       if (state === 'no-helper') {

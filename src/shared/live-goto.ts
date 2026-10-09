@@ -17,10 +17,11 @@ import type { LivePlatform } from './live.ts';
  * - no-helper: no Wanigan helper in the site (or a kind of site with none).
  * - outdated: the helper predates finding (it has no /_wanigan/find).
  * - down: nothing answered at the site's address.
+ * - log-in: the helper lists pages for a logged-in user only (WordPress's), and nobody is logged in in the view.
  * - refused: the site refused the helper's token.
- * - failed: the helper answered with something else (an error page, a bad answer).
+ * - failed: the helper answered with something else (an error page, a bad answer, a redirect).
  */
-export type FindState = 'ready' | 'off' | 'no-site' | 'no-helper' | 'outdated' | 'down' | 'refused' | 'failed';
+export type FindState = 'ready' | 'off' | 'no-site' | 'no-helper' | 'outdated' | 'log-in' | 'down' | 'refused' | 'failed';
 
 /** A page the live view knows without the helper: from its own history, or linked from the page shown. */
 export interface KnownPage {

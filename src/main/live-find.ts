@@ -163,12 +163,16 @@ export function wireLiveFind(options: {
    */
   const trouble = (r: { status: number; reason: string | null }, host: string, helperOutdated: boolean): Pick<LiveFindAnswer, 'state' | 'message'> => {
     if (r.status === 0 && r.reason && DOWN.test(r.reason)) return { state: 'down', message: `Nothing answered at ${host}.` };
+    if (r.status === 0 && r.reason && /redirect/i.test(r.reason)) {
+      return { state: 'failed', message: `${host} redirected the helper’s request, and Wanigan does not follow it: the helper’s token goes only to the site’s own address.` };
+    }
     if (r.status === 0) return { state: 'failed', message: `The site did not answer the helper (${r.reason ?? 'no reason given'}).` };
     if (r.status === 404 && helperOutdated) return { state: 'outdated', message: 'The helper in this site is older than this Wanigan and cannot list its pages.' };
     if (r.status === 404) {
       return { state: 'failed', message: `${host} answered 404 where the helper should answer. The site may not be running (for ddev, its router answers 404 then), or the helper is no longer in it.` };
     }
-    if (r.status === 401 || r.status === 403) return { state: 'refused', message: 'The site refused the helper’s token: set the helper up again.' };
+    if (r.status === 401) return { state: 'log-in', message: 'The site lists its pages for a logged-in user. Log in in the live view.' };
+    if (r.status === 403) return { state: 'refused', message: 'The site refused the helper’s token: set the helper up again.' };
     if (r.status >= 200 && r.status < 300) return { state: 'failed', message: r.reason ?? 'The helper’s answer is not one Wanigan can read.' };
     return { state: 'failed', message: `The helper answered ${r.status}.` };
   };

@@ -99,7 +99,7 @@ export const LIVE_STUB = String.raw`(() => {
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
   const L = window.__wgLive = {
     projectId: null,
-    /** ready, no-helper, outdated or down: what the find answers. */
+    /** ready, no-helper, outdated, log-in or down: what the find answers. */
     state: 'ready',
     /** How long the stand-in site takes to answer a search, in ms. */
     searchDelay: 60,
@@ -149,6 +149,7 @@ export const LIVE_STUB = String.raw`(() => {
       const q = (query ?? '').trim();
       if (L.state === 'no-helper') return answer('no-helper', { message: 'Wanigan’s helper is not in this site.', known: KNOWN });
       if (L.state === 'outdated') return answer('outdated', { message: 'The helper in this site is older than this Wanigan and cannot list its pages.', known: KNOWN });
+      if (L.state === 'log-in') return answer('log-in', { message: 'The site lists its pages for a logged-in user. Log in in the live view.', known: KNOWN });
       if (L.state === 'down') return answer('down', { message: 'Nothing answered at acme.example.test.', known: KNOWN.filter((k) => k.from === 'history') });
       if (!q) return answer('ready', { result: { cacheId: 'acme-1', items: INDEX }, known: KNOWN.filter((k) => k.from === 'history') });
       await new Promise((done) => setTimeout(done, L.searchDelay));

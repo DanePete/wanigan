@@ -711,6 +711,7 @@ function noticeFor(o: {
       o.plan ? <Button size="s" icon="plug" onClick={o.onHelper}>Set up the {o.helperWord} helper…</Button> : null);
     case 'outdated': return box('plug', 'This site’s helper is older than this Wanigan', 'Update it to search the whole site; until then Go to knows the pages the live view has seen.',
       o.plan ? <Button size="s" icon="plug" onClick={o.onHelper}>Update the helper…</Button> : null);
+    case 'log-in': return box('account', 'Log in to search the whole site', `The ${o.helperWord} helper lists the pages a logged-in user may open. Log in in the live view; until then Go to knows the pages the live view has seen.`);
     case 'refused': return box('plug', 'The site refused the helper', o.answer?.message ?? null,
       o.plan ? <Button size="s" icon="plug" onClick={o.onHelper}>Set the helper up again…</Button> : null);
     case 'down': return box('alert', `Nothing answered at ${o.host ?? 'the site'}`, 'Start the site (for ddev: ddev start in the project folder), then try again. Pages the live view has seen are still here.',

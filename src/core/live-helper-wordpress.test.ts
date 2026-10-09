@@ -81,6 +81,8 @@ $_SERVER['REQUEST_URI'] = getenv('WL_URI');
 parse_str((string) parse_url($_SERVER['REQUEST_URI'], PHP_URL_QUERY), $_GET);
 $_SERVER['SCRIPT_FILENAME'] = '/var/www/html/' . (getenv('WL_SCRIPT') ?: 'index.php');
 if (getenv('WL_TOKEN')) $_SERVER['HTTP_X_WANIGAN_LIVE'] = getenv('WL_TOKEN');
+if (getenv('WL_LOGGED_IN_COOKIE')) define('LOGGED_IN_COOKIE', getenv('WL_LOGGED_IN_COOKIE'));
+$_COOKIE = getenv('WL_COOKIE') ? array(getenv('WL_COOKIE') => 'stand-in') : array();
 ob_start();
 require getenv('WL_PLUGIN');
 $out = ob_get_clean();
@@ -88,8 +90,11 @@ echo json_encode(array('hooks' => array_values(array_unique($GLOBALS['wl_hooks']
 `);
   after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const load = (uri: string, token?: string, script?: string): { hooks: string[]; output: string; savequeries: boolean; admin: boolean; handler: boolean } => JSON.parse(execFileSync(php as string, [harness], {
-    env: { PATH: process.env.PATH ?? '', WL_URI: uri, WL_PLUGIN: plugin, ...(token ? { WL_TOKEN: token } : {}), ...(script ? { WL_SCRIPT: script } : {}) },
+  const load = (uri: string, token?: string, script?: string, cookies: { cookie?: string; name?: string } = {}): { hooks: string[]; output: string; savequeries: boolean; admin: boolean; handler: boolean } => JSON.parse(execFileSync(php as string, [harness], {
+    env: {
+      PATH: process.env.PATH ?? '', WL_URI: uri, WL_PLUGIN: plugin, ...(token ? { WL_TOKEN: token } : {}), ...(script ? { WL_SCRIPT: script } : {}),
+      ...(cookies.cookie ? { WL_COOKIE: cookies.cookie } : {}), ...(cookies.name ? { WL_LOGGED_IN_COOKIE: cookies.name } : {}),
+    },
     encoding: 'utf8',
   }));
   const COUNTER = ['save_post', 'deleted_post', 'trashed_post', 'untrashed_post', 'edited_term', 'created_term', 'delete_term', 'wp_update_nav_menu', 'customize_save_after', 'switch_theme', 'update_option_sidebars_widgets', 'added_post_meta', 'updated_post_meta', 'deleted_post_meta', 'updated_option'];
@@ -149,13 +154,20 @@ echo json_encode(array_map(function ($c) { return Wanigan_Live::place($c[0], $c[
   });
 
   test('with the token, its JSON routes and the REST API are not traced, and only the Go to index runs as an admin request', () => {
+    const LOGGED_IN = { cookie: 'wordpress_logged_in_0123abcd' };
     for (const uri of ['/_wanigan/trace/0123456789abcdef', '/_wanigan/edit/post-1-title', '/_wanigan/move', '/_wanigan/find?q=x']) {
-      const r = load(uri, TOKEN);
+      const r = load(uri, TOKEN, undefined, LOGGED_IN);
       assert.ok(!r.hooks.includes('all'), uri);
       assert.ok(r.hooks.includes('wp_loaded'), uri);
       assert.equal(r.savequeries, false, uri);
       assert.equal(r.admin, uri.startsWith('/_wanigan/find'), uri);
     }
+    // Only a logged-in request has an admin menu to list. An anonymous one is not made an admin request: plugins
+    // that hide wp-admin send those to a 404 page, which would turn the helper's answer into a redirect.
+    assert.equal(load('/_wanigan/find', TOKEN).admin, false, 'no cookie');
+    assert.equal(load('/_wanigan/find', TOKEN, undefined, { cookie: 'wordpress_sec_0123abcd' }).admin, false, 'only the auth cookie');
+    assert.equal(load('/_wanigan/find', TOKEN, undefined, { cookie: 'acme_login', name: 'acme_login' }).admin, true, 'a LOGGED_IN_COOKIE wp-config.php names');
+    assert.equal(load('/_wanigan/find', TOKEN, undefined, { cookie: 'wordpress_logged_in_0123abcd', name: 'acme_login' }).admin, false, 'not the default name when another is set');
     for (const [uri, script] of [['/wp-json/wp/v2/posts', 'index.php'], ['/?rest_route=/wp/v2/posts', 'index.php'], ['/wp-admin/admin-ajax.php', 'admin-ajax.php'], ['/wp-cron.php', 'wp-cron.php']] as const) {
       const r = load(uri, TOKEN, script);
       assert.ok(!r.hooks.includes('all'), uri);
