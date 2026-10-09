@@ -8,3 +8,5 @@ f819b50ccc749694611f3f656b70309f8cb6f2f0:src/core/mcp.test.ts:generic-api-key:41
 src/core/mcp.test.ts:generic-api-key:14
 src/core/mcp.test.ts:generic-api-key:41
 src/shared/mcp.test.ts:generic-api-key:37
+# The made-up key in the Gemini MCP credential test (acme-sk-…): it proves a server holding one is not copied.
+ed3a44c6b0be68aabdaa20f695828305681730a7:src/shared/mcp.test.ts:generic-api-key:137
