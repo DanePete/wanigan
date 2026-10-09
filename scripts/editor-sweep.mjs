@@ -160,6 +160,8 @@ try {
       // A folder crumb lists what is beside it; a folder opens in place.
       await page.locator('.crumb-folder .crumb-button', { hasText: 'src' }).click();
       await page.waitForSelector('.crumb-menu .crumb-menu-item', { timeout: 3000 });
+      // ".." is there at once; what is beside it comes when the folder has been read.
+      await page.waitForFunction(() => [...document.querySelectorAll('.crumb-menu .crumb-menu-label')].some((l) => l.textContent !== '..'), null, { timeout: 8000 }).catch(() => {});
       const beside = await page.$$eval('.crumb-menu .crumb-menu-label', (l) => l.map((x) => x.textContent));
       for (const want of ['src/', 'templates/', 'css/', 'northstar_checkout.routing.yml']) if (!beside.includes(want)) fail(`the src crumb's menu lacks ${want} (${beside.join(', ')})`);
       await shot('crumb-folder');
