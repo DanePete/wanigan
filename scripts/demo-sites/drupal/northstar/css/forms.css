@@ -53,3 +53,6 @@ label, .fieldset__legend, legend { font: 700 0.78rem/1.3 var(--ns-font); letter-
   .views-exposed-form .form-actions { margin: 0; }
   .views-exposed-form .form-actions .form-submit { width: 100%; }
 }
+.form-actions .form-submit + .form-submit { background: transparent; color: var(--ns-pine); box-shadow: inset 0 0 0 1.5px var(--ns-pine); }
+.form-actions .form-submit + .form-submit:hover { background: var(--ns-sand); }
+.form-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }

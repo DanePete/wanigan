@@ -363,4 +363,3 @@ export function desk(w, h, name) {
   b += `<ellipse cx="${w * 0.1}" cy="${h * 0.75}" rx="90" ry="90" fill="#c9a77d"/><ellipse cx="${w * 0.1}" cy="${h * 0.75}" rx="70" ry="70" fill="#3b2a1e"/>`;
   return svg(w, h, b, '');
 }
-
