@@ -75,27 +75,26 @@ export function computeNeeds(ctx: Ctx): Need[] {
     }
   }
 
-  // Two live sessions in one checkout edited the same file within the hour.
-  // Only Claude's edits are seen (Codex does not report them).
+  // Two live sessions in one checkout edited the same file within the hour:
+  // Claude's, Gemini's and Grok's edit tools, and every file a Codex patch names.
   const overlaps = db.prepare(`
     SELECT e.path, p.id AS project_id, p.name AS project_name, p.key AS project_key,
            group_concat(DISTINCT s.id) AS sessions, max(e.at) AS last_at
-    FROM session_events e
+    FROM session_edits e
     JOIN sessions s ON s.id = e.session_id AND s.state IN (${LIVE_SQL})
     JOIN projects p ON p.id = s.project_id AND p.archived_at IS NULL
-    WHERE e.path IS NOT NULL AND e.at > ?
+    WHERE e.at > ?
     GROUP BY e.path, coalesce(s.cwd, p.path), p.id
     HAVING count(DISTINCT s.id) > 1
   `).all(ctx.now() - OVERLAP_WINDOW_MS) as { path: string; project_id: string; project_name: string; project_key: string; sessions: string; last_at: number }[];
   for (const o of overlaps) {
     const ids = o.sessions.split(',');
-    const names = ids.map((id) => {
-      const s = db.prepare('SELECT title, (SELECT key FROM cards c WHERE c.id = sessions.card_id) AS card_key FROM sessions WHERE id = ?').get(id) as { title: string; card_key: string | null };
-      return s.card_key ?? s.title;
-    });
+    const who = ids.map((id) => db.prepare('SELECT title, provider, (SELECT key FROM cards c WHERE c.id = sessions.card_id) AS card_key FROM sessions WHERE id = ?')
+      .get(id) as { title: string; provider: string; card_key: string | null });
+    const names = who.map((s) => s.card_key ?? s.title);
     needs.push({
       kind: 'overlap', projectId: o.project_id, projectName: o.project_name, projectKey: o.project_key,
-      cardId: null, cardKey: null, sessionId: ids[0] ?? null, provider: 'claude',
+      cardId: null, cardKey: null, sessionId: ids[0] ?? null, provider: (who[0]?.provider ?? 'claude') as Need['provider'],
       title: o.path.split('/').slice(-2).join('/'), detail: `Edited by ${names.join(' and ')} in the same folder`, since: o.last_at,
     });
   }

@@ -276,8 +276,8 @@ function filesEdited(ctx: Ctx, sessionIds: string[], since: number): Map<string,
   const out = new Map<string, string[]>();
   if (!sessionIds.length) return out;
   const rows = ctx.db.prepare(`
-    SELECT session_id, path, max(at) AS last FROM session_events
-    WHERE path IS NOT NULL AND at >= ? AND session_id IN (${sessionIds.map(() => '?').join(',')})
+    SELECT session_id, path, max(at) AS last FROM session_edits
+    WHERE at >= ? AND session_id IN (${sessionIds.map(() => '?').join(',')})
     GROUP BY session_id, path ORDER BY last DESC
   `).all(since, ...sessionIds) as { session_id: string; path: string }[];
   for (const r of rows) {

@@ -10,6 +10,8 @@ import { corePaths } from '../core/paths.ts';
 import { alertKeys } from '../shared/notifications.ts';
 import { ACCESS, type Method } from '../shared/protocol.ts';
 import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
+import { wireLiveShots } from './live-shots.ts';
+import { wireLiveView, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
 import { menuTemplate, type MenuProject } from './menu.ts';
 import { createUpdateMenu } from './update-menu.ts';
@@ -46,6 +48,7 @@ const core = new CoreConnection({
 
 let win: BrowserWindow | null = null;
 let appSettings: AppSettingsWiring | null = null;
+let liveView: LiveViewWiring | null = null;
 
 const notifier = new NeedNotifier(async () => (await core.get()).call('needs.list', {}), () => win, showRoute,
   () => appSettings?.store.get().notifications ?? 'all');
@@ -111,7 +114,7 @@ function createWindow(route = ''): void {
   win.webContents.on('will-navigate', (event, url) => {
     if (!ownPage(url)) event.preventDefault();
   });
-  win.on('closed', () => { win = null; notifier.schedule(); });
+  win.on('closed', () => { liveView?.release(); win = null; notifier.schedule(); });
   // Coming forward or going away changes where a need is announced.
   win.on('focus', () => notifier.schedule());
   win.on('blur', () => notifier.schedule());
@@ -120,6 +123,11 @@ function createWindow(route = ''): void {
 
 function wireBridge(): void {
   appSettings = wireAppSettings({ core: () => core.get(), window: () => win, trusted, demo });
+  liveView = wireLiveView({ window: () => win, trusted, enabled: () => appSettings?.store.get().liveView === true });
+  // Switching the live view off takes it away at once, not at the next navigation.
+  appSettings.store.onChange((s) => { if (!s.liveView) liveView?.release(); });
+  const view = liveView;
+  const shots = wireLiveShots({ client: () => core.get(), settings: () => appSettings?.store.get() ?? null, shoot: (...a) => view.shoot(...a) });
   ipcMain.handle('core:call', async (event, method: unknown, params: unknown) => {
     if (!trusted(event)) return { ok: false, error: { code: 'forbidden', message: 'Untrusted sender.' } };
     if (typeof method !== 'string' || !OWNER_METHODS.has(method)) {
@@ -168,6 +176,7 @@ function wireBridge(): void {
     win?.webContents.send('core:event', event, data);
     if (event === 'needs' || event === 'sessions' || event === 'board') notifier.schedule();
     appSettings?.onCoreEvent(event);
+    shots.onEvent(event, data);
     if (event === 'projects') refreshMenu();
   });
   core.onProblem((problem) => win?.webContents.send('core:problem', problem));

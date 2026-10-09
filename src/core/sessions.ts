@@ -22,6 +22,7 @@ import {
   type Account, type CardSummary, type CardType, type Project, type Provider, type Session, type SessionEvent, type SessionState,
 } from '../shared/model.ts';
 import { CoreError } from '../shared/protocol.ts';
+import { editedPaths } from '../shared/edits.ts';
 import { applyAccount, rolloutIn, transcriptPath, type Accounts } from './accounts.ts';
 import type { Board } from './board.ts';
 import { BRIEFING_REFUSAL, BriefingRefused, briefingLimits, codexBriefing, hookBriefing, type BriefingFormat, type BriefingLimits } from './briefing.ts';
@@ -821,8 +822,18 @@ export class Sessions {
     // One agent messaging another: PreToolUse is the moment it was sent (the
     // Post row would count it twice). The row keeps `to · label`, never the message.
     const chatter = event === 'PreToolUse' && tool === CHATTER_TOOL ? chatterOf(input.tool_input) : null;
+    const edited = editedPaths(event, tool, input.tool_input, row.cwd);
     const eventId = Number(this.ctx.db.prepare('INSERT INTO session_events (session_id, at, event, tool, summary, path) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(sessionId, now, event, tool, chatter ? encodeChatter(chatter) : activity, editedPath(event, tool, input.tool_input, row.cwd)).lastInsertRowid);
+      .run(sessionId, now, event, tool, chatter ? encodeChatter(chatter) : activity, edited[0] ?? null).lastInsertRowid);
+    if (edited.length) {
+      const insert = this.ctx.db.prepare('INSERT INTO session_edits (session_id, event_id, at, path) VALUES (?, ?, ?, ?)');
+      for (const path of edited) insert.run(sessionId, eventId, now, path);
+    }
+    // The live view follows edits, and screenshots a card's page around its turns.
+    const liveKind = edited.length ? 'edit' : event === 'UserPromptSubmit' ? 'turn-start'
+      : event === 'Stop' || event === 'StopFailure' || event === 'Interrupted' ? 'turn-end'
+        : event === 'SessionStart' && !codexStart ? 'session-start' : null;
+    if (liveKind && live) this.ctx.emit('live', { projectId: row.project_id, sessionId, cardId: row.card_id, paths: edited, kind: liveKind, at: now });
     this.trimEvents(sessionId);
     // A hook that lands after the session ended is history, not news: it must
     // not rewrite why the session ended.
@@ -1216,8 +1227,12 @@ export class Sessions {
    * old ones would renumber every turn after.
    */
   private trimEvents(id: string): void {
-    this.ctx.db.prepare(`DELETE FROM session_events WHERE session_id = ? AND event != 'UserPromptSubmit' AND id <= (
+    const trimmed = this.ctx.db.prepare(`DELETE FROM session_events WHERE session_id = ? AND event != 'UserPromptSubmit' AND id <= (
       SELECT id FROM session_events WHERE session_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`).run(id, id, MAX_EVENTS_PER_SESSION);
+    // The files an event recorded go with it.
+    if (trimmed.changes) {
+      this.ctx.db.prepare('DELETE FROM session_edits WHERE session_id = ? AND event_id NOT IN (SELECT id FROM session_events WHERE session_id = ?)').run(id, id);
+    }
   }
 
   private row(id: string): SessionRow {
@@ -1267,15 +1282,4 @@ const clip = (s: string, max = 140): string => (s.length > max ? `${s.slice(0, m
 export function remoteName(title: string): string[] {
   const name = clip(title.replace(/^[\s-]+/, '').trim(), NAME_MAX);
   return name ? [name] : [];
-}
-
-const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-
-/** The absolute file an edit tool changed, so two sessions editing one file can be noticed. */
-function editedPath(event: string, tool: string | null, input: unknown, cwd: string | null): string | null {
-  if (event !== 'PostToolUse' || !tool || !EDIT_TOOLS.has(tool) || !input || typeof input !== 'object') return null;
-  const i = input as { file_path?: unknown; notebook_path?: unknown };
-  const raw = typeof i.file_path === 'string' ? i.file_path : typeof i.notebook_path === 'string' ? i.notebook_path : null;
-  if (!raw) return null;
-  return raw.startsWith('/') ? raw : cwd ? `${cwd.replace(/\/$/, '')}/${raw}` : null;
 }

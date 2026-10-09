@@ -1,9 +1,9 @@
 // A small hash router. Routes are data, so the palette, the rail and the tests
 // all read the same list.
 import { useSyncExternalStore } from 'react';
-import { GIT_TABS, PROJECT_VIEWS, type GitTab, type ProjectView } from '@shared/views';
+import { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView } from '@shared/views';
 
-export { GIT_TABS, PROJECT_VIEWS, type GitTab, type ProjectView };
+export { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView };
 
 export type Route =
   | { name: 'needs' }
@@ -40,7 +40,7 @@ export function parse(hash: string): Location {
   else if (parts[0] === 'p' && parts[1]) {
     if (parts[2] === 's' && parts[3]) route = { name: 'session', projectKey: parts[1], sessionId: parts[3] };
     else {
-      const view = PROJECT_VIEWS.find((v) => v.view === parts[2])?.view ?? 'board';
+      const view = parts[2] === LIVE_VIEW.view ? LIVE_VIEW.view : PROJECT_VIEWS.find((v) => v.view === parts[2])?.view ?? 'board';
       route = { name: 'project', projectKey: parts[1], view };
     }
   }

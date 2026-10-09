@@ -146,7 +146,7 @@ export function gitHandlers(ctx: Ctx, board: Board, sessions: Sessions, accounts
     // A turn still under way has no checkpoint yet; what its tools wrote says what it touched so far.
     const live = agentsIn(w).map((a) => a.sessionId);
     if (live.length) {
-      const rows = ctx.db.prepare(`SELECT session_id, path FROM session_events WHERE path IS NOT NULL AND at >= ? AND session_id IN (${live.map(() => '?').join(',')})`)
+      const rows = ctx.db.prepare(`SELECT session_id, path FROM session_edits WHERE at >= ? AND session_id IN (${live.map(() => '?').join(',')})`)
         .all(since, ...live) as { session_id: string; path: string }[];
       for (const r of rows) {
         const rel = relative(w.path, r.path);

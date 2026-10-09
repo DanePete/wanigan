@@ -62,6 +62,25 @@ const paths = {
   push: 'M10 14.5V4.5M6 8.5l4-4 4 4M4.5 16.5h11',
   pull: 'M10 3.5v10M6 9.5l4 4 4-4M4.5 16.5h11',
   trash: 'M4.5 6h11M8 6V4.3h4V6M6 6l.8 10.2h6.4L14 6',
+  // the live view: a page, picking an element, a screenshot, pieces of a page.
+  live: 'M3 4.5h14v11H3zM3 7.5h14M5.3 6h.01M7.3 6h.01',
+  pick: 'M10 2.8v3M10 14.2v3M2.8 10h3M14.2 10h3M10 12.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z',
+  camera: 'M3.5 6.5h3l1.5-2h4l1.5 2h3v9h-13zM10 13.2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z',
+  pieces: 'M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM11 11h5v5h-5z',
+  // what made a part of a live page, and what can be done to it by hand.
+  layers: 'M10 3.5 17 7l-7 3.5L3 7zM3 10.5l7 3.5 7-3.5M3 14l7 3.5 7-3.5',
+  region: 'M3.5 4h13v12h-13zM3.5 8h13M3.5 12.5h13',
+  block: 'M4 4.5h12v11H4zM7 8h6M7 11h4',
+  field: 'M3.5 7h13v6h-13zM6.2 9v2',
+  menu: 'M4 6h12M4 10h12M4 14h12',
+  form: 'M3.5 5h13v4h-13zM3.5 11h13v4h-13z',
+  content: 'M5 3h10v14H5zM7.5 6.5h5M7.5 9.5h5M7.5 12.5h3',
+  pencil: 'M12.5 4.5l3 3L8 15H5v-3zM11 6l3 3',
+  brush: 'M14.5 3.5c1 1-3.8 7-5.3 8.5l-1.7-1.7C9 8.8 13.5 2.5 14.5 3.5ZM7.5 10.3c-2 0-3.2 1.4-3.2 3.2 0 1.2-.6 2-1.3 2.5 3.4.6 6.2-.7 6.2-3.9',
+  desktop: 'M3 4.5h14v9H3zM7.5 16.5h5M10 13.5v3',
+  tablet: 'M5.5 3h9v14h-9zM9 14.5h2',
+  eye: 'M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5ZM10 12.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z',
+  undo: 'M7.5 6 4 9.5 7.5 13M4.5 9.5H12a4 4 0 0 1 0 8h-2',
 } as const;
 
 export type IconName = keyof typeof paths;

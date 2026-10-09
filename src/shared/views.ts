@@ -2,7 +2,7 @@
 // so the router, the key handler, the shortcut sheet and the app menu all read
 // the same list.
 
-export type ProjectView = 'board' | 'list' | 'sessions' | 'history' | 'changes' | 'decisions' | 'activity';
+export type ProjectView = 'board' | 'list' | 'sessions' | 'history' | 'changes' | 'decisions' | 'activity' | 'live';
 
 export const PROJECT_VIEWS: readonly { view: ProjectView; label: string; key: string }[] = [
   { view: 'board', label: 'Board', key: 'b' },
@@ -13,6 +13,13 @@ export const PROJECT_VIEWS: readonly { view: ProjectView; label: string; key: st
   { view: 'decisions', label: 'Decisions', key: 'd' },
   { view: 'activity', label: 'Activity', key: 'a' },
 ];
+
+/**
+ * The live view (docs/design/2026-10-08-live-view.md) is a project view too, but
+ * optional: its tab shows only while Settings › Live view is on, so it is not in
+ * the list the menu, the palette and the shortcut sheet are built from.
+ */
+export const LIVE_VIEW = { view: 'live' as const, label: 'Live' };
 
 /** The tabs of a project's Changes view, the git workbench: the working tree, the history, branches and stashes. */
 export type GitTab = 'changes' | 'commits' | 'branches' | 'stashes';

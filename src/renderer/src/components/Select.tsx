@@ -7,6 +7,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './icons';
+import { useCoversLive } from '../lib/live';
 
 export interface SelectOption<T extends string | number> {
   value: T;
@@ -42,6 +43,7 @@ export function Select<T extends string | number>({ id, value, onChange, options
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
+  useCoversLive(open);
   const [active, setActive] = useState(-1);
   const [place, setPlace] = useState<Place | null>(null);
   const placeRef = useRef(place);

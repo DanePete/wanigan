@@ -5,7 +5,7 @@ import { CHATTER_TOOL, chatterLine, decodeChatter } from '@shared/chatter';
 import { groupTurns, turnLength, type Turn } from '@shared/turns';
 import type { Checkpoint, SessionCheckpoints } from '@shared/checkpoints';
 import { TurnChange, TurnPanel, UndoDialog } from './TurnChanges';
-import { attempt, call, useQuery } from '../lib/api';
+import { attempt, call, forProject, useQuery } from '../lib/api';
 import { useDraft } from '../lib/draft';
 import { href, navigate, openCard } from '../lib/router';
 import { PROVIDER_LABEL, TYPE_LABEL, ago, duration } from '../lib/format';
@@ -16,6 +16,10 @@ import { ContinueOn } from '../components/ContinueOn';
 import { SessionTokens } from '../components/Tokens';
 import { Ask } from '../components/Ask';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/Attachments';
+import { LivePane } from '../components/Live';
+import { useLiveSplit, useSessionEdits } from '../lib/live';
+import { useAppState } from '../lib/settings';
+import { liveFor } from '@shared/settings';
 import { limitDetail } from '@shared/limits';
 import { RUNTIME_LABEL, localModelLabel, parseLocalModel } from '@shared/local-models';
 
@@ -38,6 +42,15 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
   const [turnOpen, setTurnOpen] = useState<{ checkpoint: Checkpoint; label: string } | null>(null);
   const [undoing, setUndoing] = useState(false);
   const last = checkpoints.error ? null : checkpoints.data?.last ?? null;
+  // The live view beside the terminal, following this session's edits (Settings › Live view).
+  const settings = useAppState().state?.settings;
+  const site = useQuery('live.site', settings?.liveView ? { projectId: project.id } : null, ['liveSite', 'projects'], forProject(project.id));
+  const siteUrl = settings && site.data?.url && liveFor(settings, site.data.platform) ? site.data.url : null;
+  const [split, setSplit] = useLiveSplit();
+  const showLive = !!siteUrl && split;
+  const edits = useSessionEdits(project.id, sessionId, siteUrl ? site.data?.servedPath ?? project.path : null);
+  const [outlineFirst, setOutlineFirst] = useState<string[] | null>(null);
+  const seeIt = (): void => { setOutlineFirst(edits.paths); edits.clear(); setSplit(true); };
 
   // Opening a session is seeing it: it settles "finished a turn" and "failed".
   useEffect(() => {
@@ -91,6 +104,16 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
               </>
             ) : <Button tone="quiet" icon="stop" onClick={() => setConfirmStop(true)}>Stop</Button>
           ) : null}
+          {siteUrl && !showLive && edits.paths ? (
+            <Button size="s" tone="quiet" icon="live" className="live-chip" onClick={seeIt}
+              title={`This session changed ${edits.paths.map((p) => p.split('/').pop()).join(', ')}: open the site beside the terminal, with what it made outlined`}>
+              {edits.paths[0]?.split('/').pop()} changed · See it
+            </Button>
+          ) : null}
+          {siteUrl ? (
+            <IconButton icon="live" label={showLive ? 'Hide the live view' : 'Show the site beside the terminal'}
+              onClick={() => { if (showLive) setSplit(false); else seeIt(); }} aria-pressed={showLive} />
+          ) : null}
           <IconButton icon="activity" label={timeline ? 'Hide the timeline' : 'Show the timeline'} onClick={() => setTimeline((t) => !t)} aria-pressed={timeline} />
         </div>
       </header>
@@ -129,11 +152,16 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
         </div>
       ) : null}
 
-      <div className={`session-body${timeline ? ' with-timeline' : ''}`}>
+      <div className={`session-body${timeline ? ' with-timeline' : ''}${showLive ? ' with-live' : ''}`}>
         <div className="session-main" ref={main} inert={turnOpen ? true : undefined}>
           <Terminal sessionId={session.id} live={live} />
           {live ? <Composer sessionId={session.id} provider={session.provider} state={session.state} zone={main} /> : null}
         </div>
+        {showLive ? (
+          <div className="session-live">
+            <LivePane project={project} follow={session.id} card={session.cardId ? { id: session.cardId, key: session.cardKey ?? 'the card' } : null} compact outlineFirst={outlineFirst} />
+          </div>
+        ) : null}
         {turnOpen ? (
           <TurnPanel session={session} projectId={project.id} checkpoint={turnOpen.checkpoint} label={turnOpen.label}
             last={last && last.eventId === turnOpen.checkpoint.eventId ? last : null}

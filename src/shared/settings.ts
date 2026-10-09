@@ -15,9 +15,32 @@ export interface AppSettings {
   notifications: NotifyLevel;
   /** Check GitHub for a new version once a day, or only when asked. "ask" until the owner answers. */
   updateChecks: UpdateChecks;
+  /** The live view: each project's local site inside Wanigan. Off until switched on; the rest of these need it. */
+  liveView: boolean;
+  /** Reload and outline as the agents edit. Off: an edit only says what changed, and the owner reloads. */
+  liveFollow: boolean;
+  /** Which kinds of site get a live view, and with it that platform's own integration. */
+  liveDrupal: boolean;
+  liveWordpress: boolean;
+  /** Any other site: a JS app's dev server, a static site, anything with an address. */
+  liveSites: boolean;
+  /** Before and after screenshots of a card's page, on the card. */
+  liveShots: boolean;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { keepAwake: true, notifications: 'all', updateChecks: 'ask' };
+export const DEFAULT_SETTINGS: AppSettings = {
+  keepAwake: true, notifications: 'all', updateChecks: 'ask',
+  liveView: false, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false,
+};
+
+/** Whether the live view is on for a kind of site (null: not chosen yet, so on if any kind is). */
+export function liveFor(s: AppSettings, platform: 'drupal' | 'wordpress' | 'site' | null): boolean {
+  if (!s.liveView) return false;
+  if (platform === 'drupal') return s.liveDrupal;
+  if (platform === 'wordpress') return s.liveWordpress;
+  if (platform === 'site') return s.liveSites;
+  return s.liveDrupal || s.liveWordpress || s.liveSites;
+}
 
 /** What the window is told: the settings, and what they are doing right now. */
 export interface AppState {
@@ -42,5 +65,11 @@ export function patchSettings(current: AppSettings, patch: unknown): AppSettings
     keepAwake: typeof p.keepAwake === 'boolean' ? p.keepAwake : current.keepAwake,
     notifications: (NOTIFY_LEVELS as readonly unknown[]).includes(p.notifications) ? p.notifications as NotifyLevel : current.notifications,
     updateChecks: (UPDATE_CHECKS as readonly unknown[]).includes(p.updateChecks) ? p.updateChecks as UpdateChecks : current.updateChecks,
+    liveView: typeof p.liveView === 'boolean' ? p.liveView : current.liveView,
+    liveFollow: typeof p.liveFollow === 'boolean' ? p.liveFollow : current.liveFollow,
+    liveDrupal: typeof p.liveDrupal === 'boolean' ? p.liveDrupal : current.liveDrupal,
+    liveWordpress: typeof p.liveWordpress === 'boolean' ? p.liveWordpress : current.liveWordpress,
+    liveSites: typeof p.liveSites === 'boolean' ? p.liveSites : current.liveSites,
+    liveShots: typeof p.liveShots === 'boolean' ? p.liveShots : current.liveShots,
   };
 }

@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_SETTINGS, patchSettings, readSettings } from '../shared/settings.ts';
+import { DEFAULT_SETTINGS, liveFor, patchSettings, readSettings } from '../shared/settings.ts';
 import { KeepAwake, type Blocker } from './awake.ts';
 import { SettingsStore } from './settings.ts';
 
@@ -57,6 +57,14 @@ test('settings default sensibly and ignore anything they do not know', () => {
   assert.deepEqual(patchSettings(DEFAULT_SETTINGS, { keepAwake: false, rogue: 1 }), { ...DEFAULT_SETTINGS, keepAwake: false });
   assert.deepEqual(patchSettings(DEFAULT_SETTINGS, { keepAwake: 'no' }), DEFAULT_SETTINGS, 'wrong types are ignored');
   assert.deepEqual(patchSettings(DEFAULT_SETTINGS, [false]), DEFAULT_SETTINGS);
+  assert.equal(DEFAULT_SETTINGS.liveView, false, 'the live view is off until the owner switches it on');
+  assert.equal(DEFAULT_SETTINGS.liveShots, false);
+  assert.deepEqual(patchSettings(DEFAULT_SETTINGS, { liveView: true, liveShots: 'yes' }), { ...DEFAULT_SETTINGS, liveView: true });
+  const on = { ...DEFAULT_SETTINGS, liveView: true };
+  assert.equal(liveFor(DEFAULT_SETTINGS, 'drupal'), false, 'nothing is live while the live view is off');
+  assert.equal(liveFor({ ...on, liveWordpress: false }, 'wordpress'), false, 'one kind of site switched off');
+  assert.equal(liveFor({ ...on, liveWordpress: false }, 'drupal'), true);
+  assert.equal(liveFor({ ...on, liveDrupal: false, liveWordpress: false, liveSites: false }, null), false, 'no kind on: no tab even before a site is chosen');
   assert.equal(DEFAULT_SETTINGS.notifications, 'all', 'notifications are on by default');
   assert.equal(patchSettings(DEFAULT_SETTINGS, { notifications: 'urgent' }).notifications, 'urgent');
   assert.equal(patchSettings(DEFAULT_SETTINGS, { notifications: 'loud' }).notifications, 'all', 'an unknown level is ignored');

@@ -9,6 +9,7 @@ import type { CardType, Priority, SessionState } from '@shared/model';
 import { keyLabel, type Shortcut } from '@shared/shortcuts';
 import { STATE_LABEL, TYPE_LABEL } from '../lib/format';
 import { Icon, type IconName } from './icons';
+import { useCoversLive } from '../lib/live';
 
 /* ── buttons ─────────────────────────────────────────────────────────────── */
 
@@ -247,6 +248,7 @@ export function Dialog({ title, onClose, children, footer, width = 520 }: {
   const id = useId();
   const box = useRef<HTMLDivElement>(null);
   useFocusTrap(box, onClose, '.dialog-body input, .dialog-body textarea, .dialog-body select, .dialog-body button');
+  useCoversLive();
   return createPortal(
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={id} ref={box} style={{ width }}>

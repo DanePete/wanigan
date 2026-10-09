@@ -139,6 +139,7 @@ Status:
 | Terminal record | Output streams with sequence numbers; the newest 2 MB stays in memory and 8 MB on disk. | `core/core.test.ts` › "terminal output streams to watchers with sequence numbers"; `core/scrollback.test.ts` › "memory keeps the newest 2 MB…" | added |
 | Watch | Up to four live terminals, the ones that most need you first; a tile never resizes its PTY. | `shared/watch.test.ts` (six tests); `core/watch.test.ts` › "watching a session gives its PTY size, and a real resize is announced once"; `scripts/ui-sweep.mjs` › "a PTY changed size while it was watched" | proven |
 | Overlap | Two live sessions editing one file is raised, and clears when one stops. | `core/core.test.ts` › "two live sessions in one folder editing one file is raised, and clears when one stops" | proven |
+| Codex edits | A Codex `apply_patch` counts as an edit to every file the patch names (added, updated, moved, deleted), for overlaps, commit attribution and Talk to Wanigan; edits recorded before this are carried over. The hook's shape was read from Codex's source at rust-v0.155.1. | `shared/edits.test.ts` (three tests); `core/core.test.ts` › "a Codex patch counts as an edit to every file it names…"; `core/db-upgrade.test.ts` › "edits recorded before session_edits existed are carried into it" | proven with Codex's documented payload; not yet seen from a real Codex turn |
 | Chatter | Who messaged whom and the label, never the message. | `core/core.test.ts` › "agents messaging each other are recorded as who and label, never the message"; `scripts/ui-sweep.mjs` › "the message itself reached the screen" | proven |
 | Timeline as turns | Events read as turns: prompt to stop, with tools, files and permission asks. | `shared/turns.test.ts` › "events become turns: prompt to stop, with tools, files and permission asks" | proven |
 
@@ -384,6 +385,29 @@ Status:
 | Open a pull request | Only an approved card's branch, after a plan that shows what goes where. Known preconditions are checked before pushing; a later GitHub failure can still leave the branch pushed. | `core/pull-request.test.ts` › "an approved card’s branch is pushed and its pull request opened, after every refusal that applies"; `scripts/ui-sweep.mjs` › "the pull request plan never showed" | proven |
 | To GitHub | Pushed and opened with the owner's `gh`. | A stand-in `gh` only | manual: a real push and pull request |
 
+## Live view
+
+Verified by hand against the owner's own local sites (Drupal 11; WordPress) on 9 Oct 2026: the
+real app driven with Playwright, every step a whole-window screenshot. The UI sweeps do not reach it: their bridge has
+no view to lay over the page, and nothing there serves a site.
+
+| Feature | The claim | Test | Status |
+|---|---|---|---|
+| Off until switched on | Settings › Live view; Drupal, WordPress and other sites each on or off; switching it off takes the view away. | `main/awake.test.ts` › settings validation; the owner's Drupal site by hand | added |
+| Finding the site | From `.ddev` (overrides in order), `wp-config.php`, a dev script or `.lando.yml`; nothing started, nothing reached. | `core/live.test.ts` › "a ddev Drupal site is found…", "a WordPress site is found…"; `shared/live.test.ts` › ddev configs | added |
+| Certificates | Only one issued by this Mac's mkcert authority for the site's host is trusted beyond Chromium's own verdict. | the owner's Drupal site by hand (mkcert not in the Keychain) | manual (a native session handler) |
+| Edits followed | Every file an edit names, Codex's patches included; a reload once quiet, longer for Sass and PHP (opcache); stylesheets swapped in place. | `shared/edits.test.ts`; `core/live.test.ts` › "an agent’s edits, turns and start reach the live view…" | added |
+| What made each part | Twig debug's BEGIN/END, suggestions and component start/end comments, data-component-id, the helpers' marks, Elementor's attributes, nested by containment, in page order. | `shared/live-names.test.ts` (8 tests); `shared/live-tree.test.ts` (6 tests); 83 to 115 regions on the owner's Drupal site, 12 on the WordPress site | added |
+| Overrides | A contrib or core template names the more specific file to create in the owner's theme. | `shared/live-names.test.ts` › "an override…" | added |
+| A component's props | Each top-level prop of its .component.yml: name, type (a theme's own types too), title, required; nothing nested, any indent width. | `shared/live.test.ts` › "a component’s props…" | added |
+| Words saved by hand | Saved to the owner's own template only when written there exactly once; contrib, core, two matches and Twig strings with quotes refused; a revert only while the file is as the edit left it. | `core/live.test.ts` › "words changed by hand" (3 tests) | added |
+| Fields saved by hand | A plain text field through the Drupal helper, as the user logged in in the view, as a new revision; formatted fields refused. | the owner's Drupal site by hand (a term's name saved and put back) | manual (needs a running Drupal) |
+| The Drupal helper | Plan shown first; module folder kept out of git; ddev drush install; Twig development mode with the previous values kept in Drupal's state; removal puts them back. | `core/live.test.ts` › "the Drupal helper, before anything is written" (3 tests); the owner's Drupal site end to end by hand | partial (install and removal need ddev) |
+| The WordPress helper | One must-use plugin file with its token, kept out of git, runs nothing; removal deletes it. | the owner's WordPress site end to end by hand | manual (needs a running WordPress) |
+| Content changes followed | The helper's count of cache tag invalidations (Drupal) or content saves (WordPress) reloads the view; a site that keeps changing stops it. | the owner's sites by hand (drush, wp-cli) | manual |
+| Before and after | A session's first before, its last after, a card's newest twelve; full page at 1440 CSS pixels, past the browser's cache; changed areas boxed. | `core/live.test.ts` › "a card’s before and after" (2 tests); a renamed term found as one area | partial (the capture needs a window) |
+| Not on phones | A phone's stream carries no live view edits, site settings, hand edits or screenshots. | `core/phone/gateway-sse-safety.test.ts` › "a phone stream carries board news but never the live view’s…" | added |
+
 ## The demo
 
 | Feature | The claim | Test | Status |
@@ -478,7 +502,7 @@ a blanket accessibility or narrow-window pass.
 
 | Coverage | Rows |
 |---|---|
-| Features and rules | 252 |
+| Features and rules | 266 |
 
 The statuses describe the evidence attached to each row. Historical test-count
 snapshots are omitted because they drift as regressions are added.

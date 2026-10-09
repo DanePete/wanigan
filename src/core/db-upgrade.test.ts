@@ -32,6 +32,36 @@ test('a database at schema 11, with data, opens and gains everything since', () 
   }
 });
 
+test('edits recorded before session_edits existed are carried into it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wg-upgrade-'));
+  try {
+    const file = join(dir, 'wanigan.db');
+    // The database as it stood just before session_edits arrived.
+    const before = MIGRATIONS.findIndex((m) => /CREATE TABLE session_edits/.test(m));
+    assert.ok(before > 0, 'the migration under test exists');
+    const old = new Database(file);
+    old.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    for (const m of MIGRATIONS.slice(0, before)) old.exec(m);
+    old.prepare("INSERT INTO meta VALUES ('schema', ?), ('store', 'wanigan-2')").run(String(before));
+    old.prepare("INSERT INTO projects (id, key, name, path, created_at) VALUES ('p1', 'NS', 'Northstar', '/tmp/ns', 1)").run();
+    old.prepare("INSERT INTO sessions (id, project_id, provider, title, state, token_hash, started_at) VALUES ('s1', 'p1', 'claude', 'A', 'exited', 'h', 1)").run();
+    const add = old.prepare('INSERT INTO session_events (session_id, at, event, tool, summary, path) VALUES (?, ?, ?, ?, NULL, ?)');
+    add.run('s1', 10, 'PostToolUse', 'Edit', '/tmp/ns/a.ts');
+    add.run('s1', 11, 'PostToolUse', 'Bash', null);
+    add.run('s1', 12, 'PostToolUse', 'Write', '/tmp/ns/b.ts');
+    old.close();
+
+    const db = openDatabase(file);
+    assert.deepEqual(db.prepare('SELECT session_id, at, path FROM session_edits ORDER BY at').all(), [
+      { session_id: 's1', at: 10, path: '/tmp/ns/a.ts' },
+      { session_id: 's1', at: 12, path: '/tmp/ns/b.ts' },
+    ]);
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a database from a newer Wanigan, or marked as another store, is refused and left untouched', () => {
   const dir = mkdtempSync(join(tmpdir(), 'wg-upgrade-'));
   try {

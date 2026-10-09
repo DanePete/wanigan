@@ -26,6 +26,7 @@ import { computeNeeds, needsByProject } from './needs.ts';
 import type { Sessions } from './sessions.ts';
 import type { Skills } from './skills.ts';
 import { skillsHandlers } from './skills-handlers.ts';
+import type { Live } from './live.ts';
 import type { Mcp } from './mcp.ts';
 import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
@@ -56,7 +57,7 @@ export function createHandlers(
   ctx: Ctx, board: Board, sessions: Sessions, accounts: Accounts, reviews: Reviews, jev: Jev, history: History,
   info: { version: string; build?: string | null; dataDir: string; claudeBinary: string | null; ghBinary?: string | null; demo: boolean; stopIfIdle: () => Result<'core.stopIfIdle'> },
   chat: Chat,
-  more: { skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints; local: LocalModels; phone: Phone },
+  more: { skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints; local: LocalModels; phone: Phone; live: Live },
 ): Handlers {
   /** The project a caller may touch: any for the owner, its own for a session. */
   const projectFor = (caller: Caller, requested?: string): string => {
@@ -292,6 +293,20 @@ export function createHandlers(
     'local.startServer': () => more.local.startServer(),
     'local.download': (p) => more.local.download(str(p.module, 'module')),
     'local.cancel': (p) => { more.local.cancel(str(p.module, 'module')); return { ok: true }; },
+    'live.site': (p) => more.live.site(str(p.projectId, 'project')),
+    'live.setSite': (p) => more.live.setSite(str(p.projectId, 'project'), { url: p.url, platform: p.platform }),
+    'live.installHelper': (p) => more.live.installHelper(str(p.projectId, 'project')),
+    'live.removeHelper': (p) => more.live.removeHelper(str(p.projectId, 'project')),
+    'live.saveShot': (p) => more.live.saveShot(p),
+    'live.shots': (p) => more.live.shots(str(p.cardId, 'card')),
+    'live.shotImage': (p) => more.live.shotImage(str(p.id, 'screenshot')),
+    'live.page': (p) => more.live.page(str(p.cardId, 'card')),
+    'live.setPage': (p) => more.live.setPage(str(p.cardId, 'card'), p.url),
+    'live.findText': (p) => more.live.findText(str(p.projectId, 'project'), p.file, p.text),
+    'live.saveText': (p) => more.live.saveText(str(p.projectId, 'project'), p.file, p.before, p.after),
+    'live.edits': (p) => more.live.edits(str(p.projectId, 'project')),
+    'live.revert': (p) => more.live.revert(str(p.id, 'edit')),
+    'live.parts': (p) => more.live.parts(str(p.projectId, 'project')),
     'sessions.models': (p) => more.models.catalogue(oneOf(p.provider, PROVIDERS, 'agent'), p.accountId ? str(p.accountId, 'account') : null, p.projectId ? str(p.projectId, 'project') : null),
     'sessions.input': (p) => { sessions.input(str(p.id, 'session'), p.data); return { ok: true }; },
     'sessions.resize': (p) => { sessions.resize(str(p.id, 'session'), p.cols, p.rows); return { ok: true }; },

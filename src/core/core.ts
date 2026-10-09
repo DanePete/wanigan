@@ -16,6 +16,7 @@ import { Checkpoints } from './checkpoints.ts';
 import { History, type HistoryLimits } from './history.ts';
 import { Reviews } from './review.ts';
 import { Phone, type PhoneOptions } from './phone/phone.ts';
+import { Live } from './live.ts';
 import { LocalModels, type LocalModelsOptions } from './local-models.ts';
 import { Models, type CodexModelReader } from './models.ts';
 import { Tokens } from './tokens.ts';
@@ -109,6 +110,7 @@ export class Core {
   readonly mcp: Mcp;
   readonly local: LocalModels;
   readonly phone: Phone;
+  readonly live: Live;
   private readonly demo: boolean;
   readonly handlers: Handlers;
   readonly server: CoreServer;
@@ -162,6 +164,7 @@ export class Core {
       this.mcp = new Mcp(ctx, this.accounts, this.board, this.sessions, {
         home, neutralDir: join(options.dataDir, 'probe'), limits: readLimits, ...(options.mcpBinaries ? { binaries: options.mcpBinaries } : {}),
       });
+      this.live = new Live(ctx, this.board, options.dataDir);
       this.phone = new Phone(ctx, {
         dataDir: options.dataDir,
         rendererDir: options.phone?.rendererDir ?? null,
@@ -185,7 +188,7 @@ export class Core {
       }, this.chat, {
         skills: this.skills, mcp: this.mcp, models: new Models(this.accounts, options.codexModels, this.local), tokens: new Tokens(this.accounts),
         folders: new AgentFolders(ctx, this.accounts, { home, dataDir: options.dataDir, limits: options.agentFolders }),
-        attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone,
+        attachments: this.attachments, checkpoints: this.checkpoints, local: this.local, phone: this.phone, live: this.live,
       });
       this.server = new CoreServer({
         socketPath: this.paths.socket,

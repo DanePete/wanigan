@@ -18,6 +18,7 @@ import type { OrbMood } from '../orb/mood';
 import { Button, IconButton, Segmented, useFocusTrap, useToast } from './ui';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments';
 import { receivesLine } from '@shared/attachments';
+import { useCoversLive } from '../lib/live';
 
 /*
  * What the chat asks of the orb, for both the button and the conversation.
@@ -113,6 +114,7 @@ function ChatSheet({ project, everywhere, setEverywhere, thread, error, orb, onC
   orb: { signal: OrbSignal; mood: OrbMood };
   onClose: () => void;
 }) {
+  useCoversLive();
   const toast = useToast();
   const titleId = useId();
   const inputId = useId();

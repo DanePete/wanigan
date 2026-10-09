@@ -1,8 +1,44 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { CoreProblem, CoreStatus, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
+import type { CoreProblem, CoreStatus, LiveBridge, LiveViewState, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
 import type { AppState } from '../shared/settings.ts';
 
 type Reply = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } };
+
+const live: LiveBridge = {
+  show: (projectId, url, bounds, token) => ipcRenderer.invoke('live:show', projectId, url, bounds, token ?? null) as Promise<boolean>,
+  bounds: (bounds) => ipcRenderer.send('live:bounds', bounds),
+  hide: () => ipcRenderer.invoke('live:hide') as Promise<void>,
+  cover: (covered) => ipcRenderer.invoke('live:cover', covered) as Promise<string | null>,
+  reload: (hard) => ipcRenderer.invoke('live:reload', hard === true) as Promise<void>,
+  css: () => ipcRenderer.invoke('live:css') as Promise<number>,
+  go: (url) => ipcRenderer.invoke('live:go', url) as Promise<boolean>,
+  back: () => ipcRenderer.invoke('live:back') as Promise<void>,
+  forward: () => ipcRenderer.invoke('live:forward') as Promise<void>,
+  open: () => ipcRenderer.invoke('live:open') as Promise<void>,
+  devtools: () => ipcRenderer.invoke('live:devtools') as Promise<void>,
+  scan: () => ipcRenderer.invoke('live:scan') as ReturnType<LiveBridge['scan']>,
+  outline: (indexes, label, tone) => ipcRenderer.invoke('live:outline', indexes, label, tone ?? 'edit') as Promise<number>,
+  clear: () => ipcRenderer.invoke('live:clear') as Promise<void>,
+  pick: () => ipcRenderer.invoke('live:pick') as ReturnType<LiveBridge['pick']>,
+  cancelPick: () => ipcRenderer.invoke('live:cancelPick') as Promise<void>,
+  capture: (rect) => ipcRenderer.invoke('live:capture', rect ?? null) as Promise<string | null>,
+  hasScript: () => ipcRenderer.invoke('live:hasScript') as Promise<boolean>,
+  problems: () => ipcRenderer.invoke('live:problems') as ReturnType<LiveBridge['problems']>,
+  helperChanged: () => ipcRenderer.invoke('live:helper', 'changed') as Promise<number | null>,
+  helperSave: async (field, before, after) => (await ipcRenderer.invoke('live:helper', 'save', { field, before, after }))
+    ?? { ok: false, error: 'The live view has no helper for this site.', label: null },
+  mutations: () => ipcRenderer.invoke('live:mutations') as Promise<number>,
+  picked: () => ipcRenderer.invoke('live:picked') as ReturnType<LiveBridge['picked']>,
+  style: (values) => ipcRenderer.invoke('live:style', values) as ReturnType<LiveBridge['style']>,
+  unstyle: () => ipcRenderer.invoke('live:unstyle') as ReturnType<LiveBridge['unstyle']>,
+  editText: () => ipcRenderer.invoke('live:editText') as ReturnType<LiveBridge['editText']>,
+  cancelEdit: () => ipcRenderer.invoke('live:cancelEdit') as Promise<void>,
+  onState(listener) {
+    const handler = (_e: IpcRendererEvent, state: LiveViewState): void => listener(state);
+    ipcRenderer.on('live:state', handler);
+    return () => { ipcRenderer.off('live:state', handler); };
+  },
+};
 
 const bridge: WaniganBridge = {
   async call(method, params) {
@@ -58,6 +94,7 @@ const bridge: WaniganBridge = {
     ipcRenderer.on('app:state', handler);
     return () => { ipcRenderer.off('app:state', handler); };
   },
+  live,
   platform: process.platform,
 };
 

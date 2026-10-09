@@ -653,6 +653,25 @@ describe('core', () => {
     await owner.call('sessions.stop', { id: a.id });
   });
 
+  test('a Codex patch counts as an edit to every file it names, for overlaps and the record', async () => {
+    const [project] = (await owner.call('projects.list', {})).filter((p) => p.key === 'NS');
+    const a = await owner.call('sessions.start', { projectId: project!.id, provider: 'shell', title: 'Patcher' });
+    const b = await owner.call('sessions.start', { projectId: project!.id, provider: 'shell', title: 'Editor' });
+    // As Codex 0.155.1 sends it: tool_name apply_patch, the patch in tool_input.command, paths relative to the session's folder.
+    const patch = ['*** Begin Patch', '*** Update File: src/one.ts', '@@', '-a', '+b', '*** Add File: src/two.ts', '+x', '*** End Patch'].join('\n');
+    core.sessions.hook(a.id, 'PostToolUse', { tool_name: 'apply_patch', tool_input: { command: patch } });
+    const rows = core.db.prepare('SELECT path FROM session_edits WHERE session_id = ? ORDER BY id').all(a.id) as { path: string }[];
+    assert.deepEqual(rows.map((r) => r.path), [join(projectDir, 'src/one.ts'), join(projectDir, 'src/two.ts')]);
+    // The second file, not only the first, is what collides.
+    core.sessions.hook(b.id, 'PostToolUse', { tool_name: 'Edit', tool_input: { file_path: join(projectDir, 'src/two.ts') } });
+    const overlap = (await owner.call('needs.list', {})).find((n) => n.kind === 'overlap');
+    assert.equal(overlap?.title, 'src/two.ts');
+    assert.match(overlap?.detail ?? '', /Patcher and Editor|Editor and Patcher/);
+    await owner.call('sessions.stop', { id: a.id });
+    await owner.call('sessions.stop', { id: b.id });
+    await waitFor('overlap cleared', async () => !(await owner.call('needs.list', {})).some((n) => n.kind === 'overlap'));
+  });
+
   test('a working Claude session that goes quiet is raised; looking at it settles it', async () => {
     const [project] = (await owner.call('projects.list', {})).filter((p) => p.key === 'NS');
     const s = await owner.call('sessions.start', { projectId: project!.id, provider: 'claude' });

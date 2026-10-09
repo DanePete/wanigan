@@ -11,6 +11,7 @@ import type { LocalStatus } from './local-models.ts';
 import type { PairingCode, PhoneDevice, PhoneStatus } from './phone.ts';
 import type { SessionCheckpoints, TurnChanges } from './checkpoints.ts';
 import type { SkillCopyPlan, SkillRead, SkillTarget, SkillsListing } from './skills.ts';
+import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveSite } from './live.ts';
 import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } from './mcp.ts';
 import type { ConversationUsage } from './tokens.ts';
 import type { SaidSearch } from './said.ts';
@@ -286,6 +287,34 @@ export interface Methods {
   'phone.me': { params: Record<string, never>; result: { device: PhoneDevice; pushKey: string | null } };
   /** A phone gives where to send it notifications (a Web Push subscription), or null to stop. */
   'phone.subscribe': { params: { endpoint?: string; p256dh?: string; auth?: string } | Record<string, never>; result: { ok: true } };
+
+  /** A project's local site for the live view: what the owner chose, and what its folder says. Reads only. */
+  'live.site': { params: { projectId: string }; result: LiveSite };
+  /** Choose the address the live view opens (null forgets it), and what the site runs on (guessed when left out). */
+  'live.setSite': { params: { projectId: string; url: string | null; platform?: LivePlatform | null }; result: LiveSite };
+  /** The site's docroot and the single-directory components its files define, so a component's edits can be outlined. Reads only. */
+  'live.parts': { params: { projectId: string }; result: LiveParts };
+  /** Write the live view's helper into the site and switch it on (Drupal: a development-only module, with Twig debug). */
+  'live.installHelper': { params: { projectId: string }; result: LiveSite };
+  /** Switch the helper off and remove what installing it wrote, putting the site's development settings back. */
+  'live.removeHelper': { params: { projectId: string }; result: LiveSite };
+  /** Keep a screenshot of a card's page (taken by the app). A second before for the same session is not kept; a new after replaces the last. */
+  'live.saveShot': { params: { cardId: string; sessionId: string | null; kind: 'before' | 'after'; url: string; data: string; width: number; height: number }; result: LiveShot | null };
+  /** A card's screenshots, oldest first. */
+  'live.shots': { params: { cardId: string }; result: LiveShot[] };
+  /** One screenshot's image, as base64 PNG. */
+  'live.shotImage': { params: { id: string }; result: { data: string } };
+  /** The page a card's screenshots are taken of; null means the site's own address. */
+  'live.page': { params: { cardId: string }; result: { url: string | null } };
+  'live.setPage': { params: { cardId: string; url: string | null }; result: { url: string | null } };
+  /** Where words shown on the page are in one of the site's templates (relative to its docroot). Reads only. */
+  'live.findText': { params: { projectId: string; file: string; text: string }; result: LiveFound };
+  /** Save words changed by hand to the owner's own template: only when they appear exactly once in it. */
+  'live.saveText': { params: { projectId: string; file: string; before: string; after: string }; result: LiveEdit };
+  /** The words saved by hand in a project, newest first. */
+  'live.edits': { params: { projectId: string }; result: LiveEdit[] };
+  /** Put back what a hand edit replaced, if the file is still as the edit left it. */
+  'live.revert': { params: { id: string }; result: LiveEdit };
   'sessions.input': { params: { id: string; data: string }; result: { ok: true } };
   'sessions.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } };
   /** The PTY's size comes with the replay; null once the session has ended. */
@@ -507,6 +536,20 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'phone.testPush': ['owner'],
   'phone.me': ['phone'],
   'phone.subscribe': ['phone'],
+  'live.site': ['owner'],
+  'live.setSite': ['owner'],
+  'live.parts': ['owner'],
+  'live.installHelper': ['owner'],
+  'live.removeHelper': ['owner'],
+  'live.saveShot': ['owner'],
+  'live.shots': ['owner'],
+  'live.shotImage': ['owner'],
+  'live.page': ['owner'],
+  'live.setPage': ['owner'],
+  'live.findText': ['owner'],
+  'live.saveText': ['owner'],
+  'live.edits': ['owner'],
+  'live.revert': ['owner'],
   'sessions.input': ['owner', 'phone'],
   'sessions.resize': ['owner', 'phone'],
   'sessions.watch': ['owner', 'phone'],
@@ -589,6 +632,14 @@ export interface Events {
   'local': Record<string, never>;
   /** A phone was paired or forgotten, or phone access changed. */
   'phone': Record<string, never>;
+  /** An agent edited files, or a session started or a turn began or ended: the live view follows these. */
+  'live': LiveEvent;
+  /** A project's live view settings changed. */
+  'liveSite': { projectId: string };
+  /** A card's screenshots changed. */
+  'liveShots': { cardId: string };
+  /** Words were saved by hand to a template, or put back. */
+  'liveEdits': { projectId: string };
   /** A composer's waiting files changed; `key` is `attachKey` of where they wait. */
   'attachments': { key: string };
   /** Terminal output, only to connections watching that session. */

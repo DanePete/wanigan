@@ -11,11 +11,11 @@ added from Wanigan 1 and the OnTour Production Hub, and why, is in
 
 ## Try it
 
-This source tree targets Wanigan 2 beta.2, a limited beta for macOS on Apple
+This source tree targets Wanigan 2 beta.3, a limited beta for macOS on Apple
 silicon. Its scope is the existing project boards, terminal sessions, saved
 work and **Needs you** workflow. The known limits below still apply.
 
-[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.2),
+[Download the DMG or zip](https://github.com/DanePete/wanigan/releases/tag/v2.0.0-beta.3),
 then drag Wanigan 2.app to Applications. The app is ad-hoc signed and not notarized;
 macOS may require approval in Privacy & Security before opening it.
 Verification status and remaining acceptance checks are recorded in
@@ -24,7 +24,7 @@ Verification status and remaining acceptance checks are recorded in
 The independent review ran on macOS 26.5 with stand-in agents. It did not
 repeat the historical real-CLI scenario described below.
 
-You can also build from source. The commands below select the beta.2 tag to
+You can also build from source. The commands below select the beta.3 tag to
 match the download; `main` may contain a
 different version.
 You need:
@@ -38,7 +38,7 @@ You need:
   for Jev (Settings › Jev).
 
 ```sh
-git clone --branch v2.0.0-beta.2 https://github.com/DanePete/wanigan.git
+git clone --branch v2.0.0-beta.3 https://github.com/DanePete/wanigan.git
 cd wanigan
 nvm install
 npm install           # also compiles SQLite and node-pty for Electron
@@ -67,7 +67,9 @@ The release DMG is assembled separately from that app.
   starts. Copying a skill to a project or adding a project's MCP server writes
   there, on your click, after showing exactly what changes. A card's worktree lives in
   Wanigan's data folder, but its branch and git's own record of the worktree are
-  in your repository, as with any `git worktree`.
+  in your repository, as with any `git worktree`. The live view's site helper
+  is the same: written into the site only when you install it, after showing
+  what it writes and runs, kept out of git, and removed on your click.
 - A core process keeps running after you quit, so your sessions keep going. It
   exits by itself ten minutes after the last session ends with no window open,
   unless phone access is on.
@@ -108,6 +110,39 @@ Each model says whether its pairing with an agent has been proven: a real turn
 with a tool call, read back from Wanigan's own record by
 `npm run local:check`. A model not yet proven may not use tools
 reliably.
+
+### Live view (optional)
+
+Your local Drupal, WordPress or other site, inside Wanigan, following the
+agents as they work. It is off until you switch it on in **Settings › Live
+view**, where Drupal, WordPress and other sites can each be on or off.
+
+- **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
+  a dev script, `.lando.yml`) and opens the site you already run. It starts
+  nothing. A ddev site's certificate is trusted when this Mac's own mkcert
+  authority issued it.
+- **Follows the edits.** When an agent edits a file, the page reloads (or swaps
+  only its stylesheets) and the parts that file made are outlined. A session's
+  own view says "*file* changed · See it".
+- **Layers.** The page's parts as a tree, named the way the site names them:
+  Drupal's templates, components, content, fields, blocks and regions (from Twig
+  debug's own comments), WordPress's template files and blocks. Each says
+  whose code it is (yours, contributed or core), how to override someone
+  else's template in your theme, and where to change it in the site's admin.
+- **Notes for an agent.** Point at parts across pages, say what should change,
+  and send them to a session as one message with a picture of each part.
+- **By hand.** Retype words on the page: they save to your own template when
+  they are written there exactly once (with a revert), or to a plain text field
+  through Drupal itself. Try a style on the page; it goes to the agent as
+  intent, never written into the stylesheets by hand.
+- **The site helper** (Drupal module or WordPress must-use plugin), installed
+  on your click: names every piece exactly, shows one piece alone (with sample
+  content where there is none), and reloads when content changes too.
+- **Before and after.** With screenshots on, each card shows its page as its
+  session began and after each turn that changed files, with what changed
+  boxed. Taken and kept on this Mac.
+- **Widths and problems.** Phone, tablet and full width; what the page reports
+  as wrong (its own error messages, its console).
 
 ### Gemini CLI
 
@@ -356,6 +391,11 @@ verification results and the behavior that remains unverified.
   call, not something Wanigan does for you.
 - Remote Control and Codex's token counts follow what the CLIs' binaries show;
   neither was run against a real model.
+- Live view: proven by hand on the owner's own local Drupal and WordPress
+  sites, not by the UI sweeps, which have no view to lay
+  over a page. Not built yet: Serve this card (switching which checkout ddev
+  serves), a component's props form, saving WordPress content by hand, and
+  Layout Builder and Canvas pieces by their own ids.
 - On your phone: proven in a phone-sized browser against the real phone
   gateway, with a stand-in Tailscale. A real phone through a real Tailscale
   address, and a notification arriving on one, have not been seen yet: a Mac

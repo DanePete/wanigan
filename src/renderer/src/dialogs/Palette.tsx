@@ -15,6 +15,7 @@ import { STATE_LABEL, ago } from '../lib/format';
 import { Icon, type IconName } from '../components/icons';
 import { KeyCaps } from '../components/ui';
 import type { DialogState } from '../App';
+import { useCoversLive } from '../lib/live';
 
 interface Item {
   id: string;
@@ -35,7 +36,7 @@ const GIT_ICON: Record<GitCommandId, IconName> = {
 };
 
 const VIEW_ICON: Record<ProjectView, IconName> = {
-  board: 'board', list: 'list', sessions: 'sessions', history: 'history', changes: 'file', decisions: 'decisions', activity: 'activity',
+  board: 'board', list: 'list', sessions: 'sessions', history: 'history', changes: 'file', decisions: 'decisions', activity: 'activity', live: 'live',
 };
 
 /** What agents said, searched by the core once three characters are typed and typing pauses. */
@@ -67,6 +68,7 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
   runCommand: (id: CommandId) => boolean;
 }) {
   const mac = bridge().platform === 'darwin';
+  useCoversLive();
   const [query, setQuery] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);

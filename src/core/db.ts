@@ -347,6 +347,77 @@ export const MIGRATIONS: readonly string[] = [
   -- Keep those raw values, but only newly validated token counts are known.
   ALTER TABLE jev_calls ADD COLUMN usage_known INTEGER NOT NULL DEFAULT 0 CHECK (usage_known IN (0, 1));
   `,
+  `
+  -- Every file a tool call changed, one row each. A Codex apply_patch can change
+  -- several; session_events.path keeps only the first. Rows go when the event
+  -- they came from is trimmed. Filled from the edits already recorded.
+  CREATE TABLE session_edits (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    event_id   INTEGER NOT NULL,
+    at         INTEGER NOT NULL,
+    path       TEXT NOT NULL
+  );
+  CREATE INDEX session_edits_by_path ON session_edits (path, at);
+  CREATE INDEX session_edits_by_session ON session_edits (session_id, at);
+  INSERT INTO session_edits (session_id, event_id, at, path)
+    SELECT session_id, id, at, path FROM session_events WHERE path IS NOT NULL;
+  `,
+  `
+  -- The live view (docs/design/2026-10-08-live-view.md). A project's local site:
+  -- the address the view opens, what it runs on, which checkout it serves (null
+  -- is the project folder) and the helper installed in it.
+  CREATE TABLE live_sites (
+    project_id  TEXT PRIMARY KEY REFERENCES projects(id),
+    url         TEXT,
+    platform    TEXT,
+    served_path TEXT,
+    served_card TEXT,
+    helper      TEXT,
+    token       TEXT,
+    updated_at  INTEGER NOT NULL
+  );
+  -- Screenshots of a card's page: before its session works, after each turn.
+  CREATE TABLE live_shots (
+    id         TEXT PRIMARY KEY,
+    card_id    TEXT NOT NULL REFERENCES cards(id),
+    session_id TEXT REFERENCES sessions(id),
+    kind       TEXT NOT NULL CHECK (kind IN ('before', 'after')),
+    url        TEXT NOT NULL,
+    file       TEXT NOT NULL,
+    width      INTEGER NOT NULL,
+    height     INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX live_shots_by_card ON live_shots (card_id, created_at);
+  -- The page each card watches, set by the owner or by the card's session.
+  CREATE TABLE live_pages (
+    card_id TEXT PRIMARY KEY REFERENCES cards(id),
+    url     TEXT NOT NULL,
+    set_by  TEXT NOT NULL,
+    set_at  INTEGER NOT NULL
+  );
+  `,
+  `
+  -- Words the owner changed by hand in the live view and saved to a template:
+  -- what was there, what replaced it, where, and each version's hash, so a
+  -- revert puts back exactly what was there, and only if nothing else has
+  -- changed the file since.
+  CREATE TABLE live_edits (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id),
+    path        TEXT NOT NULL,
+    offset      INTEGER NOT NULL,
+    line        INTEGER NOT NULL,
+    before_text TEXT NOT NULL,
+    after_text  TEXT NOT NULL,
+    before_hash TEXT NOT NULL,
+    after_hash  TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    reverted_at INTEGER
+  );
+  CREATE INDEX live_edits_by_project ON live_edits (project_id, created_at);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

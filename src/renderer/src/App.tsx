@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { CardStatus } from '@shared/model';
 import { useOrbLabRoute } from './orb/lab-route';
 import { bridge, useQuery } from './lib/api';
-import { PROJECT_VIEWS, gitHref, href, navigate, openCard, parse, useLocation, type Route } from './lib/router';
+import { LIVE_VIEW, PROJECT_VIEWS, gitHref, href, navigate, openCard, parse, useLocation, type Route } from './lib/router';
 import { INTENT_TAB, requestGit, type GitIntent } from './lib/git-intent';
 import { Rail } from './shell/Rail';
 import { useRail } from './lib/rail';
@@ -179,7 +179,7 @@ function viewName(route: Route): string {
     case 'settings': return 'Settings';
     case 'skills': return 'Skills';
     case 'mcp': return 'MCP servers';
-    case 'project': return PROJECT_VIEWS.find((v) => v.view === route.view)?.label ?? 'This view';
+    case 'project': return route.view === LIVE_VIEW.view ? 'Live view' : PROJECT_VIEWS.find((v) => v.view === route.view)?.label ?? 'This view';
     case 'session': return 'This session';
   }
 }

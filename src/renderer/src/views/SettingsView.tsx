@@ -1,6 +1,6 @@
 // The few things worth a setting. Most of Wanigan has a sensible default instead.
 import type { ProjectSummary } from '@shared/model';
-import type { NotifyLevel } from '@shared/settings';
+import type { AppSettings, NotifyLevel } from '@shared/settings';
 import type { UpdateStatus } from '@shared/updates';
 import { JevSettings } from '../components/Jev';
 import { LocalModelsSettings } from '../components/LocalModels';
@@ -9,6 +9,7 @@ import { Button, Segmented, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
 import { useAppState } from '../lib/settings';
+import '../styles/live.css';
 
 export function SettingsView({ projects }: { projects: ProjectSummary[] | undefined }) {
   return (
@@ -19,6 +20,7 @@ export function SettingsView({ projects }: { projects: ProjectSummary[] | undefi
       <div className="view-body">
         <div className="view-pad settings">
           <GeneralSettings />
+          <LiveViewSettings />
           <UpdateSettings />
           <LocalModelsSettings />
           <PhoneSettings />
@@ -72,6 +74,66 @@ function GeneralSettings() {
           Banners while Wanigan is in the background, and alert cards while it is in front, for anything that needs you somewhere
           other than what you are looking at. The dock badge always counts what needs you.
         </p>
+      </div>
+    </section>
+  );
+}
+
+/** The live view: optional, each part of it; kept by the app like the General section. */
+function LiveViewSettings() {
+  const { state, update } = useAppState();
+  const toast = useToast();
+  const fail = (e: unknown): void => toast((e as Error)?.message ?? String(e), 'error');
+  const s = state?.settings;
+  const set = (patch: Partial<AppSettings>): void => void update(patch).catch(fail);
+  const on = s?.liveView ?? false;
+  // What the switches below say when they cannot be used yet.
+  const why = s && !on ? 'live-settings-why' : undefined;
+  return (
+    <section className="settings-group" aria-labelledby="set-live">
+      <header className="account-group-head">
+        <h2 id="set-live">Live view</h2>
+      </header>
+      <div className="settings-row">
+        <label className="check-row">
+          <input type="checkbox" checked={on} disabled={!s} onChange={(e) => set({ liveView: e.target.checked })} />
+          <span>
+            Show each project’s local site inside Wanigan
+            <span className="faint small"> — a Live tab on the project and beside a session’s terminal. It opens the site you already run (ddev, Lando, a dev server). Nothing is installed or started.</span>
+          </span>
+        </label>
+        {why ? <p id={why} className="faint small live-settings-why">Switch the live view on to choose these.</p> : null}
+      </div>
+      <fieldset className="settings-row live-settings-kinds">
+        <legend className="settings-label">Show it for</legend>
+        <label className="check-row">
+          <input type="checkbox" checked={s?.liveDrupal ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveDrupal: e.target.checked })} />
+          <span>Drupal sites <span className="faint small"> — knows which component or template made each part of the page</span></span>
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={s?.liveWordpress ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveWordpress: e.target.checked })} />
+          <span>WordPress sites <span className="faint small"> — knows blocks, template parts and Elementor elements</span></span>
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={s?.liveSites ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveSites: e.target.checked })} />
+          <span>Other sites and JS apps <span className="faint small"> — any address: a dev server, a static site</span></span>
+        </label>
+      </fieldset>
+      <div className="settings-row live-settings-checks">
+        <label className="check-row">
+          <input type="checkbox" checked={s?.liveFollow ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveFollow: e.target.checked })} />
+          <span>
+            Follow the agents’ edits
+            <span className="faint small"> — reload as they change files, and outline what each file made. Off: an edit only says what changed, and you reload.</span>
+          </span>
+        </label>
+        <label className="check-row">
+          <input type="checkbox" checked={s?.liveShots ?? false} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveShots: e.target.checked })} />
+          <span>
+            Keep before and after screenshots on cards
+            <span className="faint small"> — a full-page picture of the card’s page as its session begins, and again after each turn that changes files, shown on the card with what changed marked. Taken on this Mac, kept in Wanigan’s data folder.</span>
+          </span>
+        </label>
       </div>
     </section>
   );

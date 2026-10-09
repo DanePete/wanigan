@@ -14,6 +14,13 @@ import { extname, join, normalize, sep } from 'node:path';
 import { PHONE_PATH, type PhoneDevice } from '../../shared/phone.ts';
 import { CoreError } from '../../shared/protocol.ts';
 
+/**
+ * Events a phone never needs: terminal output arrives only for terminals it
+ * watches, and the live view's edits and site settings (paths on this Mac,
+ * many a second while an agent works) have nothing on the phone to follow them.
+ */
+const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots']);
+
 const MAX_RPC_BODY = 256 * 1024;
 const MAX_PAIR_BODY = 4 * 1024;
 const MAX_WATCHED = 4;
@@ -184,7 +191,7 @@ export class Gateway {
     const send = (event: string, data: unknown): void => { write(`data: ${JSON.stringify({ event, data })}\n\n`); };
     write(': connected\n\n');
     if (stopped) return;
-    offEvent = this.options.onEvent((event, data) => { if (event !== 'pty.data') send(event, data); });
+    offEvent = this.options.onEvent((event, data) => { if (!NOT_FOR_PHONES.has(event)) send(event, data); });
     if (stopped) { offEvent(); return; }
     const watching = new Set(watched);
     offData = this.options.onData((sessionId, seq, data) => { if (watching.has(sessionId)) send('pty.data', { sessionId, seq, data }); });
