@@ -3,10 +3,11 @@
 // errors, error text reaching the screen, page-level horizontal overflow, or a
 // view still loading. Screenshots go to .artifacts/ui/<theme>-<name>.png — look
 // at them; the assertions only catch what was thought of in advance.
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
+import { liveStub } from './ui-live-stub.mjs';
 
 const out = join(root, '.artifacts', 'ui');
 mkdirSync(out, { recursive: true });
@@ -1272,6 +1273,121 @@ try {
     await unset.waitForTimeout(400);
     if (await unset.$('.jev-strip')) failures.push(`${theme}/jev: the hidden hint came back`);
     await unset.close();
+
+    // Local and Live: the live view's environment tabs and Compare. The browser has no view to lay over a page, so
+    // the stub plays the main process (scripts/ui-live-stub.mjs) and answers Compare with two pictures of a made-up
+    // page it draws itself. Everything it asks the core for is real: the environments, the ignored areas.
+    {
+      const cmp = await context.newPage();
+      cmp.on('pageerror', (e) => errors.push(`compare pageerror: ${e.message}`));
+      cmp.on('console', (m) => { if (m.type() === 'error') errors.push(`compare console: ${m.text()}`); });
+      await cmp.addInitScript(liveStub);
+      await cmp.goto(`${base}#/p/${ns}/board`);
+      await cmp.waitForSelector('.card');
+      const project = await cmp.evaluate(async (key) => (await window.wanigan.call('projects.list', {})).find((p) => p.key === key), ns);
+      const rpc = (method, params) => cmp.evaluate(([m, p]) => window.wanigan.call(m, p), [method, params]);
+      await rpc('live.setSite', { projectId: project.id, url: 'https://acme.ddev.site/', platform: 'drupal' });
+      for (const [name, url] of [['Live', 'https://www.acme.example/'], ['Dev', 'https://dev-acme.pantheonsite.io/'], ['Test', 'https://test-acme.pantheonsite.io/']]) {
+        await rpc('live.setEnv', { projectId: project.id, name, url });
+      }
+      // A file in the project naming one more, so the settings show what was found (taken away again below).
+      const aliases = join(project.path, 'drush', 'sites', 'acme.site.yml');
+      const hadDrush = existsSync(join(project.path, 'drush'));
+      mkdirSync(join(project.path, 'drush', 'sites'), { recursive: true });
+      writeFileSync(aliases, 'stage:\n  uri: https://stage.acme.example\n');
+      try {
+        await cmp.goto(`${base}#/p/${ns}/live`);
+        await cmp.waitForSelector('.live-envs [role="radio"]:has-text("Live")', { timeout: 8000 }).catch(() => failures.push(`${theme}/live: no environment tabs`));
+        const tabs = await cmp.$$eval('.live-envs [role="radio"]', (els) => els.map((e) => e.textContent));
+        if (tabs.join() !== 'Local,Dev,Test,Live') failures.push(`${theme}/live: the tabs are ${tabs.join()}, wanted Local, Dev, Test, Live`);
+        await cmp.waitForTimeout(250);
+        await cmp.screenshot({ path: join(out, `${theme}-live-envs.png`) });
+
+        await cmp.click('.live-envs [role="radio"]:has-text("Live")');
+        await cmp.waitForSelector('.live-hosted', { timeout: 3000 }).catch(() => failures.push(`${theme}/live: a hosted tab does not say it is read-only`));
+        const hostedShow = await cmp.evaluate(() => window.__wgLive.shows.at(-1));
+        if (!hostedShow?.env || hostedShow.token !== null || !hostedShow.url.startsWith('https://www.acme.example/')) failures.push(`${theme}/live: the hosted tab was shown as ${JSON.stringify(hostedShow)}`);
+        if (!/sends requests to that site, only when you do/.test(await cmp.textContent('.live-hosted'))) failures.push(`${theme}/live: the hosted tab does not say it sends requests to that site`);
+        await cmp.waitForTimeout(200);
+        await cmp.screenshot({ path: join(out, `${theme}-live-hosted.png`) });
+        await cmp.click('.live-envs [role="radio"]:has-text("Local")');
+        if ((await cmp.evaluate(() => window.__wgLive.shows.at(-1)))?.env !== null) failures.push(`${theme}/live: Local was not shown again as the local site`);
+
+        // Compare: both sides taken at the view's width, the hosted one never with a token.
+        await cmp.click('.live-bar button:has-text("Compare")');
+        await cmp.waitForSelector('.cmp-frame canvas', { timeout: 10000 }).catch(() => failures.push(`${theme}/compare: the pictures never showed`));
+        await cmp.waitForSelector('.cmp-summary', { timeout: 5000 }).catch(() => {});
+        const asked = await cmp.evaluate(() => window.__wgLive.shots.slice(-2));
+        const local = asked.find((r) => r.env === null);
+        const hosted = asked.find((r) => r.env !== null);
+        if (!local?.scan || local.width !== 1440 || !hosted || hosted.token !== null || hosted.scan || !hosted.url.startsWith('https://www.acme.example/')) {
+          failures.push(`${theme}/compare: asked for ${JSON.stringify(asked)}`);
+        }
+        const summary = await cmp.textContent('.cmp-summary').catch(() => '');
+        if (!/areas differ/.test(summary) || !/Live is 96 px taller/.test(summary) || !/96 px only on Live/.test(summary)) failures.push(`${theme}/compare: the summary says "${summary}"`);
+        const changes = await cmp.$$eval('.cmp-change', (els) => els.map((e) => e.textContent));
+        if (changes.length !== 3 || !/Hero/.test(changes[0]) || !/News list.*only on Live/.test(changes[1]) || !/Footer/.test(changes[2])) failures.push(`${theme}/compare: the changes are ${JSON.stringify(changes)}`);
+        if (!/local database is older than Live’s/.test(await cmp.textContent('.dialog .cmp-note'))) failures.push(`${theme}/compare: no note that content differences are usually an older database`);
+        if (!(await cmp.evaluate(() => document.activeElement?.classList.contains('cmp-frame')))) failures.push(`${theme}/compare: the keys are not on the pictures when they arrive`);
+        const boxes = await cmp.$$eval('.cmp-box', (els) => els.map((e) => e.textContent));
+        if (boxes.length !== 3 || boxes[0] !== '1 · Hero') failures.push(`${theme}/compare: the boxes are ${JSON.stringify(boxes)}`);
+        await cmp.waitForTimeout(200);
+        await cmp.screenshot({ path: join(out, `${theme}-live-compare-slider.png`) });
+        const mode = () => cmp.$eval('.cmp-bar [role="radio"][aria-checked="true"]', (e) => e.textContent);
+        for (const [key, name, shot] of [['d', 'Difference', 'difference'], ['o', 'Onion skin', 'onion'], ['t', 'Side by side', 'side'], ['ArrowRight', 'Flip', 'flip']]) {
+          await cmp.keyboard.press(key);
+          await cmp.waitForTimeout(150);
+          if ((await mode()) !== name) failures.push(`${theme}/compare: ${key} gave ${await mode()}, wanted ${name}`);
+          await cmp.screenshot({ path: join(out, `${theme}-live-compare-${shot}.png`) });
+        }
+        if (!/Showing Live/.test(await cmp.textContent('.cmp-flip'))) failures.push(`${theme}/compare: → did not show Live`);
+        await cmp.keyboard.press(' ');
+        if (!/Showing Local/.test(await cmp.textContent('.cmp-flip'))) failures.push(`${theme}/compare: Space did not flip back to Local`);
+        await cmp.keyboard.press('ArrowLeft');
+        if (!/Showing Local/.test(await cmp.textContent('.cmp-flip'))) failures.push(`${theme}/compare: ← did not show Local`);
+        const at = () => cmp.$$eval('.cmp-change', (els) => els.findIndex((e) => e.getAttribute('aria-current') === 'true'));
+        await cmp.keyboard.press('j');
+        await cmp.keyboard.press('j');
+        if ((await at()) !== 2) failures.push(`${theme}/compare: J J reached change ${await at()}, wanted the third`);
+        await cmp.keyboard.press('k');
+        if ((await at()) !== 1) failures.push(`${theme}/compare: K went to ${await at()}`);
+        await cmp.keyboard.press('j');
+        await cmp.keyboard.press('s');
+        // The footer's clock changes on its own: ignored on this page, it is no longer a change, and the site remembers it.
+        await cmp.keyboard.press('i');
+        await cmp.waitForSelector('.cmp-ignored', { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: ignoring the clock showed nothing`));
+        const kept = await rpc('live.envs', { projectId: project.id });
+        if (kept.masks.length !== 1 || kept.masks[0].width !== 1440 || kept.masks[0].label !== 'Footer' || kept.masks[0].path === null) failures.push(`${theme}/compare: the core keeps ${JSON.stringify(kept.masks)}`);
+        const left = await cmp.$$eval('.cmp-change', (els) => els.map((e) => e.textContent));
+        if (left.length !== 2 || left.some((t) => /Footer/.test(t))) failures.push(`${theme}/compare: after ignoring the clock the changes are ${JSON.stringify(left)}`);
+        await cmp.waitForTimeout(200);
+        await cmp.screenshot({ path: join(out, `${theme}-live-compare-ignored.png`) });
+        // 2: both taken again at a tablet's width.
+        await cmp.keyboard.press('2');
+        await cmp.waitForFunction(() => window.__wgLive.shots.filter((r) => r.width === 768).length === 2, null, { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: 2 did not take both at 768 px`));
+        await cmp.waitForSelector('.cmp-change', { timeout: 8000 }).catch(() => {});
+        await cmp.waitForTimeout(250);
+        await cmp.screenshot({ path: join(out, `${theme}-live-compare-tablet.png`) });
+        await cmp.keyboard.press('Escape');
+        await cmp.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/compare: Escape did not close it`));
+
+        // The site settings: environments kept, and the one the project's files name besides.
+        await cmp.click('.live-bar button[aria-label="Site settings"]');
+        await cmp.waitForSelector('.live-env-settings', { timeout: 5000 }).catch(() => failures.push(`${theme}/live: no environments in the site settings`));
+        const found = await cmp.textContent('.live-env-found').catch(() => '');
+        if (!/Stage/.test(found) || !/drush\/sites\/acme\.site\.yml: uri of @acme\.stage/.test(found)) failures.push(`${theme}/live: the settings found "${found}"`);
+        await cmp.locator('.live-env-settings').scrollIntoViewIfNeeded();
+        await cmp.waitForTimeout(200);
+        await cmp.screenshot({ path: join(out, `${theme}-live-env-settings.png`), fullPage: true });
+      } finally {
+        rmSync(hadDrush ? aliases : join(project.path, 'drush'), { recursive: true, force: true });
+        const left = await rpc('live.envs', { projectId: project.id });
+        for (const m of left.masks) await rpc('live.unmask', { projectId: project.id, id: m.id });
+        for (const e of left.envs) await rpc('live.removeEnv', { projectId: project.id, id: e.id });
+        await rpc('live.setSite', { projectId: project.id, url: null });
+        await cmp.close();
+      }
+    }
 
     for (const e of errors) failures.push(`${theme}: ${e}`);
     await context.close();
