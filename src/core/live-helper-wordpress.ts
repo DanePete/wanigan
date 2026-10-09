@@ -356,7 +356,7 @@ final class Wanigan_Live {
 				self::block_start();
 				return null;
 			case 'the_content':
-				return self::content_start();
+				return self::content_start(isset($args[1]) ? $args[1] : null);
 			case 'the_title':
 			case 'the_excerpt':
 			case 'post_thumbnail_html':
@@ -956,12 +956,16 @@ final class Wanigan_Live {
 	 * block does (blocks/post-content.php), or when a theme file applies it itself. Other callers (excerpts, feeds,
 	 * meta descriptions, the REST API) are not a part of the page.
 	 */
-	private static function content_start() {
+	private static function content_start($value) {
 		$site = self::filter_site('apply_filters');
 		if (!$site) return null;
-		$ok = in_array($site['caller'], array('the_content', 'render_block_core_post_content'), true) || self::in_theme($site['file']);
 		$post = get_post();
-		if (!$ok || !$post instanceof WP_Post) return null;
+		if (!$post instanceof WP_Post) return null;
+		$ok = in_array($site['caller'], array('the_content', 'render_block_core_post_content'), true);
+		// A theme file may run any text through the_content (a custom field, an option); it is this post's content
+		// only when it is the post's own.
+		if (!$ok && self::in_theme($site['file']) && is_string($value)) $ok = $value === $post->post_content || $value === get_the_content(null, false, $post);
+		if (!$ok) return null;
 		$type = get_post_type_object($post->post_type);
 		$label = ($type ? $type->labels->singular_name : $post->post_type) . ' ' . $post->ID . ($post->post_title !== '' ? ': ' . wp_strip_all_tags($post->post_title) : '');
 		$extra = array();
@@ -2879,7 +2883,10 @@ final class Wanigan_Live {
 		if ($q === '') self::answer(array('cacheId' => $cache, 'items' => $index));
 		$limit = isset($_GET['limit']) ? max(1, min(50, (int) $_GET['limit'])) : 50;
 		$found = self::find_search(self::cut($q, 200), $limit);
-		self::answer(array('cacheId' => $cache, 'items' => array_merge($found['items'], $index), 'total' => $found['total'], 'truncated' => $found['total'] > count($found['items'])));
+		$hits = array();
+		foreach ($found['items'] as $i) $hits[$i['id']] = true;
+		$rest = array_values(array_filter($index, function ($i) use ($hits) { return !isset($hits[$i['id']]); }));
+		self::answer(array('cacheId' => $cache, 'items' => array_merge($found['items'], $rest), 'total' => $found['total'], 'truncated' => $found['total'] > count($found['items'])));
 	}
 
 	private static function find_index(): array {

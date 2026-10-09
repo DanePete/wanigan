@@ -246,9 +246,11 @@ check was chosen because it refuses rather than guesses.
 
 ## Content, titles, excerpts, featured images
 
-`post-template.php the_content()` applies `the_content` and prints it; so do
-`blocks/post-content.php render_block_core_post_content()` and theme files that
-call `apply_filters('the_content', ...)` themselves. Core also applies it
+`post-template.php the_content()` applies `the_content` and prints it; so does
+`blocks/post-content.php render_block_core_post_content()`, and so may a theme
+file that calls `apply_filters('the_content', ...)` itself — on the post's own
+content, or on anything else (a custom field, an option), so a theme file's call
+counts only when its text is the post's `post_content` or `get_the_content()`. Core also applies it
 inside `wp_trim_excerpt()` (excerpts), feeds and the REST API. Only the first
 three are parts (the call site, found with a bounded backtrace, decides); each
 is its own part, so a post whose content is printed twice has two.
