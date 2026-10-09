@@ -42,7 +42,7 @@ stage() {
   local site="$1"; shift
   rm -rf "$site/.demo-build"
   mkdir -p "$site/.demo-build/images"
-  cp "$HERE/images/make-images.mjs" "$site/.demo-build/images/"
+  cp "$HERE"/images/*.mjs "$site/.demo-build/images/"
   for part in "$@"; do cp -R "$HERE/$part" "$site/.demo-build/"; done
 }
 
@@ -63,13 +63,14 @@ draw_images() {
 
 # A local git repository for the site, so Wanigan's Changes view and the live
 # view's helper (which writes to .git/info/exclude) have one. Never pushed.
+# git_init <site> <first commit message> <author name> <author email>
 git_init() {
   local site="$1" message="$2"
   cd "$site"
   if [ ! -d .git ]; then
     git init -q -b main
-    git config user.name "Northstar Demo"
-    git config user.email "demo@northstar.example"
+    git config user.name "$3"
+    git config user.email "$4"
   fi
   if ! git rev-parse -q --verify HEAD >/dev/null; then
     git add -A
@@ -137,7 +138,7 @@ build_drupal() {
   step "Drupal: the Live stand-in at https://$live"
   live_drupal "$site" "$live"
 
-  git_init "$site" "Northstar Storefront, the Wanigan demo store"
+  git_init "$site" "Northstar Storefront, the Wanigan demo store" "Northstar Demo" "demo@northstar.example"
   rm -rf "$site/.demo-build"
   DRUPAL_DONE="https://$name.ddev.site  (admin / $pass)  Live stand-in: https://$live"
 }
