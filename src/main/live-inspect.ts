@@ -15,10 +15,15 @@
 //   it to /_wanigan/edit/done, it closes and the page reloads with the change.
 // - A schema save is checked here against the schema the trace gave before it
 //   is posted; the helper checks it again and is the authority.
+// - Moving parts by hand (live-arrange.ts): the page script shows handles and
+//   where a drag would land, and answers a drop; a move or an insert is checked
+//   against the trace here, posted to the helper, and its undo token kept, so
+//   only an undo the site gave can be asked for.
 import { WebContentsView, ipcMain, type BrowserWindow, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron';
 import type { LiveBounds } from '../shared/bridge.ts';
 import { sameSite } from '../shared/live.ts';
 import { boxOf, paintItems, type LiveEditSaved, type LiveEdited, type LiveTraceAnswer } from '../shared/live-lens.ts';
+import { arrangeDrop, arrangeSpec, checkInsert, checkMove, undoToken, type ArrangeDrop, type LiveMoveSaved } from '../shared/live-arrange.ts';
 import { checkValue } from '../shared/live-schema.ts';
 import { TRACE_ID, parseTrace, type EditTarget, type LiveTrace } from '../shared/live-trace.ts';
 import type { LiveCurrent, LiveViewHooks } from './live-view.ts';
@@ -76,6 +81,8 @@ export function wireLiveInspect(options: {
   let painting = false;
   /** The sheet showing a site's own edit form. */
   let editing: { view: WebContentsView; target: EditTarget } | null = null;
+  /** Undo tokens the site gave for moves and inserts in this view, newest last. */
+  let undos: string[] = [];
 
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
   const tell = (channel: string, payload: unknown): void => {
@@ -107,6 +114,7 @@ export function wireLiveInspect(options: {
       latest = null;
       held = null;
       painting = false;
+      undos = [];
       if (!wc) return;
       // Escape in the page, while a lens is on, takes the lens away; the page still hears it.
       wc.on('before-input-event', (_e, input) => {
@@ -127,6 +135,49 @@ export function wireLiveInspect(options: {
       headers: { 'X-Wanigan-Live': cur.token, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
       ...(init.body ? { body: init.body } : {}),
     });
+  };
+
+  /** Post JSON to the helper and read its short JSON answer; the status is 0 when nothing answered. */
+  const post = async (cur: LiveCurrent, origin: string, path: string, payload: unknown): Promise<{ status: number; answer: Record<string, unknown> | null; error: string | null }> => {
+    let status = 0;
+    try {
+      const res = await ask(cur, origin, path, { method: 'POST', body: JSON.stringify(payload) });
+      status = res.status;
+      const parsed = JSON.parse(await readBounded(res, MAX_ANSWER_BYTES)) as unknown;
+      return { status, answer: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null, error: null };
+    } catch (error) {
+      return { status, answer: null, error: (error as Error).message || 'no answer' };
+    }
+  };
+
+  /** The trace the view holds now, if it is for the page shown. */
+  const holding = (): { cur: LiveCurrent; origin: string; trace: LiveTrace } | null => {
+    const cur = options.current();
+    const h = held;
+    return cur && h && h.projectId === cur.projectId && h.webContentsId === cur.webContents.id ? { cur, origin: h.origin, trace: h.trace } : null;
+  };
+
+  /** What a move, an insert or an undo came to, from the helper's answer. A 409 is the collection having changed meanwhile. */
+  const moved = (cur: LiveCurrent, r: { status: number; answer: Record<string, unknown> | null; error: string | null }): LiveMoveSaved => {
+    if (r.answer?.ok === true) {
+      const undo = undoToken(r.answer.undo);
+      if (undo) undos = [...undos.filter((u) => u !== undo), undo].slice(-50);
+      if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
+      return { ok: true, undo, revision: typeof r.answer.revision === 'string' ? r.answer.revision.slice(0, 100) : null };
+    }
+    const items = Array.isArray(r.answer?.items) ? (r.answer.items as unknown[]).filter((i): i is string => typeof i === 'string').slice(0, 4000) : null;
+    if (r.status === 409) {
+      // What the page shows is out of date: show the order as it is now.
+      if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
+      return { ok: false, conflict: true, items, error: 'It changed on the site since this page was shown, so nothing was moved. The page now shows the order as it is.' };
+    }
+    const said = typeof r.answer?.error === 'string' ? r.answer.error.slice(0, 500) : null;
+    return {
+      ok: false, conflict: false, items: null,
+      error: said ?? (r.status === 0 ? `The site did not answer: ${r.error ?? 'no answer'}.`
+        : r.status === 403 ? 'The site refused: the user logged in in the live view may not change this.'
+          : `The site did not save it (it answered ${r.status}).`),
+    };
   };
 
   ipcMain.handle('live:trace', async (event): Promise<LiveTraceAnswer> => {
@@ -272,6 +323,56 @@ export function wireLiveInspect(options: {
         : status === 404 ? 'The site no longer offers this edit. Reload the page, then try again.'
           : `The site did not save it (it answered ${status}).`;
     return { ok: false, error: why, revision: null };
+  });
+
+  // Arranging: the page shows handles and where a drag would land; this answers when something is dropped.
+  ipcMain.handle('live:arrange', async (event, raw: unknown): Promise<ArrangeDrop | null> => {
+    if (!ok(event)) return null;
+    const spec = arrangeSpec(raw);
+    if (!spec) return null;
+    return arrangeDrop(await options.run<unknown>(`window.__wl && window.__wl.arrange ? window.__wl.arrange(${JSON.stringify(spec)}) : null`, null));
+  });
+  ipcMain.handle('live:disarm', async (event) => { if (options.trusted(event)) await options.run('window.__wl && window.__wl.disarm && window.__wl.disarm()', null); });
+
+  // A new order shown on the page before it is saved (the keyboard's moves), and taking it away.
+  ipcMain.handle('live:preview', async (event, item: unknown, ref: unknown, place: unknown) => {
+    const n = (v: unknown): number | null => (Number.isInteger(v) && (v as number) >= 0 ? v as number : null);
+    if (!ok(event) || n(item) === null || n(ref) === null || (place !== 'before' && place !== 'after' && place !== 'into')) return false;
+    return options.run<boolean>(`window.__wl && window.__wl.preview ? window.__wl.preview(${n(item)}, ${n(ref)}, ${JSON.stringify(place)}) : false`, false);
+  });
+  ipcMain.handle('live:unpreview', async (event) => { if (options.trusted(event)) await options.run('window.__wl && window.__wl.unpreview && window.__wl.unpreview()', null); });
+
+  ipcMain.handle('live:move', async (event, raw: unknown): Promise<LiveMoveSaved> => {
+    const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
+    if (!ok(event)) return refused('The live view is off.');
+    const h = holding();
+    if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
+    const move = checkMove(h.trace, raw);
+    if (typeof move === 'string') return refused(move);
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/move', { trace: h.trace.id, ...move }));
+  });
+
+  ipcMain.handle('live:insert', async (event, raw: unknown): Promise<LiveMoveSaved> => {
+    const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
+    if (!ok(event)) return refused('The live view is off.');
+    const h = holding();
+    if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
+    const insert = checkInsert(h.trace, raw);
+    if (typeof insert === 'string') return refused(insert);
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert }));
+  });
+
+  ipcMain.handle('live:undo', async (event, raw: unknown): Promise<LiveMoveSaved> => {
+    const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
+    if (!ok(event)) return refused('The live view is off.');
+    const token = undoToken(raw);
+    const cur = options.current();
+    const page = cur?.webContents.getURL();
+    // Only an undo this view was given by this site, asked of the site the page is on.
+    if (!token || !undos.includes(token) || !cur || !page || !sameSite(cur.base, page)) return refused('That can no longer be undone here.');
+    const result = moved(cur, await post(cur, new URL(page).origin, '/_wanigan/undo', { undo: token }));
+    if (result.ok) undos = undos.filter((u) => u !== token);
+    return result.ok || !result.conflict ? result : { ...result, error: 'It changed on the site since, so it was not put back. The page now shows it as it is.' };
   });
 
   return { hooks };

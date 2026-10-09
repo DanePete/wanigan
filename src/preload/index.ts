@@ -57,6 +57,13 @@ const live: LiveBridge = {
     ipcRenderer.on('live:key', handler);
     return () => { ipcRenderer.off('live:key', handler); };
   },
+  arrange: (spec) => ipcRenderer.invoke('live:arrange', spec) as ReturnType<LiveBridge['arrange']>,
+  disarm: () => ipcRenderer.invoke('live:disarm') as Promise<void>,
+  preview: (item, ref, place) => ipcRenderer.invoke('live:preview', item, ref, place) as Promise<boolean>,
+  unpreview: () => ipcRenderer.invoke('live:unpreview') as Promise<void>,
+  move: (move) => ipcRenderer.invoke('live:move', move) as ReturnType<LiveBridge['move']>,
+  insert: (insert) => ipcRenderer.invoke('live:insert', insert) as ReturnType<LiveBridge['insert']>,
+  undo: (token) => ipcRenderer.invoke('live:undo', token) as ReturnType<LiveBridge['undo']>,
 };
 
 const bridge: WaniganBridge = {

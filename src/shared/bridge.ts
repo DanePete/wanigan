@@ -2,6 +2,7 @@
 // bridge; in the browser test harness it is the same shape over HTTP.
 import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
+import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved } from './live-arrange.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -120,6 +121,18 @@ export interface LiveBridge {
   onEdited(listener: (edited: LiveEdited) => void): () => void;
   /** A key pressed in the page that the window acts on: Escape, while a lens is on. */
   onKey(listener: (key: 'Escape') => void): () => void;
+  /** Let the owner drag what the spec allows on the page; answers what was dropped (shown on the page, not saved), or null when arranging stopped. */
+  arrange(spec: ArrangeSpec): Promise<ArrangeDrop | null>;
+  disarm(): Promise<void>;
+  /** Show a part moved before, after or into another on the page, until unpreview or a reload. */
+  preview(item: number, ref: number, place: 'before' | 'after' | 'into'): Promise<boolean>;
+  unpreview(): Promise<void>;
+  /** Save a move through the site helper; the page reloads with it. */
+  move(move: LiveMove): Promise<LiveMoveSaved>;
+  /** Insert a palette entry through the site helper; the page reloads with it. */
+  insert(insert: LiveInsert): Promise<LiveMoveSaved>;
+  /** Put back a move or insert, by the token the site gave for it. */
+  undo(token: string): Promise<LiveMoveSaved>;
 }
 
 export interface WaniganBridge {
