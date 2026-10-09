@@ -1,5 +1,5 @@
 // A chosen part of the live page, however it was chosen (picked on the page or
-// in the Layers tree): four verbs first, then the note to an agent, then why it
+// in the Layers tree): five verbs first, then the note to an agent, then why it
 // looks as it does, folded.
 //
 // - Edit ▾ is the one place for every way of changing it, grouped by where the
@@ -7,7 +7,9 @@
 //   the part, the admin page), on the page (retyping its words, trying a
 //   style), and in code (its template in the code editor, an override).
 // - Move opens where it is and moves it (Arrange.tsx); Code opens what made it
-//   in the code editor; Alone shows it with nothing around it.
+//   in the code editor; Alone shows it with nothing around it; Take out takes
+//   an item out of its collection (only its placement or reference goes),
+//   asking first when what it is in is shared, or says why it cannot.
 // - A hand edit is tried in the page first. Words save straight to the owner's
 //   own template only when they appear there exactly once; anything else
 //   becomes a note for an agent, with the exact change attached. Styles are
@@ -20,6 +22,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject, type React
 import type { LiveComponent, LiveFound, LivePick, LivePlatform, LiveRegion, LiveSite } from '@shared/live';
 import { partFor, type LiveTraceAnswer, type PartIndex } from '@shared/live-lens';
 import type { EditTarget, LiveTrace } from '@shared/live-trace';
+import { checkRemove, collectionOf } from '@shared/live-arrange';
 import { editPath, entityOf, nameOf, originOf, overrideDir, overrides, type LiveOrigin } from '@shared/live-names';
 import { diagnose, troubleText } from '@shared/live-site';
 import { ancestors, kindKey } from '@shared/live-tree';
@@ -32,6 +35,7 @@ import { Button, Disclosure, IconButton, useToast } from '../ui';
 import { KIND_ICON } from './Layers';
 import { NoteComposer, draftFor } from './Notes';
 import { MoveSection, type useArrange } from './Arrange';
+import { HelperDialog } from './Helper';
 import { EDIT_KIND, TraceAccess, TraceCache, TraceCost, TraceData, TraceHistory, TraceMadeBy } from './PartTrace';
 import { TraceNote } from './TraceNote';
 import { SiteAiSection } from './SiteAi';
@@ -46,8 +50,8 @@ export interface Selection {
   how?: 'pick' | 'tree';
 }
 
-/** The four verbs, for the live view's keys (E, M, ., ⇧A). Each does what its button does, or nothing when it is off. */
-export interface InspectorVerbs { edit: () => void; move: () => void; code: () => void; alone: () => void }
+/** The five verbs, for the live view's keys (E, M, ., ⇧A, ⇧X). Each does what its button does, or says why it cannot. */
+export type InspectorVerbs = Record<'edit' | 'move' | 'code' | 'alone' | 'take-out', () => void>;
 
 const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contributed', core: 'Drupal core' };
 
@@ -110,12 +114,15 @@ export function Inspector({ project, platform, selection, regions, components, d
   const [style, setStyle] = useState<StyleChange[]>([]);
   const [styling, setStyling] = useState(false);
   const [moving, setMoving] = useState(false);
+  /** Why the chosen part cannot be taken out, said under the verbs once Take out is pressed. */
+  const [outWhy, setOutWhy] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
   const movePanel = useRef<HTMLElement | null>(null);
   const editOpen = useRef<(() => void) | null>(null);
   const aloneOpen = useRef<(() => void) | null>(null);
   // A part pointed at keeps its own element; one chosen in the tree is the same part whichever element stands for it.
   const key = `${region?.index ?? ''}:${selection.how === 'tree' && region ? '' : pick?.selector ?? ''}`;
-  useEffect(() => { setWords(null); setWordsFile(null); setStyle([]); setStyling(false); setMoving(false); }, [key]);
+  useEffect(() => { setWords(null); setWordsFile(null); setStyle([]); setStyling(false); setMoving(false); setOutWhy(null); }, [key]);
 
   const go = (path: string): void => {
     if (!page || !live) return;
@@ -137,6 +144,11 @@ export function Inspector({ project, platform, selection, regions, components, d
   const canMove = !readOnly && !!now && !!arrange.movable(now);
   const showMove = !!now && (moving || arrange.pending?.region === now.index);
   const cms = platform === 'wordpress' ? 'WordPress' : 'Drupal';
+  // Take out: the chosen part, when it is an item of one of the trace's collections.
+  const own = now && !readOnly ? parts.byRegion.get(now.index) ?? null : null;
+  const home = own && trace ? collectionOf(trace, own.id) : null;
+  /** A collection the helper says nothing about taking out of: a helper older than version 4. */
+  const oldHelper = !!home && home.removes !== true && !home.removeWhy;
 
   /* ── Edit ▾: every way to change it, by where the change is saved ── */
   const targets = traced && trace && !readOnly ? (traced.part.edits ?? []).map((id) => parts.edits.get(id)).filter((e): e is EditTarget => !!e) : [];
@@ -169,6 +181,13 @@ export function Inspector({ project, platform, selection, regions, components, d
   if (override) editItems.push({ id: 'override', group: inCode, icon: 'file', label: 'Create override…', detail: `${override.label}: a copy for this part only, in your theme`, run: () => edit(override) });
 
   const openCode = (): void => { if (code) openInEditor(code); };
+  const takeOut = (): void => {
+    if (!home || !own) { toast(readOnly ? 'This environment is read-only: nothing here can take it out.' : `Nothing says ${title} can be taken out here.`); return; }
+    const remove = checkRemove(trace, { collection: home.id, item: own.id });
+    if (typeof remove === 'string') { setOutWhy(remove); return; }
+    setOutWhy(null);
+    void arrange.saveRemove(remove);
+  };
   const startMove = (): void => {
     if (!canMove) return;
     setMoving((v) => !v || arrange.pending?.region === now?.index);
@@ -185,6 +204,7 @@ export function Inspector({ project, platform, selection, regions, components, d
       move: () => { if (canMove) startMove(); else toast(readOnly ? 'This environment is read-only: nothing here can move it.' : `${title} cannot be moved here.`); },
       code: () => { if (code) openCode(); else toast(codeWhyNot(region, docroot)); },
       alone: () => { if (alone.length) showAlone(); else toast(aloneWhyNot(helper, isAlone, readOnly)); },
+      'take-out': takeOut,
     };
   }
 
@@ -247,7 +267,23 @@ export function Inspector({ project, platform, selection, regions, components, d
             <kbd aria-hidden="true">⇧A</kbd>
           </button>
         )}
+        <button type="button" className="btn live-verb live-verb-out" aria-keyshortcuts="Shift+X" disabled={!home} onClick={takeOut}
+          aria-describedby={outWhy ? 'live-out-why' : undefined}
+          title={home ? `Take it out of ${home.label}: only its place there goes, never what it shows (⇧X)` : readOnly ? 'This environment is read-only' : 'Nothing says it can be taken out here'}>
+          <Icon name="takeOut" size={16} />
+          <span className="live-verb-name">Take out</span>
+          <kbd aria-hidden="true">⇧X</kbd>
+        </button>
       </div>
+      {outWhy ? (
+        <div className="live-out-why" id="live-out-why" role="status">
+          <p className="small">{outWhy}</p>
+          {oldHelper && site.helper && site.helperPlan && !site.helperPlan.refused ? (
+            <div className="live-actions"><Button size="s" icon="plug" onClick={() => setUpdating(true)}>Update the helper…</Button></div>
+          ) : null}
+        </div>
+      ) : null}
+      {updating ? <HelperDialog site={site} project={project} onClose={() => setUpdating(false)} /> : null}
 
       {showMove && now ? <MoveSection arrange={arrange} region={now} trace={trace} panelRef={movePanel} onClose={() => setMoving(false)} /> : null}
       {words && pick ? (

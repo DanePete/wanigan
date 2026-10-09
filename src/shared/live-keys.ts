@@ -6,11 +6,12 @@
 // Single keys work only while nothing is being typed into, in the window or
 // in the page. None of them is a key the sheet gives to anything else: the
 // widths' 1, 2 and 3 mean the same as in Compare, and the rest are keys no
-// other part of Wanigan uses (C is a new card everywhere, so Compare is ⇧C).
+// other part of Wanigan uses (C is a new card everywhere, so Compare is ⇧C; X
+// archives on the board, so taking a part out is ⇧X).
 
 export type LiveKeyId =
-  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'compare'
-  | 'edit' | 'move' | 'code' | 'alone';
+  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'compare' | 'library'
+  | 'edit' | 'move' | 'code' | 'alone' | 'take-out';
 
 export interface LiveKeySpec {
   id: LiveKeyId;
@@ -32,10 +33,12 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'tab-previous', key: '[', shift: false, page: true, focusWindow: false },
   { id: 'tab-next', key: ']', shift: false, page: true, focusWindow: false },
   { id: 'compare', key: 'c', shift: true, page: true, focusWindow: true },
+  { id: 'library', key: 'b', shift: true, page: true, focusWindow: true },
   { id: 'edit', key: 'e', shift: false, page: false, focusWindow: false },
   { id: 'move', key: 'm', shift: false, page: false, focusWindow: false },
   { id: 'code', key: '.', shift: false, page: false, focusWindow: false },
   { id: 'alone', key: 'a', shift: true, page: false, focusWindow: false },
+  { id: 'take-out', key: 'x', shift: true, page: false, focusWindow: false },
 ];
 
 /** What the page script is given to wait for: the keys it may take from the page. */

@@ -28,6 +28,11 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     move: async () => ({ ok: false, error: nothing }),
     insert: async () => ({ ok: false, error: nothing }),
     undo: async () => ({ ok: false, error: nothing }),
+    remove: async () => ({ ok: false, error: nothing }),
+    // The component library (live-library.ts): none to list here.
+    library: async () => ({ state: 'down', error: nothing }),
+    libraryPictures: async () => ({ ok: false, error: nothing }),
+    libraryPicture: async () => null,
     // A part chosen in the tree, as the picked element (live-page.ts).
     choose: async () => null,
     // Local and Live (live-compare.ts).

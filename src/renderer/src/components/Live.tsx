@@ -9,7 +9,9 @@
 // settings: one menu), the page (back, forward, reload, the address field
 // that opens Go to, the width, the lens), and the tools (Pick, and a menu of
 // the rarely used). One status line under the page says what just happened
-// and which keys work now; the keys themselves are shared/live-keys.ts.
+// and which keys work now; the keys themselves are shared/live-keys.ts. The
+// tools' Library opens the site's component library in the side panel
+// (components/live/Library.tsx).
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { LiveViewState } from '@shared/bridge';
@@ -45,6 +47,7 @@ import { NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { PaletteTab, useArrange } from './live/Arrange';
+import { LibraryPanel } from './live/Library';
 import { EditSheet, type EditRequest } from './live/EditSheet';
 import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
 import { RequestTab } from './live/Request';
@@ -281,6 +284,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   /** The page the stage opens: the site's address, or the same page on the environment switched to. */
   const [stageUrl, setStageUrl] = useState(url);
   const [comparing, setComparing] = useState(false);
+  /** The component library takes the side panel while it is open. */
+  const [library, setLibrary] = useState(false);
   /** What the chosen part's verbs do, and what opens the lens list: for the keys. */
   const verbs = useRef<InspectorVerbs | null>(null);
   const lensOpen = useRef<(() => void) | null>(null);
@@ -549,6 +554,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     setPicking(false);
     if (!p) return;
     setTab('layers');
+    setLibrary(false);
     setSelection({ region: p.regions[0] ?? null, pick: p, how: 'pick' });
     const inner = p.regions[0];
     if (inner) await live.outline([inner.index], labelOf(inner), 'edit'); else await live.clear();
@@ -597,6 +603,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
    * style. How a part was chosen does not change what can be done to it.
    */
   const select = (region: LiveRegion): void => {
+    setLibrary(false);
+    setTab('layers');
     setSelection({ region, pick: null, how: 'tree' });
     void live.outline([region.index], labelOf(region), 'edit');
     void live.choose(region.index).then((p) => {
@@ -673,18 +681,21 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       case 'tab-previous':
       case 'tab-next': {
         if (compact) return;
+        setLibrary(false);
         const at = tabs.findIndex((t) => t.value === shownTab);
         const next = tabs[(at + (id === 'tab-next' ? 1 : -1) + tabs.length) % tabs.length];
         if (next) setTab(next.value);
         return;
       }
       case 'compare': if (!compact) openCompare(); return;
+      case 'library': if (!compact) setLibrary(!library); return;
       case 'edit':
       case 'move':
       case 'code':
       case 'alone':
+      case 'take-out':
         if (compact) return;
-        if (!selected.current || shownTab !== 'layers') { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
+        if (!selected.current || shownTab !== 'layers' || library) { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
         verbs.current?.[id]();
     }
   };
@@ -732,7 +743,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     text: <><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits. <span className="faint">{HOSTED_NOTE}</span></>,
   } : banner ? { text: bannerText(banner), warn: banner.kind === 'write' && banner.warn } : null;
   const keysNow: [string[], string][] = picking ? []
-    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['P'], 'pick'], [['Esc'], 'back']]
+    : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
+    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['P'], 'pick'], [['Esc'], 'back']]
       : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['?'], 'all keys']];
 
   return (
@@ -760,6 +772,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             title={hasScript ? 'Point at something on the page to see what made it, or walk the page with the arrows: Enter picks, P or Escape stops (P)' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
             {picking ? 'Picking…' : 'Pick'}<kbd className="live-key" aria-hidden="true">P</kbd>
           </Button>
+          {!compact ? (
+            <Button size="s" tone={library ? 'primary' : 'quiet'} icon="pieces" onClick={() => setLibrary(!library)} aria-keyshortcuts="Shift+B" aria-pressed={library}
+              title="The site’s component library: what it can place, pictured, and added to the page from there (⇧B)">
+              Library<kbd className="live-key" aria-hidden="true">⇧B</kbd>
+            </Button>
+          ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
         </div>
       </div>
@@ -794,7 +812,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </div>
           ) : null
         ) : (
-          <aside className={`live-side${shownTab === 'request' ? ' wide' : ''}`} aria-label="What is on this page">
+          <aside className={`live-side${shownTab === 'request' || library ? ' wide' : ''}`} aria-label={library ? 'The site’s component library' : 'What is on this page'}>
+            {library ? (
+              <LibraryPanel project={project} site={site} trace={env ? null : traceData} parts={parts} regions={regions} arrange={arrange} readOnly={!!env}
+                onClose={() => setLibrary(false)} onSelect={select} onHover={hover} />
+            ) : (<>
             <Segmented<Tab> size="s" label="Show" value={shownTab} options={tabs} onChange={setTab} />
             {shownTab === 'layers' ? (
               selection ? (
@@ -826,6 +848,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             ) : (
               <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
             )}
+            </>)}
           </aside>
         )}
       </div>

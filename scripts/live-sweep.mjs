@@ -4,8 +4,11 @@
 // over a plain wireframe, never a website. Screenshots go to
 // .artifacts/live/<theme>-<name>.png: the lenses' legends, the Inspector's
 // sections, moving a part by the keyboard, both edit sheets, the request, the
-// palette and the states without a trace; and the layout itself: the bar's
-// three groups and its site menu, the four verbs on a chosen part with the
+// palette, the component library (listed, searched, pictured, an entry's
+// details, placing one, a WordPress library's patterns and styles, an outdated
+// helper), taking a part out (at once, or asked first with its reach), and the
+// states without a trace; and the layout itself: the bar's
+// three groups and its site menu, the five verbs on a chosen part with the
 // note under them, a part chosen in the tree offering what a pick offers, the
 // status line, and every key the live view lists on the shortcut sheet. Then the page script itself, in a
 // real Chromium page of made-up markup: the trace's part marks read and paired,
@@ -206,7 +209,7 @@ try {
     await shot('palette');
     await page.locator('.live-palette-entry', { hasText: 'Call to action' }).getByRole('button', { name: 'Place' }).click();
     await page.waitForSelector('.live-status:has-text("Placing Call to action")', { timeout: 3000 }).catch(() => fail(t('palette: Place did not say it is placing')));
-    if ((await page.evaluate(() => window.__wgLive.spec?.placing?.entry)) !== 'pal-cta') fail(t('palette: the page was not told what to place'));
+    if ((await page.evaluate(() => window.__wgLive.spec?.placing?.entry)) !== 'pal.b.acme_cta_block') fail(t('palette: the page was not told what to place'));
     await shot('palette-placing');
     await page.keyboard.press('Escape');
 
@@ -234,7 +237,7 @@ try {
       for (const want of [/^Back$/, /^Forward$/, /^Reload/, /^Go to a page of acme\.example\.test/, /^Phone/, /^Tablet/, /^Full width/, /^Lens$/]) {
         if (!pageGroup?.controls.some((c) => want.test(c))) fail(t(`layout: the page group has nothing like ${want} (${pageGroup?.controls.join(' | ')})`));
       }
-      if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^More/.test(toolGroup?.controls[1] ?? '') || toolGroup?.controls.length !== 2) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
+      if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^Library/.test(toolGroup?.controls[1] ?? '') || !/^More/.test(toolGroup?.controls[2] ?? '') || toolGroup?.controls.length !== 3) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
       }
@@ -280,7 +283,7 @@ try {
       const verbsAt = order.findIndex((o) => /^What to do with Search$/.test(o));
       if (verbsAt < 0 || order[verbsAt + 1] !== 'Tell an agent' || order.at(-1) !== 'Why it looks like this') fail(t(`layout: the Inspector is in this order: ${order.join(' › ')}`));
       const verbs = await page.$$eval('.live-verbs > button', (els) => els.map((b) => b.querySelector('.live-verb-name')?.textContent.trim()));
-      if (verbs.join() !== 'Edit,Move,Code,Alone') fail(t(`layout: the verbs are ${verbs.join(', ')}`));
+      if (verbs.join() !== 'Edit,Move,Code,Alone,Take out') fail(t(`layout: the verbs are ${verbs.join(', ')}`));
       const folded = await page.$$eval('.live-why .disclosure-head button', (els) => els.filter((b) => b.getAttribute('aria-expanded') === 'true').length);
       if (folded) fail(t(`layout: ${folded} of the diagnostics are open before they are asked for`));
       await page.getByRole('button', { name: /^Edit Search/ }).click();
@@ -390,6 +393,188 @@ try {
       await shot('layout');
     }
 
+    // ── The component library: from the bar's key, listed by kind and searched, pictured a few at a time, an entry's
+    // details (its pictures, props, slots, files, where this page uses it), placing one through the palette, and why
+    // what cannot be placed cannot. Then taking parts out: content at once with Undo, shared configuration asked first.
+    {
+      const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
+      const said = () => page.locator('[aria-live="polite"].visually-hidden').innerText().catch(() => '');
+      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const row = (id) => page.locator(`.live-library-entry[data-entry="${id}"]`);
+      const openEntry = async (id) => {
+        await row(id).locator('.live-library-open').click();
+        await page.waitForSelector('.live-library-detail', { timeout: 3000 }).catch(() => fail(t(`library: ${id} did not open its details`)));
+      };
+      const backToList = () => page.getByRole('button', { name: 'Back to the library' }).click();
+      await page.locator('.toast .toast-x').click().catch(() => {});
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      if (await page.$('.live-inspector')) await page.getByRole('button', { name: 'Back to the layers' }).click();
+      await nobody();
+      await page.keyboard.press('Shift+B');
+      await page.waitForSelector('.live-library-entry', { timeout: 4000 }).catch(() => fail(t('library: ⇧B did not open the library')));
+      if ((await page.getAttribute('.live-bar-tools button[aria-keyshortcuts="Shift+B"]', 'aria-pressed')) !== 'true') fail(t('library: the bar’s Library is not shown as on'));
+      if (!(await page.evaluate(() => document.activeElement?.closest('.live-library-search') !== null))) fail(t('library: opening it did not put the keyboard in its search'));
+      const heads = await page.$$eval('.live-library-group .live-section-title', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+      if (heads.join() !== 'Components 3,Blocks 5') fail(t(`library: the kinds read ${heads.join(' | ')}`));
+      if ((await page.$$('.live-library-entry')).length !== 8) fail(t(`library: ${(await page.$$('.live-library-entry')).length} entries listed, not 8`));
+      const lede = await page.locator('.live-library-list > p').first().innerText();
+      if (!/What this Drupal site can place, as its core lists it: 3 components, 5 blocks\. Pictured in the acme theme\./.test(lede)) fail(t(`library: it opens with "${lede}"`));
+      if (!(await page.locator('.live-library-group[aria-label="Components"]').innerText()).includes('Drupal core places a component only inside a template or a field that uses it, not on its own.')) fail(t('library: a component Drupal cannot place does not say why'));
+      // Pictures: of the entries in view, both widths, never more entries at once than the main process takes.
+      await page.waitForSelector('.live-library-entry[data-entry="sdc:acme:hero"] .live-library-thumb img', { timeout: 6000 }).catch(() => fail(t('library: Hero’s picture never showed')));
+      const asks = await page.evaluate(() => window.__wgLive.pictureAsks);
+      if (!asks.length || asks.some((a) => a.length > 24)) fail(t(`library: pictures were asked for as ${JSON.stringify(asks)}`));
+      if (asks.flat().some((id) => id === 'sdc:northwind:badge' || id === 'block:northstar_pay_button')) fail(t('library: an entry with no picture was asked to be pictured'));
+      await page.waitForTimeout(400);
+      await shot('library');
+
+      // Search: every word, across names, providers and categories.
+      await page.locator('.live-library-search input').fill('newsletter');
+      const found = await page.$$eval('.live-library-entry', (els) => els.map((e) => e.getAttribute('data-entry')));
+      if (found.join() !== 'block:acme_newsletter_block') fail(t(`library: searching "newsletter" lists ${found.join(', ')}`));
+      await page.waitForSelector('.live-library [role="status"]:has-text("1 entry matches")', { timeout: 2000 }).catch(() => fail(t('library: the search did not say how many match')));
+      await page.locator('.live-library-search input').fill('northwind ui');
+      if ((await page.$$('.live-library-entry')).length !== 2) fail(t('library: searching "northwind ui" did not find both of its entries'));
+      await shot('library-search');
+      await page.locator('.live-library-search input').fill('');
+
+      // One entry: its pictures side by side, its props and slots, why it cannot be placed, and where this page uses it.
+      await openEntry('sdc:acme:hero');
+      await page.waitForSelector('.live-library-detail img[alt="Hero, rendered alone 1440 pixels wide"]', { timeout: 5000 }).catch(() => fail(t('library: Hero’s desktop picture is not in its details')));
+      await page.waitForSelector('.live-library-detail img[alt="Hero, rendered alone 390 pixels wide"]', { timeout: 5000 }).catch(() => fail(t('library: Hero’s phone picture is not in its details')));
+      const detail = (await page.locator('.live-library-detail').innerText()).replace(/\s+/g, ' ');
+      for (const want of ['Component · acme · your code', 'heading *', 'string', 'Default “left”', 'One of “left”, “center”', 'media', 'A picture or a video beside the words.',
+        'Drupal core places a component only inside a template or a field that uses it, not on its own.', 'This page only', 'hero.twig', 'sdc:acme:hero', 'Rendered alone by the site with its own example, in the acme theme.']) {
+        if (!detail.includes(want)) fail(t(`library: Hero’s details do not say "${want}"`));
+      }
+      const uses = await page.$$eval('.live-library-use', (els) => els.map((e) => e.textContent));
+      if (uses.join() !== 'Hero') fail(t(`library: Hero is used on this page as ${JSON.stringify(uses)}`));
+      await shot('library-entry');
+      await page.locator('.live-library-detail').evaluate((el) => el.closest('.live-side').scrollTop = 10_000);
+      await shot('library-entry-more');
+      await page.locator('.live-library-shot-open').first().click();
+      await page.waitForSelector('.dialog .live-library-large img', { timeout: 3000 }).catch(() => fail(t('library: a picture did not open larger')));
+      await page.keyboard.press('Escape');
+      // Choosing where it is used chooses that part of the page.
+      await page.locator('.live-library-use', { hasText: 'Hero' }).click();
+      await page.waitForFunction(() => document.querySelector('.live-inspector .live-side-title')?.textContent === 'Hero', null, { timeout: 3000 }).catch(() => fail(t('library: choosing where it is used did not choose the part')));
+      if (await page.$('.live-library')) fail(t('library: it stayed open over the chosen part'));
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+
+      // No picture, and why; a picture that failed, and why; files open in the Code tab when they are in the project.
+      await page.getByRole('button', { name: /^Library/ }).click();
+      await page.waitForSelector('.live-library-entry', { timeout: 4000 });
+      await openEntry('block:northwind_hours_block');
+      await page.waitForSelector('.live-library-shot-why:has-text("The piece did not say it was drawn within 25 seconds.")', { timeout: 4000 }).catch(() => fail(t('library: a picture that failed does not say why')));
+      await backToList();
+      await openEntry('block:northstar_pay_button');
+      const pay = (await page.locator('.live-library-detail').innerText()).replace(/\s+/g, ' ');
+      if (!pay.includes('No picture. It shows the order of the page it is placed on, so it has nothing to show alone.')) fail(t('library: an entry with no picture does not say why'));
+      if (!pay.includes('Takes from the page entity:commerce_order')) fail(t('library: what it takes from the page is not said'));
+      if (!pay.includes('Nothing on this page takes it')) fail(t('library: a block no place here takes does not say so'));
+      await page.waitForSelector('.live-library-files button.live-file-open', { timeout: 4000 }).catch(() => fail(t('library: none of its files opens')));
+      const opens = await page.$$eval('.live-library-files button.live-file-open', (els) => els.map((e) => e.textContent));
+      if (opens.join() !== 'web/modules/custom/northstar_checkout/templates/northstar-pay-button.html.twig,web/modules/custom/northstar_checkout/css/pay-button.css') fail(t(`library: the files that open are ${opens.join(', ')}`));
+      if (!(await page.locator('.live-library-files').innerText()).includes('Not in the folder this project’s site serves')) fail(t('library: a file not in the project does not say so'));
+      await shot('library-no-picture');
+      await backToList();
+
+      // Placing: Place, then the page shows where it can go; the drop is saved through the palette's insert.
+      await row('block:system_branding_block').waitFor();
+      if (!(await row('block:system_branding_block').innerText()).includes('Not placeable here')) fail(t('library: a block nothing here takes is not said to be unplaceable'));
+      await row('block:acme_cta_block').getByRole('button', { name: /^Place Call to action/ }).click();
+      await page.waitForSelector('.live-status:has-text("Placing Call to action")', { timeout: 3000 }).catch(() => fail(t('library: Place did not say it is placing')));
+      await page.waitForFunction(() => window.__wgLive.spec?.placing?.entry === 'pal.b.acme_cta_block', null, { timeout: 3000 }).catch(() => fail(t('library: the page was not told what to place')));
+      await shot('library-placing');
+      await page.evaluate(() => window.__wgLive.drop({ kind: 'insert', insert: { collection: 'c-sidebar', entry: 'pal.b.acme_cta_block', index: 1 } }));
+      await page.waitForSelector('.dialog:has-text("every page that shows this region (41 pages)")', { timeout: 3000 }).catch(() => fail(t('library: adding into shared configuration did not ask first')));
+      await page.locator('.dialog button', { hasText: 'Add it' }).click();
+      await page.waitForSelector('.toast-info:has-text("Added Call to action")', { timeout: 3000 }).catch(() => fail(t('library: adding did not say so')));
+      const inserted = (await calls()).filter((c) => c.startsWith('insert ')).map((c) => JSON.parse(c.slice(7))).pop();
+      if (inserted?.collection !== 'c-sidebar' || inserted.entry !== 'pal.b.acme_cta_block' || inserted.index !== 1) fail(t(`library: the insert saved was ${JSON.stringify(inserted)}, not the palette's into the sidebar`));
+      await page.locator('.toast .toast-x').click().catch(() => {});
+
+      // A WordPress library: block types, a pattern and a block style; a style is not placed.
+      await page.evaluate(() => { window.__wgLive.libraryAnswer = { state: 'ok', library: window.__wgLive.wpLibrary }; });
+      if (!(await page.$('.live-library'))) await page.getByRole('button', { name: /^Library/ }).click();
+      await page.getByRole('button', { name: 'Ask the site again' }).click();
+      await page.waitForFunction(() => [...document.querySelectorAll('.live-library-group .live-section-title')].map((e) => e.textContent.replace(/\s+/g, ' ').trim()).join() === 'Blocks 2,Patterns 1,Block styles 1', null, { timeout: 4000 })
+        .catch(async () => fail(t(`library: a WordPress library reads ${(await page.$$eval('.live-library-group .live-section-title', (els) => els.map((e) => e.textContent))).join(' | ')}`)));
+      await openEntry('style:core/button:outline');
+      if (!(await page.locator('.live-library-detail').innerText()).includes('A block style is how a block looks')) fail(t('library: a block style does not say it is not placed'));
+      await backToList();
+      await shot('library-wordpress');
+      await page.evaluate(() => { window.__wgLive.libraryAnswer = null; });
+      await page.getByRole('button', { name: 'Close the library (⇧B)' }).click();
+      if (await page.$('.live-library')) fail(t('library: Close did not close it'));
+
+      // Taking out a content item: saved at once, said, with Undo.
+      const before = (await calls()).length;
+      await page.locator('.live-layer', { hasText: 'Quote paragraph' }).first().click();
+      await page.locator('.live-inspector .live-side-title').focus();
+      await page.keyboard.press('Shift+X');
+      await page.waitForSelector('.toast-info:has-text("Took Quote paragraph out of Paragraphs on Article 12")', { timeout: 3000 }).catch(() => fail(t('take out: a content item was not taken out at once')));
+      if (await page.$('.dialog')) fail(t('take out: a content item asked first'));
+      if (!(await calls()).slice(before).includes('remove {"collection":"c-paras","item":"p-para-1"}')) fail(t('take out: the removal was not posted'));
+      await page.waitForSelector('.live-status-said:has-text("Quote paragraph: taken out.")', { timeout: 4000 })
+        .catch(async () => fail(t(`take out: the read-back was not said (${await page.locator('.live-status-said').first().innerText().catch(() => '')})`)));
+      if (!/Took Quote paragraph out/.test(await said())) fail(t('take out: it was not said aloud'));
+      await shot('take-out-saved');
+      await page.locator('.toast-info:has-text("Took Quote paragraph") button', { hasText: 'Undo' }).click();
+      await page.waitForFunction(() => window.__wgLive.calls.includes('undo u-3'), null, { timeout: 3000 }).catch(() => fail(t('take out: Undo did not ask the site')));
+
+      // Taking out a shared placement: asked first, with where it shows; Cancel saves nothing.
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+      await page.locator('.live-layer', { hasText: 'Search' }).first().click();
+      const mark = (await calls()).length;
+      await page.locator('.live-verbs button', { hasText: 'Take out' }).click();
+      await page.waitForSelector('.dialog:has-text("This takes the block off every page that shows this region (41 pages).")', { timeout: 3000 }).catch(() => fail(t('take out: a shared placement did not ask first with its reach')));
+      const asked = await page.locator('.dialog').innerText().catch(() => '');
+      if (!asked.includes('The placement is switched off, not deleted')) fail(t('take out: the question does not say what stays'));
+      await shot('take-out-confirm');
+      await page.locator('.dialog button', { hasText: 'Cancel' }).click();
+      await page.waitForSelector('.dialog', { state: 'detached', timeout: 2000 }).catch(() => fail(t('take out: Cancel did not close the question')));
+      if ((await calls()).slice(mark).some((c) => c.startsWith('remove '))) fail(t('take out: Cancel saved the removal anyway'));
+      if (!/Not taken out\. Search stays where it is\./.test(await said())) fail(t('take out: Cancel was not said'));
+
+      // A place nothing can be taken out of says why; a helper that says nothing about it says to update it.
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+      await page.locator('.live-layer', { hasText: 'Acme branding' }).first().click();
+      await page.locator('.live-verbs button', { hasText: 'Take out' }).click();
+      await page.waitForSelector('.live-out-why:has-text("may not administer blocks")', { timeout: 2000 }).catch(() => fail(t('take out: a place with a reason did not say it')));
+      await shot('take-out-why');
+      await page.evaluate(() => {
+        const t0 = window.__wgLive.answer.trace;
+        window.__wgLive.answer = { state: 'ok', trace: { ...t0, collections: t0.collections.map(({ removes, removeWhy, shows, ...c }) => c) } };
+      });
+      let traced = (await calls()).length;
+      await page.getByRole('button', { name: /^Reload/ }).first().click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('trace'), traced, { timeout: 3000 }).catch(() => fail(t('take out: the reload was not traced')));
+      await page.waitForTimeout(150);
+      await page.getByRole('button', { name: 'Back to the layers' }).click().catch(() => {});
+      await page.locator('.live-layer', { hasText: 'Search' }).first().click();
+      await page.locator('.live-verbs button', { hasText: 'Take out' }).click();
+      await page.waitForSelector('.live-out-why:has-text("Update the helper from the Live tab")', { timeout: 3000 }).catch(() => fail(t('take out: an older helper did not say to update it')));
+      if (!(await page.$('.live-out-why button:has-text("Update the helper…")'))) fail(t('take out: no way to update the helper from there'));
+      await page.evaluate((tr) => { window.__wgLive.answer = { state: 'ok', trace: tr }; }, liveFixture.trace);
+      await page.getByRole('button', { name: 'Back to the layers' }).click();
+      traced = (await calls()).length;
+      await page.getByRole('button', { name: /^Reload/ }).first().click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('trace'), traced, { timeout: 3000 }).catch(() => fail(t('take out: the reload was not traced')));
+
+      // Last, as it opens the code editor: a file of the entry opens there.
+      await page.getByRole('button', { name: /^Library/ }).click();
+      await page.waitForSelector('.live-library-entry', { timeout: 4000 });
+      await openEntry('block:northstar_pay_button');
+      await page.locator('.live-library-files button.live-file-open').first().click();
+      await page.waitForFunction(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'northstar-pay-button.html.twig', null, { timeout: 8000 })
+        .catch(() => fail(t('library: its file did not open in the code editor')));
+      await page.keyboard.press('Meta+j');
+      await page.waitForSelector('.editor-drawer:not([hidden])', { state: 'detached', timeout: 3000 }).catch(() => {});
+      await page.getByRole('button', { name: 'Back to the library' }).click().catch(() => {});
+      await page.getByRole('button', { name: 'Close the library (⇧B)' }).click().catch(() => {});
+    }
+
     // States without a trace, each said plainly with the next step.
     await page.evaluate(() => { window.__wgLive.answer = { state: 'expired' }; });
     await page.getByRole('button', { name: /^Reload/ }).first().click();
@@ -412,7 +597,7 @@ try {
     await old.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
     await old.addInitScript(liveStub, liveFixture);
     await old.addInitScript(LIVE_DEFAULTS);
-    await old.addInitScript(() => { window.__wgLive.outdated = true; window.__wgLive.answer = { state: 'missing' }; });
+    await old.addInitScript(() => { window.__wgLive.outdated = true; window.__wgLive.answer = { state: 'missing' }; window.__wgLive.libraryAnswer = { state: 'outdated' }; });
     const p2 = await old.newPage();
     await p2.goto(`${base}#/p/NS/live`);
     await p2.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('outdated: no layers')));
@@ -421,6 +606,11 @@ try {
     await p2.getByRole('radio', { name: 'Request' }).click();
     await p2.waitForSelector('.live-request, .live-trace-note:has-text("Update the helper to see this")', { timeout: 3000 }).catch(() => fail(t('outdated: the request did not say to update the helper')));
     await p2.screenshot({ path: join(out, `${theme}-state-outdated.png`), animations: 'disabled' });
+    // The library says why there is none, in the main process's words, and offers the update.
+    await p2.getByRole('button', { name: /^Library/ }).click();
+    await p2.waitForSelector('.live-library-trouble:has-text("The site helper is older than this Wanigan and has no component library.")', { timeout: 3000 }).catch(() => fail(t('outdated: the library did not say the helper is too old')));
+    if (!(await p2.$('.live-library-trouble button:has-text("Update the helper…")'))) fail(t('outdated: the library does not offer to update the helper'));
+    await p2.screenshot({ path: join(out, `${theme}-library-outdated.png`), animations: 'disabled' });
     await old.close();
 
     // A helper another Wanigan set up: its own key refused (`other`), or none of this Wanigan's at all (`found` on disk).
