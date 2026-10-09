@@ -335,7 +335,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const editCheck = useRef<Promise<WriteCheck> | null>(null);
   const arrange = useArrange({
     project, platform: site.platform, trace: traceData, parts, regions, layers, page: view?.url ?? url, checks,
-    enabled: arrangeOn && hasScript && !compact && !picking && !editing && !view?.loading && !view?.error,
+    enabled: hasScript && !compact && !picking && !editing && !view?.loading && !view?.error, handles: arrangeOn,
     onSaved: (label) => setSaved((was) => ({ ...was, parts: new Set([...was.parts, label.replace(/^(Moved|Added) /, '').split(',')[0] as string]) })),
   });
   const helperSite = site.platform === 'drupal' || site.platform === 'wordpress';

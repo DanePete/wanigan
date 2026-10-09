@@ -630,6 +630,25 @@ try {
       await p3.screenshot({ path: join(out, `${theme}-state-${name}-wanigan.png`), animations: 'disabled' });
       await ctx.close();
     }
+
+    // Drag handles switched off in the More menu: Place still arms the page for what is being placed.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); localStorage.setItem('wanigan.live.arrange', '0'); } catch {}`);
+      await ctx.addInitScript(liveStub, liveFixture);
+      await ctx.addInitScript(LIVE_DEFAULTS);
+      const p4 = await ctx.newPage();
+      await p4.goto(`${base}#/p/NS/live`);
+      await p4.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('handles off: no layers')));
+      await p4.keyboard.press('Shift+B');
+      const cta = p4.locator('.live-library-entry[data-entry="block:acme_cta_block"]');
+      await cta.waitFor({ timeout: 5000 }).catch(() => fail(t('handles off: the library did not open')));
+      await cta.getByRole('button', { name: /^Place Call to action/ }).click();
+      await p4.waitForFunction(() => window.__wgLive.spec?.placing?.entry === 'pal.b.acme_cta_block', null, { timeout: 3000 })
+        .catch(() => fail(t('handles off: Place did not arm the page, so placing did nothing')));
+      await ctx.close();
+    }
   }
 
   // The page script itself, in a real page of made-up markup.

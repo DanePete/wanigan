@@ -60,15 +60,17 @@ function around(boxes: ({ x: number; y: number; width: number; height: number } 
   return { x, y, width: Math.max(...list.map((b) => b.x + b.width)) + pad - x, height: Math.max(...list.map((b) => b.y + b.height)) + pad - y };
 }
 
-export function useArrange({ project, platform, trace, parts, regions, layers, enabled, page, checks, onSaved }: {
+export function useArrange({ project, platform, trace, parts, regions, layers, enabled, handles, page, checks, onSaved }: {
   project: ProjectSummary;
   platform: 'drupal' | 'wordpress' | 'site' | null;
   trace: LiveTrace | null;
   parts: PartIndex;
   regions: LiveRegion[];
   layers: readonly Layer[];
-  /** Whether the page may be armed now (not loading, picking or editing; arranging switched on). */
+  /** Whether the page may be armed now (not loading, picking or editing). */
   enabled: boolean;
+  /** Drag handles are switched on (the More menu). Placing an entry arms the page with them off too. */
+  handles: boolean;
   page: string;
   /** Every move, insert and undo is read back once the page reloads with it. */
   checks: WriteChecks;
@@ -78,6 +80,8 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   const live = liveBridge();
   const toast = useToast();
   const [placing, setPlacing] = useState<PaletteEntry | null>(null);
+  // Placing a palette or library entry is asked for there and then: it does not wait for the drag handles' switch.
+  const armed = enabled && (handles || placing !== null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [said, setSaid] = useState('');
   const [asking, setAsking] = useState<Asking | null>(null);
@@ -247,7 +251,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   specRef.current = spec;
   useEffect(() => {
     const s = specRef.current;
-    if (!live || !enabled || pending || (!s.collections.length && !s.groups.length && !s.placing)) return undefined;
+    if (!live || !armed || pending || (!s.collections.length && !s.groups.length && !s.placing)) return undefined;
     let alive = true;
     void (async () => {
       while (alive) {
@@ -262,7 +266,7 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
       }
     })();
     return () => { alive = false; void live.disarm(); };
-  }, [live, key, enabled, pending, onDrop, checks]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, key, armed, pending, onDrop, checks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── the keyboard ─────────────────────────────────────────────────────── */
 
