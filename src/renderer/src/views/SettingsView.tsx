@@ -140,8 +140,8 @@ function LiveViewSettings() {
         <p className="faint small live-settings-why">
           A site’s Dev, Test and Live, kept in its site settings, are tabs beside Local, and Compare lays a page of your local site over the same
           page there. Opening one, or comparing with it, sends requests to that site, only when you do. It opens read-only, in a private session of
-          its own: no cookies shared with your local site, never the helper’s token, its certificate checked as any browser would, and nothing sent
-          that could change it.
+          its own: no cookies shared with your local site, never the helper’s token, its certificate checked as any browser would (or, for a copy
+          of the site on this Mac, by your own mkcert authority, as the Local tab is), and nothing sent that could change it.
         </p>
       </div>
     </section>

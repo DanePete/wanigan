@@ -61,13 +61,23 @@ export function isLocalHost(hostname: string): boolean {
     || /\.(ddev\.site|lndo\.site|docksal\.site|docksal|local|internal)$/.test(h) || !h.includes('.');
 }
 
+/** Whether a resolved address is this Mac's own: 127.0.0.0/8, ::1, or 127.x written as IPv6. */
+export function loopbackAddress(address: string): boolean {
+  const a = address.toLowerCase().replace(/^\[|\]$/g, '');
+  return /^127\.\d+\.\d+\.\d+$/.test(a) || a === '::1' || /^::ffff:127\.\d+\.\d+\.\d+$/.test(a);
+}
+
 /**
- * The address of a hosted environment, or why it cannot be one. https only
- * (its certificate is checked as any browser would), no user name or password,
- * no query (a query can carry a key), and not this Mac. The path is kept, so a
- * site served below a folder works; it always ends with a slash.
+ * The address of an environment, or why it cannot be one. https only (its
+ * certificate is checked as any browser would), no user name or password, no
+ * query (a query can carry a key). An address on this Mac is refused unless
+ * `onThisMac`: one found in a project's files there is the local site or a
+ * tool's, but one the owner types can be a copy of the site (Live's database
+ * under another name), which the core takes as long as it is not the Local
+ * tab's own. The path is kept, so a site served below a folder works; it
+ * always ends with a slash.
  */
-export function hostedUrl(raw: unknown): { url: string; refused: null } | { url: null; refused: string } {
+export function hostedUrl(raw: unknown, options: { onThisMac?: boolean } = {}): { url: string; refused: null } | { url: null; refused: string } {
   const no = (refused: string) => ({ url: null, refused } as const);
   if (typeof raw !== 'string' || !raw.trim()) return no('Type the environment’s address.');
   const text = raw.trim();
@@ -77,7 +87,7 @@ export function hostedUrl(raw: unknown): { url: string; refused: null } | { url:
   if (url.protocol !== 'https:') return no('A hosted environment must be https, so its certificate is checked.');
   if (url.username || url.password) return no('Leave the user name and password out of the address: Wanigan never keeps credentials in one.');
   if (url.search) return no('Leave the query (?…) out: an environment is an address, and a query can carry a key.');
-  if (!url.hostname || isLocalHost(url.hostname)) return no('That is an address on this Mac: the Local tab is for the site you run here.');
+  if (!url.hostname || (!options.onThisMac && isLocalHost(url.hostname))) return no('That is an address on this Mac: the Local tab is for the site you run here.');
   const path = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
   return { url: `${url.origin}${path}`, refused: null };
 }

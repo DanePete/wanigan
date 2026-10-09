@@ -8,6 +8,7 @@
 // session of its own instead: read-only, never with the helper's token, its
 // certificate judged by Chromium alone. Design: docs/design/2026-10-08-live-view.md.
 import { X509Certificate } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,7 @@ import { BrowserWindow, WebContentsView, ipcMain, session, shell, type IpcMainIn
 import { liveUrl, sameSite, type LivePick, type LiveProblem, type LiveRegion } from '../shared/live.ts';
 import { cleanRegions, regionById, type LiveCapture, type LiveViewNow, type TimedProblem } from '../shared/live-agent.ts';
 import { certificateOf, failureKind, principal, type LiveFailure, type LivePresented } from '../shared/live-site.ts';
+import { loopbackAddress } from '../shared/live-envs.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 import { envId, hostedPage } from './live-compare-request.ts';
 
@@ -130,6 +132,16 @@ function script(): string | null {
   if (pageScript !== undefined) return pageScript;
   try { pageScript = readFileSync(join(__dirname, '../renderer/live-page.js'), 'utf8'); } catch { pageScript = null; }
   return pageScript;
+}
+
+/** Whether a host name resolves to this Mac alone (every address it has is loopback). */
+async function onThisMac(hostname: string): Promise<boolean> {
+  try {
+    const all = await lookup(hostname, { all: true });
+    return all.length > 0 && all.every((a) => loopbackAddress(a.address));
+  } catch {
+    return false;
+  }
 }
 
 /** Where mkcert keeps its authority: $CAROOT, or mkcert's own folder (`mkcert -CAROOT`). */
@@ -270,6 +282,20 @@ export function wireLiveView(options: {
     if (hosted) {
       // Read-only: a form cannot be sent and nothing can be saved from here; what a page loads by POST stays empty.
       ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !['GET', 'HEAD', 'OPTIONS'].includes(details.method) }));
+      // Chromium's certificate verdict stands, with one exception: a copy of the site on this Mac (Live's database
+      // under another name) has a certificate from the owner's own mkcert authority, as the Local tab does. It is
+      // trusted only where that authority issued it for this name and the name resolves to this Mac alone. A verdict
+      // Chromium accepted is left to Chromium (-3 keeps its Certificate Transparency check).
+      ses.setCertificateVerifyProc((request, callback) => {
+        const key = certKey(id, request.hostname);
+        if (request.errorCode === 0) { refusedCerts.delete(key); callback(-3); return; }
+        const { trusted, presented } = judge(request.certificate.data, request.hostname, request.verificationResult);
+        const refuse = (): void => { if (presented) refusedCerts.set(key, presented); else refusedCerts.delete(key); callback(-3); };
+        if (!trusted) { refuse(); return; }
+        void onThisMac(request.hostname).then((here) => {
+          if (here) { refusedCerts.delete(key); callback(0); } else refuse();
+        }, refuse);
+      });
       return;
     }
     // The helper's token goes with the pages the view itself loads (and its frames), never with the page's own
