@@ -77,32 +77,48 @@ final class Finder {
     $limit = max(1, min(50, $limit));
     $text = trim(mb_substr($text, 0, 200));
     $total = 0;
+    $candidates = [];
     $types = \Drupal::entityTypeManager();
-    foreach (self::SEARCHED as $type => $kind) {
+    $fields = \Drupal::service('entity_field.manager');
+    // Content, terms, users and media by their own kinds; any other content
+    // entity type with its own page, edit form and a stored label (a shop's
+    // products, say) as content.
+    $searched = self::SEARCHED;
+    foreach ($types->getDefinitions() as $type => $definition) {
+      if (!isset($searched[$type]) && $definition->entityClassImplements(ContentEntityInterface::class) && $definition->hasLinkTemplate('canonical') && $definition->hasLinkTemplate('edit-form') && $definition->getKey('label')) {
+        $searched[$type] = 'content';
+      }
+    }
+    foreach ($searched as $type => $kind) {
       if (!$types->hasDefinition($type) || $text === '') {
         continue;
       }
       $definition = $types->getDefinition($type);
       $label = $definition->getKey('label') ?: ($type === 'user' ? 'name' : NULL);
-      if (!$label) {
+      $base = $label ? ($fields->getBaseFieldDefinitions($type)[$label] ?? NULL) : NULL;
+      if (!$label || !$base || $base->isComputed()) {
         continue;
       }
       $storage = $types->getStorage($type);
       $query = $storage->getQuery()->accessCheck(TRUE)->condition($label, $text, 'CONTAINS');
       $count = (clone $query)->count()->execute();
       $total += (int) $count;
-      if ($definition->hasKey('id') && $type !== 'user' && $definition->entityClassImplements(\Drupal\Core\Entity\EntityChangedInterface::class)) {
+      $has_changed = isset($fields->getBaseFieldDefinitions($type)['changed']);
+      if ($has_changed) {
         $query->sort('changed', 'DESC');
       }
-      $ids = $query->range(0, $limit)->execute();
-      foreach ($storage->loadMultiple($ids) as $entity) {
+      foreach ($storage->loadMultiple($query->range(0, $limit)->execute()) as $entity) {
         if ($entity->access('view')) {
-          $this->add($this->entityItem($entity, $kind));
+          $candidates[] = [$has_changed && method_exists($entity, 'getChangedTime') ? (int) $entity->getChangedTime() : 0, $entity, $kind];
         }
       }
     }
+    // Newest first across every kind; only the ones shown get their actions.
+    usort($candidates, static fn ($a, $b) => $b[0] <=> $a[0]);
+    foreach (array_slice($candidates, 0, $limit) as [, $entity, $kind]) {
+      $this->add($this->entityItem($entity, $kind));
+    }
     $items = array_values($this->items);
-    usort($items, static fn ($a, $b) => ($b['changed'] ?? 0) <=> ($a['changed'] ?? 0));
     return ['cacheId' => $this->cacheId(), 'items' => array_slice($items, 0, $limit), 'total' => $total];
   }
 
