@@ -422,6 +422,24 @@ try {
     await p2.waitForSelector('.live-request, .live-trace-note:has-text("Update the helper to see this")', { timeout: 3000 }).catch(() => fail(t('outdated: the request did not say to update the helper')));
     await p2.screenshot({ path: join(out, `${theme}-state-outdated.png`), animations: 'disabled' });
     await old.close();
+
+    // A helper another Wanigan set up: its own key refused (`other`), or none of this Wanigan's at all (`found` on disk).
+    for (const [name, init] of [['other', () => { window.__wgLive.answer = { state: 'other' }; }], ['found', () => { window.__wgLive.found = true; }]]) {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
+      await ctx.addInitScript(liveStub, liveFixture);
+      await ctx.addInitScript(LIVE_DEFAULTS);
+      await ctx.addInitScript(init);
+      const p3 = await ctx.newPage();
+      await p3.goto(`${base}#/p/NS/live`);
+      const note = p3.locator('.live-side .live-trace-note:not(.compact)').filter({ hasText: 'This site’s helper answers to another Wanigan' });
+      await note.waitFor({ timeout: 8000 }).catch(() => fail(t(`${name}: the side panel did not say the helper answers to another Wanigan`)));
+      if (!(await note.getByRole('button', { name: 'Set up the helper…' }).isVisible().catch(() => false))) fail(t(`${name}: the note did not offer setting it up again`));
+      if (await p3.locator('.live-helper-offer').count()) fail(t(`${name}: the generic offer to set up a helper was shown beside the note`));
+      await p3.screenshot({ path: join(out, `${theme}-state-${name}-wanigan.png`), animations: 'disabled' });
+      await ctx.close();
+    }
   }
 
   // The page script itself, in a real page of made-up markup.

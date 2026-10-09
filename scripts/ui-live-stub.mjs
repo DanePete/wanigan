@@ -195,9 +195,11 @@ export function liveStub(f) {
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
   const site = (projectId) => ({
     projectId, url: 'https://acme.example.test/', platform: 'drupal', servedPath: null, servedCard: null, candidates: [], ddev: null,
-    helper: { kind: 'drupal', version: 2, outdated: window.__wgLive.outdated },
+    // `found`: no helper of this Wanigan's, but one another Wanigan set up is in the site's files.
+    helper: window.__wgLive.found ? null : { kind: 'drupal', version: 2, outdated: window.__wgLive.outdated },
+    found: window.__wgLive.found ? { kind: 'drupal', version: 4, outdated: false } : null,
     helperPlan: { kind: 'drupal', folder: '/tmp/acme/web/modules/custom/wanigan_live', files: ['wanigan_live.info.yml', 'wanigan_live.module'], exclude: '/web/modules/custom/wanigan_live/', runs: ['ddev drush pm:install wanigan_live'], refused: null },
-    token: 'stub',
+    token: window.__wgLive.found ? null : 'stub',
   });
   const real = window.wanigan.call.bind(window.wanigan);
   window.wanigan.call = (method, params) => {

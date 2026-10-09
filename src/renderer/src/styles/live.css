@@ -1443,7 +1443,8 @@
   display: grid;
   gap: var(--space-1);
   min-width: 0;
-  flex: 1;
+  /* Narrower than a column and the button goes under the words, rather than squeezing them. */
+  flex: 1 1 var(--column-w);
 }
 
 .live-trace-note-title {

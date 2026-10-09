@@ -804,12 +804,14 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                   siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} />
               ) : (
                 <>
+                  {/* A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out. */}
+                  {!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
                   {regions.length ? (
                     <Layers regions={regions} components={components} selected={null} changed={changed} onHover={hover} onSelect={select} partName={partName} />
                   ) : (
                     <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
                   )}
-                  {env ? null : <HelperOffer site={site} project={project} />}
+                  {env || trace?.state === 'other' ? null : <HelperOffer site={site} project={project} />}
                 </>
               )
             ) : shownTab === 'request' ? (
