@@ -1210,3 +1210,38 @@ input[type='radio'] {
     transition: none;
   }
 }
+
+/* ── a menu of actions (components/Menu.tsx): the dropdown's list, with keys and a note ── */
+
+.menu-button[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.menu-list .sel-opt {
+  align-items: center;
+}
+
+.menu-list .sel-check {
+  padding-top: 0;
+  color: var(--muted);
+}
+
+.menu-list .sel-opt[aria-checked='true'] .sel-check {
+  color: var(--water);
+}
+
+.menu-keys {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.menu-note {
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-2) 30px;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  line-height: var(--lh-sm);
+}
