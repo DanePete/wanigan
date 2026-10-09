@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LiveSite } from '../shared/live.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer } from '../shared/live-library.ts';
-import { askLibrary, captureInWindow, libraryWhy, pictureFile, wireLiveLibrary, type PieceCapture } from './live-library.ts';
+import { askLibrary, libraryWhy, pictureFile, wireLiveLibrary, type PieceCapture } from './live-library.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
