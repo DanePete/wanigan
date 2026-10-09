@@ -20,8 +20,11 @@ const GIVES: Record<'drupal' | 'wordpress', string[]> = {
     'Reloads the view when content changes in Drupal (an agent running drush, an editor saving), not only when files change.',
   ],
   wordpress: [
-    'Names the template file behind each part of the page (header.php, each template part, the page template), each block, and each post’s content.',
-    'Shows one post alone, in your theme.',
+    'Shows what made every part of the page, read through WordPress core: the template file and the others the template hierarchy considered, each block and pattern, the filters that shaped its output (each with its file, line, time and whether it changed anything), and the queries it ran.',
+    'Edits titles, excerpts, registered fields, block settings that live in the markup, the site title and tagline, menu links and widgets where they show, through WordPress’s own REST API as the user you are logged in as, saved as revisions where WordPress keeps them.',
+    'Moves blocks in posts, templates and template parts, menu items and widgets by dragging, each with Undo.',
+    'Copies a parent theme’s template into your child theme to override it, only when you ask.',
+    'Finds any page fast with Go to: the admin menu, Site Editor templates, posts of every type, terms, users and media.',
     'Reloads the view when content changes in WordPress (an agent running wp-cli, an editor saving), not only when files change.',
   ],
 };
@@ -36,7 +39,7 @@ export function HelperOffer({ site, project }: { site: LiveSite; project: Projec
     <div className="live-helper-offer">
       <p className="small">
         {plan.kind === 'drupal' ? 'See what made every part, edit and move content through Drupal’s own forms, find any page, and follow content changes too.'
-          : 'Name the template file behind every part, show a post alone, and follow content changes too.'}
+          : 'See what made every part, edit and move content through WordPress’s own API, find any page, and follow content changes too.'}
       </p>
       <Button size="s" icon="plug" onClick={() => setOpen(true)}>Set up the {NAME[plan.kind]} helper…</Button>
       {open ? <HelperDialog site={site} project={project} onClose={() => setOpen(false)} /> : null}
@@ -80,7 +83,7 @@ export function HelperSettings({ site, project }: { site: LiveSite; project: Pro
         <>
           <p className="faint small">
             {plan.kind === 'drupal' ? 'A development-only module that lets the live view show what made every part, edit and move content through Drupal’s own forms, find any page and follow content changes.'
-              : 'One development-only plugin file that lets the live view name the template file behind every part, show a post alone and follow content changes.'}
+              : 'One development-only plugin file that lets the live view show what made every part, edit and move content through WordPress’s own API, find any page and follow content changes.'}
           </p>
           <div className="live-actions"><Button size="s" icon="plug" onClick={() => setOpen(true)}>Set up the {NAME[plan.kind]} helper…</Button></div>
         </>

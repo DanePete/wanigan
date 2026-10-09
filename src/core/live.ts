@@ -416,7 +416,8 @@ export class Live {
       }
       const token = randomBytes(24).toString('hex');
       mkdirSync(plan.folder, { recursive: true });
-      writeFileSync(file, wordpressHelper(token));
+      // Where WordPress sits in the project, so the trace names files from the project's root.
+      writeFileSync(file, wordpressHelper(token, relative(root, dirname(dirname(plan.folder))).split(sep).join('/')));
       await excludeFromGit(root, file, true, false);
       const record: HelperRecord = { kind: 'wordpress', version: WORDPRESS_HELPER_VERSION };
       this.ctx.db.prepare('UPDATE live_sites SET helper = ?, token = ?, updated_at = ? WHERE project_id = ?').run(JSON.stringify(record), token, this.ctx.now(), projectId);
