@@ -157,11 +157,17 @@ export function wireLiveFind(options: {
     }
   };
 
-  /** Why the helper's answer is not one to use, as a state and the owner's words. */
-  const trouble = (r: { status: number; reason: string | null }, host: string): Pick<LiveFindAnswer, 'state' | 'message'> => {
+  /**
+   * Why the helper's answer is not one to use, as a state and the owner's words. A 404 is an older helper (one with no
+   * /_wanigan/find) only when the site's helper is older: ddev's router answers 404 for a site that is not running too.
+   */
+  const trouble = (r: { status: number; reason: string | null }, host: string, helperOutdated: boolean): Pick<LiveFindAnswer, 'state' | 'message'> => {
     if (r.status === 0 && r.reason && DOWN.test(r.reason)) return { state: 'down', message: `Nothing answered at ${host}.` };
     if (r.status === 0) return { state: 'failed', message: `The site did not answer the helper (${r.reason ?? 'no reason given'}).` };
-    if (r.status === 404) return { state: 'outdated', message: 'The helper in this site is older than this Wanigan and cannot list its pages.' };
+    if (r.status === 404 && helperOutdated) return { state: 'outdated', message: 'The helper in this site is older than this Wanigan and cannot list its pages.' };
+    if (r.status === 404) {
+      return { state: 'failed', message: `${host} answered 404 where the helper should answer. The site may not be running (for ddev, its router answers 404 then), or the helper is no longer in it.` };
+    }
     if (r.status === 401 || r.status === 403) return { state: 'refused', message: 'The site refused the helper’s token: set the helper up again.' };
     if (r.status >= 200 && r.status < 300) return { state: 'failed', message: r.reason ?? 'The helper’s answer is not one Wanigan can read.' };
     return { state: 'failed', message: `The helper answered ${r.status}.` };
@@ -195,7 +201,7 @@ export function wireLiveFind(options: {
     if (query) {
       const r = await ask(ses, origin, `/_wanigan/find?q=${encodeURIComponent(query)}&limit=${FIND_LIMIT}`, token, MAX_SEARCH_BYTES, SEARCH_MS);
       const result = r.status === 200 ? parseFind(r.body) : null;
-      if (!result) { const t = trouble(r, host); return without(t.state, t.message ?? ''); }
+      if (!result) { const t = trouble(r, host, site.helper.outdated); return without(t.state, t.message ?? ''); }
       return answer('ready', { origin, platform, result, known: await knownPages(projectId, base, false) });
     }
 
@@ -228,7 +234,7 @@ export function wireLiveFind(options: {
     const result = r.status === 200 ? parseFind(r.body) : null;
     if (!result) {
       held.delete(projectId);
-      const t = trouble(r, host);
+      const t = trouble(r, host, site.helper.outdated);
       return without(t.state, t.message ?? '');
     }
     held.set(projectId, { origin, result, changed, at: now, who });

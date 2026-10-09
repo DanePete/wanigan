@@ -155,9 +155,22 @@ test('a search asks the helper with the words and the limit, and is not kept', a
   } finally { await site.close(); }
 });
 
-test('each failure is named: an old helper, a refused token, an error, a bad answer, a site that is not there', async () => {
+test('a 404 is an older helper only when the site’s helper is older; from a current one it says what else it may be', async () => {
+  const site = await helperSite((_req, res) => json(res, {}, 404));
+  try {
+    const old = await wire({ url: site.url, helper: { kind: 'drupal', version: 1, outdated: true } }).find();
+    assert.equal(old.state, 'outdated');
+    // ddev's router answers 404 for a site that is not running: the helper is current, so it is not "older".
+    const current = await wire({ url: site.url }).find();
+    assert.equal(current.state, 'failed');
+    assert.match(current.message ?? '', /answered 404 where the helper should answer/);
+    assert.match(current.message ?? '', /may not be running/);
+    assert.doesNotMatch(current.message ?? '', /older/);
+  } finally { await site.close(); }
+});
+
+test('each failure is named: a refused token, an error, a bad answer, a site that is not there', async () => {
   const cases: [string, (res: ServerResponse) => void, LiveFindAnswer['state']][] = [
-    ['an older helper', (res) => json(res, {}, 404), 'outdated'],
     ['a refused token', (res) => json(res, {}, 403), 'refused'],
     ['a PHP error', (res) => { res.writeHead(500); res.end('Fatal error'); }, 'failed'],
     ['not JSON', (res) => { res.writeHead(200); res.end('<html>'); }, 'failed'],
