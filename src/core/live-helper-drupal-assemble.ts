@@ -810,9 +810,10 @@ final class TraceBuilder {
         if ($parent === '') {
           $collection['part'] = $menu_part;
         }
-        if (!$content) {
-          $collection['shows'] = 'everywhere the ' . (string) $this->recorder->parts[$menu_part]['label'] . ' shows';
-        }
+        // A menu shows wherever its block is placed, whether its links are
+        // content (menu_link_content) or defined in code: a change to it is
+        // seen there, so the window asks first either way.
+        $collection['shows'] = 'everywhere the ' . (string) $this->recorder->parts[$menu_part]['label'] . ' shows';
         $collection['removes'] = $why === NULL;
         if ($why) {
           $collection['why'] = $why;

@@ -338,6 +338,13 @@ test('every part a Drupal page can name carries its identity, and the trace keep
   assert.deepEqual(one(parts, 'Front page · Page').identity, { kind: 'config', type: 'view', id: 'frontpage:page_1' }, 'a view display');
   assert.deepEqual(one(parts, 'article: Northwind news (teaser)').identity, { kind: 'entity', type: 'node', id: UUID.teaser, bundle: 'article', langcode: 'en' }, 'an entity a view shows');
 
+  // A menu shows wherever it is placed, so taking a link out asks first, even when its links are content.
+  const menus = (first.collections ?? []).filter((c) => c.kind === 'menu');
+  assert.deepEqual(menus.map((c) => [c.label, c.changes, c.shows]), [
+    ['Main navigation', 'content', 'everywhere the Main navigation shows'],
+    ['Footer navigation', 'configuration', 'everywhere the Footer navigation shows'],
+  ]);
+
   // Nothing stable to name.
   for (const label of ['Page', 'content', 'Main navigation', 'Footer navigation', 'article: Sample (teaser)']) assert.equal(one(parts, label).identity, undefined, label);
 });
