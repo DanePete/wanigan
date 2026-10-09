@@ -1068,8 +1068,20 @@ try {
     await page.keyboard.press('Escape');
     await page.fill('.topbar-tools .search-field input', 'debug');
     await page.waitForTimeout(200);
-    if ((await page.$$('.lib-row')).length !== 2) failures.push(`${theme}: skills search did not narrow to the two debugging skills`);
+    // Claude's, and the one in ~/.agents/skills that Codex and Gemini CLI both read.
+    if ((await page.$$('.lib-row')).length !== 3) failures.push(`${theme}: skills search did not narrow to the three debugging skills`);
     await page.screenshot({ path: join(out, `${theme}-skills-search.png`) });
+    // Gemini CLI's own: its folder, and the Agent Skills one it shares with Codex.
+    await page.fill('.topbar-tools .search-field input', '');
+    await page.click('.topbar-tools [role="radio"]:has-text("Gemini CLI")');
+    await page.waitForSelector('.lib-row:has-text("storefront-copy")', { timeout: 3000 })
+      .catch(() => failures.push(`${theme}: the Skills view does not list Gemini CLI’s own skill`));
+    if (!(await page.$('.lib-group-note:has-text("Codex reads this folder too")'))) failures.push(`${theme}: Gemini’s ~/.agents/skills does not say Codex reads it too`);
+    await page.click('.lib-row:has-text("storefront-copy")');
+    await page.waitForSelector('.lib-detail .prose');
+    if (!(await page.$('.lib-facts dd.mono:has-text("/storefront-copy")'))) failures.push(`${theme}: a Gemini skill does not say its slash command`);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: join(out, `${theme}-skills-gemini.png`) });
 
     // MCP: no secret reaches the page; check connections (a stand-in CLI); the store; two add plans.
     await page.goto(`${base}#/mcp`);

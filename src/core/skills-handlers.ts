@@ -28,7 +28,7 @@ function id(v: unknown): string {
 function target(v: unknown): SkillTarget {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new CoreError('invalid', 'Copy it where?');
   const t = v as Record<string, unknown>;
-  if (t.agent !== 'claude' && t.agent !== 'codex') throw new CoreError('invalid', 'Copy it for which agent?');
+  if (t.agent !== 'claude' && t.agent !== 'codex' && t.agent !== 'gemini') throw new CoreError('invalid', 'Copy it for which agent?');
   const optional = (x: unknown, what: string): string | null => {
     if (x === undefined || x === null || x === '') return null;
     if (typeof x !== 'string') throw new CoreError('invalid', `Which ${what}?`);

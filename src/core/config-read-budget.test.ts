@@ -78,8 +78,8 @@ for (const kind of ['skills', 'mcp'] as const) test(`${kind}: complete at the re
 
 for (const kind of ['skills', 'mcp'] as const) test(`${kind}: one ignored JSON value crosses the exact structural cap`, async context => {
   // MCP parses 19 values: registry8/settings1/manifests8/state1/Codex1.
-  // Skills parses the first 18 plus frontmatter6 and roots5. Both admit accounts2.
-  const f = await fixture(context, { items: kind === 'skills' ? 31 : 21 });
+  // Skills parses the first 18 plus frontmatter6 and roots7 (Gemini CLI's two). Both admit accounts2.
+  const f = await fixture(context, { items: kind === 'skills' ? 33 : 21 });
   const before = await f.unchangedRead(kind); writeFileSync(f.user, '{"ignored":null}');
   const files = snapshot(f.home); await assert.rejects(f.list(kind), refusal); assert.deepEqual(snapshot(f.home), files);
   writeFileSync(f.user, '{}'); assert.deepEqual(await f.unchangedRead(kind), before);

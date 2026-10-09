@@ -92,6 +92,10 @@ export function seedSkills(home: string, projects: { northstar: string; orbit: s
   skill(join(home, '.codex', 'skills', 'release-notes'), 'release-notes',
     'Draft release notes from merged pull requests since the last tag.', '# Release notes\n\nGroup by feature, fix and chore. Link each PR.\n');
 
+  // Gemini CLI: its own folder (it reads ~/.agents/skills too, beside Codex).
+  skill(join(home, '.gemini', 'skills', 'storefront-copy'), 'storefront-copy',
+    'Write product copy in the Northstar voice: short, concrete, no superlatives.', '# Storefront copy\n\nOne sentence of what it is, one of why it matters.\n');
+
   // Projects.
   skill(join(projects.northstar, '.claude', 'skills', 'checkout-a11y'), 'checkout-a11y',
     'Audit the checkout flow with axe and fix what it finds, one violation per commit.',

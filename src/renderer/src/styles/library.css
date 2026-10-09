@@ -60,6 +60,12 @@
   white-space: nowrap;
 }
 
+.lib-group-note {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
 .lib-rows {
   list-style: none;
   margin: 0;

@@ -1,6 +1,6 @@
 // Hook wiring for agent CLIs. Wanigan writes these files into its own data
 // directory and passes them on the command line; nothing goes into a repository.
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface HookFiles {
@@ -95,8 +95,9 @@ const GEMINI_TOOL_EVENTS = new Set(['BeforeTool', 'AfterTool']);
  * one, so this is how hooks reach it without touching the owner's ~/.gemini or
  * a project. The login stays where it is (macOS Keychain). The owner's chosen
  * sign-in method and trusted folders are copied in (read, never written back),
- * so Gemini asks neither again; their own extensions, MCP servers and global
- * GEMINI.md stay in their own home and are not loaded here.
+ * so Gemini asks neither again, and their own skill folders are linked in, so
+ * Gemini reads them where they are. Their own extensions and global GEMINI.md
+ * stay in their own home and are not loaded here.
  */
 /** Where Wanigan's Gemini home is, in its data folder. */
 export const geminiHomeDir = (dataDir: string): string => join(dataDir, 'gemini-home');
@@ -131,7 +132,30 @@ export function writeGeminiHome(dataDir: string, relay: string, ownerHome: strin
     const folders = readJson(trusted);
     if (folders) atomicWrite(join(dir, 'trustedFolders.json'), `${JSON.stringify(folders, null, 2)}\n`);
   }
+  // The owner's own skills, read where they are: Gemini looks for user skills
+  // in its home's .gemini/skills and .agents/skills (SkillManager, 0.46).
+  linkOwnFolder(join(dir, 'skills'), join(ownerHome, '.gemini', 'skills'));
+  mkdirSync(join(home, '.agents'), { recursive: true, mode: 0o700 });
+  linkOwnFolder(join(home, '.agents', 'skills'), join(ownerHome, '.agents', 'skills'));
   return home;
+}
+
+/**
+ * A link in Wanigan's Gemini home to one of the owner's folders, while that
+ * folder exists. A link that points elsewhere, or at nothing, is replaced or
+ * taken away; a real folder in its place (Gemini made one) is left alone.
+ */
+function linkOwnFolder(link: string, target: string): void {
+  let isDirectory = false;
+  try { isDirectory = statSync(target).isDirectory(); } catch { isDirectory = false; }
+  let current: string | null = null;
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return;
+    current = readlinkSync(link);
+  } catch { current = null; }
+  if (current === target && isDirectory) return;
+  if (current !== null) unlinkSync(link);
+  if (isDirectory) symlinkSync(target, link, 'dir');
 }
 
 /** Whether Gemini CLI saved a conversation in a Gemini home: its chat files end in the id's first eight characters. */
