@@ -14,6 +14,7 @@ import type { SkillCopyPlan, SkillRead, SkillTarget, SkillsListing } from './ski
 import type { LiveEdit, LiveEvent, LiveFound, LiveParts, LivePlatform, LiveShot, LiveShotMiss, LiveSite } from './live.ts';
 import type { LiveAsk, LiveLook, LiveToolResult } from './live-agent.ts';
 import type { LiveEnvs } from './live-envs.ts';
+import type { LayerSnapshot, LayerState, LayerVerdict } from './design-layer.ts';
 import type { LiveRunEvent, LiveStartResult, LiveStatus } from './live-site.ts';
 import type { McpAddParams, McpCatalogEntry, McpCheck, McpListing, McpPlan } from './mcp.ts';
 import type { ConversationUsage } from './tokens.ts';
@@ -371,6 +372,25 @@ export interface Methods {
   'live.shotMissed': { params: { cardId: string; sessionId: string | null; kind: 'before' | 'after'; url: string; reason: string }; result: LiveShotMiss };
   /** Why a card's before or after was not taken, newest first; gone once one of that kind is. */
   'live.shotMisses': { params: { cardId: string }; result: LiveShotMiss[] };
+  /*
+   * The design layer (src/shared/design-layer.ts): the owner's edits to the live page, kept here until they are made
+   * real in the site and verified. An append-only log underneath, so undo and redo are exact. Never written into the
+   * site or the project: the main process shows them on the page.
+   */
+  /** A project's layer: its edits in the order made, and what undo and redo would do. */
+  'live.layer': { params: { projectId: string }; result: LayerSnapshot };
+  /** Add an edit (a LayerEditInput); the core gives it its id and checks it with layerEdit(). Clears what redo would bring back. */
+  'live.layerAdd': { params: { projectId: string; edit: unknown }; result: LayerSnapshot };
+  /** Take an edit out of the tray, kept in the log so undo can bring it back. Only a draft or an orphaned edit. */
+  'live.layerDiscard': { params: { projectId: string; id: string }; result: LayerSnapshot };
+  'live.layerUndo': { params: { projectId: string }; result: LayerSnapshot };
+  'live.layerRedo': { params: { projectId: string }; result: LayerSnapshot };
+  /**
+   * What became of an edit: implemented (the site now does it natively), verified (with the verdict that said so),
+   * orphaned (its target no longer resolves on its page) or back to draft (it resolves again, or a verification
+   * failed), retired by the owner. A verdict may come with any of them.
+   */
+  'live.layerMark': { params: { projectId: string; id: string; state: LayerState; verdict?: LayerVerdict | null }; result: LayerSnapshot };
   /**
    * The code editor: the owner's own files, by hand. Paths are relative to the
    * project folder or a card's worktree; the core refuses anything outside it,
@@ -656,6 +676,12 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.start': ['owner'],
   'live.shotMissed': ['owner'],
   'live.shotMisses': ['owner'],
+  'live.layer': ['owner'],
+  'live.layerAdd': ['owner'],
+  'live.layerDiscard': ['owner'],
+  'live.layerUndo': ['owner'],
+  'live.layerRedo': ['owner'],
+  'live.layerMark': ['owner'],
   'files.read': ['owner'],
   'files.write': ['owner'],
   'files.stat': ['owner'],

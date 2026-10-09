@@ -74,6 +74,13 @@ const live: LiveBridge = {
   library: (projectId, options) => ipcRenderer.invoke('live:library', projectId, options ?? null) as ReturnType<LiveBridge['library']>,
   libraryPictures: (projectId, entries, options) => ipcRenderer.invoke('live:libraryPictures', projectId, entries, options ?? null) as ReturnType<LiveBridge['libraryPictures']>,
   libraryPicture: (projectId, entry, width) => ipcRenderer.invoke('live:libraryPicture', projectId, entry, width) as ReturnType<LiveBridge['libraryPicture']>,
+  // The design layer (src/main/live-layer.ts).
+  layerApply: () => ipcRenderer.invoke('live:layerApply') as ReturnType<LiveBridge['layerApply']>,
+  layerShow: (on) => ipcRenderer.invoke('live:layerShow', on) as ReturnType<LiveBridge['layerShow']>,
+  layerTarget: () => ipcRenderer.invoke('live:layerTarget') as ReturnType<LiveBridge['layerTarget']>,
+  layerImplement: (id) => ipcRenderer.invoke('live:layerImplement', id) as ReturnType<LiveBridge['layerImplement']>,
+  layerVerify: (id, options) => ipcRenderer.invoke('live:layerVerify', id, options ?? null) as ReturnType<LiveBridge['layerVerify']>,
+  layerPicture: (path) => ipcRenderer.invoke('live:layerPicture', path) as ReturnType<LiveBridge['layerPicture']>,
   // The Go to launcher (src/main/live-find.ts).
   find: (projectId, query, options) => ipcRenderer.invoke('live:find', projectId, query ?? '', options ?? null) as ReturnType<LiveBridge['find']>,
   findHere: (projectId) => ipcRenderer.invoke('live:findHere', projectId) as ReturnType<LiveBridge['findHere']>,

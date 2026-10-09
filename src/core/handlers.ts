@@ -46,6 +46,9 @@ export type Caller = { role: 'owner' } | { role: 'session'; session: Session } |
 type Handler<M extends Method> = (params: Params<M>, caller: Caller) => Result<M> | Promise<Result<M>>;
 export type Handlers = { [M in Method]: Handler<M> };
 
+/** The design layer's methods until the core keeps its log: said plainly, never answered with an empty layer. */
+const layerNotYet = (): never => { throw new CoreError('refused', 'The design layer is not built yet.'); };
+
 /**
  * What a paused project's live agent sessions are told, once, when each is
  * next idle. A note is asked only of an agent holding a card: one holding none
@@ -335,6 +338,13 @@ export function createHandlers(
     'live.start': (p) => more.live.start(str(p.projectId, 'project'), p.restart === true),
     'live.shotMissed': (p) => more.live.shotMissed(p),
     'live.shotMisses': (p) => more.live.shotMisses(str(p.cardId, 'card')),
+    // The design layer's log: the contract is src/shared/design-layer.ts; the core's side is still to be built.
+    'live.layer': layerNotYet,
+    'live.layerAdd': layerNotYet,
+    'live.layerDiscard': layerNotYet,
+    'live.layerUndo': layerNotYet,
+    'live.layerRedo': layerNotYet,
+    'live.layerMark': layerNotYet,
     'files.read': (p) => more.files.read(p, p.path),
     'files.write': (p) => more.files.write(p, p.path, p.text, p.baseHash, p.anyway === true),
     'files.stat': (p) => more.files.stat(p, p.path),

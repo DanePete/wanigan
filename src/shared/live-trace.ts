@@ -204,6 +204,103 @@ export interface TraceAi {
 export const PART_KINDS = ['template', 'component', 'block', 'entity', 'field', 'view', 'region', 'form', 'shortcode', 'pattern', 'menu', 'widget'] as const;
 export type PartKind = (typeof PART_KINDS)[number];
 
+/**
+ * Helper 4: what a part is, so it can be found again after a reload, a reorder
+ * or an edit elsewhere on the page. A part id (`p237`) is a place in render
+ * order and belongs to a position; this names the thing the platform stores.
+ *
+ * - `entity`: a stored item. Drupal: its entity type, UUID, bundle and
+ *   language. WordPress: `post` or `term` and its ID, the post type or
+ *   taxonomy as bundle. Narrowed to one `field` (Drupal field name; WordPress
+ *   `post_title`, `post_content`, `post_excerpt` or a registered meta key) and
+ *   to one `item` of it: a reference item by what it refers to
+ *   (`ref:<entity type>:<uuid or ID>`), so a reorder does not move it; a value
+ *   item by its delta (`delta:<n>`).
+ * - `component`: a single-directory component (`acme:card`) or a block type
+ *   (`core/paragraph`) rendered inside another identified part (`within`, that
+ *   part's identityKey, or null at the page's top), and which of its kind it
+ *   is there (`nth`, from 0, in document order).
+ * - `config`: one configuration item, by `type` and `id`: a Drupal block
+ *   placement (`block`, with its `plugin`), a menu link (`menu_link`, its
+ *   plugin id), a view display (`view`, `id:display`); a WordPress widget
+ *   (`widget`), menu item (`menu_item`), template (`wp_template`) or template
+ *   part (`wp_template_part`, its `theme//slug` id).
+ * - `block`: a WordPress block in stored markup: where (`post:12`,
+ *   `tpl:<id>`, `tp:<id>`), its path among the blocks there, and its name.
+ */
+export type PartIdentity =
+  | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string }
+  | { kind: 'component'; name: string; within: string | null; nth: number }
+  | { kind: 'config'; type: string; id: string; plugin?: string }
+  | { kind: 'block'; store: string; path: number[]; name: string };
+
+/** A machine name, id, UUID or store as a helper reports it: plain, bounded, no spaces or control characters. */
+const IDENT = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
+
+/** A part's identity as a helper gave it, checked; null when it is not one. */
+export function parseIdentity(raw: unknown): PartIdentity | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const v = raw as Record<string, unknown>;
+  const name = (x: unknown): string | null => (typeof x === 'string' && IDENT.test(x) ? x : null);
+  // An optional part that is there but malformed refuses the whole identity: dropping a field or an item would
+  // widen the target from one item to all of the content.
+  let bad = false;
+  const opt = <K extends string>(key: K, x: unknown, test = IDENT): Partial<Record<K, string>> => {
+    if (x === undefined || x === null) return {};
+    if (typeof x !== 'string' || !test.test(x)) { bad = true; return {}; }
+    return { [key]: x } as Record<K, string>;
+  };
+  switch (v.kind) {
+    case 'entity': {
+      const type = name(v.type), id = name(v.id);
+      if (!type || !id) return null;
+      const out: PartIdentity = { kind: 'entity', type, id, ...opt('bundle', v.bundle), ...opt('langcode', v.langcode), ...opt('field', v.field), ...opt('item', v.item, /^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/) };
+      return bad ? null : out;
+    }
+    case 'component': {
+      const n = name(v.name);
+      const within = v.within === null || v.within === undefined ? null : typeof v.within === 'string' && v.within.length <= 1000 && !/[\u0000-\u001f]/.test(v.within) ? v.within : undefined;
+      if (!n || within === undefined || !Number.isInteger(v.nth) || (v.nth as number) < 0 || (v.nth as number) > 10_000) return null;
+      return { kind: 'component', name: n, within, nth: v.nth as number };
+    }
+    case 'config': {
+      const type = name(v.type), id = name(v.id);
+      const plugin = opt('plugin', v.plugin);
+      return type && id && !bad ? { kind: 'config', type, id, ...plugin } : null;
+    }
+    case 'block': {
+      const store = name(v.store), n = name(v.name);
+      const path = Array.isArray(v.path) && v.path.length > 0 && v.path.length <= 64 && v.path.every((x) => Number.isInteger(x) && x >= 0 && x < 10_000) ? v.path as number[] : null;
+      return store && n && path ? { kind: 'block', store, path, name: n } : null;
+    }
+    default: return null;
+  }
+}
+
+/** One string for an identity: equal for the same part on every load, and what a component's `within` names. */
+export function identityKey(i: PartIdentity): string {
+  switch (i.kind) {
+    case 'entity': return ['entity', i.type, i.id, i.langcode ?? '', i.field ?? '', i.item ?? ''].join('|');
+    case 'component': return ['component', i.name, i.within ?? '', String(i.nth)].join('|');
+    case 'config': return ['config', i.type, i.id].join('|');
+    case 'block': return ['block', i.store, i.path.join('.'), i.name].join('|');
+  }
+}
+
+/**
+ * What every instance of a part's kind shares, for an edit scoped to `kind`: the same field of the same bundle, the
+ * same component or block type, the same block plugin. Null when a part has no kind beyond itself (a menu link, a
+ * template).
+ */
+export function kindKey(i: PartIdentity): string | null {
+  switch (i.kind) {
+    case 'entity': return i.bundle ? (i.field ? `field|${i.type}|${i.bundle}|${i.field}` : `entity|${i.type}|${i.bundle}`) : null;
+    case 'component': return `component|${i.name}`;
+    case 'block': return `component|${i.name}`;
+    case 'config': return i.plugin ? `plugin|${i.type}|${i.plugin}` : null;
+  }
+}
+
 export interface TracePart {
   /** Matches the `wl:part` comments around it in the page. */
   id: string;
@@ -225,6 +322,8 @@ export interface TracePart {
   access?: { result: 'allowed' | 'forbidden' | 'neutral'; reason?: string };
   /** Asset libraries the part attached itself (not those of the parts inside it), as the platform names them: `core/drupal`, `acme/hero`. */
   libraries?: string[];
+  /** Helper 4: what it is, kept across reloads and reorders (see PartIdentity). Absent from older helpers, and for markup no helper can name. */
+  identity?: PartIdentity;
 }
 
 export interface TraceQuery {
@@ -485,6 +584,7 @@ export function parseTrace(raw: unknown): LiveTrace | null {
       const libraries = v.libraries.map((l) => str(l, 200)).filter((l): l is string => !!l).slice(0, 100);
       if (libraries.length) out.libraries = libraries;
     }
+    const identity = parseIdentity(v.identity); if (identity) out.identity = identity;
     return out;
   }, 'parts', truncated);
   const trace: LiveTrace = {

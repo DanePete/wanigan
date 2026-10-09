@@ -5,6 +5,7 @@ import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
 import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveRemove, LiveWriteOptions } from './live-arrange.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer } from './live-library.ts';
+import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerVerdict } from './design-layer.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
@@ -208,6 +209,24 @@ export interface LiveBridge {
   libraryPictures(projectId: string, entries: string[], options?: { widths?: number[]; refresh?: boolean }): Promise<LibraryPicturesAnswer>;
   /** A kept picture of an entry at a width, as base64 PNG; null when there is none for the library as it is now. */
   libraryPicture(projectId: string, entry: string, width: number): Promise<string | null>;
+  /*
+   * The design layer, the main process's side (src/main/live-layer.ts; the contract is src/shared/design-layer.ts).
+   * The edits themselves are the core's (`live.layer*`); these show them on the page, key a new one, make one real
+   * and verify it. After any change to the log the window calls layerApply().
+   */
+
+  /** Show the layer on the page shown: read the project's edits from the core, find each target, tag it, inject the preview, patch words. Runs again by itself after every load. */
+  layerApply(): Promise<LayerApplied>;
+  /** Show the page with the layer, or as the site renders it without one (for comparing). On by default; a load keeps the choice. */
+  layerShow(on: boolean): Promise<LayerApplied>;
+  /** The picked element as an edit would be keyed to it: its target, what `kind` would reach, its values before. Null with nothing picked. */
+  layerTarget(): Promise<LayerPickTarget | null>;
+  /** Make one edit real in the site, where phase 1 can (words in a plain text field, through the helper), and tell the core. */
+  layerImplement(id: string): Promise<LayerImplemented>;
+  /** Verify one implemented edit (or every implemented edit of this page): the page as designed against the page as the site renders it, at the given widths (default 390 and 1440). Tells the core. */
+  layerVerify(id: string | null, options?: { widths?: number[] }): Promise<LayerVerdict>;
+  /** A verification picture (a path a verdict named) as base64 PNG, for a window that cannot read the data folder. */
+  layerPicture(path: string): Promise<string | null>;
   /* The Go to launcher (src/main/live-find.ts; the helpers' contract is src/shared/live-find.ts). */
 
   /** A project's site's destinations: the helper's index, or its search for `query`, or why there are none (with the pages the view knows). */

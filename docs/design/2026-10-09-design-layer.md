@@ -259,6 +259,72 @@ before adding it:
 5. **Themes and reach.** Creating a subtheme or child theme; reach checks
    across many pages.
 
+## Phase 1, as contracted
+
+The types are in `src/shared/design-layer.ts` and `src/shared/live-trace.ts`
+(`PartIdentity`), the core's methods in `src/shared/protocol.ts`
+(`live.layer*`), the main process's in `src/shared/bridge.ts`
+(`LiveBridge.layer*`). Phase 1 covers text and style edits; images, inserts
+and removals as layer edits come later (inserting and removing already work
+directly through the helpers).
+
+**The helpers (version 4, the same bump as removal and the library).** Every
+part a helper can name carries `identity`:
+
+- Drupal: an entity part is `entity` (type, UUID, bundle, langcode); a field
+  part adds `field`; a field item adds `item`, `ref:<type>:<uuid>` for a
+  reference (so a reorder does not move it) and `delta:<n>` for a value. A
+  single-directory component is `component` (its id, the identity key of the
+  nearest identified part it is inside, and which of that id it is there). A
+  block placement is `config` `block` (its id, its plugin); a menu link is
+  `config` `menu_link`; a view display is `config` `view`.
+- WordPress: a post is `entity` `post` (its ID, post type as bundle), a term
+  `entity` `term`; `post_title`, `post_content`, `post_excerpt` or a
+  registered meta key as `field`. A block in stored markup is `block` (its
+  store, path and name). A widget, menu item, template and template part are
+  `config`.
+
+**The core** keeps the log in its database (an additive migration): one row
+per edit and an append-only list of what was done to them (add, discard,
+undo, redo, mark), so undo and redo are exact and nothing is lost. It checks
+every edit with `layerEdit()` and gives it its id. It never writes to the site
+or the project.
+
+**The main process** (`src/main/live-layer.ts`):
+
+1. After every load of the view, and on `layerApply()`, it reads the
+   project's edits from the core and resolves each one on the page: the
+   trace's parts by `identityKey` (or, for scope `kind`, every part with the
+   same `kindKey`), then `inner` inside each part's own element, and checks
+   `textHash`. It tags what it found with `data-wl-edit`, injects
+   `compileLayer()` as one stylesheet it replaces whole, and patches the
+   words of text edits in place. An edit of this page that does not resolve
+   is reported as orphaned (and the core told); edits of other pages are left
+   alone.
+2. `layerTarget()` keys the picked element: its part's identity (the
+   innermost region with a part that has one), the CSS path from that part's
+   root element to it, its words' hash, what `kind` would reach and how many
+   elements that is on this page, and its computed values as `before`.
+3. `layerImplement(id)` makes a text edit real where it is plain words in a
+   plain text field the helper can save (`helperSave`, as the logged-in user,
+   a revision where the site keeps them), and marks it `implemented`. Anything
+   else answers `route: 'agent'` (styles, until phase 3) or `route: 'none'`,
+   with why.
+4. `layerVerify(id)` renders the page with the layer (the design) and without
+   it (the result) in hidden windows in the view's session at each width,
+   measures the noise floor by rendering the result twice, then runs the
+   steps in order: computed styles and boxes of the touched elements, pixels
+   around them, then the rest of the page. It keeps the pictures in the data
+   folder and tells the core (`verified`, or back to `draft` with the verdict).
+
+**The window** shows a tray of the project's edits (before and after, the
+page each is on, its state and verdict, fragile ones said so), per-edit
+discard, undo and redo, and the style panel and "Retype the words", which now
+make layer edits with a scope (`this`, every instance of its `kind`, or a
+token for the site) instead of trying values on the page. A style edit's
+"Make it real" goes to an agent as intent, as before; a text edit's saves
+through the helper and then verifies.
+
 ## Still to prove
 
 The research settled the approach; these need a probe before they are relied on:

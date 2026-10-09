@@ -5,11 +5,18 @@
 // an agent through MCP, so everything here is checked), and the CSS the live
 // view injects so each edit shows at once.
 //
+// Phase 1 (layer and content) is the contract below, shared by the core (the
+// log: LayerSnapshot through `live.layer*` in protocol.ts), the main process
+// (LiveBridge.layer*: resolving targets on the page, tagging, the preview, the
+// native implementation of text, the verify capture) and the window (the
+// tray, the style panel, scopes).
+//
 // The preview stylesheet is never shipped. It targets only elements the page
 // script tagged with the edit's id (`data-wl-edit`), and it always wins
 // (`!important`, a doubled attribute selector), so the page shows the design
 // whatever the theme's own rules say. Whether the native implementation wins
 // the cascade is what the verify step proves.
+import { kindKey, parseIdentity, type PartIdentity } from './live-trace.ts';
 
 /** Style properties an edit may set. Each is something the owner can see and a theme can implement natively. */
 export const LAYER_PROPERTIES = [
@@ -24,13 +31,19 @@ export const LAYER_PROPERTIES = [
 ] as const;
 export type LayerProperty = (typeof LAYER_PROPERTIES)[number];
 
-/** Who an edit is for: what the trace says the part is. Never a DOM path alone (`selector` is the marked fallback). */
-export type LayerTarget =
-  | { kind: 'entity'; entityType: string; uuid: string; field: string | null; delta: number | null; langcode: string | null }
-  | { kind: 'block'; post: string; path: number[]; name: string }
-  | { kind: 'component'; name: string; path: number[] }
-  | { kind: 'config'; type: string; id: string }
-  | { kind: 'selector'; selector: string; textHash: string };
+/**
+ * Who an edit is for. What the trace says the part is (its PartIdentity, helper 4), and the element inside it the
+ * owner chose (a CSS path from the part's own root element; null for the part itself). Markup no helper explains has
+ * only a `selector` from the document, and its edit is fragile: said so in the tray, and orphaned rather than
+ * guessed when it stops matching. `textHash` is the element's own words when the edit was made (layerTextHash): a
+ * target that now resolves to other words is orphaned, never applied to whatever sits in its place.
+ */
+export interface LayerTarget {
+  part: PartIdentity | null;
+  inner: string | null;
+  selector: string | null;
+  textHash: string | null;
+}
 
 /** `this`: one element. `kind`: every instance of its component, block type or field. `site`: a token. */
 export type LayerScope = 'this' | 'kind' | 'site';
@@ -50,6 +63,10 @@ export type LayerState = 'draft' | 'implemented' | 'verified' | 'retired' | 'orp
 export interface LayerEdit {
   id: string;
   target: LayerTarget;
+  /** What the tray calls it: the element and the part, as the trace names them ("Heading in Hero (component)"). */
+  label: string;
+  /** The page it was made on, as a path of the site ("/about"). */
+  page: string;
   scope: LayerScope;
   /** `all`, or the id of one of the theme's breakpoints. */
   breakpoint: string;
@@ -59,12 +76,17 @@ export interface LayerEdit {
   state: LayerState;
   by: 'owner' | 'agent';
   at: number;
+  /** What the last verification said; null until one runs. */
+  verdict: LayerVerdict | null;
 }
 
 /** A breakpoint as the theme defines it (Drupal's breakpoints.yml, WordPress's widths), as a media query. */
 export interface LayerBreakpoint { id: string; label: string; media: string }
 
 const ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** A CSS path the page script wrote: tags, classes, ids, :nth-of-type(n), > and spaces. Nothing that could reach outside a selector. */
+const PATH = /^[A-Za-z0-9 >:()._#-]{1,500}$/;
+const TEXT_HASH = /^[0-9a-f]{8,16}$/;
 const TOKEN = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
 /** A media query the layer will print: `all` or `screen`, width features, numbers, units and `and` only (Drupal's breakpoints.yml writes `all and (min-width: …)`). */
 const MEDIA = /^(?:(?:only )?(?:screen|all) and )?\((?:min|max)-width: ?\d{1,5}(?:\.\d+)?(?:px|em|rem)\)(?: and \((?:min|max)-width: ?\d{1,5}(?:\.\d+)?(?:px|em|rem)\))?$/;
@@ -104,10 +126,17 @@ export function layerEdit(raw: unknown): { edit: LayerEdit; refused: null } | { 
   if (r.before && typeof r.before === 'object') {
     for (const [k, v] of Object.entries(r.before as Record<string, unknown>).slice(0, 60)) if (typeof v === 'string' && k.length <= 100) before[k] = v.slice(0, 2000);
   }
+  if (change.type !== 'token' && !target.part && !target.selector) return no('An edit needs a target the trace names.');
+  if (r.scope === 'kind' && (!target.part || !kindKey(target.part))) return no('Only a part with a kind (a component, a block type, a field) can be changed for every instance.');
   const states: readonly LayerState[] = ['draft', 'implemented', 'verified', 'retired', 'orphaned'];
   const state = states.includes(r.state as LayerState) ? r.state as LayerState : 'draft';
+  const label = typeof r.label === 'string' && r.label.trim() ? r.label.trim().slice(0, 200) : 'An edit';
+  const page = typeof r.page === 'string' && r.page.startsWith('/') && !r.page.startsWith('//') && r.page.length <= 2000 && !/[\u0000-\u001f]/.test(r.page) ? r.page : '/';
   return {
-    edit: { id: r.id, target, scope: r.scope, breakpoint: r.breakpoint, change, before, state, by: r.by === 'agent' ? 'agent' : 'owner', at: typeof r.at === 'number' && Number.isFinite(r.at) ? r.at : 0 },
+    edit: {
+      id: r.id, target, label, page, scope: r.scope, breakpoint: r.breakpoint, change, before, state, by: r.by === 'agent' ? 'agent' : 'owner',
+      at: typeof r.at === 'number' && Number.isFinite(r.at) ? r.at : 0, verdict: null,
+    },
     refused: null,
   };
 }
@@ -115,33 +144,14 @@ export function layerEdit(raw: unknown): { edit: LayerEdit; refused: null } | { 
 function layerTarget(raw: unknown): LayerTarget | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
-  const name = (v: unknown, max = 200): string | null => (typeof v === 'string' && v.length > 0 && v.length <= max && !/[\u0000-\u001f]/.test(v) ? v : null);
-  const path = (v: unknown): number[] | null => (Array.isArray(v) && v.length <= 64 && v.every((n) => Number.isInteger(n) && n >= 0 && n < 10_000) ? v as number[] : null);
-  switch (t.kind) {
-    case 'entity': {
-      const entityType = name(t.entityType, 64), uuid = name(t.uuid, 64);
-      if (!entityType || !uuid) return null;
-      const delta = Number.isInteger(t.delta) && (t.delta as number) >= 0 ? t.delta as number : null;
-      return { kind: 'entity', entityType, uuid, field: name(t.field, 64), delta, langcode: name(t.langcode, 16) };
-    }
-    case 'block': {
-      const post = name(t.post, 32), p = path(t.path), n = name(t.name, 100);
-      return post && p && n ? { kind: 'block', post, path: p, name: n } : null;
-    }
-    case 'component': {
-      const n = name(t.name, 200), p = path(t.path);
-      return n && p ? { kind: 'component', name: n, path: p } : null;
-    }
-    case 'config': {
-      const type = name(t.type, 64), id = name(t.id, 200);
-      return type && id ? { kind: 'config', type, id } : null;
-    }
-    case 'selector': {
-      const selector = name(t.selector, 500), textHash = name(t.textHash, 64);
-      return selector && textHash ? { kind: 'selector', selector, textHash } : null;
-    }
-    default: return null;
-  }
+  const part = t.part === null || t.part === undefined ? null : parseIdentity(t.part);
+  if (t.part !== null && t.part !== undefined && !part) return null;
+  const path = (v: unknown): string | null | undefined => (v === null || v === undefined ? null : typeof v === 'string' && PATH.test(v) ? v : undefined);
+  const inner = path(t.inner), selector = path(t.selector);
+  if (inner === undefined || selector === undefined) return null;
+  const textHash = t.textHash === null || t.textHash === undefined ? null : typeof t.textHash === 'string' && TEXT_HASH.test(t.textHash) ? t.textHash : undefined;
+  if (textHash === undefined) return null;
+  return { part, inner: part ? inner : null, selector: part ? null : selector, textHash };
 }
 
 function layerChange(raw: unknown): LayerChange | string {
@@ -245,4 +255,107 @@ export function compileLayer(edits: readonly LayerEdit[], breakpoints: readonly 
     if (rules) out.push(`@media ${b.media} {\n${rules.map((r) => `  ${r}`).join('\n')}\n}`);
   }
   return out.join('\n');
+}
+
+/** An element's own words as the layer keys them: whitespace folded, then FNV-1a (64-bit) as 16 hex digits. The page script computes the same. */
+export function layerTextHash(text: string): string {
+  const folded = text.replace(/\s+/g, ' ').trim();
+  let h = 0xcbf29ce484222325n;
+  for (let i = 0; i < folded.length; i++) {
+    h ^= BigInt(folded.charCodeAt(i));
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0');
+}
+
+/* ── phase 1: what the core keeps, the main process does, and the window shows ── */
+
+/**
+ * A project's layer as the core keeps it (`live.layer`): the edits in effect and those already in the site, in the
+ * order made, and what undo and redo would do. Undo takes back the newest add or discard; redo puts it back, until
+ * the next add. Taken-back edits are kept in the log but are not listed.
+ */
+export interface LayerSnapshot {
+  projectId: string;
+  edits: LayerEdit[];
+  /** The edit undo would take back (an add) or bring back (a discard), with what it is; null when there is nothing to undo. */
+  undo: { id: string; label: string; action: 'add' | 'discard' } | null;
+  redo: { id: string; label: string; action: 'add' | 'discard' } | null;
+}
+
+/** What the window sends to make an edit: the core gives it its id, `by`, `at` and `state`, and checks it (layerEdit). */
+export type LayerEditInput = Pick<LayerEdit, 'target' | 'label' | 'page' | 'scope' | 'breakpoint' | 'change' | 'before'>;
+
+/** The picked element as the layer would key an edit to it (LiveBridge.layerTarget). */
+export interface LayerPickTarget {
+  target: LayerTarget;
+  /** The tray's name for it. */
+  label: string;
+  /** What `kind` would reach, in words ("every Card component", "the Body field of every Article"); null when it has no kind. */
+  kindLabel: string | null;
+  /** How many elements on this page `kind` would reach now. */
+  kindCount: number;
+  /** Its computed values for the layer's properties, and its words: an edit's `before`. */
+  before: Record<string, string>;
+  /** The helper names no part for it: an edit is fragile. */
+  fragile: boolean;
+}
+
+/** The layer applied to the page shown (LiveBridge.layerApply): what each edit of this page reached. */
+export interface LayerApplied {
+  /** The page path the view shows. */
+  page: string;
+  /** Edits shown on this page, and how many elements each tagged. */
+  shown: { id: string; elements: number }[];
+  /** Edits made on this page whose target no longer resolves, or resolves to other words: listed, never applied. The core is told. */
+  orphaned: { id: string; why: string }[];
+  /** Edits of other pages (scope `this`), left alone here. */
+  elsewhere: string[];
+  /** The layer is switched off in the view (LiveBridge.layerShow(false)): nothing is shown. */
+  off: boolean;
+}
+
+/**
+ * Making an edit real (LiveBridge.layerImplement). Phase 1 implements text in a plain text field through the site
+ * helper, as the logged-in user, with a revision where the site keeps them; anything else goes to an agent as a
+ * brief (`route: 'agent'`) on the owner's click, or is not yet possible (`route: 'none'`), and says why.
+ */
+export type LayerImplemented =
+  | { ok: true; id: string; state: 'implemented'; revision: string | null }
+  | { ok: false; id: string; route: 'agent' | 'none'; why: string };
+
+/** A rectangle of the page, in CSS pixels of the document at the verified width. */
+export interface LayerRect { x: number; y: number; width: number; height: number }
+
+/** One thing the verification found different between the page as designed and the page as the site now renders it. */
+export type LayerDifference =
+  /** A computed value of a touched element (step 1). */
+  | { kind: 'style'; edit: string; width: number; element: string; property: string; design: string; result: string }
+  /** A touched element's box (step 1). */
+  | { kind: 'box'; edit: string; width: number; element: string; design: LayerRect; result: LayerRect }
+  /** Pixels inside or around a touched element past the noise floor (step 2). */
+  | { kind: 'pixels'; edit: string | null; width: number; rect: LayerRect; pixels: number; maxDiff: number }
+  /** Pixels away from every touched element: the change reached further than it should (step 3). */
+  | { kind: 'leak'; width: number; rect: LayerRect; pixels: number; maxDiff: number };
+
+/** The verification steps, in the order they run; the first that fails stops it. Phase 1 runs the first three. */
+export const VERIFY_STEPS = ['styles', 'pixels', 'rest'] as const;
+export type VerifyStep = (typeof VERIFY_STEPS)[number];
+
+/**
+ * What a verification said (LiveBridge.layerVerify), kept on the edit. The design is the page with the layer, the
+ * result is the page without it, each rendered in a hidden window at the same width, scale and session. The noise
+ * floor is measured first, by rendering one version twice, and stated as two numbers (the largest channel difference
+ * and how many pixels differ), never as a percentage.
+ */
+export interface LayerVerdict {
+  at: number;
+  ok: boolean;
+  /** The first step that failed, or null when every step passed. */
+  failed: VerifyStep | null;
+  widths: number[];
+  noise: { maxDiff: number; pixels: number };
+  differences: LayerDifference[];
+  /** Pictures kept in Wanigan's data folder for the tray: the design, the result and their difference, per width. */
+  pictures: { width: number; design: string; result: string; diff: string | null }[];
 }
