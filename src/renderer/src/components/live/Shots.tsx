@@ -4,6 +4,7 @@
 // pixels that differ marked.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LiveShot } from '@shared/live';
+import { changeBoxes } from '@shared/live-compare';
 import type { CardDetail } from '@shared/model';
 import { call, useQuery } from '../../lib/api';
 import { ago } from '../../lib/format';
@@ -167,13 +168,12 @@ const load = (src: string): Promise<HTMLImageElement> => new Promise((done, fail
 
 /** Pixels whose colour moved more than this (summed over red, green and blue) differ: past antialiasing noise, short of any real change. */
 const DIFFERS = 24;
-/** Differences are grouped into cells this many pixels square, and touching cells into one boxed area. */
-const CELL = 16;
 
 /**
  * Compare two screenshots at the page's CSS width (half a 2x shot): the after
  * faded, each pixel that differs in the live view's blue, and a box around each area of change
- * so that one changed word on a long page is seen.
+ * so that one changed word on a long page is seen. The areas are found as the
+ * Local and hosted comparison finds them (shared/live-compare.ts).
  */
 async function diff(beforeSrc: string, afterSrc: string): Promise<Diff> {
   const [x, y] = await Promise.all([load(beforeSrc), load(afterSrc)]);
@@ -193,9 +193,7 @@ async function diff(beforeSrc: string, afterSrc: string): Promise<Diff> {
   };
   const a = draw(x);
   const b = draw(y);
-  const cols = Math.ceil(w / CELL);
-  const rows = Math.ceil(h / CELL);
-  const cells = new Uint8Array(cols * rows);
+  const marks = new Uint8Array(w * h);
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -209,7 +207,7 @@ async function diff(beforeSrc: string, afterSrc: string): Promise<Diff> {
     const d = Math.abs(a.data[i]! - b.data[i]!) + Math.abs(a.data[i + 1]! - b.data[i + 1]!) + Math.abs(a.data[i + 2]! - b.data[i + 2]!);
     if (d > DIFFERS) {
       pixels++;
-      cells[Math.floor((p / w) / CELL) * cols + Math.floor((p % w) / CELL)] = 1;
+      marks[p] = 1;
       result.data[i] = wr; result.data[i + 1] = wg; result.data[i + 2] = wb; result.data[i + 3] = 255;
     } else {
       result.data[i] = 255 - (255 - b.data[i]!) * 0.4;
@@ -219,37 +217,9 @@ async function diff(beforeSrc: string, afterSrc: string): Promise<Diff> {
     }
   }
   g.putImageData(result, 0, 0);
-  // Touching cells are one area: flood each, and box it with some room.
-  const seen = new Uint8Array(cells.length);
-  let areas = 0;
-  const boxes: Diff['boxes'] = [];
+  const boxes = changeBoxes(marks, w, h);
   g.strokeStyle = `rgb(${wr} ${wg} ${wb})`;
   g.lineWidth = 3;
-  for (let start = 0; start < cells.length; start++) {
-    if (!cells[start] || seen[start]) continue;
-    areas++;
-    let [x0, y0, x1, y1] = [cols, rows, 0, 0];
-    const stack = [start];
-    seen[start] = 1;
-    while (stack.length) {
-      const c = stack.pop() as number;
-      const cx = c % cols;
-      const cy = Math.floor(c / cols);
-      x0 = Math.min(x0, cx); y0 = Math.min(y0, cy); x1 = Math.max(x1, cx); y1 = Math.max(y1, cy);
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]] as const) {
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-        const n = ny * cols + nx;
-        if (cells[n] && !seen[n]) { seen[n] = 1; stack.push(n); }
-      }
-    }
-    const pad = 6;
-    const rect = { x: x0 * CELL - pad, y: y0 * CELL - pad, width: (x1 - x0 + 1) * CELL + pad * 2, height: (y1 - y0 + 1) * CELL + pad * 2 };
-    g.strokeRect(rect.x, rect.y, rect.width, rect.height);
-    boxes.push(rect);
-  }
-  // Top to bottom, as the page reads.
-  boxes.sort((p, q) => p.y - q.y || p.x - q.x);
-  return { src: canvas.toDataURL('image/png'), pixels, total: w * h, areas, height: h, boxes };
+  for (const rect of boxes) g.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  return { src: canvas.toDataURL('image/png'), pixels, total: w * h, areas: boxes.length, height: h, boxes };
 }
