@@ -53,6 +53,8 @@ test('every command the keys can produce is listed on the sheet', () => {
   for (const k of 'abcdefghijklmnopqrstuvwxyz0123456789/,?\\'.split('').concat(['Escape'])) {
     for (const state of [at(), at({ afterG: true })]) {
       presses.push([key(k), state], [key(k, { metaKey: true }), state], [key(k, { shiftKey: true }), state], [key(k, { metaKey: true, shiftKey: true }), state]);
+      // With ⌥ a Mac types another character; the key's code still names the letter.
+      if (/^[a-z]$/.test(k)) presses.push([key(k, { metaKey: true, altKey: true, code: `Key${k.toUpperCase()}` }), state]);
     }
   }
   for (const [e, s] of presses) {
@@ -105,16 +107,21 @@ test('the sheet’s Commits keys are the keys the Commits tab handles', () => {
   assert.equal(matchKey(key('j'), at()), null);
 });
 
-test('git’s chords push, pull, fetch, switch and make a branch, from anywhere in the window', () => {
+test('git’s chords push, pull, fetch, switch and make a branch, and ⌘P opens a file, from anywhere in the window', () => {
   for (const typing of [false, true]) {
-    assert.deepEqual(matchKey(key('p', { metaKey: true }), at({ typing })), { id: 'git-push' });
+    assert.deepEqual(matchKey(key('π', { metaKey: true, altKey: true, code: 'KeyP' }), at({ typing })), { id: 'git-push' }, '⌥⌘P, which types π');
+    assert.deepEqual(matchKey(key('p', { metaKey: true }), at({ typing })), { id: 'quick-open' });
+    assert.deepEqual(matchKey(key('j', { metaKey: true }), at({ typing })), { id: 'toggle-editor' });
     assert.deepEqual(matchKey(key('P', { metaKey: true, shiftKey: true }), at({ typing })), { id: 'git-pull' });
     assert.deepEqual(matchKey(key('F', { metaKey: true, shiftKey: true }), at({ typing })), { id: 'git-fetch' });
     assert.deepEqual(matchKey(key('b', { metaKey: true }), at({ typing })), { id: 'git-switch' });
     assert.deepEqual(matchKey(key('B', { metaKey: true, shiftKey: true }), at({ typing })), { id: 'git-branch' });
   }
   assert.equal(matchKey(key('f', { metaKey: true }), at()), null, '⌘F is left for find');
-  assert.equal(menuAccelerator('git-push'), 'CmdOrCtrl+P');
+  assert.equal(menuAccelerator('git-push'), 'CmdOrCtrl+Alt+P');
+  assert.equal(shortcutText(shortcutFor('git-push')!, true), '⌘⌥P');
+  assert.equal(menuAccelerator('quick-open'), 'CmdOrCtrl+P');
+  assert.equal(menuAccelerator('toggle-editor'), 'CmdOrCtrl+J');
   assert.equal(menuAccelerator('git-pull'), 'CmdOrCtrl+Shift+P');
   assert.equal(shortcutText(shortcutFor('git-branch')!, true), '⌘⇧B');
   for (const id of ['git-commit', 'git-stash']) assert.ok(COMMAND_IDS.has(id), `${id} can come from the menu and ⌘K`);

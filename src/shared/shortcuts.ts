@@ -11,6 +11,7 @@ import { PROJECT_VIEWS, type ProjectView } from './views.ts';
 
 export type CommandId =
   | 'palette' | 'new-session' | 'new-card' | 'shortcuts' | 'settings' | 'close-card' | 'history' | 'toggle-rail'
+  | 'quick-open' | 'toggle-editor'
   | 'go-needs' | 'go-running' | 'go-accounts' | 'go-settings'
   | `go-${ProjectView}`
   | `project-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
@@ -29,7 +30,7 @@ export const GIT_COMMANDS: readonly { id: GitCommandId; label: string }[] = [
   { id: 'git-stash', label: 'Stash changes…' },
 ];
 
-export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'On the board' | 'In Changes' | 'In Commits' | 'In dialogs and lists';
+export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In Changes' | 'In Commits' | 'In dialogs and lists';
 
 export interface Shortcut {
   /** The command it runs; null when a view handles the key itself (the board, a dialog). */
@@ -57,16 +58,27 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'settings', label: 'Settings', group: 'Anywhere', keys: ['Mod', ','] },
   { id: 'toggle-rail', label: 'Collapse or expand the sidebar', group: 'Anywhere', keys: ['Mod', '\\'] },
   { id: 'close-card', label: 'Close the open card', group: 'Anywhere', keys: ['Esc'] },
+  { id: 'quick-open', label: 'Open a file of the open project', group: 'Anywhere', keys: ['Mod', 'P'] },
+  { id: 'toggle-editor', label: 'Show or hide the code editor', group: 'Anywhere', keys: ['Mod', 'J'] },
   { id: 'go-needs', label: 'Needs you', group: 'Go to', keys: ['G', 'N'], sequence: true },
   { id: 'go-running', label: 'Running', group: 'Go to', keys: ['G', 'R'], sequence: true },
   ...viewShortcuts,
   { id: 'project-1', label: 'Your first nine projects, in order', group: 'Go to', keys: ['Mod', '1–9'] },
   // In the open project: each opens the git workbench where it happens.
-  { id: 'git-push', label: 'Push the branch (shows what goes first)', group: 'Git', keys: ['Mod', 'P'] },
+  { id: 'git-push', label: 'Push the branch (shows what goes first)', group: 'Git', keys: ['Mod', 'Alt', 'P'] },
   { id: 'git-pull', label: 'Pull, fast-forward only', group: 'Git', keys: ['Mod', 'Shift', 'P'] },
   { id: 'git-fetch', label: 'Fetch', group: 'Git', keys: ['Mod', 'Shift', 'F'] },
   { id: 'git-switch', label: 'Switch branch', group: 'Git', keys: ['Mod', 'B'] },
   { id: 'git-branch', label: 'New branch', group: 'Git', keys: ['Mod', 'Shift', 'B'] },
+  // The code editor handles these itself (src/renderer/src/editor/), while it has focus.
+  { id: null, label: 'Save the file', group: 'In the code editor', keys: ['Mod', 'S'] },
+  { id: null, label: 'Find and replace', group: 'In the code editor', keys: ['Mod', 'F'] },
+  { id: null, label: 'Go to a line', group: 'In the code editor', keys: ['Ctrl', 'G'] },
+  { id: null, label: 'Back to where you were', group: 'In the code editor', keys: ['Ctrl', '-'] },
+  { id: null, label: 'Forward again', group: 'In the code editor', keys: ['Ctrl', 'Shift', '-'] },
+  { id: null, label: 'Move to the breadcrumbs', group: 'In the code editor', keys: ['Mod', 'Shift', '.'] },
+  { id: null, label: 'Wrap long lines, or not', group: 'In the code editor', keys: ['Alt', 'Z'] },
+  { id: null, label: 'Leave the editor', group: 'In the code editor', keys: ['Esc', 'Tab'], sequence: true },
   // The board handles these itself (views/Board.tsx); they are listed so the sheet is whole.
   { id: null, label: 'Next card down', group: 'On the board', keys: ['J'], alt: [['↓']] },
   { id: null, label: 'Next card up', group: 'On the board', keys: ['K'], alt: [['↑']] },
@@ -91,12 +103,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Close a dialog', group: 'In dialogs and lists', keys: ['Esc'] },
 ];
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'On the board', 'In Changes', 'In Commits', 'In dialogs and lists'];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In Changes', 'In Commits', 'In dialogs and lists'];
 
 /** How a key is written on this platform. */
 export function keyLabel(key: string, mac: boolean): string {
   if (key === 'Mod') return mac ? '⌘' : 'Ctrl';
   if (key === 'Shift') return mac ? '⇧' : 'Shift';
+  if (key === 'Alt') return mac ? '⌥' : 'Alt';
+  if (key === 'Ctrl') return mac ? '⌃' : 'Ctrl';
   if (key === 'Enter') return mac ? '↩' : 'Enter';
   return key;
 }
@@ -109,6 +123,8 @@ export function shortcutText(s: Shortcut, mac: boolean): string {
 
 export interface KeyInput {
   key: string;
+  /** The physical key (`KeyP`): what a letter is when Option changes the character it types. */
+  code?: string;
   metaKey: boolean;
   ctrlKey: boolean;
   altKey: boolean;
@@ -130,6 +146,9 @@ export type KeyMatch = { id: CommandId } | { pending: 'g' } | null;
 /** What a key press means, given where focus is. Null is "not ours": let it through. */
 export function matchKey(e: KeyInput, state: KeyState): KeyMatch {
   const mod = state.mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  // ⌥ turns P into π on a Mac keyboard: the key itself says which letter it was.
+  const letter = e.code && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
+  if (mod && e.altKey && !e.shiftKey && letter === 'p') return { id: 'git-push' };
   if (mod && !e.altKey) {
     const k = e.key.toLowerCase();
     if (k === 'k' && !e.shiftKey) return { id: 'palette' };
@@ -139,7 +158,8 @@ export function matchKey(e: KeyInput, state: KeyState): KeyMatch {
     if (k === ',' && !e.shiftKey) return { id: 'settings' };
     if (k === '\\' && !e.shiftKey) return { id: 'toggle-rail' };
     if (/^[1-9]$/.test(k) && !e.shiftKey) return { id: `project-${Number(k)}` as CommandId };
-    if (k === 'p') return { id: e.shiftKey ? 'git-pull' : 'git-push' };
+    if (k === 'p') return { id: e.shiftKey ? 'git-pull' : 'quick-open' };
+    if (k === 'j' && !e.shiftKey) return { id: 'toggle-editor' };
     if (k === 'f' && e.shiftKey) return { id: 'git-fetch' };
     if (k === 'b') return { id: e.shiftKey ? 'git-branch' : 'git-switch' };
     return null;
