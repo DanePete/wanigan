@@ -66,12 +66,23 @@ test('a Git menu: commit, push, pull, fetch, switch, branch and stash, with thei
   const { menu, find, click, sent } = build();
   const git = menu('Git');
   assert.deepEqual(git.filter((i) => i.type !== 'separator').map((i) => [i.label, i.accelerator]), [
-    ['Commit…', undefined], ['Push…', 'CmdOrCtrl+P'], ['Pull', 'CmdOrCtrl+Shift+P'], ['Fetch', 'CmdOrCtrl+Shift+F'],
+    ['Commit…', undefined], ['Push…', 'CmdOrCtrl+Alt+P'], ['Pull', 'CmdOrCtrl+Shift+P'], ['Fetch', 'CmdOrCtrl+Shift+F'],
     ['Switch Branch…', 'CmdOrCtrl+B'], ['New Branch…', 'CmdOrCtrl+Shift+B'], ['Stash Changes…', undefined],
   ]);
   click(find('Push…', git));
   click(find('Stash Changes…', git));
   assert.deepEqual(sent, ['command git-push', 'command git-stash']);
+});
+
+test('Go › Open File… is ⌘P, and View › Code Editor shows or hides the editor with ⌘J', () => {
+  const { menu, find, click, sent } = build();
+  const open = find('Open File…', menu('Go'));
+  assert.equal(open.accelerator, 'CmdOrCtrl+P');
+  const editor = find('Code Editor', menu('View'));
+  assert.equal(editor.accelerator, 'CmdOrCtrl+J');
+  click(open);
+  click(editor);
+  assert.deepEqual(sent, ['command quick-open', 'command toggle-editor']);
 });
 
 test('the View menu shows or hides the sidebar with ⌘\\', () => {

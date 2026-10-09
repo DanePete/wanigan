@@ -25,6 +25,7 @@ import type {
   StashEntry, StashFile,
 } from './git.ts';
 import type { LinePick } from './patch.ts';
+import type { DirList, FileList, FileRoot, FileSave, FileStat, FileText } from './files.ts';
 import type { SecretScanReport } from './secret-scan.ts';
 
 /** Which checkout a git method acts on: the project folder, or a card's own worktree. */
@@ -367,6 +368,24 @@ export interface Methods {
   'live.shotMissed': { params: { cardId: string; sessionId: string | null; kind: 'before' | 'after'; url: string; reason: string }; result: LiveShotMiss };
   /** Why a card's before or after was not taken, newest first; gone once one of that kind is. */
   'live.shotMisses': { params: { cardId: string }; result: LiveShotMiss[] };
+  /**
+   * The code editor: the owner's own files, by hand. Paths are relative to the
+   * project folder or a card's worktree; the core refuses anything outside it,
+   * git's own records, and anything that is not UTF-8 text or is over 2 MB.
+   */
+  /** A file's text and how to write it back; someone else's code says why it opens read-only. */
+  'files.read': { params: FileRoot & { path: string }; result: FileText };
+  /**
+   * Save a file, only if it is still the version `baseHash` names; otherwise the
+   * file as it is now comes back and nothing is written. Someone else's code needs `anyway`.
+   */
+  'files.write': { params: FileRoot & { path: string; text: string; baseHash: string; anyway?: boolean }; result: FileSave };
+  /** A file's hash now (null when it is gone): how the editor notices another hand changing it. */
+  'files.stat': { params: FileRoot & { path: string }; result: FileStat };
+  /** Files for quick open: git's view in a repository; `installed` adds vendor and node_modules. Bounded. */
+  'files.list': { params: FileRoot & { installed?: boolean }; result: FileList };
+  /** One folder's entries, for the breadcrumbs. */
+  'files.dir': { params: FileRoot & { path: string }; result: DirList };
   'sessions.input': { params: { id: string; data: string }; result: { ok: true } };
   'sessions.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } };
   /** The PTY's size comes with the replay; null once the session has ended. */
@@ -632,6 +651,11 @@ export const ACCESS: { readonly [M in Method]: readonly Role[] } = {
   'live.start': ['owner'],
   'live.shotMissed': ['owner'],
   'live.shotMisses': ['owner'],
+  'files.read': ['owner'],
+  'files.write': ['owner'],
+  'files.stat': ['owner'],
+  'files.list': ['owner'],
+  'files.dir': ['owner'],
   'sessions.input': ['owner', 'phone'],
   'sessions.resize': ['owner', 'phone'],
   'sessions.watch': ['owner', 'phone'],
@@ -734,6 +758,8 @@ export interface Events {
   'liveLooks': { projectId: string; cardId: string | null; sessionId: string };
   /** A ddev start or restart the owner asked for printed a line, or finished. */
   'liveRun': LiveRunEvent;
+  /** The owner saved a file in the code editor. Never sent to phones: it names files. */
+  'files': { projectId: string; cardId: string | null; path: string };
   /** A composer's waiting files changed; `key` is `attachKey` of where they wait. */
   'attachments': { key: string };
   /** Terminal output, only to connections watching that session. */

@@ -198,10 +198,11 @@ export function componentProps(yml: string): LiveProp[] {
   return out;
 }
 
-/** What the live view hears from the core: an agent edited files, or a turn started or ended. */
+/** What the live view hears from the core: an agent (or the owner, in the code editor) edited files, or a turn started or ended. */
 export interface LiveEvent {
   projectId: string;
-  sessionId: string;
+  /** The agent session; null for the owner's own edit in Wanigan's code editor. */
+  sessionId: string | null;
   cardId: string | null;
   /** The absolute files edited (empty for a turn's start or end). */
   paths: string[];

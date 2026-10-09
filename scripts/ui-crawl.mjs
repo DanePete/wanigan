@@ -552,6 +552,13 @@ const nthCardFocused = (column, n) => (page) => page.waitForFunction(([c, i]) =>
 function keyChecks(w) {
   const ns = w.projects.find((p) => p.name.startsWith('Northstar')).key;
   const board = `#/p/${ns}/board`;
+  const changes = `#/p/${ns}/changes`;
+  /** A file open in the code editor from Changes, the cursor in its text. */
+  const editing = async (page) => {
+    await page.locator('.diff-slot button:has-text("Edit")').first().click();
+    await page.waitForSelector('.editor-code .cm-content', { timeout: 15_000 });
+    await page.click('.editor-code .cm-content');
+  };
   const shell = w.sessions.find((s) => s.provider === 'shell' && s.live);
   const inbox = w.cards.filter((c) => c.projectKey === ns && c.status === 'inbox');
   const checks = {
@@ -595,7 +602,20 @@ function keyChecks(w) {
       expect: focused(() => document.querySelectorAll('.git-group-staged .git-file').length === 2) }],
     'Commit (in the message box)': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', setup: async (page) => { await page.click('.commit-subject input'); await page.keyboard.press('ControlOrMeta+a'); await page.keyboard.type('Made by the crawler'); }, keys: ['Meta+Enter'],
       expect: shows('.dialog h2:text-is("Commit while an agent is working here?")') }],
-    'Push the branch (shows what goes first)': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+p'], expect: shows('.dialog .push-commits li') }],
+    'Push the branch (shows what goes first)': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Alt+p'], expect: shows('.dialog .push-commits li') }],
+    // The code editor: ⌘P and ⌘J anywhere in a project; the rest with a file open from Changes, the cursor in it.
+    'Open a file of the open project': [{ at: board, keys: ['Meta+p'], expect: shows('.quick-open .quick-open-option') }],
+    'Show or hide the code editor': [{ at: board, keys: ['Meta+j'], expect: shows('.editor-drawer:not([hidden])') }],
+    'Save the file': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.type(' '); }, keys: ['Meta+s'], expect: shows('.editor-tab.active:not(.unsaved)') }],
+    'Find and replace': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+f'], expect: shows('.cm-panel.cm-search') }],
+    'Go to a line': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Control+g'], expect: shows('.cm-panel.cm-gotoLine') }],
+    'Back to where you were': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); }, keys: ['Control+Minus'],
+      expect: focused(() => /^Line 1,/.test(document.querySelector('.editor-status button')?.textContent ?? '')) }],
+    'Forward again': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); await page.keyboard.press('Control+Minus'); }, keys: ['Control+Shift+Minus'],
+      expect: focused(() => !/^Line 1,/.test(document.querySelector('.editor-status button')?.textContent ?? 'Line 1,')) }],
+    'Move to the breadcrumbs': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+Shift+Period'], expect: focused(() => document.activeElement?.classList.contains('crumb-button')) }],
+    'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[title^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
+    'Leave the editor': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Escape', 'Tab'], expect: focused(() => !document.activeElement?.closest('.cm-editor')) }],
     'Pull, fast-forward only': [{ at: `#/p/${ns}/changes?branch=${ns}-3`, ready: '.pr-chip', keys: ['Meta+Shift+p'], expect: shows('.toast:has-text("Already up to date with origin/wanigan/ns-3")') }],
     Fetch: [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+f'], expect: shows('.toast:has-text("Fetched from origin")') }],
     'Switch branch': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+b'], expect: focused(() => location.hash.endsWith('/changes/branches') && document.activeElement?.closest('.branches-toolbar') !== null && document.activeElement?.tagName === 'INPUT') }],
@@ -710,6 +730,13 @@ const xtermSays = (page, pattern) => page.waitForFunction((p) => new RegExp(p).t
 function checks(w) {
   const ns = w.projects.find((p) => p.name.startsWith('Northstar')).key;
   const board = `#/p/${ns}/board`;
+  const changes = `#/p/${ns}/changes`;
+  /** A file open in the code editor from Changes, the cursor in its text. */
+  const editing = async (page) => {
+    await page.locator('.diff-slot button:has-text("Edit")').first().click();
+    await page.waitForSelector('.editor-code .cm-content', { timeout: 15_000 });
+    await page.click('.editor-code .cm-content');
+  };
   const shell = w.sessions.find((s) => s.provider === 'shell' && s.live);
   const shellAt = `#/p/${shell.projectKey}/s/${shell.id}`;
   const limited = w.sessions.find((s) => s.title.startsWith('Rate limiter'));

@@ -123,7 +123,7 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
     if (currentProject) for (const c of GIT_COMMANDS) out.push({ ...keyed(c.id, 'Commands', GIT_ICON[c.id], `Git: ${c.label}`, currentProject.key), whenTyped: true });
     out.push(
       { id: 'open-project', group: 'Commands', label: 'Open a project…', icon: 'folder', run: () => setDialog({ kind: 'project' }) },
-      ...(currentProject ? [keyed('history', 'Commands', 'history')] : []),
+      ...(currentProject ? [keyed('history', 'Commands', 'history'), keyed('quick-open', 'Commands', 'file', 'Open a file…'), keyed('toggle-editor', 'Commands', 'code', 'Show or hide the code editor')] : []),
       keyed('toggle-rail', 'Commands', 'sidebar'),
       keyed('shortcuts', 'Commands', 'question'),
       { id: 'theme-dark', group: 'Commands', label: 'Theme: dark', icon: 'moon', run: () => setTheme('dark') },

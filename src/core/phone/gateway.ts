@@ -21,7 +21,7 @@ import { CoreError } from '../../shared/protocol.ts';
  * Nor do saved board views: the phone shows a board a column at a time, with
  * no filters, and may not read the views (they are the owner's, on the Mac).
  */
-const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots', 'boardViews', 'liveAsk', 'liveLooks', 'liveRun']);
+const NOT_FOR_PHONES = new Set(['pty.data', 'live', 'liveSite', 'liveEdits', 'liveShots', 'boardViews', 'liveAsk', 'liveLooks', 'liveRun', 'files']);
 
 const MAX_RPC_BODY = 256 * 1024;
 const MAX_PAIR_BODY = 4 * 1024;

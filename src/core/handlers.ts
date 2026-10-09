@@ -29,6 +29,7 @@ import { skillsHandlers } from './skills-handlers.ts';
 import type { Live } from './live.ts';
 import type { LiveAgent } from './live-agent.ts';
 import type { LiveEnvironments } from './live-envs.ts';
+import type { Files } from './files.ts';
 import type { Mcp } from './mcp.ts';
 import type { AgentFolders } from './agent-folders.ts';
 import type { Checkpoints } from './checkpoints.ts';
@@ -62,7 +63,7 @@ export function createHandlers(
   chat: Chat,
   more: {
     skills: Skills; mcp: Mcp; models: Models; tokens: Tokens; folders: AgentFolders; attachments: Attachments; checkpoints: Checkpoints;
-    local: LocalModels; phone: Phone; live: Live; liveAgent: LiveAgent; boardViews: BoardViews; liveEnvs: LiveEnvironments;
+    local: LocalModels; phone: Phone; live: Live; liveAgent: LiveAgent; boardViews: BoardViews; liveEnvs: LiveEnvironments; files: Files;
   },
 ): Handlers {
   /** The project a caller may touch: any for the owner, its own for a session. */
@@ -332,6 +333,11 @@ export function createHandlers(
     'live.start': (p) => more.live.start(str(p.projectId, 'project'), p.restart === true),
     'live.shotMissed': (p) => more.live.shotMissed(p),
     'live.shotMisses': (p) => more.live.shotMisses(str(p.cardId, 'card')),
+    'files.read': (p) => more.files.read(p, p.path),
+    'files.write': (p) => more.files.write(p, p.path, p.text, p.baseHash, p.anyway === true),
+    'files.stat': (p) => more.files.stat(p, p.path),
+    'files.list': (p) => more.files.list(p, p.installed === true),
+    'files.dir': (p) => more.files.dir(p, p.path),
     'sessions.models': (p) => more.models.catalogue(oneOf(p.provider, PROVIDERS, 'agent'), p.accountId ? str(p.accountId, 'account') : null, p.projectId ? str(p.projectId, 'project') : null),
     'sessions.input': (p) => { sessions.input(str(p.id, 'session'), p.data); return { ok: true }; },
     'sessions.resize': (p) => { sessions.resize(str(p.id, 'session'), p.cols, p.rows); return { ok: true }; },

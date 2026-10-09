@@ -17,6 +17,7 @@ import { FileDiff, STATUS_LABEL, type DiffLayout, type HunkPick } from '../../co
 import { CommitBox, type CommitBoxHandle } from './CommitBox';
 import { Resolver } from './Resolver';
 import { Confirm, Ref, WhoLine, WhoMarks, type Where } from './common';
+import { EditButton } from '../../editor/EditButton';
 
 /** Narrower than this, side by side is too cramped to read, and the diff shows unified. */
 const SPLIT_MIN_WIDTH = 760;
@@ -305,6 +306,13 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
   /* ── a file's and a hunk's buttons ──────────────────────────────────── */
 
   const fileActions = (e: Entry): ReactNode => {
+    // A file that is there to change opens in the code editor, in this checkout.
+    const edit = e.file.status !== 'D' && !e.file.binary && e.area !== 'conflicted'
+      ? <EditButton target={{ projectId: project.id, cardId: where.cardId, path: e.file.path }} />
+      : null;
+    return <>{edit}{gitActions(e)}</>;
+  };
+  const gitActions = (e: Entry): ReactNode => {
     const picked = pickedIn(e.key);
     const p = parts(picked);
     if (picked.size) {

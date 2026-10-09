@@ -289,7 +289,8 @@ function DecisionEdit({ id, title, body, onDone }: { id: string; title: string; 
 /* ── activity ─────────────────────────────────────────────────────────────── */
 
 function ActivityView({ project }: { project: ProjectSummary }) {
-  const activity = useQuery('activity.list', { projectId: project.id, limit: 300 }, ['board', 'sessions', 'decisions', 'projects'], forProject(project.id));
+  // A save in the code editor is activity too ("You edited …").
+  const activity = useQuery('activity.list', { projectId: project.id, limit: 300 }, ['board', 'sessions', 'decisions', 'projects', 'files'], forProject(project.id));
   const sessions = useQuery('sessions.list', { projectId: project.id }, ['sessions'], forProject(project.id));
   const cards = useQuery('cards.list', { projectId: project.id }, ['board'], forProject(project.id));
   const sessionMap = useMemo(() => new Map((sessions.data ?? []).map((s) => [s.id, s])), [sessions.data]);

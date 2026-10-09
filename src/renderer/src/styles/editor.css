@@ -1,0 +1,720 @@
+/*
+  The code editor: a drawer beneath (or beside) the view, its tabs and actions,
+  the breadcrumbs and their menus, notices about the file, a side-by-side
+  comparison, and the status line. CodeMirror's own parts are themed from the
+  same tokens in src/renderer/src/editor/code/setup.ts.
+*/
+
+/* ── the drawer ─────────────────────────────────────────────────────────── */
+
+.editor-drawer {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.editor-drawer[data-dock='right'] {
+  border-top: 0;
+  border-left: 1px solid var(--line-strong);
+  height: auto;
+}
+
+.editor-drawer[hidden] {
+  display: none;
+}
+
+/* Beside the view: the view and the drawer share the width instead of the height. */
+.work:has(> .editor-drawer[data-dock='right']:not([hidden])) {
+  flex-direction: row;
+}
+
+.editor-resizer {
+  position: absolute;
+  z-index: 2;
+  top: calc(-1 * var(--space-1));
+  left: 0;
+  right: 0;
+  height: var(--space-2);
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.editor-drawer[data-dock='right'] .editor-resizer {
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--space-1));
+  right: auto;
+  width: var(--space-2);
+  height: auto;
+  cursor: col-resize;
+}
+
+.editor-resizer:hover,
+.editor-resizer:focus-visible {
+  background: var(--water-line);
+  outline: none;
+}
+
+.editor-head {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-height: calc(var(--space-8) + var(--space-1));
+  border-bottom: 1px solid var(--line);
+  background: var(--rail);
+}
+
+.editor-tabs {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.editor-tabs ul {
+  display: flex;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  max-width: 260px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.editor-tab.active {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: inset 0 2px 0 var(--water);
+}
+
+.editor-tab-open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  cursor: pointer;
+}
+
+.editor-tab-open:focus-visible,
+.editor-tab-close:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--water);
+}
+
+.editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab-dir {
+  color: var(--faint);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* Unsaved: a quiet dot in the text colour. Not amber: an unsaved file does not need you. */
+.editor-dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-round);
+  background: currentcolor;
+}
+
+.editor-tab-close {
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-6) - var(--space-1));
+  height: calc(var(--space-6) - var(--space-1));
+  margin-right: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.editor-tab:hover .editor-tab-close,
+.editor-tab.active .editor-tab-close,
+.editor-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.editor-tab-close:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.editor-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  border-left: 1px solid var(--line);
+}
+
+.editor-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-body > .empty {
+  margin: auto;
+}
+
+.editor-slot {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-slot[hidden] {
+  display: none;
+}
+
+/* Closed with files still open: one line that brings it back. */
+.editor-collapsed {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--rail);
+  color: var(--muted);
+  font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.editor-collapsed:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.editor-collapsed:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--water);
+}
+
+.editor-collapsed kbd {
+  margin-left: auto;
+}
+
+.editor-collapsed-unsaved {
+  color: var(--fg);
+}
+
+/* ── inside: breadcrumbs, notices, the text, the status line ───────────── */
+
+.editor-surface {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-code {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-code[hidden] {
+  display: none;
+}
+
+.editor-placeholder {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+}
+
+.crumbs {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: calc(var(--space-6) + var(--space-1));
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: 400 var(--text-sm) / var(--lh-sm) var(--font-ui);
+}
+
+.crumbs-nav {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding-right: var(--space-1);
+  border-right: 1px solid var(--line);
+}
+
+.crumbs-nav .btn-icon {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.crumbs-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.crumbs-path ol {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.crumb {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.crumb-sep {
+  flex: none;
+  color: var(--faint);
+}
+
+.crumb-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 280px;
+  padding: 2px var(--space-1);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.crumb-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumb-file .crumb-button,
+.crumb-symbol:last-child .crumb-button {
+  color: var(--fg);
+}
+
+.crumb-symbol .crumb-button {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.crumb-button:hover,
+.crumb-button[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.crumb-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.crumb-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: 70vw;
+  max-height: 300px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: rise var(--dur-fast) var(--ease);
+}
+
+.crumb-menu-placed {
+  position: fixed;
+  width: 340px;
+}
+
+.crumbs-recent {
+  width: 380px;
+}
+
+.crumb-menu-filter,
+.crumb-menu-filter:focus {
+  flex: none;
+  height: calc(var(--space-8) - var(--space-1));
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+  font-size: var(--text-sm);
+}
+
+.crumb-menu-title {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--faint);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.crumb-menu-list {
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-1);
+  overflow: auto;
+  list-style: none;
+  overscroll-behavior: contain;
+}
+
+.crumb-menu-list:focus-visible {
+  outline: none;
+}
+
+.crumb-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--space-6) + var(--space-1));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.crumb-menu-item > svg {
+  flex: none;
+}
+
+.crumb-menu-item.active {
+  background: var(--water-soft);
+  color: var(--fg);
+}
+
+.crumb-menu-item.current .crumb-menu-label {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.crumb-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb-menu-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb-menu-note {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* What needs saying about the file. Calm by default; strong (not amber) when your work and theirs differ. */
+.editor-notice {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--water-soft);
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+.editor-notice > svg {
+  flex: none;
+  color: var(--water);
+}
+
+.editor-notice-strong {
+  background: color-mix(in srgb, var(--water) 22%, var(--surface));
+}
+
+.editor-notice-locked {
+  background: var(--sunken);
+}
+
+.editor-notice-locked > svg {
+  color: var(--muted);
+}
+
+.editor-notice-text {
+  flex: 1;
+  min-width: 220px;
+}
+
+.editor-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--space-6);
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--line);
+  background: var(--rail);
+  color: var(--faint);
+  font: 400 var(--text-xs) / var(--lh-sm) var(--font-ui);
+  white-space: nowrap;
+}
+
+.editor-status .linkish {
+  color: var(--muted);
+}
+
+.editor-status-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-status-saving:empty {
+  display: none;
+}
+
+.editor-status-toggle {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.editor-status-toggle[aria-pressed='true'] {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+  color: var(--fg);
+}
+
+.editor-status-toggle:focus-visible,
+.editor-status .linkish:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+/* CodeMirror's fold arrows, and the Vim status line it adds below the text. */
+.cm-fold-mark {
+  display: inline-block;
+  width: var(--space-3);
+  text-align: center;
+}
+
+.cm-vim-panel {
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+}
+
+/* ── comparing two versions ─────────────────────────────────────────────── */
+
+.compare {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.compare-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
+}
+
+.compare-title {
+  flex: 1;
+  min-width: 200px;
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.compare-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.compare-labels {
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.compare-labels span {
+  padding: var(--space-1) var(--space-3);
+}
+
+.compare-labels span + span {
+  border-left: 1px solid var(--line);
+}
+
+.compare-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.compare-body .cm-mergeView {
+  min-height: 100%;
+}
+
+.compare-body .cm-editor {
+  background: var(--surface);
+}
+
+.compare-body .cm-changedLine {
+  background: var(--diff-add);
+}
+
+.compare-body .cm-merge-a .cm-changedLine,
+.compare-body .cm-deletedChunk {
+  background: var(--diff-del);
+}
+
+.compare-body .cm-changedText {
+  background: var(--diff-add-word);
+}
+
+.compare-body .cm-merge-a .cm-changedText,
+.compare-body .cm-deletedChunk .cm-deletedText {
+  background: var(--diff-del-word);
+}
+
+.compare-body .cm-merge-revert {
+  background: var(--rail);
+}
+
+.compare-body .cm-merge-revert button {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.compare-body .cm-merge-revert button:hover {
+  background: var(--water-soft);
+}
+
+.compare-body .cm-collapsedLines {
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.compare-hint {
+  flex: none;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* ── quick open ─────────────────────────────────────────────────────────── */
+
+.quick-open-option .palette-label b,
+.quick-open-dir b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.quick-open-option .palette-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
+.quick-open-dir {
+  max-width: 55%;
+}
+
+.quick-open-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* A component's files in the live view open in the editor. */
+.live-file-open {
+  background: none;
+  cursor: pointer;
+}
+
+.live-file-open:hover {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+  color: var(--fg);
+}
+
+.live-file-open:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}

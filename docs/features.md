@@ -459,6 +459,38 @@ the site is not shown (not running, a refused certificate), with a stand-in brid
 | Moving by hand | A collection item dragged by its handle: a line where it lands, places it cannot go dimmed, the new order shown on the page, then saved through the helper with Undo; a configuration move says what it changes and asks first; a 409 says it changed meanwhile. A part whose order is in a template becomes a note with pictures of the order now and wanted. The keyboard does the same from the Inspector, said aloud. | `shared/live-arrange.test.ts` (8 tests); `renderer/src/live-page.test.ts` › the drop slot; `scripts/live-sweep.mjs` › a real drag in the page script, a keyboard move, Undo, a 409 | stub only (moves need the helpers; multi-select not built) |
 | Adding from the palette | An entry dragged onto the page, placed with a click, or put at a named place; checked against the collection's inserts before it is posted. | `shared/live-arrange.test.ts` › "an insert is checked…"; `scripts/live-sweep.mjs` › "palette" | stub only (a drag from the window into the site's view is not seen working) |
 
+## Code editor
+
+Design: [docs/design/2026-10-09-code-editor.md](design/2026-10-09-code-editor.md). The core's rules are proved through
+the owner's socket on fixture folders; the window by `scripts/editor-sweep.mjs` (part of `npm run test:ui`) against a real
+seeded core whose demo projects are real folders, in both themes, checking the disk and the core after each step.
+
+| Feature | The claim | Test | Status |
+|---|---|---|---|
+| Reading a file | Relative to the project folder or a card's worktree; the text with `\n` line endings and no BOM, its sha256, line endings, BOM, final newline. | `core/files.test.ts` › "a read gives the text with \n line endings…", "line endings, byte order marks and final newlines…" | added |
+| Confinement | `..`, absolute paths, empty or `.` segments and `.git` refused before the disk is touched; a link out of the root, or into `.git`, refused by its real path; a link that stays inside is the file it points to. | `core/files.test.ts` › "a path is clean only when…", "nothing outside the project, through a link or of git’s own…" | added |
+| Text only, 2 MB | Binary, invalid UTF-8 and UTF-16 refused; over 2 MB refused on read and on save. | `core/files.test.ts` › "only text the editor can show opens, up to 2 MB", "line endings…" | added |
+| Atomic save | A temporary file beside it, fsynced and renamed over it; line endings, BOM and mode (group bits too) kept; no temporary file left. | `core/files.test.ts` › "a save writes the file atomically…"; `scripts/editor-sweep.mjs` › typed, ⌘S, the disk read back | added |
+| Someone else's change first | A save names the version it was made from; if the file changed since, nothing is written and the file as it is now comes back. | `core/files.test.ts` › "a save made from an older version writes nothing…"; `scripts/editor-sweep.mjs` › a refused save opens the merge, the disk untouched | added |
+| Someone else's code | Drupal core, contributed projects, vendor folders, node_modules, WordPress core and plugins open read-only with the reason, told by markers on disk; Edit anyway writes, and the activity says so; a file the disk will not let the owner write stays read-only. | `core/files.test.ts` › "someone else’s code is told by what is on disk…", "Drupal core opens read-only…", "a file the disk will not let the owner write…"; `scripts/editor-sweep.mjs` › read-only, then Edit anyway | added |
+| Recorded and followed | Every save is "You edited" in Activity and the same `live` edit event an agent's edit is (no session), so the live view reloads or swaps stylesheets; `files` and `git` events refetch what shows. | `core/files.test.ts` › "every save is in the activity, and announced as the live view hears an agent’s edit"; `scripts/editor-sweep.mjs` › the activity row; with the live view played by a stand-in bridge, a saved template reloads the page past the cache and a saved stylesheet is swapped in place | added (a real page by hand) |
+| Not on phones | A phone's stream never carries the editor's saves. | `core/phone/gateway-sse-safety.test.ts` › "…or code editor saves" | added |
+| Owner only | A session cannot read or write a file through the editor's methods. | `core/files.test.ts` › "the editor is the owner’s…" | added |
+| Who changed it | The agent session whose hooks last reported writing the file is named in the banner. | `core/files.test.ts` › "the file names the agent session that last wrote it"; `scripts/editor-sweep.mjs` › "Claude Code (Free shipping banner) changed this file" | added |
+| Quick open | ⌘P: git's view (tracked plus untracked not ignored, minus deleted), vendor and node_modules on request, a bounded walk outside a repository; ranked by the letters typed; `name:line`. | `core/files.test.ts` › "quick open lists what git sees…", "a folder that is not a repository is walked…"; `shared/fuzzy.test.ts` (5 tests); `scripts/editor-sweep.mjs` › quick open by humps and at a line | added |
+| A card's worktree | Files there are their own root; the project folder is untouched; a card without a worktree is refused. | `core/files.test.ts` › "a card’s worktree is a root of its own…"; `scripts/editor-sweep.mjs` › Edit from a turn opens the worktree's copy | added |
+| The drawer | Beneath the view or beside it, ⌘J, resized by its edge or keys, beneath a session; every control named. | `scripts/editor-sweep.mjs` › beside, beneath a session, ⌘J twice, unnamed controls | added |
+| Editing | Highlighting per language (Twig over HTML), the unsaved dot, ⌘S, closing an unsaved file asks; brackets closed and indented as typed. | `scripts/editor-sweep.mjs` › CSS and Twig highlighted, the dot, ⌘S, the close dialog; `core/files.test.ts` › indentation read from the file | added |
+| An agent's change | Nothing unsaved: reloaded, keeping the cursor where the text did not change, with who and Compare. Unsaved: untouched, with Compare and merge, Reload theirs, Save mine over it; Save merged keeps both. | `scripts/editor-sweep.mjs` › reloaded, compared, merged (both changes on disk); `editor/code/text.test.ts` › the smallest replacement | added |
+| Unsaved text kept | Unsaved text is kept on this Mac until saved or thrown away, and comes back when the file opens again; Revert puts the saved text back. | `scripts/editor-sweep.mjs` › typed, the window reloaded, the file opened again, Revert | added |
+| Breadcrumbs: symbols | PHP class and method, Twig block and the HTML inside it, CSS rule and at-rule, Sass nesting, JavaScript function, class, method and functions in constants, YAML key path and list items, JSON keys, Markdown headings; siblings for each. | `editor/code/symbols.test.ts` (8 tests); `scripts/editor-sweep.mjs` › CheckoutController › build, its sibling chosen | added |
+| Breadcrumbs: folders | Each folder crumb lists what is beside it, folders first, nothing of git's; a folder opens in place; typing narrows. | `core/files.test.ts` › "a folder lists folders first…"; `scripts/editor-sweep.mjs` › the src crumb, routing.yml opened from it | added |
+| Breadcrumbs: keys | ⌘⇧. moves to them, ← and → walk them, Escape goes back to the text; Escape then Tab leaves the editor. | `scripts/editor-sweep.mjs` | added |
+| Back and Forward | Every jump across files is remembered; ⌃- and ⌃⇧-, the mouse's back button, the recent places. | `shared/nav-history.test.ts` (6 tests); `scripts/editor-sweep.mjs` › back twice, forward, the mouse's button, the list | added |
+| Keys and menus | ⌘P quick open, ⌘J the editor, Push on ⌥⌘P (by the key's code, as ⌥ types π); Go › Open File…, View › Code Editor. | `shared/shortcuts.test.ts`; `main/menu.test.ts` › "Go › Open File… is ⌘P…" | added |
+| Edit from the live view | A picked part's template opens at the words picked; a component's files are buttons. | `scripts/editor-sweep.mjs` › the live view played by a stand-in bridge: Pick, Edit code, the cursor at "Pay"; `editor/code/text.test.ts` › words found | added (the real view by hand) |
+| Edit from Changes and a turn | In the checkout shown; in the folder the session worked in. | `scripts/editor-sweep.mjs` › Edit in Changes, Edit in a turn's changes | added |
+
 ## The demo
 
 | Feature | The claim | Test | Status |
@@ -553,7 +585,7 @@ a blanket accessibility or narrow-window pass.
 
 | Coverage | Rows |
 |---|---|
-| Features and rules | 266 |
+| Features and rules | 289 |
 
 The statuses describe the evidence attached to each row. Historical test-count
 snapshots are omitted because they drift as regressions are added.

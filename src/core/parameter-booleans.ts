@@ -33,6 +33,8 @@ const FIELDS: BooleanParams = {
   'live.part': { image: true },
   'live.problems': { sinceTurn: true },
   'live.start': { restart: true },
+  'files.write': { anyway: true },
+  'files.list': { installed: true },
 };
 
 export function validateBooleans(method: Method, params: object): void {

@@ -40,6 +40,7 @@ import { RequestTab } from './live/Request';
 import { TraceNote } from './live/TraceNote';
 import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
+import { openInEditor, relativeTo } from '../editor/EditButton';
 import '../styles/live.css';
 
 const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[] = [
@@ -416,18 +417,19 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   useEffect(() => bridge().on((event, data) => {
     if (event !== 'live' || hostedRef.current) return;
     const e = data as LiveEvent;
-    if (e.projectId !== project.id || (follow && e.sessionId !== follow)) return;
-    if (e.kind === 'turn-start') { edited.current.delete(e.sessionId); return; }
+    // A session's view follows that session, and the owner's own saves in the code editor (no session).
+    if (e.projectId !== project.id || (follow && e.sessionId !== null && e.sessionId !== follow)) return;
+    if (e.kind === 'turn-start') { if (e.sessionId) edited.current.delete(e.sessionId); return; }
     if (e.kind !== 'edit' && e.kind !== 'turn-end') return;
     const q = queue.current;
     if (e.kind === 'edit') {
       const inside = e.paths.filter((p) => p === root || p.startsWith(`${root}/`));
       if (!inside.length) { setBanner({ kind: 'elsewhere', file: fileName(e.paths[0] ?? '') }); return; }
       if (!following) { setBanner({ kind: 'waiting', file: fileName(inside[0] as string) }); return; }
-      edited.current.add(e.sessionId);
+      if (e.sessionId) edited.current.add(e.sessionId);
       for (const p of inside) q.paths.add(p);
     } else {
-      const reloadedForEdits = edited.current.delete(e.sessionId);
+      const reloadedForEdits = !!e.sessionId && edited.current.delete(e.sessionId);
       if (!following || reloadedForEdits || site.helper) return;
     }
     if (q.timer !== null) window.clearTimeout(q.timer);
@@ -639,6 +641,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               </span>
               <NoteComposer compact project={project} components={components} prefer={follow}
                 draft={draftFor(view?.url ?? url, { regions: selection.pick.regions, pick: selection.pick })} onDone={unselect} />
+              {selection.region?.file && siteParts.data?.docroot && relativeTo(project.path, `${siteParts.data.docroot}/${selection.region.file}`) ? (
+                <IconButton icon="code" label="Edit its template in the code editor"
+                  onClick={() => openInEditor({ projectId: project.id, path: relativeTo(project.path, `${siteParts.data!.docroot}/${selection.region!.file}`) as string, find: selection.pick?.text ?? null })} />
+              ) : null}
               <IconButton icon="close" label="Clear the pick" onClick={unselect} />
             </div>
           ) : null

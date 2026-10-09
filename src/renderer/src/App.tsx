@@ -27,6 +27,8 @@ import { Alerts } from './components/Alerts';
 import { ViewBoundary } from './components/ViewBoundary';
 import { CoreProblemPanel } from './components/CoreProblem';
 import { ShortcutSheet } from './dialogs/ShortcutSheet';
+import { EditorDrawer } from './editor/EditorDrawer';
+import { openQuickOpen, toggleEditor } from './editor/store';
 import { COMMAND_IDS, matchKey, type CommandId } from '@shared/shortcuts';
 import { windowTitle } from '@shared/views';
 
@@ -118,6 +120,8 @@ function Shell() {
           </div>
         ) : null}
         <CoreProblemPanel />
+        {/* The view, and the code editor's drawer beneath (or beside) it. */}
+        <div className="work">
         <ViewBoundary name={viewName(route)} resetKey={href(route)}>
         {route.name === 'needs' ? (
           <NeedsView needs={needs.data} projects={projects.data} loading={needs.loading && !needs.data} onAddProject={() => setDialog({ kind: 'project' })}
@@ -144,6 +148,10 @@ function Shell() {
           <Missing loading={projects.loading} what="this session" />
         )}
         </ViewBoundary>
+        <ViewBoundary name="The code editor" compact>
+          <EditorDrawer project={project ?? null} />
+        </ViewBoundary>
+        </div>
       </main>
       {location.card ? (
         <ViewBoundary name={`Card ${location.card}`} resetKey={location.card} compact onClose={() => openCard(null)}
@@ -220,6 +228,18 @@ function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
         if (location.hash.includes('card=')) openCard(null);
         return false;
       case 'toggle-rail': toggleRail(); return true;
+      case 'quick-open': {
+        // Over a card's worktree when the Changes view shows one; otherwise the project folder.
+        if (!currentProject()) return false;
+        const shown = parse(location.hash);
+        setDialog(null);
+        openQuickOpen(shown.route.name === 'project' && shown.route.view === 'changes' ? shown.branch : null);
+        return true;
+      }
+      case 'toggle-editor':
+        if (!currentProject()) return false;
+        toggleEditor();
+        return true;
       case 'settings': case 'go-settings': navigate({ name: 'settings' }); return true;
       case 'go-needs': navigate({ name: 'needs' }); return true;
       case 'go-running': navigate({ name: 'running' }); return true;

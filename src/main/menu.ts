@@ -68,6 +68,7 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
         { label: 'Settings', click: () => actions.command('go-settings') },
         { type: 'separator' },
         ...PROJECT_VIEWS.map((v) => item(v.label, `go-${v.view}`)),
+        item('Open File…', 'quick-open'),
         { type: 'separator' },
         ...(projects.length
           ? projects.map((p, i): MenuItemConstructorOptions => ({
@@ -90,7 +91,7 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
     {
       label: 'View',
       submenu: [
-        item('Toggle Sidebar', 'toggle-rail'), { type: 'separator' },
+        item('Toggle Sidebar', 'toggle-rail'), item('Code Editor', 'toggle-editor'), { type: 'separator' },
         { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
         { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],
