@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { CoreProblem, CoreStatus, LiveBridge, LiveViewState, PickedFiles, WaniganBridge } from '../shared/bridge.ts';
+import type { LiveEdited } from '../shared/live-lens.ts';
 import type { AppState } from '../shared/settings.ts';
 
 type Reply = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } };
@@ -37,6 +38,24 @@ const live: LiveBridge = {
     const handler = (_e: IpcRendererEvent, state: LiveViewState): void => listener(state);
     ipcRenderer.on('live:state', handler);
     return () => { ipcRenderer.off('live:state', handler); };
+  },
+  // The helper's trace, lenses and editing in place (src/main/live-inspect.ts).
+  trace: () => ipcRenderer.invoke('live:trace') as ReturnType<LiveBridge['trace']>,
+  paint: (items) => ipcRenderer.invoke('live:paint', items) as Promise<number>,
+  where: (index) => ipcRenderer.invoke('live:where', index) as ReturnType<LiveBridge['where']>,
+  editOpen: (target, bounds) => ipcRenderer.invoke('live:editOpen', target, bounds) as ReturnType<LiveBridge['editOpen']>,
+  editBounds: (bounds) => ipcRenderer.send('live:editBounds', bounds),
+  editClose: () => ipcRenderer.invoke('live:editClose') as Promise<void>,
+  editSave: (target, value) => ipcRenderer.invoke('live:editSave', target, value) as ReturnType<LiveBridge['editSave']>,
+  onEdited(listener) {
+    const handler = (_e: IpcRendererEvent, edited: LiveEdited): void => listener(edited);
+    ipcRenderer.on('live:edited', handler);
+    return () => { ipcRenderer.off('live:edited', handler); };
+  },
+  onKey(listener) {
+    const handler = (_e: IpcRendererEvent, key: unknown): void => { if (key === 'Escape') listener(key); };
+    ipcRenderer.on('live:key', handler);
+    return () => { ipcRenderer.off('live:key', handler); };
   },
 };
 

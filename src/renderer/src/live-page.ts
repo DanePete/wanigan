@@ -22,18 +22,55 @@
 //   attributes data-wl-entity, data-wl-block, data-wl-view, data-wl-piece and
 //   data-wl-field.
 // - Elementor's own data-element_type, data-widget_type and data-id.
+// - The helpers' trace marks: `<!-- wl:part id="p12" -->` … `<!-- /wl:part
+//   id="p12" -->` around each part the page's trace describes
+//   (shared/live-trace.ts). A part around the same content as a region found
+//   another way gives that region its id; a part nothing else found is a region
+//   of its own.
 //
 // Built on its own (live-page-entry.ts → out/renderer/live-page.js) and read
 // as text by the main process, which runs it in an isolated world. It imports
-// nothing.
+// nothing: a shared chunk would be an import statement the page cannot run.
+
+/**
+ * Which region each part of the trace is. Parts and regions are given by the
+ * content they hold, as a key (the same key: the same elements and words,
+ * whatever comments and blank space lie between), and by where their opening
+ * mark is, outermost first. Within one key the outermost part is the
+ * outermost region, the next the next. A part with no region of its own is
+ * `alone`: the page script makes it one.
+ */
+export function pairParts(
+  parts: readonly { id: string; key: string | null; at: number }[],
+  regions: readonly { index: number; key: string | null; at: number }[],
+): { byRegion: Map<number, string>; alone: string[] } {
+  const groups = new Map<string, { index: number; at: number }[]>();
+  for (const r of regions) {
+    if (!r.key) continue;
+    const g = groups.get(r.key);
+    if (g) g.push(r); else groups.set(r.key, [r]);
+  }
+  for (const g of groups.values()) g.sort((a, b) => a.at - b.at || a.index - b.index);
+  const taken = new Map<string, number>();
+  const byRegion = new Map<number, string>();
+  const alone: string[] = [];
+  for (const p of [...parts].sort((a, b) => a.at - b.at)) {
+    const n = p.key ? taken.get(p.key) ?? 0 : 0;
+    const r = p.key ? groups.get(p.key)?.[n] : undefined;
+    if (r && !byRegion.has(r.index)) { byRegion.set(r.index, p.id); taken.set(p.key as string, n + 1); } else alone.push(p.id);
+  }
+  return { byRegion, alone };
+}
 
 export function livePage(): void {
   type Rect = { x: number; y: number; width: number; height: number };
   type Info = {
     file: string | null; entity: string | null; block: string | null; view: string | null; element: string | null;
-    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[];
+    hook: string | null; component: string | null; piece: string | null; field: string | null; suggestions: string[]; part: string | null;
   };
-  type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number };
+  /** `at`: where its opening mark is among the page's marks, for pairing with the trace's parts. */
+  type Region = Info & { index: number; range: Range | null; el: Element | null; parent: number | null; order: number; at: number };
+  type Paint = { index: number; color: string; fill: number; label: string | null; dashed: boolean };
   type Tone = 'edit' | 'pick' | 'hover';
 
   const w = window as unknown as { __wl?: unknown };
@@ -48,6 +85,8 @@ export function livePage(): void {
   const WL_BEGIN = /^\s*wl:begin (file|entity)="([^"]+)"\s*$/;
   const WL_END = /^\s*wl:end (file|entity)="([^"]+)"\s*$/;
   const COMPONENT = /^\s*\S+\s+Component (start|end): ([a-z][\w-]*:[a-z][\w-]*)\s*$/u;
+  const PART_BEGIN = /^\s*wl:part id="([^"]{1,200})"\s*$/;
+  const PART_END = /^\s*\/wl:part id="([^"]{1,200})"\s*$/;
   /** Past this many, a region's parent is not worked out: the page is a runaway, not a site. */
   const MAX_NESTED = 900;
   // Wanigan's water blue for what changed and what is pointed at; a deeper blue for what is being picked. Never amber:
@@ -59,6 +98,8 @@ export function livePage(): void {
   let picked: Element | null = null;
   /** What is drawn, redrawn as the page scrolls, reflows or loads more. */
   let shown: { indexes: number[]; label: string | null; tone: Tone } | null = null;
+  /** A lens over the page: each part filled and outlined in its class's colour, under any outline. */
+  let painted: Paint[] = [];
   let hovered: Element | null = null;
   let frame = 0;
   let mutations = 0;
@@ -123,7 +164,7 @@ export function livePage(): void {
   function info(r: Region): Info {
     return {
       file: r.file, entity: r.entity, block: r.block, view: r.view, element: r.element, hook: r.hook,
-      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions,
+      component: r.component, piece: r.piece, field: r.field, suggestions: r.suggestions, part: r.part,
     };
   }
 
@@ -146,28 +187,63 @@ export function livePage(): void {
     starts.forEach(({ r }, i) => { r.order = i; });
   }
 
+  /** A range around one element. */
+  function nodeRange(el: Element): Range {
+    const range = document.createRange();
+    try { range.selectNode(el); } catch { /* detached */ }
+    return range;
+  }
+
+  const blankNode = (n: Node | undefined): boolean => !!n && (n.nodeType === Node.COMMENT_NODE || (n.nodeType === Node.TEXT_NODE && !/\S/.test(n.nodeValue ?? '')));
+
+  /**
+   * What a range holds, as a key: its ends moved past comments and blank text,
+   * so a part's marks around a template's debug comments, or around a marked
+   * element, give the same key as the template or the element. Null when it
+   * holds nothing but comments and blank space.
+   */
+  function contentKey(range: Range, ids: Map<Node, number>): string | null {
+    const id = (n: Node): number => { let v = ids.get(n); if (v === undefined) { v = ids.size; ids.set(n, v); } return v; };
+    const sc = range.startContainer, ec = range.endContainer;
+    let so = range.startOffset, eo = range.endOffset;
+    if (sc.nodeType !== Node.TEXT_NODE) while (so < sc.childNodes.length && blankNode(sc.childNodes[so])) so++;
+    if (ec.nodeType !== Node.TEXT_NODE) while (eo > 0 && blankNode(ec.childNodes[eo - 1])) eo--;
+    if (sc === ec && so >= eo) return null;
+    return `${id(sc)}:${so}-${id(ec)}:${eo}`;
+  }
+
   function scan(): (Info & { index: number; rect: Rect; parent: number | null; order: number })[] {
     regions = [];
-    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [] };
-    // What has begun and not yet ended, by what will end it: a template's file or a component's id.
-    const open: { key: string; info: Info; begin: Comment }[] = [];
+    const blank: Info = { file: null, hook: null, entity: null, block: null, view: null, element: null, component: null, piece: null, field: null, suggestions: [], part: null };
+    // What has begun and not yet ended, by what will end it: a template's file, a component's id, a trace part's id.
+    const open: { key: string; info: Info; begin: Comment; at: number }[] = [];
+    /** The trace's parts, as ranges, until they are paired with the regions they are. */
+    const parts: { id: string; range: Range; at: number }[] = [];
     const close = (key: string, end: Comment): void => {
       for (let i = open.length - 1; i >= 0; i--) {
         const o = open[i];
         if (!o || o.key !== key) continue;
-        open.splice(i);
+        // A part's marks close only themselves: a template left open inside a part stays open.
+        if (o.info.part) open.splice(i, 1); else open.splice(i);
         const range = document.createRange();
         try { range.setStartAfter(o.begin); range.setEndBefore(end); } catch { return; }
-        regions.push({ ...o.info, index: regions.length, range, el: null, parent: null, order: 0 });
+        if (o.info.part) parts.push({ id: o.info.part, range, at: o.at });
+        else regions.push({ ...o.info, index: regions.length, range, el: null, parent: null, order: 0, at: o.at });
         return;
       }
     };
     let hook: string | null = null;
     let suggested: string[] = [];
+    let seq = 0;
     const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const comment = node as Comment;
       const text = comment.data;
+      const at = seq++;
+      const pb = PART_BEGIN.exec(text);
+      if (pb) { const id = unescape(pb[1] as string); open.push({ key: `part ${id}`, info: { ...blank, part: id }, begin: comment, at }); continue; }
+      const pe = PART_END.exec(text);
+      if (pe) { close(`part ${unescape(pe[1] as string)}`, comment); continue; }
       const h = HOOK.exec(text);
       if (h) { hook = unescape(h[1] as string); suggested = []; continue; }
       if (SUGGESTIONS.test(text)) {
@@ -177,14 +253,14 @@ export function livePage(): void {
       const c = COMPONENT.exec(text);
       if (c) {
         const id = c[2] as string;
-        if (c[1] === 'start') open.push({ key: `component ${id}`, info: { ...blank, component: id }, begin: comment });
+        if (c[1] === 'start') open.push({ key: `component ${id}`, info: { ...blank, component: id }, begin: comment, at });
         else close(`component ${id}`, comment);
         continue;
       }
       const wb = WL_BEGIN.exec(text);
       if (wb) {
         const value = unescape(wb[2] as string);
-        open.push({ key: `${wb[1]} ${value}`, info: wb[1] === 'entity' ? { ...blank, entity: value } : { ...blank, file: value }, begin: comment });
+        open.push({ key: `${wb[1]} ${value}`, info: wb[1] === 'entity' ? { ...blank, entity: value } : { ...blank, file: value }, begin: comment, at });
         continue;
       }
       const we = WL_END.exec(text);
@@ -192,7 +268,7 @@ export function livePage(): void {
       const b = BEGIN.exec(text);
       if (b) {
         const file = unescape(b[1] as string);
-        open.push({ key: `file ${file}`, info: { ...blank, file, hook, suggestions: suggested }, begin: comment });
+        open.push({ key: `file ${file}`, info: { ...blank, file, hook, suggestions: suggested }, begin: comment, at });
         hook = null;
         suggested = [];
         continue;
@@ -207,7 +283,8 @@ export function livePage(): void {
       const type = el.getAttribute('data-element_type');
       const widget = el.getAttribute('data-widget_type');
       const region: Region = {
-        ...blank, index: regions.length, range: null, el, parent: null, order: 0,
+        // A mark on an element sits inside the comments around it: after every comment, for pairing.
+        ...blank, index: regions.length, range: null, el, parent: null, order: 0, at: seq + regions.length,
         entity: el.getAttribute('data-wl-entity'),
         block: el.getAttribute('data-wl-block'),
         view: el.getAttribute('data-wl-view'),
@@ -220,6 +297,18 @@ export function livePage(): void {
       const only = !region.entity && !region.block && !region.view && !region.element && !region.piece && !region.field;
       if (only && commented.some((r) => r.component === region.component && contains(r, el))) continue;
       regions.push(region);
+    }
+    if (parts.length) {
+      const ids = new Map<Node, number>();
+      const paired = pairParts(
+        parts.map((p) => ({ id: p.id, key: contentKey(p.range, ids), at: p.at })),
+        regions.map((r) => ({ index: r.index, key: contentKey(r.range ?? nodeRange(r.el as Element), ids), at: r.at })),
+      );
+      for (const [index, id] of paired.byRegion) (regions[index] as Region).part = id;
+      const alone = new Set(paired.alone);
+      for (const p of parts) {
+        if (alone.has(p.id)) regions.push({ ...blank, part: p.id, index: regions.length, range: p.range, el: null, parent: null, order: 0, at: p.at });
+      }
     }
     nest();
     rank();
@@ -261,6 +350,31 @@ export function livePage(): void {
     root.appendChild(b);
   }
 
+  /** `#rrggbb` at an opacity. */
+  function rgba(hex: string, alpha: number): string {
+    const n = Number.parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  }
+
+  /** A part under a lens: filled lightly in its class's colour, outlined, with its number when it has one. Calm on any page. */
+  function paintBox(root: ShadowRoot, rect: DOMRect, p: Paint): void {
+    const b = document.createElement('div');
+    b.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;`
+      + `outline:1.5px ${p.dashed ? 'dashed' : 'solid'} ${p.color};outline-offset:-1px;background:${rgba(p.color, p.fill)};`
+      // A thin dark line inside the colour keeps it readable on a light page and a dark one.
+      + 'box-shadow:inset 0 0 0 2px rgba(0,0,0,0.18);';
+    if (p.label && rect.width > 48 && rect.height > 18) {
+      const n = Number.parseInt(p.color.slice(1), 16);
+      const light = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150;
+      const tag = document.createElement('span');
+      tag.textContent = p.label;
+      tag.style.cssText = 'position:absolute;left:2px;top:2px;max-width:calc(100% - 4px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+        + `font:500 11px/17px -apple-system,system-ui,sans-serif;padding:0 5px;border-radius:3px;color:${light ? '#0b1014' : '#ffffff'};background:${p.color};`;
+      b.appendChild(tag);
+    }
+    root.appendChild(b);
+  }
+
   function labelOf(r: Info): string {
     const parts = [r.file ? r.file.split('/').pop() ?? r.file : null, r.component ? `component ${r.component}` : null, r.entity,
       r.block ? `block ${r.block}` : null, r.view ? `view ${r.view}` : null, r.element];
@@ -270,9 +384,14 @@ export function livePage(): void {
   function draw(): void {
     frame = 0;
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
-    const root = existing ?? (shown || hovered ? host() : null);
+    const root = existing ?? (shown || hovered || painted.length ? host() : null);
     if (!root) return;
     root.replaceChildren();
+    for (const p of painted) {
+      const r = regions[p.index];
+      const rect = r ? viewRect(r) : null;
+      if (rect && rect.bottom > 0 && rect.top < innerHeight) paintBox(root, rect, p);
+    }
     if (shown) {
       for (const i of shown.indexes) {
         const r = regions[i];
@@ -296,12 +415,26 @@ export function livePage(): void {
   new MutationObserver((records) => {
     if (records.every((m) => ours(m.target))) return;
     mutations++;
-    if (shown) redraw();
+    if (shown || painted.length) redraw();
   }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
   function clear(): void {
     shown = null;
     redraw();
+  }
+
+  /** Paint a lens over the page (an empty list takes it away). Returns how many parts it painted. */
+  function paint(items: Paint[]): number {
+    painted = items.filter((p) => !!regions[p.index]);
+    draw();
+    return painted.length;
+  }
+
+  /** Where a region is in the view now, in CSS pixels of the view; null when it is not on the page. */
+  function where(index: number): Rect | null {
+    const r = regions[index];
+    const box = r ? viewRect(r) : null;
+    return box ? { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) } : null;
   }
 
   function outline(indexes: number[], label: string | null, tone: Tone = 'edit'): number {
@@ -543,7 +676,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText,
+    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, paint, where,
     cancelEdit: () => endEdit(false),
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,

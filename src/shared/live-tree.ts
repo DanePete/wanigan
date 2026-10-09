@@ -29,6 +29,8 @@ export function kindKey(r: LiveRegion): string {
   const e = entityOf(r);
   if (e) return `entity ${e.type}:${e.bundle ?? ''}:${e.viewMode ?? ''}:${r.file ?? ''}`;
   if (r.element) return `element ${r.element.split('#')[0]}`;
+  // A part only the helper's comments name is its own kind: two of them are not a run of one thing.
+  if (r.part && !r.file && !r.hook && !r.block && !r.view && !r.field) return `part ${r.part}`;
   return `file ${r.file ?? ''} ${r.hook ?? ''} ${r.block ?? ''} ${r.view ?? ''} ${r.field ?? ''}`;
 }
 
@@ -52,8 +54,13 @@ function identity(r: LiveRegion): string | null {
 const byPlace = (a: LiveRegion, b: LiveRegion): number =>
   (a.order ?? 0) - (b.order ?? 0) || a.rect.y - b.rect.y || a.rect.x - b.rect.x || b.rect.width * b.rect.height - a.rect.width * a.rect.height || a.index - b.index;
 
-export function layersOf(regions: readonly LiveRegion[], options: { all?: boolean; componentName?: (id: string) => string | null } = {}): Layer[] {
-  const named = new Map(regions.map((r) => [r.index, nameOf(r, r.component ? options.componentName?.(r.component) ?? null : null)]));
+export function layersOf(regions: readonly LiveRegion[], options: {
+  all?: boolean;
+  componentName?: (id: string) => string | null;
+  /** The site helper's label and kind for a part id, from the page's trace. */
+  partName?: (id: string) => { label: string; kind: string } | null;
+} = {}): Layer[] {
+  const named = new Map(regions.map((r) => [r.index, nameOf(r, r.component ? options.componentName?.(r.component) ?? null : null, r.part ? options.partName?.(r.part) ?? null : null)]));
   const kids = new Map<number | null, LiveRegion[]>();
   const known = new Set(regions.map((r) => r.index));
   for (const r of regions) {

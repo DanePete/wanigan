@@ -98,9 +98,23 @@ export function fieldOf(r: LiveRegion): { entityType: string; field: string; bun
   return null;
 }
 
-/** What to call a region, from what made it. `componentName` is the component's own name, when the site has it on disk. */
-export function nameOf(r: LiveRegion, componentName?: string | null): PartName {
+/** The icon for each kind of part the site helper reports. */
+const PART_ICON: Record<string, LiveKind> = {
+  template: 'template', component: 'component', block: 'block', entity: 'content', field: 'field', view: 'view', region: 'region',
+  form: 'form', shortcode: 'element', pattern: 'component', menu: 'menu', widget: 'block',
+};
+
+/**
+ * What to call a region, from what made it. `componentName` is the component's
+ * own name, when the site has it on disk; `part` is the site helper's label and
+ * kind for it, from the page's trace, used when the markup says nothing else.
+ */
+export function nameOf(r: LiveRegion, componentName?: string | null, part?: { label: string; kind: string } | null): PartName {
   const origin = originOf(r.file);
+  const only = !r.component && !r.element && !r.view && !r.block && !r.entity && !r.field && !r.file && !r.hook;
+  if (only && part) {
+    return { title: part.label, kind: `${human(part.kind)} · from the trace`, icon: PART_ICON[part.kind] ?? 'template', origin: null, wrapper: false, small: false };
+  }
   if (r.component) {
     const [provider, id] = r.component.split(':');
     return { title: tidyName(componentName ?? human(id ?? r.component)), kind: `Component · ${provider}`, icon: 'component', origin, wrapper: false, small: false };

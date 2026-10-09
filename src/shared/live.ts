@@ -226,6 +226,12 @@ export interface LiveRegion {
   field: string | null;
   /** Drupal's template file name suggestions for it, most specific first, without `.html.twig`. */
   suggestions: string[];
+  /**
+   * The site helper's part id for it, from the `wl:part` comments around it
+   * (shared/live-trace.ts): what the page's trace says about it is under that id.
+   * Absent or null when the page carries no trace.
+   */
+  part?: string | null;
   /** The index of the smallest region it lies inside, or null at the top. */
   parent: number | null;
   /** Where it begins in the document, as a rank among the page's regions: the order the page is written in. */
@@ -373,7 +379,9 @@ export function regionMadeBy(regionFile: string | null, editedPath: string): boo
 
 /** What a region is, regardless of where it sits: the same part on a reloaded page has the same key. */
 function regionKey(r: LiveRegion): string {
-  return [r.component, r.file, r.entity, r.block, r.view, r.element].map((v) => v ?? '').join('|');
+  const known = [r.component, r.file, r.entity, r.block, r.view, r.element];
+  // A part the helper's comments alone name is known by its part id.
+  return [...known, known.some(Boolean) ? null : r.part].map((v) => v ?? '').join('|');
 }
 
 /**
