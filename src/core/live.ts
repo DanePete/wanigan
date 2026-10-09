@@ -7,7 +7,7 @@
 // Design: docs/design/2026-10-08-live-view.md.
 import { execFile, spawn } from 'node:child_process';
 import { X509Certificate, createHash, randomBytes, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   LIVE_PLATFORMS, componentProps, ddevInfo, ddevPlatform, liveUrl, sameSite,
@@ -48,8 +48,12 @@ interface SiteRow {
   token: string | null;
 }
 
-/** What the helper column holds: which helper, and which version. */
-interface HelperRecord { kind: 'drupal' | 'wordpress'; version: number }
+/**
+ * What the helper column holds: which helper, and which version; and for
+ * WordPress, whether installing it made the mu-plugins folder, so removing it
+ * takes away only what Wanigan added.
+ */
+interface HelperRecord { kind: 'drupal' | 'wordpress'; version: number; madeFolder?: boolean }
 
 /** A ddev command may wait on a container starting: give it time, then give up and say so. */
 const DDEV_TIMEOUT_MS = 180_000;
@@ -382,7 +386,7 @@ export class Live {
     const record = helperRecord(row?.helper ?? null);
     if (!row || !record) throw new CoreError('refused', 'There is no helper to remove.');
     const root = row.served_path ?? project.path;
-    if (record.kind === 'wordpress') return this.removeWordpress(project.id, root);
+    if (record.kind === 'wordpress') return this.removeWordpress(project.id, root, record.madeFolder === true);
     const plan = this.drupalPlan(root);
     return this.exclusive(project.id, async () => {
       const ddev = await this.ddevCommand();
@@ -415,22 +419,26 @@ export class Live {
         throw new CoreError('refused', `${file} already exists and Wanigan did not write it. Nothing was changed.`);
       }
       const token = randomBytes(24).toString('hex');
+      // An update finds the folder its first install made: it is still Wanigan's to take away.
+      const madeFolder = !existsSync(plan.folder) || helperRecord(this.row(projectId)?.helper ?? null)?.madeFolder === true;
       mkdirSync(plan.folder, { recursive: true });
       // Where WordPress sits in the project, so the trace names files from the project's root.
       writeFileSync(file, wordpressHelper(token, relative(root, dirname(dirname(plan.folder))).split(sep).join('/')));
       await excludeFromGit(root, file, true, false);
-      const record: HelperRecord = { kind: 'wordpress', version: WORDPRESS_HELPER_VERSION };
+      const record: HelperRecord = { kind: 'wordpress', version: WORDPRESS_HELPER_VERSION, ...(madeFolder ? { madeFolder } : {}) };
       this.ctx.db.prepare('UPDATE live_sites SET helper = ?, token = ?, updated_at = ? WHERE project_id = ?').run(JSON.stringify(record), token, this.ctx.now(), projectId);
       this.ctx.emit('liveSite', { projectId });
       return this.site(projectId);
     });
   }
 
-  private removeWordpress(projectId: string, root: string): Promise<LiveSite> {
+  private removeWordpress(projectId: string, root: string, madeFolder: boolean): Promise<LiveSite> {
     const plan = wordpressPlan(root);
     return this.exclusive(projectId, async () => {
       const file = join(plan.folder, WORDPRESS_HELPER_FILE);
       if ((readText(file) ?? '').includes(WORDPRESS_HELPER_MARK)) rmSync(file, { force: true });
+      // The folder goes only if installing made it and nothing else has been put in it since.
+      if (madeFolder) { try { rmdirSync(plan.folder); } catch { /* not empty, or already gone */ } }
       await excludeFromGit(root, file, false, false);
       this.ctx.db.prepare('UPDATE live_sites SET helper = NULL, token = NULL, updated_at = ? WHERE project_id = ?').run(this.ctx.now(), projectId);
       this.ctx.emit('liveSite', { projectId });

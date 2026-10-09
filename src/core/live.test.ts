@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -289,6 +289,7 @@ describe('the Drupal helper, before anything is written', () => {
     const gone = await t.owner.call('live.removeHelper', { projectId });
     assert.equal(gone.helper, null);
     assert.equal(existsSync(file), false);
+    assert.ok(existsSync(join(t.projectDir, 'wp-content', 'mu-plugins')), 'the site’s own mu-plugins folder stays');
     assert.ok(!readFileSync(join(t.projectDir, '.git', 'info', 'exclude'), 'utf8').includes('wanigan-live.php'));
   });
 
@@ -305,8 +306,15 @@ describe('the Drupal helper, before anything is written', () => {
       assert.equal(plan?.folder, join(w.projectDir, 'web', 'wp-content', 'mu-plugins'));
       await w.owner.call('live.installHelper', { projectId: id });
       assert.ok(readFileSync(join(plan?.folder ?? '', 'wanigan-live.php'), 'utf8').includes("WANIGAN_LIVE_SITE_DIR = 'web';"));
+      // Updating finds the folder there, and still knows the first install made it.
+      await w.owner.call('live.installHelper', { projectId: id });
       await w.owner.call('live.removeHelper', { projectId: id });
-      assert.equal(existsSync(join(plan?.folder ?? '', 'wanigan-live.php')), false);
+      assert.equal(existsSync(plan?.folder ?? ''), false, 'the mu-plugins folder installing made goes with it');
+      // One the site has put its own plugin in since stays, with that plugin.
+      await w.owner.call('live.installHelper', { projectId: id });
+      writeFileSync(join(plan?.folder ?? '', 'acme.php'), '<?php');
+      await w.owner.call('live.removeHelper', { projectId: id });
+      assert.deepEqual(readdirSync(plan?.folder ?? ''), ['acme.php']);
     } finally { await w.close(); }
   });
 
