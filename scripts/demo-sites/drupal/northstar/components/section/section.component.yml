@@ -22,7 +22,9 @@ props:
 slots:
   heading:
     title: Heading
+    examples: ['From the journal']
   content:
     title: Content
+    examples: ['<p>Notes from the last three trips.</p>']
   footer:
     title: Footer

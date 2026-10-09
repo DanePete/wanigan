@@ -28,7 +28,9 @@ slots:
     title: Picture
   title:
     title: Name
+    examples: ['Trail tarp, 3 × 3 m']
   price:
     title: Price
+    examples: ['$75']
   badges:
     title: Badges

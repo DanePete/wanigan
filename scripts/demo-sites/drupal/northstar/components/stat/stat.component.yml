@@ -5,7 +5,9 @@ description: 'A big number with a label and a line beneath.'
 slots:
   number:
     title: Number
+    examples: ['61.2']
   label:
     title: Label
+    examples: ['kilometres of trail in the log']
   text:
     title: Text

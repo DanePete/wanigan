@@ -19,5 +19,7 @@ slots:
     title: Picture
   title:
     title: Title
+    examples: ['Reading a lake map']
   summary:
     title: Summary
+    examples: ['Depth lines, portages, and where the wind will find you.']

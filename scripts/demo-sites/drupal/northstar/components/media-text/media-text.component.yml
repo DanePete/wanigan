@@ -22,5 +22,7 @@ slots:
     title: Picture
   heading:
     title: Heading
+    examples: ['Packed in ten minutes']
   text:
     title: Text
+    examples: ['<p>Everything for a night out, in the order you need it.</p>']

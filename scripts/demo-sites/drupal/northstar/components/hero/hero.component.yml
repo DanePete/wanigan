@@ -29,7 +29,10 @@ slots:
   kicker:
     title: Kicker
     description: 'A few words above the heading.'
+    examples: ['Autumn 2026']
   heading:
     title: Heading
+    examples: ['Gear for the edge of the map']
   text:
     title: Text
+    examples: ['<p>Tested on the trails we walked ourselves.</p>']

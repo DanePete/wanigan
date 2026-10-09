@@ -16,8 +16,10 @@ props:
 slots:
   question:
     title: Question
+    examples: ['Can I paddle the north shore in October?']
   answer:
     title: Answer
+    examples: ['<p>On calm mornings, yes. The wind rises after noon, so plan to be off the water by two.</p>']
 libraryOverrides:
   dependencies:
     - core/drupal

@@ -29,7 +29,10 @@ props:
 slots:
   title:
     title: Title
+    examples: ['Night paddle']
   place:
     title: Place
+    examples: ['North landing']
   summary:
     title: Summary
+    examples: ['Headlamps on, phones off: two hours under the stars.']

@@ -5,5 +5,7 @@ description: 'A few words from someone, large, with their name.'
 slots:
   quote:
     title: Words
+    examples: ['<p>The best map is the one you drew on the way back.</p>']
   cite:
     title: Who said it
+    examples: ['A reader on the north shore']

@@ -21,5 +21,7 @@ props:
 slots:
   heading:
     title: Heading
+    examples: ['The ice is not safe yet']
   text:
     title: Text
+    examples: ['<p>Wait for ten centimetres of clear ice before walking out.</p>']

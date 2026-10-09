@@ -13,5 +13,7 @@ props:
 slots:
   heading:
     title: Heading
+    examples: ['Waterproof to the seams']
   text:
     title: Text
+    examples: ['<p>Every bag is welded, not stitched.</p>']
