@@ -12,7 +12,7 @@ import type { RenderOptions, RenderedPage } from './live-view.ts';
 
 const SITE = 'https://acme.ddev.site/';
 
-function app(opts: { settings?: Partial<AppSettings>; now?: LiveViewNow | null; logged?: TimedProblem[] | null; window?: boolean } = {}) {
+function app(opts: { settings?: Partial<AppSettings>; now?: LiveViewNow | null; logged?: TimedProblem[] | null; window?: boolean; fetch?: (url: string, init: RequestInit) => Promise<Response> } = {}) {
   const calls: [string, Record<string, unknown>][] = [];
   const renders: { projectId: string; url: string; token: string | null; options: RenderOptions }[] = [];
   const reads: string[] = [];
@@ -34,6 +34,7 @@ function app(opts: { settings?: Partial<AppSettings>; now?: LiveViewNow | null; 
       logged: (id) => { reads.push(`logged ${id}`); return opts.logged ?? null; },
     },
     windowOpen: () => opts.window ?? true,
+    sessionFor: opts.fetch ? () => ({ fetch: opts.fetch as (url: string, init: RequestInit) => Promise<Response> }) : undefined,
   });
   const ask = (more: Partial<LiveAsk>): LiveAsk => ({
     id: `a${calls.length}-${renders.length}`, kind: 'render', projectId: 'p1', sessionId: 's1', site: { url: SITE, platform: 'drupal' }, url: null,
@@ -121,4 +122,27 @@ test('status reads the settings and the view; problems add the owner’s console
   a.wiring.onEvent('liveAsk', late);
   await new Promise((ok) => setTimeout(ok, 30));
   assert.ok(!a.calls.some(([m, prm]) => m === 'live.answer' && prm.id === late.id), 'the core stopped waiting: nothing is rendered or sent');
+});
+
+test('the site’s AI is asked of the helper’s own route on the site, with its token, and nothing is rendered', async () => {
+  const asked: { url: string; headers: Record<string, string>; redirect: string | undefined }[] = [];
+  let reply = (): Response => new Response(JSON.stringify({
+    version: 1, platform: 'wordpress', coreAi: true, supports: true, watches: { prompts: true, abilities: true }, saves: [],
+    connectors: [{ id: 'acme', name: 'Acme AI', type: 'ai_provider', method: 'api_key', keySource: 'env', setUp: true, key: 'never-kept' }], abilities: [],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const a = app({ fetch: async (url, init) => { asked.push({ url, headers: init.headers as Record<string, string>, redirect: init.redirect }); return reply(); } });
+  a.wiring.onEvent('liveAsk', a.ask({ id: 'ai1', kind: 'ai', site: { url: SITE, platform: 'wordpress' } }));
+  const answer = await a.answered('ai1');
+  assert.deepEqual(asked.map((x) => [x.url, x.headers['X-Wanigan-Live'], x.redirect]), [['https://acme.ddev.site/_wanigan/ai', 'f'.repeat(32), 'error']]);
+  assert.equal(a.renders.length, 0, 'nothing is rendered: the helper says it');
+  const ai = answer.result as { connectors: Record<string, unknown>[] };
+  assert.deepEqual(ai.connectors[0], { id: 'acme', name: 'Acme AI', type: 'ai_provider', method: 'api_key', keySource: 'env', setUp: true }, 'what the contract does not name is dropped');
+  // An older helper has no such route: said as that, with what to do.
+  reply = () => new Response('<html>Not found</html>', { status: 404 });
+  a.wiring.onEvent('liveAsk', a.ask({ id: 'ai2', kind: 'ai' }));
+  assert.match(String((await a.answered('ai2')).error), /older than this Wanigan.*updates it from the project’s Live tab/);
+  // Switched off, nothing is asked.
+  const off = app({ settings: { liveView: false }, fetch: async () => reply() });
+  off.wiring.onEvent('liveAsk', off.ask({ id: 'ai3', kind: 'ai' }));
+  assert.match(String((await off.answered('ai3')).error), /The live view is off/);
 });

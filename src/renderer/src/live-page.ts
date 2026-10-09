@@ -1021,6 +1021,44 @@ export function livePage(): void {
     return out.slice(0, max);
   }
 
+  /**
+   * What a region shows, as a short hash: its words, and each element's name and the attributes that change what is
+   * seen (a picture, a link, its classes), in order. The helper's own marks and attributes are left out, so the same
+   * content rendered again hashes the same; a save that changed what the region shows does not. Null when the page
+   * no longer has it.
+   */
+  function fingerprints(indexes: number[]): Record<number, string | null> {
+    const out: Record<number, string | null> = {};
+    for (const index of indexes.slice(0, 200)) {
+      const r = regions.find((x) => x.index === index);
+      const root = r ? r.el ?? r.range?.commonAncestorContainer ?? null : null;
+      if (!r || !root) { out[index] = null; continue; }
+      let text = '';
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      for (let n: Node | null = r.el ? root : walker.nextNode(); n; n = walker.nextNode()) {
+        if (r.range && !r.range.intersectsNode(n)) continue;
+        if (n.nodeType === Node.TEXT_NODE) {
+          const parent = n.parentElement;
+          if (parent && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName) && !parent.closest(`#${HOST_ID}`)) text += `${words(n.textContent)} `;
+          continue;
+        }
+        const el = n as Element;
+        if (el.id === HOST_ID || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) continue;
+        text += `<${el.tagName}`;
+        for (const name of ['src', 'srcset', 'alt', 'href', 'class', 'title', 'value']) {
+          const v = el.getAttribute(name);
+          if (v !== null) text += ` ${name}=${v}`;
+        }
+        text += '>';
+        if (text.length > 400_000) break;
+      }
+      let h = 0x811c9dc5;
+      for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+      out[index] = `${h.toString(36)}:${text.length}`;
+    }
+    return out;
+  }
+
   /** Each region's words from the last scan, by index, cut short: how an agent tells one teaser from the next. */
   function texts(max: number): Record<number, string> {
     const out: Record<number, string> = {};
@@ -1085,7 +1123,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, styleOf, paint, where, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
     cancelEdit: () => endEdit(false),
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,

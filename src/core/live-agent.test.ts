@@ -193,6 +193,26 @@ describe('an agent’s look at the live view', () => {
     assert.deepEqual(heard, [], 'a session hears no events');
   });
 
+  test('the site’s AI comes from the helper through the app, as data, and the call is kept as evidence', async () => {
+    answer = (ask) => (ask.kind === 'ai' ? {
+      result: {
+        version: 1, platform: 'drupal', coreAi: true, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false },
+        saves: [{ id: 'entity:node', label: 'Saving a content item (node)', core: 12, runs: [{ by: 'acme_ai', name: 'Acme AI', kind: 'module', owner: 'contrib', hooks: ['entity_presave'] }] }],
+      },
+    } : null);
+    const out = await agent.call('live.siteAi', {});
+    const ask = asks.at(-1)!;
+    assert.deepEqual([ask.kind, ask.projectId, ask.sessionId, ask.url, ask.site.url], ['ai', projectId, sessionId, null, SITE]);
+    assert.match(out.text, /^Drupal core has no AI API/);
+    assert.match(out.text, /^- Saving a content item \(node\): Acme AI \(module\) on entity_presave$/m);
+    assert.equal(out.structured.coreAi, false, 'Drupal core has no AI API, whatever a helper claims');
+    const [last] = await looks();
+    assert.deepEqual([last!.tool, last!.ok, last!.page, last!.said], ['live_site_ai', true, null, 'no AI API in Drupal core; one kind of save runs code beyond core']);
+    answer = (ask) => (ask.kind === 'ai' ? { error: 'The site helper is older than this Wanigan and cannot say what AI the site runs.' } : null);
+    await assert.rejects(agent.call('live.siteAi', {}), /older than this Wanigan/);
+    assert.equal((await looks())[0]!.ok, false, 'a refusal is evidence too');
+  });
+
   test('the real shim, run as an agent CLI runs it, answers MCP as this session', async () => {
     answer = (ask) => (ask.kind === 'render' ? { result: rendered() } : null);
     const child = spawn(join(t.core.paths.bin, 'wanigan'), ['mcp'], {
@@ -244,7 +264,7 @@ test('every agent is handed the live view’s server at launch, and nothing abou
     assert.deepEqual(JSON.parse(readFileSync(config, 'utf8')), { mcpServers: { wanigan: { type: 'stdio', command: shim, args: ['mcp'] } } }, 'the shim, no token');
     const settings = JSON.parse(readFileSync(join(t.core.paths.dataDir, 'hooks', 'claude-settings.json'), 'utf8')) as { permissions: { allow: string[] } };
     assert.deepEqual(settings.permissions.allow, CLAUDE_ALLOW);
-    assert.deepEqual(CLAUDE_ALLOW, ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff'].map((n) => `mcp__wanigan__${n}`));
+    assert.deepEqual(CLAUDE_ALLOW, ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai'].map((n) => `mcp__wanigan__${n}`));
 
     const codex = await t.owner.call('sessions.start', { projectId: project.id, provider: 'codex' });
     const codexLine = await waitFor('codex', () => /ARGS=.*developer_instructions=.*$/m.exec(t.core.sessions.replay(codex.id).replay)?.[0]);

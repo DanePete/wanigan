@@ -27,6 +27,7 @@ export function lookSentence(look: LiveLook): string {
     case 'live_part': return `${who} looked closely at ${look.asked} on ${page}${at}`;
     case 'live_problems': return `${who} checked ${page}${at} for problems${look.asked ? `, ${look.asked}` : ''}`;
     case 'live_diff': return `${who} compared ${page}${at} with its screenshot ${look.asked}`;
+    case 'live_site_ai': return `${who} read what AI the site runs, and what its saves run`;
     default: return `${who} read the live view`;
   }
 }

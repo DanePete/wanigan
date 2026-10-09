@@ -80,6 +80,17 @@ try {
     for (const want of ['acme_preprocess_node', 'Create override…', 'Hero props', 'Fresh bread, every morning', 'node:12', '62.4 ms', 'Spring wording', 'Allowed']) {
       if (!inspector.includes(want)) fail(t(`inspector: "${want}" is not shown`));
     }
+    // Before anything is saved, whose code also runs on that save; and the site's AI as its core reports it.
+    if (!inspector.includes('Saving here also runs code from: Acme Events (module).')) fail(t('inspector: what saving runs is not said'));
+    const siteAi = page.locator('.disclosure-head button', { hasText: 'AI on this site' }).first();
+    if (!(await siteAi.count())) fail(t('inspector: no AI on this site section'));
+    else {
+      if ((await siteAi.innerText()).includes('no AI API in Drupal core') === false) fail(t(`inspector: AI on this site says "${await siteAi.innerText()}"`));
+      await siteAi.click();
+      const said = await page.locator('.live-site-ai').innerText();
+      for (const want of ['Drupal core has no AI API', 'Saving a content item (node)', 'Acme Events (module)', 'never reads a key']) if (!said.includes(want)) fail(t(`inspector: AI on this site does not say "${want}"`));
+      if (!(await page.evaluate(() => window.__wgLive.calls.includes('siteAi')))) fail(t('inspector: the site’s AI was not asked for'));
+    }
     const sideways = await page.locator('.live-side').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
     if (sideways) fail(t('inspector: the side panel is wider than itself'));
     await page.locator('.live-side').evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
@@ -109,11 +120,14 @@ try {
     await page.keyboard.press('Alt+ArrowDown');
     await page.keyboard.press('Enter');
     await page.waitForSelector('.dialog:has-text("every page that shows this region (41 pages)")', { timeout: 3000 }).catch(() => fail(t('move: a configuration move did not say what it changes')));
+    if (!(await page.locator('.dialog').innerText()).includes('Saving here also runs code from: Acme Events (module).')) fail(t('move: the confirm does not say what else the save runs'));
     await shot('move-confirm');
     await page.locator('.dialog button', { hasText: 'Move it' }).click();
     await page.waitForSelector('.toast-info:has-text("Moved Search")', { timeout: 3000 }).catch(() => fail(t('move: no toast after saving')));
     const moved = await page.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('move ')));
     if (moved !== 'move {"collection":"c-sidebar","item":"p-search","to":{"collection":"c-sidebar","index":1}}') fail(t(`move: posted ${moved}`));
+    await page.waitForSelector('.live-note:has-text("Search: moved, and the page shows the change after reloading.")', { timeout: 4000 })
+      .catch(async () => fail(t(`check: a move that landed was not said (${await page.locator('.live-note').first().innerText().catch(() => 'no note')})`)));
     await shot('move-saved');
     await page.locator('.toast-info button', { hasText: 'Undo' }).click();
     if (!(await page.evaluate(() => window.__wgLive.calls.includes('undo u-1')))) fail(t('move: Undo did not ask the site'));
@@ -139,6 +153,19 @@ try {
     await page.waitForSelector('.toast-info:has-text("Saved Hero props")', { timeout: 3000 }).catch(() => fail(t('edit: saving did not say so')));
     const save = await page.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('editSave')));
     if (!save?.includes('"heading":"Fresh bread, all day"') || !save.includes('"image":{"src":"hero.jpg"}')) fail(t(`edit: saved ${save}`));
+    // The save is read back once the page reloads: by the value the new trace holds for it.
+    await page.waitForSelector('.live-note:has-text("Hero props: saved, and the site holds it after reloading.")', { timeout: 4000 })
+      .catch(async () => fail(t(`check: an edit that landed was not said (${await page.locator('.live-note').first().innerText().catch(() => 'no note')})`)));
+    // A save the site called a success that changed nothing is said plainly.
+    await page.evaluate(() => { window.__wgLive.unchanged = true; });
+    await page.getByRole('button', { name: 'Edit Hero props' }).click();
+    await page.getByLabel('Heading *').fill('Fresh bread, all night');
+    await page.locator('.live-sheet button[type="submit"]').click();
+    await page.waitForSelector('.live-note.warn:has-text("The site said it saved Hero props, but after reloading it holds the old value")', { timeout: 4000 })
+      .catch(() => fail(t('check: a save that changed nothing was not said')));
+    await shot('check-unchanged');
+    await page.evaluate(() => { window.__wgLive.unchanged = false; });
+    await page.locator('.toast-error .toast-x').click().catch(() => {});
     await page.getByRole('button', { name: 'Edit Title (node 12)' }).click();
     await page.waitForSelector('.live-sheet.native', { timeout: 3000 }).catch(() => fail(t('edit: the native sheet did not open')));
     if (!(await page.evaluate(() => window.__wgLive.calls.includes('editOpen e-title')))) fail(t('edit: the site’s form was not asked for'));

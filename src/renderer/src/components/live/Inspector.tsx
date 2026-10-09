@@ -25,6 +25,8 @@ import { NoteComposer, draftFor } from './Notes';
 import { MoveSection, type useArrange } from './Arrange';
 import { TraceAccess, TraceCache, TraceCost, TraceData, TraceEdits, TraceHistory, TraceMadeBy } from './PartTrace';
 import { TraceNote } from './TraceNote';
+import { SiteAiSection } from './SiteAi';
+import type { LiveSiteAiAnswer } from '@shared/live-ai';
 import { EditButton, openInEditor, relativeTo } from '../../editor/EditButton';
 import type { StyleChange } from './note-store';
 
@@ -35,7 +37,7 @@ const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contr
 const near = (root: string, abs: string): string => (abs.startsWith(`${root}/`) ? abs.slice(root.length + 1) : abs);
 
 export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose, onSaved,
-  site, answer, trace, parts, arrange, onEdit }: {
+  site, answer, trace, parts, arrange, onEdit, siteAi, onSiteAiRefresh }: {
   project: ProjectSummary;
   platform: LivePlatform | null;
   selection: Selection;
@@ -63,6 +65,9 @@ export function Inspector({ project, platform, selection, regions, components, d
   arrange: ReturnType<typeof useArrange>;
   /** Open an edit target in a sheet beside the part. */
   onEdit: (target: EditTarget, region: LiveRegion | null) => void;
+  /** The site's AI as its core reports it (null until read, or on a hosted environment), and asking for it again. */
+  siteAi: LiveSiteAiAnswer | null;
+  onSiteAiRefresh: () => void;
 }) {
   const live = liveBridge();
   const { region, pick } = selection;
@@ -151,15 +156,16 @@ export function Inspector({ project, platform, selection, regions, components, d
       {/* A hosted environment is read-only: nothing here edits or moves it. */}
       {readOnly ? null : traced && trace ? (
         <div className="live-trace-sections">
-          <TraceEdits part={traced.part} edits={parts.edits} onEdit={edit} />
+          <TraceEdits part={traced.part} edits={parts.edits} onEdit={edit} trace={trace} />
           {now ? <MoveSection arrange={arrange} region={now} trace={trace} /> : null}
           <TraceData part={traced.part} edits={parts.edits} onEdit={edit} />
           <TraceCache part={traced.part} />
           <TraceCost part={traced.part} trace={trace} />
           <TraceHistory part={traced.part} />
           <TraceAccess part={traced.part} user={trace.user} />
+          <SiteAiSection answer={siteAi} onRefresh={onSiteAiRefresh} />
         </div>
-      ) : now ? <div className="live-trace-sections"><MoveSection arrange={arrange} region={now} trace={trace} /></div> : null}
+      ) : now ? <div className="live-trace-sections"><MoveSection arrange={arrange} region={now} trace={trace} /><SiteAiSection answer={siteAi} onRefresh={onSiteAiRefresh} /></div> : null}
 
       {!readOnly && (admin || content || alone.length) ? (
         <section className="live-section" aria-label="Change it in the site">

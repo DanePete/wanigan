@@ -9,7 +9,7 @@ import { nameOf, type PartName } from './live-names.ts';
 import type { ChangedArea } from './live-diff.ts';
 
 /** What the core asks the app. Each agent tool is one of these underneath. */
-export type LiveAskKind = 'status' | 'render' | 'problems' | 'diff';
+export type LiveAskKind = 'status' | 'render' | 'problems' | 'diff' | 'ai';
 
 /** A picture to take of a rendered page: none, the first screen, the whole page, or one part. */
 export type LiveCapture = 'none' | 'screen' | 'page' | 'part';
@@ -137,7 +137,7 @@ export interface LiveToolResult {
 }
 
 /** The tools an agent sees, by the names its CLI shows them. */
-export const LIVE_TOOLS = ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff'] as const;
+export const LIVE_TOOLS = ['live_status', 'live_look', 'live_find', 'live_part', 'live_problems', 'live_diff', 'live_site_ai'] as const;
 export type LiveTool = (typeof LIVE_TOOLS)[number];
 
 /** One call an agent made to the live view, kept as evidence on its card. */

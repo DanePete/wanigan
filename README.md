@@ -210,12 +210,22 @@ WordPress and other sites can each be on or off.
   template becomes a note for an agent); adding blocks from a palette. All of
   it by keyboard too.
 - **Agents see it too.** Every agent session is handed Wanigan's own MCP
-  server, `wanigan mcp`, with six read-only tools: `live_status`, `live_look`
+  server, `wanigan mcp`, with seven read-only tools: `live_status`, `live_look`
   (a page and its parts, named the way Layers names them, with a picture only
   when asked), `live_find`, `live_part` (what the Inspector shows: whose code
-  it is, the override to create, the admin link), `live_problems`, and
+  it is, the override to create, the admin link), `live_problems`,
   `live_diff` (what changed since the session's last turn, each changed area
-  matched to the edited file that explains it, or said to be unexplained).
+  matched to the edited file that explains it, or said to be unexplained), and
+  `live_site_ai` (the AI the site runs as its core reports it, never a key,
+  and the code beyond core that runs when content is saved).
+- **The site's AI, before it spends.** The Inspector's AI on this site lists
+  WordPress core's AI Client, its connectors (set up or not, where each key
+  comes from, never the key) and abilities; Drupal core has no AI API, and it
+  says so. Before an edit, a move or an insert saves, the live view says whose
+  code also runs on that save (found through each platform's own hook lists),
+  and on WordPress it says afterwards which prompts core's AI Client sent and
+  which abilities ran. Every write is read back after the page reloads, and
+  one that changed nothing is said plainly.
   Pages are rendered in a hidden window, so your own view never moves, and
   only the project's own local site is ever opened. Every call shows on the
   card, under **Looked at the live view**.

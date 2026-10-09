@@ -14,6 +14,7 @@ import {
 } from '../shared/live-agent.ts';
 import { diffText, findText, lookText, pageAt, partText, pathOf, problemsText, statusText, type TextContext } from '../shared/live-agent-text.ts';
 import { isStylesheet } from '../shared/live.ts';
+import { parseSiteAi, siteAiText } from '../shared/live-ai.ts';
 import type { Session } from '../shared/model.ts';
 import { CoreError } from '../shared/protocol.ts';
 import type { Board } from './board.ts';
@@ -21,7 +22,9 @@ import type { Ctx } from './context.ts';
 import type { Live } from './live.ts';
 
 /** How long the core waits for the app: a status is read at once; a page loads (up to 30 s), settles and is read. */
-const WAIT_MS: Record<LiveAskKind, number> = { status: 5_000, render: 60_000, problems: 60_000, diff: 90_000 };
+const WAIT_MS: Record<LiveAskKind, number> = { status: 5_000, render: 60_000, problems: 60_000, diff: 90_000, ai: 20_000 };
+/** Abilities listed to an agent at most: a site with more says how many were left out. */
+const MAX_ABILITIES = 150;
 /** Pages a session may have the app reading at once, and all sessions together. */
 const PER_SESSION = 2;
 const IN_ALL = 8;
@@ -171,6 +174,37 @@ export class LiveAgent {
         local: (path) => this.local(session.projectId, path),
       });
       return { result: { text: out.text, structured: out.structured, image: null }, page: pathOf(answer.url), width: answer.width, said: out.summary };
+    });
+  }
+
+  /**
+   * The AI the project's site runs, as its own core reports it, through the site helper: on WordPress, whether it
+   * supports AI, its connectors (set up or not, where each key comes from, never the key) and its abilities; on
+   * both, what saving each kind of content runs besides core. Read-only and free: nothing is prompted.
+   */
+  siteAi(session: Session): Promise<LiveToolResult> {
+    return this.record(session, 'live_site_ai', '', async () => {
+      const site = this.siteFor(session);
+      if (site.platform !== 'drupal' && site.platform !== 'wordpress') {
+        throw new CoreError('refused', 'This project’s site is not set as Drupal or WordPress, so there is no core to ask what AI it runs.');
+      }
+      if (!this.live.site(session.projectId).helper) {
+        throw new CoreError('refused', 'The site helper is not installed, and the site’s AI is read through it. The owner installs it from the project’s Live tab.');
+      }
+      const ai = parseSiteAi(await this.ask('ai', this.base(session, site.url, site.platform, {})));
+      if (!ai) throw new CoreError('refused', 'The site helper did not say what AI the site runs.');
+      const shown = { ...ai, abilities: ai.abilities ? ai.abilities.slice(0, MAX_ABILITIES) : null };
+      const text = siteAiText(shown) + (ai.abilities && ai.abilities.length > MAX_ABILITIES ? `\n(${ai.abilities.length - MAX_ABILITIES} more abilities are not listed here.)` : '');
+      const connected = (ai.connectors ?? []).filter((c) => c.type === 'ai_provider' && c.setUp).length;
+      const running = ai.saves.filter((s) => s.runs.length).length;
+      const saving = running ? `${running === 1 ? 'one kind of save runs' : `${running} kinds of save run`} code beyond core` : 'saving runs only core';
+      return {
+        result: { text, structured: shown as unknown as Record<string, unknown>, image: null },
+        page: null, width: null,
+        said: ai.platform === 'drupal'
+          ? `no AI API in Drupal core; ${saving}`
+          : `${connected} AI ${connected === 1 ? 'connector' : 'connectors'} set up, ${ai.abilities?.length ?? 0} abilities; ${saving}`,
+      };
     });
   }
 

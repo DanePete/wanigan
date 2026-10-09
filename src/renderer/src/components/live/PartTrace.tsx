@@ -3,11 +3,12 @@
 // its cache, its cost and queries, its revisions and who may see it. The most
 // used open by default; the rest open on request and say in one line what
 // they hold.
-import type { EditTarget, LiveTrace, TracePart, TraceStep } from '@shared/live-trace';
+import { saveOf, type EditTarget, type LiveTrace, type TracePart, type TraceSave, type TraceStep } from '@shared/live-trace';
 import { partQueries } from '@shared/live-lens';
 import { ago } from '../../lib/format';
 import { Button, CopyButton, Disclosure } from '../ui';
 import { OWNER_LABEL, maxAge, ms, ownerClass, where } from './trace-format';
+import { SavesNote } from './SiteAi';
 
 const EDIT_KIND: Record<EditTarget['kind'], string> = {
   field: 'Field', property: 'Property', 'block-attributes': 'Block settings', config: 'Configuration', option: 'Site option', meta: 'Post meta',
@@ -72,13 +73,16 @@ function ChainStep({ step, slowest }: { step: TraceStep; slowest: boolean }) {
   );
 }
 
-/** Every way to change the part, one click each; what cannot be changed here says why. */
-export function TraceEdits({ part, edits, onEdit }: { part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void }) {
+/** Every way to change the part, one click each; what cannot be changed here says why, and what else saving it runs. */
+export function TraceEdits({ part, edits, onEdit, trace = null }: { part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void; trace?: LiveTrace | null }) {
   const list = (part.edits ?? []).map((id) => edits.get(id)).filter((e): e is EditTarget => !!e);
   if (!list.length) return null;
   const open = list.filter((e) => !e.why).length;
+  // One note for each kind of save these edits make (usually one): said before any of them is opened.
+  const saves = [...new Set(list.filter((e) => !e.why).map((e) => saveOf(trace, e)).filter((s): s is TraceSave => !!s))];
   return (
     <Disclosure title="Edit" open summary={`${open} here${list.length > open ? `, ${list.length - open} not` : ''}`}>
+      {saves.map((s, i) => <SavesNote key={s.id} save={s} ai={i === 0 ? trace?.ai : null} />)}
       <ul className="live-edit-list">
         {list.map((e) => (
           <li key={e.id}>

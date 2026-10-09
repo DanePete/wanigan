@@ -24,7 +24,9 @@ import type { LiveBounds } from '../shared/bridge.ts';
 import { sameSite } from '../shared/live.ts';
 import { boxOf, paintItems, type LiveEditSaved, type LiveEdited, type LiveTraceAnswer } from '../shared/live-lens.ts';
 import { arrangeDrop, arrangeSpec, checkInsert, checkMove, undoToken, type ArrangeDrop, type LiveMoveSaved } from '../shared/live-arrange.ts';
+import { parseSaveAi, type LiveSiteAiAnswer } from '../shared/live-ai.ts';
 import { checkValue } from '../shared/live-schema.ts';
+import { askSiteAi } from './live-site-ai.ts';
 import { TRACE_ID, parseTrace, type EditTarget, type LiveTrace } from '../shared/live-trace.ts';
 import type { LiveCurrent, LiveViewHooks } from './live-view.ts';
 
@@ -35,6 +37,14 @@ const MAX_VALUE_BYTES = 64 * 1024;
 const FETCH_MS = 15_000;
 
 type Rect = { x: number; y: number; width: number; height: number };
+
+/**
+ * The owner's choice, for one write, to stop WordPress core's AI Client while it runs: sent only when it is
+ * exactly that choice, and nothing else the window passes.
+ */
+function noSiteAi(raw: unknown): { noSiteAi?: true } {
+  return raw && typeof raw === 'object' && (raw as { noSiteAi?: unknown }).noSiteAi === true ? { noSiteAi: true } : {};
+}
 
 /** A response header, whatever case the server wrote it in. */
 function header(headers: Record<string, string[]> | undefined, name: string): string | null {
@@ -80,7 +90,7 @@ export function wireLiveInspect(options: {
   /** A lens is painted: Escape in the page takes it away. */
   let painting = false;
   /** The sheet showing a site's own edit form. */
-  let editing: { view: WebContentsView; target: EditTarget } | null = null;
+  let editing: { view: WebContentsView; target: EditTarget; finish?: (saved: boolean) => void } | null = null;
   /** Undo tokens the site gave for moves and inserts in this view, newest last. */
   let undos: string[] = [];
 
@@ -164,21 +174,23 @@ export function wireLiveInspect(options: {
 
   /** What a move, an insert or an undo came to, from the helper's answer. A 409 is the collection having changed meanwhile. */
   const moved = (cur: LiveCurrent, r: { status: number; answer: Record<string, unknown> | null; error: string | null }): LiveMoveSaved => {
+    // What the site's own AI did during it, as core reported it: said whether the save went through or not.
+    const ai = parseSaveAi(r.answer?.ai);
     if (r.answer?.ok === true) {
       const undo = undoToken(r.answer.undo);
       if (undo) undos = [...undos.filter((u) => u !== undo), undo].slice(-50);
       if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: true, undo, revision: typeof r.answer.revision === 'string' ? r.answer.revision.slice(0, 100) : null };
+      return { ok: true, undo, revision: typeof r.answer.revision === 'string' ? r.answer.revision.slice(0, 100) : null, ai };
     }
     const items = Array.isArray(r.answer?.items) ? (r.answer.items as unknown[]).filter((i): i is string => typeof i === 'string').slice(0, 4000) : null;
     if (r.status === 409) {
       // What the page shows is out of date: show the order as it is now.
       if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: false, conflict: true, items, error: 'It changed on the site since this page was shown, so nothing was moved. The page now shows the order as it is.' };
+      return { ok: false, conflict: true, items, error: 'It changed on the site since this page was shown, so nothing was moved. The page now shows the order as it is.', ai };
     }
     const said = typeof r.answer?.error === 'string' ? r.answer.error.slice(0, 500) : null;
     return {
-      ok: false, conflict: false, items: null,
+      ok: false, conflict: false, items: null, ai,
       error: said ?? (r.status === 0 ? `The site did not answer: ${r.error ?? 'no answer'}.`
         : r.status === 403 ? 'The site refused: the user logged in in the live view may not change this.'
           : `The site did not save it (it answered ${r.status}).`),
@@ -218,6 +230,28 @@ export function wireLiveInspect(options: {
     return { state: 'ok', trace };
   });
 
+  // The site's AI as its core reports it: read-only, and free (the helper lists what core knows; nothing is prompted).
+  ipcMain.handle('live:siteAi', async (event): Promise<LiveSiteAiAnswer> => {
+    if (!ok(event)) return { state: 'no-helper' };
+    const cur = options.current();
+    if (!cur?.token) return { state: 'no-helper' };
+    const page = cur.webContents.getURL();
+    const origin = new URL(page && sameSite(cur.base, page) ? page : cur.base).origin;
+    if (!sameSite(cur.base, origin)) return { state: 'no-helper' };
+    return askSiteAi((url, init) => cur.webContents.session.fetch(url, init), origin, cur.token);
+  });
+
+  /** The helper's count of content changes, or null when it did not say. */
+  const changes = async (cur: LiveCurrent, origin: string): Promise<number | null> => {
+    try {
+      const res = await ask(cur, origin, '/_wanigan/changed');
+      const data = JSON.parse(await readBounded(res, MAX_ANSWER_BYTES)) as { changed?: unknown };
+      return res.ok && typeof data.changed === 'number' && data.changed >= 0 ? data.changed : null;
+    } catch {
+      return null;
+    }
+  };
+
   ipcMain.handle('live:paint', async (event, raw: unknown) => {
     if (!ok(event)) return 0;
     const items = paintItems(raw);
@@ -229,6 +263,22 @@ export function wireLiveInspect(options: {
   ipcMain.handle('live:focusWindow', (event) => {
     const w = options.window();
     if (options.trusted(event) && w && !w.isDestroyed()) w.webContents.focus();
+  });
+
+  // What regions show, hashed (the page script's fingerprints()): read before a write and after the reload, to say
+  // when a write the site called a success left the page as it was.
+  ipcMain.handle('live:fingerprints', async (event, raw: unknown) => {
+    if (!ok(event) || !Array.isArray(raw)) return {};
+    const list = raw.filter((i): i is number => Number.isInteger(i) && i >= 0).slice(0, 200);
+    const got = await options.run<unknown>(`window.__wl && window.__wl.fingerprints ? window.__wl.fingerprints(${JSON.stringify(list)}) : {}`, {});
+    const out: Record<number, string | null> = {};
+    if (got && typeof got === 'object') {
+      for (const i of list) {
+        const v = (got as Record<string, unknown>)[String(i)];
+        out[i] = typeof v === 'string' && v.length <= 40 ? v : null;
+      }
+    }
+    return out;
   });
 
   ipcMain.handle('live:where', async (event, index: unknown) => {
@@ -263,6 +313,9 @@ export function wireLiveInspect(options: {
     });
     const wc = view.webContents;
     editing = { view, target: t };
+    // A form that saves without leaving the page (WordPress's block editor) never reaches done: what the site's
+    // change counter says before and after tells the page to reload anyway.
+    const before = changes(cur, origin);
     const isDone = (u: string): boolean => {
       try { return sameSite(cur.base, u) && new URL(u).pathname === '/_wanigan/edit/done'; } catch { return false; }
     };
@@ -272,7 +325,15 @@ export function wireLiveInspect(options: {
       tell('live:edited', { target: t.id, label: t.label, saved, error } satisfies LiveEdited);
       // Past the browser's cache: the page shows what the site saved, at once.
       if (saved && !cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
+      if (saved || error) return;
+      void (async () => {
+        const [was, now] = [await before, await changes(cur, origin)];
+        if (was === null || now === null || now === was || cur.webContents.isDestroyed()) return;
+        cur.webContents.reloadIgnoringCache();
+        tell('live:edited', { target: t.id, label: t.label, saved: false, error: null, changed: true } satisfies LiveEdited);
+      })();
     };
+    editing.finish = (saved) => finish(saved);
     // The form stays on the site; done is the site saying it saved.
     const guard = (e: { preventDefault(): void }, u: string): void => {
       if (isDone(u)) { e.preventDefault(); finish(true); return; }
@@ -302,19 +363,20 @@ export function wireLiveInspect(options: {
     if (b && editing) editing.view.setBounds(b);
   });
 
-  ipcMain.handle('live:editClose', (event) => { if (options.trusted(event)) closeEdit(); });
+  // The sheet closed from the window: as Escape in the form, so a save the form made without leaving the page is still seen.
+  ipcMain.handle('live:editClose', (event) => { if (!options.trusted(event)) return; if (editing?.finish) editing.finish(false); else closeEdit(); });
 
-  ipcMain.handle('live:editSave', async (event, rawTarget: unknown, rawValue: unknown): Promise<LiveEditSaved> => {
+  ipcMain.handle('live:editSave', async (event, rawTarget: unknown, rawValue: unknown, rawOptions: unknown): Promise<LiveEditSaved> => {
     if (!ok(event)) return { ok: false, error: 'The live view is off.', revision: null };
     const found = target(rawTarget, 'schema');
     if (typeof found === 'string') return { ok: false, error: found, revision: null };
     const { cur, origin, trace, target: t } = found;
     let body: string;
-    try { body = JSON.stringify({ trace: trace.id, value: rawValue ?? null }); } catch { return { ok: false, error: 'That value cannot be sent.', revision: null }; }
+    try { body = JSON.stringify({ trace: trace.id, value: rawValue ?? null, ...noSiteAi(rawOptions) }); } catch { return { ok: false, error: 'That value cannot be sent.', revision: null }; }
     if (body.length > MAX_VALUE_BYTES) return { ok: false, error: 'That value is too large to save here.', revision: null };
     const wrong = checkValue(t.schema, rawValue);
     if (wrong.length) return { ok: false, error: wrong.join(' '), revision: null };
-    type Answer = { ok?: unknown; error?: unknown; revision?: unknown };
+    type Answer = { ok?: unknown; error?: unknown; revision?: unknown; ai?: unknown };
     let answer: Answer | null = null;
     let status = 0;
     try {
@@ -327,13 +389,13 @@ export function wireLiveInspect(options: {
     const said: Answer | null = answer && typeof answer === 'object' ? answer : null;
     if (said?.ok === true) {
       if (!cur.webContents.isDestroyed()) cur.webContents.reloadIgnoringCache();
-      return { ok: true, error: null, revision: typeof said.revision === 'string' ? said.revision.slice(0, 100) : null };
+      return { ok: true, error: null, revision: typeof said.revision === 'string' ? said.revision.slice(0, 100) : null, ai: parseSaveAi(said.ai) };
     }
     const why = typeof said?.error === 'string' ? said.error.slice(0, 500)
       : status === 403 ? 'The site refused: the user logged in in the live view may not edit this.'
         : status === 404 ? 'The site no longer offers this edit. Reload the page, then try again.'
           : `The site did not save it (it answered ${status}).`;
-    return { ok: false, error: why, revision: null };
+    return { ok: false, error: why, revision: null, ai: parseSaveAi(said?.ai) };
   });
 
   // Arranging: the page shows handles and where a drag would land; this answers when something is dropped.
@@ -353,24 +415,24 @@ export function wireLiveInspect(options: {
   });
   ipcMain.handle('live:unpreview', async (event) => { if (options.trusted(event)) await options.run('window.__wl && window.__wl.unpreview && window.__wl.unpreview()', null); });
 
-  ipcMain.handle('live:move', async (event, raw: unknown): Promise<LiveMoveSaved> => {
+  ipcMain.handle('live:move', async (event, raw: unknown, rawOptions: unknown): Promise<LiveMoveSaved> => {
     const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
     if (!ok(event)) return refused('The live view is off.');
     const h = holding();
     if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
     const move = checkMove(h.trace, raw);
     if (typeof move === 'string') return refused(move);
-    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/move', { trace: h.trace.id, ...move }));
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/move', { trace: h.trace.id, ...move, ...noSiteAi(rawOptions) }));
   });
 
-  ipcMain.handle('live:insert', async (event, raw: unknown): Promise<LiveMoveSaved> => {
+  ipcMain.handle('live:insert', async (event, raw: unknown, rawOptions: unknown): Promise<LiveMoveSaved> => {
     const refused = (error: string): LiveMoveSaved => ({ ok: false, error, conflict: false, items: null });
     if (!ok(event)) return refused('The live view is off.');
     const h = holding();
     if (!h) return refused('There is no trace for this page yet. Reload it, then try again.');
     const insert = checkInsert(h.trace, raw);
     if (typeof insert === 'string') return refused(insert);
-    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert }));
+    return moved(h.cur, await post(h.cur, h.origin, '/_wanigan/insert', { trace: h.trace.id, ...insert, ...noSiteAi(rawOptions) }));
   });
 
   ipcMain.handle('live:undo', async (event, raw: unknown): Promise<LiveMoveSaved> => {

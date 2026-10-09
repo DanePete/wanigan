@@ -319,6 +319,7 @@ export function createHandlers(
     'live.part': (p, caller) => more.liveAgent.part(asSession(caller), p),
     'live.problems': (p, caller) => more.liveAgent.problems(asSession(caller), p),
     'live.diff': (p, caller) => more.liveAgent.diff(asSession(caller), p),
+    'live.siteAi': (_p, caller) => more.liveAgent.siteAi(asSession(caller)),
     // The server marks the connection that called it as the app; the answer is all this says.
     'live.host': () => ({ ok: true }),
     'live.answer': (p) => more.liveAgent.answer(p),
