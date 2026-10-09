@@ -1,7 +1,8 @@
 // The Drupal helper's trace, assembled: what each part is (Describe), the
 // marks the helper adds to field items and menu links after the site's own
-// preprocess (Marks), and the LiveTrace built from a recording (TraceBuilder),
-// with its edit targets, collections and palette. PHP source.
+// preprocess (Marks), what each part names that a reload or a reorder keeps
+// (Identity, helper version 4), and the LiveTrace built from a recording
+// (TraceBuilder), with its edit targets, collections and palette. PHP source.
 
 const DESCRIBE = String.raw`<?php
 
@@ -287,6 +288,7 @@ namespace Drupal\wanigan_live\Trace;
 use Drupal\Component\Render\MarkupInterface;
 use Drupal\Component\Utility\Html;
 use Drupal\Component\Utility\Xss;
+use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Field\FieldItemInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\Render\Markup;
@@ -343,6 +345,20 @@ final class Marks {
     $element = $variables['element'] ?? [];
     $label = (string) ($element['#title'] ?? ($variables['field_name'] ?? 'Item'));
     $items = $element['#items'] ?? NULL;
+    // What each item names (Identity::item()), before any is marked: two
+    // items that refer to the same thing cannot be told apart after a
+    // reorder, so neither is named.
+    $entity = $element['#object'] ?? NULL;
+    $name = isset($element['#field_name']) ? (string) $element['#field_name'] : NULL;
+    $places = [];
+    if ($items instanceof FieldItemListInterface && $entity instanceof EntityInterface && $name !== NULL) {
+      foreach ($variables['items'] as $delta => $item) {
+        if (is_int($delta) && is_array($item) && array_key_exists('content', $item) && $items->offsetExists($delta)) {
+          $places[$delta] = Identity::item($items->get($delta), $delta, $item['content']);
+        }
+      }
+    }
+    $twice = array_filter(array_count_values(array_filter($places, 'is_string')), static fn ($n) => $n > 1);
     foreach ($variables['items'] as $delta => &$item) {
       if (!is_array($item) || !array_key_exists('content', $item)) {
         continue;
@@ -352,7 +368,9 @@ final class Marks {
         return;
       }
       $identity = ($items instanceof FieldItemListInterface && $items->offsetExists($delta)) ? self::identity($items->get($delta)) : NULL;
-      $recorder->parts[$id] = ['id' => $id, 'kind' => 'field', 'label' => $label . ' #' . ($delta + 1), 'item' => ['field' => $frame, 'delta' => (int) $delta, 'identity' => $identity]];
+      $place = $places[$delta] ?? NULL;
+      $named = ($place !== NULL && !isset($twice[$place])) ? Identity::entity($entity, $name, $place) : NULL;
+      $recorder->parts[$id] = ['id' => $id, 'kind' => 'field', 'label' => $label . ' #' . ($delta + 1), 'item' => ['field' => $frame, 'delta' => (int) $delta, 'identity' => $identity], 'identity' => $named];
       $item['content'] = self::wrap($item['content'], $id);
     }
   }
@@ -424,7 +442,181 @@ final class Marks {
 }
 `;
 
+const IDENTITY = String.raw`<?php
+
+namespace Drupal\wanigan_live\Trace;
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Field\FieldItemInterface;
+
+/**
+ * What a part is, so the live view finds it again after a reload, a reorder
+ * or an edit elsewhere on the page (PartIdentity in Wanigan's
+ * src/shared/live-trace.ts): the thing Drupal stores, not its place in the
+ * render.
+ *
+ * - A shown entity: its type, UUID, bundle and language; a field of it adds
+ *   the field's name; one item of that field adds what the item refers to
+ *   (ref:<entity type>:<UUID>, so a reorder does not move it) or, for a value,
+ *   its delta.
+ * - A single-directory component: its id, the key of the nearest part with an
+ *   identity it is inside, and which of that id it is there (TraceBuilder,
+ *   once the page is read).
+ * - A block placement (its config id and plugin), a menu link (its plugin
+ *   id), a view display (view:display).
+ *
+ * Named only from what the render already holds: nothing is loaded to name
+ * it. Every value must be a plain name as parseIdentity() accepts it; a part
+ * with any value that is not one gets no identity, never a cleaned-up one,
+ * which could name something else.
+ */
+final class Identity {
+
+  /**
+   * A machine name, id, UUID or store, as src/shared/live-trace.ts IDENT.
+   */
+  public const NAME = '~^[A-Za-z0-9_.:/@+-]{1,200}$~';
+
+  /**
+   * A field item: what it refers to, or its delta.
+   */
+  public const ITEM = '~^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$~';
+
+  /**
+   * A value fit to name a part by, or NULL.
+   */
+  public static function name(mixed $value): ?string {
+    if (!is_string($value) && !is_int($value)) {
+      return NULL;
+    }
+    $value = (string) $value;
+    return preg_match(self::NAME, $value) === 1 ? $value : NULL;
+  }
+
+  /**
+   * A stored entity, narrowed to one field and one of its items when given.
+   */
+  public static function entity(EntityInterface $entity, ?string $field = NULL, ?string $item = NULL): ?array {
+    // Not stored yet (a preview, a sample): its UUID is new on every render.
+    if ($entity->isNew()) {
+      return NULL;
+    }
+    $out = [
+      'kind' => 'entity',
+      'type' => self::name($entity->getEntityTypeId()),
+      'id' => self::name($entity->uuid()),
+      'bundle' => self::name($entity->bundle()),
+      'langcode' => self::name($entity->language()->getId()),
+    ];
+    if ($field !== NULL) {
+      $out['field'] = self::name($field);
+    }
+    if ($item !== NULL) {
+      $out['item'] = preg_match(self::ITEM, $item) === 1 ? $item : NULL;
+    }
+    return in_array(NULL, $out, TRUE) ? NULL : $out;
+  }
+
+  /**
+   * A field item's place: what a reference refers to, by the entity its
+   * formatter already loaded (EntityReferenceFormatterBase::prepareView()
+   * puts it in $item->entity and sets $item->_loaded; an entity the item
+   * shows rendered is in its own build, EntityViewBuilder's '#<type>'); a
+   * value's delta. NULL for a reference whose target is not in hand.
+   */
+  public static function item(FieldItemInterface $item, int $delta, mixed $content = NULL): ?string {
+    $values = $item->getValue();
+    if (!is_array($values) || !array_key_exists('target_id', $values)) {
+      return 'delta:' . $delta;
+    }
+    $target = !empty($item->_loaded) ? $item->entity : NULL;
+    if (!$target instanceof EntityInterface) {
+      $shown = Describe::entityOf($content);
+      $target = ($shown !== NULL && (string) $shown->id() === (string) $values['target_id']) ? $shown : NULL;
+    }
+    if (!$target instanceof EntityInterface || $target->isNew()) {
+      return NULL;
+    }
+    $type = self::name($target->getEntityTypeId());
+    $uuid = self::name($target->uuid());
+    return ($type !== NULL && $uuid !== NULL) ? 'ref:' . $type . ':' . $uuid : NULL;
+  }
+
+  /**
+   * One configuration item: a block placement, a menu link, a view display.
+   */
+  public static function config(string $type, mixed $id, mixed $plugin = NULL): ?array {
+    $out = ['kind' => 'config', 'type' => $type, 'id' => self::name($id)];
+    if ($plugin !== NULL) {
+      $out['plugin'] = self::name($plugin);
+    }
+    return in_array(NULL, $out, TRUE) ? NULL : $out;
+  }
+
+  /**
+   * A component, where it sits: within the part of that key (NULL at the
+   * page's top), the nth of its id there.
+   */
+  public static function component(string $name, ?string $within, int $nth): ?array {
+    if (self::name($name) === NULL || ($within !== NULL && (strlen($within) > 1000 || preg_match('/[\x00-\x1f]/', $within))) || $nth < 0 || $nth > 10000) {
+      return NULL;
+    }
+    return ['kind' => 'component', 'name' => $name, 'within' => $within, 'nth' => $nth];
+  }
+
+  /**
+   * A recorded part's identity, but a component's (it depends on where the
+   * page puts it: TraceBuilder::identities()). NULL for markup with nothing
+   * stable to name: a template, a region, a form, the page.
+   */
+  public static function of(array $p): ?array {
+    if (array_key_exists('identity', $p)) {
+      // A field item, named as it was marked (Marks::fieldItems()).
+      return $p['identity'];
+    }
+    $entity = $p['meta']['entity']['object'] ?? NULL;
+    switch ($p['kind']) {
+      case 'entity':
+        return $entity instanceof EntityInterface ? self::entity($entity) : NULL;
+
+      case 'field':
+        return ($entity instanceof EntityInterface && isset($p['meta']['field']['name'])) ? self::entity($entity, (string) $p['meta']['field']['name']) : NULL;
+
+      case 'block':
+        // A placement: a block config entity's own id. A Layout Builder
+        // component, or a block built in code, has none.
+        $block = $p['meta']['block'] ?? [];
+        return (!empty($block['id']) && empty($block['layout'])) ? self::config('block', $block['id'], $block['plugin'] ?? '') : NULL;
+
+      case 'menu':
+        return isset($p['link']['plugin']) ? self::config('menu_link', $p['link']['plugin']) : NULL;
+
+      case 'view':
+        $view = self::name($p['meta']['view']['id'] ?? NULL);
+        $display = self::name($p['meta']['view']['display'] ?? NULL);
+        return ($view !== NULL && $display !== NULL) ? self::config('view', $view . ':' . $display) : NULL;
+    }
+    return NULL;
+  }
+
+  /**
+   * One string for an identity, as identityKey() in src/shared/live-trace.ts
+   * makes it: what a component's within names.
+   */
+  public static function key(array $i): string {
+    return match ($i['kind']) {
+      'entity' => implode('|', ['entity', $i['type'], $i['id'], $i['langcode'] ?? '', $i['field'] ?? '', $i['item'] ?? '']),
+      'component' => implode('|', ['component', $i['name'], $i['within'] ?? '', (string) $i['nth']]),
+      'config' => implode('|', ['config', $i['type'], $i['id']]),
+      'block' => implode('|', ['block', $i['store'], implode('.', $i['path']), $i['name']]),
+    };
+  }
+
+}
+`;
+
 export const DRUPAL_BUILD_FILES: Readonly<Record<string, string>> = {
   'src/Trace/Describe.php': DESCRIBE,
   'src/Trace/Marks.php': MARKS,
+  'src/Trace/Identity.php': IDENTITY,
 };

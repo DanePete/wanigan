@@ -122,6 +122,8 @@ final class Wanigan_Live {
 	const LIMITS = array('library' => 2000, 'parts' => 4000, 'edits' => 4000, 'hooks' => 5000, 'queries' => 2000, 'assets' => 500, 'logs' => 500, 'chain' => 200, 'variables' => 200, 'preview' => 400, 'collections' => 1000, 'palette' => 1000, 'saves' => 200, 'runs' => 100, 'connectors' => 100, 'abilities' => 500);
 	/** Keys whose values are never shown. */
 	const SECRET = '/pass|pwd|secret|token|nonce|auth|cookie|salt|session|api[_-]?key|private[_-]?key|credential|signature|hash/i';
+	/** A name, id or store a part's identity may carry: what parseIdentity() in src/shared/live-trace.ts accepts. */
+	const IDENT = '#^[A-Za-z0-9_.:/@+-]{1,200}$#';
 
 	/**
 	 * Filters whose callbacks shape a part's output or data. While one of these runs for a traced part, each of its
@@ -1458,6 +1460,12 @@ final class Wanigan_Live {
 		try {
 			$trace = self::$trace;
 			if (self::$present !== null) $trace = self::prune($trace, self::$present);
+			try {
+				$trace['parts'] = self::identify($trace['parts']);
+			} catch (Throwable $e) {
+				// Parts that cannot be named are still traced, without an identity.
+				error_log('Wanigan live view: the parts of this page could not be named: ' . $e->getMessage());
+			}
 			$trace = self::fit($trace);
 			$user = get_current_user_id();
 			$private = array('edits' => self::$private, 'collections' => isset($trace['_collections']) ? $trace['_collections'] : array());
@@ -2327,6 +2335,118 @@ final class Wanigan_Live {
 			self::$private[$id] = array('type' => 'link', 'url' => $url, 'cap' => $cap);
 		}
 		return $id;
+	}
+
+	/* ── what each part is, kept across reloads (helper 4) ─────────────── */
+
+	/**
+	 * Each part's identity (PartIdentity in src/shared/live-trace.ts): what WordPress stores, so the live view finds
+	 * the part again after a reload or an edit elsewhere, where its part id is only a place in render order.
+	 *
+	 * - A post's content, title or excerpt: entity post (its ID, the post type as bundle) and the field it is
+	 *   (post_content, post_title, post_excerpt). A nav menu is the term WordPress stores it as (entity term, nav_menu).
+	 * - A block in stored markup: block, by its store (post:<ID>, tpl:<template id>, tp:<template part id>), its path
+	 *   among the blocks there and its name. A template part block is the wp_template_part it shows, wherever it sits.
+	 * - A widget, a menu item, a block template: config widget, menu_item, wp_template.
+	 * - A block rendered from no store of its own (inside a synced pattern, from a theme file): component, by its name,
+	 *   the key of the nearest part around it with an identity, and which of its name it is there, in render order.
+	 *   That waits for the page (prune()), which says where each part sits.
+	 *
+	 * Named only from what the trace already holds. A part with nothing stable to name (a PHP template, a widget area,
+	 * a shortcode, a featured image, an excerpt WordPress made from the content) has none, and so does one with any
+	 * value parseIdentity() would refuse, and never a cleaned-up value, which could name something else.
+	 */
+	private static function identify(array $parts): array {
+		$parents = array();
+		foreach ($parts as $p) $parents[$p['id']] = isset($p['parent']) ? $p['parent'] : null;
+		$keys = array();
+		$seen = array();
+		foreach ($parts as $i => $p) {
+			$identity = self::identity_of(isset(self::$meta[$p['id']]) ? self::$meta[$p['id']] : array());
+			if (is_string($identity)) {
+				$within = null;
+				for ($at = $parents[$p['id']]; $at !== null; $at = isset($parents[$at]) ? $parents[$at] : null) {
+					if (isset($keys[$at])) {
+						$within = $keys[$at];
+						break;
+					}
+				}
+				$slot = ($within === null ? '' : $within) . "\n" . $identity;
+				$seen[$slot] = isset($seen[$slot]) ? $seen[$slot] + 1 : 0;
+				$identity = ($within === null || strlen($within) <= 1000) && $seen[$slot] <= 10000 ? array('kind' => 'component', 'name' => $identity, 'within' => $within, 'nth' => $seen[$slot]) : null;
+			}
+			if (is_array($identity)) {
+				$parts[$i]['identity'] = $identity;
+				$keys[$p['id']] = self::identity_key($identity);
+			}
+		}
+		return $parts;
+	}
+
+	/** What one part names, from what the trace kept about it: its identity, a block name still to be placed, or null. */
+	private static function identity_of(array $m) {
+		if (isset($m['block'])) {
+			$name = self::ident($m['block']);
+			if ($name === null) return null;
+			if ($m['block'] === 'core/template-part' && !empty($m['tp'])) return self::config_identity('wp_template_part', $m['tp']);
+			if (empty($m['map'])) return $name;
+			$store = self::ident($m['map']['store']);
+			$path = array_values((array) $m['map']['path']);
+			if ($store === null || !$path || count($path) > 64) return null;
+			foreach ($path as $x) {
+				if (!is_int($x) || $x < 0 || $x >= 10000) return null;
+			}
+			return array('kind' => 'block', 'store' => $store, 'path' => $path, 'name' => $name);
+		}
+		if (isset($m['post'])) {
+			$post = get_post($m['post']);
+			if (!$post instanceof WP_Post) return null;
+			$fields = array('the_title' => 'post_title', 'the_excerpt' => 'post_excerpt');
+			if (!empty($m['content'])) $field = 'post_content';
+			elseif (isset($m['field']) && isset($fields[$m['field']])) $field = $fields[$m['field']];
+			else return null;
+			// get_the_excerpt() makes one from the content when the post has none: that is not the excerpt field.
+			if ($field === 'post_excerpt' && (string) $post->post_excerpt === '') return null;
+			return self::entity_identity('post', $post->ID, $post->post_type, $field);
+		}
+		if (isset($m['wp_template'])) return self::config_identity('wp_template', $m['wp_template']);
+		if (isset($m['widget'])) return self::config_identity('widget', $m['widget']);
+		if (isset($m['item'])) return self::config_identity('menu_item', $m['item']);
+		if (!empty($m['menu'])) return self::entity_identity('term', $m['menu'], 'nav_menu', null);
+		return null;
+	}
+
+	/** A value fit to name a part by, or null. */
+	private static function ident($v): ?string {
+		if (!is_string($v) && !is_int($v)) return null;
+		$v = (string) $v;
+		return preg_match(self::IDENT, $v) ? $v : null;
+	}
+
+	private static function entity_identity(string $type, $id, $bundle, ?string $field): ?array {
+		$out = array('kind' => 'entity', 'type' => $type, 'id' => self::ident($id), 'bundle' => self::ident($bundle));
+		if ($field !== null) $out['field'] = self::ident($field);
+		return in_array(null, $out, true) ? null : $out;
+	}
+
+	private static function config_identity(string $type, $id): ?array {
+		$id = self::ident($id);
+		return $id === null ? null : array('kind' => 'config', 'type' => $type, 'id' => $id);
+	}
+
+	/** One string for an identity, as identityKey() in src/shared/live-trace.ts makes it: what a component's within names. */
+	public static function identity_key(array $i): string {
+		switch ($i['kind']) {
+			case 'entity':
+				return implode('|', array('entity', $i['type'], $i['id'], isset($i['langcode']) ? $i['langcode'] : '', isset($i['field']) ? $i['field'] : '', isset($i['item']) ? $i['item'] : ''));
+			case 'component':
+				return implode('|', array('component', $i['name'], $i['within'] === null ? '' : $i['within'], (string) $i['nth']));
+			case 'config':
+				return implode('|', array('config', $i['type'], $i['id']));
+			case 'block':
+				return implode('|', array('block', $i['store'], implode('.', $i['path']), $i['name']));
+		}
+		return '';
 	}
 
 	/* ── collections: what can be moved, and what can be inserted ───────── */
