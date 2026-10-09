@@ -23,8 +23,12 @@ function useAgents(project: ProjectSummary): Session[] {
 
 const sessionLabel = (s: Session): string => (s.cardKey ? `${s.cardKey} · ${s.title}` : s.title);
 
-/** Queue notes to a session as one message, each part's picture attached in order. */
-async function send(notes: readonly LiveNote[], to: Session, components: Map<string, LiveComponent>): Promise<void> {
+/**
+ * Queue notes to a session as one message, each part's picture attached in
+ * order. True once queued: `attempt` answers undefined only for a failure, so
+ * a send that answered nothing would read as one that failed.
+ */
+async function send(notes: readonly LiveNote[], to: Session, components: Map<string, LiveComponent>): Promise<true> {
   const ids: string[] = [];
   for (const [i, n] of notes.entries()) {
     if (!n.shot) continue;
@@ -32,6 +36,7 @@ async function send(notes: readonly LiveNote[], to: Session, components: Map<str
     if (n.after) ids.push((await call('attachments.save', { to: { session: to.id }, name: `live-note-${i + 1}-wanted.png`, data: n.after })).id);
   }
   await call('sessions.queue', { id: to.id, text: notesText(notes, (id) => components.get(id)?.dir ?? null), attachments: ids });
+  return true;
 }
 
 /** Who notes go to: the session followed, or the one asked for, else the project's only agent. */
