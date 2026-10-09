@@ -621,9 +621,12 @@ final class Wanigan_Live {
 		return '<!-- /wl:part id="' . $id . '" -->';
 	}
 
-	/** A part's output between its marks; output with no markup is left as it is (it may sit in an attribute). */
-	private static function marked(string $id, $html) {
-		if (!is_string($html) || trim($html) === '' || strpos($html, '<') === false) return $html;
+	/**
+	 * A part's output between its marks. Output with no markup is left as it is (it may end up in an attribute),
+	 * unless core is known to print it as text ($text: the_title() and the_excerpt() echo it between tags).
+	 */
+	private static function marked(string $id, $html, bool $text = false) {
+		if (!is_string($html) || trim($html) === '' || (!$text && strpos($html, '<') === false)) return $html;
 		self::$meta[$id]['marked'] = true;
 		return self::begin_mark($id) . $html . self::end_mark($id);
 	}
@@ -1020,7 +1023,7 @@ final class Wanigan_Live {
 			self::$parts[$id]['cost'] = array('ms' => round((hrtime(true) - $p->start) / 1e6, 3));
 			$src = self::caller_source();
 			if ($src) self::$parts[$id]['source'] = $src;
-			return self::marked($id, $value);
+			return self::marked($id, $value, $hook !== 'post_thumbnail_html');
 		} finally {
 			self::$busy--;
 		}
@@ -2363,7 +2366,8 @@ final class Wanigan_Live {
 				if ($w = self::cannot('edit_theme_options', 'change menus')) $c['why'] = $w;
 				$ids = array();
 				foreach ($items as $it) $ids[$it] = self::$meta[$it]['item'];
-				$c['_private'] = array('type' => 'menu', 'menu' => (int) $m['menu'], 'parent' => (int) $parent, 'items' => $ids, 'state' => $state);
+				$object = get_queried_object();
+				$c['_private'] = array('type' => 'menu', 'menu' => (int) $m['menu'], 'parent' => (int) $parent, 'items' => $ids, 'state' => $state, 'this' => $object instanceof WP_Post ? array($object->post_type, $object->ID) : null);
 				$out[] = $c;
 			}
 		}
@@ -2619,7 +2623,7 @@ final class Wanigan_Live {
 		}
 		$file = $r ? $r->getFileName() : false;
 		$source = $file ? self::source($file, (int) $r->getStartLine()) : null;
-		$by = $file ? self::whose($file)[2] : 'unknown';
+		$by = $file ? self::whose($file)[2] : ($r && $r->isInternal() ? 'php' : 'unknown');
 		$out = array('callback' => self::cut($name, 300), 'source' => $source, 'by' => $by);
 		if ($key !== null) self::$describe[$key] = $out;
 		return $out;
@@ -3204,7 +3208,9 @@ final class Wanigan_Live {
 		$content = serialize_blocks($blocks);
 		$saved = self::save_store($fp['store'], $info, $content);
 		if (is_wp_error($saved)) return $saved;
-		$undo = array('type' => 'blocks', 'store' => $fp['store'], 'before' => $info['content'], 'after' => md5($content));
+		// A theme's template or part saved for the first time became the Site Editor's database copy; undoing that is
+		// deleting the copy (what the Site Editor's Reset does), which brings the theme's file back.
+		$undo = array('type' => 'blocks', 'store' => $fp['store'], 'before' => $info['content'], 'after' => md5($content), 'reset' => $info['post'] === null && strpos($fp['store'], 'post:') !== 0);
 		$out = array('undo' => $undo);
 		if (isset($saved['revision'])) $out['revision'] = $saved['revision'];
 		return $out;
@@ -3406,9 +3412,9 @@ final class Wanigan_Live {
 		if ($item !== null) {
 			$moving = (int) $from['private']['items'][$item];
 		} else {
-			$object = get_queried_object();
-			if ($entry !== 'menu-link:this' || !$object instanceof WP_Post) return new WP_Error('wanigan', 'That cannot be inserted there.');
-			$made = self::rest('POST', '/wp/v2/menu-items', array('menus' => $menu, 'type' => 'post_type', 'object' => $object->post_type, 'object_id' => $object->ID, 'parent' => $parent, 'status' => 'publish', 'menu_order' => count($state) + 1));
+			$this_page = $to['private']['this'];
+			if ($entry !== 'menu-link:this' || !$this_page || !get_post($this_page[1])) return new WP_Error('wanigan', 'That cannot be inserted there.');
+			$made = self::rest('POST', '/wp/v2/menu-items', array('menus' => $menu, 'type' => 'post_type', 'object' => $this_page[0], 'object_id' => (int) $this_page[1], 'parent' => $parent, 'status' => 'publish', 'menu_order' => count($state) + 1));
 			if (is_wp_error($made)) return $made;
 			$moving = (int) $made['id'];
 			$created = $moving;
@@ -3455,6 +3461,7 @@ final class Wanigan_Live {
 			$info = self::fresh_store($u['store']);
 			if (is_wp_error($info)) $result = $info;
 			elseif (md5($info['content']) !== $u['after']) $result = new WP_Error('wanigan', 'It changed again since, so putting it back could undo other work.');
+			elseif (!empty($u['reset'])) $result = self::rest('DELETE', $info['route'], array('force' => true));
 			else $result = self::save_store($u['store'], $info, $u['before']);
 		} elseif ($u['type'] === 'widgets') {
 			$all = wp_get_sidebars_widgets();
