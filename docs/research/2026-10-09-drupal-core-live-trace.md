@@ -196,6 +196,10 @@ items shown get their local tasks and entity operations
   closes any left above it, so a trace stays consistent.
 - **Request-wide lists are bounded** (`TRACE_LIMITS`) and say so in
   `truncated`; a part's chain is bounded at 200 steps (`chain:<id>`).
+- **Backtraces a site prints** (verbose error display) name the helper's
+  subclasses among their frames, for every request, and Twig's compiled class
+  names change with its extension set; nothing else a request without the
+  token returns changes.
 - **Fibers that suspend** while rendering placeholders can make a part's
   wall-clock time include another's; query counts are attributed by frame,
   so they stay right.
@@ -221,8 +225,15 @@ menu link's own forms and a menu's edit page reached; a template copied into
 the active theme and used at once, a second copy refused with its path, then
 deleted; a block moved in its region and a menu link moved within its level,
 each with a stale second move refused with the current order, each undone and
-compared with a backup; Go to's index and search; requests without the token
-compared byte for byte with the previous helper's.
+compared with a backup; Go to's index and search. Pages fetched without the
+token, anonymously and as an administrator, were compared with the same pages
+under the previous helper: the same bytes once the values that change on every
+render are set aside (the asset query string a cache rebuild renews, `uniqid()`
+ids, form build ids and tokens, a time-based cookie lifetime). The one other
+difference is where a site prints PHP warnings with their backtraces into its
+own pages (verbose error display on a development site): those backtraces list
+the helper's subclasses among their frames, and Twig's compiled class names,
+which Twig derives from its extension set.
 
 Not verified on a real site: Layout Builder collections, moves and their undo
 (the site has no Layout Builder), and a reorder of a multi-value field with
