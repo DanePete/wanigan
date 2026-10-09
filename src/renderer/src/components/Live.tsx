@@ -1,15 +1,20 @@
 // The live view: a project's local site inside Wanigan, following the agents'
 // edits. The app lays its own view over the stage below (lib/live.ts); this
 // file decides what to show around it, when to reload, and what to outline.
-// The side panel's parts are in components/live/.
+// The side panel's parts are in components/live/. With the site helper's
+// trace it also colours the page through lenses, edits parts where they show,
+// moves them by hand, and lays out the request behind the page.
 // Design: docs/design/2026-10-08-live-view.md.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { LiveViewState } from '@shared/bridge';
 import {
   inFolder, isStylesheet, regionMadeBy, sameRegion,
   type LiveCandidate, type LiveEdit, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
 } from '@shared/live';
 import { nameOf, themeOf } from '@shared/live-names';
+import { lensView, partIndex, type LensId, type LiveTraceAnswer } from '@shared/live-lens';
+import type { EditTarget } from '@shared/live-trace';
+import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
@@ -23,6 +28,11 @@ import { Layers } from './live/Layers';
 import { NoteComposer, NotesTab, draftFor } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
+import { PaletteTab, useArrange } from './live/Arrange';
+import { EditSheet, type EditRequest } from './live/EditSheet';
+import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
+import { RequestTab } from './live/Request';
+import { TraceNote } from './live/TraceNote';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import '../styles/live.css';
 
@@ -159,7 +169,9 @@ const LATE_TRIES = 6;
 const CONTENT_EVERY_MS = 2_000;
 const CONTENT_RELOADS_A_MINUTE = 4;
 
-type Tab = 'layers' | 'notes' | 'problems';
+type Tab = 'layers' | 'notes' | 'problems' | 'request' | 'add';
+const ARRANGE_KEY = 'wanigan.live.arrange';
+const readArrange = (): boolean => { try { return localStorage.getItem(ARRANGE_KEY) !== '0'; } catch { return true; } };
 type Width = 'full' | 'tablet' | 'phone';
 const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' | 'tablet' | 'phone' }> = {
   full: { px: null, label: 'Full width', icon: 'desktop' },
@@ -201,7 +213,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const toast = useToast();
   const live = liveBridge() as NonNullable<ReturnType<typeof liveBridge>>;
   // Components and templates are Drupal's own; other kinds of site have none to map.
-  const parts = useQuery('live.parts', site.platform === 'drupal' ? { projectId: project.id } : null, ['liveSite'], forProject(project.id));
+  const siteParts = useQuery('live.parts', site.platform === 'drupal' ? { projectId: project.id } : null, ['liveSite'], forProject(project.id));
   const notes = useNotes(project.id);
   const [view, setView] = useState<LiveViewState | null>(null);
   const [regions, setRegions] = useState<LiveRegion[]>([]);
@@ -219,15 +231,58 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const outlineAfterLoad = useRef<string[] | null>(outlineFirst);
   const late = useRef<{ timer: number | null; seen: number; tries: number }>({ timer: null, seen: -1, tries: 0 });
   const root = site.servedPath ?? project.path;
-  const components = useMemo(() => new Map((parts.data?.components ?? []).map((c) => [c.id, c])), [parts.data]);
+  const components = useMemo(() => new Map((siteParts.data?.components ?? []).map((c) => [c.id, c])), [siteParts.data]);
   const componentsRef = useRef(components);
   componentsRef.current = components;
   const scanned = useRef<LiveRegion[]>([]);
   const selected = useRef<Selection | null>(null);
   selected.current = selection;
   const theme = useMemo(() => themeOf(regions), [regions]);
+  /* The site helper's trace of the page shown, and what is built on it. */
+  const [trace, setTrace] = useState<LiveTraceAnswer | null>(null);
+  const traceData = trace?.state === 'ok' ? trace.trace : null;
+  const parts = useMemo(() => partIndex(regions, traceData), [regions, traceData]);
+  const partName = useCallback((id: string) => { const p = parts.parts.get(id); return p ? { label: p.label, kind: p.kind } : null; }, [parts]);
+  const layers = useMemo(() => layersOf(regions, { componentName: (id) => components.get(id)?.name ?? null, partName }), [regions, components, partName]);
+  const [lens, setLens] = useState<LensId>('structure');
+  const [only, setOnly] = useState<string | null>(null);
+  const [saved, setSaved] = useState(() => ({ ids: new Set<string>(), labels: new Set<string>(), parts: new Set<string>() }));
+  const lensed = useMemo(() => lensView(lens, { regions, trace: traceData, changed, saved }), [lens, regions, traceData, changed, saved]);
+  usePaintLens(lensed, only);
+  const [editing, setEditing] = useState<EditRequest | null>(null);
+  const [arrangeOn, setArrangeOn] = useState(readArrange);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const deviceRef = useRef<HTMLDivElement>(null);
+  const arrange = useArrange({
+    project, platform: site.platform, trace: traceData, parts, regions, layers, page: view?.url ?? url,
+    enabled: arrangeOn && hasScript && !compact && !picking && !editing && !view?.loading && !view?.error,
+    onSaved: (label) => setSaved((was) => ({ ...was, parts: new Set([...was.parts, label.replace(/^(Moved|Added) /, '').split(',')[0] as string]) })),
+  });
+  const helperSite = site.platform === 'drupal' || site.platform === 'wordpress';
+  const fetchTrace = useCallback(async (): Promise<void> => {
+    if (!helperSite) { setTrace(null); return; }
+    if (!site.helper || !site.token) { setTrace({ state: 'no-helper' }); return; }
+    setTrace(await live.trace());
+  }, [live, helperSite, site.helper, site.token]);
 
   useEffect(() => { void live.hasScript().then(setHasScript); }, [live]);
+  useEffect(() => { setOnly(null); }, [lens]);
+
+  // Escape, in the window or in the page, takes a lens away (and stops placing a palette entry).
+  useEffect(() => {
+    if (lens === 'structure' && !arrange.placing) return undefined;
+    const back = (): void => { setLens('structure'); arrange.setPlacing(null); };
+    const key = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet')) return;
+      const t = e.target as Element | null;
+      if (t?.closest?.('input, textarea, select, .sel-list') || (t && t !== document.body && !t.closest?.('.live'))) return;
+      e.preventDefault();
+      back();
+    };
+    document.addEventListener('keydown', key, true);
+    const off = live.onKey(back);
+    return () => { document.removeEventListener('keydown', key, true); off(); };
+  }, [lens, arrange.placing, live]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Whether a part of the page was made by an edited file: its template, or a file in its component's folder. */
   const madeBy = useCallback((r: LiveRegion, path: string): boolean => {
@@ -285,13 +340,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (s.projectId !== project.id) return;
     setView(s);
     if (s.url) setAddress(s.url);
-    if (s.loading) { setProblems(null); return; }
+    if (s.loading) { setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); return; }
     if (!s.error) {
       const wanted = outlineAfterLoad.current;
       outlineAfterLoad.current = null;
-      void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); return refreshProblems(); });
+      void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); void fetchTrace(); return refreshProblems(); });
     }
-  }), [live, project.id, scanAndOutline, watchLate, refreshProblems]);
+  }), [live, project.id, scanAndOutline, watchLate, refreshProblems, fetchTrace]);
 
   useEffect(() => { if (view && !view.loading) void refreshProblems(); }, [view?.logged, refreshProblems]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -389,6 +444,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const pick = async (): Promise<void> => {
     if (picking) { await live.cancelPick(); return; }
     setPicking(true);
+    await live.disarm();
     const p = await live.pick();
     setPicking(false);
     if (!p) return;
@@ -396,6 +452,26 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     setSelection({ region: p.regions[0] ?? null, pick: p });
     const inner = p.regions[0];
     if (inner) await live.outline([inner.index], labelOf(inner), 'edit'); else await live.clear();
+    // The keyboard comes back to the window, to the part's details: Alt+arrows move it from there.
+    await live.focusWindow();
+    window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.live-inspector .live-side-title')?.focus());
+  };
+
+  const openEdit = (target: EditTarget, region: LiveRegion | null): void => {
+    void live.cancelEdit();
+    setEditing({ target, region });
+  };
+  const editSaved = (target: EditTarget, revision: string | null): void => {
+    setEditing(null);
+    setSaved((was) => ({ ...was, ids: new Set([...was.ids, target.id]), labels: new Set([...was.labels, target.label]) }));
+    toast(`Saved ${target.label}${revision ? `, as revision ${revision}` : ''}. The page shows it now.`);
+  };
+  const point = (indexes: number[] | null): void => { if (indexes) void live.outline(indexes.slice(0, 200), null, 'hover'); else hover(null); };
+  const flipArrange = (): void => {
+    setArrangeOn((v) => {
+      try { localStorage.setItem(ARRANGE_KEY, v ? '0' : '1'); } catch { /* lasts this window */ }
+      return !v;
+    });
   };
 
   const select = (region: LiveRegion): void => {
@@ -413,7 +489,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const same = r ? regions.filter((x) => sameRegion(r, [r], [x])) : [];
     if (same.length === 1) void live.outline([same[0]!.index], null, 'hover'); else hover(null);
   };
-  const saved = (): void => {
+  const wordsSaved = (): void => {
     outlineAfterLoad.current = [];
     void live.reload();
   };
@@ -430,11 +506,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const alone = (() => {
     try { return /^\/_wanigan\/piece\/([a-z]+)\//.exec(new URL(view?.url ?? '').pathname)?.[1] ?? null; } catch { return null; }
   })();
-  const tabs: { value: Tab; label: string }[] = [
+  const tabs: { value: Tab; label: string; hint?: string }[] = [
     { value: 'layers', label: 'Layers' },
     { value: 'notes', label: notes.length ? `Notes ${notes.length}` : 'Notes' },
     { value: 'problems', label: errors ? `Problems ${errors}` : 'Problems' },
+    ...(helperSite ? [{ value: 'request' as const, label: 'Request', hint: 'The hooks, queries, assets and logs behind this page' }] : []),
+    ...(traceData?.palette?.length ? [{ value: 'add' as const, label: 'Add', hint: 'What the site can add to this page' }] : []),
   ];
+  const shownTab: Tab = tabs.some((t) => t.value === tab) ? tab : 'layers';
+  const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
 
   return (
     <div className={`live${compact ? ' live-compact' : ''}`}>
@@ -452,6 +532,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             <IconButton key={w} icon={WIDTHS[w].icon} label={WIDTHS[w].label} aria-pressed={width === w} data-on={width === w ? '' : undefined} onClick={() => setWidth(w)} />
           ))}
         </div>
+        {!compact ? <LensPicker lens={lens} onChange={setLens} disabled={!hasScript} /> : null}
+        {!compact ? (
+          <IconButton icon="pieces" label={arrangeOn ? 'Moving parts by dragging is on: a handle shows on the part under the pointer' : 'Moving parts by dragging is off'}
+            aria-pressed={arrangeOn} data-on={arrangeOn ? '' : undefined} onClick={flipArrange} disabled={!hasScript} />
+        ) : null}
         <Button size="s" tone={picking ? 'primary' : 'quiet'} icon="pick" onClick={() => void pick()} disabled={!hasScript}
           title={hasScript ? 'Point at something on the page to see what made it: ↑ and ↓ walk out and in, Enter picks, Escape stops' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
           {picking ? 'Picking…' : 'Pick'}
@@ -460,8 +545,27 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
         <IconButton icon="open" label="Open in the default browser" onClick={() => void live.open()} />
         <IconButton icon="settings" label="Site settings" onClick={onEdit} />
       </form>
+      {!compact ? (
+        <LensStrip view={lensed} only={only} onOnly={setOnly} onHover={point} onClose={() => setLens('structure')}
+          note={<TraceNote compact answer={trace} site={site} project={project} />} />
+      ) : null}
+      {arrange.placing ? (
+        <div className="live-lens" role="region" aria-label="Placing">
+          <span className="live-lens-name">Placing {arrange.placing.label}</span>
+          <span className="small">The page shows where it would go: click there to add it. Escape stops.</span>
+          <span className="live-lens-esc" />
+          <IconButton icon="close" label="Stop placing (Escape)" onClick={() => arrange.setPlacing(null)} />
+        </div>
+      ) : null}
+      <div className="visually-hidden" role="status" aria-live="polite">{arrange.said}</div>
+      {arrange.asking}
       <div className="live-main">
-        <LiveStage project={project} url={url} token={site.token} view={view} width={WIDTHS[width].px} onReload={() => void live.reload(true)} onEdit={onEdit} />
+        <LiveStage project={project} url={url} token={site.token} view={view} width={WIDTHS[width].px} onReload={() => void live.reload(true)} onEdit={onEdit}
+          stageRef={stageRef} deviceRef={deviceRef}>
+          {editing ? (
+            <EditSheet request={editing} stage={stageRef} device={deviceRef} cms={cms} onClose={() => setEditing(null)} onSaved={editSaved} />
+          ) : null}
+        </LiveStage>
         {compact ? (
           selection?.pick ? (
             <div className="live-strip">
@@ -475,30 +579,35 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </div>
           ) : null
         ) : (
-          <aside className="live-side" aria-label="What is on this page">
-            <Segmented<Tab> size="s" label="Show" value={tab} options={tabs} onChange={setTab} />
+          <aside className={`live-side${shownTab === 'request' ? ' wide' : ''}`} aria-label="What is on this page">
+            <Segmented<Tab> size="s" label="Show" value={shownTab} options={tabs} onChange={setTab} />
             {alone ? (
               <p className="live-note live-alone small" role="status">
                 <span>Showing one piece alone{alone === 'sample' || alone === 'component' ? ', with sample content' : ''}.</span>
                 <Button size="s" tone="quiet" icon="back" onClick={() => void live.back()}>Back to the page</Button>
               </p>
             ) : null}
-            {banner && tab === 'layers' && !alone ? <p className="live-note small" role="status">{bannerText(banner)}</p> : null}
-            {tab === 'layers' ? (
+            {banner && shownTab === 'layers' && !alone ? <p className="live-note small" role="status">{bannerText(banner)}</p> : null}
+            {shownTab === 'layers' ? (
               selection ? (
-                <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={parts.data?.docroot ?? null}
-                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper} onSelect={select} onClose={unselect} onSaved={saved} />
+                <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
+                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper} onSelect={select} onClose={unselect} onSaved={wordsSaved}
+                  site={site} answer={trace} trace={traceData} parts={parts} arrange={arrange} onEdit={openEdit} />
               ) : (
                 <>
                   {regions.length ? (
-                    <Layers regions={regions} components={components} selected={null} changed={changed} onHover={hover} onSelect={select} />
+                    <Layers regions={regions} components={components} selected={null} changed={changed} onHover={hover} onSelect={select} partName={partName} />
                   ) : (
                     <NothingMarked platform={site.platform} loading={!!view?.loading} />
                   )}
                   <HelperOffer site={site} project={project} />
                 </>
               )
-            ) : tab === 'notes' ? (
+            ) : shownTab === 'request' ? (
+              <RequestTab answer={trace} site={site} project={project} parts={parts} onPoint={point} />
+            ) : shownTab === 'add' ? (
+              <PaletteTab arrange={arrange} trace={traceData} />
+            ) : shownTab === 'notes' ? (
               <>
                 <NotesTab project={project} components={components} prefer={follow} onShow={showNote} />
                 <EditsList project={project} />
@@ -590,11 +699,14 @@ function EditsList({ project }: { project: ProjectSummary }) {
  * moves, steps the view aside while something covers it (showing the last
  * frame instead), narrows to a device's width, and shows why a page did not load.
  */
-function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
+function LiveStage({ project, url, token, view, width, onReload, onEdit, stageRef, deviceRef, children }: {
   project: ProjectSummary; url: string; token: string | null; view: LiveViewState | null; width: number | null; onReload: () => void; onEdit: () => void;
+  stageRef: RefObject<HTMLDivElement | null>; deviceRef: RefObject<HTMLDivElement | null>;
+  /** What sits over the page: an edit sheet beside a part. */
+  children?: ReactNode;
 }) {
   const live = liveBridge() as NonNullable<ReturnType<typeof liveBridge>>;
-  const device = useRef<HTMLDivElement>(null);
+  const device = deviceRef;
   const covered = useLiveCovered();
   const [frame, setFrame] = useState<string | null>(null);
   const error = view?.error ?? null;
@@ -629,12 +741,13 @@ function LiveStage({ project, url, token, view, width, onReload, onEdit }: {
   }, [hidden, covered, live]);
 
   return (
-    <div className={`live-stage${width ? ' narrow' : ''}`}>
+    <div className={`live-stage${width ? ' narrow' : ''}`} ref={stageRef}>
       <div className="live-device" ref={device} style={width ? { width } : undefined}>
         {frame && !error ? <img className="live-frame" src={frame} alt="" /> : null}
       </div>
       {width ? <span className="live-device-size faint small" aria-hidden="true">{width} px</span> : null}
       {error ? <LoadProblem error={error} url={url} onReload={onReload} onEdit={onEdit} /> : null}
+      {children}
     </div>
   );
 }

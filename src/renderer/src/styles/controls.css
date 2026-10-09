@@ -717,6 +717,12 @@ input[type='radio'] {
   padding: var(--space-4);
 }
 
+.toast-info:has(.btn) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .toast-error {
   display: flex;
   align-items: center;

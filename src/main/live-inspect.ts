@@ -220,6 +220,12 @@ export function wireLiveInspect(options: {
     return options.run<number>(`window.__wl && window.__wl.paint ? window.__wl.paint(${JSON.stringify(items)}) : 0`, 0);
   });
 
+  // After a pick in the page, the keyboard comes back to the window: the Inspector is where the chosen part is described and moved.
+  ipcMain.handle('live:focusWindow', (event) => {
+    const w = options.window();
+    if (options.trusted(event) && w && !w.isDestroyed()) w.webContents.focus();
+  });
+
   ipcMain.handle('live:where', async (event, index: unknown) => {
     if (!ok(event) || !Number.isInteger(index) || (index as number) < 0) return null;
     const r = await options.run<Rect | null>(`window.__wl && window.__wl.where ? window.__wl.where(${index as number}) : null`, null);

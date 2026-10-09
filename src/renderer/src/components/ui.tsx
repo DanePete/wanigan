@@ -321,6 +321,8 @@ type PushToast = (text: string, tone?: Toast['tone'], options?: { action?: Toast
 const ToastContext = createContext<PushToast>(() => {});
 
 const INFO_MS = 3500;
+/** An info toast with an action (Undo) waits longer. */
+const INFO_ACTION_MS = 12_000;
 const MAX_TOASTS = 4;
 
 /**
@@ -345,7 +347,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       }
       return list;
     });
-    if (tone === 'info') setTimeout(() => dismiss(id), INFO_MS);
+    if (tone === 'info') setTimeout(() => dismiss(id), options?.action ? INFO_ACTION_MS : INFO_MS);
   }, [dismiss]);
   return (
     <ToastContext.Provider value={push}>
@@ -361,6 +363,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button type="button" className="toast-x" aria-label="Dismiss" title="Dismiss" onClick={() => dismiss(t.id)}>
                 <Icon name="close" size={14} />
               </button>
+            </div>
+          ) : t.action ? (
+            // A done thing that can be undone: it stays long enough to change one's mind.
+            <div key={t.id} className="toast toast-info">
+              <span className="toast-text">{t.text}</span>
+              <Button size="s" onClick={() => { dismiss(t.id); t.action?.run(); }}>{t.action.label}</Button>
             </div>
           ) : (
             <div key={t.id} className="toast toast-info">{t.text}</div>

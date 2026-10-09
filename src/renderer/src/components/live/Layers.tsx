@@ -28,7 +28,7 @@ function visibleRows(layers: readonly Layer[], open: ReadonlySet<string>, depth 
   return out;
 }
 
-export function Layers({ regions, components, selected, changed, onHover, onSelect }: {
+export function Layers({ regions, components, selected, changed, onHover, onSelect, partName }: {
   regions: LiveRegion[];
   components: Map<string, LiveComponent>;
   selected: number | null;
@@ -37,9 +37,11 @@ export function Layers({ regions, components, selected, changed, onHover, onSele
   /** Point at parts on the page, with what to call them; null to stop. */
   onHover: (regions: LiveRegion[] | null, label: string | null) => void;
   onSelect: (region: LiveRegion) => void;
+  /** The site helper's label and kind for a part id, from the page's trace. */
+  partName?: (id: string) => { label: string; kind: string } | null;
 }) {
   const [all, setAll] = useState(readAll);
-  const layers = useMemo(() => layersOf(regions, { all, componentName: (id) => components.get(id)?.name ?? null }), [regions, all, components]);
+  const layers = useMemo(() => layersOf(regions, { all, componentName: (id) => components.get(id)?.name ?? null, partName }), [regions, all, components, partName]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const tree = useRef<HTMLUListElement>(null);

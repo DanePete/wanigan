@@ -226,8 +226,12 @@ export interface LensInput {
   trace: LiveTrace | null;
   /** Regions the last agent edit made, by index. */
   changed?: ReadonlySet<number>;
-  /** Edit targets saved by hand since the page was opened: their ids, and their labels (ids are stable only within a trace). */
-  saved?: { ids: ReadonlySet<string>; labels: ReadonlySet<string> };
+  /**
+   * What was saved by hand since the page was opened: edit targets by id and
+   * by label (ids are stable only within a trace), and parts moved or inserted,
+   * by label.
+   */
+  saved?: { ids: ReadonlySet<string>; labels: ReadonlySet<string>; parts?: ReadonlySet<string> };
 }
 
 export interface LensView {
@@ -282,7 +286,7 @@ function classify(lens: Exclude<LensId, 'structure'>, r: LiveRegion, part: Trace
       if (input.changed?.has(r.index)) return { cls: 'edited', label: null };
       const saved = input.saved;
       const targets = (part?.edits ?? []).map((id) => edits.get(id)).filter((e): e is EditTarget => !!e);
-      if (saved && targets.some((e) => saved.ids.has(e.id) || saved.labels.has(e.label))) return { cls: 'saved', label: null };
+      if (saved && (targets.some((e) => saved.ids.has(e.id) || saved.labels.has(e.label)) || (part && saved.parts?.has(part.label)))) return { cls: 'saved', label: null };
       return null;
     }
   }

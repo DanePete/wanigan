@@ -108,6 +108,8 @@ export interface LiveBridge {
   trace(): Promise<LiveTraceAnswer>;
   /** Paint a lens over the page: regions by their index from the last scan. An empty list takes it away. Returns how many it painted. */
   paint(items: LivePaint[]): Promise<number>;
+  /** Give the keyboard back to the window (after a pick in the page). */
+  focusWindow(): Promise<void>;
   /** Where a region from the last scan is in the view now, in CSS pixels of the view; null when it is not on the page. */
   where(index: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** Open the site's own form for an edit target of the page's trace, laid over a sheet at `bounds` (window CSS pixels). */

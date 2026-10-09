@@ -29,6 +29,7 @@ async function send(notes: readonly LiveNote[], to: Session, components: Map<str
   for (const [i, n] of notes.entries()) {
     if (!n.shot) continue;
     ids.push((await call('attachments.save', { to: { session: to.id }, name: `live-note-${i + 1}.png`, data: n.shot })).id);
+    if (n.after) ids.push((await call('attachments.save', { to: { session: to.id }, name: `live-note-${i + 1}-wanted.png`, data: n.after })).id);
   }
   await call('sessions.queue', { id: to.id, text: notesText(notes, (id) => components.get(id)?.dir ?? null), attachments: ids });
 }

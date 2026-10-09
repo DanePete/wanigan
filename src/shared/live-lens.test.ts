@@ -103,6 +103,8 @@ test('the Changed lens: an agent’s edit by region, a hand save by target id or
   assert.deepEqual(Object.fromEntries(changed.classes.map((c) => [c.id, c.indexes])), { edited: [6], saved: [3] });
   const byLabel = lensView('changed', { regions, trace, saved: { ids: new Set(), labels: new Set(['Title (node 12)']) } });
   assert.deepEqual(byLabel.classes.find((c) => c.id === 'saved')?.indexes, [1], 'a new render may give the target a new id');
+  const moved = lensView('changed', { regions, trace, saved: { ids: new Set(), labels: new Set(), parts: new Set(['Main menu']) } });
+  assert.deepEqual(moved.classes.find((c) => c.id === 'saved')?.indexes, [2], 'a part moved by hand');
   assert.deepEqual(lensView('structure', { regions, trace }).paint, []);
 });
 

@@ -43,6 +43,7 @@ const live: LiveBridge = {
   trace: () => ipcRenderer.invoke('live:trace') as ReturnType<LiveBridge['trace']>,
   paint: (items) => ipcRenderer.invoke('live:paint', items) as Promise<number>,
   where: (index) => ipcRenderer.invoke('live:where', index) as ReturnType<LiveBridge['where']>,
+  focusWindow: () => ipcRenderer.invoke('live:focusWindow') as Promise<void>,
   editOpen: (target, bounds) => ipcRenderer.invoke('live:editOpen', target, bounds) as ReturnType<LiveBridge['editOpen']>,
   editBounds: (bounds) => ipcRenderer.send('live:editBounds', bounds),
   editClose: () => ipcRenderer.invoke('live:editClose') as Promise<void>,

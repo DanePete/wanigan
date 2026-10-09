@@ -63,6 +63,9 @@
   --dur-blink: 4600ms; /* how often a character blinks */
 
   --rail-w: 252px;
+  /* The live view's side panel, and wider for the request behind the page. */
+  --live-side-w: 340px;
+  --live-side-wide: 440px;
   --rail-w-folded: 56px;
   --topbar-h: 52px;
   --drawer-w: min(620px, 92vw);

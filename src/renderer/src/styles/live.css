@@ -166,7 +166,7 @@
 
 .live-side {
   flex: none;
-  width: 340px;
+  width: var(--live-side-w);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1035,4 +1035,603 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+}
+
+
+/* ── lenses ──────────────────────────────────────────────────────────────── */
+
+.live-lens-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+}
+
+/* Under the bar, never on the stage: the site's own view draws over anything laid there. */
+.live-lens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--space-10);
+  padding: var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.live-lens-name {
+  font: 600 var(--text-sm) / var(--leading-tight) var(--font-ui);
+}
+
+.live-lens-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-lens-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-round);
+  background: none;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.live-lens-key:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.live-lens-key:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.live-lens-key[aria-pressed='true'] {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.live-lens-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--swatch);
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--swatch) 35%, transparent);
+}
+
+.live-lens-swatch.dashed {
+  border-style: dashed;
+  background: none;
+}
+
+.live-lens-swatch.hollow {
+  background: none;
+}
+
+.live-lens-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-lens-need {
+  flex: 1;
+  min-width: 0;
+}
+
+.live-lens-esc {
+  margin-left: auto;
+}
+
+/* ── what the trace says, and why there is none ──────────────────────────── */
+
+.live-trace-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-trace-note.compact {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.live-trace-note p {
+  margin: 0;
+}
+
+.live-trace-note-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.live-trace-note-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.live-trace-note.compact .live-trace-note-title {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.live-trace-made {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-trace-sections {
+  display: grid;
+  border-bottom: 1px solid var(--line);
+}
+
+.live-origin.unknown {
+  border: 1px dashed var(--line-strong);
+  color: var(--faint);
+}
+
+.live-ms {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.live-chain,
+.live-alt-list,
+.live-edit-list,
+.live-history,
+.live-queries,
+.live-timeline,
+.live-assets,
+.live-palette-list {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-chain-step {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 2px solid var(--line);
+}
+
+.live-chain-step.slow {
+  border-left-color: var(--lane-2);
+}
+
+.live-chain-step.slow .live-ms {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.live-chain-head,
+.live-chain-source,
+.live-query-head,
+.live-asset-head,
+.live-hook-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.live-chain-head .mono,
+.live-chain-source .mono,
+.live-hook-name .mono {
+  overflow-wrap: anywhere;
+}
+
+.live-chain-source .btn-icon,
+.live-query-head .btn-icon,
+.live-tags .btn-icon,
+.live-made-file .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.live-alternatives {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-alt-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+.live-alt-list li .mono {
+  overflow-wrap: anywhere;
+}
+
+.live-alt-list li.chosen {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.live-edit-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+}
+
+.live-edit-list li:first-child {
+  border-top: 0;
+}
+
+.live-edit-what {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.live-vars {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.live-var dt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.live-var dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.live-var dd.mono {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  white-space: pre-wrap;
+}
+
+.live-tags {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+
+.live-query {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-query:hover,
+.live-query:focus-within {
+  box-shadow: inset 0 0 0 1px var(--water-line);
+}
+
+.live-sql {
+  display: -webkit-box;
+  overflow: hidden;
+  font: 400 var(--text-xs) / var(--leading) var(--font-mono);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.live-query-part {
+  color: var(--water);
+}
+
+.live-history li {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+}
+
+.live-history li:first-child {
+  border-top: 0;
+}
+
+/* ── the edit sheet ──────────────────────────────────────────────────────── */
+
+.live-sheet {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: rise var(--dur) var(--ease);
+}
+
+.live-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.live-sheet-head p {
+  margin: var(--space-1) 0 0;
+}
+
+.live-sheet-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--red-soft);
+  color: var(--fg);
+}
+
+/* Where the site's own form is laid by the app; the words show only until it arrives. */
+.live-sheet-native {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--sunken);
+}
+
+.live-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.live-sheet-body .field {
+  margin-bottom: var(--space-3);
+}
+
+.live-sheet-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--space-4));
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--raised);
+}
+
+.live-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--fg);
+  font-weight: 400;
+}
+
+.live-strings {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-strings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--red);
+}
+
+[aria-invalid='true'] {
+  border-color: var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-sheet {
+    animation: none;
+  }
+}
+
+/* ── the request behind the page ─────────────────────────────────────────── */
+
+.live-side.wide {
+  width: var(--live-side-wide);
+}
+
+.live-request {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.live-request > .segmented {
+  justify-self: stretch;
+}
+
+.live-request > .segmented button {
+  flex: 1;
+}
+
+.live-totals {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-totals p {
+  margin: 0;
+}
+
+.live-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.live-stat {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.live-stat dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-request-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.live-request-search {
+  flex: 1;
+  width: auto;
+  min-width: 140px;
+  height: 28px;
+}
+
+.live-hook {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-radius: var(--radius-s);
+}
+
+.live-hook-bar {
+  position: absolute;
+  inset: auto var(--space-2) 0 var(--space-3);
+  height: 2px;
+  background: var(--line);
+}
+
+.live-hook-bar span {
+  display: block;
+  height: 100%;
+  background: var(--muted);
+}
+
+.live-hook.slow {
+  background: color-mix(in srgb, var(--lane-2) 12%, transparent);
+}
+
+.live-hook.slow .live-hook-bar span {
+  background: var(--lane-2);
+}
+
+.live-hook.slow .live-ms {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.live-query-group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-query-caller {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-weight: 500;
+}
+
+.live-query-caller .mono {
+  overflow-wrap: anywhere;
+}
+
+.live-assets li {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+}
+
+.live-assets li:first-child {
+  border-top: 0;
+}
+
+.live-asset-src {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── moving parts, and adding them ───────────────────────────────────────── */
+
+.live-up svg {
+  transform: rotate(-90deg);
+}
+
+.live-down svg {
+  transform: rotate(90deg);
+}
+
+.live-palette-entry {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.live-palette-entry[draggable='true'] {
+  cursor: grab;
+}
+
+.live-palette-what {
+  display: grid;
+  gap: 2px;
+}
+
+.live-place-by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.live-palette .search-field {
+  width: auto;
+}
+
+/* In the Live tab a toast keeps to the side panel: the site's view draws over the stage, and an Undo there could not be reached. */
+body:has(.live-side) .toasts .toast {
+  max-width: calc(var(--live-side-w) - 2 * var(--space-4));
 }
