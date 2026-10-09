@@ -3,7 +3,7 @@
 // chooses one; a strip under the bar holds its legend and counts, since the
 // site's own view draws over anything laid on the stage. Escape, here or in
 // the page, goes back to Structure.
-import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from 'react';
 import { LENSES, type LensId, type LensView, type LivePaint } from '@shared/live-lens';
 import { liveBridge, tokenColor } from '../../lib/live';
 import { plural } from '../../lib/format';
@@ -12,12 +12,23 @@ import { Icon } from '../icons';
 import { Select } from '../Select';
 import { IconButton } from '../ui';
 
-export function LensPicker({ lens, onChange, disabled }: { lens: LensId; onChange: (lens: LensId) => void; disabled?: boolean }) {
+/** The bar's lens list. ⇧L opens it (`openRef`), from the live view or its page. */
+export function LensPicker({ lens, onChange, disabled, openRef }: { lens: LensId; onChange: (lens: LensId) => void; disabled?: boolean; openRef?: MutableRefObject<(() => void) | null> }) {
+  const box = useRef<HTMLSpanElement>(null);
+  if (openRef) {
+    openRef.current = () => {
+      const button = box.current?.querySelector<HTMLButtonElement>('button.select');
+      if (!button || button.disabled) return;
+      button.focus();
+      if (button.getAttribute('aria-expanded') !== 'true') button.click();
+    };
+  }
   return (
-    <span className="live-lens-pick" title="Colour the page by one question at a time">
+    <span className="live-lens-pick" title="Colour the page by one question at a time (⇧L)" ref={box}>
       <Icon name="eye" size={14} />
       <Select<LensId> label="Lens" size="s" value={lens} onChange={onChange} disabled={disabled}
         options={LENSES.map((l) => ({ value: l.id, label: l.label, detail: l.hint }))} />
+      <kbd className="live-key" aria-hidden="true">⇧L</kbd>
     </span>
   );
 }

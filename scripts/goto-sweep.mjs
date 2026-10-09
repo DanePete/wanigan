@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // The live view's Go to launcher in both themes, against the demo's core and a
 // stand-in live view with a made-up Acme site (scripts/ui-goto-stub.mjs):
-// opened by Shift+Space, by its button, from the page and by ⌘⇧Space from the
-// board; filtered, jumped, its actions, each way of leaving, and each state the
+// opened by Shift+Space, by the address field it opens over, from the page and
+// by ⌘⇧Space from the board; filtered, jumped, its actions, each way of leaving, and each state the
 // site can be in. Screenshots go to .artifacts/ui/goto/<theme>-<name>.png:
 // look at them; the assertions only catch what was thought of in advance.
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { LIVE_STUB } from './ui-goto-stub.mjs';
+import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 
 const out = join(root, '.artifacts', 'ui', 'goto');
 mkdirSync(out, { recursive: true });
@@ -72,6 +73,41 @@ try {
     // A newer wait replaces the older, which answers null.
     const replaced = await probe.evaluate(async () => { const first = window.__wl.awaitGoto(); window.__wl.awaitGoto(); return first; });
     if (replaced !== null) fail(name, `a replaced wait answered ${replaced}`);
+    // The live view's own keys, passed in by the window (shared/live-keys.ts): answered while nothing is typed into, never
+    // heard by the page; the verbs, which need a part chosen in the window, are left to the page; and picking keeps P.
+    await probe.evaluate(() => { window.__heardKeys = 0; addEventListener('keydown', (e) => { if (e.code !== 'Space' && !['Shift', 'Meta', 'Control', 'Alt'].includes(e.key)) window.__heardKeys++; }); });
+    const live = async (focus, key) => {
+      await probe.evaluate(({ f, k }) => {
+        window.__got = null;
+        window.__wl.awaitGoto(k).then((v) => { window.__got = v; });
+        const el = f === 'page' ? null : document.getElementById(f);
+        if (el) el.focus({ preventScroll: true }); else document.activeElement?.blur();
+      }, { f: focus, k: LIVE_PAGE_KEYS });
+      const heard = await probe.evaluate(() => window.__heardKeys);
+      await probe.keyboard.press(key);
+      await probe.waitForTimeout(150);
+      return probe.evaluate((h) => ({ got: window.__got, heard: window.__heardKeys - h }), heard);
+    };
+    for (const [key, id] of [['p', 'pick'], ['Shift+L', 'lens'], ['1', 'width-phone'], ['3', 'width-full'], [']', 'tab-next'], ['Shift+C', 'compare']]) {
+      const r = await live('page', key);
+      if (r.got !== id || r.heard !== 0) fail(name, `${key} on the page answered ${r.got} (the page heard it ${r.heard} times), not ${id}`);
+    }
+    for (const [focus, key] of [['field', 'p'], ['area', '1'], ['rich', 'Shift+C'], ['page', 'e'], ['page', 'c'], ['page', 'l']]) {
+      const r = await live(focus, key);
+      if (r.got !== null || r.heard !== 1) fail(name, `${key} in #${focus} was taken (${r.got}), or the page did not hear it`);
+    }
+    const picking = await probe.evaluate(async (k) => {
+      window.__got = null;
+      window.__wl.awaitGoto(k).then((v) => { window.__got = v; });
+      document.activeElement?.blur();
+      const picked = window.__wl.pick();
+      return { picked: 'waiting', k: !!picked };
+    }, LIVE_PAGE_KEYS);
+    await probe.keyboard.press('p');
+    await probe.waitForTimeout(150);
+    const after = await probe.evaluate(() => ({ got: window.__got }));
+    if (!picking.k || after.got !== null) fail(name, `P while picking was taken by the window (${after.got}) instead of stopping the pick`);
+    await probe.evaluate(() => { window.__wl.awaitGoto(); });
     const here = await probe.evaluate(() => window.__wl.gotoHere());
     if (here.heading !== 'Spring open house' || !here.canonical?.endsWith('/events/spring-open-house') || !here.shortlink?.endsWith('/node/12')) fail(name, `the page says it is ${JSON.stringify(here)}`);
     const links = await probe.evaluate(() => window.__wl.gotoLinks());
@@ -97,8 +133,9 @@ try {
     const shot = (name) => page.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled' });
     const live = () => page.evaluate(() => ({ went: [...window.__wgLive.went], browser: [...window.__wgLive.browser], returned: window.__wgLive.returned, finds: window.__wgLive.finds.map((f) => f.query) }));
     const open = async (how = 'button') => {
+      // The address field opens it; Shift+Space is pressed on another of the bar's buttons, so the field's own keys are not what opened it.
       if (how === 'button') await page.click('.live-bar button[aria-label^="Go to a page"]');
-      else if (how === 'keys') { await page.focus('.live-bar button[aria-label^="Go to a page"]'); await page.keyboard.press('Shift+Space'); }
+      else if (how === 'keys') { await page.focus('.live-bar button[aria-label^="Reload"]'); await page.keyboard.press('Shift+Space'); }
       await page.waitForSelector('.goto [role="option"]', { timeout: 5000 });
     };
     const closed = () => page.waitForSelector('.goto', { state: 'detached', timeout: 5000 });
@@ -140,6 +177,7 @@ try {
         groups: [...document.querySelectorAll('.goto-group-head')].map((h) => h.textContent),
         count: document.querySelector('.goto-count')?.textContent ?? '', live: !!document.querySelector('.goto [aria-live="polite"]'),
         modal: document.querySelector('.goto')?.getAttribute('aria-modal'), frame: !!document.querySelector('.live-frame'),
+        over: (() => { const g = document.querySelector('.goto.goto-anchored')?.getBoundingClientRect(); const a = document.querySelector('.live-address')?.getBoundingClientRect(); return !!g && !!a && Math.abs(g.left - a.left) < 2 && g.top <= a.top + 2; })(),
         overflow: (() => { const g = document.querySelector('.goto'); return g ? g.scrollWidth > g.clientWidth + 1 : false; })(),
         ids: [...document.querySelectorAll('.goto [role="option"]')].every((o) => o.id),
       };
@@ -151,6 +189,7 @@ try {
     if (!/^Displaying \d+ of \d+$/.test(opened.count)) fail('open', `the count reads "${opened.count}"`);
     if (opened.overflow) fail('open', 'the launcher overflows sideways');
     if (!opened.frame) fail('open', 'the live view did not step aside for the launcher (no last frame)');
+    if (!opened.over) fail('open', 'in the live view it did not open over the address field');
     await shot('open');
 
     // ── Filtered: acronyms and word starts, a label before a tag, the site's own search merged in.
@@ -233,8 +272,13 @@ try {
     await open('keys');
     await page.keyboard.press('Escape');
     await closed().catch(() => fail('escape', 'Escape did not close Go to'));
-    const back = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName);
-    if (!/^Go to a page/.test(back ?? '')) fail('escape', `focus went to ${back}, not back where it was`);
+    let back = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName);
+    if (!/^Reload/.test(back ?? '')) fail('escape', `focus went to ${back}, not back where it was (Reload)`);
+    await open('button');
+    await page.keyboard.press('Escape');
+    await closed().catch(() => fail('escape', 'Escape did not close Go to opened from the address field'));
+    back = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName);
+    if (!/^Go to a page/.test(back ?? '')) fail('escape', `focus went to ${back}, not back to the address field`);
     const before = (await live()).returned;
     await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 4000 }).catch(() => fail('page', 'the live view is not waiting for Shift+Space from the page'));
     await page.evaluate(() => window.__wgLive.press?.());
@@ -296,6 +340,7 @@ try {
     await page.keyboard.press('Meta+Shift+Space');
     await page.waitForSelector('.goto [role="option"]', { timeout: 4000 }).catch(() => fail('board', '⌘⇧Space on the board did not open Go to'));
     if (await page.$('.goto-group-head:has-text("This page")')) fail('board', 'off the live view, it still offers "This page"');
+    if (await page.$('.goto.goto-anchored')) fail('board', 'off the live view, it opened where an address field would be');
     await shot('board');
     await type('contact');
     await firstIs('board', 'Contact');

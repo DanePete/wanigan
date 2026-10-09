@@ -4,6 +4,12 @@
 // The side panel's parts are in components/live/. With the site helper's
 // trace it also colours the page through lenses, edits parts where they show,
 // moves them by hand, and lays out the request behind the page.
+//
+// The bar is three groups: the site (which environment, Compare, the
+// settings: one menu), the page (back, forward, reload, the address field
+// that opens Go to, the width, the lens), and the tools (Pick, and a menu of
+// the rarely used). One status line under the page says what just happened
+// and which keys work now; the keys themselves are shared/live-keys.ts.
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { LiveViewState } from '@shared/bridge';
@@ -21,19 +27,21 @@ import type { WriteCheck } from '@shared/live-check';
 import type { EditTarget } from '@shared/live-trace';
 import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
+import { isSendKey, liveKey, type LiveKeyId } from '@shared/live-keys';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
-import { useGoToKeys } from '../lib/live-goto';
+import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
 import { navigate } from '../lib/router';
 import { useAppState } from '../lib/settings';
 import { liveFor, type AppSettings } from '@shared/settings';
 import { Icon } from './icons';
-import { Inspector, type Selection } from './live/Inspector';
+import { MenuButton, type MenuItem } from './Menu';
+import { Inspector, type InspectorVerbs, type Selection } from './live/Inspector';
 import { CompareDialog } from './live/Compare';
-import { EnvTabs, EnvironmentSettings, HOSTED_NOTE, useEnvs } from './live/Environments';
+import { EnvironmentSettings, HOSTED_NOTE, SiteMenu, useEnvs } from './live/Environments';
 import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
-import { NoteComposer, NotesTab, draftFor } from './live/Notes';
+import { NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { PaletteTab, useArrange } from './live/Arrange';
@@ -207,10 +215,11 @@ type Tab = 'layers' | 'notes' | 'problems' | 'request' | 'add';
 const ARRANGE_KEY = 'wanigan.live.arrange';
 const readArrange = (): boolean => { try { return localStorage.getItem(ARRANGE_KEY) !== '0'; } catch { return true; } };
 type Width = 'full' | 'tablet' | 'phone';
-const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' | 'tablet' | 'phone'; compare: CompareWidth }> = {
-  full: { px: null, label: 'Full width', icon: 'desktop', compare: 1440 },
-  tablet: { px: 768, label: 'Tablet, 768 pixels wide', icon: 'tablet', compare: 768 },
-  phone: { px: 390, label: 'Phone, 390 pixels wide', icon: 'phone', compare: 390 },
+/** Narrowest first, as Compare lists them: 1, 2 and 3 are the same widths there. */
+const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' | 'tablet' | 'phone'; compare: CompareWidth; key: string }> = {
+  phone: { px: 390, label: 'Phone, 390 pixels wide', icon: 'phone', compare: 390, key: '1' },
+  tablet: { px: 768, label: 'Tablet, 768 pixels wide', icon: 'tablet', compare: 768, key: '2' },
+  full: { px: null, label: 'Full width', icon: 'desktop', compare: 1440, key: '3' },
 };
 
 type Banner =
@@ -257,7 +266,6 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [selection, setSelection] = useState<Selection | null>(null);
   const [picking, setPicking] = useState(false);
   const [banner, setBanner] = useState<Banner | null>(null);
-  const [address, setAddress] = useState(url);
   const [hasScript, setHasScript] = useState(true);
   const [tab, setTab] = useState<Tab>('layers');
   const [width, setWidth] = useState<Width>('full');
@@ -273,6 +281,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   /** The page the stage opens: the site's address, or the same page on the environment switched to. */
   const [stageUrl, setStageUrl] = useState(url);
   const [comparing, setComparing] = useState(false);
+  /** What the chosen part's verbs do, and what opens the lens list: for the keys. */
+  const verbs = useRef<InspectorVerbs | null>(null);
+  const lensOpen = useRef<(() => void) | null>(null);
   const queue = useRef<{ paths: Set<string>; timer: number | null }>({ paths: new Set(), timer: null });
   /** Files to outline once the load in flight has finished. */
   const outlineAfterLoad = useRef<string[] | null>(outlineFirst);
@@ -335,8 +346,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const readSiteAi = useCallback((): void => { void live.siteAi().then(setSiteAi); }, [live]);
   useEffect(() => { setSiteAi(null); }, [site.token]);
   useEffect(() => { if (trace?.state === 'ok' && !siteAi && !envId) readSiteAi(); }, [trace?.state, siteAi, envId, readSiteAi]);
-  // Go to: Shift+Space here or in the page, and the bar's button (components/live/GoTo.tsx).
-  const goTo = useGoToKeys(project.id);
+  // Go to: Shift+Space here or in the page, and the address field (components/live/GoTo.tsx). The page answers the
+  // live view's own keys the same way (P picks…); `runKey` is what they do.
+  const runKey = useRef<(id: LiveKeyId) => void>(() => {});
+  const goTo = useGoToKeys(project.id, (id) => runKey.current(id));
+  const sender = useNotesSender(project, components, follow);
+  const sendAll = useRef(sender.sendAll);
+  sendAll.current = sender.sendAll;
 
   useEffect(() => { void live.hasScript().then(setHasScript); }, [live]);
   useEffect(() => { setOnly(null); }, [lens]);
@@ -381,8 +397,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     // What the owner had chosen stays chosen, if the page still has it. A reload loses the picked element itself.
     const kept = selected.current;
     const region = kept?.region ? sameRegion(kept.region, before, found) : null;
-    const next = kept && (region || (!reloaded && kept.pick)) ? { region, pick: reloaded ? null : kept.pick } : null;
+    const next: Selection | null = kept && (region || (!reloaded && kept.pick)) ? { region, pick: reloaded ? null : kept.pick, how: reloaded ? 'tree' : kept.how } : null;
     setSelection(next);
+    // The part stays chosen through a reload, and its element stands for it again: what can be done to it stays the same.
+    if (next?.region && !next.pick) {
+      const at = next.region.index;
+      void live.choose(at).then((p) => { if (p) setSelection((s) => (s?.region?.index === at && !s.pick ? { ...s, pick: p } : s)); }).catch(() => {});
+    }
     const hits = paths.length ? found.filter((r) => paths.some((p) => madeBy(r, p))) : [];
     if (paths.length) setChanged(new Set(hits.map((h) => h.index)));
     if (hits.length) {
@@ -413,7 +434,6 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   useEffect(() => live.onState((s) => {
     if (s.projectId !== project.id || (s.env ?? null) !== hostedRef.current) return;
     setView(s);
-    if (s.url) setAddress(s.url);
     if (s.loading) { setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); checks.loading(); return; }
     if (!s.error) {
       const wanted = outlineAfterLoad.current;
@@ -519,18 +539,19 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (late.current.timer !== null) window.clearTimeout(late.current.timer);
   }, []);
 
+  /** Pick on the page, from the chosen part when there is one (else the page's main content), so the keyboard can walk at once. */
   const pick = async (): Promise<void> => {
     if (picking) { await live.cancelPick(); return; }
     setPicking(true);
     await live.disarm();
-    const p = await live.pick();
+    const p = await live.pick(selected.current?.region?.index ?? null);
     setPicking(false);
     if (!p) return;
     setTab('layers');
-    setSelection({ region: p.regions[0] ?? null, pick: p });
+    setSelection({ region: p.regions[0] ?? null, pick: p, how: 'pick' });
     const inner = p.regions[0];
     if (inner) await live.outline([inner.index], labelOf(inner), 'edit'); else await live.clear();
-    // The keyboard comes back to the window, to the part's details: Alt+arrows move it from there.
+    // The keyboard comes back to the window, to the part's details: Alt+arrows move it from there, and E M . ⇧A act on it.
     await live.focusWindow();
     window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.live-inspector .live-side-title')?.focus());
   };
@@ -569,9 +590,17 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     });
   };
 
+  /**
+   * Choose a part from the tree (or the crumbs). Its element becomes the
+   * picked one, so it offers what a pick offers: retyping its words, trying a
+   * style. How a part was chosen does not change what can be done to it.
+   */
   const select = (region: LiveRegion): void => {
-    setSelection({ region, pick: null });
+    setSelection({ region, pick: null, how: 'tree' });
     void live.outline([region.index], labelOf(region), 'edit');
+    void live.choose(region.index).then((p) => {
+      if (p) setSelection((s) => (s?.region?.index === region.index && !s.pick ? { ...s, pick: p } : s));
+    }).catch(() => {});
   };
   const hover = (list: LiveRegion[] | null, label: string | null = null): void => {
     if (list) { void live.outline(list.map((r) => r.index), label, 'hover'); return; }
@@ -598,13 +627,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     setRegions([]);
     setBanner(null);
   };
-
-  const go = (e: FormEvent): void => {
-    e.preventDefault();
-    void live.go(address).then((ok) => {
-      if (!ok) toast('That is another site. Change the address in the site settings (the gear) to open it.', 'error');
-    });
-  };
+  // Go to opens the same path on the environment shown, as the address field always did.
+  useEffect(() => {
+    let origin: string | null = null;
+    try { origin = env ? new URL(env.url).origin : null; } catch { origin = null; }
+    showingOrigin(project.id, origin);
+    return () => showingOrigin(project.id, null);
+  }, [project.id, env]);
 
   const errors = problems?.length ?? 0;
   /** The view shows one piece alone (the helper's page), and which kind. */
@@ -620,57 +649,122 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   ];
   const shownTab: Tab = tabs.some((t) => t.value === tab) ? tab : 'layers';
   const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
+  const compare = envs.length
+    ? { can: !view?.loading, why: 'Wait for the page to load', with: env?.name ?? envs[envs.length - 1]?.name ?? null }
+    : {
+      can: false, with: null,
+      why: envData?.candidates.length ? `${envData.candidates.length} hosted environments are named in the project’s files: keep one in Site settings to compare with it`
+        : 'Add a hosted environment (Dev, Test, Live) in Site settings to compare with it',
+    };
+  const openCompare = (): void => {
+    if (compare.can) setComparing(true); else toast(`${compare.why}.`);
+  };
+  const shot = useShotPage(card && shots && !env ? card : null, view?.url ?? null);
+
+  // The live view's own keys (shared/live-keys.ts), here and from the page: each does what its control does.
+  runKey.current = (id: LiveKeyId): void => {
+    switch (id) {
+      case 'pick': if (hasScript) void pick(); return;
+      case 'lens': if (!compact && hasScript) lensOpen.current?.(); return;
+      case 'width-phone': if (!compact) setWidth('phone'); return;
+      case 'width-tablet': if (!compact) setWidth('tablet'); return;
+      case 'width-full': if (!compact) setWidth('full'); return;
+      case 'tab-previous':
+      case 'tab-next': {
+        if (compact) return;
+        const at = tabs.findIndex((t) => t.value === shownTab);
+        const next = tabs[(at + (id === 'tab-next' ? 1 : -1) + tabs.length) % tabs.length];
+        if (next) setTab(next.value);
+        return;
+      }
+      case 'compare': if (!compact) openCompare(); return;
+      case 'edit':
+      case 'move':
+      case 'code':
+      case 'alone':
+        if (compact) return;
+        if (!selected.current || shownTab !== 'layers') { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
+        verbs.current?.[id]();
+    }
+  };
+  // In the window: while the live view (or nothing) has the keyboard, nothing is typed into, and nothing is open over it.
+  useEffect(() => {
+    const mac = bridge().platform === 'darwin';
+    let afterG = 0;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.repeat || e.isComposing) return;
+      const t = e.target instanceof Element ? e.target : null;
+      if (!t || !(t === document.body || t.closest('.live'))) return;
+      if (t.closest('.live-sheet') || document.querySelector('[aria-modal="true"], .sel-list')) return;
+      const typing = isTyping(t) && !(t instanceof HTMLInputElement && /^(checkbox|radio|button|submit|reset)$/.test(t.type));
+      if (isSendKey(e, mac)) {
+        // In the note box it sends that note (Notes.tsx); anywhere else, the notes waiting.
+        if (!typing) { e.preventDefault(); void sendAll.current(); }
+        return;
+      }
+      if (typing) return;
+      // G then a letter goes somewhere (the window's own keys): that letter is not the live view's.
+      if (e.key === 'g' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { afterG = Date.now(); return; }
+      if (Date.now() - afterG < 1200) { afterG = 0; return; }
+      const id = liveKey(e);
+      if (!id) return;
+      e.preventDefault();
+      runKey.current(id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /** The one line under the page that says what is going on: what was just done, or the state the view is in. */
+  const status: { text: ReactNode; className?: string; action?: ReactNode; warn?: boolean } | null = arrange.placing ? {
+    className: 'live-placing',
+    text: <>Placing <strong>{arrange.placing.label}</strong>: the page shows where it would go. Click there to add it; Escape stops.</>,
+    action: <IconButton icon="close" label="Stop placing (Escape)" onClick={() => arrange.setPlacing(null)} />,
+  } : picking ? {
+    text: 'Picking: point at a part, or walk with ↑ ↓ ← → and press Enter. P or Escape stops.',
+  } : alone ? {
+    className: 'live-alone',
+    text: `Showing one piece alone${alone === 'sample' || alone === 'component' ? ', with sample content' : ''}.`,
+    action: <Button size="s" tone="quiet" icon="back" onClick={() => void live.back()}>Back to the page</Button>,
+  } : env ? {
+    className: 'live-hosted',
+    text: <><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits. <span className="faint">{HOSTED_NOTE}</span></>,
+  } : banner ? { text: bannerText(banner), warn: banner.kind === 'write' && banner.warn } : null;
+  const keysNow: [string[], string][] = picking ? []
+    : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['P'], 'pick'], [['Esc'], 'back']]
+      : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['?'], 'all keys']];
 
   return (
     <div className={`live${compact ? ' live-compact' : ''}`}>
-      <form className="live-bar" onSubmit={go} aria-label="Live view">
-        {!compact && envs.length ? <EnvTabs envs={envs} value={env?.id ?? null} onChange={switchTo} /> : null}
-        <IconButton icon="back" label="Back" disabled={!view?.canGoBack} onClick={() => void live.back()} />
-        <IconButton icon="chevron" label="Forward" disabled={!view?.canGoForward} onClick={() => void live.forward()} />
-        <IconButton icon="refresh" label={view?.loading ? 'Loading…' : 'Reload (hold Shift to skip the cache)'}
-          onClick={(e) => void live.reload(e.shiftKey)} data-loading={view?.loading ? '' : undefined} />
-        <label className="live-address">
-          <span className="visually-hidden">Address</span>
-          <input className="mono" value={address} onChange={(e) => setAddress(e.target.value)} spellCheck={false} autoComplete="off" />
-        </label>
-        <IconButton icon="search" label="Go to a page of the site (Shift+Space)" onClick={goTo} />
-        <div className="live-widths" role="group" aria-label="Width">
-          {(Object.keys(WIDTHS) as Width[]).map((w) => (
-            <IconButton key={w} icon={WIDTHS[w].icon} label={WIDTHS[w].label} aria-pressed={width === w} data-on={width === w ? '' : undefined} onClick={() => setWidth(w)} />
-          ))}
+      <div className="live-bar" role="group" aria-label="Live view">
+        <div className="live-bar-group live-bar-site" role="group" aria-label="The site">
+          <SiteMenu envs={compact ? [] : envs} shown={env} onShow={switchTo} compare={compare} onCompare={openCompare} onSettings={onEdit} compact={compact} />
         </div>
-        {!compact ? <LensPicker lens={lens} onChange={setLens} disabled={!hasScript} /> : null}
-        {!compact ? (
-          <IconButton icon="pieces" label={arrangeOn ? 'Moving parts by dragging is on: a handle shows on the part under the pointer' : 'Moving parts by dragging is off'}
-            aria-pressed={arrangeOn} data-on={arrangeOn ? '' : undefined} onClick={flipArrange} disabled={!hasScript} />
-        ) : null}
-        <Button size="s" tone={picking ? 'primary' : 'quiet'} icon="pick" onClick={() => void pick()} disabled={!hasScript}
-          title={hasScript ? 'Point at something on the page to see what made it: ↑ and ↓ walk out and in, Enter picks, Escape stops' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
-          {picking ? 'Picking…' : 'Pick'}
-        </Button>
-        {!compact ? (
-          <Button size="s" tone="quiet" icon="compare" disabled={!envs.length || !!view?.loading} onClick={() => setComparing(true)}
-            title={envs.length ? `Lay this page on Local over the same page on ${env?.name ?? envs[envs.length - 1]?.name}: wipe, onion skin, difference, flip, side by side`
-              : envData?.candidates.length ? `${envData.candidates.length} hosted environments are named in the project’s files: keep them in the site settings (the gear) to compare with them`
-                : 'Add a hosted environment (Dev, Test, Live) in the site settings (the gear) to compare with it'}>
-            Compare
+        <div className="live-bar-group live-bar-page" role="group" aria-label="The page">
+          <IconButton icon="back" label="Back" disabled={!view?.canGoBack} onClick={() => void live.back()} />
+          <IconButton icon="chevron" label="Forward" disabled={!view?.canGoForward} onClick={() => void live.forward()} />
+          <IconButton icon="refresh" label={view?.loading ? 'Loading…' : 'Reload (hold Shift to skip the cache)'}
+            onClick={(e) => void live.reload(e.shiftKey)} data-loading={view?.loading ? '' : undefined} />
+          <AddressField projectId={project.id} url={view?.url ?? (env ? env.url : stageUrl)} title={view?.title ?? null} onOpen={goTo} />
+          <div className="live-widths" role="group" aria-label="Width">
+            {(Object.keys(WIDTHS) as Width[]).map((w) => (
+              <IconButton key={w} icon={WIDTHS[w].icon} label={`${WIDTHS[w].label} (${WIDTHS[w].key})`} aria-keyshortcuts={WIDTHS[w].key}
+                aria-pressed={width === w} data-on={width === w ? '' : undefined} onClick={() => setWidth(w)} />
+            ))}
+          </div>
+          {!compact ? <LensPicker lens={lens} onChange={setLens} disabled={!hasScript} openRef={lensOpen} /> : null}
+        </div>
+        <div className="live-bar-group live-bar-tools" role="group" aria-label="Tools">
+          <Button size="s" tone={picking ? 'primary' : 'quiet'} icon="pick" onClick={() => void pick()} disabled={!hasScript} aria-keyshortcuts="P"
+            title={hasScript ? 'Point at something on the page to see what made it, or walk the page with the arrows: Enter picks, P or Escape stops (P)' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
+            {picking ? 'Picking…' : 'Pick'}<kbd className="live-key" aria-hidden="true">P</kbd>
           </Button>
-        ) : null}
-        {card && shots && !env ? <ShotPage card={card} page={view?.url ?? null} /> : null}
-        <IconButton icon="open" label="Open in the default browser" onClick={() => void live.open()} />
-        <IconButton icon="settings" label="Site settings" onClick={onEdit} />
-      </form>
+          <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
+        </div>
+      </div>
       {!compact ? (
         <LensStrip view={lensed} only={only} onOnly={setOnly} onHover={point} onClose={() => setLens('structure')}
           note={<TraceNote compact answer={trace} site={site} project={project} />} />
-      ) : null}
-      {arrange.placing ? (
-        <div className="live-lens" role="region" aria-label="Placing">
-          <span className="live-lens-name">Placing {arrange.placing.label}</span>
-          <span className="small">The page shows where it would go: click there to add it. Escape stops.</span>
-          <span className="live-lens-esc" />
-          <IconButton icon="close" label="Stop placing (Escape)" onClick={() => arrange.setPlacing(null)} />
-        </div>
       ) : null}
       <div className="visually-hidden" role="status" aria-live="polite">{arrange.said}</div>
       {arrange.asking}
@@ -701,24 +795,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
         ) : (
           <aside className={`live-side${shownTab === 'request' ? ' wide' : ''}`} aria-label="What is on this page">
             <Segmented<Tab> size="s" label="Show" value={shownTab} options={tabs} onChange={setTab} />
-            {alone ? (
-              <p className="live-note live-alone small" role="status">
-                <span>Showing one piece alone{alone === 'sample' || alone === 'component' ? ', with sample content' : ''}.</span>
-                <Button size="s" tone="quiet" icon="back" onClick={() => void live.back()}>Back to the page</Button>
-              </p>
-            ) : null}
-            {env ? (
-              <div className="live-note live-hosted small" role="status">
-                <span><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits.</span>
-                <span className="faint">{HOSTED_NOTE}</span>
-              </div>
-            ) : null}
-            {banner && shownTab === 'layers' && !alone && !env ? <p className={`live-note small${banner.kind === 'write' && banner.warn ? ' warn' : ''}`} role={banner.kind === 'write' && banner.warn ? 'alert' : 'status'}>{bannerText(banner)}</p> : null}
             {shownTab === 'layers' ? (
               selection ? (
                 <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
                   theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect} onSaved={wordsSaved}
-                  site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit}
+                  site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
                   siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} />
               ) : (
                 <>
@@ -736,18 +817,34 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               <PaletteTab arrange={arrange} trace={traceData} />
             ) : shownTab === 'notes' ? (
               <>
-                <NotesTab project={project} components={components} prefer={follow} onShow={showNote} />
+                <NotesTab project={project} components={components} sender={sender} onShow={showNote} />
                 <EditsList project={project} />
               </>
             ) : (
               <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
             )}
-            <p className="live-side-foot faint small">
-              {site.platform === 'drupal' ? 'Drupal' : site.platform === 'wordpress' ? 'WordPress' : 'Site'} · {env ? `${env.name}, read-only` : follow ? 'following this session' : `following every session in ${project.name}`}
-            </p>
           </aside>
         )}
       </div>
+      {!compact ? (
+        <div className="live-status">
+          {status ? (
+            <span className={`live-status-said${status.className ? ` ${status.className}` : ''}${status.warn ? ' warn' : ''}`} role={status.warn ? 'alert' : 'status'}>
+              <Icon name={env && !alone && !picking && !arrange.placing ? 'open' : 'live'} size={14} />
+              <span className="live-status-text">{status.text}</span>
+              {status.action}
+            </span>
+          ) : <span className="live-status-said" role="status" />}
+          <span className="live-status-where faint">
+            {site.platform === 'drupal' ? 'Drupal' : site.platform === 'wordpress' ? 'WordPress' : 'Site'} · {env ? `${env.name}, read-only` : follow ? 'following this session' : `following every session in ${project.name}`}
+          </span>
+          {keysNow.length ? (
+            <span className="live-status-keys faint" aria-label="Keys that work now">
+              {keysNow.map(([keys, what]) => <span key={what}>{keys.map((k) => <kbd key={k}>{k}</kbd>)} {what}</span>)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {comparing && envs.length ? (
         <CompareDialog project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
           width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
@@ -756,10 +853,64 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   );
 }
 
-/** Which page a card's before and after are of: the site's address unless the owner chose this one. */
-function ShotPage({ card, page }: { card: { id: string; key: string }; page: string | null }) {
+/**
+ * Where a page is typed: it shows the page the view is on, and opens Go to
+ * over itself, with that address chosen (typing replaces it; Enter goes
+ * there), or with what was typed into it. Shift+Space and ⌘⇧Space open it too.
+ */
+function AddressField({ projectId, url, title, onOpen }: {
+  projectId: string; url: string; title: string | null;
+  onOpen: (from?: { address?: string | null; query?: string | null }) => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => (ref.current ? anchorGoTo(projectId, ref.current) : undefined), [projectId]);
+  const parts = (() => { try { const u = new URL(url); return { host: u.host, path: `${u.pathname}${u.search}` }; } catch { return { host: '', path: url }; } })();
+  return (
+    <button ref={ref} type="button" className="live-address" aria-haspopup="dialog" aria-keyshortcuts="Shift+Space"
+      aria-label={`Go to a page of ${parts.host || 'the site'}, or type its address. Shown: ${url}`} title={title ? `${title} · ${url}` : url}
+      onClick={() => onOpen({ address: url })}
+      onKeyDown={(e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        // Space opens it as a click does; Shift+Space opens Go to with nothing typed, as it does anywhere in the view.
+        if (e.key === ' ') { e.preventDefault(); onOpen(e.shiftKey ? {} : { address: url }); return; }
+        // Typing into the field starts the search.
+        if (e.key.length === 1) { e.preventDefault(); onOpen({ query: e.key }); }
+      }}>
+      <Icon name="search" size={14} />
+      <span className="live-address-text mono">
+        <span className="live-address-host">{parts.host}</span>
+        <span className="live-address-path">{parts.path}</span>
+      </span>
+      <span className="live-address-hint" aria-hidden="true">Type a title, path or id <kbd>⇧</kbd><kbd>Space</kbd></span>
+    </button>
+  );
+}
+
+/** What is used rarely, in one menu at the end of the bar: dragging parts, the default browser, a card's before and after. */
+function MoreMenu({ compact, arrangeOn, canArrange, onArrange, onBrowser, shot }: {
+  compact: boolean; arrangeOn: boolean; canArrange: boolean; onArrange: () => void; onBrowser: () => void; shot: MenuItem | null;
+}) {
+  const items: MenuItem[] = [];
+  if (!compact) {
+    items.push({
+      id: 'drag', kind: 'check', checked: arrangeOn, disabled: !canArrange, label: 'Drag handles on the page',
+      detail: arrangeOn ? 'A handle shows on the part under the pointer, to move it by dragging' : 'Off: parts move from their details (Move) instead', run: onArrange,
+    });
+  }
+  items.push({ id: 'browser', icon: 'open', label: 'Open in the default browser', detail: 'This page, without the helper’s token', run: onBrowser });
+  if (shot) items.push(shot);
+  return (
+    <MenuButton className="btn-quiet btn-icon live-more" label="More: drag handles, the default browser, before and after" items={items} align="end" width={320}>
+      <Icon name="more" />
+    </MenuButton>
+  );
+}
+
+/** Which page a card's before and after are of, as a switch in the More menu: the site's address unless the owner chose this one. */
+function useShotPage(card: { id: string; key: string } | null, page: string | null): MenuItem | null {
   const toast = useToast();
-  const chosen = useQuery('live.page', { cardId: card.id }, ['liveShots']);
+  const chosen = useQuery('live.page', card ? { cardId: card.id } : null, ['liveShots']);
+  if (!card) return null;
   const here = !!page && chosen.data?.url === page;
   const flip = async (): Promise<void> => {
     if (!page) return;
@@ -768,10 +919,11 @@ function ShotPage({ card, page }: { card: { id: string; key: string }; page: str
     void chosen.reload();
     toast(here ? `${card.key}’s screenshots are of the site’s own address again.` : `${card.key}’s before and after will be of this page.`);
   };
-  return (
-    <IconButton icon="camera" label={here ? `${card.key}’s screenshots are of this page (click for the site’s address)` : `Take ${card.key}’s before and after of this page`}
-      aria-pressed={here} data-on={here ? '' : undefined} onClick={flip} />
-  );
+  return {
+    id: 'shots', kind: 'check', checked: here, icon: 'camera', disabled: !page,
+    label: `${card.key}’s before and after of this page`, detail: here ? 'On: off goes back to the site’s own address' : 'Off: they are of the site’s own address',
+    run: () => void flip(),
+  };
 }
 
 function selectionTitle(s: Selection, components: Map<string, { name: string }>): string {

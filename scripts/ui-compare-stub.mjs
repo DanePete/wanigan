@@ -123,6 +123,7 @@ export function compareStub() {
     outline: async () => 0,
     clear: async () => {},
     pick: async () => null,
+    choose: async () => null,
     cancelPick: async () => {},
     capture: async () => null,
     problems: async () => [],

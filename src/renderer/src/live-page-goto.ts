@@ -1,7 +1,8 @@
 // The live page script's part for the "Go to" launcher, added to the same
 // isolated world as live-page.ts (live-page-entry.ts runs both): Shift+Space on
 // the page, when nothing there is being typed into, is answered to the window
-// the way a pick is (the main process waits on `awaitGoto()`); and what the
+// the way a pick is (the main process waits on `awaitGoto()`), and so are the
+// live view's own keys the window passes in (P picks, 1 2 3 widths…); and what the
 // page says it is, and the pages it links to, for finding where to go next.
 // It imports nothing.
 
@@ -11,8 +12,10 @@ export function livePageGoto(): void {
   const wl = w.__wl;
   const HOST_ID = '__wanigan_live_overlay';
 
-  /** What waits for the next Shift+Space; only while it does is the key taken from the page. */
-  let waiting: ((key: 'goto' | null) => void) | null = null;
+  /** What waits for the next Shift+Space (or another of the live view's keys); only while it does is a key taken from the page. */
+  let waiting: ((key: string | null) => void) | null = null;
+  /** The live view's other keys to take while waiting (shared/live-keys.ts, passed in by the main process). */
+  let keys: { id: string; key: string; shift: boolean }[] = [];
 
   const words = (s: string | null | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim();
 
@@ -36,19 +39,31 @@ export function livePageGoto(): void {
   }
 
   addEventListener('keydown', (e) => {
-    if (!waiting || e.code !== 'Space' || !e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.repeat || e.isComposing) return;
+    if (!waiting || e.metaKey || e.ctrlKey || e.altKey || e.repeat || e.isComposing) return;
+    const goto = e.code === 'Space' && e.shiftKey;
+    const lower = e.key.length === 1 ? e.key.toLowerCase() : '';
+    // Picking or retyping words has the keyboard: those keys are theirs (Shift+Space still opens Go to).
+    const other = goto || !lower || (wl.busy as (() => boolean) | undefined)?.() ? null : keys.find((k) => k.key === lower && k.shift === e.shiftKey) ?? null;
+    if (!goto && !other) return;
     if (editable(e.composedPath()[0] ?? e.target) || editable(focused())) return;
-    // Shift+Space would scroll the page up; here it opens Go to instead, and the page never hears it.
+    // Shift+Space would scroll the page up; here it opens Go to instead, and the page never hears it. So with the others.
     e.preventDefault();
     e.stopImmediatePropagation();
     const answer = waiting;
     waiting = null;
-    answer('goto');
+    answer(goto ? 'goto' : (other as { id: string }).id);
   }, true);
 
-  /** Wait for Shift+Space. A newer wait replaces this one, which then answers null. */
-  wl.awaitGoto = (): Promise<'goto' | null> => {
+  /**
+   * Wait for Shift+Space, which answers 'goto', or for one of `take` (the live
+   * view's keys), which answers its id. A newer wait replaces this one, which
+   * then answers null.
+   */
+  wl.awaitGoto = (take?: unknown): Promise<string | null> => {
     waiting?.(null);
+    keys = Array.isArray(take)
+      ? take.filter((k): k is { id: string; key: string; shift: boolean } => !!k && typeof k.id === 'string' && typeof k.key === 'string' && k.key.length === 1 && typeof k.shift === 'boolean').slice(0, 20)
+      : [];
     return new Promise((resolve) => { waiting = resolve; });
   };
 

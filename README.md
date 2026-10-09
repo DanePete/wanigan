@@ -118,6 +118,18 @@ agents as they work. Every project has a **Live** tab. The view is off until
 you switch it on, from that tab or in **Settings › Live view**, where Drupal,
 WordPress and other sites can each be on or off.
 
+- **One bar, three groups.** The site (one menu: Local and the hosted
+  environments to show the page on, Compare, Site settings), the page (back,
+  forward, reload, the address, the width, the lens) and the tools (Pick, and a
+  menu for drag handles, the default browser and a card's before and after). One
+  status line under the page says what just happened (what an edit outlined,
+  a hosted environment shown read-only, a piece shown alone, a palette entry
+  being placed), what the view follows, and the keys that work now.
+- **Keys for everything**, in the view and in its page while nothing is typed
+  into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
+  [ and ] the side panel's tabs, ⇧C Compare; on a chosen part E edits, M moves,
+  . opens its code, ⇧A shows it alone; ⌘↩ adds a note, ⇧⌘↩ sends it (or the
+  notes waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -142,18 +154,23 @@ WordPress and other sites can each be on or off.
   own view says "*file* changed · See it".
 - **Layers.** The page's parts as a tree, named the way the site names them:
   Drupal's templates, components, content, fields, blocks and regions (from Twig
-  debug's own comments), WordPress's template files and blocks. Each says
-  whose code it is (yours, contributed or core), how to override someone
-  else's template in your theme, and where to change it in the site's admin.
+  debug's own comments), WordPress's template files and blocks. A part chosen
+  there or picked on the page (from the keyboard too: P starts on the chosen
+  part, the arrows walk, Enter picks) offers the same four verbs: **Edit ▾**
+  (every way to change it, by where the change is saved: in the site, on the
+  page, in code), **Move**, **Code** and **Alone**; the note to an agent is
+  right under them, and why it looks as it does (whose code it is, how to
+  override someone else's template in your theme, its data, cache and cost)
+  is folded below.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part.
-- **By hand.** Retype words on the page: they save to your own template when
+- **By hand** (Edit ▾ › On the page). Retype words on the page: they save to your own template when
   they are written there exactly once (with a revert), or to a plain text field
   through Drupal itself. Try a style on the page; it goes to the agent as
   intent, never written into the stylesheets by hand.
-- **Go to** (Shift+Space in the live view, ⌘⇧Space anywhere in a project):
-  any page of the site by typing a few letters of its title, an admin or
-  structure page, a path or an id, ranked as you type and by what you choose
+- **Go to**, in the address field (click it, or Shift+Space in the live view,
+  ⌘⇧Space anywhere in a project): an address, or any page of the site by
+  typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
   often; Enter opens it in the view, ⌥Enter its edit form, ⌘Enter the default
   browser, → its tasks. It searches the whole site through the helper, and
   without one, the pages the view has seen.
@@ -175,12 +192,12 @@ WordPress and other sites can each be on or off.
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
   as wrong (its own error messages, its console).
-- **Local and Live.** Tabs beside Local for the site's hosted environments
-  (Dev, Test, Live, as the host names them), each showing the same page. Found
+- **Local and Live.** In the site menu beside Local, the site's hosted
+  environments (Dev, Test, Live, as the host names them), each showing the same page. Found
   in the project's own files (Drush and WP-CLI aliases, ddev's and Lando's
   Pantheon settings with `pantheon.yml`, Stage File Proxy's origin, environment
   variables in ddev or compose files, a README's tables), each saying which
-  file; only the ones you keep (or type) become tabs. A hosted environment is
+  file; only the ones you keep (or type) are in the menu. A hosted environment is
   **read-only**: its own private session (no cookies shared with your local
   site), never the helper's token, its certificate checked as any browser
   would, and only requests that read (GET, HEAD, OPTIONS), so no form can be
@@ -196,9 +213,9 @@ WordPress and other sites can each be on or off.
   previous change, 1 2 3 for the widths, I to ignore a change (a slideshow, a
   clock), remembered for the site. Content that differs usually means the local
   database is older, not that the code changed, and it says so.
-- **What reaches a hosted site.** Opening a hosted environment's tab, or
+- **What reaches a hosted site.** Showing a page on a hosted environment, or
   pressing Compare, sends requests to that site, only when you do it. Wanigan
-  asks it for nothing in the background (while its tab is open, the page loads
+  asks it for nothing in the background (while it is shown, the page loads
   what it loads, as in any browser), and the local site's helper token never
   goes there.
 - **With the helper's trace** (being finished; seen so far only against a
@@ -270,7 +287,7 @@ view, beside the project's files.
 
 - **Opens from where you are.** ⌘P finds any file in the project by a few
   letters of its name or path (`name:42` for a line). **Edit** on a file in
-  Changes or in a turn's diff; **Edit code** on a part picked in the live view
+  Changes or in a turn's diff; **Code** (.) on a part chosen in the live view
   opens its template where it writes the words you picked. ⌘J shows or hides
   the drawer.
 - **The Code tab.** The project's folders as a tree beside the editor, read a
@@ -438,7 +455,7 @@ Releases), or download the newest from there once.
 | **Needs you** | Permission prompts, reviews, questions from agents, failed or interrupted sessions, usage limits, Claude Code's and Codex's (a Claude Code conversation continues on another account in one click), finished turns: ranked, across every project, and announced in the window or as a notification. Reply to a finished turn or answer a question in place; a permission row shows exactly what is asked, with hidden or lookalike characters spelled out. |
 | **Accounts** | Claude Code and Codex accounts found in supported config locations, with who each is signed in as according to the CLI. Each project picks its own. |
 | **Pause** | Per project: no new sessions or claims, and live agents are asked to wrap up. Nothing running is killed. |
-| **Code editor** | A drawer beneath any project view, or the project's Code tab beside its files: open with ⌘P, the tab's tree, Edit in Changes or a turn's diff, or Edit code on a part in the live view; breadcrumbs and Back and Forward; a save never lands over an agent's change, and the live view follows it. |
+| **Code editor** | A drawer beneath any project view, or the project's Code tab beside its files: open with ⌘P, the tab's tree, Edit in Changes or a turn's diff, or Code on a part in the live view; breadcrumbs and Back and Forward; a save never lands over an agent's change, and the live view follows it. |
 | **Changes** | A project's uncommitted git changes, or everything one card's branch changed: syntax colour for PHP, Twig, YAML, JS/TS, CSS and more, unified or side by side, a Viewed mark per file, J/K between files, and notes on lines sent to the agent as one message. |
 | **Branches** | A card can work on its own branch in its own git worktree, so agents never share a checkout; merge it back with one button that refuses rather than forces. |
 | **AI review** | On request, Claude Code checks a card against its criteria with read-only tools and cites file-and-quote proof; Wanigan checks every quote against the file. Advice only. |

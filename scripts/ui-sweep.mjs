@@ -1473,7 +1473,7 @@ try {
       await views.close();
     }
 
-    // Local and Live: the live view's environment tabs and Compare. The browser has no view to lay over a page, so
+    // Local and Live: the live view's environments and Compare, in its site menu. The browser has no view to lay over a page, so
     // the stub plays the main process (scripts/ui-compare-stub.mjs) and answers Compare with two pictures of a made-up
     // page it draws itself. Everything it asks the core for is real: the environments, the ignored areas.
     {
@@ -1497,24 +1497,34 @@ try {
       writeFileSync(aliases, 'stage:\n  uri: https://stage.acme.example\n');
       try {
         await cmp.goto(`${base}#/p/${ns}/live`);
-        await cmp.waitForSelector('.live-envs [role="radio"]:has-text("Live")', { timeout: 8000 }).catch(() => failures.push(`${theme}/live: no environment tabs`));
-        const tabs = await cmp.$$eval('.live-envs [role="radio"]', (els) => els.map((e) => e.textContent));
-        if (tabs.join() !== 'Local,Dev,Test,Live') failures.push(`${theme}/live: the tabs are ${tabs.join()}, wanted Local, Dev, Test, Live`);
+        /** Open the site menu and choose one of its items (an environment, Compare, the settings). */
+        const siteMenu = async (item) => {
+          await cmp.click('.live-bar button[aria-label^="Site:"]');
+          await cmp.click(`[role="menu"] [role^="menuitem"]:has-text("${item}")`);
+        };
+        await cmp.waitForSelector('.live-bar button[aria-label^="Site: Local shown"]', { timeout: 8000 }).catch(() => failures.push(`${theme}/live: no site menu`));
+        await cmp.click('.live-bar button[aria-label^="Site:"]');
+        await cmp.waitForSelector('[role="menu"] [role="menuitemradio"]:has-text("Live")', { timeout: 8000 }).catch(() => failures.push(`${theme}/live: no environments in the site menu`));
+        const tabs = await cmp.$$eval('[role="menu"] [role="menuitemradio"]', (els) => els.map((e) => e.querySelector('.sel-text > span')?.textContent));
+        if (tabs.join() !== 'Local,Dev,Test,Live') failures.push(`${theme}/live: the environments are ${tabs.join()}, wanted Local, Dev, Test, Live`);
+        if (!/sends requests to that site, only when you do/.test(await cmp.textContent('[role="menu"] .menu-note').catch(() => ''))) failures.push(`${theme}/live: the site menu does not say what opening a hosted environment does`);
         await cmp.waitForTimeout(250);
         await cmp.screenshot({ path: join(out, `${theme}-live-envs.png`) });
+        await cmp.keyboard.press('Escape');
 
-        await cmp.click('.live-envs [role="radio"]:has-text("Live")');
+        await siteMenu('Live');
         await cmp.waitForSelector('.live-hosted', { timeout: 3000 }).catch(() => failures.push(`${theme}/live: a hosted tab does not say it is read-only`));
         const hostedShow = await cmp.evaluate(() => window.__wgLive.shows.at(-1));
         if (!hostedShow?.env || hostedShow.token !== null || !hostedShow.url.startsWith('https://www.acme.example/')) failures.push(`${theme}/live: the hosted tab was shown as ${JSON.stringify(hostedShow)}`);
         if (!/sends requests to that site, only when you do/.test(await cmp.textContent('.live-hosted'))) failures.push(`${theme}/live: the hosted tab does not say it sends requests to that site`);
         await cmp.waitForTimeout(200);
         await cmp.screenshot({ path: join(out, `${theme}-live-hosted.png`) });
-        await cmp.click('.live-envs [role="radio"]:has-text("Local")');
+        if (!/^Site: Live shown/.test(await cmp.getAttribute('.live-bar button[aria-label^="Site:"]', 'aria-label') ?? '')) failures.push(`${theme}/live: the site menu does not say Live is shown`);
+        await siteMenu('Local');
         if ((await cmp.evaluate(() => window.__wgLive.shows.at(-1)))?.env !== null) failures.push(`${theme}/live: Local was not shown again as the local site`);
 
         // Compare: both sides taken at the view's width, the hosted one never with a token.
-        await cmp.click('.live-bar button:has-text("Compare")');
+        await siteMenu('Compare Local with Live');
         await cmp.waitForSelector('.cmp-frame canvas', { timeout: 10000 }).catch(() => failures.push(`${theme}/compare: the pictures never showed`));
         await cmp.waitForSelector('.cmp-summary', { timeout: 5000 }).catch(() => {});
         const asked = await cmp.evaluate(() => window.__wgLive.shots.slice(-2));
@@ -1572,7 +1582,13 @@ try {
         await cmp.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/compare: Escape did not close it`));
 
         // The site settings: environments kept, and the one the project's files name besides.
-        await cmp.click('.live-bar button[aria-label="Site settings"]');
+        // ⇧C opens Compare too, from the live view.
+        await cmp.evaluate(() => document.activeElement?.blur());
+        await cmp.keyboard.press('Shift+C');
+        await cmp.waitForSelector('.dialog .cmp-head', { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: ⇧C did not open Compare`));
+        await cmp.keyboard.press('Escape');
+        await cmp.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => {});
+        await siteMenu('Site settings');
         await cmp.waitForSelector('.live-env-settings', { timeout: 5000 }).catch(() => failures.push(`${theme}/live: no environments in the site settings`));
         const found = await cmp.textContent('.live-env-found').catch(() => '');
         if (!/Stage/.test(found) || !/drush\/sites\/acme\.site\.yml: uri of @acme\.stage/.test(found)) failures.push(`${theme}/live: the settings found "${found}"`);
@@ -2100,7 +2116,7 @@ async function liveSiteStates() {
           bounds: () => {}, hide: async () => {}, cover: nothing,
           reload: async () => { report(); },
           css: async () => 0, go: async () => true, back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
-          scan: async () => [], outline: async () => 0, clear: async () => {}, pick: nothing, cancelPick: async () => {}, capture: nothing,
+          scan: async () => [], outline: async () => 0, clear: async () => {}, pick: nothing, choose: nothing, cancelPick: async () => {}, capture: nothing,
           problems: async () => [], mutations: async () => 0, picked: nothing, style: nothing, unstyle: nothing, editText: nothing, cancelEdit: async () => {},
           helperChanged: nothing, helperSave: async () => ({ ok: false, error: null, label: null }), hasScript: async () => true,
           onState: (l) => { listeners.add(l); return () => listeners.delete(l); },

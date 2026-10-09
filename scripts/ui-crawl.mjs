@@ -21,6 +21,8 @@ import { compareStub } from './ui-compare-stub.mjs';
 import { pageHelpers } from './ui-crawl-page.mjs';
 import { LIVE_STUB } from './ui-goto-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
+import { liveFixture, liveStub } from './ui-live-stub.mjs';
+import { PICK_STUB } from './ui-pick-stub.mjs';
 import { crawlTarget } from './ui-crawl-target.mjs';
 import { qualifyStoppedResize } from './ui-crawl-refusals.ts';
 
@@ -565,6 +567,26 @@ const LIVE_STANDINS = {
       sessionStorage.setItem('wanigan.crawl.live-project', (await window.wanigan.call('projects.list', {})).find((p) => p.key === k).id);
     }, key),
   },
+  // The live view with made-up Acme parts and their trace (ui-live-stub.mjs): what its keys act on. It plays any project's site.
+  live: {
+    scripts: [`(${liveStub})(${JSON.stringify(liveFixture)});`, LIVE_DEFAULTS],
+    prepare: async () => {},
+  },
+  // One part whose template is the demo's own (ui-pick-stub.mjs): what the Code key opens in the code editor.
+  pick: {
+    // The demo's Northstar has no Drupal of its own, so the stand-in site says where its web root is: the project's web/.
+    scripts: [PICK_STUB, LIVE_DEFAULTS, `window.__wgApp = { ...window.__wgApp, settings: { ...window.__wgApp?.settings, liveView: true, liveDrupal: true } };
+      (() => {
+        const real = window.wanigan.call.bind(window.wanigan);
+        const docroot = sessionStorage.getItem('wanigan.crawl.docroot');
+        window.wanigan.call = (m, p) => (m === 'live.parts' && docroot ? Promise.resolve({ docroot, components: [] }) : real(m, p));
+      })();`],
+    prepare: (page, key) => page.evaluate(async (k) => {
+      const project = (await window.wanigan.call('projects.list', {})).find((p) => p.key === k);
+      await window.wanigan.call('live.setSite', { projectId: project.id, url: 'https://northstar.example.test/', platform: 'drupal' });
+      sessionStorage.setItem('wanigan.crawl.docroot', `${project.path}/web`);
+    }, key),
+  },
   // Compare: Local and a hosted Live drawn on a canvas (ui-compare-stub.mjs). The core keeps the site and the environment.
   compare: {
     scripts: [compareStub, LIVE_DEFAULTS],
@@ -602,7 +624,8 @@ function keyChecks(w) {
       const project = (await call('projects.list', {})).find((p) => p.key === k);
       for (const m of (await call('live.envs', { projectId: project.id })).masks) await call('live.unmask', { projectId: project.id, id: m.id });
     }, ns);
-    await page.click('.live-bar button:has-text("Compare")');
+    await page.click('.live-bar button[aria-label^="Site:"]');
+    await page.click('[role="menu"] [role^="menuitem"]:has-text("Compare Local with")');
     await page.waitForSelector('.cmp-change', { timeout: 10_000 });
     await page.waitForFunction(() => document.activeElement?.classList.contains('cmp-frame'), null, { timeout: 3000 });
     for (const k of keys) await page.keyboard.press(k);
@@ -613,6 +636,15 @@ function keyChecks(w) {
   /** Both pages taken again at this width. */
   const takenAt = (px) => focused((w) => { const s = window.__wgLive.shots.slice(-2); return s.length === 2 && s.every((r) => r.width === w); }, px);
   const atWidth = (key, px) => async (page) => { await page.keyboard.press(key); await takenAt(px)(page); await page.waitForSelector('.cmp-change', { timeout: 10_000 }); };
+  /** The live view with a part chosen in its tree, the keyboard on the tree. */
+  const choose = (name) => async (page) => { await page.click(`.live-layer:has-text("${name}")`); await page.waitForSelector('.live-inspector', { timeout: 5000 }); };
+  const widthIs = (label) => focused((l) => document.querySelector(`.live-widths button[aria-label^="${l}"]`)?.getAttribute('aria-pressed') === 'true', label);
+  const tabIs = (label) => focused((l) => document.querySelector('.live-side > .segmented [aria-checked="true"]')?.textContent?.startsWith(l), label);
+  /** A note written in the box under a chosen part. */
+  const noting = async (page) => {
+    await choose('Opening hours')(page);
+    await page.fill('.live-inspector textarea[aria-label="What should change here?"]', 'Made by the crawler');
+  };
   const checks = {
     'Search and commands': [{ at: board, keys: ['Meta+k'], expect: shows('.palette') }],
     'New session': [{ at: board, keys: ['Meta+t'], expect: shows('.dialog h2:text-is("New session")') }],
@@ -698,8 +730,29 @@ function keyChecks(w) {
     // Go to: ⌘⇧Space from anywhere in a project; Shift+Space in the live view, pressed on another of its buttons so a
     // button's own Space can never be what opened it.
     'A page of the project’s site': [{ standIn: 'goto', at: board, keys: ['Meta+Shift+Space'], expect: shows('.goto [role="option"]') }],
-    'A page of the site, from the live view (not while typing)': [{ standIn: 'goto', at: live, ready: '.live-bar', setup: async (page) => { await page.focus('.live-bar button[aria-label="Site settings"]'); },
+    'A page of the site, from the live view (not while typing)': [{ standIn: 'goto', at: live, ready: '.live-bar', setup: async (page) => { await page.focus('.live-bar button[aria-label^="Reload"]'); },
       keys: ['Shift+Space'], expect: shows('.goto [role="option"]') }],
+    // The live view's own keys (shared/live-keys.ts), with the made-up Acme parts; nothing focused but the view.
+    'Pick a part on the page, or stop picking': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['p'], expect: shows('.live-status:has-text("Picking")') }],
+    'Colour the page by a lens': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+L'], expect: shows('.sel-list [role="option"]:has-text("Owner")') }],
+    'Phone, tablet or full width': [
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['1'], expect: widthIs('Phone') },
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['2'], expect: widthIs('Tablet') },
+      { standIn: 'live', at: live, ready: '.live-tree', setup: press('1'), keys: ['3'], expect: widthIs('Full width') },
+    ],
+    'Previous or next tab of the side panel': [
+      { standIn: 'live', at: live, ready: '.live-tree', keys: ['['], expect: tabIs('Add') },
+      { standIn: 'live', at: live, ready: '.live-tree', keys: [']'], expect: tabIs('Notes') },
+    ],
+    'Compare Local with a hosted environment': [{ standIn: 'compare', at: live, ready: '.live-bar', keys: ['Shift+C'], expect: shows('.dialog .cmp-head') }],
+    'Every way to edit the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Hero'), keys: ['e'], expect: shows('[role="menu"] [role="menuitem"]:has-text("Hero props")') }],
+    'Move the chosen part': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['m'], expect: shows('.live-move button.live-up') }],
+    'The chosen part’s code, in the code editor': [{ standIn: 'pick', at: live, ready: '.live-layer', setup: choose(''), keys: ['.'],
+      expect: focused(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'northstar-pay-button.html.twig') }],
+    'Show the chosen part alone': [{ standIn: 'live', at: live, ready: '.live-tree', setup: choose('Search'), keys: ['Shift+A'],
+      expect: focused(() => window.__wgLive.calls.some((c) => c.startsWith('go ') && c.includes('/_wanigan/piece/block/acme_search'))) }],
+    'Add the note to the notes (in the note box)': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Enter'], expect: shows('.live-side > .segmented button:has-text("Notes 1")') }],
+    'Send the note now, or the notes waiting': [{ standIn: 'live', at: live, ready: '.live-tree', setup: noting, keys: ['Meta+Shift+Enter'], expect: shows('.toast:has-text("Sent to")') }],
     // Compare, opened from the live view. It starts on the slider, at the first change, at the view's 1440 px.
     'Show Local, or the hosted page': [
       { standIn: 'compare', at: live, ready: '.live-bar', setup: comparing(), keys: ['ArrowRight'], expect: showing('Live') },

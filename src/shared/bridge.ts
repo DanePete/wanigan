@@ -7,6 +7,7 @@ import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, Liv
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
+import type { LiveKeyId } from './live-keys.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -123,8 +124,13 @@ export interface LiveBridge {
   /** Outline regions by their index from the last scan: an edit's, a pointed-at row's (dashed), a pick's. Returns how many were drawn. */
   outline(indexes: number[], label: string | null, tone?: LiveTone): Promise<number>;
   clear(): Promise<void>;
-  /** Let the owner pick an element; null when they pressed Escape or picking was cancelled. */
-  pick(): Promise<LivePick | null>;
+  /**
+   * Let the owner pick an element; null when they pressed Escape or picking was cancelled. `start` is a region from
+   * the last scan where the keyboard starts walking (else the page's main content), so picking needs no pointer.
+   */
+  pick(start?: number | null): Promise<LivePick | null>;
+  /** Make a region from the last scan the picked element, as choosing it in the Layers tree does; null when it has none. */
+  choose(index: number): Promise<LivePick | null>;
   cancelPick(): Promise<void>;
   /** A PNG (base64) of what the view shows, or of one rectangle of the page in CSS pixels of the view. */
   capture(rect?: { x: number; y: number; width: number; height: number }): Promise<string | null>;
@@ -197,8 +203,11 @@ export interface LiveBridge {
   find(projectId: string, query?: string, options?: { refresh?: boolean }): Promise<LiveFindAnswer>;
   /** What the page shown is, when the view shows this project's site; null otherwise. */
   findHere(projectId: string): Promise<LiveHere | null>;
-  /** Wait for Shift+Space on the page, while nothing there is typed into: 'goto', or null when a newer wait or a new page replaced it. */
-  awaitGoto(): Promise<'goto' | null>;
+  /**
+   * Wait for Shift+Space on the page, or one of the live view's own keys (shared/live-keys.ts), while nothing there is
+   * typed into: 'goto' or the key's id, or null when a newer wait or a new page replaced it.
+   */
+  awaitGoto(): Promise<'goto' | LiveKeyId | null>;
   /** The launcher takes the keyboard; true when the view's page had it. */
   gotoFocus(): Promise<boolean>;
   /** Give the keyboard back to the view's page. */

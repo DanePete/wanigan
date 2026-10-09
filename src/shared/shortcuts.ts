@@ -30,7 +30,7 @@ export const GIT_COMMANDS: readonly { id: GitCommandId; label: string }[] = [
   { id: 'git-stash', label: 'Stash changes…' },
 ];
 
-export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In Changes' | 'In Commits' | 'Comparing pages' | 'In dialogs and lists';
+export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In Changes' | 'In Commits' | 'In the live view' | 'Comparing pages' | 'In dialogs and lists';
 
 export interface Shortcut {
   /** The command it runs; null when a view handles the key itself (the board, a dialog). */
@@ -103,6 +103,19 @@ export const SHORTCUTS: readonly Shortcut[] = [
   // And the Commits tab (views/git/Commits.tsx).
   { id: null, label: 'Next commit', group: 'In Commits', keys: ['J'], alt: [['↓']] },
   { id: null, label: 'Previous commit', group: 'In Commits', keys: ['K'], alt: [['↑']] },
+  // And the live view itself (components/Live.tsx, keys from shared/live-keys.ts liveKey), in the window or in the
+  // site's page while nothing is typed into; the four verbs act on the part chosen.
+  { id: null, label: 'Pick a part on the page, or stop picking', group: 'In the live view', keys: ['P'] },
+  { id: null, label: 'Colour the page by a lens', group: 'In the live view', keys: ['Shift', 'L'] },
+  { id: null, label: 'Phone, tablet or full width', group: 'In the live view', keys: ['1'], alt: [['2'], ['3']] },
+  { id: null, label: 'Previous or next tab of the side panel', group: 'In the live view', keys: ['['], alt: [[']']] },
+  { id: null, label: 'Compare Local with a hosted environment', group: 'In the live view', keys: ['Shift', 'C'] },
+  { id: null, label: 'Every way to edit the chosen part', group: 'In the live view', keys: ['E'] },
+  { id: null, label: 'Move the chosen part', group: 'In the live view', keys: ['M'] },
+  { id: null, label: 'The chosen part’s code, in the code editor', group: 'In the live view', keys: ['.'] },
+  { id: null, label: 'Show the chosen part alone', group: 'In the live view', keys: ['Shift', 'A'] },
+  { id: null, label: 'Add the note to the notes (in the note box)', group: 'In the live view', keys: ['Mod', 'Enter'] },
+  { id: null, label: 'Send the note now, or the notes waiting', group: 'In the live view', keys: ['Mod', 'Shift', 'Enter'] },
   // And the live view's Compare (components/live/CompareViewer.tsx, keys from shared/live-compare.ts compareKey).
   { id: null, label: 'Show Local, or the hosted page', group: 'Comparing pages', keys: ['←'], alt: [['→']] },
   { id: null, label: 'Flip to the other', group: 'Comparing pages', keys: ['Space'] },
@@ -122,7 +135,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Close a dialog', group: 'In dialogs and lists', keys: ['Esc'] },
 ];
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In Changes', 'In Commits', 'Comparing pages', 'In dialogs and lists'];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In Changes', 'In Commits', 'In the live view', 'Comparing pages', 'In dialogs and lists'];
 
 /** How a key is written on this platform. */
 export function keyLabel(key: string, mac: boolean): string {

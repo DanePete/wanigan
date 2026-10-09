@@ -139,7 +139,7 @@ export const LIVE_STUB = String.raw`(() => {
     reload: async () => {}, css: async () => 0,
     go: async (url) => { L.went.push(url); view = { url, title: url }; setTimeout(tell, 0); return true; },
     back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
-    scan: async () => [], outline: async () => 0, clear: async () => {}, pick: async () => null, cancelPick: async () => {},
+    scan: async () => [], outline: async () => 0, clear: async () => {}, pick: async () => null, choose: async () => null, cancelPick: async () => {},
     capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null,
     style: async () => null, unstyle: async () => null, editText: async () => null, cancelEdit: async () => {},
     helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'stand-in', label: null }), hasScript: async () => true,
@@ -157,8 +157,9 @@ export const LIVE_STUB = String.raw`(() => {
       return answer('ready', { result: { cacheId: 'acme-1', items: hits.slice(0, 50), total: hits.length } });
     },
     findHere: async () => L.here,
-    // Shift+Space on the page: the sweep calls __wgLive.press() as the page script would answer.
-    awaitGoto: () => new Promise((resolve) => { L.press = () => { L.press = null; resolve('goto'); }; }),
+    // Shift+Space on the page: the sweep calls __wgLive.press() as the page script would answer, or press('pick') for
+    // one of the live view's own keys pressed there.
+    awaitGoto: () => new Promise((resolve) => { L.press = (key = 'goto') => { L.press = null; resolve(key); }; }),
     gotoFocus: async () => { L.focused++; return false; },
     gotoReturn: async () => { L.returned++; },
     openInBrowser: async (_projectId, path) => { L.browser.push(path); return true; },

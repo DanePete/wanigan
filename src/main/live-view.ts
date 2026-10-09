@@ -524,10 +524,16 @@ export function wireLiveView(options: {
     return run<number>(`window.__wl ? window.__wl.outline(${JSON.stringify(list)}, ${JSON.stringify(text)}, ${JSON.stringify(how)}) : 0`, 0);
   });
   ipcMain.handle('live:clear', async (event) => { if (ok(event)) await run('window.__wl && window.__wl.clear()', null); });
-  ipcMain.handle('live:pick', async (event) => {
+  ipcMain.handle('live:pick', async (event, start: unknown) => {
     if (!ok(event)) return null;
     view?.webContents.focus();
-    return run<LivePick | null>('window.__wl ? window.__wl.pick() : null', null);
+    const from = Number.isInteger(start) && (start as number) >= 0 ? start as number : null;
+    return run<LivePick | null>(`window.__wl ? window.__wl.pick(${JSON.stringify(from)}) : null`, null);
+  });
+  // Choosing a part in the tree makes it the picked element too: words and styles are tried on it the same way.
+  ipcMain.handle('live:choose', async (event, index: unknown) => {
+    if (!ok(event) || !Number.isInteger(index) || (index as number) < 0) return null;
+    return run<LivePick | null>(`window.__wl && window.__wl.choose ? window.__wl.choose(${JSON.stringify(index)}) : null`, null);
   });
   ipcMain.handle('live:cancelPick', async (event) => { if (options.trusted(event)) await run('window.__wl && window.__wl.cancelPick()', null); });
   // The site helper's own routes, asked through the view's session (so as the user logged in there), with the token.

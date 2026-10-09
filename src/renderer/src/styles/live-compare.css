@@ -1,19 +1,4 @@
-/* The live view's hosted environments (tabs and settings) and Compare: two renders of a page laid over each other. */
-
-/* ── tabs ───────────────────────────────────────────────────────────────── */
-
-.live-envs {
-  display: flex;
-  align-items: center;
-  padding-right: var(--space-2);
-  margin-right: var(--space-1);
-  border-right: 1px solid var(--line);
-}
-
-.live-hosted {
-  display: grid;
-  gap: var(--space-1);
-}
+/* The live view's hosted environments (their settings; the site menu is components/live/Environments.tsx) and Compare: two renders of a page laid over each other. */
 
 /* ── settings ───────────────────────────────────────────────────────────── */
 

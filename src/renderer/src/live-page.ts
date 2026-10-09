@@ -863,10 +863,65 @@ export function livePage(): void {
     };
   }
 
-  function pick(): Promise<unknown> {
+  /** The element a region is: its own, or for a template's output, the first element in it. */
+  function elementOf(r: Region | undefined): Element | null {
+    if (!r) return null;
+    if (r.el) return r.el;
+    if (!r.range) return null;
+    const walker = document.createTreeWalker(r.range.commonAncestorContainer, NodeFilter.SHOW_ELEMENT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      try { if (r.range.isPointInRange(n, 0) && (n as Element).getClientRects().length) return n as Element; } catch { /* a node the range cannot place */ }
+    }
+    return null;
+  }
+
+  /**
+   * Choose a region as the picked element, the way the Layers tree chooses
+   * one: what can be done to a part (its words, a style) does not depend on
+   * how it was chosen. Null when the region has no element on the page.
+   */
+  function choose(index: number): unknown {
+    const el = elementOf(regions[index]);
+    if (!el || el.closest(`#${HOST_ID}`)) return null;
+    picked = el;
+    return describe(el);
+  }
+
+  /** Where picking starts from the keyboard with nothing chosen: the page's main content. */
+  function mainContent(): Element | null {
+    const main = document.querySelector('main, [role="main"]');
+    if (main?.getClientRects().length) return main;
+    return Array.from(document.body?.children ?? []).find((c) => c.id !== HOST_ID && c.getClientRects().length && c.getBoundingClientRect().height > 40) ?? document.body;
+  }
+
+  /** An element the page shows (not the overlay): somewhere the keyboard can walk to. */
+  const onPage = (el: Element): boolean => el.id !== HOST_ID && el.getClientRects().length > 0;
+
+  /** The next element that is on the page, walking siblings one way. */
+  function sibling(el: Element, by: 1 | -1): Element | null {
+    let n = by > 0 ? el.nextElementSibling : el.previousElementSibling;
+    while (n && !onPage(n)) n = by > 0 ? n.nextElementSibling : n.previousElementSibling;
+    return n;
+  }
+
+  /**
+   * Let the owner pick an element. `start` (a region's index) is where the
+   * keyboard starts, so ↑ ↓ ← → and Enter work before the pointer has
+   * pointed at anything; without one, the page's main content. The pointer
+   * takes over wherever it goes.
+   */
+  function pick(start: number | null = null): Promise<unknown> {
     cancelPick();
     if (!regions.length) scan();
     return new Promise((resolve) => {
+      hovered = (start !== null ? elementOf(regions[start]) : null) ?? mainContent();
+      if (hovered) draw();
+      const show = (el: Element): void => {
+        hovered = el;
+        const b = el.getBoundingClientRect();
+        if (b.bottom < 0 || b.top > innerHeight) el.scrollIntoView({ block: 'nearest' });
+        draw();
+      };
       const stop = (e: Event): void => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); };
       const at = (e: MouseEvent): Element | null => {
         const el = document.elementFromPoint(e.clientX, e.clientY);
@@ -884,13 +939,22 @@ export function livePage(): void {
         if (el) picked = el;
         finish(el ? describe(el) : null);
       };
-      // The keyboard walks out to what holds the pointed-at element and back in, and Enter picks it.
+      // The keyboard walks out to what holds the element and back in, and along to the ones beside it; Enter picks it.
+      // P again stops, as Escape does: the key that started picking ends it.
       const key = (e: KeyboardEvent): void => {
-        if (e.key === 'Escape') { stop(e); finish(null); return; }
+        const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+        if (e.key === 'Escape' || (plain && !e.shiftKey && (e.key === 'p' || e.key === 'P'))) { stop(e); finish(null); return; }
         if (!hovered) return;
-        if (e.key === 'ArrowUp' && hovered.parentElement && hovered.parentElement !== document.documentElement) { stop(e); hovered = hovered.parentElement; draw(); }
-        else if (e.key === 'ArrowDown' && hovered.firstElementChild) { stop(e); hovered = hovered.firstElementChild; draw(); }
-        else if (e.key === 'Enter') { stop(e); picked = hovered; finish(describe(hovered)); }
+        if (e.key === 'ArrowUp' && hovered.parentElement && hovered.parentElement !== document.documentElement) { stop(e); show(hovered.parentElement); }
+        else if (e.key === 'ArrowDown') {
+          stop(e);
+          const inner = Array.from(hovered.children).find(onPage);
+          if (inner) show(inner);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          stop(e);
+          const next = sibling(hovered, e.key === 'ArrowRight' ? 1 : -1);
+          if (next) show(next);
+        } else if (e.key === 'Enter') { stop(e); picked = hovered; finish(describe(hovered)); }
       };
       const swallow = (e: Event): void => stop(e);
       const events: [string, EventListener][] = [
@@ -1123,8 +1187,10 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, css, problems, style, unstyle, editText, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, choose, css, problems, style, unstyle, editText, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
     cancelEdit: () => endEdit(false),
+    /** Picking or retyping: the page's keys are those, not the live view's (live-page-goto.ts asks). */
+    busy: () => !!picking || !!editing,
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,
     /** The picked element described again, after a style or new words were tried on it. */
