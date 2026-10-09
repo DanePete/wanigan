@@ -242,10 +242,74 @@
 
 @media (max-width: 640px) {
 	.trail-finder__controls {
-		gap: 0.75rem;
+		display: grid;
+		gap: 0.6rem;
+	}
+
+	/* Each set of choices is one row that scrolls sideways, not the page. */
+	.trail-finder__group {
+		flex-wrap: nowrap;
+		margin-inline: calc(-1 * var(--wp--style--root--padding-left, 1.25rem));
+		padding-inline: var(--wp--style--root--padding-left, 1.25rem);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.trail-finder__group::-webkit-scrollbar {
+		display: none;
 	}
 
 	.trail-finder__group--unit {
-		margin-inline-start: 0;
+		margin-inline-start: calc(-1 * var(--wp--style--root--padding-left, 1.25rem));
+	}
+
+	.trail-finder__label {
+		min-width: 5.5rem;
+	}
+
+	.trail-finder__choice {
+		flex: none;
+	}
+
+	/* Cards become rows: the map small on the left, the facts beside it. */
+	.trail-finder__list {
+		gap: 0.75rem;
+	}
+
+	.trail-card {
+		flex-direction: row;
+	}
+
+	.trail-card__picture {
+		flex: none;
+		width: 7.5rem;
+		aspect-ratio: auto;
+	}
+
+	.trail-card__body {
+		padding: 0.85rem 1rem;
+		gap: 0.3rem;
+	}
+
+	.trail-card__title {
+		font-size: 1.15rem;
+	}
+
+	.trail-card__facts {
+		padding-top: 0.25rem;
+		gap: 0.1rem 0.75rem;
+		font-size: 0.75rem;
+	}
+
+	.trail-card__difficulty {
+		position: static;
+		align-self: flex-start;
+		order: -1;
+		padding: 0.2rem 0.55rem;
+		font-size: 0.6875rem;
+	}
+
+	.trail-card__region {
+		display: none;
 	}
 }

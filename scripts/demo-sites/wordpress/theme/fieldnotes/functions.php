@@ -177,3 +177,19 @@ function fieldnotes_link( string $slug, string $type = 'post' ): string {
 	$post = get_page_by_path( $slug, OBJECT, $type );
 	return $post ? (string) get_permalink( $post ) : '';
 }
+
+/**
+ * The comment form in the journal's own words: a note, not a "reply".
+ */
+add_filter(
+	'comment_form_defaults',
+	static function ( array $defaults ): array {
+		$trail                            = is_singular( 'trail' );
+		$defaults['title_reply']          = $trail ? __( 'Add a trail report', 'fieldnotes' ) : __( 'Add a note', 'fieldnotes' );
+		$defaults['title_reply_to']       = __( 'Reply to %s', 'fieldnotes' );
+		$defaults['label_submit']         = $trail ? __( 'Send the report', 'fieldnotes' ) : __( 'Send the note', 'fieldnotes' );
+		$defaults['comment_notes_before'] = '<p class="comment-notes">' . esc_html__( 'Your email address stays with us. Name and email are needed; the rest is up to you.', 'fieldnotes' ) . '</p>';
+		$defaults['comment_field']        = str_replace( '>Comment', '>' . ( $trail ? esc_html__( 'What was the trail like?', 'fieldnotes' ) : esc_html__( 'Your note', 'fieldnotes' ) ), $defaults['comment_field'] );
+		return $defaults;
+	}
+);

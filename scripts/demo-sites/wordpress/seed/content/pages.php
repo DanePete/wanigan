@@ -107,8 +107,9 @@ return array(
 			. group(
 				p( 'Fieldnotes is a demonstration site. The lake country, its trails, the people who write here and the readers who comment are all invented, and so is every reading in the weather log. Any resemblance to a real place is a coincidence of names.', array( 'fontSize' => 'small' ) ),
 				array(
-					'className' => 'is-style-card fn-note',
+					'className' => 'is-style-card fn-pad',
 					'name'      => 'A note on what is real',
+					'layout'    => array( 'type' => 'default' ),
 				)
 			),
 	),
@@ -118,7 +119,7 @@ return array(
 		'slug'     => 'gear-checklist',
 		'order'    => 5,
 		'template' => '',
-		'picture'  => 'kit-winter',
+		'picture'  => 'kit-day',
 		'content'  => static fn () =>
 			p( 'What we carry, by season. Ticked items go on every walk; the rest depend on the day. Weights are what our own things weigh on the kitchen scale.', array( 'className' => 'fn-standfirst', 'fontSize' => 'large' ) )
 			. columns(

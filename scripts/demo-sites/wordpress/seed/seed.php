@@ -107,6 +107,7 @@ $fn_synced = array(
 			array(
 				'className' => 'is-style-card fn-pad',
 				'name'      => 'Leave it as you found it',
+				'layout'    => array( 'type' => 'default' ),
 			)
 		),
 	),
@@ -119,6 +120,7 @@ $fn_synced = array(
 			array(
 				'className' => 'is-style-card fn-pad',
 				'name'      => 'How we keep the log',
+				'layout'    => array( 'type' => 'default' ),
 			)
 		),
 	),
@@ -362,7 +364,7 @@ foreach ( get_posts(
 	wp_delete_post( $fn_id, true );
 }
 
-$fn_count = static fn ( string $type ) => (int) array_sum( (array) wp_count_posts( $type ) );
+$fn_count = static fn ( string $type ) => (int) wp_count_posts( $type )->publish + (int) ( 'attachment' === $type ? wp_count_posts( $type )->inherit : 0 );
 WP_CLI::success(
 	sprintf(
 		'Fieldnotes: %d entries, %d trails, %d pages, %d synced patterns, %d pictures, %d readers\' notes.',

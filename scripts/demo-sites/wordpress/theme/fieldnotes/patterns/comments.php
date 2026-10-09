@@ -6,9 +6,17 @@
  * Categories: fieldnotes
  * Inserter: no
  */
+
+$fieldnotes_heading = is_singular( 'trail' ) ? 'Trail reports' : 'Notes from readers';
 ?>
 <!-- wp:comments {"metadata":{"name":"Readers' notes"},"className":"fn-comments"} -->
-<div class="wp-block-comments fn-comments"><!-- wp:comments-title {"level":2,"showPostTitle":false,"fontSize":"x-large"} /-->
+<div class="wp-block-comments fn-comments"><!-- wp:group {"style":{"spacing":{"blockGap":"0.75rem"}},"layout":{"type":"flex","flexWrap":"nowrap","verticalAlignment":"center"}} -->
+<div class="wp-block-group"><!-- wp:heading {"fontSize":"x-large"} -->
+<h2 class="wp-block-heading has-x-large-font-size"><?php echo esc_html( $fieldnotes_heading ); ?></h2>
+<!-- /wp:heading -->
+
+<!-- wp:post-comments-count {"className":"fn-count"} /--></div>
+<!-- /wp:group -->
 
 <!-- wp:comment-template -->
 <!-- wp:group {"style":{"spacing":{"padding":{"top":"var:preset|spacing|30","bottom":"var:preset|spacing|30"},"blockGap":"0.5rem"},"border":{"top":{"color":"var:preset|color|line","width":"1px"}}},"layout":{"type":"default"}} -->

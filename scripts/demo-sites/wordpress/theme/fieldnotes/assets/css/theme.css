@@ -418,6 +418,9 @@ body {
 
 /* The header's search: a quiet icon that opens into a field. */
 .site-header__search .wp-block-search__button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	width: 2.5rem;
 	height: 2.5rem;
 	margin: 0;
@@ -462,4 +465,137 @@ body {
 /* The essay band: its words sit low, on the same grid as every other section. */
 .wp-block-cover.fn-essay {
 	align-items: flex-end;
+}
+
+/* The front page plate: wide on a desk, closer on a phone. */
+.fn-hero-image img {
+	width: 100%;
+	aspect-ratio: 2 / 1;
+	object-fit: cover;
+}
+
+@media (max-width: 640px) {
+	.fn-hero-image img {
+		aspect-ratio: 4 / 3;
+	}
+}
+
+/* Section chips: "Everything" and the sections wrap as one row. */
+.fn-chips > .wp-block-categories.is-style-chips {
+	display: contents;
+}
+
+/* Tags under an entry, and the entries either side. */
+.fn-tags {
+	font-weight: 400;
+	color: var(--wp--preset--color--muted);
+}
+
+.fn-tags a {
+	color: var(--wp--preset--color--contrast);
+}
+
+.fn-either-side {
+	padding-top: var(--wp--preset--spacing--30);
+	border-top: 1px solid var(--wp--preset--color--line);
+}
+
+.fn-either-side > * {
+	flex: 1 1 16rem;
+	max-width: 24rem;
+}
+
+.fn-either-side a {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+	text-decoration: none;
+}
+
+.fn-either-side .post-navigation-link__label {
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--wp--preset--color--muted);
+}
+
+.fn-either-side .post-navigation-link__title {
+	font-family: var(--wp--preset--font-family--literata);
+	font-size: var(--wp--preset--font-size--large);
+	line-height: 1.25;
+}
+
+.fn-either-side a:hover .post-navigation-link__title {
+	color: var(--wp--preset--color--accent);
+}
+
+/* Readers' notes and their form. */
+.fn-count {
+	padding: 0.15rem 0.6rem;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--pill);
+	font-family: var(--wp--preset--font-family--fira-code);
+	font-size: var(--wp--preset--font-size--x-small);
+}
+
+.fn-comments .wp-block-comment-content {
+	font-size: var(--wp--preset--font-size--medium);
+}
+
+.wp-block-post-comments-form textarea,
+.wp-block-post-comments-form input:not([type="submit"]):not([type="checkbox"]) {
+	width: 100%;
+	padding: 0.75rem 0.9rem;
+	border: 1px solid var(--wp--preset--color--line);
+	border-radius: var(--wp--custom--radius--medium);
+	background: var(--wp--preset--color--surface);
+	color: var(--wp--preset--color--contrast);
+	font: inherit;
+	font-size: var(--wp--preset--font-size--small);
+}
+
+.wp-block-post-comments-form textarea {
+	min-height: 9rem;
+}
+
+.wp-block-post-comments-form :is(textarea, input):focus {
+	outline: 2px solid var(--wp--preset--color--accent);
+	outline-offset: 1px;
+}
+
+.wp-block-post-comments-form .comment-reply-title {
+	margin-top: var(--wp--preset--spacing--50);
+	font-family: var(--wp--preset--font-family--literata);
+	font-size: var(--wp--preset--font-size--x-large);
+	font-weight: 300;
+}
+
+.wp-block-post-comments-form .comment-notes,
+.wp-block-post-comments-form .comment-form-cookies-consent {
+	font-size: var(--wp--preset--font-size--small);
+	color: var(--wp--preset--color--muted);
+}
+
+/* Rhythm in an entry or a page: more air above a heading or a wide figure
+   than between two paragraphs. Full-width sections set their own. */
+.wp-block-post-content > h2 {
+	margin-block-start: var(--wp--preset--spacing--60);
+}
+
+.wp-block-post-content > h3 {
+	margin-block-start: var(--wp--preset--spacing--50);
+}
+
+.wp-block-post-content > :is(.alignwide, .wp-block-image, .wp-block-gallery, .wp-block-table, .wp-block-pullquote, .wp-block-columns, .wp-block-group.is-style-notebook, .wp-block-fieldnotes-season-figures):not(.alignfull) {
+	margin-block: var(--wp--preset--spacing--50);
+}
+
+.wp-block-post-content > .wp-block-details + .wp-block-details {
+	margin-block-start: 0;
+}
+
+.wp-block-post-content > .wp-block-columns h2,
+.wp-block-post-content > .wp-block-columns h3 {
+	margin-block-start: 0;
 }

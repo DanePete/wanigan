@@ -388,13 +388,20 @@ function fn_user( string $login, string $name, string $email, string $bio, strin
 	return (int) $id;
 }
 
-/** The attachment id of a picture, importing it from .demo-images the first time. */
+/**
+ * The attachment id of a picture, importing it from .demo-images the first
+ * time. When the drawing changes (its checksum differs from the one kept on
+ * the attachment), the file is replaced in place and its sizes made again,
+ * so the id, and every block that points at it, stays the same.
+ */
 function fn_picture_id( string $name ): int {
 	static $cache = array();
 	if ( isset( $cache[ $name ] ) ) {
 		return $cache[ $name ];
 	}
-	$ids = get_posts(
+	$source = FN_PICTURES . "/{$name}.jpg";
+	$sum    = is_readable( $source ) ? md5_file( $source ) : '';
+	$ids    = get_posts(
 		array(
 			'post_type'      => 'attachment',
 			'post_status'    => 'inherit',
@@ -405,10 +412,19 @@ function fn_picture_id( string $name ): int {
 		)
 	);
 	if ( $ids ) {
-		return $cache[ $name ] = (int) $ids[0];
+		$id = (int) $ids[0];
+		if ( $sum && get_post_meta( $id, '_fieldnotes_picture_md5', true ) !== $sum ) {
+			$file   = get_attached_file( $id );
+			$backup = get_post_meta( $id, '_wp_attachment_backup_sizes', true );
+			wp_delete_attachment_files( $id, wp_get_attachment_metadata( $id ), is_array( $backup ) ? $backup : array(), $file );
+			copy( $source, $file );
+			wp_update_attachment_metadata( $id, wp_generate_attachment_metadata( $id, $file ) );
+			update_post_meta( $id, '_fieldnotes_picture_md5', $sum );
+			WP_CLI::log( "    redrawn: {$name}" );
+		}
+		return $cache[ $name ] = $id;
 	}
-	$source = FN_PICTURES . "/{$name}.jpg";
-	if ( ! is_readable( $source ) ) {
+	if ( ! $sum ) {
 		WP_CLI::error( "No picture {$name}.jpg in .demo-images: draw_images should have made it." );
 	}
 	$tmp = wp_tempnam( "{$name}.jpg" );
@@ -424,6 +440,7 @@ function fn_picture_id( string $name ): int {
 		WP_CLI::error( "picture {$name}: " . $id->get_error_message() );
 	}
 	update_post_meta( $id, '_fieldnotes_picture', $name );
+	update_post_meta( $id, '_fieldnotes_picture_md5', $sum );
 	return $cache[ $name ] = (int) $id;
 }
 

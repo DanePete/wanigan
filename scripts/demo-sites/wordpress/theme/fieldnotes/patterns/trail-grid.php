@@ -14,7 +14,13 @@
 <!-- wp:pattern {"slug":"fieldnotes/trail-card"} /-->
 <!-- /wp:post-template -->
 
-<!-- wp:pattern {"slug":"fieldnotes/pagination"} /-->
+<!-- wp:query-pagination {"paginationArrow":"arrow","className":"fn-pagination","style":{"spacing":{"margin":{"top":"var:preset|spacing|60"}}},"layout":{"type":"flex","justifyContent":"space-between"}} -->
+<!-- wp:query-pagination-previous {"label":"Newer"} /-->
+
+<!-- wp:query-pagination-numbers /-->
+
+<!-- wp:query-pagination-next {"label":"Older"} /-->
+<!-- /wp:query-pagination -->
 
 <!-- wp:query-no-results -->
 <!-- wp:paragraph -->
