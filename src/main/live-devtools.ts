@@ -22,7 +22,7 @@
 import { WebContentsView, ipcMain, shell, type BrowserWindow, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { isDevtoolsKey } from '../shared/shortcuts.ts';
 import {
-  DEVTOOLS_CLOSED, devtoolsBox, devtoolsPoint, devtoolsStep, viewportBox,
+  DEVTOOLS_CLOSED, devtoolsBox, devtoolsPoint, devtoolsStep, revealedOf,
   type DevtoolsEffect, type DevtoolsEvent, type DevtoolsModel, type LiveDevtoolsMode,
 } from '../shared/live-devtools.ts';
 import type { LiveViewHooks } from './live-view.ts';
@@ -210,7 +210,7 @@ export function wireLiveDevtools(options: {
   ipcMain.handle('live:reveal', async (event, index: unknown) => {
     if (!ok(event) || (index !== null && (!Number.isInteger(index) || (index as number) < 0))) return null;
     const box = await options.run<unknown>(`window.__wl && window.__wl.reveal ? window.__wl.reveal(${JSON.stringify(index)}) : null`, null);
-    return viewportBox(box);
+    return revealedOf(box);
   });
 
   return { hooks, mode: () => model.mode };

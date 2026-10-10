@@ -583,6 +583,8 @@ try {
       const since = async (n) => (await calls()).slice(n);
       const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       const frames = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+      // A picture of what was just checked, without the toasts earlier steps left (they were checked there).
+      const devShot = (name) => page.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled', style: '.toasts { visibility: hidden !important; }' });
       const devtools = page.locator('.live-bar-tools button[aria-keyshortcuts="Alt+Meta+I"]');
       const open = () => page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="devtools"] .live-devtools-host', { timeout: 3000 }).then(() => true, () => false);
       /** Where the stand-in laid DevTools' view, against the tab's own area: the same box, to the pixel. */
@@ -600,12 +602,16 @@ try {
           return !!h && !!b && Math.round(h.left) === Math.round(b.x) && Math.round(h.top) === Math.round(b.y) && Math.round(h.width) === Math.round(b.width) && Math.round(h.height) === Math.round(b.height);
         }, null, { timeout: 3000 }).catch(async () => fail(t(`devtools: after ${what} DevTools is not over the tab (${JSON.stringify(await laid())})`)));
       };
-      /** The centre DevTools must be pointed at for a part: what of it is on screen, in the page's pixels (shared/live-devtools.ts). */
+      /**
+       * The centre DevTools must be pointed at for a part: what of it is on screen as the page is scrolled now, in the
+       * page's pixels, the page being as big as its place in the window (shared/live-devtools.ts centreOf).
+       */
       const centreFor = (index) => page.evaluate(async (i) => {
         const r = await window.wanigan.live.where(i);
         const d = document.querySelector('.live-device');
         if (!r || !d) return null;
-        const left = Math.max(0, r.x), top = Math.max(0, r.y), right = Math.min(d.clientWidth, r.x + r.width), bottom = Math.min(d.clientHeight, r.y + r.height);
+        const y = r.y - (window.__wgLive.scrollY ?? 0);
+        const left = Math.max(0, r.x), top = Math.max(0, y), right = Math.min(d.clientWidth, r.x + r.width), bottom = Math.min(d.clientHeight, y + r.height);
         return `${Math.min(d.clientWidth - 1, Math.floor((left + right) / 2))} ${Math.min(d.clientHeight - 1, Math.floor((top + bottom) / 2))}`;
       }, index);
       /** The region a row of the tree stands for: what choosing it chooses on the page (then back to the tree alone). */
@@ -655,7 +661,7 @@ try {
       if (!said.includes('Wanigan’s marks are in this page’s HTML while the live view is on.')) fail(t(`devtools: the tab does not say what of the page is Wanigan’s (${said})`));
       if (!said.includes('X-Wanigan-Live')) fail(t('devtools: on a site with the helper the tab does not say the Network panel shows its key'));
       if (!said.includes('⌥⌘I opens or closes this tab.')) fail(t(`devtools: the tab does not say its key (${said})`));
-      await shot('devtools');
+      await devShot('devtools');
 
       // It follows the tab: the window resized, the dock's edge moved by the keyboard, the dock beside the page and back.
       await page.setViewportSize({ width: 1280, height: 800 });
@@ -667,7 +673,7 @@ try {
       await page.click('.editor-actions button[aria-label="Put the dock beside the view"]');
       await page.waitForSelector('.editor-drawer[data-dock="right"]:not([hidden]) .live-devtools-host', { timeout: 3000 }).catch(() => fail(t('devtools: beside the page the tab is gone')));
       await followed('the dock went beside the page');
-      await shot('devtools-beside');
+      await devShot('devtools-beside');
       await page.click('.editor-actions button[aria-label="Put the dock beneath the view"]');
       await followed('the dock came back beneath the page');
       await page.focus('.editor-resizer');
@@ -720,7 +726,8 @@ try {
       await page.click('.editor-actions button[aria-label="Hide the dock"]');
       await page.locator('.live-layer', { hasText: /^Hero/ }).first().click();
       await page.waitForSelector('.live-inspector', { timeout: 3000 });
-      const showHero = page.getByRole('button', { name: 'Show Hero in DevTools (⇧D)' });
+      // Beside the part's name (the tree above it, folded to Hero, has its own on Hero's row).
+      const showHero = page.locator('.live-inspector').getByRole('button', { name: 'Show Hero in DevTools (⇧D)' });
       if (!(await showHero.count())) fail(t('devtools: the chosen part has no Show in DevTools'));
       n = await mark();
       await showHero.click();
@@ -729,7 +736,7 @@ try {
       const heroAt = await page.evaluate(() => window.__wgLive.picked);
       if (asked.at !== await centreFor(heroAt)) fail(t(`devtools: DevTools was pointed at ${asked.at}, not the centre of Hero (${await centreFor(heroAt)})`));
       if (!(await open())) fail(t('devtools: Show in DevTools did not open the DevTools tab'));
-      await shot('devtools-inspect');
+      await devShot('devtools-inspect');
       // ⇧D does what the button does.
       await nobody();
       n = await mark();
@@ -750,12 +757,13 @@ try {
         return !!row && !!act && act.top >= row.top - 1 && act.bottom <= row.bottom + 1 && Math.abs(act.right - row.right) <= 1;
       });
       if (!beside) fail(t('devtools: Show in DevTools is not at the end of the row pointed at'));
-      await shot('devtools-row');
+      await devShot('devtools-row');
       n = await mark();
       await rowAct.click();
       asked = await inspected(n, 'Show in DevTools on a row');
       if (asked.reveal !== sidebarAt) fail(t(`devtools: the row's Show in DevTools brought ${asked.reveal} into view, not Sidebar (${sidebarAt})`));
-      if (asked.at !== await centreFor(Number(sidebarAt))) fail(t(`devtools: the row pointed DevTools at ${asked.at}, not the centre of Sidebar`));
+      if (asked.at !== await centreFor(Number(sidebarAt))) fail(t(`devtools: the row pointed DevTools at ${asked.at}, not the centre of Sidebar (${await centreFor(Number(sidebarAt))})`));
+      if (!(await page.evaluate(() => window.__wgLive.scrollY > 0))) fail(t('devtools: Sidebar, below the fold, was not scrolled into view'));
       const search = page.locator('.live-layer', { hasText: /^Search/ }).first();
       const searchAt = await regionOfRow(search);
       await search.focus();
@@ -771,7 +779,7 @@ try {
       await page.waitForSelector('.live-devtools-away:has-text("DevTools is in its own window.")', { timeout: 3000 }).catch(() => fail(t('devtools: in its own window, the tab does not say where DevTools is')));
       if (!(await since(n)).includes('devtoolsDetach')) fail(t('devtools: Open in its own window did not ask for DevTools’ own window'));
       if ((await laid()).drawn) fail(t('devtools: DevTools is drawn in the dock and in its own window'));
-      await shot('devtools-detached');
+      await devShot('devtools-detached');
       n = await mark();
       await page.getByRole('button', { name: 'Back into the dock' }).click();
       await page.waitForFunction((k) => { const c = window.__wgLive.calls.slice(k); return c.indexOf('devtoolsClose') >= 0 && c.indexOf('devtoolsShow focus') > c.indexOf('devtoolsClose'); }, n, { timeout: 3000 })
@@ -795,6 +803,7 @@ try {
       await page.goto(`${base}#/p/NS/live`);
       await page.waitForSelector('.live-tree', { timeout: 15_000 });
       if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
+      await page.evaluate(() => window.__wgLive.scrollTo(0));
     }
 
     // ── The design layer: a style tried and words retyped on a chosen part are edits of the layer, shown on the page
@@ -1833,8 +1842,10 @@ try {
     if (!foot.box || foot.y <= 0 || foot.box.y < 0 || foot.box.y + foot.box.height > 600 || foot.box.x !== 120 || foot.box.width !== 300) {
       fail(`page script: revealing a part off screen did not bring it into view (${JSON.stringify(foot)})`);
     }
-    // The box answered is where it is now: the same as where() says after.
-    if (JSON.stringify(foot.box) !== JSON.stringify(await tall.evaluate((i) => window.__wl.where(i), footAt))) fail('page script: reveal answered a box other than where the part is');
+    // The box answered is where it is now (the same as where() says after), with the viewport it was measured in.
+    const { viewWidth, viewHeight, ...footBox } = foot.box;
+    if (JSON.stringify(footBox) !== JSON.stringify(await tall.evaluate((i) => window.__wl.where(i), footAt))) fail('page script: reveal answered a box other than where the part is');
+    if (viewWidth !== 800 || viewHeight !== 600) fail(`page script: reveal measured the part in a viewport of ${viewWidth} × ${viewHeight}, not 800 × 600`);
     await tall.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
     const marked = await tall.evaluate((i) => ({ box: window.__wl.reveal(i), y: scrollY }), markedAt);
     if (!marked.box || marked.y <= 0 || marked.box.y < 0 || marked.box.y >= 600) fail(`page script: revealing a part marked by comments did not bring it into view (${JSON.stringify(marked)})`);

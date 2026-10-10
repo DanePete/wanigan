@@ -685,8 +685,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const chord = devtoolsChord(bridge().platform === 'darwin');
   /** Show in DevTools: a region from the last scan, or the picked element (null); DevTools' inspector at its centre. */
   const inspectIn = async (target: number | null): Promise<void> => {
-    const d = deviceRef.current;
-    const why = await showInDevtools(live, target, d ? { width: d.clientWidth, height: d.clientHeight } : null);
+    const why = await showInDevtools(live, target);
     if (why) toast(why);
   };
   const inspectChosen = (): void => {

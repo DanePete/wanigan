@@ -764,11 +764,15 @@ export function liveStub(f) {
       return true;
     },
     onDevtools(l) { listeners.devtools.add(l); return () => listeners.devtools.delete(l); },
-    // Where a part is in the view now (its box less the page's scroll), as the page script answers after bringing it into view.
+    // Where a part is in the view now, as the page script answers: scrolled to it (centred) when none of it is on
+    // screen, its box less the page's scroll, and the viewport's size.
     async reveal(index) {
       window.__wgLive.calls.push(`reveal ${index}`);
       const r = regions[index ?? window.__wgLive.picked];
-      return r ? { ...r.rect, y: r.rect.y - (window.__wgLive.scrollY ?? 0) } : null;
+      if (!r || !bounds) return null;
+      const top = r.rect.y - (window.__wgLive.scrollY ?? 0);
+      if (top + r.rect.height <= 0 || top >= bounds.height) window.__wgLive.scrollTo(Math.max(0, Math.round(r.rect.y + r.rect.height / 2 - bounds.height / 2)));
+      return { box: { ...r.rect, y: r.rect.y - window.__wgLive.scrollY }, view: { width: bounds.width, height: bounds.height } };
     },
     async scan() { return regions; },
     async outline(indexes, label, tone) { shown.outline = indexes.map((index) => ({ index, label, tone })); draw(); return indexes.length; },

@@ -78,17 +78,27 @@ export function inProject(projectKey: string, hash = location.hash): boolean {
   return (route.name === 'project' || route.name === 'session') && route.projectKey === projectKey;
 }
 
+/** Three frames: the dock drawn open, the page's placeholder measured smaller, and the view told so. */
+const settled = (): Promise<void> => new Promise((done) => {
+  requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+});
+
 /**
- * Show a part in DevTools: the page scrolled to it when none of it is on screen, the DevTools tab opened (unless
- * DevTools is in its own window, where it stays), and DevTools' inspector pointed at the centre of what of it is on
- * screen, so the Elements panel selects it. `target` is a region from the last scan, or the picked element (null);
- * `view` is the page's size. Null when it was shown, else why not.
+ * Show a part in DevTools: the DevTools tab opened first (unless DevTools is in its own window, where it stays), since
+ * opening the dock makes the page shorter; then the page scrolled to the part when none of it is on screen, and
+ * DevTools' inspector pointed at the centre of what of it is on screen in the viewport it was measured in, so the
+ * Elements panel selects it. `target` is a region from the last scan, or the picked element (null). Null when it was
+ * shown, else why not.
  */
-export async function showInDevtools(live: LiveBridge, target: number | null, view: { width: number; height: number } | null): Promise<string | null> {
-  const box = await live.reveal(target);
-  if (!box) return 'It is not on the page now: reload, or choose it again.';
-  const at = view ? centreOf(box, view) : null;
+export async function showInDevtools(live: LiveBridge, target: number | null): Promise<string | null> {
+  const s = editorState();
+  if (devtoolsMode() !== 'detached' && !(s.open && dockShows(s) === DEVTOOLS_TAB)) {
+    showDock(DEVTOOLS_TAB);
+    await settled();
+  }
+  const shown = await live.reveal(target);
+  if (!shown) return 'It is not on the page now: reload, or choose it again.';
+  const at = centreOf(shown.box, shown.view);
   if (!at) return 'None of it is on screen, so DevTools has nothing to point at.';
-  if (devtoolsMode() !== 'detached') showDock(DEVTOOLS_TAB);
   return (await live.devtoolsInspect(at.x, at.y)) ? null : 'DevTools could not open for this page.';
 }

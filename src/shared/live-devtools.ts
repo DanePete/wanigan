@@ -147,6 +147,19 @@ export function viewportBox(raw: unknown): DevtoolsBox | null {
   return x === null || y === null || width === null || height === null ? null : { x, y, width, height };
 }
 
+/** A part brought into view, as the page script read it: its box in the viewport, and the viewport's size then. */
+export interface LiveRevealed { box: DevtoolsBox; view: { width: number; height: number } }
+
+/** What the page script answered for a part brought into view, checked; null when it is not that. */
+export function revealedOf(raw: unknown): LiveRevealed | null {
+  const box = viewportBox(raw);
+  if (!box || !raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const side = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 100_000 ? Math.round(v) : null);
+  const width = side(r.viewWidth), height = side(r.viewHeight);
+  return width === null || height === null ? null : { box, view: { width, height } };
+}
+
 /**
  * Where to point DevTools' inspector at a part: the centre of what of it is on screen, in the page's own pixels
  * (`box` is in the viewport, `view` is the viewport's size). Null when none of it is on screen.

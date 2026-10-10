@@ -823,10 +823,11 @@ export function livePage(): void {
 
   /**
    * A part's box in the view, the page scrolled to it first when none of it is on screen: a region from the last scan,
-   * or the picked element (null). Show in DevTools points DevTools' inspector at its centre. Scrolled instantly, never
-   * smoothly: a site's smooth scrolling would leave the box where it was when it is read.
+   * or the picked element (null), with the viewport's size it was measured in. Show in DevTools points DevTools'
+   * inspector at the centre of what of it is on screen. Scrolled instantly, never smoothly: a site's smooth scrolling
+   * would leave the box where it was when it is read.
    */
-  function reveal(index: number | null): Rect | null {
+  function reveal(index: number | null): (Rect & { viewWidth: number; viewHeight: number }) | null {
     const r = index === null ? null : regions[index];
     if (index !== null && !r) return null;
     const box = (): DOMRect | null => {
@@ -852,7 +853,7 @@ export function livePage(): void {
       }
       if (!b) return null;
     }
-    return { x: Math.round(b.left), y: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height) };
+    return { x: Math.round(b.left), y: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height), viewWidth: innerWidth, viewHeight: innerHeight };
   }
 
   function outline(indexes: number[], label: string | null, tone: Tone = 'edit'): number {

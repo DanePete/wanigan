@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  DEVTOOLS_CLOSED, centreOf, devtoolsBox, devtoolsPoint, devtoolsStep, offScreen, viewportBox,
+  DEVTOOLS_CLOSED, centreOf, devtoolsBox, devtoolsPoint, devtoolsStep, offScreen, revealedOf, viewportBox,
   type DevtoolsEffect, type DevtoolsEvent, type DevtoolsModel,
 } from './live-devtools.ts';
 
@@ -131,6 +131,11 @@ test('boxes and points from the window are checked', () => {
   assert.deepEqual(viewportBox({ x: -40, y: -1200.2, width: 300, height: 80 }), { x: -40, y: -1200, width: 300, height: 80 });
   assert.equal(viewportBox({ x: 0, y: 0, width: -1, height: 4 }), null);
   assert.equal(viewportBox({ x: 0, y: 2e9, width: 1, height: 4 }), null);
+  // A part brought into view comes with the viewport it was measured in: the centre is read against that.
+  assert.deepEqual(revealedOf({ x: 10, y: -5, width: 100, height: 40, viewWidth: 1179.6, viewHeight: 512 }), { box: { x: 10, y: -5, width: 100, height: 40 }, view: { width: 1180, height: 512 } });
+  for (const bad of [{ x: 1, y: 1, width: 1, height: 1 }, { x: 1, y: 1, width: 1, height: 1, viewWidth: 0, viewHeight: 5 }, { x: 1, y: 1, width: 1, height: 1, viewWidth: 9, viewHeight: '5' }, null]) {
+    assert.equal(revealedOf(bad), null, JSON.stringify(bad));
+  }
 });
 
 test('the centre of a part is the centre of what of it is on screen, in the page’s pixels', () => {

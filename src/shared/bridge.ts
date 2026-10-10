@@ -10,7 +10,7 @@ import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { LiveGesture, LiveKeyId } from './live-keys.ts';
-import type { LiveDevtoolsMode } from './live-devtools.ts';
+import type { LiveDevtoolsMode, LiveRevealed } from './live-devtools.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -149,11 +149,11 @@ export interface LiveBridge {
   /** Where DevTools is, each time that changes (its own window closed by the owner, too). */
   onDevtools(listener: (mode: LiveDevtoolsMode) => void): () => void;
   /**
-   * A part's box in the view now (CSS pixels of the viewport; it may run off an edge), after scrolling the page to it
-   * when none of it was on screen: a region from the last scan, or the picked element (null). Null when it is not on
-   * the page.
+   * A part's box in the view now (CSS pixels of the viewport; it may run off an edge) and the viewport's size it was
+   * measured in, after scrolling the page to it when none of it was on screen: a region from the last scan, or the
+   * picked element (null). Null when it is not on the page.
    */
-  reveal(index: number | null): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  reveal(index: number | null): Promise<LiveRevealed | null>;
   /** The regions of the page and what produced each. */
   scan(): Promise<LiveRegion[]>;
   /** Outline regions by their index from the last scan: an edit's, a pointed-at row's (dashed), a pick's. Returns how many were drawn. */
