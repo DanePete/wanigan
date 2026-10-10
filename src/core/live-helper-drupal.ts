@@ -526,7 +526,7 @@ final class LiveController extends ControllerBase {
       }
     }
     elseif (!$entity->hasTranslation($langcode)) {
-      return $this->refuse('This content has no translation in that language, so the words are not saved to another one. Translate it in Drupal first.', 409);
+      return $this->refuse('This content has no translation in that language, and Wanigan does not make one from here yet, so the words are not saved to another one. Translate it in Drupal first.', 409);
     }
     else {
       $entity = $entity->getTranslation($langcode);
@@ -551,11 +551,11 @@ final class LiveController extends ControllerBase {
       $latest = method_exists($storage, 'getLatestTranslationAffectedRevisionId') ? $storage->getLatestTranslationAffectedRevisionId($entity->id(), $entity->language()->getId()) : NULL;
       if ($shown !== '' && (string) $entity->getRevisionId() !== $shown) {
         return $this->refuse($latest !== NULL && (string) $latest === $shown
-          ? 'The page shows a draft, not the version visitors see, and words are saved from here only to that one. Change the draft in Drupal’s form.'
+          ? 'The page shows a draft, not the version visitors see: Wanigan does not save words into a draft yet, only into the version visitors see. Change the draft in Drupal’s form.'
           : 'This content was saved again since the page loaded. Reload, and try again.', 409);
       }
       if ($latest !== NULL && (int) $latest > (int) $entity->getRevisionId()) {
-        return $this->refuse('This content has a newer draft than the version the page shows. Saving here would make a new version without the draft’s changes and leave the draft behind, so nothing is saved. Change it in Drupal’s form, which edits the draft.', 409);
+        return $this->refuse('This content has a newer draft than the version the page shows, and Wanigan does not save into a draft yet: saving here would make a new version without the draft’s changes and leave the draft behind, so nothing is saved. Change it in Drupal’s form, which edits the draft.', 409);
       }
     }
     elseif ($shownChanged !== '' && method_exists($entity, 'getChangedTime') && (string) $entity->getChangedTime() !== $shownChanged) {

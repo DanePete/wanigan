@@ -208,11 +208,11 @@ final class Words {
     $literal = self::literal($format);
     $stored = (string) $value->{$property};
     if ($trimmed && !self::whole($stored, $before, $literal)) {
-      return [409, 'These words are shown cut short here (a trimmed summary): where they end on the page is not where they end in the text, so Wanigan does not change them from here. Change them where the whole text shows, or in Drupal’s form.'];
+      return [409, 'These words are shown cut short here (a trimmed summary): where they end on the page is not where they end in the text, so Wanigan does not change them from here yet. Change them where the whole text shows, or in Drupal’s form.'];
     }
     $changed = self::replace($stored, $before, $after, $literal);
     if ($changed === NULL) {
-      return [409, 'These words are kept with a spelling Wanigan cannot change without rewriting the markup around them, so nothing is saved. Change them in Drupal’s form.'];
+      return [409, 'These words are kept with a spelling Wanigan does not change yet without rewriting the markup around them, so nothing is saved. Change them in Drupal’s form.'];
     }
     $langcode = $entity->language()->getId();
     $why = self::compare(self::render($stored, $format_id, $langcode), self::render($changed, $format_id, $langcode), $before, self::fold($after));
@@ -514,7 +514,7 @@ final class Words {
       return 'These words are a link Drupal’s URL filter makes from an address in the text (shortened to show): Drupal keeps the address, not these words, so there is no such thing to change. Change the address in Drupal’s form.';
     }
     if ($media) {
-      return 'These words are not in this field’s text: a media item embedded in it (<drupal-media>) shows them, and they are that media item’s. Change them on the media item.';
+      return 'These words are not in this field’s text: a media item embedded in it (<drupal-media>) shows them, and they are that media item’s, which Wanigan does not change from here yet. Change them on the media item.';
     }
     return 'The field no longer holds those words: it changed since the page loaded. Reload, and try again.';
   }
@@ -1332,8 +1332,172 @@ final class InlineWords {
 }
 `;
 
+const TEMPLATE_WORDS = String.raw`<?php
+
+namespace Drupal\wanigan_live\Save;
+
+use Drupal\Component\FrontMatter\FrontMatter;
+use Drupal\wanigan_live\Trace\Source;
+use Drupal\wanigan_live\Trace\TraceBuilder;
+use Twig\Source as TwigSource;
+use Twig\Token;
+
+/**
+ * Words a template writes, offered with why they are not saved here.
+ *
+ * Words typed into a Twig template change only by changing the template,
+ * which is code: Drupal keeps no stored copy of them to change. Words a
+ * template prints through t() (the t and trans filters, a trans tag)
+ * belong to Drupal's interface translation, which Wanigan does not change
+ * yet. For each template part of a page the helper lists both, read from
+ * the template's source by Drupal's own Twig lexer (nothing is compiled or
+ * run): its literal runs of words between tags and between what Twig
+ * prints, and its t() strings that print nothing else. The design layer
+ * finds an element's words there when nothing that saves holds them, and
+ * says which it is.
+ */
+final class TemplateWords {
+
+  /**
+   * Where Twig prints something or decides something: no run of words goes
+   * across it.
+   */
+  private const PRINTED = "\u{E000}";
+
+  private static array $scanned = [];
+
+  /**
+   * The targets for a template part's words: words.tpl.<hash> for those
+   * written in it, words.t.<hash> for those it prints through t().
+   */
+  public static function targets(TraceBuilder $builder, array $p): array {
+    $file = (string) ($p['file'] ?? '');
+    if (!str_ends_with($file, '.html.twig')) {
+      return [];
+    }
+    try {
+      [$written, $translated] = self::$scanned[$file] ??= self::scan($file);
+    }
+    catch (\Throwable) {
+      return [];
+    }
+    $hash = substr(md5($file), 0, 12);
+    $out = [];
+    if ($written) {
+      $out[] = self::add($builder, 'words.tpl.' . $hash, 'Words written in ' . basename($file), $written,
+        'These words are written in ' . $file . ', a template: a template is code, so Drupal keeps no such thing to change in the site. An agent can change the template from a brief (a copy of it in your theme, when the template is not yours).');
+    }
+    if ($translated) {
+      $out[] = self::add($builder, 'words.t.' . $hash, 'Words ' . basename($file) . ' translates', $translated,
+        'These words are printed by ' . $file . ' through Drupal’s interface translation (t()): Wanigan does not change an interface translation yet, and a change there reaches every page that prints the same words. Change them under Interface translation, or in the template.');
+    }
+    return array_values(array_filter($out));
+  }
+
+  private static function add(TraceBuilder $builder, string $id, string $label, array $runs, string $why): ?string {
+    $properties = [];
+    $value = [];
+    foreach (array_slice(array_values(array_unique($runs)), 0, 100) as $i => $words) {
+      $properties['w' . ($i + 1)] = ['type' => 'string', 'title' => 'Words ' . ($i + 1), 'readOnly' => TRUE];
+      $value['w' . ($i + 1)] = $words;
+    }
+    $target = [
+      'id' => $id, 'kind' => 'template-override', 'label' => $label, 'via' => 'schema', 'revisions' => FALSE,
+      'schema' => ['type' => 'object', 'properties' => $properties], 'value' => $value, 'why' => $why,
+    ];
+    return $builder->addEdit($target, ['kind' => 'words', 'what' => 'none', 'why' => $why]) ? $id : NULL;
+  }
+
+  /**
+   * A template's words: [written, printed through t()].
+   */
+  private static function scan(string $file): array {
+    $path = Source::app() . $file;
+    $code = @file_get_contents($path);
+    if (!is_string($code) || strlen($code) > 262144) {
+      return [[], []];
+    }
+    if (str_starts_with(ltrim($code), '---')) {
+      $code = FrontMatter::create($code)->getContent();
+    }
+    $stream = \Drupal::service('twig')->tokenize(new TwigSource($code, $file, $path));
+    $skeleton = '';
+    $translated = [];
+    // The words of a trans tag being read; NULL outside one, or in its
+    // plural, which is not what a singular page shows.
+    $trans = NULL;
+    $inTrans = FALSE;
+    while (!$stream->isEOF()) {
+      $token = $stream->getCurrent();
+      if ($token->test(Token::TEXT_TYPE)) {
+        if ($inTrans) {
+          $trans = $trans === NULL ? NULL : $trans . $token->getValue();
+        }
+        else {
+          $skeleton .= $token->getValue();
+        }
+      }
+      elseif ($token->test(Token::BLOCK_START_TYPE)) {
+        $tag = $stream->look(1);
+        if ($tag->test(Token::NAME_TYPE, 'trans')) {
+          [$inTrans, $trans] = [TRUE, ''];
+        }
+        elseif ($tag->test(Token::NAME_TYPE, ['plural', 'endtrans'])) {
+          if ($trans !== NULL && !str_contains($trans, self::PRINTED)) {
+            $translated[] = $trans;
+          }
+          $trans = NULL;
+          $inTrans = $tag->test(Token::NAME_TYPE, 'plural');
+          if (!$inTrans) {
+            $skeleton .= self::PRINTED;
+          }
+        }
+        elseif ($inTrans) {
+          $trans = $trans === NULL ? NULL : $trans . self::PRINTED;
+        }
+        else {
+          $skeleton .= self::PRINTED;
+        }
+      }
+      elseif ($token->test(Token::VAR_START_TYPE)) {
+        // {{ 'Words'|t }}: a string printed through t(), and nothing else.
+        if ($stream->look(1)->test(Token::STRING_TYPE) && $stream->look(2)->test(Token::PUNCTUATION_TYPE, '|') && $stream->look(3)->test(Token::NAME_TYPE, ['t', 'trans']) && $stream->look(4)->test(Token::VAR_END_TYPE)) {
+          $translated[] = (string) $stream->look(1)->getValue();
+        }
+        if ($inTrans) {
+          $trans = $trans === NULL ? NULL : $trans . self::PRINTED;
+        }
+        else {
+          $skeleton .= self::PRINTED;
+        }
+      }
+      $stream->next();
+    }
+    $written = [];
+    foreach (Words::runs($skeleton, FALSE) as [, , $words]) {
+      foreach (explode(self::PRINTED, $words) as $piece) {
+        $piece = Words::fold($piece);
+        if ($piece !== '' && preg_match('/\p{L}/u', $piece)) {
+          $written[] = $piece;
+        }
+      }
+    }
+    $strings = [];
+    foreach ($translated as $string) {
+      $string = Words::fold(html_entity_decode(strip_tags($string), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+      if ($string !== '' && preg_match('/\p{L}/u', $string)) {
+        $strings[] = $string;
+      }
+    }
+    return [$written, $strings];
+  }
+
+}
+`;
+
 /** The word saves' files, by their path inside the module's folder. */
 export const DRUPAL_WORDS_FILES: Readonly<Record<string, string>> = {
+  'src/Save/TemplateWords.php': TEMPLATE_WORDS,
   'src/Save/Words.php': WORDS,
   'src/Save/ConfigWords.php': CONFIG_WORDS,
   'src/Save/InlineWords.php': INLINE_WORDS,

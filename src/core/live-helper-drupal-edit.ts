@@ -19,6 +19,7 @@ use Drupal\Core\Plugin\Context\Context;
 use Drupal\Core\Plugin\Context\ContextDefinition;
 use Drupal\Core\Plugin\Context\EntityContext;
 use Drupal\wanigan_live\Save\ConfigWords;
+use Drupal\wanigan_live\Save\TemplateWords;
 use Drupal\wanigan_live\Trace\Describe;
 use Drupal\wanigan_live\Trace\Frame;
 use Drupal\wanigan_live\Trace\Preview;
@@ -139,6 +140,11 @@ final class Targets {
     if (!empty($p['file']) && !empty($p['alternatives'])) {
       $out[] = $this->override($p);
     }
+    // The words its template writes, offered with why they are not saved
+    // here (code, or an interface translation).
+    if (!empty($p['file'])) {
+      array_push($out, ...TemplateWords::targets($this->builder, $p));
+    }
     return array_values(array_unique(array_filter($out)));
   }
 
@@ -174,7 +180,7 @@ final class Targets {
     }
     $type = \Drupal::service('plugin.manager.field.field_type')->getDefinition($definition->getType(), FALSE);
     if (empty($type['default_widget']) && !EntityFormDisplay::collectRenderDisplay($entity, 'default')->getComponent($name)) {
-      return 'No form widget edits this kind of field.';
+      return 'No form widget edits this kind of field, and Wanigan does not edit one without its widget yet.';
     }
     if ($entity instanceof RefinableDependentAccessInterface && $entity->getAccessDependency() !== NULL) {
       return 'This belongs to other content (its layout or the item it is part of): change it there.';
@@ -369,7 +375,7 @@ final class Targets {
     $target = ['id' => $tid, 'kind' => 'menu-link', 'label' => 'Menu link: ' . $link->getTitle(), 'via' => 'native-form', 'revisions' => FALSE];
     $url = $link->getEditRoute();
     if ($url === NULL) {
-      $target['why'] = 'It is written in code, with no form to change it.';
+      $target['why'] = 'It is written in code, with no form to change it: Drupal keeps no such thing to change here.';
     }
     elseif (!$url->access()) {
       $target['why'] = 'The user you are logged in as may not change this link.';
@@ -412,11 +418,11 @@ final class Targets {
       $why = 'Its props come from the ' . $host['label'] . ' field: change them there.';
     }
     elseif ($meta['fromElement']) {
-      $why = 'Code builds its props from data held elsewhere; they are not stored as props.';
+      $why = 'Code builds its props from data held elsewhere: Drupal keeps no props of it to change here.';
     }
     else {
       $template = $this->hostTemplate($p['frame'] ?? NULL);
-      $why = 'Its props are written in Twig' . ($template && !empty($template['file']) ? ' in ' . basename($template['file']) : '') . ': copy that template into your theme to change them.';
+      $why = 'Its props are written in Twig' . ($template && !empty($template['file']) ? ' in ' . basename($template['file']) : '') . ', which is code: Drupal keeps no such thing to change in the site. Copy that template into your theme to change them.';
     }
     $target = [
       'id' => $tid,

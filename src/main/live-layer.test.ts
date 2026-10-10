@@ -473,6 +473,9 @@ test('making an edit real: words go through the helper’s save, a style goes to
   } finally { w.done(); }
 });
 
+/** On a Drupal page, words nothing holds and no template around them writes. */
+const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
+
 test('words with no field the helper marks, or a refusal from the site, are said and nothing is marked', async () => {
   const loose = edit({ label: 'Title', change: { type: 'text', value: 'New words' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Paddling 101') } });
   const w = wire({ edits: [loose], saved: { ok: false, error: 'The user you are logged in as in the live view may not change this.' } });
@@ -480,7 +483,7 @@ test('words with no field the helper marks, or a refusal from the site, are said
     w.page.parts = { p6: { '': [words('Paddling 101')] } };
     await w.apply();
     const unmarked = await w.implement(loose.id);
-    assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words');
+    assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: DRUPAL_NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words or writes them');
     assert.deepEqual([w.saves, w.posts], [[], []]);
     w.page.parts = { p6: { '': [words('Paddling 101', 'node:12:title:string:fr')] } };
     await w.apply();
@@ -1074,5 +1077,32 @@ test('Drupal: words in a default layout are saved when made real again, with the
     assert.deepEqual(await w.implement(retitled.id), { ok: true, id: retitled.id, state: 'implemented', revision: null });
     assert.deepEqual(w.saves.map((s) => (s[3] as SaveAt).confirm ?? null), [null, token], 'the token only on the save asked again');
     assert.deepEqual(w.marks.map((m) => m.state), ['implemented']);
+  } finally { w.done(); }
+});
+
+test('Drupal: words a template writes are refused as code, and words it prints through t() as an interface translation', async () => {
+  // As the Drupal helper lists them for a node's template (TemplateWords): the words typed into it, and those it
+  // prints through t(). The node part is the one around the element, its page the part above it.
+  const node: PartIdentity = { kind: 'entity', type: 'node', id: UUID, bundle: 'article', langcode: 'en' };
+  const codeWhy = 'These words are written in themes/custom/acme/templates/node.html.twig, a template: a template is code, so Drupal keeps no such thing to change in the site. An agent can change the template from a brief (a copy of it in your theme, when the template is not yours).';
+  const tWhy = 'These words are printed by themes/custom/acme/templates/node.html.twig through Drupal’s interface translation (t()): Wanigan does not change an interface translation yet, and a change there reaches every page that prints the same words. Change them under Interface translation, or in the template.';
+  const written: EditTarget = { id: 'words.tpl.0a1b2c3d4e5f', kind: 'template-override', label: 'Words written in node.html.twig', via: 'schema', revisions: false, schema: { type: 'object', properties: { w1: { type: 'string', readOnly: true } } }, value: { w1: 'Trip notes' }, why: codeWhy };
+  const translated: EditTarget = { id: 'words.t.0a1b2c3d4e5f', kind: 'template-override', label: 'Words node.html.twig translates', via: 'schema', revisions: false, schema: { type: 'object', properties: { w1: { type: 'string', readOnly: true } } }, value: { w1: 'Read more' }, why: tWhy };
+  const drupal: LiveTrace = {
+    ...trace(),
+    parts: [{ id: 'page', kind: 'template', label: 'Page' }, { id: 'n1', kind: 'entity', label: 'Article: Paddling 101', parent: 'page', identity: node, edits: [written.id, translated.id] }],
+    edits: [written, translated],
+  };
+  const heading = retype(node, 'Paddling notes', 'Trip notes', 'h3:nth-of-type(1)');
+  const more = retype(node, 'Keep reading', 'Read more', 'a:nth-of-type(1)');
+  const other = retype(node, '2 June', '1 June', 'time:nth-of-type(1)');
+  const w = wire({ edits: [heading, more, other], trace: drupal });
+  try {
+    w.page.parts = { n1: { 'h3:nth-of-type(1)': [words('Trip notes')], 'a:nth-of-type(1)': [words('Read more')], 'time:nth-of-type(1)': [words('1 June')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(heading.id), { ok: false, id: heading.id, route: 'agent', why: codeWhy }, 'Drupal keeps no such thing: an agent changes the template');
+    assert.deepEqual(await w.implement(more.id), { ok: false, id: more.id, route: 'none', why: tWhy }, 'Wanigan does not change an interface translation yet');
+    assert.deepEqual(await w.implement(other.id), { ok: false, id: other.id, route: 'none', why: DRUPAL_NOTHING_HOLDS });
+    assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []], 'nothing is sent for any of them');
   } finally { w.done(); }
 });
