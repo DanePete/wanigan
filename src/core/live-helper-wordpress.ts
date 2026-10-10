@@ -188,6 +188,10 @@ final class Wanigan_Live {
 	private static $listed = array();
 	private static $hooks = array();
 	private static $queries = array();
+	/** @var array<string,mixed> The update transients whose() names owners from, read before any plugin can query (preload()). */
+	private static $updates = array();
+	/** @var int Inside wpdb's own logging of a query, before wpdb reads that query's result: nothing may query here. */
+	private static $in_db = 0;
 	private static $qcount = 0;
 	private static $qms = 0.0;
 	private static $logs = array();
@@ -258,6 +262,7 @@ final class Wanigan_Live {
 		self::$collecting = true;
 		self::$started = microtime(true);
 		self::$id = bin2hex(random_bytes(8));
+		add_action('muplugins_loaded', array(self::class, 'preload'), 0);
 		self::$wrappers = new SplObjectStorage();
 		self::$closures = new SplObjectStorage();
 		// class-wpdb.php wpdb::_do_query() logs a query only while SAVEQUERIES is true, reading the constant on every
@@ -362,6 +367,9 @@ final class Wanigan_Live {
 	 */
 	public static function all($hook): void {
 		if (self::$busy || !self::$collecting || !is_string($hook)) return;
+		// These fire inside wpdb::query(), many times a page; listing their callbacks names plugins (whose()), which can
+		// read the database, and a query there hands its result to the query being run (see logged()).
+		if ($hook === 'query' || $hook === 'log_query_custom_data') return;
 		self::$busy++;
 		try {
 			self::$firings++;
@@ -1363,11 +1371,27 @@ final class Wanigan_Live {
 	 */
 	public static function logged($data, $query = '', $time = 0, $stack = '', $start = 0) {
 		if (self::$busy || !self::$collecting) return $data;
+		self::$in_db++;
+		try {
+			self::note_query($query, $time);
+		} finally {
+			self::$in_db--;
+		}
+		return $data;
+	}
+
+	/**
+	 * One query, as wpdb::_do_query() logs it: after the query ran and before wpdb::query() reads its result into
+	 * last_result. A query run from here would replace that result with its own, so nothing here may touch the
+	 * database: who asked is a file and line now, named when the trace is built (callers()). It was named here once,
+	 * and naming a plugin read its update transient: a plugin asking for its own option got the transient back.
+	 */
+	private static function note_query($query, $time): void {
 		self::$qcount++;
 		self::$qms += (float) $time * 1000;
 		if (count(self::$queries) >= self::LIMITS['queries']) {
 			self::$truncated['queries'] = true;
-			return $data;
+			return;
 		}
 		$core = null;
 		$caller = null;
@@ -1376,20 +1400,43 @@ final class Wanigan_Live {
 			$file = wp_normalize_path($f['file']);
 			if ($file === self::$self || str_ends_with($file, '/wp-includes/class-wpdb.php')) continue;
 			if ($core === null) $core = array($file, isset($f['line']) ? (int) $f['line'] : 0);
-			$w = self::whose($file);
-			if ($w[0] !== 'core') {
+			if (!self::core_file($file)) {
 				$caller = array($file, isset($f['line']) ? (int) $f['line'] : 0);
 				break;
 			}
 		}
 		$at = $caller ? $caller : $core;
 		$q = array('sql' => self::cut((string) $query, 4000), 'ms' => round((float) $time * 1000, 3));
-		$src = $at ? self::source($at[0], $at[1]) : null;
-		if ($src) $q['caller'] = $src;
+		if ($at) $q['at'] = $at;
 		$part = self::top_part();
 		if ($part) $q['part'] = $part;
 		self::$queries[] = $q;
-		return $data;
+	}
+
+	/** Each recorded query's asker, named now that no query is in flight (see note_query()). */
+	private static function callers(): void {
+		foreach (self::$queries as $i => $q) {
+			if (!isset($q['at'])) continue;
+			$src = self::source($q['at'][0], $q['at'][1]);
+			unset(self::$queries[$i]['at']);
+			if ($src) self::$queries[$i]['caller'] = $src;
+		}
+	}
+
+	/** Whether a file is WordPress core's, from its path alone: whose() says the same but can read the database. */
+	private static function core_file(string $file): bool {
+		$abs = wp_normalize_path(ABSPATH);
+		return strpos($file, $abs . 'wp-includes/') === 0 || strpos($file, $abs . 'wp-admin/') === 0 || dirname($file) . '/' === $abs;
+	}
+
+	/**
+	 * muplugins_loaded: the update transients whose() names plugins and themes from, read once before any plugin
+	 * loads, so naming an owner never reads the database while a query is in flight.
+	 */
+	public static function preload(): void {
+		foreach (array('update_plugins', 'update_themes') as $transient) {
+			if (!array_key_exists($transient, self::$updates)) self::$updates[$transient] = get_site_transient($transient);
+		}
 	}
 
 	/**
@@ -1483,6 +1530,7 @@ final class Wanigan_Live {
 				$i = count(self::$queries) - 1;
 				if (!isset(self::$queries[$i]['rows'])) self::$queries[$i]['rows'] = (int) $wpdb->num_rows;
 			}
+			self::callers();
 			self::$trace = self::build();
 		} catch (Throwable $e) {
 			self::$trace = null;
@@ -3514,14 +3562,17 @@ final class Wanigan_Live {
 				elseif ($dir . '/' === $content) $out = array('unknown', 'drop-in', 'drop-in', 'drop-in');
 			}
 		}
-		self::$whose[$dir] = $out;
+		if (self::$in_db === 0) self::$whose[$dir] = $out;
 		return $out;
 	}
 
 	private static function updates(string $transient, string $key, string $kind): string {
-		static $data = array();
-		if (!array_key_exists($transient, $data)) $data[$transient] = get_site_transient($transient);
-		$u = $data[$transient];
+		if (!array_key_exists($transient, self::$updates)) {
+			// Inside wpdb's logging a query would answer the query being run (see note_query()): say nothing yet.
+			if (self::$in_db > 0) return 'unknown';
+			self::$updates[$transient] = get_site_transient($transient);
+		}
+		$u = self::$updates[$transient];
 		if (!is_object($u) || empty($u->checked)) return 'unknown';
 		foreach (array('response', 'no_update') as $list) {
 			if (empty($u->$list)) continue;
