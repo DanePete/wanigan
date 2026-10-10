@@ -183,32 +183,38 @@ WordPress and other sites can each be on or off.
   shows them at once, through the layer. A style is for one element or every
   instance of its kind (how many, said before you choose it); a custom
   property can change for the whole site. Edits lists every edit by page, with
-  before → after, what it reaches, its state, and why when it no longer finds
-  its element. Make it real saves words through the site itself to the one
-  thing that holds exactly those words. On Drupal: a text field (a plain one,
-  or one run of words inside formatted text, spliced in with its markup kept
-  and saved only when the field's own text format shows nothing else changed),
-  a field's label, a block's title, the site's name and slogan, the words of a
+  before → after, what it reaches (including "this item, shown twice on this
+  page"), its state and what that means, and why when it no longer finds its
+  element. Make it real saves words through the site itself to the one thing
+  that holds exactly those words. On Drupal: a text field (a plain one, or one
+  run of words inside formatted text, spliced in with its markup kept and
+  saved only when the field's own text format shows nothing else changed), a
+  field's label, a block's title, the site's name and slogan, the words of a
   view's header, footer or empty text, a menu link's text, or the words of a
   Layout Builder inline block, through its layout (a default layout that every
   page of a kind shares is saved only when you make it real again, after it
   says how many pages that reaches); configuration says the next config import
   puts back what is exported. On WordPress a title, an excerpt, a string meta,
   the site's title or tagline, or a menu link's text, each through core's REST
-  API with a revision where WordPress keeps one. Or to your own template when
-  they are written there exactly once (with a revert). What it cannot save
-  says why, and which kind of why: Drupal keeps no such thing (words written
-  in a Twig template, a menu link written in code, a base field's label), or
-  Wanigan does not do it yet (an interface translation, a caption, words
-  across formatting). Formatted text on WordPress (a block's, a post's
-  content) and words a Drupal template writes go to an agent, as does a style:
-  never written into the stylesheets by hand. Then Verify renders the page
-  with and without the layer and says what differs, with pictures. Undo, redo,
-  discard, and the page shown without the layer to compare. The window has
-  been checked against the UI sweep's stand-in; on the Northstar demo, a
-  script driving the real app made words in a plain field real and verified
-  them. Drupal's formatted text, configuration and Layout Builder saves, and
-  WordPress, have been tested with stand-ins only.
+  API with a revision where WordPress keeps one. What it cannot save says why,
+  and which kind of why: Drupal keeps no such thing (words written in a Twig
+  template, a menu link written in code, a base field's label), or Wanigan
+  does not do it yet (an interface translation, a caption, words across
+  formatting). Formatted text on WordPress (a block's, a post's content) and
+  words a Drupal template writes go to an agent, as does a style: never
+  written into the stylesheets by hand. Where the site cannot say what writes
+  words nothing stores (a WordPress classic theme's template files), you can
+  look in the template that rendered the element itself, picked on the page:
+  Wanigan says first that every page using that template changes, and writes
+  it only when the words are there exactly once (Put back waits while the
+  layer holds the edit as in the site). Then Verify renders the page with and
+  without the layer and says what differs, with pictures. Undo, redo, discard,
+  and the page shown without the layer to compare; nothing runs twice, and
+  undo waits while words are being saved. The window has been checked against
+  the UI sweep's stand-in; on the Northstar demo, a script driving the real
+  app made words in a plain field real and verified them. Drupal's formatted
+  text, configuration and Layout Builder saves, and WordPress, have been
+  tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose

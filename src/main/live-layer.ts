@@ -72,6 +72,7 @@ import {
   type Bitmap, type ElementSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
+import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
@@ -234,53 +235,6 @@ const NAMES: Record<string, string> = {
   section: 'Section', article: 'Article', aside: 'Aside', main: 'Main content', div: 'Box', table: 'Table', form: 'Form', input: 'Field',
 };
 const humanName = (tag: unknown): string => (typeof tag === 'string' && NAMES[tag.toLowerCase()]) || (typeof tag === 'string' && /^[a-z][a-z0-9-]{0,40}$/i.test(tag) ? `<${tag.toLowerCase()}>` : 'Element');
-
-/**
- * What `kind` reaches for a Drupal block, in words, read from its plugin id for the plugin families core defines (the
- * id is what every instance of the kind shares; a block's label is its own and differs between them), and where its
- * instances are: placed in a region (Block layout) or placed in a layout (Layout Builder). "every card inline block
- * placed in a layout" (`inline_block:card`), "every article body field block …" (`field_block:node:article:body`),
- * "every main menu block …" (`system_menu_block:main`), "every news view block (block_1) …"
- * (`views_block:news-block_1`), "this reusable block wherever it is placed in …" (`block_content:<uuid>`); any other,
- * "every <its id> block …".
- */
-function blockKindWords(plugin: string, where: 'a region' | 'a layout'): string {
-  const [base, ...rest] = plugin.split(':');
-  const derivative = rest.join(':');
-  const every = (noun: string): string => `every ${noun} placed in ${where}`;
-  if (!derivative) return every(`${plugin} block`);
-  switch (base) {
-    case 'inline_block': return every(`${derivative} inline block`);
-    case 'field_block': case 'extra_field_block': {
-      const [, bundle, field] = rest;
-      return every(bundle && field && rest.length === 3 ? `${bundle} ${field} ${base === 'field_block' ? 'field ' : ''}block` : `${plugin} block`);
-    }
-    case 'system_menu_block': return every(`${derivative} menu block`);
-    case 'views_block': {
-      const at = derivative.lastIndexOf('-');
-      return every(at > 0 ? `${derivative.slice(0, at)} view block (${derivative.slice(at + 1)})` : `${plugin} block`);
-    }
-    // One custom block, shown wherever it is placed.
-    case 'block_content': return `this reusable block wherever it is placed in ${where}`;
-    default: return every(`${plugin} block`);
-  }
-}
-
-/**
- * What `kind` reaches, in words: "every Card component", "the Body field of every article", "the heading in every Card
- * component", "every card inline block placed in a layout", "every main menu block placed in a region".
- */
-export function kindWords(part: TracePart, key: string, inner: string | null): string {
-  const [kind, a, b] = key.split('|');
-  const base = kind === 'field' ? `the ${part.label} field of every ${b}`
-    : kind === 'entity' ? `every ${b} ${a}`
-      // A block placement's kind and a Layout Builder component's are apart (their kindKeys differ): each says which.
-      : kind === 'plugin' && a === 'block' && b ? blockKindWords(b, 'a region')
-        : kind === 'plugin' && a === 'layout_builder_component' && b ? blockKindWords(b, 'a layout')
-          : kind === 'plugin' ? `every ${b} ${a}`
-            : `every ${part.label} ${part.identity?.kind === 'block' ? 'block' : 'component'}`;
-  return inner ? `the ${inner.toLowerCase()} in ${base}` : base;
-}
 
 /* ── which edit target holds an element's words ─────────────────────────── */
 
@@ -1012,13 +966,14 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         }
         return {
           target: t, label: keyed.inner ? `${human} in ${partName}` : partName,
-          kindLabel: key ? kindWords(keyed.part, key, keyed.inner ? human : null) : null, kindCount, before, fragile: false,
+          // A WordPress block is named by its place: with no words to check, it is as fragile as a document path.
+          kindLabel: key ? kindWords(keyed.part, key, keyed.inner ? human : null) : null, kindCount, before, fragile: fragileWhy(t, 'this') !== null,
         };
       }
     }
     if (typeof pick.selector !== 'string') return null;
     const t: LayerTarget = { part: null, inner: null, selector: pick.selector, textHash };
-    return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: true } : null;
+    return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: fragileWhy(t, 'this') !== null } : null;
   };
 
   /* ── making an edit real ── */
@@ -1102,9 +1057,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const value = edit.change.value;
     const here = shown();
     if (!here || here.cur.projectId !== cur.projectId || !madeOn(edit, here.path)) return none(`Open ${edit.page} in the live view first: words are saved from the page they are on.`);
-    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown } | null>(call('layerOf', id), null);
+    const at = await options.run<{ count?: unknown; field?: unknown; words?: unknown; plain?: unknown; same?: unknown } | null>(call('layerOf', id), null);
     if (!at || at.count === 0) return none('Its element is not tagged on this page. Reload the page, then try again.');
-    if (at.count !== 1) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
+    // One stored thing shown more than once (one identity, every element the same plain words in the same field mark) is
+    // saved once; elements a document path matched, or that differ, are refused.
+    if (at.count !== 1 && !(edit.target.part && at.same === true)) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {
