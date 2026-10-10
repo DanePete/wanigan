@@ -117,14 +117,14 @@ export function finalIndex(positions: readonly number[], slot: number, count: nu
  */
 export const PAGE_COLORS = {
   light: {
-    water: '#1E6FD9', 'water-fill': '#1E6FD9', 'water-ink': '#FFFFFF', 'water-text': '#1A62C0', 'water-soft': 'rgba(30,111,217,.10)',
+    water: '#1E6FD9', 'water-fill': '#1E6FD9', 'water-ink': '#FFFFFF', 'water-text': '#1A62C0', 'water-soft': 'rgb(30 111 217 / 0.1)',
     raised: '#FFFFFF', fg: '#111A22', muted: '#4C5967', hover: '#EAEEF2',
-    'elev-float': '0 10px 28px rgba(16,26,36,.16), 0 0 0 1px rgba(16,26,36,.06)',
+    'elev-float': '0 10px 28px rgb(16 26 36 / 0.16), 0 0 0 1px rgb(16 26 36 / 0.06)',
   },
   dark: {
-    water: '#4D9BFF', 'water-fill': '#2B74D6', 'water-ink': '#FFFFFF', 'water-text': '#4D9BFF', 'water-soft': 'rgba(77,155,255,.16)',
+    water: '#4D9BFF', 'water-fill': '#2B74D6', 'water-ink': '#FFFFFF', 'water-text': '#4D9BFF', 'water-soft': 'rgb(77 155 255 / 0.16)',
     raised: '#172028', fg: '#E8EDF2', muted: '#A9B5C1', hover: '#1F2830',
-    'elev-float': '0 10px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08)',
+    'elev-float': '0 10px 30px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.08)',
   },
 } as const;
 
@@ -454,14 +454,15 @@ export function livePage(): void {
    * The chosen part's action bar, floating above its right edge (below it when there is no room above): Style, Move,
    * Take out, Ask an agent. A press answers the window, which acts as its button there does; the page never hears it.
    */
-  function actionBar(rect: DOMRect): HTMLElement {
+  const BAR_H = 32;
+  /** The bar, made once and kept across redraws (a page that changes itself redraws often), so a press is never lost between down and up. */
+  let bar: { el: HTMLElement; dark: boolean } | null = null;
+  function actionBar(): HTMLElement {
     const c = studio();
     const bar = document.createElement('div');
     bar.setAttribute('role', 'toolbar');
     bar.setAttribute('aria-label', 'For the chosen part');
-    const height = 32;
-    const top = rect.top > height + 14 ? rect.top - height - 8 : rect.bottom + height + 16 < innerHeight ? rect.bottom + 8 : Math.max(4, rect.top + 4);
-    bar.style.cssText = `position:absolute;top:${top}px;right:${Math.max(4, innerWidth - rect.right - 2)}px;display:flex;gap:2px;padding:3px;box-sizing:border-box;height:${height}px;`
+    bar.style.cssText = `position:absolute;z-index:1;display:flex;gap:2px;padding:3px;box-sizing:border-box;height:${BAR_H}px;`
       + `border-radius:10px;background:${c.raised};box-shadow:${c['elev-float']};pointer-events:auto;font:500 12px/1 ${FONT};`;
     for (const a of ACTION_BAR) {
       const b = document.createElement('button');
@@ -494,7 +495,18 @@ export function livePage(): void {
     return bar;
   }
 
-  function box(root: ShadowRoot, rect: DOMRect, label: string, tone: Tone, bar = false): void {
+  /** Put the bar over the chosen part (above it, or below it when there is no room), made again only when the colour scheme changed; null takes it away. */
+  function placeBar(root: ShadowRoot, rect: DOMRect | null): void {
+    if (!rect) { bar?.el.remove(); return; }
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    if (!bar || bar.dark !== dark) { bar?.el.remove(); bar = { el: actionBar(), dark }; }
+    const top = rect.top > BAR_H + 14 ? rect.top - BAR_H - 8 : rect.bottom + BAR_H + 16 < innerHeight ? rect.bottom + 8 : Math.max(4, rect.top + 4);
+    bar.el.style.top = `${top}px`;
+    bar.el.style.right = `${Math.max(4, innerWidth - rect.right - 2)}px`;
+    if (bar.el.parentNode !== root) root.appendChild(bar.el);
+  }
+
+  function box(root: ShadowRoot, rect: DOMRect, label: string, tone: Tone, withBar = false): boolean {
     const c = studio();
     const b = document.createElement('div');
     const outline = tone === 'hover' ? `1.5px dashed ${c.water}` : tone === 'edit' ? `1.5px solid ${c.water}` : `2px solid ${c.water}`;
@@ -504,7 +516,8 @@ export function livePage(): void {
       + `background:${tone === 'aim' ? c['water-soft'] : 'transparent'};`;
     root.appendChild(b);
     if (label) root.appendChild(chip(rect, label, tone === 'pick' || tone === 'type' || tone === 'aim'));
-    if (bar) root.appendChild(actionBar(rect));
+    if (withBar) placeBar(root, rect);
+    return withBar;
   }
 
   /** `#rrggbb` at an opacity. */
@@ -543,7 +556,9 @@ export function livePage(): void {
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
     const root = existing ?? (shown || hovered || painted.length || arranging || typing ? host() : null);
     if (!root) return;
-    root.replaceChildren();
+    // Everything drawn again, but the chosen part's bar, which is moved rather than made again.
+    for (const n of [...root.childNodes]) if (n !== bar?.el) n.remove();
+    let barShown = false;
     for (const p of painted) {
       const r = regions[p.index];
       const rect = r ? viewRect(r) : null;
@@ -556,7 +571,7 @@ export function livePage(): void {
       for (const i of shown.indexes) {
         const r = regions[i];
         const rect = r ? viewRect(r) : null;
-        if (r && rect && rect.bottom > 0 && rect.top < innerHeight) box(root, rect, shown.label ?? labelOf(info(r)), shown.tone, bar);
+        if (r && rect && rect.bottom > 0 && rect.top < innerHeight) barShown = box(root, rect, shown.label ?? labelOf(info(r)), shown.tone, bar) || barShown;
       }
     }
     if (hovered?.isConnected) {
@@ -568,6 +583,7 @@ export function livePage(): void {
       const name = shown?.tone === 'pick' && shown.label ? `${shown.label} · ` : '';
       box(root, typing.el.getBoundingClientRect(), `${name}typing · Enter keeps · Esc puts back`, 'type');
     }
+    if (!barShown) placeBar(root, null);
   }
 
   /* ── moving parts by hand ────────────────────────────────────────────── */
@@ -826,7 +842,13 @@ export function livePage(): void {
         document.documentElement.style.removeProperty('user-select');
         cancelAnimationFrame(scroller);
         const value = l ? answer(l, d) : null;
-        if (value) { if (e.type === 'pointerup') addEventListener('click', swallowClick, true); finish(value); return; }
+        if (value) {
+          // The click a drop's release makes (if any, it comes in the same task) is the drop's, never the page's; a release
+          // that makes none (the drag ended elsewhere) must not leave the next click anywhere swallowed (the action bar's).
+          if (e.type === 'pointerup') { addEventListener('click', swallowClick, true); setTimeout(() => removeEventListener('click', swallowClick, true), 0); }
+          finish(value);
+          return;
+        }
         if (d.from.kind === 'entry') return;
         draw();
       };

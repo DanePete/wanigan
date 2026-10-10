@@ -46,7 +46,7 @@ import { liveBridge, useLiveCovered } from '../lib/live';
 import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
 import { navigate } from '../lib/router';
 import { actionable, useNotices, type Notice } from '../lib/notices';
-import { plural } from '../lib/format';
+import { PROVIDER_LABEL, plural } from '../lib/format';
 import { useAppState } from '../lib/settings';
 import { liveFor, type AppSettings } from '@shared/settings';
 import { Icon } from './icons';
@@ -79,11 +79,13 @@ import { RequestTab } from './live/Request';
 import { TraceNote } from './live/TraceNote';
 import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { useWriteChecks } from './live/write-checks';
-import { HowLiveWorks, useHowLiveWorks } from './live/HowLiveWorks';
+import { HowLiveWorks } from './live/HowLiveWorks';
+import { HowButton } from './How';
+import { useHow } from '../lib/how';
 import { LIVE_TIP } from './live/keys';
 import { Button, Count, Empty, EmptyState, IconButton, Segmented, tipProps, useToast } from './ui';
 import { openInEditor, relativeTo } from '../editor/EditButton';
-import { stepDock } from '../editor/store';
+import { showDock, stepDock } from '../editor/store';
 import { devtoolsChord, showInDevtools } from '../lib/live-devtools';
 import '../styles/live.css';
 
@@ -327,8 +329,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [tab, setTab] = useState<Tab>('layers');
   /** The Add tab: the site's library, or what this page itself can take (the trace's palette). */
   const [addMode, setAddMode] = useState<AddMode>('library');
-  /** The tab before Add, for ⇧B to go back to. */
+  /** The tab before Add, for ⇧B to go back to; and whether Add was opened by its key, which takes the keyboard to its search. */
   const beforeAdd = useRef<Tab>('layers');
+  const addByKey = useRef(false);
   const [width, setWidth] = useState<Width>('full');
   const [changed, setChanged] = useState<ReadonlySet<number>>(new Set());
   const [problems, setProblems] = useState<LiveProblem[] | null>(null);
@@ -358,7 +361,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const liveRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow(liveRef);
   const [structureWide, setStructureWide] = useState(() => readOpen(STRUCTURE_KEY));
-  const [structureNarrow, setStructureNarrow] = useState(false);
+  /** Narrow, one side panel at a time: Structure until a part is chosen, the Inspector while one is. */
+  const [structureNarrow, setStructureNarrow] = useState(true);
   const structure = narrow ? structureNarrow : structureWide;
   const setStructure = (open: boolean): void => {
     if (narrow) setStructureNarrow(open);
@@ -403,7 +407,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [arrangeOn, setArrangeOn] = useState(readArrange);
   const stageRef = useRef<HTMLDivElement>(null);
   const deviceRef = useRef<HTMLDivElement>(null);
-  const how = useHowLiveWorks(project.id, !compact);
+  // How this works (components/live/HowLiveWorks.tsx): the toolbar's button and the palette open it. A session's split view has none.
+  const how = useHow(compact ? 'live-compact' : 'live');
 
   /** Say what just happened in the status line (and the tray): a file changed, the page reloaded. */
   const say = useCallback((b: Banner): void => {
@@ -723,15 +728,17 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const kept = selection?.region;
     if (kept) void live.outline([kept.index], labelOf(kept), 'pick'); else void live.clear();
   };
-  const unselect = (): void => { setSelection(null); setTool(null); void live.clear(); };
+  const unselect = (): void => { setSelection(null); setTool(null); if (narrow && !tray) setStructureNarrow(true); void live.clear(); };
   /** Nothing chosen any more: the keyboard goes to the tree's row for the part when it was on the part's details. */
   const backToTree = (): void => {
     const fromPart = !!document.activeElement?.closest('.live-inspector');
     unselect();
     if (fromPart) {
+      // To the tree's row when Layers shows; else to Structure's tab shown (the library stays as it was).
       if (!structure) setStructure(true);
-      setTab('layers');
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.live-tree [tabindex="0"]')?.focus()));
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        (document.querySelector<HTMLElement>('.live-structure .live-tree [tabindex="0"]') ?? document.querySelector<HTMLElement>('.live-structure [role="tab"][aria-selected="true"]'))?.focus();
+      }));
     }
   };
   const showNote = (n: LiveNote | null): void => {
@@ -746,6 +753,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   };
   /** Structure's tabs: Add opens on what was asked (⇧B toggles back to the tab before it). */
   const showTab = (next: Tab): void => {
+    if (next !== 'add') addByKey.current = false;
     if (next === 'add' && tab !== 'add') beforeAdd.current = tab;
     setTab(next);
     if (!structure) setStructure(true);
@@ -894,7 +902,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       case 'compare': if (!compact) { if (comparing) setComparing(false); else openCompare(); } return;
       case 'library':
         if (compact) return;
-        if (tab === 'add' && structure) setTab(beforeAdd.current === 'add' ? 'layers' : beforeAdd.current); else showTab('add');
+        if (tab === 'add' && structure) setTab(beforeAdd.current === 'add' ? 'layers' : beforeAdd.current);
+        else { addByKey.current = true; showTab('add'); }
         return;
       case 'edits': if (!compact) openTray(!tray); return;
       // ⇧D: the chosen part in DevTools (a row of the tree with the keyboard takes it first: Layers.tsx).
@@ -1018,7 +1027,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           </span>
           <AddressField projectId={project.id} url={view?.url ?? (env ? env.url : stageUrl)} title={view?.title ?? null} onOpen={goTo} />
         </div>
-        <ToolGroup label="Tools" className="live-tools">
+        <div className="live-tools" data-tour="live-tools">
+        <ToolGroup label="Tools">
           <IconButton icon="pick" label={picking ? 'Selecting… (P or Escape stops)' : 'Select a part on the page'} keys={LIVE_TIP.select} pressed={picking}
             disabled={!hasScript} onClick={() => void pick()} />
           {!compact ? (
@@ -1036,6 +1046,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </>
           ) : null}
         </ToolGroup>
+        </div>
         <div className="live-bar-end">
           {!compact ? <LensPicker lens={lens} onChange={setLens} disabled={!hasScript} openRef={lensOpen} /> : null}
           {!compact ? (
@@ -1061,12 +1072,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             <IconButton icon="eye" label="Show the page without the layer" pressed={!layer.on} disabled={!!env || !live} onClick={() => void layer.show(!layer.on)} />
           ) : null}
           {!compact ? (
-            <Button size="s" className="live-edits-btn" aria-pressed={tray} keys={LIVE_TIP.edits} {...tipProps('Your edits to the page, in the design layer', LIVE_TIP.edits)}
+            <span className="live-commit" data-tour="live-edits">
+            <Button size="s" icon="brush" className="live-edits-btn" aria-pressed={tray} keys={LIVE_TIP.edits} {...tipProps('Your edits to the page, in the design layer', LIVE_TIP.edits)}
               aria-label={`Edits${layer.drafts ? `, ${plural(layer.drafts, 'draft')}` : ''}: the design layer`} onClick={() => openTray(!tray)}>
               <span className="live-edits-name">Edits</span>{layer.drafts ? <Count n={layer.drafts} tone={tray ? 'sunk' : 'water'} /> : null}
             </Button>
-          ) : null}
-          {!compact ? (
             <MenuButton className="btn-primary btn-s live-real" label={`Make real: ${drafts.length ? plural(drafts.length, 'draft') : 'nothing'} on this page`} align="end" width={340}
               disabled={!!env || (!drafts.length && !made.length)} tip={env ? 'A hosted environment is read-only' : !drafts.length && !made.length ? 'Nothing on this page waits to be made real or verified' : 'Save this page’s edits in the site, or verify them'}
               items={[
@@ -1078,9 +1088,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               ]}>
               <span>Make real</span><Icon name="down" size={12} />
             </MenuButton>
+            </span>
           ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
-          {!compact ? <IconButton icon="question" label="How the live editor works" className="live-how" onClick={how.open} /> : null}
+          {!compact ? (
+            <>
+              <span className="live-how live-how-words"><HowButton onClick={how.show} /></span>
+              <IconButton icon="question" label="How this works" className="live-how live-how-icon" onClick={how.show} />
+            </>
+          ) : null}
         </div>
       </Toolbar>
       {!compact ? (
@@ -1092,6 +1108,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       {arrange.asking}
       <div className="live-main">
         {showStructure ? (
+          <div className="live-panel-wrap" data-tour="live-structure">
           <Panel side="left" label="Structure" className="live-structure" resizable sizeKey="live-structure" minSize={220} maxSize={420}
             size={tab === 'add' ? 320 : undefined}
             tabs={<Tabs id="live-structure" label="Structure" value={tab} onChange={showTab} tabs={TABS} />}>
@@ -1116,6 +1133,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                   ) : null}
                   {shownAdd === 'page' ? <PaletteTab arrange={arrange} trace={traceData} /> : (
                     <LibraryPanel project={project} site={site} trace={env ? null : traceData} parts={parts} regions={regions} arrange={arrange} readOnly={!!env}
+                      focusSearch={addByKey.current}
                       onClose={() => setTab(beforeAdd.current === 'add' ? 'layers' : beforeAdd.current)} onSelect={select} onHover={hover} />
                   )}
                 </div>
@@ -1124,6 +1142,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               )}
             </TabPanel>
           </Panel>
+          </div>
         ) : null}
         <LiveStage project={project} url={env || sameSite(stageUrl, url) ? stageUrl : url} token={env ? null : site.token} env={env?.id ?? null} view={view} width={WIDTHS[width].px}
           onReload={() => void live.reload(true)} onEdit={onEdit} stageRef={stageRef} deviceRef={deviceRef} compact={compact}>
@@ -1162,6 +1181,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </div>
           ) : null
         ) : right ? (
+          <div className="live-panel-wrap" data-tour="live-inspector">
           <Panel side="right" label={tray ? 'Edits' : selection ? 'The chosen part' : 'Inspector'} className="live-inspector-panel" resizable sizeKey="live-inspector" minSize={260} maxSize={520}>
             {tray ? (
               <LayerTray project={project} layer={layer} page={pageNow} siteUrl={url} trace={env ? null : traceData} parts={parts} regions={regions}
@@ -1184,6 +1204,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               </div>
             )}
           </Panel>
+          </div>
         ) : null}
       </div>
       {/* Notes, Problems, Request and the page's DevTools, in the dock beneath the page beside the code editor. */}
@@ -1222,9 +1243,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           <DockTabs projectId={project.id} tabs={docked} chord={chord} />
         </StatusSlot>
       ) : null}
-      {how.shown ? (
+      {how.open && !compact ? (
         <HowLiveWorks project={project} layer={layer.snapshot} drafts={layer.drafts} helper={!!site.helper} cms={helperSite ? cms : null}
-          onClose={how.close} onEdits={() => { how.close(); openTray(true); }} onSelect={() => { how.close(); void pick(); }} />
+          notes={notes.length} agents={sender.agentsKnown ? sender.agents.length : null} agent={PROVIDER_LABEL[sender.starter.agent]}
+          onClose={how.hide} onEdits={() => { how.hide(); openTray(true); }} onSelect={() => { how.hide(); void pick(); }}
+          onNotes={() => { how.hide(); showDock('notes'); }} />
       ) : null}
     </div>
   );
@@ -1394,7 +1417,7 @@ function LiveStage({ project, url, token, env, view, width, onReload, onEdit, st
   }, [hidden, covered, live]);
 
   return (
-    <div className={`live-stage${width ? ' narrow' : ''}${compact ? ' compact' : ''}`} ref={stageRef} aria-label="The page" role="region">
+    <div className={`live-stage${width ? ' narrow' : ''}${compact ? ' compact' : ''}`} ref={stageRef} aria-label="The page" role="region" data-tour="live-canvas">
       {width ? <span className="live-device-size" aria-hidden="true">{width} px</span> : null}
       <div className={`live-device${view?.loading && !frame ? ' loading' : ''}`} ref={device} style={width ? { width } : undefined}>
         {frame && !trouble ? <img className="live-frame" src={frame} alt="" /> : null}

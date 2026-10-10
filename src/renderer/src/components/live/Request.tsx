@@ -122,7 +122,7 @@ function QueryRow({ q, parts, onPoint }: { q: TraceQuery; parts: PartIndex; onPo
       <span className="live-query-head">
         <span className="live-ms small">{ms(q.ms)}</span>
         {q.rows !== undefined ? <span className="faint small">{q.rows} {q.rows === 1 ? 'row' : 'rows'}</span> : null}
-        {label ? <span className="small live-query-part" title={regions.length ? 'Outlined on the page while pointed at' : 'Not on this page'}>for {label}</span> : null}
+        {label ? <span className="small live-query-part" data-tip={regions.length ? 'Outlined on the page while pointed at' : 'Not on this page'}>for {label}</span> : null}
         <CopyButton text={q.sql} label="Copy the SQL" what="the query" />
       </span>
       <code className="live-sql">{q.sql}</code>
@@ -171,7 +171,7 @@ function Assets({ trace }: { trace: LiveTrace }) {
               {a.bytes !== undefined ? <span className="faint small">{bytes(a.bytes)}</span> : null}
             </span>
             <span className="faint small">Added by {a.by}</span>
-            <span className="mono small faint live-asset-src" title={a.src}>{a.src}</span>
+            <span className="mono small faint live-asset-src" data-tip={a.src}>{a.src}</span>
           </li>
         ))}
       </ul>

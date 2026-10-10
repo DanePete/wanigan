@@ -113,7 +113,7 @@ export function DevtoolsTab({ project, keyed }: {
           {' '}<span className="live-devtools-keys">{chord.text} opens or closes this tab.</span>
         </p>
         <Button size="s" tone="quiet" icon="open" disabled={mode === 'detached'} onClick={detach}
-          title="DevTools in a window of its own, for a second screen">Open in its own window</Button>
+          data-tip="DevTools in a window of its own, for a second screen">Open in its own window</Button>
       </div>
     </div>
   );

@@ -371,6 +371,23 @@ export function liveStub(f) {
   };
   // The wireframe at a size, for a stand-in that pictures the view (scripts/ui-snap-stub.mjs).
   window.__wgLive.wire = wireAt;
+  // Every outcome said, in order: the frame's status line says only the latest (a read-back replaces the save it
+  // checks), and a failure to act on is a toast in its place, so a sweep asks what was said, not what is said now.
+  window.__wgLive.said = [];
+  const shownSaid = new Set();
+  const hearSaid = () => {
+    const now = new Set();
+    for (const el of document.querySelectorAll('.status-line .status-said, .status-urgent .toast-text, .toasts .toast')) {
+      const text = el.textContent?.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      now.add(text);
+      // Said again after it went away: said again.
+      if (!shownSaid.has(text)) window.__wgLive.said.push(text);
+    }
+    shownSaid.clear();
+    for (const t of now) shownSaid.add(t);
+  };
+  new MutationObserver(hearSaid).observe(document, { subtree: true, childList: true, characterData: true });
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
   // `platform`: the sweep may make the made-up site a WordPress one from the start (its helper's kind with it).
   const site = (projectId) => ({

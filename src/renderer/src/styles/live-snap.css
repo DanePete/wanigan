@@ -70,21 +70,16 @@
 
 .live-snap-tools {
   display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
+  gap: var(--gap-hair);
+  padding: var(--gap-hair);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-m);
   background: var(--sunken);
 }
 
-.live-stage-snap .btn-primary .live-key {
-  border-color: var(--water-ink);
-  color: var(--water-ink);
-}
-
 .live-snap-tools .btn[aria-checked='true'] {
   background: var(--water-soft);
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .live-snap-wait {
@@ -108,7 +103,7 @@
   justify-content: center;
   align-items: flex-start;
   overflow: auto;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-m);
   background: var(--sunken);
 }
@@ -132,7 +127,7 @@
 
 .live-snap-drag {
   position: absolute;
-  border: 2px solid var(--water);
+  border: var(--focus-ring) solid var(--water);
   background: var(--water-soft);
   pointer-events: none;
 }
@@ -143,7 +138,7 @@
 
 .live-snap-label {
   position: absolute;
-  width: 220px;
+  width: calc(5 * var(--space-10) + var(--space-5));
   transform: translateY(-100%);
   font-size: var(--text-sm);
 }
@@ -160,6 +155,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
   overflow: auto;
+  padding-bottom: var(--space-4);
 }
 
 @container (max-width: 760px) {
@@ -185,7 +181,7 @@
   max-height: 60vh;
   object-fit: contain;
   object-position: left top;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-s);
 }
 
@@ -263,10 +259,10 @@
 .live-record-clip video {
   display: block;
   flex: 1 1 0;
-  min-height: 96px;
+  min-height: calc(2 * var(--space-12));
   width: 100%;
   object-fit: contain;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-m);
   background: var(--sunken);
 }
@@ -284,9 +280,9 @@
 .live-record-frame {
   display: grid;
   gap: var(--space-1);
-  width: 132px;
+  width: calc(3 * var(--space-10) + var(--space-3));
   padding: var(--space-1);
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-s);
   background: var(--surface);
   color: var(--fg);
@@ -302,15 +298,15 @@
 .live-record-frames.compact img {
   display: block;
   width: 100%;
-  height: 72px;
+  height: calc(var(--space-12) + var(--space-6));
   object-fit: cover;
   object-position: top;
   border-radius: var(--radius-s);
 }
 
 .live-record-frames.compact img {
-  width: 132px;
-  border: 1px solid var(--line);
+  width: calc(3 * var(--space-10) + var(--space-3));
+  border: var(--hairline) solid var(--line);
 }
 
 .live-record-frame .small {
@@ -330,18 +326,18 @@
   padding: 0;
   overflow: auto;
   list-style: none;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-m);
   background: var(--surface);
 }
 
 .live-record-steps li + li {
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .live-record-steps button {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: calc(var(--space-12) + var(--space-1)) minmax(0, 1fr);
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-1) var(--space-2);

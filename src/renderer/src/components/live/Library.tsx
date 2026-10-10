@@ -111,7 +111,7 @@ function usePictures(projectId: string, lib: ComponentLibrary | null): { shots: 
   return { shots, want };
 }
 
-export function LibraryPanel({ project, site, trace, parts, regions, arrange, readOnly, onClose, onSelect, onHover }: {
+export function LibraryPanel({ project, site, trace, parts, regions, arrange, readOnly, focusSearch = true, onClose, onSelect, onHover }: {
   project: ProjectSummary;
   site: LiveSite;
   /** The page shown's trace: what it takes, and what on it is which entry. */
@@ -121,6 +121,8 @@ export function LibraryPanel({ project, site, trace, parts, regions, arrange, re
   arrange: ReturnType<typeof useArrange>;
   /** A hosted environment is shown: nothing can be added to it. */
   readOnly: boolean;
+  /** Opened by its key: the keyboard goes to its search once the list is there (stepping the tabs with [ and ] leaves it where it was). */
+  focusSearch?: boolean;
   onClose: () => void;
   /** Choose a part of the page (where it is used): it opens in the panel's Layers. */
   onSelect: (region: LiveRegion) => void;
@@ -144,7 +146,7 @@ export function LibraryPanel({ project, site, trace, parts, regions, arrange, re
   const entry = lib && chosen ? lib.entries.find((e) => e.id === chosen) ?? null : null;
   // Opened from its tab or its key, the keyboard goes to the search once the list is there; back from an entry, to its row.
   const searchRef = useRef<HTMLInputElement>(null);
-  const searchFirst = useRef(true);
+  const searchFirst = useRef(focusSearch);
   const back = (): void => {
     const was = chosen;
     setChosen(null);

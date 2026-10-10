@@ -33,11 +33,12 @@
 
 /*
   The page on the left (the structure toggle, the site, back, forward, reload, the address), the tools in the middle,
-  the view of the page on the right (the lens, the widths, the layer's eye, Edits, Make real, more). The address is
-  what gives as the bar narrows; then the lens and Edits give up their words; under that the bar takes a second row.
+  the view of the page on the right (the lens, the widths, the layer's eye, Edits, Make real, more, how it works). The
+  address is what gives as the bar narrows; then Edits and How this works give up their words; past that the view's
+  controls take a row of their own, and then a third: a group is never narrower than what it holds, so nothing is
+  ever drawn over anything else.
 */
 .live-bar {
-  flex-wrap: nowrap;
   gap: var(--space-2);
 }
 
@@ -46,15 +47,15 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-width: 0;
 }
 
 .live-bar-start {
-  flex: 1 1 0;
+  flex: 1 1 auto;
 }
 
 .live-bar-end {
-  flex: 1 1 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
   justify-content: flex-end;
 }
 
@@ -120,7 +121,22 @@
 }
 
 .live-tools {
+  display: flex;
   flex: none;
+}
+
+.live-commit {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Each side panel in a box of its own (the tour points at it): the panel keeps its width, the canvas takes the rest. */
+.live-panel-wrap {
+  display: flex;
+  flex: none;
+  min-height: 0;
 }
 
 /* Where Voice goes when it lands (another branch): nothing is drawn until it does. */
@@ -145,10 +161,6 @@
   display: inline-flex;
 }
 
-.live-edits-btn {
-  flex: none;
-}
-
 .live-edits-btn > span {
   display: inline-flex;
   align-items: center;
@@ -156,7 +168,6 @@
 }
 
 .live-real {
-  flex: none;
   gap: var(--space-1);
 }
 
@@ -170,32 +181,19 @@
   min-height: var(--toolbar-h);
 }
 
-@container live (max-width: 1240px) {
-  .live-edits-name {
-    display: none;
-  }
+/* How this works: its words where there is room, its icon (the same name, as its tooltip) where there is not. */
+.live-how-icon {
+  display: none;
 }
 
-@container live (max-width: 1080px) {
-  .live-lens-pick,
-  .live-how {
+@container live (max-width: 1300px) {
+  .live-edits-name,
+  .live-how-words {
     display: none;
   }
-}
 
-/* Narrower still (the dock beside a small window): the bar takes a second row, the tools and the view's controls under the page's. */
-@container live (max-width: 900px) {
-  .live:not(.live-compact) > .live-bar {
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
-  }
-
-  .live:not(.live-compact) .live-bar-start {
-    flex: 1 1 100%;
-  }
-
-  .live:not(.live-compact) .live-bar-end {
-    flex: 1 1 0;
+  .live-how-icon {
+    display: inline-flex;
   }
 }
 
@@ -1401,6 +1399,23 @@
 
 .live-compose-actions .select {
   max-width: 100%;
+}
+
+/* Start an agent with it: the primary, and its chevron for another agent, as one control. */
+.live-start {
+  display: inline-flex;
+  gap: var(--hairline);
+}
+
+.live-start > .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.live-start > .live-start-other {
+  width: var(--control-s);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .live-compose p {

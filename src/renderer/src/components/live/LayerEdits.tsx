@@ -132,7 +132,7 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits (⇧E).</p>
+      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits.</p>
     </form>
   );
 }

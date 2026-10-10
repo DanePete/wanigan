@@ -20,7 +20,6 @@ import { KeyCaps } from '../components/ui';
 import { openNotifications } from '../components/NotificationTray';
 import { openSettingsSection } from '../shell/SettingsNav';
 import type { DialogState } from '../App';
-import { openHowLiveWorks } from '../components/live/HowLiveWorks';
 import { useCoversLive } from '../lib/live';
 
 interface Item {
@@ -142,9 +141,6 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
       ...(currentProject ? [
         keyed('history', 'Commands', 'history'), keyed('quick-open', 'Commands', 'file', 'Open a file…'), keyed('toggle-editor', 'Commands', 'code', 'Show or hide the code editor'),
         keyed('live-goto', 'Commands', 'live', 'Go to a page of the site…', currentProject.key),
-        // The live editor's flow, with its numbers (components/live/HowLiveWorks.tsx): the live view opens first.
-        { id: 'live-how', group: 'Commands' as const, label: 'How the live editor works', detail: currentProject.key, icon: 'question' as const, whenTyped: true,
-          run: () => { navigate({ name: 'project', projectKey: currentProject.key, view: LIVE_VIEW.view }); openHowLiveWorks(currentProject.id); } },
         // The live view page's DevTools, found by typing ("devtools", "inspect", "console").
         { ...keyed('live-devtools', 'Commands', 'devtools', 'Page DevTools: elements, console, network', 'In the live view'), whenTyped: true },
         { id: 'show-folder', group: 'Commands' as const, label: `Show ${currentProject.name} in ${fileManager(bridge().platform)}`, icon: 'folder' as const, whenTyped: true, run: () => void bridge().openPath(currentProject.path) },

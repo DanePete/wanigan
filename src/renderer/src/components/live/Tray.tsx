@@ -236,11 +236,11 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       ) : null}
       <div className="live-actions">
         {e.state === 'draft' ? (
-          <Button size="s" tone="primary" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
+          <Button size="s" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
             data-tip={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
         {e.state === 'implemented' ? (
-          <Button size="s" tone="primary" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
+          <Button size="s" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
             data-tip="Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width">
             {verifying ? 'Verifying…' : 'Verify'}
           </Button>

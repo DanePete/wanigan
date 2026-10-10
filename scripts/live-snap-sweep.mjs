@@ -124,7 +124,7 @@ try {
     await page.waitForFunction(() => window.__wgLive.calls.includes('trace'), null, { timeout: 5000 }).catch(() => fail(t('the tab never asked for the trace')));
 
     // ── Snap: the bar's control and ⇧S, an area dragged over the picture.
-    if (!(await page.$('.live-bar-tools button[aria-keyshortcuts="Shift+S"][aria-label^="Snap"]'))) fail(t('snap: no Snap control with its name and key in the bar'));
+    if (!(await page.$('.live-bar .live-tools button[aria-keyshortcuts="Shift+S"][aria-label^="Snap"]'))) fail(t('snap: no Snap tool with its name and key in the toolbar'));
     await nobody();
     await page.keyboard.press('Shift+S');
     await phase('area', 'snap: ⇧S did not open the snap on the view’s picture');
@@ -196,7 +196,8 @@ try {
     await shot('snap-compose');
     await page.locator('.live-snap-compose button', { hasText: /^Send/ }).first().click();
     await queuedNow('snap: sending did not go to the agent');
-    await page.waitForSelector('.toast:has-text("Sent to")', { timeout: 6000 }).catch(() => fail(t('snap: sending did not say so')));
+    // The status line says only the latest outcome: what it said is kept by the stand-in (ui-live-stub.mjs).
+    await page.waitForFunction(() => (window.__wgLive.said ?? []).some((x) => x.includes('Sent to')), null, { timeout: 6000 }).catch(() => fail(t('snap: sending did not say so')));
     const snapSent = await sent();
     const pic = snapSent.filter((s) => s.method === 'attachments.save');
     const queued = snapSent.find((s) => s.method === 'sessions.queue');
@@ -216,9 +217,9 @@ try {
     if (!(await page.locator('textarea[aria-label="Context sent with it"]').inputValue()).includes('Pictured: What the view showed')) fail(t('snap: the whole view is not said to be pictured'));
     await page.fill('textarea[aria-label="What is wrong, in your words"]', 'The hero is too tall on this page.');
     await page.keyboard.press('Meta+Enter');
-    await page.waitForSelector('.dock-tabs button:has-text("Notes 1")', { timeout: 3000 }).catch(() => fail(t('snap: Save to Notes (⌘↩) did not keep it in Notes')));
+    await page.waitForSelector('.status-line .dock-tabs button[aria-label^="Notes, 1 waiting"]', { timeout: 3000 }).catch(() => fail(t('snap: Save to Notes (⌘↩) did not keep it in Notes')));
     if ((await sent()).length) fail(t('snap: Save to Notes sent something'));
-    await page.locator('.dock-tabs button', { hasText: /^Notes/ }).first().click();
+    await page.locator('.status-line .dock-tabs button[data-dock="notes"]').click();
     await page.waitForSelector('.live-note-item:has-text("Snap")', { timeout: 3000 }).catch(() => fail(t('snap: the Notes tab does not list the snap')));
     await nobody();
     await page.keyboard.press('Shift+S');
@@ -232,13 +233,60 @@ try {
     await page.waitForSelector('.live-stage-snap', { state: 'detached', timeout: 2000 }).catch(() => fail(t('snap: Escape on the view’s picture did not close the snap')));
     await page.waitForFunction(() => document.querySelector('#__wg_live_stub')?.style.visibility !== 'hidden', null, { timeout: 2000 }).catch(() => fail(t('snap: the view did not come back')));
 
+    // ── Straight to an agent with none running: Ask an agent offers Start Claude Code with this (the agent New session
+    // would start here), and one click starts it in the project, saves the picture to it and queues the words, as a send
+    // to a running session does; the status line says so and offers the session. Nothing starts until it is pressed.
+    {
+      await page.evaluate(() => { window.__wgLive.noAgents = true; window.__wgLive.sent.splice(0); });
+      await nobody();
+      await page.keyboard.press('Shift+S');
+      await phase('area', 'start: ⇧S did not open the snap');
+      await page.keyboard.press('w');
+      await phase('mark', 'start: W did not take the whole view');
+      await page.keyboard.press('Meta+Enter');
+      await phase('compose', 'start: ⌘↩ did not open the composer');
+      const startButton = page.locator('.live-snap-compose .live-start button', { hasText: /^Start Claude Code with this/ });
+      await startButton.waitFor({ timeout: 3000 }).catch(() => fail(t('start: with no agent running, the composer does not offer Start Claude Code with this')));
+      if (await page.$('.live-snap-compose button:has-text("Send to")')) fail(t('start: with no agent running, the composer still offers to send to one'));
+      if ((await sent()).some((x) => x.method === 'sessions.start')) fail(t('start: a session started before anything was pressed'));
+      await page.locator('.live-snap-compose .live-start-other').click();
+      const others = await page.$$eval('[role="menu"] [role^="menuitem"]', (els) => els.map((e) => `${e.textContent}|${e.getAttribute('aria-disabled') ?? ''}`));
+      if (!/^Start Claude Code with this/.test(others[0] ?? '') || !others.some((x) => /^Start Codex with this/.test(x)) || !others.some((x) => /^Gemini CLI: not from here.*\|true$/.test(x))) {
+        fail(t(`start: the other agents offered are ${others.join(' | ')}`));
+      }
+      await page.keyboard.press('Escape');
+      await page.fill('textarea[aria-label="What is wrong, in your words"]', 'The footer overlaps the hours on a phone.');
+      await shot('start-offer');
+      await startButton.click();
+      await page.waitForFunction(() => window.__wgLive.sent.some((x) => x.method === 'sessions.queue' && x.queued !== null), null, { timeout: 15_000 })
+        .catch(() => fail(t('start: the note never reached the started session’s queue')));
+      const went = await sent();
+      const started = went.find((x) => x.method === 'sessions.start');
+      const saved = went.filter((x) => x.method === 'attachments.save');
+      const queued = went.find((x) => x.method === 'sessions.queue');
+      if (!started || started.provider !== 'claude') fail(t(`start: what started was ${JSON.stringify(started)}`));
+      if (saved.length !== 1 || saved[0].session !== started?.session || saved[0].name !== 'live-snap-1.png') fail(t(`start: the picture went ${JSON.stringify(saved.map((x) => [x.name, x.session]))}`));
+      if (!queued || queued.session !== started?.session || queued.attachments !== 1 || !queued.text.includes('The footer overlaps the hours on a phone.') || !(queued.queued >= 1)) {
+        fail(t(`start: the started session's queue holds ${JSON.stringify(queued && { session: queued.session === started?.session, attachments: queued.attachments, queued: queued.queued })}`));
+      }
+      // The core holds it: the picture left the session's composer with the message.
+      const composerLeft = started ? await page.evaluate((id) => window.wanigan.call('attachments.list', { to: { session: id } }), started.session) : null;
+      if (!Array.isArray(composerLeft) || composerLeft.length) fail(t(`start: the picture did not go with the queued message (${JSON.stringify(composerLeft)})`));
+      await page.waitForFunction(() => (window.__wgLive.said ?? []).some((x) => x.startsWith('Claude Code started on it')), null, { timeout: 3000 }).catch(() => fail(t('start: the status line did not say the agent started on it')));
+      if (!(await page.$('.status-line button:has-text("Open the session")'))) fail(t('start: the status line does not offer the session'));
+      if (await page.$('.live-stage-snap')) fail(t('start: the snap stayed open after it was handed over'));
+      await shot('start-done');
+      if (started) await page.evaluate((id) => window.wanigan.call('sessions.stop', { id }), started.session);
+      await page.evaluate(() => { window.__wgLive.noAgents = false; window.__wgLive.sent.splice(0); });
+    }
+
     // ── Record: ⇧R, Recording in sight with its time, Escape stops it, the review.
     await nobody();
-    const record = page.locator('.live-bar-tools .live-record-btn');
+    const record = page.locator('.live-bar .live-tools .live-record-btn');
     if ((await record.getAttribute('aria-keyshortcuts')) !== 'Shift+R' || !/^Record/.test(await record.getAttribute('aria-label') ?? '')) fail(t('record: no Record control with its name and key'));
     await page.keyboard.press('Shift+R');
     await page.waitForSelector('.live-record-btn.on[aria-pressed="true"]', { timeout: 3000 }).catch(() => fail(t('record: ⇧R did not start recording')));
-    await page.waitForSelector('.live-status-said.live-recording:has-text("Recording the live view")', { timeout: 2000 }).catch(() => fail(t('record: the status line does not say it is recording')));
+    await page.waitForSelector('.status-line .live-status-said.live-recording:has-text("Recording the live view")', { timeout: 2000 }).catch(() => fail(t('record: the status line does not say it is recording')));
     const said = await page.locator('.visually-hidden[role="status"][aria-live="assertive"]').innerText().catch(() => '');
     if (!/Recording the live view/.test(said)) fail(t(`record: the start was not announced (${said})`));
     await page.waitForFunction(() => /0:0[1-9]/.test(document.querySelector('.live-record-btn .live-record-time')?.textContent ?? ''), null, { timeout: 3000 })

@@ -119,7 +119,8 @@ try {
     const nsHref = await page.$eval('.rail-projects a[aria-label^="Northstar"]', (a) => a.getAttribute('href'));
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const places = [['board', `#/p/${ns}/board`], ['sessions', `#/p/${ns}/sessions`], ['changes', `#/p/${ns}/changes`], ['history', `#/p/${ns}/history`],
-      ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings']];
+      ['decisions', `#/p/${ns}/decisions`], ['activity', `#/p/${ns}/activity`], ['list', `#/p/${ns}/list`], ['running', '#/running'], ['needs', '#/needs'], ['settings', '#/settings'],
+      ['live', `#/p/${ns}/live`]];
     let offered = 0;
     for (const [place, hash] of places) {
       await page.goto(`${base}${hash}`);

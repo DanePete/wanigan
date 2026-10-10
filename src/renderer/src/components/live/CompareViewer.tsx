@@ -188,7 +188,7 @@ export function CompareViewer({ a, b, width, regions, components, masks, onIgnor
               Showing {shown === 'a' ? a.label : b.label}
             </Button>
             <Button size="s" tone="quiet" icon={playing ? 'pause' : 'play'} aria-pressed={playing} disabled={reducedMotion()}
-              title={reducedMotion() ? 'Flipping on its own is off while this Mac reduces motion' : 'Flip between them twice a second'} onClick={() => setPlaying((p) => !p)}>
+              data-tip={reducedMotion() ? 'Flipping on its own is off while this computer reduces motion' : 'Flip between them twice a second'} onClick={() => setPlaying((p) => !p)}>
               {playing ? 'Stop' : 'Flip on its own'}
             </Button>
           </span>
@@ -258,8 +258,8 @@ export function CompareViewer({ a, b, width, regions, components, masks, onIgnor
                   : change ? 'Rows only one side has are not counted as changed pixels, so there is nothing to ignore.' : ''}
               </p>
               <div className="live-actions">
-                <Button size="s" disabled={!canIgnore} onClick={() => ignore('page')} title="I">Ignore on this page</Button>
-                <Button size="s" tone="quiet" disabled={!canIgnore} onClick={() => ignore('site')} title="Shift-I">On every page</Button>
+                <Button size="s" disabled={!canIgnore} onClick={() => ignore('page')} data-tip="Ignore it on this page" data-tip-keys="I" aria-keyshortcuts="I">Ignore on this page</Button>
+                <Button size="s" tone="quiet" disabled={!canIgnore} onClick={() => ignore('site')} data-tip="Ignore it on every page" data-tip-keys="Shift+I" aria-keyshortcuts="Shift+I">On every page</Button>
               </div>
             </div>
           ) : null}

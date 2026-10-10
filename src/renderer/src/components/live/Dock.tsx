@@ -17,6 +17,7 @@ import { createPortal } from 'react-dom';
 import { CODE_TAB, dockShows, setDockTabs, toggleDock, useDockHost, useEditor, type DockTab } from '../../editor/store';
 import { keyLabel } from '@shared/shortcuts';
 import { bridge } from '../../lib/api';
+import { toggleDevtoolsTab } from '../../lib/live-devtools';
 import { Count, tipProps } from '../ui';
 
 export type LiveDockTab = 'notes' | 'problems' | 'request' | 'devtools';
@@ -59,7 +60,7 @@ export function DockTabs({ projectId, tabs, chord }: {
   const unsaved = mine.filter((t) => editor.unsaved.has(t.key)).length;
   const all: (DockTab & { count?: number; tone?: LiveDockItem['tone'] })[] = [{ ...CODE_TAB, count: mine.length, tone: 'sunk' }, ...tabs];
   return (
-    <div className="dock-tabs" role="group" aria-label="The dock beneath the page">
+    <div className="dock-tabs" role="group" aria-label="The dock beneath the page" data-tour="live-dock">
       {all.map((t) => {
         const on = shows === t.id;
         const counted = t.count ? `, ${t.count} ${t.id === 'notes' ? 'waiting' : t.id === 'problems' ? 'reported' : t.count === 1 ? 'file open' : 'files open'}` : '';
@@ -69,7 +70,7 @@ export function DockTabs({ projectId, tabs, chord }: {
             : { 'data-tip': `${t.hint ?? t.label}${on ? ': hide the dock' : ''}` };
         return (
           <button key={t.id} type="button" className="btn btn-quiet btn-s dock-tab" aria-pressed={on} data-dock={t.id} aria-label={name} {...tip}
-            onClick={() => toggleDock(t.id)}>
+            onClick={() => (t.id === 'devtools' ? toggleDevtoolsTab() : toggleDock(t.id))}>
             <span>{t.label}</span>
             {t.count ? <Count n={t.count} tone={on ? 'sunk' : t.tone ?? 'sunk'} /> : null}
             {t.id === CODE_TAB.id && unsaved ? <span className="dock-tab-unsaved" aria-hidden="true" data-tip={`${unsaved} unsaved`} /> : null}

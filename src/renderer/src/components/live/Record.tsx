@@ -20,12 +20,11 @@ import type { LiveRecordState, LiveRecording } from '@shared/bridge';
 import type { LiveComponent } from '@shared/live';
 import { RECORDINGS_KEPT, clock, isErrorStep, length, recordContext, stepText, type PartNamer } from '@shared/live-record';
 import { formatBytes } from '@shared/attachments';
-import { keyLabel } from '@shared/shortcuts';
 import type { ProjectSummary } from '@shared/model';
 import { bridge } from '../../lib/api';
 import { liveBridge, useCoversLive } from '../../lib/live';
 import { isTyping } from '../../lib/live-goto';
-import { Button, IconButton, useToast } from '../ui';
+import { Button, IconButton, tipProps, useToast } from '../ui';
 import { Icon } from '../icons';
 import { NoteComposer, draftFor } from './Notes';
 import { LIVE_TIP } from './keys';
@@ -210,7 +209,6 @@ export function RecordReview({ project, recording, partName, components, prefer,
   };
   const actions = useRef({ reveal, remove });
   actions.current = { reveal, remove };
-  const chord = (...k: string[]): string => k.map((x) => keyLabel(x, mac)).join(mac ? '' : '+');
   const why = r.stopped === 'limit' ? `It stopped at ${length(r.ms)}, the longest a recording runs.`
     : r.stopped === 'view' ? 'It stopped when the live view went away.' : r.stopped === 'escape' ? 'Escape on the page stopped it.' : null;
 
@@ -218,15 +216,15 @@ export function RecordReview({ project, recording, partName, components, prefer,
     <section className="live-stage-snap live-record-review" aria-labelledby={titleId}>
       <div className="live-snap-head">
         <h2 className="live-snap-title" id={titleId}><Icon name="record" size={16} /> Recording, {length(r.ms)}</h2>
-        <span className="small faint live-snap-path mono" title={r.url}>{r.url}</span>
+        <span className="small faint live-snap-path mono" data-tip={r.url}>{r.url}</span>
         <span className="live-snap-spacer" />
         {composing ? <Button size="s" tone="quiet" icon="back" onClick={() => setComposing(false)} aria-keyshortcuts="Escape">Back</Button> : (
-          <Button size="s" tone="primary" icon="send" onClick={() => setComposing(true)} aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'}
-            title={`Send the key frames and the step log, with what you say (${chord('Mod', 'Enter')})`}>
-            Ask an agent <kbd className="live-key" aria-hidden="true">{chord('Mod', 'Enter')}</kbd>
+          <Button size="s" tone="primary" icon="send" onClick={() => setComposing(true)}
+            {...tipProps('Send the key frames and the step log, with what you say', { id: null, label: 'Ask an agent', group: 'In the live view', keys: ['Mod', 'Enter'] })}>
+            Ask an agent
           </Button>
         )}
-        <IconButton icon="close" label="Close the recording (Escape)" onClick={onClose} />
+        <IconButton icon="close" label="Close the recording" keys={LIVE_TIP.stop} onClick={onClose} />
       </div>
       {composing ? (
         <div className="live-snap-compose">
@@ -282,9 +280,9 @@ export function RecordReview({ project, recording, partName, components, prefer,
                 {r.clip ? <>, the clip a WebM video of {formatBytes(r.clip.bytes)}</> : null}. A project keeps its last {RECORDINGS_KEPT} recordings; a file is held to 20 MB, as attachments are.
               </p>
               <div className="live-record-kept-actions">
-                <Button size="s" tone="quiet" icon="folder" onClick={() => void reveal()} aria-keyshortcuts="O" title={`${revealLabel(platform)} (O)`}>{revealLabel(platform)}</Button>
+                <Button size="s" tone="quiet" icon="folder" onClick={() => void reveal()} {...tipProps(revealLabel(platform), { id: null, label: revealLabel(platform), group: 'In the live view', keys: ['O'] })}>{revealLabel(platform)}</Button>
                 <Button size="s" tone="quiet" icon="trash" onClick={() => void remove()} aria-keyshortcuts={mac ? 'Meta+Backspace' : 'Control+Backspace'}
-                  title={`Delete the clip, its key frames and its log (${chord('Mod', 'Backspace')})`}>Delete</Button>
+                  {...tipProps('Delete the clip, its key frames and its log', { id: null, label: 'Delete', group: 'In the live view', keys: ['Mod', 'Backspace'] })}>Delete</Button>
               </div>
             </div>
           </div>
