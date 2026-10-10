@@ -14,7 +14,9 @@
 // - An edit on the page goes into the design layer: the page shows it at once,
 //   the site does not have it until it is made real from the tray (Edits, ⇧E;
 //   Tray.tsx), where words are saved through the helper and styles go to an
-//   agent as intent.
+//   agent as intent. Retype the words (E, or a double-click on them in the page)
+//   types on the page itself, every keystroke shown there; Retype in a box is the
+//   same edit typed here, for the keyboard and screen readers.
 //
 // With the site helper's trace, "Why it looks like this" also says what the
 // trace knows of the part (PartTrace.tsx): the hooks that shaped it, its data,
@@ -41,7 +43,7 @@ import { TraceNote } from './TraceNote';
 import { SiteAiSection } from './SiteAi';
 import type { LiveSiteAiAnswer } from '@shared/live-ai';
 import { openInEditor, relativeTo, type EditorTarget } from '../../editor/EditButton';
-import { pagePath } from '../../lib/live-layer';
+import { changeLines, pagePath, placesOf, thisReach } from '../../lib/live-layer';
 import { LayerAddedNote, RetypeWords, StyleEdit, type LayerAdded } from './LayerEdits';
 import type { LayerApi } from './use-layer';
 
@@ -52,8 +54,12 @@ export interface Selection {
   how?: 'pick' | 'tree';
 }
 
-/** The five verbs, for the live view's keys (E, M, ., ⇧A, ⇧X). Each does what its button does, or says why it cannot. */
-export type InspectorVerbs = Record<'edit' | 'move' | 'code' | 'alone' | 'take-out', () => void>;
+/**
+ * The five verbs, for the live view's keys (E, M, ., ⇧A, ⇧X), and typing on the chosen part's words (`retype`: a
+ * double-click on them in the page). Each does what its button does, or says why it cannot. E types on the words when
+ * the part is only words, and opens Edit ▾ otherwise.
+ */
+export type InspectorVerbs = Record<'edit' | 'move' | 'code' | 'alone' | 'take-out' | 'retype', () => void>;
 
 const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contributed', core: 'Drupal core' };
 
@@ -154,6 +160,22 @@ export function Inspector({ project, platform, selection, regions, components, d
   /** A collection the helper says nothing about taking out of: a helper older than version 4. */
   const oldHelper = !!home && home.removes !== true && !home.removeWhy;
 
+  /** Words can be typed on the page: the chosen element holds only words, on the local site. */
+  const typable = !!pick?.own && !!live && !readOnly;
+  /**
+   * Type on the chosen element's words in the page itself: the window says so under the page while it lasts, and
+   * words kept there are a text edit of the layer, said here once added.
+   */
+  const typeOnPage = (): void => {
+    if (!typable || !pick) { toast(readOnly ? 'This environment is read-only: nothing here can change it.' : 'Pick the words themselves (an element with only text in it) to retype them.'); return; }
+    setStyling(false); setRetyping(false); setAdded(null);
+    void layer.typeOnPage(pagePath(page) || pagePath(pick.url)).then((r) => {
+      if (!r) return;
+      const change = { type: 'text' as const, value: r.words };
+      setAdded({ label: r.target.label, lines: changeLines({ change, before: r.target.before }), reach: thisReach(placesOf(r.target.target.part, trace), !!r.target.target.part) });
+    });
+  };
+
   /* ── Edit ▾: every way to change it, by where the change is saved ── */
   const targets = traced && trace && !readOnly ? (traced.part.edits ?? []).map((id) => parts.edits.get(id)).filter((e): e is EditTarget => !!e) : [];
   const override = targets.find((e) => e.kind === 'template-override' && !e.why) ?? null;
@@ -172,9 +194,15 @@ export function Inspector({ project, platform, selection, regions, components, d
     }
     if (pick && live) {
       const onPage = 'On the page · in the design layer, nothing saved yet';
+      const pickWords = 'Pick the words themselves (an element with only text in it) to retype them';
       editItems.push({
-        id: 'words', group: onPage, icon: 'pencil', label: 'Retype the words', disabled: !pick.own,
-        detail: pick.own ? `${layer.on ? 'Shown on the page at once' : 'Kept in the layer (the page is shown without it now)'}; made real in the site from Edits (⇧E)` : 'Pick the words themselves (an element with only text in it) to retype them',
+        id: 'words', group: onPage, icon: 'pencil', label: 'Retype the words', disabled: !pick.own, keys: pick.own ? ['E'] : undefined,
+        detail: pick.own ? `On the page itself, each key as you type it (or double-click them there): Enter keeps it in the layer, Esc puts it back${layer.on ? '' : ' (the page is shown without the layer now)'}` : pickWords,
+        run: typeOnPage,
+      });
+      editItems.push({
+        id: 'words-box', group: onPage, icon: 'pencil', label: 'Retype in a box', disabled: !pick.own,
+        detail: pick.own ? `The same edit, typed in a box here: for the keyboard and screen readers. ${layer.on ? 'Shown on the page once added' : 'Kept in the layer (the page is shown without it now)'}; made real from Edits (⇧E)` : pickWords,
         run: () => { setStyling(false); setAdded(null); setRetyping(true); },
       });
       editItems.push({
@@ -207,7 +235,12 @@ export function Inspector({ project, platform, selection, regions, components, d
   };
   if (verbs) {
     verbs.current = {
-      edit: () => { if (editItems.some((i) => !i.disabled)) editOpen.current?.(); else toast(readOnly ? 'This environment is read-only: nothing here can change it.' : `Nothing says how to change ${title} here. Tell an agent instead.`); },
+      // Words are typed at once, on the page; anything else opens every way to change it.
+      edit: () => {
+        if (typable) { typeOnPage(); return; }
+        if (editItems.some((i) => !i.disabled)) editOpen.current?.(); else toast(readOnly ? 'This environment is read-only: nothing here can change it.' : `Nothing says how to change ${title} here. Tell an agent instead.`);
+      },
+      retype: () => { if (typable) typeOnPage(); },
       move: () => { if (canMove) startMove(); else toast(readOnly ? 'This environment is read-only: nothing here can move it.' : `${title} cannot be moved here.`); },
       code: () => { if (code) openCode(); else toast(codeWhyNot(region, docroot)); },
       alone: () => { if (alone.length) showAlone(); else toast(aloneWhyNot(helper, isAlone, readOnly)); },
@@ -242,7 +275,7 @@ export function Inspector({ project, platform, selection, regions, components, d
 
       <div className="live-verbs" role="group" aria-label={`What to do with ${title}`}>
         <MenuButton className="live-verb" label={`Edit ${title}: every way, in one menu`} items={editItems} openRef={editOpen} width={340}
-          disabled={!editItems.length} title={editItems.length ? 'Every way to change it, by where the change is saved (E)' : readOnly ? 'This environment is read-only' : 'Nothing says how to change it here: tell an agent'}>
+          disabled={!editItems.length} title={editItems.length ? (typable ? 'Every way to change it, by where the change is saved. E types on its words, on the page' : 'Every way to change it, by where the change is saved (E)') : readOnly ? 'This environment is read-only' : 'Nothing says how to change it here: tell an agent'}>
           <Icon name="pencil" size={16} />
           <span className="live-verb-name">Edit <Icon name="down" size={12} /></span>
           <kbd aria-hidden="true">E</kbd>

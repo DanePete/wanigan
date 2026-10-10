@@ -49,6 +49,14 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'take-out', key: 'x', shift: true, page: false, focusWindow: false },
 ];
 
+/**
+ * What the page answers the window besides a key: a double-click on the chosen part's own words, which types on them
+ * as Retype the words (E) does (live-page-goto.ts).
+ */
+export type LiveGesture = 'retype';
+
+export const isLiveGesture = (v: unknown): v is LiveGesture => v === 'retype';
+
 /** What the page script is given to wait for: the keys it may take from the page. */
 export const LIVE_PAGE_KEYS: readonly { id: LiveKeyId; key: string; shift: boolean }[] = LIVE_KEYS
   .filter((k) => k.page).map(({ id, key, shift }) => ({ id, key, shift }));

@@ -21,6 +21,10 @@
 import { WORDPRESS_ADAPTERS_SOURCE } from './live-helper-wordpress-adapters.ts';
 import { WORDPRESS_USAGE_SOURCE } from './live-helper-wordpress-usage.ts';
 import { WORDPRESS_VERIFY_SOURCE } from './live-helper-wordpress-verify.ts';
+import { WORDPRESS_WORDS_SOURCE } from './live-helper-wordpress-words.ts';
+import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
+import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
+import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
@@ -36,7 +40,11 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
+  // The site-adapter base right after the core, then the stored-words search and the plugins' adapters for it (each
+  // registers itself, and is used only when its plugin is active): page builders first, as they are asked in the order
+  // they registered.
+  const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE;
+  return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);
@@ -188,6 +196,10 @@ final class Wanigan_Live {
 	private static $listed = array();
 	private static $hooks = array();
 	private static $queries = array();
+	/** @var array<string,mixed> The update transients whose() names owners from, read before any plugin can query (preload()). */
+	private static $updates = array();
+	/** @var int Inside wpdb's own logging of a query, before wpdb reads that query's result: nothing may query here. */
+	private static $in_db = 0;
 	private static $qcount = 0;
 	private static $qms = 0.0;
 	private static $logs = array();
@@ -237,7 +249,7 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
@@ -247,6 +259,7 @@ final class Wanigan_Live {
 			// blocks.php register_block_type_from_metadata(): the only place a block's block.json path is known, which
 			// the component library names.
 			if ($m[1] === 'components') add_filter('block_type_metadata', array(self::class, 'block_json'), PHP_INT_MAX);
+			self::quiet();
 			add_action('wp_loaded', array(self::class, 'route'), PHP_INT_MAX);
 			return;
 		}
@@ -257,6 +270,7 @@ final class Wanigan_Live {
 		self::$collecting = true;
 		self::$started = microtime(true);
 		self::$id = bin2hex(random_bytes(8));
+		add_action('muplugins_loaded', array(self::class, 'preload'), 0);
 		self::$wrappers = new SplObjectStorage();
 		self::$closures = new SplObjectStorage();
 		// class-wpdb.php wpdb::_do_query() logs a query only while SAVEQUERIES is true, reading the constant on every
@@ -331,6 +345,23 @@ final class Wanigan_Live {
 		return false;
 	}
 
+	/**
+	 * For the helper's own answers: a site that shows PHP errors on screen (WP_DEBUG_DISPLAY, which a WP_DEBUG site
+	 * has unless it says otherwise) would print the next plugin's deprecation notice into the JSON and break it. Errors
+	 * still reach the site's log; the screen gets none, and what was printed before an answer is dropped by clean().
+	 */
+	public static function quiet(): void {
+		@ini_set('display_errors', '0');
+		ob_start();
+	}
+
+	/** Drops whatever PHP printed before an answer (a notice, a stray echo), so the answer is only its JSON. */
+	public static function clean(): void {
+		while (ob_get_level() > 0) {
+			if (!@ob_end_clean()) break;
+		}
+	}
+
 	private static function request_path(): string {
 		$uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
 		return (string) wp_parse_url($uri, PHP_URL_PATH);
@@ -344,6 +375,9 @@ final class Wanigan_Live {
 	 */
 	public static function all($hook): void {
 		if (self::$busy || !self::$collecting || !is_string($hook)) return;
+		// These fire inside wpdb::query(), many times a page; listing their callbacks names plugins (whose()), which can
+		// read the database, and a query there hands its result to the query being run (see logged()).
+		if ($hook === 'query' || $hook === 'log_query_custom_data') return;
 		self::$busy++;
 		try {
 			self::$firings++;
@@ -1345,11 +1379,27 @@ final class Wanigan_Live {
 	 */
 	public static function logged($data, $query = '', $time = 0, $stack = '', $start = 0) {
 		if (self::$busy || !self::$collecting) return $data;
+		self::$in_db++;
+		try {
+			self::note_query($query, $time);
+		} finally {
+			self::$in_db--;
+		}
+		return $data;
+	}
+
+	/**
+	 * One query, as wpdb::_do_query() logs it: after the query ran and before wpdb::query() reads its result into
+	 * last_result. A query run from here would replace that result with its own, so nothing here may touch the
+	 * database: who asked is a file and line now, named when the trace is built (callers()). It was named here once,
+	 * and naming a plugin read its update transient: a plugin asking for its own option got the transient back.
+	 */
+	private static function note_query($query, $time): void {
 		self::$qcount++;
 		self::$qms += (float) $time * 1000;
 		if (count(self::$queries) >= self::LIMITS['queries']) {
 			self::$truncated['queries'] = true;
-			return $data;
+			return;
 		}
 		$core = null;
 		$caller = null;
@@ -1358,20 +1408,43 @@ final class Wanigan_Live {
 			$file = wp_normalize_path($f['file']);
 			if ($file === self::$self || str_ends_with($file, '/wp-includes/class-wpdb.php')) continue;
 			if ($core === null) $core = array($file, isset($f['line']) ? (int) $f['line'] : 0);
-			$w = self::whose($file);
-			if ($w[0] !== 'core') {
+			if (!self::core_file($file)) {
 				$caller = array($file, isset($f['line']) ? (int) $f['line'] : 0);
 				break;
 			}
 		}
 		$at = $caller ? $caller : $core;
 		$q = array('sql' => self::cut((string) $query, 4000), 'ms' => round((float) $time * 1000, 3));
-		$src = $at ? self::source($at[0], $at[1]) : null;
-		if ($src) $q['caller'] = $src;
+		if ($at) $q['at'] = $at;
 		$part = self::top_part();
 		if ($part) $q['part'] = $part;
 		self::$queries[] = $q;
-		return $data;
+	}
+
+	/** Each recorded query's asker, named now that no query is in flight (see note_query()). */
+	private static function callers(): void {
+		foreach (self::$queries as $i => $q) {
+			if (!isset($q['at'])) continue;
+			$src = self::source($q['at'][0], $q['at'][1]);
+			unset(self::$queries[$i]['at']);
+			if ($src) self::$queries[$i]['caller'] = $src;
+		}
+	}
+
+	/** Whether a file is WordPress core's, from its path alone: whose() says the same but can read the database. */
+	private static function core_file(string $file): bool {
+		$abs = wp_normalize_path(ABSPATH);
+		return strpos($file, $abs . 'wp-includes/') === 0 || strpos($file, $abs . 'wp-admin/') === 0 || dirname($file) . '/' === $abs;
+	}
+
+	/**
+	 * muplugins_loaded: the update transients whose() names plugins and themes from, read once before any plugin
+	 * loads, so naming an owner never reads the database while a query is in flight.
+	 */
+	public static function preload(): void {
+		foreach (array('update_plugins', 'update_themes') as $transient) {
+			if (!array_key_exists($transient, self::$updates)) self::$updates[$transient] = get_site_transient($transient);
+		}
 	}
 
 	/**
@@ -1465,6 +1538,7 @@ final class Wanigan_Live {
 				$i = count(self::$queries) - 1;
 				if (!isset(self::$queries[$i]['rows'])) self::$queries[$i]['rows'] = (int) $wpdb->num_rows;
 			}
+			self::callers();
 			self::$trace = self::build();
 		} catch (Throwable $e) {
 			self::$trace = null;
@@ -1792,7 +1866,8 @@ final class Wanigan_Live {
 				$value = array_key_exists($key, $values) ? $values[$key] : null;
 				$rev = !empty($registered[$key]['revisions_enabled']);
 				$label = (isset($s['description']) && $s['description'] !== '' ? $s['description'] : $key) . ' (' . $title . ')';
-				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : null);
+				// A plugin's own data, or a structure in a string, is not offered as words to type (Wanigan_Live_Stored::meta_why()).
+				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : Wanigan_Live_Stored::meta_why((string) $key, $s, $value));
 				$id = $out['meta-' . $n];
 				unset($out['meta-' . $n]);
 				$out['meta:' . $key] = $id;
@@ -1810,6 +1885,21 @@ final class Wanigan_Live {
 		}
 		self::$post_edits[$pid] = $out;
 		return $out;
+	}
+
+	/** A stored trace's public and private halves, for the stored-words save (Wanigan_Live_Stored); null when it is gone or another user's. */
+	public static function stored_trace(string $id): ?array {
+		return self::load($id);
+	}
+
+	/** Why the logged-in user cannot change a post here now (its capability, a lock), or null: for the stored-words save. */
+	public static function post_refusal(WP_Post $post, string $noun): ?string {
+		return self::post_why($post, $noun);
+	}
+
+	/** A post's newest revision id, or null: for the stored-words save. */
+	public static function revision_of(int $pid): ?int {
+		return self::latest_revision($pid);
 	}
 
 	/** Why the logged-in user cannot change a post here now, or null. */
@@ -3496,14 +3586,17 @@ final class Wanigan_Live {
 				elseif ($dir . '/' === $content) $out = array('unknown', 'drop-in', 'drop-in', 'drop-in');
 			}
 		}
-		self::$whose[$dir] = $out;
+		if (self::$in_db === 0) self::$whose[$dir] = $out;
 		return $out;
 	}
 
 	private static function updates(string $transient, string $key, string $kind): string {
-		static $data = array();
-		if (!array_key_exists($transient, $data)) $data[$transient] = get_site_transient($transient);
-		$u = $data[$transient];
+		if (!array_key_exists($transient, self::$updates)) {
+			// Inside wpdb's logging a query would answer the query being run (see note_query()): say nothing yet.
+			if (self::$in_db > 0) return 'unknown';
+			self::$updates[$transient] = get_site_transient($transient);
+		}
+		$u = self::$updates[$transient];
 		if (!is_object($u) || empty($u->checked)) return 'unknown';
 		foreach (array('response', 'no_update') as $list) {
 			if (empty($u->$list)) continue;
@@ -4603,7 +4696,7 @@ final class Wanigan_Live {
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -4631,6 +4724,11 @@ final class Wanigan_Live {
 			if ($route === 'insert') self::move($body, true);
 			if ($route === 'remove') self::remove($body);
 			if ($route === 'undo') self::undo($body);
+			if ($route === 'words') {
+				// Words no edit target holds, found where the post keeps them and saved there (Wanigan_Live_Stored, below).
+				$words = Wanigan_Live_Stored::request($body);
+				self::answer($words[0], $words[1]);
+			}
 		} catch (Throwable $e) {
 			self::answer(array('ok' => false, 'error' => 'WordPress stopped with an error: ' . $e->getMessage()), 500);
 		}
@@ -4639,6 +4737,7 @@ final class Wanigan_Live {
 
 	private static function answer(array $data, int $status = 200): void {
 		if (self::$ai !== null && !isset($data['ai'])) $data['ai'] = self::ai_report();
+		self::clean();
 		wp_send_json($data, $status);
 	}
 
@@ -5488,6 +5587,9 @@ final class Wanigan_Live {
 				wp_set_sidebars_widgets($all);
 				$result = array();
 			}
+		} elseif ($u['type'] === 'stored') {
+			// Words saved where a post kept them (Wanigan_Live_Stored): the old value, only while it holds what was written.
+			$result = Wanigan_Live_Stored::undo($u);
 		} elseif ($u['type'] === 'menu') {
 			if (self::menu_state($u['menu']) !== $u['after']) $result = new WP_Error('wanigan', 'The menu changed again since, so putting it back could undo other work.');
 			else {
@@ -5589,12 +5691,17 @@ if (wanigan_live_on()) {
 		$path = (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 		if (!preg_match('#/_wanigan/(changed|save)$#', $path, $m)) return;
 		nocache_headers();
+		Wanigan_Live::clean();
 		if ($m[1] === 'changed') wp_send_json(array('changed' => (int) get_option('wanigan_live_changes', 0)));
 		wp_send_json(array('ok' => false, 'error' => 'This WordPress helper saves through /_wanigan/edit: reload the live view.'), 409);
 	}, 0);
 	// A piece is shown alone: no admin bar over it, decided before core sets the bar up (_wp_admin_bar_init, also on
 	// template_redirect at 0).
-	if (preg_match('#/_wanigan/piece/#', (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH))) add_filter('show_admin_bar', '__return_false', PHP_INT_MAX);
+	// Nor a PHP notice printed across it, when the site shows errors on screen.
+	if (preg_match('#/_wanigan/piece/#', (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH))) {
+		add_filter('show_admin_bar', '__return_false', PHP_INT_MAX);
+		@ini_set('display_errors', '0');
+	}
 	add_action('template_redirect', function () {
 		$path = (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 		// One entry of the component library alone (helper version 4).

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compileLayer, layerBreakpoints, layerEdit, layerSelector, layerTextHash, layerValue, type LayerEdit, type LayerTarget } from './design-layer.ts';
+import {
+  LAYER_PROPERTIES, compileLayer, layerBreakpoints, layerEdit, layerSelector, layerTextHash, layerValue, trySheet, tryValues, tryVar, type LayerEdit, type LayerTarget,
+} from './design-layer.ts';
 import { identityKey, kindKey, parseIdentity } from './live-trace.ts';
 
 const hero: LayerTarget = { part: { kind: 'component', name: 'acme:hero', within: null, nth: 0 }, inner: null, selector: null, textHash: null };
@@ -171,4 +173,37 @@ test('words are hashed the same however their whitespace falls', () => {
   assert.notEqual(layerTextHash('Plan your trip'), layerTextHash('Plan your trips'));
   assert.match(layerTextHash(''), /^[0-9a-f]{16}$/);
   assert.equal(layerTextHash('Paddling 101'), layerTextHash('Paddling 101'));
+});
+
+/** A selector's specificity, as (ids, classes and attributes and pseudo-classes, types), for the plain selectors the sheets print. */
+const specificity = (sel: string): [number, number, number] => {
+  const ids = (sel.match(/#[\w-]+/g) ?? []).length;
+  const attrs = (sel.match(/\[[^\]]*\]/g) ?? []).length + (sel.replace(/\[[^\]]*\]/g, '').match(/(?<!:):[\w-]+/g) ?? []).length;
+  const types = (sel.replace(/\[[^\]]*\]/g, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gi) ?? []).length;
+  return [ids, attrs, types];
+};
+const outranks = (a: [number, number, number], b: [number, number, number]): boolean => a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2];
+
+test('a style being tried shows through one sheet that holds no value of its own, and outranks the layer’s own rule for the same property', () => {
+  const sheet = trySheet();
+  const rules = sheet.split('\n');
+  assert.equal(rules.length, LAYER_PROPERTIES.length, 'one rule for each property the layer sets, and nothing else');
+  for (const [i, p] of LAYER_PROPERTIES.entries()) {
+    const m = /^((?:\[data-wl-try~="([a-z-]+)"\])+) \{ ([a-z-]+): var\((--wl-try-[a-z-]+)\) !important; \}$/.exec(rules[i] ?? '');
+    assert.ok(m, rules[i]);
+    assert.deepEqual([m[2], m[3], m[4]], [p, p, tryVar(p)], `${p} is read from its own custom property, on elements marked for it: no value is written into the sheet`);
+  }
+  // Both sheets are injected at the user origin, where !important beats every page declaration: between them the
+  // selector decides, and a value being tried must show over an edit the layer already shows on that element.
+  const layer = compileLayer([edit({ id: 'e1', change: { type: 'style', values: { color: '#123456' } } })], [], 'g7');
+  const layerSelectors = layer.split(' { ')[0]!.split(', ');
+  assert.equal(layerSelectors.length, 2);
+  const tried = specificity(rules[0]!.split(' { ')[0]!);
+  for (const s of layerSelectors) assert.ok(outranks(tried, specificity(s)), `${rules[0]!.split(' { ')[0]} over ${s}`);
+});
+
+test('values to try are the layer’s own properties with values it prints; anything else is left out, and none is nothing', () => {
+  assert.deepEqual(tryValues({ color: '#c0392b', 'font-size': '22px', position: 'fixed', 'background-color': 'red; } body { display: none', margin: '0' }), { color: '#c0392b', 'font-size': '22px' });
+  assert.deepEqual(tryValues({ 'padding-top': ' 2rem !important ' }), { 'padding-top': '2rem' }, 'the sheet adds its own !important');
+  for (const none of [null, undefined, 'color: red', ['color'], {}, { position: 'fixed' }, { color: 'url(https://example.test/x.png)' }]) assert.equal(tryValues(none), null, JSON.stringify(none));
 });

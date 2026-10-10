@@ -9,6 +9,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { WORDPRESS_HELPER_MARK, WORDPRESS_HELPER_VERSION, wordpressHelper } from './live-helper-wordpress.ts';
+import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
+import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
+import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 
 // A made-up token, built here so no key-shaped string sits in the source.
 const TOKEN = 'ab'.repeat(24);
@@ -42,8 +45,21 @@ test('only a hex token and a plain relative folder are written into PHP', () => 
   for (const bad of ['../outside', 'web/../..', "web'; //", 'a b', 'web/./x']) assert.throws(() => wordpressHelper(TOKEN, bad), /plain relative path/, bad);
 });
 
-test('it hooks core, and names no plugin or theme', () => {
-  const src = wordpressHelper(TOKEN);
+test('it hooks core, and names no plugin or theme outside the stored-words adapters, each isolated in its own class', () => {
+  // The adapters (Elementor, ACF, known copies) are the one place a plugin is named: each in its own file and class,
+  // registered with the stored-words search, which never depends on them. Everything else is core only.
+  const adapters = [WORDPRESS_ELEMENTOR_SOURCE, WORDPRESS_ACF_SOURCE, WORDPRESS_COPIES_SOURCE];
+  const full = wordpressHelper(TOKEN);
+  for (const a of adapters) assert.ok(full.includes(a));
+  const src = adapters.reduce((s, a) => s.replace(a, ''), full);
+  for (const [a, name, shape] of [
+    [WORDPRESS_ELEMENTOR_SOURCE, 'Wanigan_Live_Adapter_Elementor', 'extends Wanigan_Live_Adapter implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_ACF_SOURCE, 'Wanigan_Live_Acf', 'implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_COPIES_SOURCE, 'Wanigan_Live_Copies', 'implements Wanigan_Live_Words_Adapter'],
+  ] as const) {
+    assert.match(a, new RegExp(`final class ${name} ${shape}`));
+    assert.ok(!src.includes(name), `${name} is named only in its own file`);
+  }
   // The seams the trace and the edits are built on, each from WordPress core.
   for (const hook of ["add_action('all'", "'log_query_custom_data'", "'wp_before_load_template'", "'wp_before_include_template'", "'pre_render_block'", "'interactivity_process_directives'", "'wp_template_enhancement_output_buffer'", "'render_block_core_template_part_file'", "'block_bindings_source_value'", "'dynamic_sidebar_params'", "'walker_nav_menu_start_el'", 'rest_do_request(', 'WP_REST_Post_Meta_Fields', 'serialize_blocks(', 'wp_set_sidebars_widgets(', "'wp-admin/menu.php'"]) {
     assert.ok(src.includes(hook), hook);
@@ -52,6 +68,15 @@ test('it hooks core, and names no plugin or theme', () => {
   for (const name of ['elementor', 'acf', 'woocommerce', 'yoast', 'gravity', 'divi', 'astra', 'twentytwenty', 'rank-math', 'jetpack', 'akismet', 'mwai', 'alttext', 'openai', 'anthropic']) {
     assert.ok(!new RegExp(`\\b${name}`, 'i').test(src), name);
   }
+});
+
+test('each adapter calls its plugin only inside its own source', () => {
+  // Elementor's API is called only by its adapter, ACF's only by its: the known-copies list may name their data (it is
+  // the exclusion list, kept whether or not an adapter exists), never call them.
+  const others = (mine: string): string => [WORDPRESS_ELEMENTOR_SOURCE, WORDPRESS_ACF_SOURCE, WORDPRESS_COPIES_SOURCE].filter((a) => a !== mine).join('\n');
+  assert.ok(/\\Elementor\\Plugin::\$instance/.test(WORDPRESS_ELEMENTOR_SOURCE) && !/\\?Elementor\\/.test(others(WORDPRESS_ELEMENTOR_SOURCE)), 'Elementor’s classes');
+  assert.ok(/\bacf_update_value\(/.test(WORDPRESS_ACF_SOURCE) && !/\bacf_[a-z_]+\(/.test(others(WORDPRESS_ACF_SOURCE)), 'ACF’s functions');
+  assert.ok(!/\bFLBuilder|SiteOrigin_Panels|\\Bricks\\|aioseo\(/.test(others(WORDPRESS_COPIES_SOURCE)), 'the copies’ plugins are named only by the copies');
 });
 
 test('the site’s AI is read through core alone, and no key is ever read', () => {
@@ -273,8 +298,16 @@ function wp_get_abilities() {
 $_SERVER['REQUEST_URI'] = getenv('WL_URI');
 $_SERVER['SCRIPT_FILENAME'] = ABSPATH . 'index.php';
 $_SERVER['HTTP_X_WANIGAN_LIVE'] = getenv('WL_TOKEN');
+// A site that shows PHP errors on screen, as its wp-config.php says before any plugin loads.
+if (getenv('WL_NOISE') === '1' || getenv('WL_DO') === 'display') ini_set('display_errors', '1');
 require getenv('WL_PLUGIN');
 foreach (array('wp-content/plugins/acme-seo/acme-seo.php', 'wp-content/plugins/northwind-alt/northwind-alt.php', 'wp-content/themes/northwind/functions.php', 'wp-content/mu-plugins/acme-tools.php', 'wp-includes/post.php') as $f) require_once ABSPATH . $f;
+// A plugin loaded after the must-use plugins printing a deprecation notice, on a site that shows errors on screen.
+if (getenv('WL_NOISE') === '1') {
+  echo "<br />\n<b>Deprecated</b>:  Creation of dynamic property Acme_Seo::$x is deprecated in acme-seo.php on line 1<br />\n";
+  trigger_error('Acme_Seo::legacy() is deprecated', E_USER_DEPRECATED);
+}
+if (getenv('WL_DO') === 'display') { echo json_encode(array('display' => ini_get('display_errors'))); exit; }
 hooked('save_post', array('acme_seo_on_save', 'wl_core_on_save', 'acme_tools_on_save'));
 hooked('save_post_page', array('northwind_theme_on_save'));
 hooked('wp_after_insert_post', array(array(new Acme_Seo_Meta(), 'meta')));
@@ -303,6 +336,13 @@ if (getenv('WL_DO') === 'listen') {
     assert.ok(!out.includes(secret), 'no key, and no prompt text, ever leaves the helper');
     return JSON.parse(out) as Answer;
   };
+
+  test('a site that shows PHP errors on screen cannot break an answer: what was printed before it is dropped, and no error is shown', () => {
+    const r = ai('route', { WL_NOISE: '1' });
+    assert.equal(r.status, 200, 'the answer is only its JSON');
+    const shown = execFileSync(php as string, [AI], { env: { PATH: process.env.PATH ?? '', WL_SITE: realpathSync(site), WL_PLUGIN: plugin, WL_TOKEN: TOKEN, WL_URI: '/_wanigan/ai', WL_DO: 'display' }, encoding: 'utf8' });
+    assert.equal((JSON.parse(shown) as { display: string }).display, '0', 'its own routes show no PHP error on screen');
+  });
 
   test('GET /_wanigan/ai lists core’s connectors with where each key comes from, never the key, and the abilities by whose code they are', () => {
     const r = ai('route');

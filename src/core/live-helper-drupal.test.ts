@@ -59,23 +59,38 @@ test('every class the services, routes and the service provider name is one the 
   for (const r of routes) assert.match(r, /_custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'/, r.split('\n')[0]);
 });
 
-test('each swap puts in a class that extends the core class it replaces, only under the provider\'s check', () => {
+test('each swap puts in a class that extends the core class it replaces, one per shape of it, only under the provider\'s check', () => {
   const provider = classes.get('Drupal\\wanigan_live\\WaniganLiveServiceProvider')?.text ?? '';
   assert.match(provider, /implements ServiceModifierInterface/);
-  const swaps = [...provider.matchAll(/'([\w.\\]+)' => \[\n\s+'(Drupal\\Core\\[\w\\]+)',\n\s+'(Drupal\\wanigan_live\\[\w\\]+)',/g)];
-  assert.deepEqual(swaps.map((m) => m[1]).sort(), ['Drupal\\Core\\Template\\TwigThemeEngine', 'module_handler', 'renderer', 'theme.manager', 'theme.registry']);
-  for (const [, , core, ours] of swaps) {
-    const text = classes.get(ours!)?.text ?? '';
+  const engine = /public const ENGINE = '([\w\\]+)';/.exec(provider)?.[1];
+  // Each service: core's class, then its family of the trace's classes, newest first.
+  const services = [...provider.matchAll(/\n {4}(?:'([\w.]+)'|self::ENGINE) => \[(?:'(Drupal\\Core\\[\w\\]+)'|self::ENGINE), \[\n([\s\S]*?)\n {4}\]\],/g)]
+    .map(([, id, core, body]) => ({ id: id ?? engine, core: core ?? engine, family: [...(body ?? '').matchAll(/\n {6}'(Drupal\\wanigan_live\\Trace\\\w+)' => \[/g)].map((m) => m[1] as string) }));
+  assert.deepEqual(services.map((x) => x.id).sort(), ['Drupal\\Core\\Template\\TwigThemeEngine', 'module_handler', 'renderer', 'theme.manager', 'theme.registry']);
+  assert.deepEqual(Object.fromEntries(services.map((x) => [x.id, x.family.map((c) => c.split('\\').pop())])), {
+    module_handler: ['TraceModuleHandler', 'TraceModuleHandler112', 'TraceModuleHandler111', 'TraceModuleHandler103'],
+    'theme.manager': ['TraceThemeManager', 'TraceThemeManager103'],
+    'theme.registry': ['TraceRegistry', 'TraceRegistry112', 'TraceRegistry103'],
+    renderer: ['TraceRenderer', 'TraceRenderer103'],
+    'Drupal\\Core\\Template\\TwigThemeEngine': ['TraceThemeEngine'],
+  });
+  for (const { core, family } of services) {
     const short = core!.split('\\').pop();
-    assert.match(text, new RegExp(`^use ${core!.replace(/\\/g, '\\\\')};`, 'm'), `${ours} uses ${core}`);
-    assert.match(text, new RegExp(`class \\w+ extends ${short} `), `${ours} extends ${short}`);
+    for (const ours of family) {
+      const text = classes.get(ours)?.text ?? '';
+      // A shape's class extends core's, or the newest shape's class when only how it reads core differs.
+      const parent = /class \w+ extends (\w+) /.exec(text)?.[1];
+      assert.ok(parent === short || family.slice(0, 1).some((first) => first.endsWith(`\\${parent}`)), `${ours} extends ${short}`);
+      if (parent === short) assert.match(text, new RegExp(`^use ${core!.replace(/\\/g, '\\\\')};`, 'm'), `${ours} uses ${core}`);
+    }
   }
-  assert.match(provider, /self::fits\(\$signatures\)/, 'a class is swapped only when core\'s signatures fit');
+  assert.match(provider, /self::fits\(self::withOwn\(\$id, \$core, \$signatures\)\)/, 'a class is swapped only when core\'s signatures fit');
 });
 
 test('nothing in the helper acts unless a trace is on, or the token is carried', () => {
   for (const [file, text] of php) {
-    if (!/^(?:final )?class \w+ extends (ModuleHandler|ThemeManager|Registry|TwigThemeEngine|Renderer) /m.test(text)) continue;
+    // A class extending a core service, or a trait all of a service's classes share.
+    if (!/^(?:final )?class \w+ extends (ModuleHandler|ThemeManager|Registry|TwigThemeEngine|Renderer) /m.test(text) && !/^trait \w+ \{/m.test(text)) continue;
     // Every overriding method of a swapped service asks the recorder first.
     // (Its own additions, which only read core, are not overrides.)
     for (const [, name, body] of text.matchAll(/\n {2}(?:public|protected) function (\w+)\([^)]*\)[^{]*\{\n([\s\S]*?)\n {2}\}/g)) {

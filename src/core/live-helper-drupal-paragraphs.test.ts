@@ -230,7 +230,7 @@ namespace {
       Store::put('paragraph', '5', 49, ['en' => ['field_text' => ['Paddle north']]], [], ['node', '1', 'field_paragraphs']);
       Store::put('paragraph', '5', 50, ['en' => ['field_text' => ['Paddle north']]], [], ['node', '1', 'field_paragraphs']);
       Store::put('node', '1', 9, ['en' => ['title' => ['About Acme']]], ['field_paragraphs' => [['paragraph', '5', 49]]]);
-      Store::put('node', '1', 10, ['en' => ['title' => ['About Acme']]], ['field_paragraphs' => [['paragraph', '5', 50]]]);
+      Store::put('node', '1', 10, ['en' => ['title' => ['About Acme'], 'field_summary' => ['A long summary']]], ['field_paragraphs' => [['paragraph', '5', 50]]]);
       Store::$alias['node']['1'] = '/about-acme';
       // Lake guide: a section paragraph (6) holding a text paragraph (7).
       Store::put('paragraph', '7', 70, ['en' => ['field_text' => ['Canoe']]], [], ['paragraph', '6', 'field_items']);
@@ -345,9 +345,20 @@ const SCENARIOS = String.raw`
   // A page from before the node was saved again: it showed the paragraph at 49, and the node now pins 50.
   World::reset();
   $out['stale'] = [$save($words('5', 49, 'Paddle north', 'Paddle south')), Store::$log];
-  // The words changed since: the item no longer holds them.
+  // Words the paragraph the page showed does not hold: the root pins that very revision, so the site shows them
+  // other than it keeps them.
   World::reset();
   $out['otherWords'] = [$save($words('5', 50, 'Paddle west', 'Paddle south')), Store::$log];
+  // A problem the node or the paragraph already had, in a field the change does not touch: saved, and said in the same
+  // answer as the address; one in the node's paragraphs field itself still refuses it.
+  World::reset();
+  World::$violations['node'] = [['field_summary.0.value', 'This value is too long.']];
+  World::$violations['paragraph'] = [['field_caption.0.value', 'This value should not be null.']];
+  Store::$rev['paragraph'][50]['fields']['en']['field_caption'] = [''];
+  $out['already'] = [$save($words('5', 50, 'Paddle north', 'Paddle south')), Store::$log];
+  World::reset();
+  World::$violations['node'] = [['field_paragraphs.0', 'The referenced entity is not valid.']];
+  $out['alreadyOnHolder'] = [$save($words('5', 50, 'Paddle north', 'Paddle south')), Store::$log];
   // The user may not update the node.
   World::reset();
   World::$may = FALSE;
@@ -467,7 +478,13 @@ test('a paragraph is never saved over a newer draft, a later save, the workflow 
   refused('workflow', 403, /^Its workflow does not let the user .* save “About Acme”, which this paragraph is saved through, as it is \(You do not have access to transition from Published to Published\.\)/);
   refused('paragraphViolation', 422, /^Drupal would not save it\. field_text\.0\.value: This value is too long\./);
   refused('stale', 409, /^The page showed a version of this paragraph that “About Acme” does not show now: it was saved again since the page loaded/);
-  refused('otherWords', 409, /no longer holds those words/);
+  refused('otherWords', 409, /^That item of the field holds other words \(“Paddle north”\) than the page shows, and the content has not changed since the page loaded/);
+  refused('alreadyOnHolder', 422, /^Drupal would not save “About Acme”, which this paragraph is saved through\. field_paragraphs\.0: The referenced entity is not valid\./);
+  const [already, alreadyLog] = out.already as [Answer, string[]];
+  assert.deepEqual([already[0], alreadyLog], [200, ['paragraph 5 as revision 1000', 'node 1 as revision 1001']], 'a problem already there elsewhere does not stop it');
+  assert.deepEqual([already[1].url, already[1].was, already[1].note], ['/about-acme', '/about-acme',
+    'Saved. Note that this paragraph already had a problem Drupal reports, in a field this change does not touch: field_caption.0.value: This value should not be null. Note that “About Acme” already had a problem Drupal reports, in a field this change does not touch: field_summary.0.value: This value is too long.'],
+    'said in the same answer as the address');
   assert.deepEqual(out.may, [403, []]);
 });
 

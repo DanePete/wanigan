@@ -101,13 +101,15 @@ final class TraceBuilder {
       'hooks' => array_map(fn ($s) => $this->step($s), $this->recorder->hooks),
       'queries' => $this->queries(),
       'assets' => $this->assets(),
-      'logs' => array_map(static function ($log) {
+      // What the trace lacks on this core (Recorder::sense()), then what the
+      // site logged.
+      'logs' => array_merge(array_map(static fn ($note) => ['level' => 'notice', 'message' => $note], $this->recorder->notes), array_map(static function ($log) {
         $out = ['level' => $log['level'], 'message' => $log['message']];
         if ($source = Source::of($log['file'], $log['line'])) {
           $out['source'] = $source;
         }
         return $out;
-      }, $this->recorder->logs),
+      }, $this->recorder->logs)),
       'collections' => $collections,
       'palette' => array_values($this->palette),
       'saves' => array_slice(array_values($saves), 0, 200),
@@ -207,8 +209,26 @@ final class TraceBuilder {
       if ($identity !== NULL) {
         $this->identities[$id] = $identity;
         $keys[$id] = Identity::key($identity);
+        $this->shown($identity, $p);
       }
     }
+  }
+
+  /**
+   * What the page showed of a piece of content, kept beside the trace: the
+   * revision it rendered and when that translation last changed, by type,
+   * UUID and language. The stored-words save (Save\StoredWords) saves only
+   * over that.
+   */
+  private function shown(array $identity, array $p): void {
+    $entity = $p['meta']['entity']['object'] ?? NULL;
+    if ($identity['kind'] !== 'entity' || !$entity instanceof EntityInterface) {
+      return;
+    }
+    $this->private['shown'][$identity['type'] . '|' . $identity['id'] . '|' . ($identity['langcode'] ?? '')] = [
+      'revision' => $p['meta']['entity']['revision'] ?? NULL,
+      'changed' => method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : NULL,
+    ];
   }
 
   /**
@@ -382,10 +402,10 @@ final class TraceBuilder {
       try {
         $modules = \Drupal::moduleHandler();
         $themes = \Drupal::theme();
-        if ($modules->moduleExists($by) && $modules instanceof TraceModuleHandler) {
+        if ($modules->moduleExists($by) && $modules instanceof HookListeners) {
           $listener = $modules->listenerFor($by, $hook);
         }
-        elseif ($themes instanceof TraceThemeManager) {
+        elseif ($themes instanceof HookListeners) {
           $listener = $themes->listenerFor($by, $hook);
         }
       }

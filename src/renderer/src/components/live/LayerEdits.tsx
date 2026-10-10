@@ -1,10 +1,17 @@
 // The Inspector's edits on the page, made in the design layer
 // (docs/design/2026-10-09-design-layer.md, "Phase 1, as contracted"): retyping
-// a part's words and trying a style. Each is an edit the core keeps
-// (`live.layerAdd`), keyed to the picked element by the main process
-// (LiveBridge.layerTarget) by what the site says it is, and the page shows it
-// through the layer at once. Nothing is written to the site here: an edit is
-// made real from the tray (components/live/Tray.tsx).
+// a part's words in a box (the keyboard and screen-reader way to do what typing
+// on the page itself does: use-layer.ts typeOnPage) and trying a style. Each is
+// an edit the core keeps (`live.layerAdd`), keyed to the picked element by the
+// main process (LiveBridge.layerTarget) by what the site says it is, and the
+// page shows it through the layer at once. Nothing is written to the site here:
+// an edit is made real from the tray (components/live/Tray.tsx).
+//
+// - A style shows on the page as its control moves, before it is an edit: one
+//   preview the page script owns (LiveBridge.layerTry), replaced on every change
+//   and taken away by Reset, Done or choosing another part. Show it on the page
+//   (or Enter) keeps it as an edit, and the preview gives way to the layer
+//   showing the same values.
 //
 // - Words are changed for one element. A style is for that element, or for
 //   every instance of its kind (a component, a block type, a field), whose
@@ -14,7 +21,7 @@
 //   a WordPress block by its place in the stored markup: when no words guard it,
 //   that is said plainly, as fragile, before the edit is made, with what
 //   happens if the page changes (fragileWhy).
-import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
 import { fragileWhy } from '@shared/layer-words';
 import type { LivePick } from '@shared/live';
@@ -48,6 +55,33 @@ function useTarget(again: unknown): { target: LayerPickTarget | null; asked: boo
     return () => { current = false; };
   }, [live, again]);
   return state;
+}
+
+/**
+ * Show what is being tried on the page as it changes: one call at a time, the newest values winning (a colour dragged
+ * sends many), and taken away when the panel goes. Values the layer would not set are left out; none takes it away.
+ */
+function useTry(values: Partial<Record<LayerProperty, string>>, scope: Exclude<LayerScope, 'site'>): void {
+  const live = liveBridge();
+  const queue = useRef<{ busy: boolean; next: { values: Partial<Record<LayerProperty, string>> | null; scope: Exclude<LayerScope, 'site'> } | null }>({ busy: false, next: null });
+  const send = useCallback((next: { values: Partial<Record<LayerProperty, string>> | null; scope: Exclude<LayerScope, 'site'> }): void => {
+    const q = queue.current;
+    q.next = next;
+    if (q.busy || !live?.layerTry) return;
+    q.busy = true;
+    void (async () => {
+      while (q.next) {
+        const n = q.next;
+        q.next = null;
+        await live.layerTry(n.values, n.scope).catch(() => 0);
+      }
+      q.busy = false;
+    })();
+  }, [live]);
+  const shown = Object.fromEntries(Object.entries(values).filter(([, v]) => typeof v === 'string' && layerValue(v) !== null)) as Partial<Record<LayerProperty, string>>;
+  const key = JSON.stringify([shown, scope]);
+  useEffect(() => { send({ values: Object.keys(shown).length ? shown : null, scope }); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => send({ values: null, scope: 'this' }), [send]);
 }
 
 /** The fragile warning, said before the edit is made (fragileWhy: the main process decides it the same way). */
@@ -84,7 +118,7 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
     if (done) onAdded({ label: t.label, lines: changeLines({ change, before: t.before }), reach: thisReach(placesOf(t.target.part, trace), !!t.target.part) });
   };
   return (
-    <form className="live-change live-layer-edit" onSubmit={(e) => void submit(e)} aria-label="Retype the words">
+    <form className="live-change live-layer-edit" onSubmit={(e) => void submit(e)} aria-label="Retype the words in a box">
       <label className="small" htmlFor={id}>New words</label>
       <textarea id={id} rows={2} value={value} onChange={(e) => setValue(e.target.value)} autoFocus spellCheck
         onKeyDown={(e) => {
@@ -142,7 +176,8 @@ const TOKEN = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
 
 /**
  * Try a style on the picked element: the values the owner sets, for this element or every instance of its kind,
- * shown on the page through the layer when added. A custom property is changed for the whole site.
+ * shown on the page as they change (a preview), and through the layer once added. A custom property is changed for
+ * the whole site.
  */
 export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   pick: LivePick; layer: LayerApi; page: string;
@@ -162,6 +197,8 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   const base = useCallback((prop: LayerProperty): string => target?.before[prop] ?? pick.style[prop] ?? '', [target, pick.style]);
   const set = (prop: LayerProperty, value: string): void => setValues((was) => ({ ...was, [prop]: value }));
   const chosen = Object.entries(values).filter(([k, v]) => v !== '' && v !== base(k as LayerProperty)) as [LayerProperty, string][];
+  // What is chosen shows on the page at once, as it changes: a preview, until it is added.
+  useTry(Object.fromEntries(chosen), scope);
   // One element, or the one stored thing the page shows in more than one place.
   const one = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
   const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : one;
@@ -255,7 +292,8 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
         <Button size="s" tone="quiet" onClick={onDone}>Done</Button>
       </div>
       <p className="faint small">
-        {shownWords(layer.on)}, for {reach}. Making it real goes to an agent as intent, to make in the theme’s own styles.
+        Shown on the page as you change it, for {reach}; Show it on the page keeps it in Wanigan’s layer{layer.on ? '' : ' (the page is shown without the layer now, so it shows once you show the layer again)'}.
+        Making it real goes to an agent as intent, to make in the theme’s own styles.
       </p>
       <Disclosure title="A token, for the whole site" summary="a custom property">
         <div className="live-style-grid">

@@ -9,7 +9,8 @@
 // settings: one menu), the page (back, forward, reload, the address field
 // that opens Go to, the width, the lens), and the tools (Pick, and a menu of
 // the rarely used). One status line under the page says what just happened
-// and which keys work now; the keys themselves are shared/live-keys.ts. The
+// (or that words are being typed on the page, with Keep and Put back) and which
+// keys work now; the keys themselves are shared/live-keys.ts. The
 // tools' Library opens the site's component library in the side panel
 // (components/live/Library.tsx), and Edits the design layer's tray
 // (components/live/Tray.tsx): the page's edits, made real and verified there.
@@ -35,7 +36,7 @@ import type { WriteCheck } from '@shared/live-check';
 import type { EditTarget } from '@shared/live-trace';
 import { layersOf } from '@shared/live-tree';
 import type { ProjectSummary } from '@shared/model';
-import { isSendKey, liveKey, type LiveKeyId } from '@shared/live-keys';
+import { isSendKey, liveKey, type LiveGesture, type LiveKeyId } from '@shared/live-keys';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
 import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
@@ -371,7 +372,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   useEffect(() => { if (trace?.state === 'ok' && !siteAi && !envId) readSiteAi(); }, [trace?.state, siteAi, envId, readSiteAi]);
   // Go to: Shift+Space here or in the page, and the address field (components/live/GoTo.tsx). The page answers the
   // live view's own keys the same way (P picks…); `runKey` is what they do.
-  const runKey = useRef<(id: LiveKeyId) => void>(() => {});
+  const runKey = useRef<(id: LiveKeyId | LiveGesture) => void>(() => {});
   const goTo = useGoToKeys(project.id, (id) => runKey.current(id));
   const sender = useNotesSender(project, components, follow);
   const sendAll = useRef(sender.sendAll);
@@ -704,8 +705,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   // The live view's own keys (shared/live-keys.ts), here and from the page: each does what its control does. While
   // Compare is drawn, 1 2 3 are its widths.
-  runKey.current = (id: LiveKeyId): void => {
+  runKey.current = (id: LiveKeyId | LiveGesture): void => {
     switch (id) {
+      // A double-click on the chosen part's words in the page: typed on there, as E does.
+      case 'retype':
+        if (!compact && selected.current && shownTab === 'layers' && !library && !tray) verbs.current?.retype();
+        return;
       case 'pick': if (hasScript) void pick(); return;
       case 'lens': if (!compact && hasScript) lensOpen.current?.(); return;
       case 'width-phone': if (!compact && !comparing) setWidth('phone'); return;
@@ -769,8 +774,31 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Escape in the window while words are typed on the page puts them back, as it does in the page.
+  const endTyping = layer.endTyping;
+  useEffect(() => {
+    if (!layer.typing) return undefined;
+    const key = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[aria-modal="true"], .sel-list, [role="menu"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      endTyping(false);
+    };
+    document.addEventListener('keydown', key, true);
+    return () => document.removeEventListener('keydown', key, true);
+  }, [layer.typing, endTyping]);
+
   /** The one line under the page that says what is going on: what was just done, or the state the view is in. */
-  const status: { text: ReactNode; className?: string; action?: ReactNode; warn?: boolean } | null = arrange.placing ? {
+  const status: { text: ReactNode; className?: string; action?: ReactNode; warn?: boolean } | null = layer.typing ? {
+    className: 'live-typing',
+    text: 'Typing on the page: Enter keeps it in the layer, Esc puts it back.',
+    action: (
+      <span className="live-actions">
+        <Button size="s" tone="quiet" icon="check" aria-keyshortcuts="Enter" onClick={() => layer.endTyping(true)}>Keep</Button>
+        <Button size="s" tone="quiet" icon="undo" aria-keyshortcuts="Escape" onClick={() => layer.endTyping(false)}>Put back</Button>
+      </span>
+    ),
+  } : arrange.placing ? {
     className: 'live-placing',
     text: <>Placing <strong>{arrange.placing.label}</strong>: the page shows where it would go. Click there to add it; Escape stops.</>,
     action: <IconButton icon="close" label="Stop placing (Escape)" onClick={() => arrange.setPlacing(null)} />,
@@ -797,7 +825,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     text: 'Showing the page without the design layer: as the site renders it, without your edits.',
     action: <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
   } : null;
-  const keysNow: [string[], string][] = picking ? []
+  const keysNow: [string[], string][] = layer.typing ? [[['Enter'], 'keep'], [['Esc'], 'put back']]
+    : picking ? []
     : comparing && envs.length && !compact ? [[['J', 'K'], 'changes'], [['S', 'O', 'D', 'T'], 'how'], [['1', '2', '3'], 'width'], [['Esc'], 'back to the page']]
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
     : tray && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'E'], 'close the edits']]

@@ -43,7 +43,9 @@ use Drupal\wanigan_live\Trace\Identity;
  * pinned item to the one pinning the revision the page showed (anything else
  * means the page is stale), change that very paragraph object, mark it and
  * every paragraph above it as needing a save, and save the root as a new
- * revision with its log, user and changed time after its own validation. Entity
+ * revision with its log, user and changed time after its own validation,
+ * judged as a save of its paragraphs field alone would be (Words::judge():
+ * a problem it already had in another field is noted, not refused). Entity
  * Reference Revisions' item save (EntityReferenceRevisionsItem::preSave())
  * then saves each paragraph as a new revision of its own and pins it. Access is
  * the root's update access, as Paragraphs' own access handler defers to it.
@@ -107,6 +109,9 @@ final class Paragraphs implements AdapterInterface {
    *   The composite's entity type, as the page marked it.
    * @param string $id
    *   Its id.
+   * @param string $field
+   *   The field of it the change is in: its validation is judged as a save
+   *   of that field alone (Words::judge()).
    * @param string $shown
    *   The revision of it the page showed: the one its host pins.
    * @param string $langcode
@@ -115,8 +120,10 @@ final class Paragraphs implements AdapterInterface {
    *   The language the page's content was rendered in, when the page said.
    * @param callable $edit
    *   Makes the change in the composite: given that translation of it, the
-   *   very object the root's save carries, it returns NULL once the change is
-   *   made, or why not as [HTTP status, words].
+   *   very object the root's save carries (the revision the page showed, so
+   *   words the page shows around a field's own are the site's), and the
+   *   answer's notes so far (it may add a sentence), it returns NULL once
+   *   the change is made, or why not as [HTTP status, words].
    * @param string $fingerprint
    *   What is changed (the old and new words): a confirmation is for this
    *   change only.
@@ -125,11 +132,14 @@ final class Paragraphs implements AdapterInterface {
    *
    * @return array
    *   [HTTP status, answer]: on a save, the root's label, its new revision,
-   *   its workflow state and its address after the save and before it
-   *   ('url', 'was'); on a refusal, why ('error'), and a 'confirm' token when
-   *   asking again saves it. Each carries this adapter's state ('adapter').
+   *   its workflow state, its address after the save and before it ('url',
+   *   'was'), and what it went ahead with ('note': the edit's sentences, and
+   *   problems the paragraph or the root already had in a field the change
+   *   does not touch); on a refusal, why ('error'), and a 'confirm' token
+   *   when asking again saves it. Each carries this adapter's state
+   *   ('adapter').
    */
-  public static function save(string $type, string $id, string $shown, string $langcode, ?string $page, callable $edit, string $fingerprint, ?string $confirm): array {
+  public static function save(string $type, string $id, string $field, string $shown, string $langcode, ?string $page, callable $edit, string $fingerprint, ?string $confirm): array {
     $status = Adapters::status(self::class);
     if ($status['status'] === 'absent') {
       // Never saved on its own: that is the defect this adapter exists for.
@@ -138,7 +148,7 @@ final class Paragraphs implements AdapterInterface {
     if ($status['status'] === 'broken') {
       return [409, self::refusal(Adapters::refusal($status))];
     }
-    [$code, $answer] = self::through($type, $id, $shown, $langcode, $page, $edit, $fingerprint, $confirm);
+    [$code, $answer] = self::through($type, $id, $field, $shown, $langcode, $page, $edit, $fingerprint, $confirm);
     $answer['adapter'] = ['id' => $status['id'], 'name' => $status['name'], 'version' => $status['version'], 'status' => $status['status']];
     return [$code, $answer];
   }
@@ -146,7 +156,7 @@ final class Paragraphs implements AdapterInterface {
   /**
    * The save, once the adapter may run.
    */
-  private static function through(string $type, string $id, string $shown, string $langcode, ?string $page, callable $edit, string $fingerprint, ?string $confirm): array {
+  private static function through(string $type, string $id, string $edited, string $shown, string $langcode, ?string $page, callable $edit, string $fingerprint, ?string $confirm): array {
     if ($shown === '') {
       return [409, self::refusal('The page did not say which version of this paragraph it showed, so nothing is saved. Reload, and try again.')];
     }
@@ -268,21 +278,27 @@ final class Paragraphs implements AdapterInterface {
     }
     $shared = $library['status'] !== 'absent' && ParagraphsLibrary::is($root);
 
+    // What Drupal reports of the paragraph and of the root as they are,
+    // before the change, to tell a problem the change brings from one they
+    // already had (Words::judge()). That the paragraph is older than its
+    // newest revision is not one: the host pins this one.
+    $rootField = $chain[count($chain) - 1][1];
+    $rootWas = Words::problems($root);
+    $childWas = Words::problems($child, EntityChangedConstraint::class);
     // The change, in the paragraph object the root's save carries.
-    if ($refusal = $edit($child)) {
+    $notes = [];
+    if ($refusal = $edit($child, $notes)) {
       return [$refusal[0], self::refusal($refusal[1])];
     }
-    // The paragraph's own violations (its fields' constraints, which the host's
-    // validation does not reach); that it is older than its newest revision is
-    // not one, since the host pins this one.
-    $problems = [];
-    foreach ($child->validate() as $violation) {
-      if (!(method_exists($violation, 'getConstraint') && $violation->getConstraint() instanceof EntityChangedConstraint)) {
-        $problems[] = self::said($violation);
-      }
+    // The paragraph's own violations (its fields' constraints, which the
+    // host's validation does not reach), judged as a save of the edited field
+    // alone would be.
+    [$workflow, $problems, $already] = Words::judge($childWas, Words::problems($child, EntityChangedConstraint::class), $edited);
+    if ($workflow || $problems) {
+      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice(array_merge($workflow, $problems), 0, 3)))];
     }
-    if ($problems) {
-      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)))];
+    if ($already) {
+      $notes[] = Words::already($already, ($notes ? 'Note' : 'Saved. Note') . ' that this ' . $what);
     }
     if ($shared) {
       // A library item: every page using it shows it. Said first, with how
@@ -317,21 +333,22 @@ final class Paragraphs implements AdapterInterface {
     if ($root instanceof EntityChangedInterface) {
       $root->setChangedTime($now);
     }
-    // Every violation of the root refuses it: one on another field, on the
-    // content as a whole, or on its workflow's state (which a paragraph's own
-    // validation never sees).
-    $problems = [];
-    foreach ($root->validate() as $violation) {
-      $path = (string) $violation->getPropertyPath();
-      if ($path === 'moderation_state' || str_starts_with($path, 'moderation_state.')) {
-        return [403, self::refusal('Its workflow does not let the user you are logged in as in the live view save ' . $named . ', which this ' . $what . ' is saved through, as it is (' . trim(strip_tags((string) $violation->getMessage())) . '): a save here keeps its state, and nothing is made a draft instead. Change it in Drupal’s form.')];
-      }
-      $problems[] = self::said($violation);
+    // The root, refused as a save of its paragraphs field alone would be
+    // (Words::judge()): a violation of that field or of the content as a
+    // whole, any of its workflow's (which a paragraph's own validation never
+    // sees), and any the change brings, wherever it is. A problem it already
+    // had in another field does not stop it, and the answer says it.
+    [$workflow, $problems, $already] = Words::judge($rootWas, Words::problems($root), $rootField);
+    if ($workflow) {
+      return [403, self::refusal('Its workflow does not let the user you are logged in as in the live view save ' . $named . ', which this ' . $what . ' is saved through, as it is (' . $workflow[0] . '): a save here keeps its state, and nothing is made a draft instead. Change it in Drupal’s form.')];
     }
     if ($problems) {
       return [422, self::refusal('Drupal would not save ' . $named . ', which this ' . $what . ' is saved through. ' . implode(' ', array_slice($problems, 0, 3)))];
     }
-    $was = Words::url($root);
+    if ($already) {
+      $notes[] = Words::already($already, ($notes ? 'Note' : 'Saved. Note') . ' that ' . $named);
+    }
+    $address = Words::url($root);
     $root->save();
     $state = $root->hasField('moderation_state') ? $root->get('moderation_state')->value : NULL;
     return [200, [
@@ -340,8 +357,8 @@ final class Paragraphs implements AdapterInterface {
       'revision' => $root->getEntityType()->isRevisionable() ? (string) $root->getRevisionId() : NULL,
       'state' => is_string($state) ? $state : NULL,
       'url' => Words::url($root),
-      'was' => $was,
-    ]];
+      'was' => $address,
+    ] + ($notes ? ['note' => implode(' ', $notes)] : [])];
   }
 
   /**
@@ -408,11 +425,6 @@ final class Paragraphs implements AdapterInterface {
     catch (\Throwable) {
       return $code;
     }
-  }
-
-  private static function said(object $violation): string {
-    $path = (string) $violation->getPropertyPath();
-    return ($path !== '' ? $path . ': ' : '') . trim(strip_tags((string) $violation->getMessage()));
   }
 
   private static function refusal(string $message): array {

@@ -6,8 +6,9 @@
 // showed gets the changed block, the layout's entity is saved as a new revision, and the version the layout pinned
 // before is kept as it was; a default layout, which every entity of its bundle without its own shows, is saved only
 // when asked again with the token its first answer gave, which says how far it reaches; and a changed layout, a newer
-// draft, unsaved Layout Builder work, a user Layout Builder would turn away, a translation, a block violation or the
-// workflow refuses it, saving nothing. Nothing here runs Drupal or touches a site; it needs PHP. Made-up content
+// draft, unsaved Layout Builder work, a user Layout Builder would turn away, a translation, a violation the block's
+// field or the change brings, or the workflow refuses it, saving nothing; a problem the block or the layout's content
+// already had in a field the change does not touch is said, not refused. Nothing here runs Drupal or touches a site; it needs PHP. Made-up content
 // (acme); nothing real.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -68,7 +69,9 @@ namespace {
     public function setAccessDependency($d) { $this->dependency = $d; }
     public function get($name) { return $this->fields ??= new Items([new Item($this->words)]); }
     public $fields = NULL;
-    public function validate() { return World::$blockViolations; }
+    // A violation of the block given in $blockBrought is found only once its words are changed (the change brings it).
+    public function validate() { return array_merge(World::$blockViolations, $this->get('title')->get(0)->value !== $this->words ? World::$blockBrought : []); }
+    public function hasField($f) { return in_array($f, ['title', 'uuid'], TRUE); }
   }
   final class Lang { public function __construct(private string $l) {} public function getId() { return $this->l; } }
   /** The trip a layout belongs to: its default revision. */
@@ -84,8 +87,12 @@ namespace {
     public function setRevisionLogMessage($m) { $this->log = $m; }
     public function setRevisionUserId($u) {}
     public function setRevisionCreationTime($t) {}
-    public function validate() { return World::$tripViolations; }
-    public function hasField($f) { return FALSE; }
+    // A violation of the trip given in $tripBrought is found only once its layout holds a changed block.
+    public function validate() {
+      $changed = World::$overrides && array_filter(World::$overrides->sections[0]->components, fn ($c) => !empty($c->configuration['block_serialized']));
+      return array_merge(World::$tripViolations, $changed ? World::$tripBrought : []);
+    }
+    public function hasField($f) { return in_array($f, ['uuid', 'layout_builder__layout'], TRUE); }
     public function hasLinkTemplate($rel) { return $rel === 'canonical'; }
     public function toUrl() { return new class { public function toString() { return '/trips/lake-loop'; } }; }
   }
@@ -140,6 +147,8 @@ namespace {
     public static $usage = NULL;
     public static array $blockViolations = [];
     public static array $tripViolations = [];
+    public static array $blockBrought = [];
+    public static array $tripBrought = [];
     public static ?Storage $overrides = NULL;
     public static ?Storage $defaults = NULL;
     public static ?Trip $trip = NULL;
@@ -147,7 +156,7 @@ namespace {
     public static function reset(string $where = 'overrides'): void {
       self::$revisions = [40 => 'Plan a trip', 41 => 'Plan your trip', 42 => 'Plan your trip!'];
       self::$saved = []; self::$tripSaves = []; self::$french = FALSE; self::$fieldMay = TRUE; self::$layoutMay = TRUE; self::$may = ['configure any layout'];
-      self::$unsaved = FALSE; self::$latest = NULL; self::$blockViolations = []; self::$tripViolations = [];
+      self::$unsaved = FALSE; self::$latest = NULL; self::$blockViolations = []; self::$tripViolations = []; self::$blockBrought = []; self::$tripBrought = [];
       self::$trip = new Trip(20);
       $components = ['c0ffee00-0000-4000-8000-0000000000c1' => new Component('c0ffee00-0000-4000-8000-0000000000c1', 'inline_block:card', ['id' => 'inline_block:card', 'block_revision_id' => 41, 'block_serialized' => NULL]), 'c0ffee00-0000-4000-8000-0000000000c2' => new Component('c0ffee00-0000-4000-8000-0000000000c2', 'system_powered_by_block', [])];
       self::$overrides = new Storage('overrides', self::$trip, [new Section($components)]);
@@ -233,6 +242,21 @@ const SCENARIOS = String.raw`
   World::reset();
   World::$tripViolations = [new Violation('moderation_state', 'You do not have access to transition from Published to Published.')];
   $out['workflow'] = [$save(), World::$saved];
+  // A problem the block or the trip already had, in a field the change does not touch (an old UUID core now rejects),
+  // does not stop it, and is said; one the change brings refuses it.
+  World::reset();
+  World::$tripViolations = [new Violation('uuid.0.value', 'This is not a valid UUID.')];
+  $out['tripAlready'] = [$save(), World::$saved];
+  World::reset();
+  World::$tripBrought = [new Violation('layout_builder__layout', 'Acme layouts hold three sections at most.')];
+  $out['tripBrought'] = [$save(), World::$saved];
+  World::reset();
+  World::$blockViolations = [new Violation('uuid.0.value', 'This is not a valid UUID.')];
+  World::$tripViolations = [new Violation('uuid.0.value', 'This is not a valid UUID.')];
+  $out['bothAlready'] = $save();
+  World::reset();
+  World::$blockBrought = [new Violation('uuid.0.value', 'Acme rules this out.')];
+  $out['blockBrought'] = [$save(), World::$saved];
 
   // A display's default layout: said first, with how far it reaches; saved when asked again with that token.
   World::reset('defaults');
@@ -292,6 +316,18 @@ test('an inline block’s words are refused, saving nothing, where its layout or
   assert.equal(out.olderIsFine, 200, 'a pinned version older than the block’s newest is what the layout shows, not a conflict');
   refused('blockViolation', 422, /Drupal would not save it\. title\.0\.value: This value is too long\./);
   refused('workflow', 403, /^Its workflow does not let the user .* nothing is made a draft instead/);
+  refused('tripBrought', 422, /^Drupal would not save the content this layout belongs to\. layout_builder__layout: Acme layouts hold three sections at most\.$/);
+  refused('blockBrought', 422, /^Drupal would not save it\. uuid\.0\.value: Acme rules this out\.$/);
+});
+
+test('an inline block’s words are saved past a problem the block or its layout’s content already had in a field the change does not touch, and the answer says it', (t) => {
+  const out = run(t);
+  if (!out) return;
+  const [trip, tripSaved] = out.tripAlready as [[number, { ok: boolean; note?: string }], string[]];
+  assert.deepEqual([trip[0], trip[1].ok, tripSaved], [200, true, ['node.3']]);
+  assert.equal(trip[1].note, 'Saved. Note that the content this layout belongs to already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID.');
+  const both = out.bothAlready as [number, { note?: string }];
+  assert.deepEqual([both[0], both[1].note], [200, 'Saved. Note that this block already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID. Note that the content this layout belongs to already had a problem Drupal reports, in a field this change does not touch: uuid.0.value: This is not a valid UUID.']);
 });
 
 test('a default layout’s words are saved only when asked again with the token that said how far they reach', (t) => {

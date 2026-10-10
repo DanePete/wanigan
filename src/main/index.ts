@@ -13,6 +13,7 @@ import { wireAppSettings, type AppSettingsWiring } from './app-settings.ts';
 import { wireLiveCompare } from './live-compare.ts';
 import { askTrace, wireLiveInspect } from './live-inspect.ts';
 import { wireLiveLayer } from './live-layer.ts';
+import { askStoredWords, undoStoredWords } from './live-stored-words.ts';
 import { wireLiveFind } from './live-find.ts';
 import { wireLiveLibrary } from './live-library.ts';
 import { wireLiveShots } from './live-shots.ts';
@@ -167,6 +168,7 @@ function wireBridge(): void {
     current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback), trace: () => inspect.trace(),
     helperSave: (field, before, after, at) => view.helperSave(field, before, after, at),
     schemaSave: (target, value, trace) => inspect.schemaSave(target, value, null, trace),
+    storedWords: (ask) => askStoredWords(view.current(), ask), storedUndo: (token) => undoStoredWords(view.current(), token),
     partition: (id, url, token) => view.partition(id, null, url, token), sessionFor: (id, url) => view.sessionFor(id, url),
     askTrace, pageScript: () => view.pageScript(),
   }).hooks;

@@ -2,9 +2,11 @@
 // the page's own scripts cannot see or call it. It reads which template,
 // component, entity, block, view or Elementor element produced each region,
 // outlines regions on request, lets the owner pick an element, finds and tags
-// the design layer's edits and patches their words, and swaps stylesheets in
-// place. What the layer shows lives only in this copy of the page: a reload
-// puts the site's own back, and the layer is applied again.
+// the design layer's edits and patches their words, lets the owner type on the
+// chosen element's words where they are and try a style on it before either is
+// an edit, and swaps stylesheets in place. What the layer shows lives only in
+// this copy of the page: a reload puts the site's own back, and the layer is
+// applied again.
 //
 // What it reads, all of it the site's own markup:
 // - Drupal's Twig debug comments, as core/themes/engines/twig/twig.engine
@@ -124,7 +126,8 @@ export function livePage(): void {
   type Landing =
     | { kind: 'collection'; c: SpecCollection; index: number; line: Box; across: boolean; ref: number | null; place: 'before' | 'after' | 'into' }
     | { kind: 'sibling'; ref: number; place: 'before' | 'after'; line: Box; across: boolean };
-  type Tone = 'edit' | 'pick' | 'hover';
+  /** `type`: the element being typed on. */
+  type Tone = 'edit' | 'pick' | 'hover' | 'type';
 
   const w = window as unknown as { __wl?: unknown };
   if (w.__wl) return;
@@ -144,7 +147,7 @@ export function livePage(): void {
   const MAX_NESTED = 900;
   // Wanigan's water blue for what changed and what is pointed at; a deeper blue for what is being picked. Never amber:
   // in Wanigan, amber means something needs the owner.
-  const COLORS: Record<Tone, string> = { edit: '#63b3e4', hover: '#63b3e4', pick: '#2f86c9' };
+  const COLORS: Record<Tone, string> = { edit: '#63b3e4', hover: '#63b3e4', pick: '#2f86c9', type: '#2f86c9' };
 
   let regions: Region[] = [];
   let picking: { resolve: (v: unknown) => void; cleanup: () => void } | null = null;
@@ -170,6 +173,14 @@ export function livePage(): void {
   let scannedAt = -1;
   /** Elements whose words the design layer has patched, ever: their changes are the layer's, not the page's. */
   const layerTouched = new WeakSet<Node>();
+  /**
+   * Typing on the chosen element's words in the page: the element, exactly what it held when typing began (its child
+   * nodes in order, and each text and comment node's value), its words then, and how the session ends.
+   */
+  type Typing = { el: HTMLElement; nodes: Node[]; values: (string | null)[]; words: string; end: (keep: boolean) => void };
+  let typing: Typing | null = null;
+  /** A style being tried: the elements it shows on, the properties set on each, and each one's style attribute before, as written and as read. */
+  let tried: { els: HTMLElement[]; props: string[]; style: (string | null)[]; css: string[] } | null = null;
 
   const unescape = (s: string): string => s.replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   const words = (s: string | null | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim();
@@ -403,14 +414,15 @@ export function livePage(): void {
     const color = COLORS[tone];
     const b = document.createElement('div');
     b.style.cssText = `position:absolute;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;box-sizing:border-box;`
-      + `outline:2px ${tone === 'hover' ? 'dashed' : 'solid'} ${color};outline-offset:-1px;`
+      // Around the words being typed, not over them: the caret at their end stays in sight.
+      + `outline:2px ${tone === 'hover' ? 'dashed' : 'solid'} ${color};outline-offset:${tone === 'type' ? 3 : -1}px;`
       + `background:${tone === 'pick' ? 'rgba(47,134,201,0.12)' : tone === 'edit' ? 'rgba(99,179,228,0.08)' : 'transparent'};`;
     if (label) {
       const tag = document.createElement('span');
       tag.textContent = label;
       const above = rect.top > 22;
       tag.style.cssText = `position:absolute;left:-1px;top:${above ? -21 : 0}px;max-width:min(520px,100vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`
-        + `font:500 11px/19px -apple-system,system-ui,sans-serif;padding:0 6px;color:${tone === 'pick' ? '#ffffff' : '#06131c'};background:${color};border-radius:${above ? '3px 3px 0 0' : '0 0 3px 0'};`;
+        + `font:500 11px/19px -apple-system,system-ui,sans-serif;padding:0 6px;color:${tone === 'pick' || tone === 'type' ? '#ffffff' : '#06131c'};background:${color};border-radius:${above ? '3px 3px 0 0' : '0 0 3px 0'};`;
       b.appendChild(tag);
     }
     root.appendChild(b);
@@ -450,7 +462,7 @@ export function livePage(): void {
   function draw(): void {
     frame = 0;
     const existing = document.getElementById(HOST_ID)?.shadowRoot ?? null;
-    const root = existing ?? (shown || hovered || painted.length || arranging ? host() : null);
+    const root = existing ?? (shown || hovered || painted.length || arranging || typing ? host() : null);
     if (!root) return;
     root.replaceChildren();
     for (const p of painted) {
@@ -458,7 +470,8 @@ export function livePage(): void {
       const rect = r ? viewRect(r) : null;
       if (rect && rect.bottom > 0 && rect.top < innerHeight) paintBox(root, rect, p);
     }
-    if (shown) {
+    // While words are typed, their element's own outline says so; the chosen part's would sit over it.
+    if (shown && !typing) {
       for (const i of shown.indexes) {
         const r = regions[i];
         const rect = r ? viewRect(r) : null;
@@ -470,6 +483,7 @@ export function livePage(): void {
       box(root, hovered.getBoundingClientRect(), innermost ? labelOf(info(innermost)) : hovered.tagName.toLowerCase(), 'pick');
     }
     if (arranging) drawArrange(root);
+    if (typing?.el.isConnected) box(root, typing.el.getBoundingClientRect(), 'Typing · Enter keeps · Esc puts back', 'type');
   }
 
   /* ── moving parts by hand ────────────────────────────────────────────── */
@@ -676,6 +690,7 @@ export function livePage(): void {
    */
   function arrange(spec: Spec): Promise<unknown> {
     disarm();
+    endTyping(true);
     if (!regions.length) scan();
     return new Promise((resolve) => {
       const items = new Set<number>();
@@ -887,6 +902,8 @@ export function livePage(): void {
   function choose(index: number): unknown {
     const el = elementOf(regions[index]);
     if (!el || el.closest(`#${HOST_ID}`)) return null;
+    // Words being typed elsewhere are kept, as clicking away keeps them.
+    endTyping(true);
     picked = el;
     return describe(el);
   }
@@ -916,6 +933,7 @@ export function livePage(): void {
    */
   function pick(start: number | null = null): Promise<unknown> {
     cancelPick();
+    endTyping(true);
     if (!regions.length) scan();
     return new Promise((resolve) => {
       hovered = (start !== null ? elementOf(regions[start]) : null) ?? mainContent();
@@ -1129,8 +1147,10 @@ export function livePage(): void {
   // too, as the site rendered them) is hashed by the main process (layerTextHash), so there is one hash, not two that
   // could drift apart.
 
+  /** Where an edit's elements are: the trace parts the main process named, and the path inside each part's roots; or a document path. */
+  type FindSpec = { parts: string[] | null; inner: string | null; selector: string | null };
   /** `text`: answer each element's text, for the edit's textHash or its words. */
-  type LayerSpec = { id: string; parts: string[] | null; inner: string | null; selector: string | null; text?: boolean };
+  type LayerSpec = FindSpec & { id: string; text?: boolean };
   /** How much of an element's text is read: what a target's hash is taken over, on both sides. */
   const TEXT_MAX = 500_000;
   /** Each edit's elements as the last kept layerFind found them, in document order. */
@@ -1266,29 +1286,40 @@ export function livePage(): void {
 
   const inDocumentOrder = (a: Element, b: Element): number => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
 
+  /** The page's regions by the trace part each is, the page scanned again first when it changed since. */
+  function partRegions(): Map<string, Region> {
+    if (!regions.length || mutations !== scannedAt) scan();
+    const byPart = new Map<string, Region>();
+    for (const r of regions) if (r.part) byPart.set(r.part, r);
+    return byPart;
+  }
+
+  /** The elements a spec finds, in document order, at most 500. */
+  function findEls(s: FindSpec, byPart: Map<string, Region>): Element[] {
+    const seen = new Set<Element>();
+    if (Array.isArray(s.parts)) {
+      for (const p of s.parts.slice(0, 4_000)) {
+        const r = byPart.get(p);
+        if (r) for (const el of underPart(rootsOf(r), typeof s.inner === 'string' ? s.inner : null)) seen.add(el);
+      }
+    } else if (typeof s.selector === 'string') {
+      try { for (const el of Array.from(document.querySelectorAll(s.selector))) seen.add(el); } catch { /* not a selector: nothing found */ }
+    }
+    return [...seen].filter((el) => el.isConnected && !el.closest(`#${HOST_ID}`)).sort(inDocumentOrder).slice(0, 500);
+  }
+
   /**
    * Find each edit's elements: the regions paired with the parts the main process named, then the path inside each
    * part's roots; or a document path. Answers how many each found, their whole text as the site rendered it (when
    * asked), and whether each holds only words. Kept, they are what layerSet tags.
    */
   function layerFind(specs: LayerSpec[], keep: boolean): Record<string, { count: number; texts: (string | null)[]; plain: boolean[] }> {
-    if (!regions.length || mutations !== scannedAt) scan();
-    const byPart = new Map<string, Region>();
-    for (const r of regions) if (r.part) byPart.set(r.part, r);
+    const byPart = partRegions();
     const found = new Map<string, Element[]>();
     const out: Record<string, { count: number; texts: (string | null)[]; plain: boolean[] }> = {};
     for (const s of specs.slice(0, 2_000)) {
       if (!s || typeof s.id !== 'string' || !EDIT_ID.test(s.id)) continue;
-      const seen = new Set<Element>();
-      if (Array.isArray(s.parts)) {
-        for (const p of s.parts.slice(0, 4_000)) {
-          const r = byPart.get(p);
-          if (r) for (const el of underPart(rootsOf(r), typeof s.inner === 'string' ? s.inner : null)) seen.add(el);
-        }
-      } else if (typeof s.selector === 'string') {
-        try { for (const el of Array.from(document.querySelectorAll(s.selector))) seen.add(el); } catch { /* not a selector: nothing found */ }
-      }
-      const els = [...seen].filter((el) => el.isConnected && !el.closest(`#${HOST_ID}`)).sort(inDocumentOrder).slice(0, 500);
+      const els = findEls(s, byPart);
       found.set(s.id, els);
       out[s.id] = { count: els.length, texts: s.text ? els.map((el) => textOfElement(el, true)) : [], plain: els.map(plainWords) };
     }
@@ -1342,6 +1373,8 @@ export function livePage(): void {
    * user-origin sheet cannot be taken out once injected. Returns how many elements carry a tag.
    */
   function layerSet(set: { tags: Record<string, number[]>; texts: { id: string; value: string }[]; on: boolean; gate?: string | null }): number {
+    // Words being typed are kept first, as clicking away keeps them: the layer is about to write words itself.
+    endTyping(true);
     const root = document.documentElement;
     if (set.on && typeof set.gate === 'string' && /^g\d{1,9}$/.test(set.gate)) root.setAttribute('data-wl-layer', set.gate);
     else root.removeAttribute('data-wl-layer');
@@ -1498,11 +1531,210 @@ export function livePage(): void {
     };
   }
 
+  /* ── typing on the page: the chosen element's own words, edited where they are ── */
+
+  /** Put an element's children back exactly as a type session found them: the same nodes, in order, holding the same values. */
+  function restoreNodes(t: Typing): void {
+    const { el, nodes, values } = t;
+    if (el.childNodes.length !== nodes.length || nodes.some((n, i) => el.childNodes[i] !== n)) el.replaceChildren(...nodes);
+    nodes.forEach((n, i) => { const v = values[i]; if (typeof v === 'string' && n.nodeValue !== v) n.nodeValue = v; });
+  }
+
+  /**
+   * Put an attribute back as it was: its value, or none. Read first: Chromium writes a style attribute changed through
+   * `el.style` only when it is read, so one taken away unread would come back, empty, at the next read.
+   */
+  function restoreAttr(el: Element, name: string, was: string | null): void {
+    const now = el.getAttribute(name);
+    if (was === null) { if (now !== null) el.removeAttribute(name); } else if (now !== was) el.setAttribute(name, was);
+  }
+
+  /** End typing on the page: keep the words typed (true) or put back what the element held (false). Nothing when none is under way. */
+  function endTyping(keep: boolean): void {
+    typing?.end(keep);
+  }
+
+  /**
+   * Type on the chosen element's own words, where they are: it becomes editable in place (plain text only, the caret
+   * at its end, the keyboard here), so every keystroke shows on the page as it is typed. Enter, or clicking away in the
+   * page, keeps the words: the element's own nodes are put back holding the new words, the way the layer writes words
+   * (writeWords), so once the window adds the edit the layer goes on showing them without a flicker. Escape puts back
+   * exactly what it held, its text nodes and the helper's part marks alike. While it lasts the page's own scripts hear
+   * none of what is typed, a link or a button around the words or in them does not act, a paste or a drop is its plain
+   * text, and the live view's keys are not taken (busy). The keyboard going to the window, whose status line has Keep
+   * and Put back, does not end it.
+   *
+   * Answers `{ kept: true, words, key }`, `{ kept: false, why, key }` (`why`: null for Escape, `same` or `empty` when
+   * there was nothing to keep; `key`: it ended by Enter or Escape here, so the window may take the keyboard back), or
+   * `{ refused }` with why it never began.
+   */
+  function layerType(): Promise<unknown> {
+    endTyping(true);
+    cancelPick();
+    disarm();
+    const chosen = target();
+    if (!chosen) return Promise.resolve({ refused: 'Nothing is chosen on the page any more: pick it again, then retype it.' });
+    if (!plainWords(chosen) || chosen.closest(`#${HOST_ID}`)) return Promise.resolve({ refused: 'Only words can be typed on the page, and this element holds more than words: pick the words themselves.' });
+    if (chosen.isContentEditable) return Promise.resolve({ refused: 'The page itself already lets you type here, so Wanigan leaves it to the page.' });
+    const el: HTMLElement = chosen;
+    return new Promise((resolve) => {
+      const nodes = Array.from(el.childNodes);
+      const t: Typing = {
+        el, nodes, values: nodes.map((n) => (n.nodeType === Node.TEXT_NODE || n.nodeType === Node.COMMENT_NODE ? n.nodeValue : null)),
+        words: words(el.textContent), end: () => {},
+      };
+      const editableWas = el.getAttribute('contenteditable');
+      // The browser's own focus ring would sit inside the overlay's outline: one outline says it, so the ring is hidden
+      // while typing, and the element's own style put back as it was written.
+      const styleWas = el.getAttribute('style');
+      const ringWas = [el.style.getPropertyValue('outline-style'), el.style.getPropertyPriority('outline-style')] as const;
+      const cssWas = el.style.cssText;
+      const inside = (e: Event): boolean => e.composedPath().includes(el);
+      const key = (e: KeyboardEvent): void => {
+        if (!inside(e) && document.activeElement !== el) return;
+        // An input method's Enter confirms a word; only the owner's own Enter keeps the words.
+        if (e.type === 'keydown' && !e.isComposing && e.keyCode !== 229) {
+          if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); finish(true, true); return; }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); finish(false, true); return; }
+        }
+        // The page's own scripts hear none of what is typed here: a carousel's arrows, a site's shortcuts.
+        e.stopPropagation();
+      };
+      // Words, not lines or formatting: Enter keeps them (above), and nothing typed makes a line or a style.
+      const shape = (e: InputEvent): void => { if (inside(e) && /^(?:insertParagraph|insertLineBreak|format)/.test(e.inputType)) e.preventDefault(); };
+      const paste = (e: ClipboardEvent): void => {
+        if (!inside(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const text = (e.clipboardData?.getData('text/plain') ?? '').replace(/\s+/g, ' ');
+        if (text) document.execCommand('insertText', false, text);
+      };
+      const drop = (e: DragEvent): void => {
+        if (!inside(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const text = (e.dataTransfer?.getData('text/plain') ?? '').replace(/\s+/g, ' ');
+        const at = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+        if (!text || !at || !el.contains(at.startContainer)) return;
+        getSelection()?.removeAllRanges();
+        getSelection()?.addRange(at);
+        document.execCommand('insertText', false, text);
+      };
+      // A link or a button around the words (or the words being one) does nothing while they are typed: a click places the caret.
+      const click = (e: MouseEvent): void => { if (inside(e)) { e.preventDefault(); e.stopPropagation(); } };
+      const press = (e: MouseEvent): void => {
+        if (inside(e)) { e.stopPropagation(); return; }
+        // Clicking away, anywhere else on the page, keeps the words as Enter does; the page's scrollbars are not the page.
+        const view = document.documentElement;
+        if (e.clientX >= view.clientWidth || e.clientY >= view.clientHeight) return;
+        finish(true);
+      };
+      // Focus moved on within the page (Tab, or the page's own doing): kept. The window taking the keyboard is not the
+      // owner clicking away: the page's document no longer has focus then, and typing waits for the keyboard to come back.
+      const blur = (): void => { setTimeout(() => { if (typing === t && document.hasFocus() && document.activeElement !== el) finish(true); }, 0); };
+      const events: [string, EventListener][] = [
+        ['keydown', key as EventListener], ['keyup', key as EventListener], ['keypress', key as EventListener], ['beforeinput', shape as EventListener],
+        ['paste', paste as EventListener], ['drop', drop as EventListener], ['click', click as EventListener], ['auxclick', click as EventListener],
+        ['pointerdown', press as EventListener], ['mousedown', press as EventListener], ['input', redraw],
+      ];
+      function finish(keep: boolean, key = false): void {
+        if (typing !== t) return;
+        typing = null;
+        for (const [name, fn] of events) removeEventListener(name, fn, true);
+        el.removeEventListener('blur', blur);
+        restoreAttr(el, 'contenteditable', editableWas);
+        if (ringWas[0]) el.style.setProperty('outline-style', ringWas[0], ringWas[1]); else el.style.removeProperty('outline-style');
+        if (el.style.cssText === cssWas) restoreAttr(el, 'style', styleWas);
+        const now = words(el.textContent);
+        // The element's own nodes, as they were: the helper's part marks and the text nodes the layer writes into.
+        restoreNodes(t);
+        const kept = keep && !!now && now !== t.words;
+        if (kept) writeWords(el, now);
+        const sel = getSelection();
+        if (sel?.anchorNode && el.contains(sel.anchorNode)) sel.removeAllRanges();
+        if (document.activeElement === el) el.blur();
+        redraw();
+        resolve(kept ? { kept: true, words: now, key } : { kept: false, why: !keep ? null : now ? 'same' : 'empty', key });
+      }
+      t.end = finish;
+      for (const [name, fn] of events) addEventListener(name, fn, true);
+      el.addEventListener('blur', blur);
+      // Its changes while it is typed are the owner's, not the page changing itself.
+      layerTouched.add(el);
+      el.setAttribute('contenteditable', 'plaintext-only');
+      el.style.setProperty('outline-style', 'none', 'important');
+      typing = t;
+      el.focus({ preventScroll: true });
+      const sel = getSelection();
+      if (sel) {
+        const at = document.createRange();
+        at.selectNodeContents(el);
+        at.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(at);
+      }
+      draw();
+    });
+  }
+
+  /** Whether a double-click at `node` is on the chosen element's words, which typing then starts on (live-page-goto.ts answers it to the window). */
+  function retypeAt(node: unknown): boolean {
+    const el = target();
+    return !!el && !picking && !typing && !arranging && node instanceof Node && el.contains(node) && plainWords(el) && !el.isContentEditable;
+  }
+
+  /* ── trying a style: one preview, the page script's own, before it is an edit ── */
+
+  const TRY_PROP = /^[a-z][a-z-]{0,39}$/;
+
+  /**
+   * Take the style being tried away: each element's mark and the custom properties set on it, and no more. Its style
+   * attribute is put back as it was written when nothing else changed it meanwhile (the page's own scripts may have).
+   */
+  function untry(): void {
+    const t = tried;
+    tried = null;
+    if (!t) return;
+    t.els.forEach((el, i) => {
+      for (const p of t.props) el.style.removeProperty(`--wl-try-${p}`);
+      el.removeAttribute('data-wl-try');
+      if (el.style.cssText === t.css[i]) restoreAttr(el, 'style', t.style[i] ?? null);
+    });
+    redraw();
+  }
+
+  /**
+   * Show style values on the elements a spec finds (the chosen element, when it finds none) as the layer would show
+   * them, before they are an edit: each element marked with `data-wl-try` naming the properties, each value in its
+   * property's custom property on the element, which the sheet the main process injected reads from there
+   * (shared/design-layer.ts trySheet). One preview at a time: every call takes the last one away first, and no values
+   * only take it away. Returns how many elements show it.
+   */
+  function layerTry(spec: FindSpec | null, values: Record<string, unknown> | null): number {
+    untry();
+    if (!spec || !values || typeof values !== 'object') return 0;
+    const entries = Object.entries(values).filter((e): e is [string, string] => TRY_PROP.test(e[0]) && typeof e[1] === 'string' && e[1].length <= 300).slice(0, 60);
+    if (!entries.length) return 0;
+    const found = findEls(spec, partRegions()).filter((el): el is HTMLElement => el instanceof HTMLElement);
+    const chosen = target();
+    const els = found.length ? found : chosen ? [chosen] : [];
+    if (!els.length) return 0;
+    tried = { els, props: entries.map(([k]) => k), style: els.map((el) => el.getAttribute('style')), css: els.map((el) => el.style.cssText) };
+    for (const el of els) {
+      for (const [k, v] of entries) el.style.setProperty(`--wl-try-${k}`, v);
+      el.setAttribute('data-wl-try', entries.map(([k]) => k).join(' '));
+    }
+    redraw();
+    return els.length;
+  }
+
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage,
-    /** Picking: the page's keys are its, not the live view's (live-page-goto.ts asks). */
-    busy: () => !!picking,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerType, layerTry, retypeAt,
+    /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
+    layerTypeEnd: (keep: unknown) => endTyping(keep === true),
+    /** Picking, or typing on the page: the page's keys are its, not the live view's (live-page-goto.ts asks). */
+    busy: () => !!picking || !!typing,
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,
     /** The picked element described again. */

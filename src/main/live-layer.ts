@@ -40,6 +40,13 @@
 //   how to write go to an agent as a brief, as do styles and tokens; on Drupal, words nothing holds are said as what
 //   they are (writtenIn(): written in a template, which an agent changes, or printed through t()); anything else says
 //   why.
+// - Last, words nothing the page offers holds (on WordPress also words somewhere in a post's content no target
+//   offers; on Drupal, words in no template, and words in a marked field of a type the word saves do not model) are
+//   looked for where the content keeps them: the helper's stored-words search (POST /_wanigan/words,
+//   live-stored-words.ts), found once or refused with why, saved over the value as found, then the page reloaded and
+//   read back. The answer says where the words are kept, whether the site keeps a revision, what a plugin's own copy
+//   may do, and, when the reloaded page still shows the old words, says so first; Undo puts the old value back by the
+//   token the site gave.
 // - Keeping the page as it was: just before words are saved, and when a style, a token or formatted words are handed
 //   to an agent, the page the edit is on is rendered at the verification widths through the same hidden render,
 //   without the layer and then, in the same load, with that one edit as designed on it, and kept under the edit's
@@ -67,15 +74,21 @@
 //   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
 //   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
 //   implemented with the failed verdict (its words are in the site; the verdict says what differs).
+// - Typing on the page, and trying a style, before either is an edit: the picked element is keyed first (as
+//   layerTarget keys it), then made editable in place by the page script, whose answer (the words kept, or why not) the
+//   window adds as a text edit; a navigation that ends it answers cancelled. A style being tried is one preview the
+//   page script owns, on the elements an edit for it would reach (`this`) or every one of its kind, shown through a
+//   sheet injected once per document at the user origin that holds no value of its own (trySheet) and outranks the
+//   layer's own rules for the same properties. Neither is kept anywhere but the page shown.
 // - Nothing here writes to the site except the helper save, and nothing reaches any origin but the site's own.
 import { randomInt } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
-  LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash,
+  LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash, trySheet, tryValues,
   type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
-  type LayerTarget, type LayerVerdict,
+  type LayerTarget, type LayerTyped, type LayerUndone, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
   MAX_DIFFERENCES, OUTSIDE_PROPERTIES, VERIFY_WIDTHS, against, applyMask, compareElements, compareOutside, comparePixels, compareTokens, diffBitmaps, diffPicture,
@@ -83,6 +96,7 @@ import {
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
+import { storedContentOf, type StoredContent, type StoredUndone, type StoredWordsAnswer, type StoredWordsAsk } from '../shared/live-stored-words.ts';
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
@@ -90,6 +104,7 @@ import { movedTo, sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
+import { builderHints, reloadAndWait } from './live-stored-words.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
@@ -139,6 +154,9 @@ type Found = Record<string, { count?: unknown; texts?: unknown; plain?: unknown 
 
 /** Whether an edit's element is checked by its text: one element (`this`) whose text was there to hash. */
 const guarded = (e: LayerEdit): boolean => e.scope === 'this' && !!e.target.textHash;
+
+/** A target the core would take for an edit, checked as it will check it: one it would refuse is never offered. */
+const sound = (t: LayerTarget): boolean => !layerEdit({ id: 'check', target: t, scope: 'this', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }).refused;
 
 /**
  * Resolve each edit in effect (draft, implemented, or orphaned and maybe back) on the page at `path`, through the page
@@ -438,6 +456,25 @@ export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: strin
 
 /** On Drupal, words no target holds and no template around them writes: made by code from what Wanigan does not save yet. */
 const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
+
+/** The field types the Drupal helper's word saves model (POST /_wanigan/save); a marked field of any other type is looked for in its stored values. */
+const WORD_FIELDS = new Set(['string', 'string_long', 'text', 'text_long', 'text_with_summary']);
+
+/**
+ * What a stored-words save came to, in the owner's words: where the words are kept and through whose save, whether
+ * the site keeps a revision of it, what a plugin's or module's own copy may do, and what the reloaded page shows. A
+ * page still showing the old words is said first: the site has them, and whatever renders them may not.
+ */
+export function storedSaid(saved: Extract<StoredWordsAnswer, { ok: true }>, shows: 'new' | 'old' | 'unknown'): string {
+  const by = saved.writer === 'core' ? '' : `, and were saved through ${saved.writer}’s own save`;
+  const where = `The words are kept in ${saved.where}${by}.`;
+  const revision = saved.revision ? ` The site keeps a revision of it (revision ${saved.revision}).`
+    : ' The site keeps no revision of it: Undo here puts the old words back, while nothing else has changed them (for ten minutes).';
+  const cache = saved.cache ? ` ${saved.cache}` : '';
+  if (shows === 'old') return `Saved in the site, but the page still shows the old words: whatever renders it may keep its own copy. ${where}${revision} Undo puts the old words back.`;
+  if (shows === 'new') return `Saved in the site, and the reloaded page shows the new words. ${where}${revision}${cache}`;
+  return `Saved in the site. ${where}${revision} Wanigan could not find its element on the reloaded page to check what it shows.${cache}`;
+}
 
 /** Why there is no trace to find what holds an element's words in. */
 function untraced(answer: Exclude<LiveTraceAnswer, { state: 'ok' }>): string {
@@ -760,6 +797,15 @@ export interface LiveLayerOptions {
    * its id in the trace the view holds, refused unless that is still the trace `trace` names.
    */
   schemaSave: (target: string, value: unknown, trace: string) => Promise<LiveEditSaved>;
+  /**
+   * The helper's stored-words search and save (`POST /_wanigan/words`, live-stored-words.ts), as the view's user: asked
+   * when nothing the page offers to edit holds an edit's words. Absent, they are not looked for further.
+   */
+  storedWords?: (ask: StoredWordsAsk) => Promise<StoredWordsAnswer>;
+  /** Put a stored-words save back by the token the site gave for it (`POST /_wanigan/undo`). */
+  storedUndo?: (token: string) => Promise<StoredUndone>;
+  /** Reload the view's page and wait until it has loaded (live-stored-words.ts reloadAndWait); a test seam. */
+  reloaded?: (wc: WebContents) => Promise<boolean>;
   /** The partition a render of a project's page runs in, prepared with its trust and the helper's token (live-view.ts). */
   partition: (projectId: string, url: string, token: string | null) => string;
   /** A project's view session, for asking a hidden render's trace (live-view.ts). */
@@ -887,11 +933,19 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   let sheet: { wc: number; key: string } | null = null;
   /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
   let generation = 0;
+  /** The page (by its webContents) whose document has the try sheet; a new document has none. */
+  let triedIn: number | null = null;
+  /** Trying a style, one call at a time and in the order asked, so a preview taken away is never put back by one asked before it. */
+  let trying: Promise<unknown> = Promise.resolve();
   /**
    * The helper's confirm tokens, by edit: a save it refused saying how far it reaches (words in a Drupal default layout
    * every entity of a bundle shares) is made when the edit is made real again, with the token that answer gave.
    */
   const confirms = new Map<string, string>();
+  /** A site-wide place the stored-words search found for an edit and said so: made real again, it is saved there. */
+  const storedConfirms = new Map<string, string>();
+  /** Undo tokens the site gave for stored-words saves, by edit, with the page each was made on. */
+  const storedUndos = new Map<string, { token: string; page: string }>();
   /** Applying, one at a time; and rendering for the layer, one at a time (verifying, and keeping a page from before: each loads whole pages in hidden windows). */
   let applying: Promise<unknown> = Promise.resolve();
   let verifying: Promise<unknown> = Promise.resolve();
@@ -985,29 +1039,46 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const hooks: LiveViewHooks = {
     view(wc) {
       sheet = null;
+      triedIn = null;
       if (!wc) return;
-      // A new document has none of the old one's stylesheet.
-      wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument && sheet?.wc === wc.id) sheet = null; });
+      // A new document has none of the old one's stylesheets.
+      wc.on('did-start-navigation', (details) => {
+        if (!details.isMainFrame || details.isSameDocument) return;
+        if (sheet?.wc === wc.id) sheet = null;
+        if (triedIn === wc.id) triedIn = null;
+      });
       wc.on('did-finish-load', () => { if (options.enabled()) void apply().catch(() => {}); });
     },
   };
 
   /* ── the picked element, keyed ── */
 
-  const target = async (): Promise<LayerPickTarget | null> => {
-    const here = shown();
-    if (!here) return null;
+  type Pick = { parts?: unknown; selector?: unknown; text?: unknown; tag?: unknown; values?: unknown };
+  type Keyed = { part: TracePart & { identity: PartIdentity }; inner: string | null };
+  /**
+   * The picked element as the page script reads it (its computed values for `props`), and the innermost part around
+   * it with an identity in the shown page's trace. Null with nothing picked.
+   */
+  const picked = async (props: readonly string[]): Promise<{ trace: LiveTrace | null; pick: Pick; keyed: Keyed | null } | null> => {
     const answer = await options.trace();
     const trace = answer.state === 'ok' ? answer.trace : null;
-    type Pick = { parts?: unknown; selector?: unknown; text?: unknown; tag?: unknown; values?: unknown };
-    const pick = await options.run<Pick | null>(call('layerPick', LAYER_PROPERTIES), null);
+    const pick = await options.run<Pick | null>(call('layerPick', props), null);
     if (!pick || typeof pick !== 'object') return null;
     const byId = new Map((trace?.parts ?? []).map((p) => [p.id, p]));
-    let keyed: { part: TracePart & { identity: PartIdentity }; inner: string | null } | null = null;
+    let keyed: Keyed | null = null;
     for (const k of Array.isArray(pick.parts) ? pick.parts as { part?: unknown; inner?: unknown }[] : []) {
       const p = typeof k?.part === 'string' ? byId.get(k.part) : undefined;
       if (p?.identity && (k.inner === null || typeof k.inner === 'string')) { keyed = { part: p as TracePart & { identity: PartIdentity }, inner: k.inner as string | null }; break; }
     }
+    return { trace, pick, keyed };
+  };
+
+  const target = async (): Promise<LayerPickTarget | null> => {
+    const here = shown();
+    if (!here) return null;
+    const got = await picked(LAYER_PROPERTIES);
+    if (!got) return null;
+    const { trace, pick, keyed } = got;
     // Its whole text, as the site rendered it: what the edit is checked against on every load. None, no check.
     const words = typeof pick.text === 'string' && pick.text ? pick.text : null;
     const textHash = words ? layerTextHash(words) : null;
@@ -1016,8 +1087,6 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     for (const k of LAYER_PROPERTIES) if (typeof values[k] === 'string') before[k] = (values[k] as string).slice(0, 2_000);
     if (words) before.text = words.slice(0, 2_000);
     const human = humanName(pick.tag);
-    // Checked as the core will check it: a target it would refuse is not offered.
-    const sound = (t: LayerTarget): boolean => !layerEdit({ id: 'check', target: t, scope: 'this', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }).refused;
     if (keyed) {
       const t: LayerTarget = { part: keyed.part.identity, inner: keyed.inner, selector: null, textHash };
       if (sound(t)) {
@@ -1040,6 +1109,89 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (typeof pick.selector !== 'string') return null;
     const t: LayerTarget = { part: null, inner: null, selector: pick.selector, textHash };
     return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: fragileWhy(t, 'this') !== null } : null;
+  };
+
+  /* ── typing on the page, and trying a style, before either is an edit ── */
+
+  /** Why typing on the page never began, from the main process's side. */
+  const refusedType = (why: string): LayerTyped => ({ ended: 'refused', why });
+
+  /**
+   * Type on the picked element's words in the page: keyed first (target(), by the words the site rendered), then made
+   * editable by the page script, the keyboard given to the view. Answers what the page script says when typing ends,
+   * or cancelled when the page goes to another address first (its script, and the words typed, go with it).
+   */
+  const type = async (): Promise<LayerTyped> => {
+    const here = shown();
+    if (!here) return refusedType('Words are typed on the local site’s own page, and the view does not show one now.');
+    const t = await target();
+    if (!t) return refusedType('Nothing is chosen on the page any more: pick it again, then retype it.');
+    const wc = here.cur.webContents;
+    if (wc.isDestroyed() || wc.getURL() !== here.url) return refusedType('The page changed meanwhile: retype it on the page shown now.');
+    let off = (): void => {};
+    const ended = new Promise<LayerTyped>((resolve) => {
+      const gone = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
+        if (details.isMainFrame && !details.isSameDocument) resolve({ ended: 'cancelled', why: 'The page went to another address while you typed, so nothing was kept.', key: false });
+      };
+      const destroyed = (): void => resolve({ ended: 'cancelled', why: 'The page went away while you typed, so nothing was kept.', key: false });
+      wc.on('did-start-navigation', gone);
+      wc.on('destroyed', destroyed);
+      off = () => { wc.off('did-start-navigation', gone); wc.off('destroyed', destroyed); };
+    });
+    try {
+      // The keyboard goes to the page: the caret is there.
+      wc.focus();
+      const got = await Promise.race([options.run<unknown>(call('layerType'), null), ended]);
+      if (got && typeof got === 'object' && 'ended' in got) return got as LayerTyped;
+      if (!got || typeof got !== 'object') return refusedType('The page did not answer: reload it, then retype it.');
+      const g = got as { kept?: unknown; words?: unknown; why?: unknown; refused?: unknown; key?: unknown };
+      if (typeof g.refused === 'string') return refusedType(g.refused.slice(0, 300));
+      const words = typeof g.words === 'string' ? g.words.replace(/\s+/g, ' ').trim().slice(0, 100_000) : '';
+      const key = g.key === true;
+      if (g.kept === true && words) return { ended: 'kept', words, target: t, key };
+      return { ended: 'cancelled', why: g.why === 'empty' ? 'Nothing was left typed, so the words were put back.' : null, key };
+    } finally {
+      off();
+    }
+  };
+
+  /**
+   * Try style values on the picked element (`this`: the elements an edit for it would reach; `kind`: every element of
+   * its kind on the page), as one preview the page script owns; values that are not the layer's, or none, take it away.
+   */
+  const tryNow = async (rawValues: unknown, rawScope: unknown): Promise<number> => {
+    const here = shown();
+    if (!here) return 0;
+    const untry = async (): Promise<number> => { await options.run(call('layerTry', null, null), 0); return 0; };
+    const values = tryValues(rawValues);
+    if (!values) return untry();
+    const scope = rawScope === 'kind' ? 'kind' : 'this';
+    const got = await picked([]);
+    if (!got) return untry();
+    const { trace, pick, keyed } = got;
+    let spec: { parts: string[] | null; inner: string | null; selector: string | null } | null = null;
+    if (keyed && sound({ part: keyed.part.identity, inner: keyed.inner, selector: null, textHash: null })) {
+      // The same parts an edit would reach (resolveLayer): its identity's, or for `kind`, every part sharing its kind.
+      const key = scope === 'kind' ? kindKey(keyed.part.identity) : identityKey(keyed.part.identity);
+      const same = (i: PartIdentity): boolean => (scope === 'kind' ? kindKey(i) : identityKey(i)) === key;
+      if (key) spec = { parts: (trace?.parts ?? []).filter((p) => p.identity && same(p.identity)).map((p) => p.id), inner: keyed.inner, selector: null };
+    } else if (scope === 'this' && typeof pick.selector === 'string' && sound({ part: null, inner: null, selector: pick.selector, textHash: null })) {
+      spec = { parts: null, inner: null, selector: pick.selector };
+    }
+    if (!spec) return untry();
+    const wc = here.cur.webContents;
+    if (triedIn !== wc.id) {
+      // Once per document, at the user origin with the layer's own sheet: it holds nothing until the page script marks an element.
+      await wc.insertCSS(trySheet(), { cssOrigin: 'user' });
+      triedIn = wc.id;
+    }
+    const n = await options.run<unknown>(call('layerTry', spec, values), 0);
+    return typeof n === 'number' && Number.isInteger(n) ? n : 0;
+  };
+  const tryStyle = (rawValues: unknown, rawScope: unknown): Promise<number> => {
+    const next = trying.then(() => tryNow(rawValues, rawScope), () => tryNow(rawValues, rawScope));
+    trying = next.catch(() => {});
+    return next;
   };
 
   /* ── making an edit real ── */
@@ -1114,6 +1266,23 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const inSiteUnmarked = (revision: string | null, refused: string): string =>
     `The words are saved in the site${revision ? ` (revision ${revision})` : ''}, but the layer could not mark this edit implemented: ${refused} Do not save it again; it is in the site.`;
 
+  /**
+   * After a stored-words save: the page reloaded and the layer applied again, what the edit's element shows now, as
+   * the site rendered it (the page script's siteWords, under the layer's patch): the new words, the old ones, or not
+   * known (no element, or the page did not load in time).
+   */
+  const readBack = async (wc: WebContents, id: string, value: string, before: string): Promise<'new' | 'old' | 'unknown'> => {
+    if (wc.isDestroyed()) return 'unknown';
+    const loaded = await (options.reloaded ?? reloadAndWait)(wc).catch(() => false);
+    if (!loaded || wc.isDestroyed()) return 'unknown';
+    await apply().catch(() => null);
+    const now = await options.run<{ words?: unknown } | null>(call('layerOf', id), null);
+    const shown = now && typeof now.words === 'string' ? asWords(now.words) : null;
+    if (shown === null) return 'unknown';
+    if (shown === asWords(value)) return 'new';
+    return shown === asWords(before) ? 'old' : 'unknown';
+  };
+
   const implement = async (raw: unknown): Promise<LayerImplemented> => {
     const id = typeof raw === 'string' && EDIT_ID.test(raw) ? raw : '';
     const none = (why: string): LayerImplemented => ({ ok: false, id, route: 'none', why });
@@ -1148,11 +1317,51 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.count !== 1 && !(edit.target.part && at.same === true)) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
+    const words = at.words;
+    /**
+     * Words nothing the page offers to edit holds, looked for where the content keeps them (the helper's stored-words
+     * search) and saved there: found once, the page as it is kept, then saved over the value as found, marked
+     * implemented on the site's ok, the page reloaded and read back. A place every page shows is said first, and saved
+     * when made real again. Found nowhere is the caller's to say.
+     */
+    const fromStore = async (traceId: string, content: StoredContent, platform: 'drupal' | 'wordpress'): Promise<{ done: LayerImplemented } | { nowhere: string }> => {
+      const ask = options.storedWords;
+      if (!ask) return { nowhere: '' };
+      const hints = platform === 'wordpress' ? await builderHints(options.run, id) : undefined;
+      const base = { trace: traceId, content, before: words, after: value, ...(hints ? { hints } : {}) };
+      const found = await ask({ step: 'find', ...base });
+      if (!found.ok) return found.reason === 'nowhere' ? { nowhere: found.error } : { done: none(found.error) };
+      if (found.ask && storedConfirms.get(id) !== found.place) {
+        storedConfirms.set(id, found.place);
+        return { done: none(`${found.ask} Make it real again to save it there.`) };
+      }
+      // The page as it is, kept just before the words are saved.
+      await keepBefore(cur.projectId, edit, all, true);
+      const saved = await ask({ step: 'save', ...base, place: found.place, hash: found.hash, ...(found.ask ? { confirmed: true } : {}) });
+      storedConfirms.delete(id);
+      if (!saved.ok) return { done: none(saved.error) };
+      if (saved.undo) storedUndos.set(id, { token: saved.undo, page: edit.page });
+      const refused = await mark(cur.projectId, id, 'implemented');
+      const shows = await readBack(here.cur.webContents, id, value, words);
+      const said = storedSaid(saved, shows);
+      if (refused) return { done: none(`${inSiteUnmarked(saved.revision, refused)} ${said}`) };
+      return { done: { ok: true, id, state: 'implemented', revision: saved.revision, said, undo: saved.undo !== null, shows, ...(saved.adapter ? { adapter: saved.adapter } : {}) } };
+    };
     if (typeof at.field === 'string') {
       // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
       // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
       if (typeof where === 'string') return none(where);
+      // A field of a type the helper's word saves do not model (a contributed module's): its stored values are
+      // searched first; found nowhere there, the helper's own save answers (a field's label, or why not).
+      if (options.storedWords && !WORD_FIELDS.has(at.field.split(':')[3] ?? '')) {
+        const traced = await options.trace();
+        const c = traced.state === 'ok' && edit.target.part ? storedContentOf(traced.trace, edit.target.part) : null;
+        if (traced.state === 'ok' && c) {
+          const r = await fromStore(traced.trace.id, c, 'drupal');
+          if ('done' in r) return r.done;
+        }
+      }
       // The page as it is, kept just before the words are saved.
       await keepBefore(cur.projectId, edit, all, true);
       // Asked again after the site said how far it reaches: with the token it gave, so that save is made.
@@ -1175,7 +1384,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
         else here.cur.webContents.reloadIgnoringCache();
       }
       if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
-      return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
+      return { ok: true, id, state: 'implemented', revision: saved.revision ?? null, ...(saved.note ? { note: saved.note } : {}) };
     }
     // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
     // exactly these words, saved as the window saves one.
@@ -1188,7 +1397,23 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
       const written = writtenIn(answer.trace, edit.target.part, at.words);
       if (written?.id.startsWith('words.tpl.')) return toAgent(written.why ?? DRUPAL_NOTHING_HOLDS);
+      // Written in no template: looked for in the stored values of the content the page showed.
+      const c = !written && options.storedWords ? storedContentOf(answer.trace, edit.target.part) : null;
+      if (c) {
+        const r = await fromStore(answer.trace.id, c, 'drupal');
+        if ('done' in r) return r.done;
+        if (r.nowhere) return none(r.nowhere);
+      }
       return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
+    }
+    // WordPress: nothing the page offers holds them, or they are somewhere in a post's content that no target offers
+    // (classic content, a builder's, a shortcode's, a block's settings): looked for where the post keeps them. Words a
+    // target holds as formatted text are not this search's. Found nowhere, what was said before stands, with why.
+    const stored = !found.ok && answer.trace.platform === 'wordpress' && options.storedWords ? storedContentOf(answer.trace, edit.target.part) : null;
+    if (!found.ok && stored && (found.why === NOTHING_HOLDS || (found.route === 'agent' && !/^These words are formatted text/.test(found.why)))) {
+      const r = await fromStore(answer.trace.id, stored, 'wordpress');
+      if ('done' in r) return r.done;
+      if (r.nowhere) return found.route === 'agent' ? toAgent(`${r.nowhere} An agent can make the change from a brief.`) : none(r.nowhere);
     }
     // Formatted words handed to an agent keep the page from before, as a style does.
     if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };
@@ -1405,6 +1630,24 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     }
   };
 
+  /**
+   * Put back a stored-words save made from the layer in this window, by the token the site gave (ten minutes), from
+   * the page it was made on; the page reloads. The edit stays implemented: the layer never takes an edit that was in
+   * the site back to a draft, and a verification says what the page shows.
+   */
+  const undoStored = async (raw: unknown): Promise<LayerUndone> => {
+    const id = typeof raw === 'string' && EDIT_ID.test(raw) ? raw : '';
+    const kept = id ? storedUndos.get(id) : undefined;
+    if (!kept || !options.storedUndo) return { ok: false, id, why: 'That can no longer be undone here: Undo puts back a save made from the layer in this window, for ten minutes.' };
+    const here = shown();
+    if (!here || !madeOn({ page: kept.page }, here.path)) return { ok: false, id, why: `Open ${kept.page} in the live view first: words are put back from the page they are on.` };
+    const r = await options.storedUndo(kept.token);
+    if (!r.ok) return { ok: false, id, why: r.error };
+    storedUndos.delete(id);
+    if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+    return { ok: true, id, revision: r.revision, said: `Put back: the site holds the old words again${r.revision ? ` (revision ${r.revision})` : ''}. The edit stays in the layer as implemented (the layer never makes an edit that was in the site a draft again); verifying it shows the page without its words.` };
+  };
+
   const off = (): LayerApplied => ({ page: '', shown: [], orphaned: [], elsewhere: [], off: true });
   ipc.handle('live:layerApply', async (event) => (ok(event) ? apply() : off()));
   ipc.handle('live:layerShow', async (event, raw: unknown) => {
@@ -1413,6 +1656,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     return apply();
   });
   ipc.handle('live:layerTarget', async (event) => (ok(event) ? target() : null));
+  ipc.handle('live:layerType', async (event): Promise<LayerTyped> => (ok(event) ? type() : refusedType('The live view is off.')));
+  ipc.handle('live:layerTypeEnd', async (event, keep: unknown) => { if (options.trusted(event)) await options.run(call('layerTypeEnd', keep === true), null); });
+  ipc.handle('live:layerTry', async (event, values: unknown, scope: unknown) => (ok(event) ? tryStyle(values, scope) : 0));
   ipc.handle('live:layerImplement', async (event, raw: unknown): Promise<LayerImplemented> => (ok(event)
     ? implement(raw) : { ok: false, id: typeof raw === 'string' ? raw.slice(0, 64) : '', route: 'none', why: 'The live view is off.' }));
   ipc.handle('live:layerVerify', async (event, raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => {
@@ -1420,6 +1666,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     return verify(raw, rawOptions);
   });
   ipc.handle('live:layerPicture', async (event, raw: unknown) => (options.trusted(event) ? picture(raw) : null));
+  ipc.handle('live:layerUndo', async (event, raw: unknown): Promise<LayerUndone> => (ok(event)
+    ? undoStored(raw) : { ok: false, id: typeof raw === 'string' ? raw.slice(0, 64) : '', why: 'The live view is off.' }));
 
   return { hooks, apply };
 }
