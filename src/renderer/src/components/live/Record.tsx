@@ -2,9 +2,9 @@
 // to an agent as key frames and words with the owner's explanation. The main
 // process records (src/main/live-record.ts); this is what the window shows.
 //
-// - The bar's Record (⇧R) starts it; while it records, the button says Stop
-//   with the time, the status line says Recording with the time and how to
-//   stop, and the start and the stop are announced. Escape (not while typing)
+// - The toolbar's Record (⇧R) starts it; while it records, the tool says Stop
+//   with the time, the status line says Recording with the time and its Stop,
+//   and the start and the stop are announced. Escape (not while typing)
 //   or the control stops it; so do two minutes, leaving the live view, or the
 //   view going away.
 // - Stopped, the review is drawn in the stage where the page is (as Compare
@@ -20,14 +20,15 @@ import type { LiveRecordState, LiveRecording } from '@shared/bridge';
 import type { LiveComponent } from '@shared/live';
 import { RECORDINGS_KEPT, clock, isErrorStep, length, recordContext, stepText, type PartNamer } from '@shared/live-record';
 import { formatBytes } from '@shared/attachments';
-import type { ProjectSummary } from '@shared/model';
 import { keyLabel } from '@shared/shortcuts';
+import type { ProjectSummary } from '@shared/model';
 import { bridge } from '../../lib/api';
 import { liveBridge, useCoversLive } from '../../lib/live';
 import { isTyping } from '../../lib/live-goto';
 import { Button, IconButton, useToast } from '../ui';
 import { Icon } from '../icons';
 import { NoteComposer, draftFor } from './Notes';
+import { LIVE_TIP } from './keys';
 import '../../styles/live-snap.css';
 
 const OFF: LiveRecordState = { on: false, projectId: null, startedAt: null, limitMs: 120_000, frames: 0, steps: 0, saving: false, done: null, error: null };
@@ -95,12 +96,10 @@ export function useRecordEscape(rec: Recorder, blocked: boolean): void {
 }
 
 /**
- * The bar's Record: an icon that starts it (⇧R), its name its accessible name and tooltip; while recording it is Stop
- * with the time, pressed, in words, always in sight.
+ * The toolbar's Record, a tool: an icon that starts it (⇧R), its name its accessible name and tooltip; while recording
+ * it is pressed, Stop with the time, in words, always in sight.
  */
-export function RecordButton({ rec, disabled }: { rec: Recorder; disabled: boolean }) {
-  const mac = bridge().platform === 'darwin';
-  const key = `${keyLabel('Shift', mac)}${mac ? '' : '+'}R`;
+export function RecordButton({ rec, disabled, onToggle }: { rec: Recorder; disabled: boolean; onToggle: () => void }) {
   if (rec.saving) {
     return (
       <Button size="s" tone="quiet" icon="record" disabled aria-label="Saving the recording…" className="live-record-btn saving">
@@ -110,13 +109,13 @@ export function RecordButton({ rec, disabled }: { rec: Recorder; disabled: boole
   }
   if (!rec.on) {
     return (
-      <IconButton icon="record" onClick={() => void rec.toggle()} disabled={disabled} aria-keyshortcuts="Shift+R" aria-pressed={false} className="btn btn-quiet btn-icon live-record-btn"
-        label={`Record (${key})`} title={`Record: the live view, and only it, for up to ${length(rec.state.limitMs)}, with a log of each step (${key})`} />
+      <IconButton icon="record" onClick={onToggle} disabled={disabled} pressed={false} className="live-record-btn" keys={LIVE_TIP.record}
+        label="Record" data-tip={`Record the live view, and only it, for up to ${length(rec.state.limitMs)}, with a log of each step`} />
     );
   }
   return (
-    <Button size="s" tone="primary" icon="stop" className="live-record-btn on" onClick={() => void rec.stop()} aria-keyshortcuts="Shift+R" aria-pressed
-      aria-label={`Stop recording, ${length(rec.elapsed)} of ${length(rec.state.limitMs)} (${key} or Escape)`} title={`Recording the live view: ${key} or Escape stops it`}>
+    <Button size="s" icon="stop" className="live-record-btn on" onClick={() => void rec.stop()} aria-pressed keys={LIVE_TIP.record}
+      aria-label={`Stop recording, ${length(rec.elapsed)} of ${length(rec.state.limitMs)}`} data-tip="Recording the live view: Escape stops it too">
       <span className="live-record-word">Stop <time className="live-record-time">{length(rec.elapsed)}</time></span>
     </Button>
   );

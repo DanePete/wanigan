@@ -30,6 +30,7 @@ import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '.
 import { liveBridge } from '../../lib/live';
 import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
+import { LIVE_TIP } from './keys';
 
 /** What was just added to the layer, said in the Inspector until the next edit. */
 export interface LayerAdded { label: string; lines: ChangeLine[]; reach: string }
@@ -333,7 +334,7 @@ export function LayerAddedNote({ added, onTray }: { added: LayerAdded; onTray: (
         ))}
       </ul>
       <div className="live-actions">
-        <Button size="s" tone="quiet" icon="brush" onClick={onTray} aria-keyshortcuts="Shift+E">Open Edits<kbd className="live-key" aria-hidden="true">⇧E</kbd></Button>
+        <Button size="s" tone="quiet" icon="brush" onClick={onTray} keys={LIVE_TIP.edits}>Open Edits</Button>
       </div>
     </div>
   );

@@ -31,7 +31,8 @@ import {
   noiseWords, orphanWhy, reachWords, redoLabel, stateDetail, templateOf, templateOffered, undoLabel, verdictHeadline,
 } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
-import { Button, Dialog, IconButton, useSingleFlight, useToast } from '../ui';
+import { Button, Dialog, EmptyState, IconButton, useSingleFlight, useToast } from '../ui';
+import { LIVE_TIP } from './keys';
 import { NoteComposer } from './Notes';
 import { TemplateSave, TemplateWrittenNote, type TemplateWritten } from './TemplateSave';
 import type { LayerApi } from './use-layer';
@@ -59,7 +60,6 @@ interface TrayContext {
 
 export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => void }) {
   const { layer, page, readOnly } = ctx;
-  const live = liveBridge();
   const once = useSingleFlight();
   const title = useRef<HTMLHeadingElement>(null);
   const savedByHand = useQuery('live.edits', { projectId: ctx.project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === ctx.project.id);
@@ -93,37 +93,37 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
 
   return (
     <div className="live-tray" onKeyDown={keys}>
-      <div className="live-side-head">
-        <h2 className="live-side-title" tabIndex={-1} ref={title}>Edits</h2>
-        <IconButton icon="close" label="Close the edits (⇧E)" onClick={onClose} />
-      </div>
-      <p className="small">
-        Your changes to the page, kept by Wanigan and shown on it until each is made real in the site and verified.
-        {counts.length ? <span className="faint"> {counts.join(', ')}.</span> : null}
-      </p>
+      <header className="live-panel-head">
+        <div className="live-panel-title-row">
+          <h2 className="live-side-title" tabIndex={-1} ref={title}>Edits</h2>
+          {counts.length ? <span className="live-kind live-tray-counts">{counts.join(' · ')}</span> : null}
+          <span className="live-panel-actions">
+            <IconButton icon="close" size="s" label="Close the edits" keys={LIVE_TIP.edits} tipSide="bottom" onClick={onClose} />
+          </span>
+        </div>
+      </header>
+      <div className="live-tray-body">
       {readOnly ? <p className="small live-tray-note">A hosted environment is shown. The layer is your local site’s: show Local to see it on the page, or to make an edit real.</p> : null}
       <div className="live-tray-tools" role="group" aria-label="The layer">
         {/* While words are being saved to the site, the log waits: undo and redo never land between the save and its mark. */}
         <Button size="s" tone="quiet" icon="undo" disabled={!snap?.undo || layer.writing} onClick={() => once(layer.undo)}
-          title="Undo takes back the newest add or discard; an edit already in the site is never taken out of the layer">
+          data-tip="Undo takes back the newest add or discard; an edit already in the site is never taken out of the layer">
           {undoLabel(snap)}
         </Button>
-        <Button size="s" tone="quiet" icon="forward" disabled={!snap?.redo || layer.writing} onClick={() => once(layer.redo)}>
+        <Button size="s" tone="quiet" icon="redo" disabled={!snap?.redo || layer.writing} onClick={() => once(layer.redo)}>
           {redoLabel(snap)}
-        </Button>
-        <Button size="s" tone={layer.on ? 'quiet' : 'primary'} icon="eye" aria-pressed={!layer.on} disabled={!live || readOnly} onClick={() => once(() => layer.show(!layer.on))}>
-          Show the page without the layer
         </Button>
       </div>
       {!layer.on ? (
-        <p className="small live-tray-note" role="status">The page shows the site as it renders it, without the layer. Switch it back to see your edits.</p>
+        <p className="small live-tray-note" role="status">The page shows the site as it renders it, without the layer. Switch the eye in the toolbar back to see your edits.</p>
       ) : null}
       {layer.writing ? <p className="faint small" role="status">Saving to the site: undo, redo and discard wait until the layer has recorded it.</p> : null}
-      {!snap ? <p className="faint small">Reading the layer…</p> : !edits.length ? (
-        <p className="faint small">
-          Nothing in the layer. Choose a part, then Edit ▾ › Retype the words or Try a style: the change shows on the page at once, and waits here until you
-          make it real.
-        </p>
+      {!snap ? (
+        <div className="live-skeleton" role="status" aria-label="Reading the layer…">{[0, 1, 2].map((i) => <span key={i} className="live-skeleton-row tall" />)}</div>
+      ) : !edits.length ? (
+        <EmptyState icon="brush" title="Nothing in the layer">
+          Choose a part, then type on its words or try a style: the change shows on the page at once, and waits here until you make it real.
+        </EmptyState>
       ) : groups.map((g) => (
         <section key={g.page} className="live-tray-page" aria-label={`Edits made on ${g.page}`}>
           <h3 className="live-section-title">{g.page === '/' ? 'The front page, /' : g.page}{g.here ? <span className="live-tray-here"> · this page</span> : null}</h3>
@@ -132,6 +132,7 @@ export function LayerTray({ onClose, ...ctx }: TrayContext & { onClose: () => vo
           </ul>
         </section>
       ))}
+      </div>
     </div>
   );
 }
@@ -236,11 +237,11 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
       <div className="live-actions">
         {e.state === 'draft' ? (
           <Button size="s" tone="primary" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
-            title={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
+            data-tip={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
         {e.state === 'implemented' ? (
           <Button size="s" tone="primary" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
-            title="Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width">
+            data-tip="Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width">
             {verifying ? 'Verifying…' : 'Verify'}
           </Button>
         ) : null}

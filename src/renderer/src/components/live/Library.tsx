@@ -142,11 +142,17 @@ export function LibraryPanel({ project, site, trace, parts, regions, arrange, re
   const lib = answer?.state === 'ok' ? answer.library : null;
   const pictures = usePictures(project.id, lib);
   const entry = lib && chosen ? lib.entries.find((e) => e.id === chosen) ?? null : null;
-  const listTop = useRef<HTMLHeadingElement>(null);
-  // Opened from the bar or its key, the keyboard goes to the search once the list is there; back from an entry, to the list.
+  // Opened from its tab or its key, the keyboard goes to the search once the list is there; back from an entry, to its row.
   const searchRef = useRef<HTMLInputElement>(null);
   const searchFirst = useRef(true);
-  const back = (): void => { setChosen(null); window.requestAnimationFrame(() => listTop.current?.focus()); };
+  const back = (): void => {
+    const was = chosen;
+    setChosen(null);
+    window.requestAnimationFrame(() => {
+      const row = was ? document.querySelector<HTMLElement>(`.live-library-entry[data-entry="${CSS.escape(was)}"] .live-library-open`) : null;
+      (row ?? searchRef.current)?.focus();
+    });
+  };
   const keys = (e: KeyboardEvent): void => {
     if (e.defaultPrevented || e.key !== 'Escape' || (e.target as Element).closest('input, textarea, select, [role="menu"], .sel-list')) return;
     e.preventDefault();
@@ -158,21 +164,13 @@ export function LibraryPanel({ project, site, trace, parts, regions, arrange, re
       {entry && lib ? (
         <EntryDetail entry={entry} lib={lib} project={project} site={site} trace={trace} parts={parts} regions={regions} arrange={arrange} readOnly={readOnly}
           pictures={pictures} onBack={back} onSelect={onSelect} onHover={onHover} />
-      ) : (
-        <>
-          <div className="live-side-head">
-            <h2 className="live-side-title" tabIndex={-1} ref={listTop}>Library</h2>
-            <div className="live-actions">
-              <IconButton icon="refresh" label={asking ? 'Asking the site…' : 'Ask the site again'} disabled={asking} onClick={() => ask(true)} data-loading={asking ? '' : undefined} />
-              <IconButton icon="close" label="Close the library (⇧B)" onClick={onClose} />
-            </div>
-          </div>
-          {!answer ? <p className="faint small">Asking the site what it can place…</p>
-            : answer.state !== 'ok' ? <LibraryTrouble answer={answer} site={site} project={project} onRetry={() => ask(true)} />
-              : <LibraryList lib={answer.library} query={query} setQuery={setQuery} searchRef={searchRef} searchFirst={searchFirst} trace={trace} readOnly={readOnly}
-                arrange={arrange} pictures={pictures} onChoose={setChosen} />}
-        </>
-      )}
+      ) : !answer ? (
+        <div className="live-skeleton" role="status" aria-label="Asking the site what it can place…">
+          {[0, 1, 2, 3].map((i) => <span key={i} className="live-skeleton-row tall" />)}
+        </div>
+      ) : answer.state !== 'ok' ? <LibraryTrouble answer={answer} site={site} project={project} onRetry={() => ask(true)} />
+        : <LibraryList lib={answer.library} query={query} setQuery={setQuery} searchRef={searchRef} searchFirst={searchFirst} trace={trace} readOnly={readOnly}
+          arrange={arrange} pictures={pictures} onChoose={setChosen} asking={asking} onAsk={() => ask(true)} />}
     </div>
   );
 }
@@ -199,10 +197,12 @@ function LibraryTrouble({ answer, site, project, onRetry }: { answer: Exclude<Li
 
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one.toLowerCase() : many.toLowerCase()}`;
 
-function LibraryList({ lib, query, setQuery, searchRef, searchFirst, trace, readOnly, arrange, pictures, onChoose }: {
+function LibraryList({ lib, query, setQuery, searchRef, searchFirst, trace, readOnly, arrange, pictures, onChoose, asking, onAsk }: {
   lib: ComponentLibrary; query: string; setQuery: (q: string) => void; searchRef: RefObject<HTMLInputElement | null>; searchFirst: MutableRefObject<boolean>;
   trace: LiveTrace | null; readOnly: boolean; arrange: ReturnType<typeof useArrange>;
   pictures: ReturnType<typeof usePictures>; onChoose: (id: string) => void;
+  /** Asking the site again, and its button. */
+  asking: boolean; onAsk: () => void;
 }) {
   const groups = useMemo(() => libraryGroups(lib, query), [lib, query]);
   useEffect(() => {
@@ -236,11 +236,14 @@ function LibraryList({ lib, query, setQuery, searchRef, searchFirst, trace, read
       </p>
       {lib.truncated ? <p className="faint small">The helper listed the first {lib.entries.length}; the site has more. Search narrows what is listed.</p> : null}
       {lib.skipped ? <p className="faint small">Left out: {Object.entries(lib.skipped).map(([why, n]) => `${n} ${why}`).join(', ')}.</p> : null}
-      <label className="search-field live-library-search">
-        <Icon name="search" size={14} />
-        <span className="visually-hidden">Search the library</span>
-        <input ref={searchRef} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, provider or category" />
-      </label>
+      <div className="live-library-find">
+        <label className="search-field live-library-search">
+          <Icon name="search" size={14} />
+          <span className="visually-hidden">Search the library</span>
+          <input ref={searchRef} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name, provider or category" />
+        </label>
+        <IconButton icon="refresh" size="s" label={asking ? 'Asking the site…' : 'Ask the site again'} disabled={asking} onClick={onAsk} data-loading={asking ? '' : undefined} />
+      </div>
       {query.trim() ? <p className="faint small" role="status">{matched === 1 ? '1 entry matches' : `${matched} entries match`}.</p> : null}
       {groups.map((g) => {
         const placed = g.entries.map((e) => placement(e, lib.platform, trace, readOnly));
@@ -301,9 +304,9 @@ function EntryRow({ entry, place, quiet, platform, thumb, arrange, watch, onChoo
 
 /** A small picture of an entry at a phone's width, or what stands in for it. */
 function Thumb({ entry, shot }: { entry: LibraryEntry; shot: Shot | null }) {
-  if (entry.picture.from === 'none') return <span className="live-library-thumb none" title={entry.picture.why}><Icon name="pieces" size={16} /></span>;
+  if (entry.picture.from === 'none') return <span className="live-library-thumb none" data-tip={entry.picture.why}><Icon name="pieces" size={16} /></span>;
   if (shot?.state === 'ok') return <span className="live-library-thumb"><img src={shot.src} alt="" /></span>;
-  return <span className={`live-library-thumb${shot?.state === 'none' ? ' none' : ' waiting'}`} title={shot?.state === 'none' ? shot.why : 'Being pictured'}><Icon name="pieces" size={16} /></span>;
+  return <span className={`live-library-thumb${shot?.state === 'none' ? ' none' : ' waiting'}`} data-tip={shot?.state === 'none' ? shot.why : 'Being pictured'}><Icon name="pieces" size={16} /></span>;
 }
 
 /* ── one entry ─────────────────────────────────────────────────────────── */
@@ -359,7 +362,7 @@ function EntryDetail({ entry, lib, project, site, trace, parts, regions, arrange
             {props.map((p) => (
               <li key={p.name} className="live-library-prop">
                 <span className="live-prop">
-                  <span className="mono">{p.name}{p.required ? <span className="faint" title="Required"> *</span> : null}</span>
+                  <span className="mono">{p.name}{p.required ? <span className="faint" aria-label="required"> *</span> : null}</span>
                   <span className="lib-tag mono">{p.type}</span>
                   {p.title ? <span className="faint">{p.title}</span> : null}
                 </span>
@@ -555,7 +558,7 @@ function Place({ place, site, readOnly, onOpen }: { place: UsagePlace; site: Liv
     <li className="live-library-place">
       <span className="live-library-place-name">
         {page ? (
-          <button type="button" className="live-library-place-open" title={place.url} aria-label={`${place.label}, ${what}: open its page in the live view`} onClick={() => onOpen(page, place.label)}>{place.label}</button>
+          <button type="button" className="live-library-place-open" data-tip={place.url} aria-label={`${place.label}, ${what}: open its page in the live view`} onClick={() => onOpen(page, place.label)}>{place.label}</button>
         ) : <span className="small">{place.label}</span>}
         {place.count ? <span className="live-library-count">×{place.count}</span> : null}
       </span>
@@ -620,7 +623,7 @@ function Files({ files, project, site }: { files: string[]; project: ProjectSumm
         <li key={f}>
           <span className="live-library-file">
             {here.get(f) ? (
-              <button type="button" className="lib-tag mono live-file-open" title={`Open ${f} in the code editor`}
+              <button type="button" className="lib-tag mono live-file-open" data-tip={`Open ${f} in the code editor`}
                 onClick={() => openInEditor({ projectId: root.projectId, cardId: root.cardId, path: f })}>{f}</button>
             ) : <span className="lib-tag mono">{f}</span>}
             <CopyButton text={f} label={`Copy ${f.split('/').pop()}’s path`} what="the path" />

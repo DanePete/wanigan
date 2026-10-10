@@ -1,7 +1,7 @@
 // What the site helper's trace says about a chosen part, in the Inspector's
-// "Why it looks like this": who made it and the hooks that shaped it, its
-// data, its cache, its cost and queries, its revisions and who may see it.
-// Each opens on request and says in one line what it holds. Every way to edit
+// Made by and Data tabs: who made it and the hooks that shaped it, its data, its
+// cache, its cost and queries, its revisions and who may see it. Each folded
+// one opens on request and says in one line what it holds. Every way to edit
 // the part is in the Inspector's Edit menu (EDIT_KIND names them there).
 import type { EditTarget, LiveTrace, TracePart, TraceStep } from '@shared/live-trace';
 import { partQueries } from '@shared/live-lens';
@@ -22,7 +22,7 @@ export function TraceMadeBy({ part }: { part: TracePart }) {
     <div className="live-trace-made">
       {part.source ? (
         <div className="live-made-file">
-          <span className="mono small" title={where(part.source)}>{where(part.source)}</span>
+          <span className="mono small" data-tip={where(part.source)}>{where(part.source)}</span>
           <span className={`live-origin ${ownerClass(part.source.owner)}`}>{OWNER_LABEL[part.source.owner]}{part.source.package ? ` · ${part.source.package}` : ''}</span>
           <CopyButton text={where(part.source)} label="Copy the file’s path" what="the path" />
         </div>
@@ -62,7 +62,7 @@ function ChainStep({ step, slowest }: { step: TraceStep; slowest: boolean }) {
       {step.changed?.length ? <span className="small">Changed <span className="mono">{step.changed.join(', ')}</span></span> : null}
       {step.source ? (
         <span className="live-chain-source">
-          <span className="mono small faint" title={where(step.source)}>{where(step.source)}</span>
+          <span className="mono small faint" data-tip={where(step.source)}>{where(step.source)}</span>
           <CopyButton text={where(step.source)} label={`Copy the path of ${step.callback ?? step.hook}`} what="the path" />
         </span>
       ) : null}
@@ -71,11 +71,14 @@ function ChainStep({ step, slowest }: { step: TraceStep; slowest: boolean }) {
 }
 
 /** The variables it was rendered with, previewed (the helper bounds them and hides secrets), each editable where an edit target sets it. */
-export function TraceData({ part, edits, onEdit }: { part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void }) {
+export function TraceData({ part, edits, onEdit, bare = false }: {
+  part: TracePart; edits: Map<string, EditTarget>; onEdit: (t: EditTarget) => void;
+  /** The Data tab's own content, not folded. */
+  bare?: boolean;
+}) {
   const vars = part.variables ?? [];
   if (!vars.length) return null;
-  return (
-    <Disclosure title="Data" summary={`${vars.length} ${vars.length === 1 ? 'variable' : 'variables'}`}>
+  const list = (
       <dl className="live-vars">
         {vars.map((v) => {
           const target = v.edit ? edits.get(v.edit) : undefined;
@@ -92,8 +95,8 @@ export function TraceData({ part, edits, onEdit }: { part: TracePart; edits: Map
           );
         })}
       </dl>
-    </Disclosure>
   );
+  return bare ? list : <Disclosure title="Data" summary={`${vars.length} ${vars.length === 1 ? 'variable' : 'variables'}`}>{list}</Disclosure>;
 }
 
 export function TraceCache({ part }: { part: TracePart }) {
@@ -126,7 +129,7 @@ export function TraceCost({ part, trace }: { part: TracePart; trace: LiveTrace }
   const c = part.cost;
   return (
     <Disclosure title="Cost" summary={c ? `${ms(c.ms)}${c.queries ? ` · ${c.queries} ${c.queries === 1 ? 'query' : 'queries'}` : ''}` : `${queries.length} queries`}>
-      {c ? <p className="small">{ms(c.ms)} to render{c.queries !== undefined ? `, ${c.queries} ${c.queries === 1 ? 'query' : 'queries'}${c.queryMs !== undefined ? ` taking ${ms(c.queryMs)}` : ''}` : ''}, measured in this render on this Mac.</p> : null}
+      {c ? <p className="small">{ms(c.ms)} to render{c.queries !== undefined ? `, ${c.queries} ${c.queries === 1 ? 'query' : 'queries'}${c.queryMs !== undefined ? ` taking ${ms(c.queryMs)}` : ''}` : ''}, measured in this render on this computer.</p> : null}
       {queries.length ? (
         <ol className="live-queries" aria-label="Its queries, slowest first">
           {queries.slice(0, 50).map((q, i) => (

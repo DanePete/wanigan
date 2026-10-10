@@ -629,7 +629,47 @@ export function liveStub(f) {
       sheet.appendChild(b);
     };
     for (const p of shown.paint) { const r = regions[p.index]; if (r) box(r.rect, `outline:1.5px ${p.dashed ? 'dashed' : 'solid'} ${p.color};outline-offset:-1px;background:${rgba(p.color, p.fill)};box-shadow:inset 0 0 0 2px rgba(0,0,0,0.18);`, p.label); }
-    for (const o of shown.outline) { const r = regions[o.index]; if (r) box(r.rect, `outline:2px ${o.tone === 'hover' ? 'dashed' : 'solid'} #63b3e4;outline-offset:-1px;`, o.label); }
+    // As the page script draws them (live-page.ts, PAGE_COLORS): the chosen part outlined in water with its name chip
+    // and its action bar, whose buttons answer the window as the page's do; what is pointed at, dashed.
+    const c = matchMedia('(prefers-color-scheme: dark)').matches
+      ? { water: '#4D9BFF', fill: '#2B74D6', raised: '#172028', fg: '#E8EDF2', soft: 'rgba(77,155,255,.16)', softText: '#4D9BFF', float: '0 10px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08)' }
+      : { water: '#1E6FD9', fill: '#1E6FD9', raised: '#FFFFFF', fg: '#111A22', soft: 'rgba(30,111,217,.10)', softText: '#1A62C0', float: '0 10px 28px rgba(16,26,36,.16), 0 0 0 1px rgba(16,26,36,.06)' };
+    const font = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+    for (const o of shown.outline) {
+      const r = regions[o.index];
+      if (!r) continue;
+      const chosen = o.tone === 'pick';
+      const b = document.createElement('div');
+      b.style.cssText = `position:absolute;left:${r.rect.x}px;top:${r.rect.y}px;width:${r.rect.width}px;height:${r.rect.height}px;box-sizing:border-box;border-radius:2px;`
+        + `outline:${o.tone === 'hover' ? `1.5px dashed ${c.water}` : chosen ? `2px solid ${c.water}` : `1.5px solid ${c.water}`};outline-offset:${chosen ? 3 : -1}px;`;
+      sheet.appendChild(b);
+      if (o.label) {
+        const t = document.createElement('span');
+        t.className = chosen ? 'live-stub-chip' : '';
+        t.textContent = o.label;
+        const above = r.rect.y > 30;
+        t.style.cssText = `position:absolute;left:${Math.max(4, r.rect.x - 2)}px;top:${above ? r.rect.y - 26 : r.rect.y + 4}px;font:500 11px/20px ${font};padding:0 8px;border-radius:6px;white-space:nowrap;`
+          + (chosen ? `color:#fff;background:${c.fill};` : `color:${c.softText};background:${c.raised};box-shadow:${c.float};`);
+        sheet.appendChild(t);
+      }
+      if (chosen && shown.outline.length === 1 && !picking) {
+        const bar = document.createElement('div');
+        bar.className = 'live-stub-bar';
+        const top = r.rect.y > 46 ? r.rect.y - 40 : r.rect.y + r.rect.height + 8;
+        bar.style.cssText = `position:absolute;top:${top}px;right:${Math.max(4, (bounds?.width ?? 0) - (r.rect.x + r.rect.width) - 2)}px;display:flex;gap:2px;padding:3px;height:32px;box-sizing:border-box;border-radius:10px;background:${c.raised};box-shadow:${c.float};font:500 12px/1 ${font};`;
+        for (const [id, label] of [['style', 'Style'], ['move', 'Move'], ['take-out', 'Take out'], ['ask', 'Ask an agent']]) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.answer = id;
+          btn.textContent = label;
+          btn.style.cssText = `all:unset;display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:7px;cursor:pointer;white-space:nowrap;font:500 12px/1 ${font};`
+            + (id === 'ask' ? `background:${c.soft};color:${c.softText};` : `color:${c.fg};`);
+          btn.addEventListener('click', () => window.__wgLive.press?.(id));
+          bar.appendChild(btn);
+        }
+        sheet.appendChild(bar);
+      }
+    }
     // The layer, as the page would show it: a style's colour around its part, new words over the part's name.
     const l = window.__wgLive.layer;
     if (!l.on) return;
@@ -660,11 +700,12 @@ export function liveStub(f) {
     const typing = window.__wgLive.typing;
     const at = typing !== null ? regions[window.__wgLive.picked] : null;
     if (at) {
-      box(at.rect, 'outline:2px solid #2f86c9;outline-offset:3px;', null);
+      box(at.rect, `outline:2px solid ${c.water};outline-offset:3px;`, null);
       // Its label above the words, as the page script draws it, never over them.
       const said = document.createElement('span');
-      said.textContent = 'Typing · Enter keeps · Esc puts back';
-      said.style.cssText = `position:absolute;left:${at.rect.x - 3}px;top:${at.rect.y - 24}px;font:500 11px/19px -apple-system,system-ui,sans-serif;padding:0 6px;border-radius:3px 3px 0 0;color:#fff;background:#2f86c9;white-space:nowrap;`;
+      const named = shown.outline.find((o) => o.tone === 'pick' && o.label)?.label;
+      said.textContent = `${named ? `${named} · ` : ''}typing · Enter keeps · Esc puts back`;
+      said.style.cssText = `position:absolute;left:${at.rect.x - 2}px;top:${at.rect.y - 26}px;font:500 11px/20px ${font};padding:0 8px;border-radius:6px;color:#fff;background:${c.fill};white-space:nowrap;`;
       sheet.appendChild(said);
       const t = document.createElement('span');
       t.textContent = typing;
