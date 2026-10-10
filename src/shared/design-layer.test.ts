@@ -155,6 +155,17 @@ test('a part’s identity is checked, keyed the same on every load, and says wha
   assert.deepEqual(parseIdentity({ kind: 'entity', type: 'post', id: '12', bundle: 'page', field: null }), { kind: 'entity', type: 'post', id: '12', bundle: 'page' }, 'null is absent');
 });
 
+test('a paragraph’s identity carries the revision the page showed, which neither its key nor its kind counts', () => {
+  const raw = { kind: 'entity', type: 'paragraph', id: '0a1b-f6', bundle: 'text', langcode: 'en', field: 'field_text', item: 'delta:0' };
+  const shown = parseIdentity({ ...raw, revision: '50' });
+  assert.deepEqual(shown, { ...raw, revision: '50' });
+  const saved = parseIdentity({ ...raw, revision: '1000' })!;
+  assert.equal(identityKey(saved), identityKey(shown!), 'a save makes a new revision of the same paragraph: still the same part');
+  assert.equal(identityKey(parseIdentity(raw)!), identityKey(shown!), 'an identity from before the revision was named is the same part too');
+  assert.equal(kindKey(shown!), 'field|paragraph|text|field_text');
+  for (const revision of ['latest', '-1', '', 12]) assert.equal(parseIdentity({ ...raw, revision }), null, `revision ${JSON.stringify(revision)}: refused whole`);
+});
+
 test('words are hashed the same however their whitespace falls', () => {
   assert.equal(layerTextHash('  Plan   your\ntrip '), layerTextHash('Plan your trip'));
   assert.notEqual(layerTextHash('Plan your trip'), layerTextHash('Plan your trips'));

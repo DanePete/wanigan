@@ -4,7 +4,8 @@
 // proves: the words go to the translation and the item the request names and to nothing else, a translation that is
 // not there or an item whose words changed is refused, two items holding the same words are never guessed between, and
 // the answer carries the new revision; it saves only over what the page showed: any violation (another field's, the
-// workflow's) refuses it, as do a newer draft, a page from before another save, and an inline Layout Builder block; and
+// workflow's) refuses it, as do a newer draft, a page from before another save, and an inline Layout Builder block; the
+// answer carries the content's address after the save and before it, which a new title can move; and
 // in formatted text one run of words is spliced where it is kept, every other byte kept, and saved only when the text's
 // own format shows nothing else changed (filter-made words, words across tags or twice, a trimmed cut are refused).
 // Nothing here runs Drupal or touches a site; it needs PHP. Made-up content (acme, example.test); nothing real.
@@ -122,6 +123,8 @@ namespace {
     public array $violations = [];
     public array $translations = [];
     public array $saved = [];
+    /** Its address: an alias made from its default translation's title when it is saved, as Pathauto's would be. */
+    public string $alias = '/paddling-101';
   }
   final class Node implements ContentEntityInterface, RevisionLogInterface {
     public function __construct(public Content $content, public string $langcode, public array $fields) {}
@@ -145,7 +148,14 @@ namespace {
     public function setRevisionUserId($v) {}
     public function setRevisionCreationTime($v) {}
     public function validate() { return array_map(fn ($v) => new Violation($v[0], $v[1]), $this->content->violations); }
-    public function save() { $this->content->rev++; $this->content->saved[] = $this->langcode; }
+    public function save() {
+      $this->content->rev++;
+      $this->content->saved[] = $this->langcode;
+      $first = reset($this->content->translations);
+      if (isset($first->fields['title'])) { $this->content->alias = '/' . trim(strtolower(preg_replace('/\W+/', '-', $first->fields['title']->items[0]->value)), '-'); }
+    }
+    public function hasLinkTemplate($rel) { return $rel === 'canonical'; }
+    public function toUrl() { return new class(($this->langcode !== 'en' ? '/' . $this->langcode : '') . $this->content->alias) { public function __construct(private string $p) {} public function toString() { return $this->p; } }; }
     public function label() { return 'Paddling'; }
     public function getRevisionId() { return $this->content->rev; }
   }
@@ -178,6 +188,7 @@ namespace {
     public static function words(string $l, string $f): array { return array_map(fn ($i) => $i->value, World::$content->translations[$l]->fields[$f]->items); }
   }
 
+  require getenv('WL_HELPER') . '/src/Trace/Identity.php';
   require getenv('WL_HELPER') . '/src/Save/Words.php';
   require getenv('WL_HELPER') . '/src/Save/ConfigWords.php';
   require getenv('WL_HELPER') . '/src/Controller/LiveController.php';
@@ -324,7 +335,7 @@ function runSaves(t: { skip(why: string): void }, scenarios: string): Record<str
   if (!bin) { t.skip('PHP is not installed here'); return null; }
   const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-save-'));
   try {
-    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php']) {
+    for (const file of ['src/Controller/LiveController.php', 'src/Trace/Identity.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php']) {
       mkdirSync(join(folder, file, '..'), { recursive: true });
       writeFileSync(join(folder, file), DRUPAL_HELPER_FILES[file] ?? '');
     }
@@ -337,12 +348,12 @@ test('words are saved to the translation and the item named, and to nothing else
   const out = runSaves(t, SAVES);
   if (!out) return;
 
-  assert.deepEqual(out.french, [[200, { ok: true, value: 'Pagayer 101', label: 'Paddling', revision: '8', state: null }], ['Paddling 101'], ['Pagayer 101'], ['fr']],
-    'the French translation, as a new revision; the English keeps its words');
+  assert.deepEqual(out.french, [[200, { ok: true, value: 'Pagayer 101', label: 'Paddling', revision: '8', state: null, url: '/fr/paddling-101', was: '/fr/paddling-101' }], ['Paddling 101'], ['Pagayer 101'], ['fr']],
+    'the French translation, as a new revision, at its own address; the English keeps its words');
   const [refused, english, saved] = out.noTranslation as [[number, { ok: boolean; error: string }], string[], string[]];
   assert.deepEqual([refused[0], refused[1].ok, english, saved], [409, false, ['Paddling 101'], []]);
   assert.match(refused[1].error, /no translation in that language/);
-  assert.deepEqual(out.secondItem, [[200, { ok: true, value: 'Raft', label: 'Paddling', revision: '8', state: null }], ['Canoe', 'Raft', 'Kayak']], 'only the item named');
+  assert.deepEqual(out.secondItem, [[200, { ok: true, value: 'Raft', label: 'Paddling', revision: '8', state: null, url: '/paddling-101', was: '/paddling-101' }], ['Canoe', 'Raft', 'Kayak']], 'only the item named');
   const [changed, after] = out.itemChanged as [[number, { error: string }], string[]];
   assert.deepEqual([changed[0], after], [409, ['Canoe', 'Raft', 'Kayak']]);
   assert.match(changed[1].error, /no longer holds those words/);
@@ -365,7 +376,8 @@ test('words are saved only over what the page showed: any violation, a newer dra
   if (!out) return;
   type Answer = [number, { ok: boolean; error?: string }];
 
-  assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null }], ['en']], 'the version the page showed, saved as a new revision');
+  assert.deepEqual(out.shown, [[200, { ok: true, value: 'Paddling 102', label: 'Paddling', revision: '8', state: null, url: '/paddling-102', was: '/paddling-101' }], ['en']],
+    'the version the page showed, saved as a new revision; its address after the save and before, as the new title moved it');
   const [other, otherSaved] = out.otherField as [Answer, string[]];
   assert.deepEqual([other[0], otherSaved], [422, []], 'a violation on another field refuses it too');
   assert.equal(other[1].error, 'Drupal would not save it. field_summary: This value is too long. It should have 255 characters or less. field_tags.0.value: This value should not be null.');

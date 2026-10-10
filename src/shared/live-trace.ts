@@ -224,7 +224,10 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   `post_title`, `post_content`, `post_excerpt` or a registered meta key) and
  *   to one `item` of it: a reference item by what it refers to
  *   (`ref:<entity type>:<uuid or ID>`), so a reorder does not move it; a value
- *   item by its delta (`delta:<n>`).
+ *   item by its delta (`delta:<n>`). A Drupal composite (a paragraph, which its
+ *   host pins by revision) adds the `revision` the page showed: what a save
+ *   through its host checks the page against. It is not part of the identity's
+ *   key or kind (a save makes a new revision of the same paragraph).
  * - `component`: a single-directory component (`acme:card`) or a block type
  *   (`core/paragraph`) rendered inside another identified part (`within`, that
  *   part's identityKey, or null at the page's top), and which of its kind it
@@ -241,7 +244,7 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   `tpl:<id>`, `tp:<id>`), its path among the blocks there, and its name.
  */
 export type PartIdentity =
-  | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string }
+  | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string; revision?: string }
   | { kind: 'component'; name: string; within: string | null; nth: number }
   | { kind: 'config'; type: string; id: string; plugin?: string }
   | { kind: 'block'; store: string; path: number[]; name: string };
@@ -266,7 +269,10 @@ export function parseIdentity(raw: unknown): PartIdentity | null {
     case 'entity': {
       const type = name(v.type), id = name(v.id);
       if (!type || !id) return null;
-      const out: PartIdentity = { kind: 'entity', type, id, ...opt('bundle', v.bundle), ...opt('langcode', v.langcode), ...opt('field', v.field), ...opt('item', v.item, /^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/) };
+      const out: PartIdentity = {
+        kind: 'entity', type, id, ...opt('bundle', v.bundle), ...opt('langcode', v.langcode), ...opt('field', v.field),
+        ...opt('item', v.item, /^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/), ...opt('revision', v.revision, /^\d{1,20}$/),
+      };
       return bad ? null : out;
     }
     case 'component': {

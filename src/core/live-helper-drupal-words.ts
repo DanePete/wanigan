@@ -77,6 +77,26 @@ final class Words {
   }
 
   /**
+   * Content's own address, as core makes it (its canonical link, through its
+   * alias and language prefix), or NULL where it has none. Every save answers
+   * it after the save and before ('url', 'was'): a save can move the page
+   * (Pathauto rewrites the alias in hook_entity_update()), and the old address
+   * then answers 404, or a redirect where Redirect is on.
+   */
+  public static function url(EntityInterface $entity): ?string {
+    try {
+      if (method_exists($entity, 'hasLinkTemplate') && !$entity->hasLinkTemplate('canonical')) {
+        return NULL;
+      }
+      $url = method_exists($entity, 'toUrl') ? $entity->toUrl()->toString() : NULL;
+      return is_string($url) && str_starts_with($url, '/') ? $url : NULL;
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
+  }
+
+  /**
    * Puts new words where the old ones are, in one item of a field: the item
    * the edit names (a value's delta:<n>, a reference's ref:<type>:<uuid>),
    * else the one item holding them. NULL once the entity holds them (it is
@@ -1250,11 +1270,14 @@ final class InlineWords {
         return [422, self::refusal('Drupal would not save the content this layout belongs to. ' . implode(' ', array_slice($problems, 0, 3)))];
       }
     }
+    // The layout's entity's address, before and after (Words::url()): a
+    // display's default layout has none.
+    $was = $overrides ? Words::url($owner) : NULL;
     $storage->save();
     $revision = $overrides && $owner->getEntityType()->isRevisionable() ? (string) $owner->getRevisionId() : NULL;
     $state = $overrides && $owner->hasField('moderation_state') ? $owner->get('moderation_state')->value : NULL;
     $label = $overrides ? (string) $owner->label() : 'The default layout for ' . self::bundle($owner);
-    return [200, ['ok' => TRUE, 'value' => trim($after), 'label' => $label, 'revision' => $revision, 'state' => is_string($state) ? $state : NULL]];
+    return [200, ['ok' => TRUE, 'value' => trim($after), 'label' => $label, 'revision' => $revision, 'state' => is_string($state) ? $state : NULL, 'url' => $overrides ? Words::url($owner) : NULL, 'was' => $was]];
   }
 
   /**

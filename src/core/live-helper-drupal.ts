@@ -24,6 +24,7 @@ import { DRUPAL_USAGE_FILES } from './live-helper-drupal-usage.ts';
 import { DRUPAL_VERIFY_FILES, DRUPAL_VERIFY_MODULE, DRUPAL_VERIFY_SERVICES } from './live-helper-drupal-verify.ts';
 import { DRUPAL_WORDS_FILES } from './live-helper-drupal-words.ts';
 import { DRUPAL_ADAPTER_FILES } from './live-helper-drupal-adapters.ts';
+import { DRUPAL_PARAGRAPHS_FILES } from './live-helper-drupal-paragraphs.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -281,9 +282,11 @@ function wanigan_live_preprocess_field(array &$variables) {
   }
   // Then what a save of these words checks against (LiveController::save()):
   // the translation the page rendered, the revision it showed, and, for
-  // content that keeps no revisions, when that translation last changed; and
-  // the formatter it was shown with (FormatterBase::view() puts it there),
-  // which says what of a formatted text the page showed, whole or trimmed.
+  // content that keeps no revisions, when that translation last changed; the
+  // formatter it was shown with (FormatterBase::view() puts it there), which
+  // says what of a formatted text the page showed, whole or trimmed; and the
+  // language the page's content was rendered in, which a paragraph with no
+  // translation in it does not show (it shows its own language's words).
   $variables['attributes']['data-wl-field'] = implode(':', [
     $entity->getEntityTypeId(),
     (string) $entity->id(),
@@ -293,6 +296,31 @@ function wanigan_live_preprocess_field(array &$variables) {
     $entity->getEntityType()->isRevisionable() ? (string) $entity->getRevisionId() : '',
     method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : '',
     (string) ($element['#formatter'] ?? ''),
+    \\Drupal::languageManager()->getCurrentLanguage('language_content')->getId(),
+  ]);
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for paragraph templates.
+ *
+ * Paragraphs' own template marks nothing of which paragraph it is: the
+ * helper's mark names it (its id, its UUID and the revision the page showed,
+ * the one its host pins), so the live view names the paragraph and not only
+ * its fields. Only Paragraphs defines this template; without it, this never
+ * runs.
+ */
+function wanigan_live_preprocess_paragraph(array &$variables) {
+  if (!_wanigan_live_on()) {
+    return;
+  }
+  $paragraph = $variables['elements']['#paragraph'] ?? ($variables['paragraph'] ?? NULL);
+  if (!$paragraph instanceof EntityInterface || $paragraph->isNew()) {
+    return;
+  }
+  $variables['attributes']['data-wl-paragraph'] = implode(':', [
+    (string) $paragraph->id(),
+    (string) $paragraph->uuid(),
+    method_exists($paragraph, 'getRevisionId') ? (string) $paragraph->getRevisionId() : '',
   ]);
 }
 
@@ -388,11 +416,13 @@ use Drupal\\Core\\Controller\\ControllerBase;
 use Drupal\\Core\\Entity\\ContentEntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
 use Drupal\\Core\\Render\\Markup;
+use Drupal\\wanigan_live\\Adapter\\Paragraphs;
 use Drupal\\wanigan_live\\Find\\Finder;
 use Drupal\\wanigan_live\\Library\\Library;
 use Drupal\\wanigan_live\\Save\\ConfigWords;
 use Drupal\\wanigan_live\\Save\\InlineWords;
 use Drupal\\wanigan_live\\Save\\Words;
+use Drupal\\wanigan_live\\Trace\\Identity;
 use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
 use Symfony\\Component\\HttpFoundation\\Request;
@@ -478,8 +508,8 @@ final class LiveController extends ControllerBase {
    *
    * The field is named as the page marked it (data-wl-field: entity type,
    * id, field name, field type, the language the page rendered, the
-   * revision it showed, when that translation last changed, and the
-   * formatter that showed it). The design layer names its edit's target too:
+   * revision it showed, when that translation last changed, the formatter
+   * that showed it, and the language of the page's content). The design layer names its edit's target too:
    * the content's UUID, its language, and the item (a value's delta:<n>, a
    * reference's ref:<type>:<uuid>). The words go to that translation, never
    * another, and to that item only, which must hold the words before.
@@ -491,21 +521,26 @@ final class LiveController extends ControllerBase {
    * the latest revision; a save from the default one would leave the draft
    * behind), is refused. Words in an inline Layout Builder block are saved
    * through its layout (InlineWords), and words that are the field's label,
-   * held by no item, to its configuration (ConfigWords). Any violation
-   * Drupal's validation finds refuses it, saying
+   * held by no item, to its configuration (ConfigWords). Words in a
+   * paragraph (any composite its host pins by revision) are saved through
+   * the root host that holds it, by the Paragraphs adapter
+   * (Adapter\\Paragraphs::save()), never in the paragraph alone. Any
+   * violation Drupal's validation finds refuses it, saying
    * which, the workflow's transition check included: a save keeps the
    * content's state, so where the user may not publish it nothing is saved,
-   * and nothing is made a draft instead. A refusal saves nothing.
+   * and nothing is made a draft instead. A refusal saves nothing. A save
+   * answers the saved content's address after the save and before it ('url',
+   * 'was'), since a save can move its page.
    */
   public function saveWords(array $body): JsonResponse {
-    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 8, '');
-    [$type, $id, $name, , $marked, $shown, $shownChanged, $formatter] = $mark;
+    $mark = array_pad(explode(':', (string) ($body['field'] ?? '')), 9, '');
+    [$type, $id, $name, , $marked, $shown, $shownChanged, $formatter, $page] = $mark;
     $before = $this->words((string) ($body['before'] ?? ''));
     $after = trim((string) ($body['after'] ?? ''));
     if ($type === '' || $id === '' || $name === '' || $after === '') {
       return $this->refuse('Which field, and what words?', 400);
     }
-    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged) || !preg_match('/^[A-Za-z0-9_.-]{0,128}$/', $formatter)) {
+    if (!preg_match('/^\\d{0,20}$/', $shown) || !preg_match('/^\\d{0,20}$/', $shownChanged) || !preg_match('/^[A-Za-z0-9_.-]{0,128}$/', $formatter) || !preg_match('/^[A-Za-z0-9_-]{0,32}$/', $page)) {
       return $this->refuse('Which version of the content did the page show?', 400);
     }
     $given = static fn (string $key): ?string => is_string($body[$key] ?? NULL) && $body[$key] !== '' ? $body[$key] : NULL;
@@ -546,6 +581,23 @@ final class LiveController extends ControllerBase {
     // configuration, saved as such (ConfigWords::fieldLabel()).
     if ($item === NULL && !Words::held($entity, $name, $before, $formatter) && ($label = ConfigWords::fieldLabel($entity, $name, $before, $after))) {
       return $this->json($label[1], $label[0]);
+    }
+    // A paragraph, or any composite: its host pins the revision the page
+    // showed, and a draft of the host keeps its own, so it is saved through
+    // the root host that holds it (Paragraphs::save()), never alone.
+    if (Identity::composite($entity->getEntityType())) {
+      $confirm = $given('confirm');
+      $edit = function (ContentEntityInterface $paragraph) use ($uuid, $name, $item, $before, $after, $formatter): ?array {
+        if ($uuid !== NULL && $paragraph->uuid() !== $uuid) {
+          return [409, 'The field marked on the page is not in the content this edit was made on. Reload, and try again.'];
+        }
+        if (!$paragraph->hasField($name) || !$paragraph->get($name)->access('edit')) {
+          return [403, 'The user you are logged in as in the live view may not change this field. Log in there as someone who may.'];
+        }
+        return Words::apply($paragraph, $name, $item, $before, $after, $formatter);
+      };
+      [$status, $answer] = Paragraphs::save($type, (string) $entity->id(), $shown, $entity->language()->getId(), $page !== '' ? $page : NULL, $edit, $before . "\\n" . $after, $confirm !== NULL && preg_match('/^[a-f0-9]{32}$/', $confirm) ? $confirm : NULL);
+      return $this->json(!empty($answer['ok']) ? ['ok' => TRUE, 'value' => $after] + $answer : $answer, $status);
     }
     // A block placed only in a layout: the layout shows the revision of it
     // that it keeps, so the words are saved through the layout
@@ -602,14 +654,16 @@ final class LiveController extends ControllerBase {
     if ($problems) {
       return $this->refuse('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)), 422);
     }
+    $was = Words::url($entity);
     $entity->save();
     // The revision the words are in, where the content keeps revisions; its
-    // workflow's state, where it has one.
+    // workflow's state, where it has one; and its address now.
     $revision = $entity->getEntityType()->isRevisionable() ? $entity->getRevisionId() : NULL;
     $state = $entity->hasField('moderation_state') ? $entity->get('moderation_state')->value : NULL;
     return $this->json([
       'ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label(),
       'revision' => $revision !== NULL ? (string) $revision : NULL, 'state' => is_string($state) ? $state : NULL,
+      'url' => Words::url($entity), 'was' => $was,
     ]);
   }
 
@@ -817,4 +871,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_VERIFY_FILES,
   ...DRUPAL_WORDS_FILES,
   ...DRUPAL_ADAPTER_FILES,
+  ...DRUPAL_PARAGRAPHS_FILES,
 };

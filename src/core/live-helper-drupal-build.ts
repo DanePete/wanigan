@@ -212,6 +212,13 @@ final class Describe {
       $bundles = \Drupal::service('entity_type.bundle.info')->getBundleInfo($entity->getEntityTypeId());
       $bundle_label = isset($bundles[$entity->bundle()]['label']) ? (string) $bundles[$entity->bundle()]['label'] : $entity->bundle();
     }
+    if (Identity::composite($type)) {
+      // A paragraph is named as itself, "Text 12": its own label() names the
+      // content and field holding it ("About us > Content", the same for every
+      // paragraph there), and loads that content to say so.
+      $out = ($bundle_label ?? (string) $type->getLabel()) . ' ' . ($entity->id() ?? 'new');
+      return in_array($view_mode, ['', 'full', 'default'], TRUE) ? $out : $out . ' (' . $view_mode . ')';
+    }
     $label = trim((string) $entity->label());
     $out = ($bundle_label ?? (string) $type->getLabel()) . ': ' . ($label !== '' ? $label : $entity->getEntityTypeId() . ' ' . ($entity->id() ?? 'new'));
     return in_array($view_mode, ['', 'full', 'default'], TRUE) ? $out : $out . ' (' . $view_mode . ')';
@@ -512,6 +519,11 @@ final class Identity {
 
   /**
    * A stored entity, narrowed to one field and one of its items when given.
+   *
+   * A composite (a paragraph) adds the revision the page showed, the one its
+   * host pins: what a save through the host checks the page against. It is
+   * not part of the key (Identity::key()), so a save, which makes a new one,
+   * does not make it another part.
    */
   public static function entity(EntityInterface $entity, ?string $field = NULL, ?string $item = NULL): ?array {
     // Not stored yet (a preview, a sample): its UUID is new on every render.
@@ -531,7 +543,24 @@ final class Identity {
     if ($item !== NULL) {
       $out['item'] = preg_match(self::ITEM, $item) === 1 ? $item : NULL;
     }
-    return in_array(NULL, $out, TRUE) ? NULL : $out;
+    if (in_array(NULL, $out, TRUE)) {
+      return NULL;
+    }
+    $revision = self::composite($entity->getEntityType()) && method_exists($entity, 'getRevisionId') ? (string) $entity->getRevisionId() : '';
+    if (preg_match('/^\d{1,20}$/', $revision) === 1) {
+      $out['revision'] = $revision;
+    }
+    return $out;
+  }
+
+  /**
+   * Whether an entity type is a composite: an entity its host pins by
+   * revision and saves (Entity Reference Revisions), as a paragraph is. Known
+   * by its definition naming the field that points back at its parent
+   * (entity_revision_parent_id_field), never by its type id.
+   */
+  public static function composite(mixed $type): bool {
+    return is_object($type) && method_exists($type, 'get') && is_string($type->get('entity_revision_parent_id_field')) && $type->get('entity_revision_parent_id_field') !== '';
   }
 
   /**
