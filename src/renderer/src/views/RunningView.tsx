@@ -7,7 +7,7 @@ import { PROVIDER_LABEL, duration, plural } from '../lib/format';
 import { Icon } from '../components/icons';
 import { Button, Empty, IconButton, NotAnswering, ProjectMark, Segmented, StateMark } from '../components/ui';
 import { Terminal } from '../components/Terminal';
-import { SessionRow } from './ProjectView';
+import { SessionRow } from './SessionsView';
 
 type Layout = 'list' | 'watch';
 const LAYOUT_KEY = 'wanigan.running.layout';

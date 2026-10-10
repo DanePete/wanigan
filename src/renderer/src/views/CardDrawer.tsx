@@ -11,7 +11,7 @@ import { PROVIDER_LABEL, STATE_LABEL, TYPE_LABEL, actorName, ago } from '../lib/
 import { Icon } from '../components/icons';
 import { Button, IconButton, Segmented, StateMark, TypeMark, useSingleFlight, useToast } from '../components/ui';
 import { keyLabel } from '@shared/shortcuts';
-import { SessionRow } from './ProjectView';
+import { SessionRow } from './SessionsView';
 import { JevSection } from '../components/Jev';
 import { orbPlay } from '../components/Orb';
 import { CardTokens } from '../components/Tokens';
