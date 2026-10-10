@@ -326,7 +326,7 @@
   left: -2px;
   padding: 0 var(--space-1);
   border-radius: var(--radius-s);
-  background: var(--water);
+  background: var(--water-fill);
   color: var(--water-ink);
   font-size: var(--text-2xs);
   font-weight: 600;
@@ -416,7 +416,7 @@
   min-width: 20px;
   padding: 0 var(--space-1);
   border-radius: var(--radius-s);
-  background: var(--water);
+  background: var(--water-fill);
   color: var(--water-ink);
   font-size: var(--text-xs);
   font-weight: 600;

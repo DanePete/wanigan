@@ -318,7 +318,7 @@ body.phone {
   grid-template-columns: repeat(5, 1fr);
   padding-bottom: env(safe-area-inset-bottom);
   border-top: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
   z-index: 20; /* over what scrolls under it; under the select list (50) and toasts */
 }
 
@@ -336,7 +336,7 @@ body.phone {
 }
 
 .phone-tab.on {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .phone-tab .phone-badge {

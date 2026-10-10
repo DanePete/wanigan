@@ -17,7 +17,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-round);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-float);
   cursor: pointer;
   transition: transform var(--dur) var(--ease), border-color var(--dur-fast) var(--ease);
 }
@@ -29,7 +29,7 @@
 
 .chat-fab:focus-visible {
   border-radius: var(--radius-round);
-  box-shadow: var(--focus), var(--shadow-overlay);
+  box-shadow: var(--focus), var(--elev-float);
 }
 
 /* While Wanigan answers, a slow ring of water light around him. */
@@ -107,9 +107,9 @@ body:has(> .chat-scrim) .toasts .toast {
   height: min(720px, 100%);
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-l);
+  border-radius: var(--radius-xl);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-sheet);
   transform-origin: bottom right;
   animation: chat-in var(--dur-slow) var(--ease);
 }

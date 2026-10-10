@@ -38,7 +38,7 @@
   overflow: hidden;
   padding: var(--space-3) var(--space-3) var(--space-3);
   padding-top: calc(var(--space-8) + var(--space-2)); /* clears the macOS traffic lights */
-  background: var(--rail);
+  background: var(--bg-rail);
   border-right: 1px solid var(--line);
   -webkit-app-region: drag;
 }
@@ -97,8 +97,8 @@
 }
 
 .rail-action.primary {
-  background: var(--water);
-  border-color: var(--water);
+  background: var(--water-fill);
+  border-color: var(--water-fill);
   color: var(--water-ink);
 }
 
@@ -456,7 +456,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-s);
   background: var(--raised);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--elev-raise);
   color: var(--fg);
   font-size: var(--text-sm);
   white-space: nowrap;
@@ -674,7 +674,7 @@ a.rail-search {
 /* A new version is out: news in water, never the amber that means you are needed. */
 .rail-update,
 .rail-update:hover {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 /* Asked once, until answered: whether to check GitHub for new versions daily. */
@@ -749,7 +749,7 @@ a.rail-search.active {
 .demo-banner strong {
   padding: 1px var(--space-2);
   border-radius: var(--radius-s);
-  background: var(--water);
+  background: var(--water-fill);
   color: var(--water-ink);
   font-size: var(--text-xs);
   letter-spacing: 0.04em;

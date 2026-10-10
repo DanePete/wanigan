@@ -8,7 +8,7 @@
   overflow-y: auto;
   border-left: 1px solid var(--line-strong);
   background: var(--surface);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-sheet);
   animation: slide var(--dur-slow) var(--ease);
   outline: none;
 }
@@ -511,5 +511,5 @@ button.drawer-key {
 }
 
 button.drawer-key:hover {
-  color: var(--water);
+  color: var(--water-text);
 }

@@ -67,7 +67,7 @@
 }
 
 .status-review {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .status-done {
@@ -261,7 +261,7 @@
   padding: 1px var(--space-2);
   border-radius: var(--radius-round);
   background: var(--water-soft);
-  color: var(--water);
+  color: var(--water-text);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -478,7 +478,7 @@
 
 .fstatus-M,
 .fstatus-R {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .fpath {
@@ -959,7 +959,7 @@
 
 .dl-note-add:hover,
 .dl-note-add:focus-visible {
-  color: var(--water);
+  color: var(--water-text);
   text-decoration: underline;
 }
 

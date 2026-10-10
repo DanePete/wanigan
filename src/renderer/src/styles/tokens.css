@@ -1,28 +1,47 @@
 /*
-  Wanigan 2 tokens. Every colour, size, radius and duration in the interface
-  comes from here; component styles name tokens, never values.
+  Wanigan 2 tokens: the Studio design (docs/design/2026-10-10-studio.md).
+  Every colour, size, radius and duration in the interface comes from here;
+  component styles name tokens, never values. The window and the phone page
+  both load this file.
 
   Colour carries meaning, and each accent has exactly one:
-    water  — Wanigan itself and the primary action
+    water  — the selection, the focus ring, and the one primary action of a surface
     amber  — something needs you (and nothing else)
     red    — failed, refused, broken
-    green  — done, approved
+    green  — saved, verified, done
+
+  Groups, in order: type, space, radius, motion, sizes of the frame, then
+  colour (dark in :root, light below): surfaces, the hairline, text, the four
+  meanings, elevation, focus; then the content hues (syntax, history lanes,
+  card types, lenses), which keep clear of the four meanings.
+
+  The text-on-surface pairs are checked against WCAG AA in both themes by
+  src/shared/contrast.test.ts, which reads this file: change a value and run it.
 */
 :root {
-  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  /* ── type ─────────────────────────────────────────────────────────────────
+     IBM Plex Sans for the interface, Plex Mono for code, addresses and keys.
+     The scale is 11 / 12 / 13 (body) / 14 / 15 (panel titles) / 17 (view
+     titles) / 20 / 28; 10 is for the figure inside a count badge only.
+     Weights are 400, 500 and 600, nothing heavier. */
+  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Retired by Studio (Plex Sans Condensed): the views that still use it move to --font-ui in their pass; use --font-ui. */
   --font-display: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* Whole pixels on a 4px line grid: no half-pixel strokes on a 1x screen. */
   --text-2xs: 10px;
   --text-xs: 11px;
   --text-sm: 12px;
+  --text-base: 13px;
   --text-code: 13px;
   --text-md: 14px;
-  --text-lg: 16px;
+  --text-title: 15px;
+  --text-lg: 17px;
   --text-xl: 20px;
   --text-2xl: 28px;
+  /* Big type inside demo content and first-run screens, never in the frame. */
   --text-hero: 44px;
+  /* Whole pixels on a 4px line grid: no half-pixel strokes on a 1x screen. */
   --lh-sm: 16px;
   --lh-md: 20px;
   --lh-lg: 24px;
@@ -30,6 +49,7 @@
   --leading: 1.45;
   --leading-loose: 1.6;
 
+  /* ── space: a 4px grid ─────────────────────────────────────────────────── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -40,19 +60,26 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  --radius-s: 4px;
-  --radius-m: 7px;
-  --radius-l: 12px;
+  /* ── radius ────────────────────────────────────────────────────────────────
+     s: chips, small buttons, keys · m: buttons, fields · l: cards inside a
+     panel, menus, popovers · xl: dialogs and sheets · round: pills, dots. */
+  --radius-s: 6px;
+  --radius-m: 8px;
+  --radius-l: 10px;
+  --radius-xl: 12px;
   --radius-round: 999px;
 
-  /* A QR code is dark on light in both themes: what every camera reads. */
-  --qr-paper: #ffffff;
-  --qr-ink: #000000;
-
-  --dur-fast: 110ms;
+  /* ── motion ────────────────────────────────────────────────────────────────
+     120 ms for hover and press, 180 ms for panels and menus. Things arriving
+     ease out (--ease); things leaving ease in (--ease-in). --rise is how far a
+     menu or dialog travels as it arrives. With reduced motion (below) every
+     duration is instant and nothing travels. */
+  --dur-fast: 120ms;
   --dur: 180ms;
   --dur-slow: 280ms;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+  --rise: 6px;
   /* The one surface with personality on purpose: agents talking (chatter.css). */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-pop: 320ms; /* a bubble popping in */
@@ -61,8 +88,34 @@
   --dur-typing: 1100ms; /* one cycle of the waiting-for-a-reply dots */
   --dur-idle: 3400ms; /* one slow breath */
   --dur-blink: 4600ms; /* how often a character blinks */
+  /* How long a tooltip waits under a resting pointer (keyboard focus shows it at once). */
+  --dur-tip: 450ms;
 
+  /* ── sizes of the frame ──────────────────────────────────────────────────
+     The rail, the project bar, a view's tool bar and the status line; the
+     two panels beside the work; the controls' heights. */
   --rail-w: 252px;
+  --rail-w-folded: 56px;
+  --rail-tile: 40px;
+  --topbar-h: 48px;
+  --toolbar-h: 50px;
+  --status-h: 34px;
+  --panel-left-w: 248px;
+  --panel-right-w: 292px;
+  --panel-min-w: 200px;
+  --control-s: 28px;
+  --control-m: 32px;
+  --icon-btn-w: 32px;
+  --icon-btn-h: 30px;
+  --menu-row: 32px;
+  --hairline: 1px;
+  --focus-ring: 2px;
+  --dot: 7px;
+  --count-h: 18px;
+  --mark-rail: 34px;
+  --mark-presence: 18px;
+  /* A popover beside the rail: the notification tray. */
+  --tray-w: 360px;
   /* The live view's side panel, wider for the library and the design layer's tray, and wider still with the tree beside a chosen part. */
   --live-side-w: 340px;
   --live-side-wide: 440px;
@@ -77,46 +130,86 @@
   --live-tree-above: 40cqh;
   /* The Code tab's files, beside the editor. */
   --code-tree-w: 264px;
-  --rail-w-folded: 56px;
-  --topbar-h: 52px;
   --drawer-w: min(620px, 92vw);
   --column-w: 212px;
   --fab: 60px;
   --chat-w: min(460px, calc(100vw - 2 * var(--space-5)));
 
-  /* Dark: the river at night. */
-  color-scheme: dark;
-  --bg: #111417;
-  --rail: #0c0f12;
-  --surface: #171b1f;
-  --raised: #1d2227;
-  --hover: #232a31;
-  --sunken: #0e1114;
-  --line: #252b32;
-  --line-strong: #343c45;
-  --fg: #e8e6e1;
-  --muted: #9ba2a8;
-  --faint: #808993;
+  /* A QR code is dark on light in both themes: what every camera reads. */
+  --qr-paper: #ffffff;
+  --qr-ink: #000000;
 
-  --water: #63b3e4;
-  --water-ink: #06131c;
-  --water-soft: rgb(99 179 228 / 0.13);
-  --water-line: rgb(99 179 228 / 0.45);
-  --amber: #f0a640;
-  --amber-ink: #1b1306;
-  --amber-soft: rgb(240 166 64 / 0.13);
-  --amber-line: rgb(240 166 64 / 0.5);
-  /* A filled amber badge or button, in both themes; --amber is for text and strokes. */
-  --amber-fill: #f0a640;
-  --amber-fill-ink: #1b1306;
-  --red: #ef6b5f;
-  --red-soft: rgb(239 107 95 / 0.13);
-  --green: #58c48c;
-  --green-soft: rgb(88 196 140 / 0.13);
+  /* ── colour: dark, the river at night ─────────────────────────────────── */
+  color-scheme: dark;
+
+  /* Surfaces. --bg is the ground under everything; --bg-rail the rail; --surface
+     bars and panels; --raised what floats (menus, dialogs, popovers); --sunken
+     segmented tracks, chips and quiet wells; --bg-field inputs; --bg-canvas
+     behind the work (the page in Live, the board's lanes); --hover a quiet
+     control under the pointer. */
+  --bg: #0D1216;
+  --bg-rail: #0A0E12;
+  --surface: #131A20;
+  --raised: #172028;
+  --sunken: #1B232B;
+  --bg-field: #0F151A;
+  --bg-canvas: #070A0D;
+  --hover: #1F2830;
+
+  /* The one hairline, and a stronger one for a control's edge (a plain button, a field). */
+  --line: rgb(255 255 255 / 0.07);
+  --line-strong: rgb(255 255 255 / 0.13);
+
+  /* Text: primary, secondary, tertiary (counts, hints). */
+  --fg: #E8EDF2;
+  --muted: #A9B5C1;
+  --faint: #8693A0;
+
+  /* Water. --water for selection outlines, focus rings and the selected tool's
+     icon; --water-fill behind white text (the primary button); --water-text for
+     blue words (links, a selected row's label); --water-soft the quiet fill of
+     a selected row; --water-line a soft outline. --water-ink is text on the fill. */
+  --water: #4D9BFF;
+  --water-fill: #2B74D6;
+  --water-text: #4D9BFF;
+  --water-ink: #FFFFFF;
+  --water-soft: rgb(77 155 255 / 0.16);
+  --water-line: rgb(77 155 255 / 0.45);
+
+  /* Amber: something needs you. --amber for words and strokes; --amber-fill
+     behind --amber-fill-ink (a count, a dot). */
+  --amber: #F2A93B;
+  --amber-fill: #F2A93B;
+  --amber-fill-ink: #1B1206;
+  --amber-soft: rgb(242 169 59 / 0.14);
+  --amber-line: rgb(242 169 59 / 0.5);
+
+  /* Red: failed, refused. Green: saved, verified. */
+  --red: #FF6B5E;
+  --red-soft: rgb(255 107 94 / 0.14);
+  --green: #3FBF86;
+  --green-soft: rgb(63 191 134 / 0.14);
   --diff-add: rgb(88 196 140 / 0.16);
   --diff-add-word: rgb(88 196 140 / 0.38);
   --diff-del: rgb(239 107 95 / 0.16);
   --diff-del-word: rgb(239 107 95 / 0.38);
+
+  /* Wanigan's mark: glass and water. Never yellow, whatever needs you. */
+  --orb-water: #3E8EE8;
+  --orb-glass: rgb(160 200 240 / 0.1);
+  --orb-edge: rgb(170 210 255 / 0.55);
+
+  /* Elevation, not outlines: the selected segment, what floats (menus, the
+     element's action bar, popovers, tooltips), and sheets (dialogs, the page
+     on the canvas). */
+  --elev-raise: 0 1px 2px rgb(0 0 0 / 0.5);
+  --elev-float: 0 10px 30px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.08);
+  --elev-sheet: 0 0 0 1px rgb(255 255 255 / 0.06), 0 20px 50px rgb(0 0 0 / 0.6);
+
+  /* The focus ring is the outline (base.css); this is the same ring as a shadow, for a control that clips it. */
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--water);
+  --scrim: rgb(3 6 9 / 0.6);
+
   /*
     Syntax in diffs: quiet hues kept clear of the four meanings (no green,
     red, amber, or Wanigan's water), each at 4.5:1 or better on the add and
@@ -158,44 +251,60 @@
   --lens-violet: #8f55d6;
   --lens-slate: #6b7c8c;
   --lens-magenta: #c4458c;
-
-  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--water);
-  --shadow-card: 0 1px 0 rgb(0 0 0 / 0.25);
-  --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.55), 0 2px 10px rgb(0 0 0 / 0.35);
-  --scrim: rgb(5 8 10 / 0.55);
 }
 
-/* Light: river fog. Cool on purpose; this is water, not paper. */
+/* ── colour: light, river fog. Cool on purpose; this is water, not paper. ── */
 :root[data-theme='light'] {
   color-scheme: light;
-  --bg: #f4f6f7;
-  --rail: #eaeef0;
-  --surface: #ffffff;
-  --raised: #ffffff;
-  --hover: #e8edef;
-  --sunken: #edf0f2;
-  --line: #dde3e6;
-  --line-strong: #c3cbd0;
-  --fg: #162029;
-  --muted: #4f5b66;
-  --faint: #66717b;
+  --bg: #F5F7F9;
+  --bg-rail: #EEF1F4;
+  --surface: #FFFFFF;
+  --raised: #FFFFFF;
+  --sunken: #EEF1F4;
+  --bg-field: #FFFFFF;
+  --bg-canvas: #E6EAEE;
+  --hover: #EAEEF2;
 
-  --water: #1b6ea6;
-  --water-ink: #ffffff;
-  --water-soft: rgb(27 110 166 / 0.1);
-  --water-line: rgb(27 110 166 / 0.45);
-  --amber: #a35c00;
-  --amber-ink: #ffffff;
-  --amber-soft: rgb(196 120 0 / 0.12);
-  --amber-line: rgb(163 92 0 / 0.5);
-  --red: #c4372c;
-  --red-soft: rgb(196 55 44 / 0.1);
-  --green: #16774a;
-  --green-soft: rgb(22 119 74 / 0.1);
+  --line: rgb(16 26 36 / 0.09);
+  --line-strong: rgb(16 26 36 / 0.16);
+
+  --fg: #111A22;
+  --muted: #4C5967;
+  --faint: #5B6774;
+
+  --water: #1E6FD9;
+  --water-fill: #1E6FD9;
+  --water-text: #1A62C0;
+  --water-ink: #FFFFFF;
+  --water-soft: rgb(30 111 217 / 0.1);
+  --water-line: rgb(30 111 217 / 0.45);
+
+  /* Amber words are darker than the fill, so they read at 4.5:1 on every light surface. */
+  --amber: #985600;
+  --amber-fill: #E09A26;
+  --amber-fill-ink: #1B1206;
+  --amber-soft: rgb(224 154 38 / 0.14);
+  --amber-line: rgb(152 86 0 / 0.5);
+
+  --red: #BE3326;
+  --red-soft: rgb(190 51 38 / 0.1);
+  --green: #16744C;
+  --green-soft: rgb(22 116 76 / 0.1);
   --diff-add: rgb(22 119 74 / 0.12);
   --diff-add-word: rgb(22 119 74 / 0.28);
   --diff-del: rgb(196 55 44 / 0.11);
   --diff-del-word: rgb(196 55 44 / 0.26);
+
+  --orb-water: #3B86E0;
+  --orb-glass: rgb(225 238 250 / 0.9);
+  --orb-edge: rgb(70 120 180 / 0.45);
+
+  --elev-raise: 0 1px 2px rgb(16 26 36 / 0.12);
+  --elev-float: 0 10px 28px rgb(16 26 36 / 0.16), 0 0 0 1px rgb(16 26 36 / 0.06);
+  --elev-sheet: 0 0 0 1px rgb(16 26 36 / 0.06), 0 18px 40px rgb(16 26 36 / 0.12);
+
+  --scrim: rgb(16 26 36 / 0.28);
+
   --syn-comment: #5f6973;
   --syn-keyword: #8040bf;
   --syn-string: #0b7166;
@@ -217,8 +326,15 @@
   --lane-3: #a62f6b;
   --lane-4: #4f6a82;
   --lane-5: #6e5f00;
+}
 
-  --shadow-card: 0 1px 2px rgb(20 35 45 / 0.08);
-  --shadow-overlay: 0 24px 64px rgb(20 35 45 / 0.2), 0 2px 10px rgb(20 35 45 / 0.1);
-  --scrim: rgb(20 30 38 / 0.28);
+/* Reduced motion: every transition instant, nothing travelling (base.css also clamps animations). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur: 1ms;
+    --dur-slow: 1ms;
+    --dur-tip: 1ms;
+    --rise: 0px;
+  }
 }

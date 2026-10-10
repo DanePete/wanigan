@@ -274,7 +274,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--water);
+  color: var(--water-text);
   font-size: var(--text-sm);
   cursor: pointer;
 }

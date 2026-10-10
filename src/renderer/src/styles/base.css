@@ -14,7 +14,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 400 var(--text-md) / var(--lh-md) var(--font-ui);
+  font: 400 var(--text-base) / var(--lh-md) var(--font-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
@@ -29,7 +29,7 @@ textarea {
 }
 
 a {
-  color: var(--water);
+  color: var(--water-text);
   text-decoration: none;
 }
 
@@ -38,9 +38,8 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 2px solid var(--water);
-  outline-offset: 2px;
-  border-radius: var(--radius-s);
+  outline: var(--focus-ring) solid var(--water);
+  outline-offset: var(--focus-ring);
 }
 
 ::selection {
@@ -66,14 +65,17 @@ a:hover {
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* A key, as KeyCaps draws it: mono, quiet, on the sunk tint, never a raised bevel. */
 kbd {
-  display: inline-block;
-  min-width: 18px;
-  padding: 1px var(--space-1);
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--count-h);
+  height: var(--count-h);
+  padding: 0 var(--space-1);
   border-radius: var(--radius-s);
-  font: 500 var(--text-xs) / 1.3 var(--font-mono);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line);
+  font: 500 var(--text-xs) / 1 var(--font-mono);
   color: var(--muted);
   text-align: center;
 }

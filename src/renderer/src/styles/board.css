@@ -128,7 +128,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-m);
   background: var(--surface);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--elev-raise);
   cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
@@ -354,7 +354,7 @@
   width: 17px;
   height: 17px;
   border-radius: 50%;
-  background: var(--water);
+  background: var(--water-fill);
   color: var(--water-ink);
   font: 700 var(--text-xs) / 1 var(--font-ui);
 }
@@ -531,7 +531,7 @@
 }
 
 .views-trigger.on .views-glyph {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .views-changed {
@@ -556,7 +556,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-l);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-float);
   animation: fade var(--dur-fast) var(--ease);
 }
 
@@ -633,7 +633,7 @@
 .views-check {
   flex: none;
   width: 14px;
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .views-text {

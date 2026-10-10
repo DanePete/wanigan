@@ -17,7 +17,7 @@
 /* Proven is news about a pairing, never a state that needs you: water, not amber. */
 .tag.proven {
   border-color: var(--water-line);
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .local-progress {

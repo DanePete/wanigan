@@ -6,9 +6,9 @@
   width: min(720px, 100%);
   max-height: calc(100vh - 12vh - var(--space-6));
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-l);
+  border-radius: var(--radius-xl);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-sheet);
   overflow: hidden;
   animation: rise var(--dur) var(--ease);
 }
@@ -216,7 +216,7 @@
   color: var(--fg);
   font-weight: 600;
   text-decoration: underline;
-  text-decoration-color: var(--water);
+  text-decoration-color: var(--water-text);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }

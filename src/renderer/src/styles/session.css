@@ -49,7 +49,7 @@
 }
 
 .remote-mark svg {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 /* Narrow, the mark keeps the bar on one line: the icon shows, the words are read out. */
@@ -289,7 +289,7 @@
   border: 0;
   border-radius: var(--radius-s);
   background: none;
-  color: var(--water);
+  color: var(--water-text);
   font: inherit;
   cursor: pointer;
 }

@@ -22,7 +22,7 @@
   border-left: 3px solid var(--amber-line);
   border-radius: var(--radius-m);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-float);
   animation: alert-in var(--dur-slow) var(--ease) both;
 }
 

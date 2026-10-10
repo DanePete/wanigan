@@ -87,7 +87,7 @@ const look = EditorView.theme({
   '.cm-panel.cm-search [name=close]': { color: 'var(--muted)', fontSize: 'var(--text-lg)', padding: '0 var(--space-1)', position: 'absolute', top: 'var(--space-1)', right: 'var(--space-2)' },
   '.cm-tooltip': {
     backgroundColor: 'var(--raised)', color: 'var(--fg)', border: '1px solid var(--line-strong)', borderRadius: 'var(--radius-m)',
-    boxShadow: 'var(--shadow-overlay)', fontFamily: 'var(--font-ui)', fontSize: 'var(--text-sm)',
+    boxShadow: 'var(--elev-float)', fontFamily: 'var(--font-ui)', fontSize: 'var(--text-sm)',
   },
   '.cm-tooltip-autocomplete > ul': { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-code)', maxHeight: '14em' },
   '.cm-tooltip-autocomplete > ul > li': { padding: 'var(--space-1) var(--space-2)' },

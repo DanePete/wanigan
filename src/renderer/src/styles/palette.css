@@ -8,7 +8,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-l);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-float);
   overflow: hidden;
   animation: rise var(--dur) var(--ease);
 }
@@ -132,7 +132,7 @@
   color: var(--fg);
   font-weight: 600;
   text-decoration: underline;
-  text-decoration-color: var(--water);
+  text-decoration-color: var(--water-text);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }

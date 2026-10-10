@@ -68,7 +68,7 @@
   align-items: stretch;
   min-height: calc(var(--space-8) + var(--space-1));
   border-bottom: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
 }
 
 .editor-tabs {
@@ -241,7 +241,7 @@
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
 }
 
 .code-tree-head {
@@ -349,7 +349,7 @@
 }
 
 .code-tree-row.open-file .code-tree-icon {
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .code-tree-name {
@@ -375,7 +375,7 @@
   padding: var(--space-1) var(--space-4);
   border: 0;
   border-top: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
   color: var(--muted);
   font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
   text-align: left;
@@ -438,7 +438,7 @@
   /* The Talk to Wanigan button sits over the right end, as it does over the live view's status line. */
   padding: var(--space-1) calc(var(--fab) + var(--space-5) + var(--space-2)) var(--space-1) var(--space-3);
   border-top: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
 }
 
 .dock-collapsed-tab {
@@ -606,7 +606,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-m);
   background: var(--raised);
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--elev-float);
   overflow: hidden;
   animation: rise var(--dur-fast) var(--ease);
 }
@@ -721,7 +721,7 @@
 
 .editor-notice > svg {
   flex: none;
-  color: var(--water);
+  color: var(--water-text);
 }
 
 .editor-notice-strong {
@@ -749,7 +749,7 @@
   min-height: var(--space-6);
   padding: 0 var(--space-3);
   border-top: 1px solid var(--line);
-  background: var(--rail);
+  background: var(--bg-rail);
   color: var(--faint);
   font: 400 var(--text-xs) / var(--lh-sm) var(--font-ui);
   white-space: nowrap;
@@ -889,7 +889,7 @@
 }
 
 .compare-body .cm-merge-revert {
-  background: var(--rail);
+  background: var(--bg-rail);
 }
 
 .compare-body .cm-merge-revert button {
