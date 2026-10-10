@@ -6,7 +6,7 @@ open an issue first so we can agree on the shape before you build it.
 
 ## Set up
 
-Follow [Try it](README.md#try-it) in the README. Then:
+Follow [Try it](docs/guide/try-it.md), the setup guide. Then:
 
 ```sh
 npm test            # typecheck, unit and integration tests, UI and phone sweeps
@@ -78,7 +78,7 @@ at the sweep's screenshots in `.artifacts/ui/` and put before and after, in both
 themes, in the pull request.
 
 **Say only what is true.** If a Claude Code or Codex feature has not been seen
-working end to end, the README says so. Don't claim support from docs alone.
+working end to end, the README or its guides say so ([Not done yet](docs/guide/status.md)). Don't claim support from docs alone.
 
 ## Before you push
 
