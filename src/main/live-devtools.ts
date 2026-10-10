@@ -46,6 +46,12 @@ export function wireLiveDevtools(options: {
   let page: WebContents | null = null;
   /** The view the dock's DevTools is drawn in, while it is open there. */
   let dock: WebContentsView | null = null;
+  /**
+   * Whether the dock's DevTools has drawn itself: until then the view stays hidden over the tab's "Opening DevTools…",
+   * which showed through as one white frame of an empty view (take devtools-d1, 9.1 s). Where it goes meanwhile is kept.
+   */
+  let dockPainted = false;
+  let dockPlace: { visible: boolean; bounds: { x: number; y: number; width: number; height: number } | null } | null = null;
   /** DevTools closings this module caused itself, whose `devtools-closed` is not the owner closing its window. */
   let expected = 0;
 
@@ -80,8 +86,29 @@ export function wireLiveDevtools(options: {
     v.setVisible(false);
     w.contentView.addChildView(v);
     dock = v;
+    dockPainted = false;
+    dockPlace = null;
+    // Shown once DevTools has loaded and drawn twice (at most 2 s on, for a frontend that never says).
+    const shown = (): void => { if (dock !== v || dockPainted) return; dockPainted = true; place(); };
+    const painted = 'new Promise((done) => { const t0 = Date.now(); const look = () => (document.body && document.body.childElementCount > 0) || Date.now() - t0 > 1500 ? requestAnimationFrame(() => requestAnimationFrame(() => done(true))) : setTimeout(look, 30); look(); })';
+    wc.once('did-finish-load', () => { void wc.executeJavaScript(painted).catch(() => null).finally(shown); });
+    setTimeout(shown, 2000);
     page.setDevToolsWebContents(wc);
     page.openDevTools({ mode: 'detach', activate: false });
+  };
+
+  /** The dock where the tab says, shown only once DevTools has drawn itself in it. */
+  const place = (): void => {
+    const p = dockPlace;
+    if (!dock || !p) return;
+    if (!p.visible || !p.bounds || p.bounds.width < 1 || p.bounds.height < 1) {
+      // Stepping aside with the keyboard in it gives the keyboard back to the window.
+      if (dock.webContents.isFocused()) options.window()?.webContents.focus();
+      dock.setVisible(false);
+      return;
+    }
+    dock.setBounds(p.bounds);
+    dock.setVisible(dockPainted);
   };
 
   const undock = (): void => {
@@ -106,15 +133,8 @@ export function wireLiveDevtools(options: {
         if (live(page) && page.isDevToolsOpened()) { expected++; page.closeDevTools(); }
         return;
       case 'place': {
-        if (!dock) return;
-        if (!e.visible || !e.bounds || e.bounds.width < 1 || e.bounds.height < 1) {
-          // Stepping aside with the keyboard in it gives the keyboard back to the window.
-          if (dock.webContents.isFocused()) options.window()?.webContents.focus();
-          dock.setVisible(false);
-          return;
-        }
-        dock.setBounds(e.bounds);
-        dock.setVisible(true);
+        dockPlace = { visible: e.visible, bounds: e.bounds ?? null };
+        place();
         return;
       }
       case 'inspect':
