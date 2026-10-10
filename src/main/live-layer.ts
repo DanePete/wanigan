@@ -38,7 +38,7 @@
 //   made-up page: a rule that also turned every paragraph blue passed. Catching that needs the page as it was before
 //   the implementation, kept when it is made real and compared row by row (text reflows); that is still to build.
 // - Nothing here writes to the site except the helper save, and nothing reaches any origin but the site's own.
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
@@ -283,6 +283,23 @@ export function snapsOf(raw: unknown): ElementSnap[] {
   });
 }
 
+/**
+ * Why a render could not find its edits by identity, or null when it can: an edit keyed to a part needs this render's
+ * own trace, and without one it would be called not found when it was never looked for.
+ */
+export function traceProblem(edits: readonly LayerEdit[], header: string | null, answer: LiveTraceAnswer | null): string | null {
+  if (!edits.some((e) => e.target.part && e.breakpoint === 'all' && e.change.type !== 'token')) return null;
+  if (answer?.state === 'ok') return null;
+  const why = !header ? 'the page came without the helper’s trace (a cached copy, or a page the site’s platform did not render)'
+    : !answer ? 'the trace could not be asked for'
+      : answer.state === 'down' ? `the site did not answer for it (${answer.error.slice(0, 200)})`
+        : answer.state === 'refused' ? `the helper refused it (${answer.status})`
+          : answer.state === 'expired' ? 'the helper no longer kept it'
+            : answer.state === 'other' ? 'the site’s helper answers to another Wanigan'
+              : `the helper’s answer was not one Wanigan reads (${answer.state})`;
+  return `This render could not read the page’s trace: ${why}. Its edits are found by what the trace names, so nothing was compared. Try again.`;
+}
+
 /** A render in a hidden window (live-capture.ts): the page with its own trace, the edits found and tagged, the design's layer shown. */
 function renderInWindow(deps: {
   pageScript: () => string | null;
@@ -300,6 +317,9 @@ function renderInWindow(deps: {
       const id = page.headers()?.['x-wanigan-trace'] ?? null;
       const ses = deps.sessionFor(r.projectId, r.base);
       const answer = id && TRACE_ID.test(id) && ses ? await deps.askTrace((u, init) => ses.fetch(u, init), new URL(page.wc.getURL()).origin, r.token, id) : null;
+      // Without it no edit keyed to a part can be found, and that is said, never taken as the edit being gone.
+      const unread = traceProblem(r.edits, id && TRACE_ID.test(id) ? id : null, answer);
+      if (unread) return { error: unread };
       const trace = answer?.state === 'ok' ? answer.trace : null;
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
@@ -388,8 +408,27 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
   const core = async <T>(method: Method, params: unknown): Promise<T> => (await options.client()).callRaw(method, params) as Promise<T>;
   const snapshotOf = (projectId: string): Promise<LayerSnapshot> => core<LayerSnapshot>('live.layer', { projectId });
-  const mark = (projectId: string, id: string, state: LayerEdit['state'], verdict?: LayerVerdict): Promise<unknown> =>
-    core('live.layerMark', { projectId, id, state, ...(verdict ? { verdict } : {}) }).catch(() => null);
+  /** Tell the core what became of an edit: null once it is recorded, else why the core refused it. */
+  const mark = async (projectId: string, id: string, state: LayerEdit['state'], verdict?: LayerVerdict): Promise<string | null> => {
+    try {
+      await core('live.layerMark', { projectId, id, state, ...(verdict ? { verdict } : {}) });
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  /**
+   * Take away the verification pictures of edits the layer no longer lists (discarded, undone, retired): nothing
+   * shows them again. Only folders named as an edit is, under this project's own.
+   */
+  const sweep = (projectId: string, listed: readonly LayerEdit[]): void => {
+    const dir = join(root, folderOf(projectId));
+    const keep = new Set(listed.map((e) => e.id));
+    let entries: Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) if (entry.isDirectory() && EDIT_ID.test(entry.name) && !keep.has(entry.name)) rmSync(join(dir, entry.name), { recursive: true, force: true });
+  };
 
   /** The local site's page the view shows, when it shows one. */
   const shown = (): { cur: LiveCurrent; url: string; path: string } | null => {
@@ -419,6 +458,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!here) return { page: '', shown: [], orphaned: [], elsewhere: [], off: !on };
     const { cur, url, path } = here;
     const snap = await snapshotOf(cur.projectId);
+    sweep(cur.projectId, snap.edits);
     const answer = await options.trace();
     const res = await resolveLayer(options.run, answer.state === 'ok' ? answer.trace : null, snap.edits, path);
     const now = effective(snap.edits, res);
@@ -432,7 +472,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     await options.run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate }), 0);
     if (old && !cur.webContents.isDestroyed()) await cur.webContents.removeInsertedCSS(old).catch(() => {});
     // The core is told what this page found: lost drafts are orphaned, found ones are drafts again. An implemented
-    // edit is in the site whatever this load showed: it is said to the window, and stays implemented.
+    // edit is in the site whatever this load showed: it is said to the window, and stays implemented. A refusal here
+    // (an edit undone meanwhile) is left: the next load finds what is listed then.
     const was = new Map(snap.edits.map((e) => [e.id, e.state]));
     for (const o of res.orphaned) if (was.get(o.id) === 'draft') await mark(cur.projectId, o.id, 'orphaned');
     for (const id of res.resolved) if (was.get(id) === 'orphaned') await mark(cur.projectId, id, 'draft');
@@ -540,9 +581,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const saved = await options.helperSave(at.field, at.words, value, where);
     if (!saved) return none('The live view has no helper for this site.');
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
-    await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });
-    // The site now has the words: the page shows them as it renders them, and the layer applies again after the load.
+    const refused = await mark(cur.projectId, id, 'implemented');
+    // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
+    // applies again after the load.
     if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
+    if (refused) return none(`The words are saved in the site${saved.revision ? ` (revision ${saved.revision})` : ''}, but the layer could not mark this edit implemented: ${refused} Do not save it again; it is in the site.`);
     return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
   };
 
@@ -555,6 +598,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const widths = verifyWidths(rawOptions && typeof rawOptions === 'object' ? (rawOptions as { widths?: unknown }).widths : undefined);
     if (typeof widths === 'string') throw new Error(widths);
     const snap = await snapshotOf(projectId);
+    sweep(projectId, snap.edits);
     let edits: LayerEdit[];
     let page: string;
     if (raw === null || raw === undefined) {
@@ -658,10 +702,14 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     }
     // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
     // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).
+    const refusals: string[] = [];
     for (const e of edits) {
       const v = verdicts.get(e.id) as LayerVerdict;
-      await mark(projectId, e.id, base.ok ? 'verified' : 'implemented', v);
+      const why = await mark(projectId, e.id, base.ok ? 'verified' : 'implemented', v);
+      if (why) refusals.push(`“${e.label}”: ${why}`);
     }
+    // A verdict the layer did not keep is said, never passed off as recorded.
+    if (refusals.length) throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: ${refusals.join(' ')}`);
     return verdicts.get(edits[0]!.id) as LayerVerdict;
   };
   const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => {

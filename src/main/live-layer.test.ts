@@ -2,14 +2,15 @@
 // small model of a page, and a render seam for the verification (Electron's windows cannot open under this runner).
 // What is checked is what reaches the page, the core and the data folder. Made-up site (acme); nothing real.
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
 import type { Bitmap, ElementSnap } from '../shared/layer-verify.ts';
 import type { LiveTrace, PartIdentity } from '../shared/live-trace.ts';
-import { madeOn, pathOf, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
+import { folderOf } from './live-capture.ts';
+import { madeOn, pathOf, traceProblem, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -89,7 +90,7 @@ function modelPage() {
   return { page, run };
 }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null } } = {}) {
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; renderMs?: number; saved?: { ok: boolean; error: string | null }; refuseMark?: string } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
@@ -109,6 +110,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     callRaw: async (method: string, params: Record<string, unknown>) => {
       if (method === 'live.layer') return { projectId: 'p1', edits, undo: null, redo: null };
       if (method === 'live.layerMark') {
+        if (over.refuseMark) throw new Error(over.refuseMark);
         marks.push({ id: params.id as string, state: params.state as string, ...(params.verdict ? { verdict: params.verdict as LayerVerdict } : {}) });
         edits = edits.map((e) => (e.id === params.id ? { ...e, state: params.state as LayerEdit['state'] } : e));
         return { projectId: 'p1', edits, undo: null, redo: null };
@@ -445,6 +447,46 @@ test('words are saved only to the field, translation and item the edit’s targe
     assert.equal(w.saves.length, 1, 'nothing else was saved');
     assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[tag.id, 'implemented']]);
   } finally { w.done(); }
+});
+
+test('the layer refusing to record what happened is said: words saved stay said, the page still reloads, and a verdict is not passed off as kept', async () => {
+  const retyped = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const w = wire({ edits: [retyped], refuseMark: 'That edit is not in the layer now: it was undone or discarded.' });
+  try {
+    w.page.parts = { p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
+    await w.apply();
+    const done = await w.implement(retyped.id);
+    assert.equal(w.saves.length, 1);
+    assert.deepEqual(done, { ok: false, id: retyped.id, route: 'none', why: 'The words are saved in the site (revision 42), but the layer could not mark this edit implemented: That edit is not in the layer now: it was undone or discarded. Do not save it again; it is in the site.' });
+    assert.equal(w.sheets.reloads, 1, 'the page shows what the site now has');
+  } finally { w.done(); }
+  const e = edit({ state: 'implemented' });
+  const v = wire({ edits: [e], refuseMark: 'An edit is verified only by a verification that passed.', render: renders(e, { design: (b) => b, result: (b) => b }) });
+  try {
+    await assert.rejects(v.verify(e.id, { widths: [390] }), /The verification ran \(its pictures are kept\), but the layer did not record it: “Heading in Card \(component\)”: An edit is verified only by a verification that passed\./);
+  } finally { v.done(); }
+});
+
+test('the pictures of edits the layer no longer lists are taken away, and nothing else', async () => {
+  const kept = edit({ state: 'implemented' });
+  const w = wire({ edits: [kept] });
+  try {
+    const dir = join(w.dataDir, 'live-layer', folderOf('p1'));
+    for (const id of [kept.id, 'discarded-1', 'retired-2']) { mkdirSync(join(dir, id), { recursive: true }); writeFileSync(join(dir, id, '390-design.png'), 'x'); }
+    mkdirSync(join(dir, 'Not An Edit'), { recursive: true });
+    await w.apply();
+    assert.deepEqual([kept.id, 'discarded-1', 'retired-2', 'Not An Edit'].map((d) => existsSync(join(dir, d))), [true, false, false, true]);
+  } finally { w.done(); }
+});
+
+test('a render that cannot read its trace says so, rather than calling its edits not found', () => {
+  const keyed = edit({ state: 'implemented' });
+  const loose = edit({ state: 'implemented', target: { part: null, inner: null, selector: 'html > body:nth-of-type(1) > h2:nth-of-type(1)', textHash: null } });
+  assert.equal(traceProblem([keyed], '0123456789abcdef', { state: 'ok', trace: trace() }), null);
+  assert.equal(traceProblem([loose], null, null), null, 'an edit keyed by a document path needs no trace');
+  assert.match(traceProblem([keyed], null, null) ?? '', /^This render could not read the page’s trace: the page came without the helper’s trace .* nothing was compared/);
+  assert.match(traceProblem([keyed], '0123456789abcdef', { state: 'down', error: 'connection refused' }) ?? '', /the site did not answer for it \(connection refused\)/);
+  assert.match(traceProblem([keyed], '0123456789abcdef', { state: 'expired' }) ?? '', /no longer kept it/);
 });
 
 /* ── verification ── */
