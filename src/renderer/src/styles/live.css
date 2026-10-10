@@ -1031,9 +1031,10 @@
 
 .dock-title {
   flex: 1;
+  align-self: center;
   min-width: 0;
   margin: 0;
-  padding-left: var(--space-2);
+  padding-left: var(--space-3);
   font: 600 var(--text-base) / var(--leading-tight) var(--font-ui);
 }
 

@@ -669,7 +669,8 @@ export function liveStub(f) {
           + (chosen ? `color:#fff;background:${c.fill};` : `color:${c.softText};background:${c.raised};box-shadow:${c.float};`);
         sheet.appendChild(t);
       }
-      if (chosen && shown.outline.length === 1 && !picking) {
+      // Not while selecting, nor while its words are typed (the chip says so instead), as the page script draws it.
+      if (chosen && shown.outline.length === 1 && !picking && window.__wgLive.typing === null) {
         const bar = document.createElement('div');
         bar.className = 'live-stub-bar';
         // As the page script places it: above the part, or under it when there is no room or its name would meet it.
