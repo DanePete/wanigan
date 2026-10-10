@@ -1591,7 +1591,7 @@ try {
       // it is not in the site yet and leaves it a draft; a pass makes it verified. (Before, nothing could: it stayed a draft.)
       await set({ verdict: 'styles' });
       await rowOf('color').getByRole('button', { name: /^Verify/ }).click();
-      await rowOf('color').locator('[role="alert"]', { hasText: 'Not verified: Not in the site yet: the site does not render it as designed yet (step 1 of 3, its styles and boxes failed' })
+      await rowOf('color').locator('[role="alert"]', { hasText: 'Not verified: Not in the site yet: the site does not render it as designed yet (step 1 of 3, its styles and boxes failed at 390 and 1440 px). At 1440 px, h3.teaser__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.' })
         .waitFor({ timeout: 4000 }).catch(() => fail(t('layer: a style draft not in the site yet was not said so')));
       if ((await stateOf('color')) !== 'draft') fail(t('layer: verifying a style draft not in the site yet changed its state'));
       await set({ verdict: 'pass' });

@@ -97,7 +97,7 @@ import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash, trySheet, tryValues,
-  type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
+  type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerDifference, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
   type LayerTarget, type LayerTyped, type LayerUndone, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
@@ -991,6 +991,17 @@ const reaches = (e: LayerEdit, path: string): boolean => e.scope !== 'this' || m
 const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state === 'verified';
 /** A style or a token: made in the theme by an agent from its brief, or by hand, never saved by Wanigan itself. */
 const madeOutside = (e: LayerEdit): boolean => e.change.type === 'style' || e.change.type === 'token';
+/** One difference, in a sentence, for a draft whose verdict is said rather than kept. */
+const differenceSaid = (d: LayerDifference): string => {
+  const box = (r: LayerRect): string => `${Math.round(r.width)} × ${Math.round(r.height)}`;
+  switch (d.kind) {
+    case 'style': return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`;
+    case 'box': return `At ${d.width} px, ${d.element} is ${box(d.result)} in the site, ${box(d.design)} in the design.`;
+    case 'pixels': return `At ${d.width} px, ${d.pixels.toLocaleString('en')} pixels differ around it.`;
+    case 'leak': return `At ${d.width} px, ${d.pixels.toLocaleString('en')} pixels differ elsewhere on the page.`;
+    case 'outside': return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.before} on the page from before.`;
+  }
+};
 /** A verification's steps, as said when a draft was not found in the site. */
 const STEPS: Record<NonNullable<LayerVerdict['failed']>, string> = {
   styles: 'step 1 of 3, its styles and boxes', pixels: 'step 2 of 3, the pixels around it', rest: 'step 3 of 3, the rest of the page',
@@ -1779,7 +1790,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const v = verdicts.get(e.id) as LayerVerdict;
       if (e.state === 'draft') {
         if (!base.ok) {
-          notYet = `the site does not render it as designed yet (${STEPS[base.failed ?? 'styles']} failed at ${base.widths.join(' and ')} px). Once an agent, or you, has put it in the theme, verify again.`;
+          const seen = base.differences.slice(0, 2).map(differenceSaid).join(' ');
+          notYet = `the site does not render it as designed yet (${STEPS[base.failed ?? 'styles']} failed at ${base.widths.join(' and ')} px).${seen ? ` ${seen}` : ''} Once an agent, or you, has put it in the theme, verify again.`;
           continue;
         }
         const why = (await mark(projectId, e.id, 'implemented')) ?? (await mark(projectId, e.id, 'verified', v));

@@ -1953,7 +1953,8 @@ test('against a page from before held at another time, what the hold keeps still
 
 test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {
   const e = edit({ state: 'implemented' });
-  const draft = edit();
+  // Words, which are made real before they are verified: refused at once, once the stuck one has ended.
+  const draft = edit({ change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
   const w = wire({ edits: [e, draft], renderMs: 50, render: () => new Promise(() => {}) });
   try {
     const first = w.verify(e.id, { widths: [390] });
@@ -1990,7 +1991,7 @@ test('only an implemented edit is verified, an edit the design cannot find fails
   const notYet = wire({ edits: [waiting], render: renders(waiting, { design: (b) => b, result: (b) => b, designColor: 'rgb(200, 0, 0)' }) });
   try {
     await assert.rejects(notYet.verify(waiting.id, { widths: [390] }),
-      /^Error: Not in the site yet: the site does not render it as designed yet \(step 1 of 3, its styles and boxes failed at 390 px\)\. Once an agent, or you, has put it in the theme, verify again\.$/);
+      /^Error: Not in the site yet: the site does not render it as designed yet \(step 1 of 3, its styles and boxes failed at 390 px\)\. At 390 px, h2\.card__title: color is rgb\(18, 52, 86\) in the site, rgb\(200, 0, 0\) in the design\. Once an agent, or you, has put it in the theme, verify again\.$/);
     assert.deepEqual(notYet.marks, [], 'nothing marked');
   } finally { notYet.done(); }
 

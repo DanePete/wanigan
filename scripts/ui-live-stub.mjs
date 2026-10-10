@@ -1069,7 +1069,9 @@ export function liveStub(f) {
       if (outside) {
         if (!verdict.ok) {
           const step = { styles: 'step 1 of 3, its styles and boxes', pixels: 'step 2 of 3, the pixels around it', rest: 'step 3 of 3, the rest of the page' }[verdict.failed];
-          throw new Error(`Not in the site yet: the site does not render it as designed yet (${step} failed at 390 and 1440 px). Once an agent, or you, has put it in the theme, verify again.`);
+          const seen = differences.slice(0, 2).map((d) => (d.kind === 'style' ? `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`
+            : `At ${d.width} px, ${d.pixels.toLocaleString('en')} pixels differ around it.`)).join(' ');
+          throw new Error(`Not in the site yet: the site does not render it as designed yet (${step} failed at 390 and 1440 px). ${seen} Once an agent, or you, has put it in the theme, verify again.`);
         }
         layerCore('live.layerMark', { projectId, id, state: 'implemented' });
         layerCore('live.layerMark', { projectId, id, state: 'verified', verdict });
