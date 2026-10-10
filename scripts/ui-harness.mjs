@@ -142,6 +142,8 @@ export const BRIDGE = `
       // The app menu sends commands; the sweep plays the menu.
       onCommand(l) { commandListeners.add(l); return () => commandListeners.delete(l); },
       platform: 'darwin',
+      // Tours start on their own only where a check asks for them, so they never sit over what a sweep clicks.
+      toursOff: (() => { try { return localStorage.getItem('wanigan.test.tours') !== 'on'; } catch { return true; } })(),
     };
     // Updates are answered and up to date, so the rail is calm everywhere but where the sweep looks at them.
     window.__wgApp = {

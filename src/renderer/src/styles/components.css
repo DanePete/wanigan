@@ -784,3 +784,129 @@
   background: var(--sunken);
   color: var(--muted);
 }
+
+/* ── guided tours (components/Tour.tsx) ──────────────────────────────────── */
+
+/* Over everything but tooltips: the window dims around one lit thing; clicks wait for the tour. */
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+.tour-shade {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  animation: fade var(--dur) var(--ease);
+}
+
+.tour-spot {
+  position: absolute;
+  border-radius: var(--radius-l);
+  box-shadow: 0 0 0 var(--ring) var(--water), 0 0 0 var(--spot-spread) var(--scrim);
+  pointer-events: none;
+  transition: left var(--dur) var(--ease), top var(--dur) var(--ease), width var(--dur) var(--ease), height var(--dur) var(--ease);
+}
+
+.tour-card {
+  position: absolute;
+  width: var(--tour-card);
+  max-width: calc(100vw - 2 * var(--space-3));
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--raised);
+  box-shadow: var(--elev-sheet);
+  outline: none;
+  animation: rise var(--dur) var(--ease);
+  transition: left var(--dur) var(--ease), top var(--dur) var(--ease);
+}
+
+.tour-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  color: var(--water-text);
+  font: 500 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.tour-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tour-title {
+  margin: 0 0 var(--space-1);
+  color: var(--fg);
+  font: 600 var(--text-title) / var(--lh-md) var(--font-ui);
+}
+
+.tour-body {
+  margin: 0 0 var(--space-4);
+  color: var(--fg);
+  font-size: var(--text-base);
+  line-height: var(--lh-md);
+}
+
+.tour-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tour-dots {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.tour-dots span {
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--line-strong);
+  transition: width var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.tour-dots span.on {
+  width: var(--space-3);
+  background: var(--water);
+}
+
+/* A view's first visit: its tour offered in the status line, one line, never over the work. */
+.tour-offer {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+.tour-offer-icon {
+  flex: none;
+  color: var(--water-text);
+}
+
+.tour-offer-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-offer-text strong {
+  font-weight: 600;
+}
+
+/* Settings › Appearance: playing the welcome tour, offering every tour again. */
+.settings-tours {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
