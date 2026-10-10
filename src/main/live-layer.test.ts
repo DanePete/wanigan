@@ -700,7 +700,7 @@ test('WordPress: words kept in something shown beyond this page are said with wh
     // Asked again after five minutes: said again, not saved.
     now += 5 * 60_000 + 1;
     assert.deepEqual(await w.implement(retyped.id), { ok: false, id: retyped.id, route: 'none', why: asked });
-    assert.deepEqual(w.posts, []);
+    assert.equal(w.posts.length, 0, 'said again, not saved');
     now += 1_000;
     assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
     assert.deepEqual(w.posts.map((x) => x.body), [{ trace: '0123456789abcdef', value: { content: 'Open every day', dropCap: false } }]);
