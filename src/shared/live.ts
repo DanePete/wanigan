@@ -240,9 +240,11 @@ export interface LiveRegion {
   hook: string | null;
   /**
    * A field the site's helper marked (data-wl-field), what a hand edit to its words saves to:
-   * `entity_type:id:field_name:field_type:langcode:revision:changed:formatter` (the translation the page rendered, the
-   * revision it showed, and when that translation last changed, so a save over anything newer is refused; and the
-   * formatter that showed it, which says what of a formatted text the page showed, whole or trimmed).
+   * `entity_type:id:field_name:field_type:langcode:revision:changed:formatter:vh` (the translation the page rendered, the
+   * revision it showed, and when that translation last changed, so a save over anything newer is refused; the
+   * formatter that showed it, which says what of a formatted text the page showed, whole or trimmed; and a hash of the
+   * field's stored words as the page rendered them, which proves the same for content that keeps neither revisions nor
+   * a changed time). Read with parseFieldMark().
    */
   field: string | null;
   /** Drupal's template file name suggestions for it, most specific first, without `.html.twig`. */
@@ -259,6 +261,45 @@ export interface LiveRegion {
   order: number;
   /** Where it is on the page, in CSS pixels of the document. */
   rect: { x: number; y: number; width: number; height: number };
+}
+
+/** A field's mark (LiveRegion.field), read: each part as the helper wrote it, '' where the mark has none. */
+export interface FieldMark {
+  /** The entity type, the content's id and the field's name. */
+  type: string;
+  id: string;
+  field: string;
+  /** The field's type (`string`, `text_long`…). */
+  fieldType: string;
+  /** The translation the page rendered. */
+  langcode: string;
+  /** The revision the page showed, where the content keeps revisions. */
+  revision: string;
+  /** When that translation last changed, where the content says. */
+  changed: string;
+  /** The formatter that showed it. */
+  formatter: string;
+  /**
+   * `vh`: the first 16 hex of a sha256 of the field's stored words as the page rendered them, for the field types the
+   * helper's word saves handle; '' for any other, and on a page from before the helper marked it. Never the words.
+   */
+  hash: string;
+}
+
+/**
+ * A field's mark read as the helper writes it (`type:id:field[:field_type:langcode:revision:changed:formatter:vh]`),
+ * each part checked as the helper's save checks it, or null. A page from before a part was marked has fewer parts:
+ * those read as ''. A mark with more parts than these, or any part malformed, is not read at all.
+ */
+export function parseFieldMark(mark: unknown): FieldMark | null {
+  if (typeof mark !== 'string' || mark.length > 600) return null;
+  const parts = mark.split(':');
+  if (parts.length < 3 || parts.length > 9) return null;
+  const [type = '', id = '', field = '', fieldType = '', langcode = '', revision = '', changed = '', formatter = '', hash = ''] = parts;
+  const ok = /^[a-z0-9_]+$/.test(type) && /^[^:\s]{1,64}$/.test(id) && /^[a-z0-9_]+$/.test(field) && /^[A-Za-z0-9_.-]{0,128}$/.test(fieldType)
+    && /^[A-Za-z0-9_-]{0,32}$/.test(langcode) && /^\d{0,20}$/.test(revision) && /^\d{0,20}$/.test(changed)
+    && /^[A-Za-z0-9_.-]{0,128}$/.test(formatter) && /^(?:[a-f0-9]{16})?$/.test(hash);
+  return ok ? { type, id, field, fieldType, langcode, revision, changed, formatter, hash } : null;
 }
 
 /** What the owner picked in the view: the element, and every region it sits in, innermost first. */

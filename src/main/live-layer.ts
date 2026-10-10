@@ -98,7 +98,7 @@ import { storedContentOf, type StoredContent, type StoredUndone, type StoredWord
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
-import { sameSite, type LiveSite } from '../shared/live.ts';
+import { parseFieldMark, sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
@@ -242,15 +242,17 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
 /**
  * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
  * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
- * around its element (`type:id:field:fieldtype[:langcode:revision:changed:formatter]`) is checked to be that field. Anything else is why not:
- * the words are never saved to a field, a translation or an item the target does not name.
+ * around its element (`type:id:field[:fieldtype:langcode:revision:changed:formatter:vh]`, read by parseFieldMark()) is
+ * checked to be that field. Anything else is why not: the words are never saved to a field, a translation or an item
+ * the target does not name, nor from a mark that cannot be read.
  */
 export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
-  const [type, , name] = field.split(':');
   if (!part || part.kind !== 'entity' || !part.field) {
     return 'Its target is not a field of content the helper names, so Wanigan cannot say which content, translation and item the words would be saved to. An agent can make the change from a brief.';
   }
-  if (part.type !== type || part.field !== name) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
+  const mark = parseFieldMark(field);
+  if (!mark) return 'The field marked around its element is not marked as Wanigan’s helper marks one. Reload the page, then try again.';
+  if (part.type !== mark.type || part.field !== mark.field) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
   if (!part.langcode) return 'Its target does not say which translation it was made on, so the words are saved to none. Reload the page, then try again.';
   return { uuid: part.id, langcode: part.langcode, item: part.item ?? null };
 }
@@ -1354,7 +1356,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (typeof where === 'string') return none(where);
       // A field of a type the helper's word saves do not model (a contributed module's): its stored values are
       // searched first; found nowhere there, the helper's own save answers (a field's label, or why not).
-      if (options.storedWords && !WORD_FIELDS.has(at.field.split(':')[3] ?? '')) {
+      if (options.storedWords && !WORD_FIELDS.has(parseFieldMark(at.field)?.fieldType ?? '')) {
         const traced = await options.trace();
         const c = traced.state === 'ok' && edit.target.part ? storedContentOf(traced.trace, edit.target.part) : null;
         if (traced.state === 'ok' && c) {

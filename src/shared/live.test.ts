@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { componentProps, ddevInfo, ddevPlatform, liveUrl, readDdevYaml, regionMadeBy, sameRegion, sameSite, type LiveRegion } from './live.ts';
+import { componentProps, ddevInfo, ddevPlatform, liveUrl, parseFieldMark, readDdevYaml, regionMadeBy, sameRegion, sameSite, type LiveRegion } from './live.ts';
 
 /** Shaped like real ddev configs, comments and nested blocks included. */
 const NORTHWIND = `# ddev config
@@ -133,4 +133,25 @@ slots:
   ], 'any indent width');
   assert.deepEqual(componentProps('name: x\nprops:\n  type: object\n  required: [a]\n  properties:\n    a: \n      type: string\n'), [{ name: 'a', type: 'string', title: null, required: true }]);
   assert.deepEqual(componentProps('name: No props\n'), []);
+});
+
+test('a field’s mark: every part the helper writes, its hash last; a page from before a part reads it as none; anything malformed is not read', () => {
+  // Made-up settings content that keeps neither revisions nor a changed time: its mark carries only the hash.
+  assert.deepEqual(parseFieldMark('acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b1'), {
+    type: 'acme_settings', id: '12', field: 'field_notice', fieldType: 'string', langcode: 'en', revision: '', changed: '', formatter: 'string', hash: 'ea1a4c24dba9e1b1',
+  });
+  assert.deepEqual(parseFieldMark('node:12:body:text_with_summary:fr:7:1760000000:text_default:'), {
+    type: 'node', id: '12', field: 'body', fieldType: 'text_with_summary', langcode: 'fr', revision: '7', changed: '1760000000', formatter: 'text_default', hash: '',
+  }, 'a field the word saves do not hash ends empty');
+  assert.equal(parseFieldMark('node:12:title:string:fr:7:1760000000:string')?.hash, '', 'a page from before the hash was marked');
+  assert.deepEqual(parseFieldMark('node:12:title'), { type: 'node', id: '12', field: 'title', fieldType: '', langcode: '', revision: '', changed: '', formatter: '', hash: '' });
+  for (const bad of [
+    'acme_settings:12:field_notice:string:en:::string:Acme Outfitters', // words, not a hash
+    'acme_settings:12:field_notice:string:en:::string:EA1A4C24DBA9E1B1', // not as the helper writes it
+    'acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b', // short
+    'acme_settings:12:field_notice:string:en:::string:ea1a4c24dba9e1b1:more', // more than the helper writes
+    'node:12:title:string:fr:seven:1760000000:string', // not a revision
+    'node:12:title:string:fr/../x:7:1760000000:string', // not a language
+    'node:12', 'node:12:Title', 'Node:12:title', 'node::title', '', 42, null,
+  ]) assert.equal(parseFieldMark(bad), null, String(bad));
 });
