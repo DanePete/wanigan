@@ -345,7 +345,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (restored.current || !regions.length) return;
     restored.current = true;
     if (selection) return;
-    void live.picked().then((p) => { if (p?.regions.length) setSelection((s) => s ?? { region: p.regions[0] ?? null, pick: p, how: 'pick' }); }).catch(() => {});
+    // And in view: the page kept its scroll from the split beside a terminal, where the same offset is another place.
+    void live.picked().then((p) => {
+      if (!p?.regions.length) return;
+      setSelection((s) => s ?? { region: p.regions[0] ?? null, pick: p, how: 'pick' });
+      void live.reveal(null).catch(() => null);
+    }).catch(() => {});
   }, [regions, selection, live]);
   const [picking, setPicking] = useState(false);
   const [hasScript, setHasScript] = useState(true);
@@ -600,15 +605,37 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     l.timer = window.setTimeout(() => void tick(), LATE_EVERY_MS);
   }, [live, scanAndOutline]);
 
+  // A reload of the page shown with edits of the layer on it (a save, an agent's edit): its last frame is held until
+  // the reload is traced and the layer is back on it. Shown as it loaded, the page flashed without its edits and with
+  // its pictures not yet drawn (a frame of it in every take that saved). Released at most 4 s on.
+  const [holding, setHolding] = useState(false);
+  const holdable = useRef(false);
+  const shownUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (!holding) return undefined;
+    const late = window.setTimeout(() => setHolding(false), 4000);
+    return () => window.clearTimeout(late);
+  }, [holding]);
   useEffect(() => live.onState((s) => {
     if (s.projectId !== project.id || (s.env ?? null) !== hostedRef.current) return;
     setView(s);
-    if (s.loading) { setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); checks.loading(); return; }
+    if (s.loading) {
+      if (holdable.current && s.url && s.url === shownUrl.current) setHolding(true);
+      setProblems(null); setTrace((t) => (t ? { state: 'none' } : t)); checks.loading(); return;
+    }
+    shownUrl.current = s.url;
     if (!s.error) {
       const wanted = outlineAfterLoad.current;
       outlineAfterLoad.current = null;
-      void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); void fetchTrace(); layerLoaded.current(); return refreshProblems(); });
-    }
+      void scanAndOutline(wanted ?? [], true).then(async () => {
+        watchLate();
+        await fetchTrace().catch(() => {});
+        layerLoaded.current();
+        // The layer goes back on as the page settles: a moment more, then the page itself.
+        window.setTimeout(() => setHolding(false), 500);
+        return refreshProblems();
+      });
+    } else setHolding(false);
   }), [live, project.id, scanAndOutline, watchLate, refreshProblems, fetchTrace, checks]);
 
   useEffect(() => { if (view && !view.loading) void refreshProblems(); }, [view?.logged, refreshProblems]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -898,6 +925,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   /* Make real, from the bar: every draft on this page made real where the site can save it, or verified. */
   const pageNow = env ? '' : pagePath(view?.url ?? url);
   const pageEdits = (layer.snapshot?.edits ?? []).filter((e) => e.page === pageNow);
+  holdable.current = !env && !compact && layer.on && pageEdits.length > 0;
   const drafts = pageEdits.filter((e) => e.state === 'draft');
   const made = pageEdits.filter((e) => e.state === 'implemented');
   // Counted and verified by card, one per element, as Edits shows them: the title's words and its style are one.
@@ -1213,7 +1241,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           </Panel>
           </div>
         ) : null}
-        <LiveStage project={project} url={env || sameSite(stageUrl, url) ? stageUrl : url} token={env ? null : site.token} env={env?.id ?? null} view={view} width={WIDTHS[width].px}
+        <LiveStage project={project} url={env || sameSite(stageUrl, url) ? stageUrl : url} token={env ? null : site.token} env={env?.id ?? null} view={view} width={WIDTHS[width].px} hold={holding}
           onReload={() => void live.reload(true)} onEdit={onEdit} stageRef={stageRef} deviceRef={deviceRef} compact={compact}>
           {/* A hosted environment is read-only: no edit sheet opens over it. */}
           {editing && !env ? (
@@ -1427,8 +1455,10 @@ function NothingMarked({ platform, loading, hosted = false }: { platform: LivePl
  * as the view opens and again when a page fails, so a site that is not running
  * is said as that, never as the certificate ddev's router answered with.
  */
-function LiveStage({ project, url, token, env, view, width, onReload, onEdit, stageRef, deviceRef, compact, children }: {
+function LiveStage({ project, url, token, env, view, width, hold = false, onReload, onEdit, stageRef, deviceRef, compact, children }: {
   project: ProjectSummary; url: string; token: string | null;
+  /** The page reloads under its last frame (a save's reload, until the layer is back on it). */
+  hold?: boolean;
   /** A hosted environment's id: shown read-only in its own session. Null: the local site. */
   env: string | null;
   view: LiveViewState | null; width: number | null; onReload: () => void; onEdit: () => void;
@@ -1449,7 +1479,7 @@ function LiveStage({ project, url, token, env, view, width, onReload, onEdit, st
     projectId: project.id, run: { tool: null, state: null, said: null, start: null, folder: project.path, name: null }, hostnames: [], certificates: [], busy: null, checkedAt: 0,
   } : null);
   const trouble = diagnose({ host, status: known, failure: error, httpStatus: view?.loading ? null : view?.status ?? null, now: Date.now() });
-  const hidden = covered || !!trouble;
+  const hidden = covered || hold || !!trouble;
 
   // A page that failed, or a ddev site that answered with an error page: ask again whether it runs.
   const ddev = status.data?.run.tool === 'ddev';
@@ -1480,10 +1510,10 @@ function LiveStage({ project, url, token, env, view, width, onReload, onEdit, st
 
   useEffect(() => {
     let current = true;
-    if (hidden) void live.cover(true).then((f) => { if (current && covered) setFrame(f); });
+    if (hidden) void live.cover(true).then((f) => { if (current && (covered || hold)) setFrame(f); });
     else { setFrame(null); void live.cover(false); }
     return () => { current = false; };
-  }, [hidden, covered, live]);
+  }, [hidden, covered, hold, live]);
 
   return (
     <div className={`live-stage${width ? ' narrow' : ''}${compact ? ' compact' : ''}`} ref={stageRef} aria-label="The page" role="region" data-tour="live-canvas">

@@ -449,8 +449,10 @@ export function wireLiveView(options: {
     const partition = hosted ? hostedPartitionFor(id, hosted) : partitionFor(id);
     const ses = session.fromPartition(partition);
     prepare(ses, partition, id, hosted !== null);
+    // Not throttled when hidden: a save's reload runs under the page's last frame (Live.tsx, LiveStage's hold), and a
+    // throttled page left its pictures undrawn until it showed again.
     const v = new WebContentsView({
-      webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, spellcheck: false },
+      webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, spellcheck: false, backgroundThrottling: false },
     });
     const wc = v.webContents;
     // Off the site is outside the view: the default browser, never a frame of Wanigan's.
