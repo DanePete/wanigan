@@ -120,9 +120,10 @@ WordPress and other sites can each be on or off.
 
 - **One bar, three groups.** The site (one menu: Local and the hosted
   environments to show the page on, Compare, Site settings), the page (back,
-  forward, reload, the address, the width, the lens) and the tools (Pick, and a
-  menu for drag handles, the default browser and a card's before and after). One
-  status line under the page says what just happened (what an edit outlined,
+  forward, reload, the address, the width, the lens) and the tools (Pick,
+  Library, Edits, DevTools, and a menu for drag handles, the default browser
+  and a card's before and after). One status line under the page says what
+  just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
   being placed), what the view follows, and the keys that work now. In a
   narrow window, or with the dock beside it, the bar narrows without drawing
@@ -132,8 +133,8 @@ WordPress and other sites can each be on or off.
   part's details under it, the tree folded to that part's branch, or beside it
   in a window 1680 px wide or more), Add, the component library and the
   design layer's edits. Beneath the page, a dock shared with the code editor:
-  Code, Notes, Problems and Request, opened from its tabs (they wait in a strip
-  when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
+  Code, Notes, Problems, Request and DevTools, opened from its tabs (they wait
+  in a strip when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
   whether it is open are kept on this Mac. Compare is drawn where the page is,
   and leaving it puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
@@ -141,8 +142,26 @@ WordPress and other sites can each be on or off.
   [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
   component library; on a chosen part E types on its words on the page (or,
   for a part that is more than words, opens Edit ▾), M moves, . opens its
-  code, ⇧A shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or
-  the notes waiting). All are on the shortcut sheet (?).
+  code, ⇧A shows it alone, ⇧X takes it out, ⇧D shows it in DevTools; ⌘↩ adds
+  a note, ⇧⌘↩ sends it (or the notes waiting). All are on the shortcut sheet (?).
+- **The page's own DevTools**, in the dock: Chromium's DevTools for the page
+  (Elements with its own picker, Console, Network, Sources, Application,
+  Performance) in a DevTools tab beneath or beside the page, following the dock
+  as you resize or move it. **DevTools** in the bar, or Chrome's own key (⌥⌘I
+  on macOS, Ctrl+Shift+I on Windows and Linux, also from the page and from
+  DevTools itself), opens or closes it. **Show in DevTools** on a chosen part,
+  on a row of the Layers tree, or ⇧D, scrolls the page to the element when it
+  is off screen and selects it in Elements. **Open in its own window** puts it
+  on a second screen. Hiding the tab keeps DevTools as it was; leaving the
+  project closes it. It is the page's own DevTools, with none of Wanigan's
+  privileges. The tab says what of the page is Wanigan's: its page script and
+  outlines, and the helper's `wl:` comments and `data-wl-*` attributes, are in
+  the page's HTML while the live view is on, and the Network panel shows the
+  helper's `X-Wanigan-Live` key on the page's own loads. Wanigan's own
+  window's DevTools moved to ⌥⇧⌘I (Ctrl+Alt+Shift+I). Checked in the window
+  against a stand-in, and Electron's hosting (DevTools in a view, a point
+  selected in Elements, its own window and back) in a throwaway window on
+  made-up pages; not yet seen in the app on a site.
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -434,7 +453,7 @@ view, beside the project's files.
   opens its template where it writes the words you picked. ⌘J shows or hides
   the drawer, which stays as you left it (open or closed, beneath or beside,
   its height), kept on this Mac. In the live view it is the dock, with Notes,
-  Problems and Request beside Code.
+  Problems, Request and the page's DevTools beside Code.
 - **The Code tab.** The project's folders as a tree beside the editor, read a
   folder at a time, with the open file marked; arrows walk it, Enter opens a
   file, Space opens it and keeps your place in the tree, typing a name jumps to
