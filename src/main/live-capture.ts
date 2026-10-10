@@ -168,8 +168,11 @@ export interface HiddenPage {
    * frames run in order), images and fonts again, then every animation finished or cancelled and two frames drawn.
    */
   freeze(): Promise<void>;
-  /** The viewport grown to the page (up to `max` CSS pixels), again while the page grows with it: its height, and whether it was cut. */
-  grow(max: number): Promise<{ height: number; cut: boolean }>;
+  /**
+   * The viewport grown to the page (up to `max` CSS pixels), again while the page grows with it: the height shown,
+   * whether the page was cut there, and how tall the page is.
+   */
+  grow(max: number): Promise<{ height: number; cut: boolean; full: number }>;
   /**
    * The page from its top, `height` CSS pixels tall, as a PNG at one device pixel per CSS pixel; null when nothing
    * came. `stable`: taken again until two in a row are the same (at most five), and the last one answered.
@@ -315,7 +318,7 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
           await pause(300);
           height = await tall();
         }
-        return { height: Math.min(max, height), cut: height > max };
+        return { height: Math.min(max, height), cut: height > max, full: height };
       },
       async shoot(height, stable = false) {
         const take = async (): Promise<Buffer | null> => {

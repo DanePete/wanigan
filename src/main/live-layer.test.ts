@@ -629,6 +629,30 @@ test('a token verified with other edits does not switch off step 3 for them: a l
   } finally { w.done(); }
 });
 
+test('a page that went on below the capture limit: the verdict says how far down it was compared, passing or not', async () => {
+  const e = edit({ state: 'implemented' });
+  const long = (r: LayerRenderRequest, bitmap: Bitmap) => ({
+    png: Buffer.from('x'), bitmap, elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], ...(r.width === 1440 ? { cut: { full: 9_412 } } : {}),
+  });
+  const w = wire({ edits: [e], render: async (r) => long(r, blank(64, 200)) });
+  try {
+    const v = await w.verify(e.id);
+    assert.equal(v.ok, true);
+    assert.deepEqual(v.differences, [{ kind: 'style', edit: e.id, width: 1440, element: 'The page', property: 'compared', design: 'down to 6,000 px', result: 'not below that: the page is 9,412 px tall, and nothing under 6,000 px was compared' }],
+      'only the width that was cut, and the verdict still passes as far down as it compared');
+    assert.deepEqual(w.marks.map((m) => [m.state, m.verdict?.differences.length]), [['verified', 1]]);
+  } finally { w.done(); }
+  // Failing, what differs comes first and what was not compared after it.
+  const f = edit({ state: 'implemented' });
+  const x = wire({ edits: [f], render: async (r) => ({ ...long(r, r.design ? blank(64, 200) : painted(blank(64, 200), { x: 0, y: 150, width: 64, height: 20 }, 0)), elements: [heading(f.id, 'rgb(18, 52, 86)')], found: [f.id] }) });
+  try {
+    const v = await x.verify(f.id);
+    assert.equal(v.failed, 'rest');
+    const last = v.differences.at(-1);
+    assert.deepEqual([v.differences[0]?.kind, last?.kind === 'style' ? last.property : null], ['leak', 'compared']);
+  } finally { x.done(); }
+});
+
 test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {
   const e = edit({ state: 'implemented' });
   const draft = edit();

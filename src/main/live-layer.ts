@@ -28,7 +28,9 @@
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
 //   Nothing passes for want of a comparison: an edit found but not there when measured, a token whose custom
-//   property was not read on the root, or an edit for a named breakpoint fails, saying why. Pictures are kept in the data folder under
+//   property was not read on the root, or an edit for a named breakpoint fails, saying why. The noise floor is
+//   page-wide, as the verdict states it; a page is compared down to VERIFY_MAX_HEIGHT, and where it went on the
+//   verdict says how far, passing or not. Pictures are kept in the data folder under
 //   live-layer/<project>/<edit>/, and the core is told: verified, or still implemented with the failed verdict (its
 //   words are in the site; the verdict says what differs).
 //   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
@@ -41,7 +43,7 @@ import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash,
-  type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
+  type LayerApplied, type LayerDifference, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
   MAX_DIFFERENCES, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
@@ -246,6 +248,8 @@ export interface LayerRendered {
   found: string[];
   /** The token edits' custom properties as the page's root computes them, by name; a name missing was not read. */
   tokens?: Record<string, string>;
+  /** The page went on below the capture limit (VERIFY_MAX_HEIGHT): how tall it is. Nothing below the limit is compared. */
+  cut?: { full: number } | null;
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
@@ -306,7 +310,7 @@ function renderInWindow(deps: {
       }
       await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design, gate: r.design ? 'g1' : null }), 0);
       await page.freeze();
-      const { height } = await page.grow(VERIFY_MAX_HEIGHT);
+      const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
       const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
       // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
       const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
@@ -315,7 +319,7 @@ function renderInWindow(deps: {
         : {};
       const png = await page.shoot(height, true);
       if (!png) return { error: 'The page could not be pictured.' };
-      return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens };
+      return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null };
     },
   );
 }
@@ -582,6 +586,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
 
     const found: WidthFindings[] = [];
     const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: ReturnType<typeof diffBitmaps> }[] = [];
+    /** What was not compared, said in the verdict whatever it decides: how far down a page that went on was compared. */
+    const unseen: LayerDifference[] = [];
     for (const width of widths) {
       const first = await ask(width, false);
       if ('error' in first) throw new Error(first.error);
@@ -617,6 +623,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       const zones: Zone[] = zonesOf(design.elements, first.elements);
       const d = diffBitmaps(design.bitmap, first.bitmap);
       found.push({ width, noise, elements, pixels: comparePixels(d, zones, width) });
+      const full = Math.max(design.cut?.full ?? 0, first.cut?.full ?? 0);
+      if (full) {
+        const px = (n: number): string => `${Math.round(n).toLocaleString('en')} px`;
+        unseen.push({ kind: 'style', edit: edits[0]!.id, width, element: 'The page', property: 'compared', design: `down to ${px(VERIFY_MAX_HEIGHT)}`, result: `not below that: the page is ${px(full)} tall, and nothing under ${px(VERIFY_MAX_HEIGHT)} was compared` });
+      }
       shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d });
     }
     // One floor for the whole verdict, the one it states: the largest over both versions and every width. Two renders
@@ -626,7 +637,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const images: { width: number; design: Buffer; result: Buffer; diff: Buffer }[] = [];
     for (const i of shots) images.push({ width: i.width, design: i.design, result: i.result, diff: i.d.pixels ? await encode(diffPicture(i.resultBitmap, i.d, floor)) : Buffer.alloc(0) });
     const base: Omit<LayerVerdict, 'pictures'> = {
-      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor, differences: outcome.differences.slice(0, MAX_DIFFERENCES),
+      at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor,
+      // What differs first, then what was not compared: said on a verdict that passed too, which passed only as far down as that.
+      differences: [...outcome.differences.slice(0, MAX_DIFFERENCES - unseen.length), ...unseen],
     };
     // The pictures, for each edit's tray row: its own folder, written afresh.
     const verdicts = new Map<string, LayerVerdict>();

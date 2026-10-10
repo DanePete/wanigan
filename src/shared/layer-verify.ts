@@ -10,10 +10,11 @@
 // - Step 3, the rest of the page: a difference away from every touched element is a leak.
 // The steps run in that order and the first that fails decides the verdict.
 //
-// The noise floor is measured by rendering the result twice: the largest channel difference between the two, and
+// The noise floor is measured by rendering each version twice: the largest channel difference between the two, and
 // how many pixels differ at all. Those two numbers are the tolerance, in the manner of the web-platform-tests
 // "fuzzy" annotation (never a percentage, no anti-aliasing forgiveness): an area passes when its largest difference
-// and its count of differing pixels are each within them.
+// and its count of differing pixels are each within them. The floor is page-wide (the verdict states one), so what
+// changes between renders anywhere forgives as much in every area; nothing is masked.
 import { VERIFY_STEPS, type LayerDifference, type LayerRect, type LayerVerdict, type VerifyStep } from './design-layer.ts';
 import { changeBoxes } from './live-compare.ts';
 

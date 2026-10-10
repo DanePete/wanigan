@@ -188,7 +188,13 @@ the viewport.
 between a version and itself is the noise floor, and the tolerance is stated
 as two numbers in the manner of the web-platform-tests "fuzzy" annotation (the
 largest colour difference and the number of pixels allowed), never as a
-percentage, with anti-aliasing forgiveness off for the verdict.
+percentage, with anti-aliasing forgiveness off for the verdict. As built, the
+floor is page-wide: one pair of numbers for the whole page (the largest over
+both versions and every width), applied to each area. A block whose content
+changes between renders anywhere on the page (a random order, a clock)
+therefore forgives as many differing pixels next to an edit as it differs
+by; nothing masks it. Measuring the floor per area would need the verdict to
+state more than one, which it does not yet.
 
 **In this order, stopping at the first failure:**
 
@@ -241,7 +247,10 @@ before adding it:
 ## What this does not promise
 
 - Content that differs between renders (dates, random order, personalisation)
-  is masked, not verified.
+  is not verified, and is not masked either: it raises the page-wide noise
+  floor, which then forgives as much next to every edit.
+- A page is compared down to 6,000 px; below that nothing is, and the verdict
+  says so (a statement among its differences, even on one that passed).
 - A text format may change saved markup (Drupal filters, WordPress kses). The
   verify step shows the difference; it does not hide it.
 - Interaction states (hover, focus) and other content lengths are verified only
@@ -345,7 +354,8 @@ or the project.
    no breakpoints, so the design cannot show it) fails, saying so. Every step
    that waits on a hidden page has a deadline, and so does each render: a page
    that never answers fails the verification, its window is closed, and the
-   next one runs. It keeps the pictures in the data
+   next one runs. A page taller than 6,000 px is compared down to there, and
+   the verdict says how far, passing or not. It keeps the pictures in the data
    folder and tells the core (`verified`, or still `implemented` with the
    verdict, which says what differs: the words are in the site either way).
 
