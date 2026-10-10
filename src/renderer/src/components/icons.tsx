@@ -68,6 +68,8 @@ const paths = {
   camera: 'M3.5 6.5h3l1.5-2h4l1.5 2h3v9h-13zM10 13.2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z',
   // Record, and a snap's markup tools: a box, an arrow, a highlighter, a label, a blur.
   record: 'M10 16a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM10 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+  // Voice input: speak instead of typing.
+  mic: 'M7.5 5.5a2.5 2.5 0 0 1 5 0v4a2.5 2.5 0 0 1-5 0zM4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5',
   box: 'M4 5h12v10H4z',
   arrow: 'M4.5 15.5 15 5M9 5h6v6',
   highlight: 'M11.5 4 16 8.5l-6 6H7.5l-1.5-1.5V10.5zM5 16h10',

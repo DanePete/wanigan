@@ -6,6 +6,7 @@ import type { UpdateStatus } from '@shared/updates';
 import { JevHealthNow, JevSettings } from '../components/Jev';
 import { LocalModelsSettings } from '../components/LocalModels';
 import { PhoneSettings } from '../components/PhoneSettings';
+import { VoiceSettings } from '../components/VoiceSettings';
 import { Badge, Button, Disclosure, EmptyState, Segmented, Toggle, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
@@ -25,6 +26,7 @@ export function SettingsView({ projects }: { projects: ProjectSummary[] | undefi
     case 'updates': return <UpdateSettings />;
     case 'local': return <LocalModelsSettings />;
     case 'phone': return <PhoneSettings />;
+    case 'voice': return <VoiceSettings />;
     case 'jev': return (
       <SettingsPage id="set-jev" title="Jev" meta={<JevHealthNow />}>
         <JevSettings projects={projects} />

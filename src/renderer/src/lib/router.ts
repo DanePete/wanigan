@@ -6,7 +6,7 @@ import { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView } fro
 export { GIT_TABS, LIVE_VIEW, PROJECT_VIEWS, type GitTab, type ProjectView };
 
 /** Settings' own sections, one at a time (`#/settings/general`); Accounts, Skills and MCP servers are routes of their own. */
-export const SETTINGS_SECTIONS = ['appearance', 'general', 'live', 'updates', 'local', 'phone', 'jev'] as const;
+export const SETTINGS_SECTIONS = ['appearance', 'general', 'live', 'voice', 'updates', 'local', 'phone', 'jev'] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 export type Route =

@@ -36,7 +36,7 @@ export const GIT_COMMANDS: readonly { id: GitCommandId; label: string }[] = [
   { id: 'git-stash', label: 'Stash changes…' },
 ];
 
-export type ShortcutGroup = 'Anywhere' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In a session' | 'In Changes' | 'In Commits' | 'In the live view' | 'Comparing pages' | 'In dialogs and lists';
+export type ShortcutGroup = 'Anywhere' | 'Voice input' | 'Go to' | 'Git' | 'In the code editor' | 'On the board' | 'In a session' | 'In Changes' | 'In Commits' | 'In the live view' | 'Comparing pages' | 'In dialogs and lists';
 
 export interface Shortcut {
   /** The command it runs; null when a view handles the key itself (the board, a dialog). */
@@ -59,7 +59,15 @@ const viewShortcuts: Shortcut[] = PROJECT_VIEWS.map((v) => ({
 
 /** A session's own keys (views/SessionView.tsx): the panel of turns and details, and the composer. */
 export const SESSION_PANEL_KEYS: Shortcut = { id: null, label: 'Show or hide the session’s turns and details', group: 'In a session', keys: ['Mod', 'Shift', 'D'] };
-export const SESSION_COMPOSER_KEYS: Shortcut = { id: null, label: 'Message the agent, or go back to its terminal', group: 'In a session', keys: ['Mod', 'Shift', 'M'] };
+export const SESSION_COMPOSER_KEYS: Shortcut = { id: null, label: 'Message the agent, or go back to its terminal', group: 'In a session', keys: ['Mod', 'Shift', 'E'] };
+/**
+ * Voice input's chords (components/VoiceInput.tsx, lib/voice.ts): they reach the mic of the box being typed in, or
+ * with nothing typed into, the one shown that was used last (narration, while a recording runs). Free on every
+ * platform: no other chord here, no Electron menu role, and no common system chord is ⌘⇧M or ⌘⇧H (Ctrl+Shift
+ * elsewhere). A Mac sends no key-up for a letter while ⌘ is down, so a hold ends when the keys are let go.
+ */
+export const VOICE_TOGGLE: Shortcut = { id: null, label: 'Speak into the box you are typing in: start or stop listening', group: 'Voice input', keys: ['Mod', 'Shift', 'M'] };
+export const VOICE_HOLD: Shortcut = { id: null, label: 'Hold to speak, and let go to stop', group: 'Voice input', keys: ['Mod', 'Shift', 'H'] };
 
 export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'palette', label: 'Search and commands', group: 'Anywhere', keys: ['Mod', 'K'] },
@@ -69,6 +77,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'shortcuts', label: 'Keyboard shortcuts', group: 'Anywhere', keys: ['Mod', '/'], alt: [['?']] },
   { id: 'settings', label: 'Settings', group: 'Anywhere', keys: ['Mod', ','] },
   { id: 'close-card', label: 'Close the open card', group: 'Anywhere', keys: ['Esc'] },
+  VOICE_TOGGLE,
+  VOICE_HOLD,
   { id: 'quick-open', label: 'Open a file of the open project', group: 'Anywhere', keys: ['Mod', 'P'] },
   { id: 'toggle-editor', label: 'Show or hide the code editor', group: 'Anywhere', keys: ['Mod', 'J'] },
   { id: 'go-needs', label: 'Needs you', group: 'Go to', keys: ['G', 'N'], sequence: true },
@@ -165,7 +175,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Close a dialog', group: 'In dialogs and lists', keys: ['Esc'] },
 ];
 
-export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Go to', 'Git', 'In the code editor', 'On the board', 'In a session', 'In Changes', 'In Commits', 'In the live view', 'Comparing pages', 'In dialogs and lists'];
+export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['Anywhere', 'Voice input', 'Go to', 'Git', 'In the code editor', 'On the board', 'In a session', 'In Changes', 'In Commits', 'In the live view', 'Comparing pages', 'In dialogs and lists'];
 
 /** How a key is written on this platform. */
 export function keyLabel(key: string, mac: boolean): string {

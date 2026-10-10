@@ -25,6 +25,7 @@ export const SETTINGS_PLACES: readonly SettingsPlace[] = [
   { id: 'appearance', label: 'Appearance', icon: 'sun', group: 'Wanigan', route: section('appearance') },
   { id: 'general', label: 'General', icon: 'settings', group: 'Wanigan', route: section('general') },
   { id: 'live', label: 'Live view', palette: 'Live view settings', icon: 'live', group: 'Wanigan', route: section('live') },
+  { id: 'voice', label: 'Voice', palette: 'Voice input settings', icon: 'mic', group: 'Wanigan', route: section('voice') },
   { id: 'updates', label: 'Updates', icon: 'pull', group: 'Wanigan', route: section('updates') },
   { id: 'accounts', label: 'Accounts', icon: 'account', group: 'Agents', route: { name: 'accounts' }, keys: 'go-accounts' },
   { id: 'skills', label: 'Skills', icon: 'skill', group: 'Agents', route: { name: 'skills' } },

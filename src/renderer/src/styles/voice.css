@@ -1,0 +1,178 @@
+/* Voice input (components/VoiceInput.tsx, components/VoiceSettings.tsx, components/live/Voice.tsx). Tokens only. */
+
+.voice {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  --voice-level: 0;
+}
+
+/* Listening: the pressed mic (water fill, from IconButton) with a ring that follows the voice. */
+.voice.listening .voice-mic {
+  box-shadow: 0 0 0 calc(var(--ring) + var(--voice-level) * var(--space-1)) var(--water-line);
+  transition: box-shadow var(--dur-fast) var(--ease);
+}
+
+/* The words heard so far, above the mic, over the box it belongs to: shown, not yet in the box. */
+.voice-volatile {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: var(--tip-max);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  pointer-events: none;
+  animation: rise var(--dur) var(--ease);
+}
+
+.voice-words {
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.voice-dot {
+  flex: none;
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: var(--radius-round);
+  background: var(--water);
+  opacity: 0.5;
+}
+
+.voice.speaking .voice-dot {
+  opacity: 1;
+  animation: voice-breathe var(--dur-slow) var(--ease) infinite alternate;
+}
+
+/* With reduced motion every duration is instant: a breath that never stops would flicker, so the dot only lights. */
+@media (prefers-reduced-motion: reduce) {
+  .voice.speaking .voice-dot { animation: none; }
+}
+
+@keyframes voice-breathe {
+  from { transform: scale(0.8); }
+  to { transform: scale(1.15); }
+}
+
+/* Narration, in the status line while a recording runs: the live page covers the canvas, so its words show here. */
+.voice-narrating {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: var(--tip-max);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.voice-narrating .voice-dot {
+  opacity: 1;
+}
+
+.voice-narrating .voice-words {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A sentence that settles into its box: one soft water glow. */
+.voice-settled {
+  animation: voice-settle var(--dur-slow) var(--ease);
+}
+
+@keyframes voice-settle {
+  from { box-shadow: var(--focus); }
+  to { box-shadow: none; }
+}
+
+/* The popover beside the mic: the first-use prompt, or what went wrong and what to do. */
+.voice-pop {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  gap: var(--space-2);
+}
+
+.voice-pop-title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.voice-pop-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.voice-pop-body p {
+  margin: 0;
+}
+
+.voice-pop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.voice-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--gap-hair) var(--space-3);
+  margin: 0;
+}
+
+.voice-facts dt {
+  color: var(--muted);
+}
+
+.voice-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.voice-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.voice-progress .meter-bar {
+  grid-column: 1 / -1;
+}
+
+/* Settings › Voice. */
+/* Each model is a row of its own beside the others (rows space themselves: .settings-row + .settings-row). */
+.voice-models {
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-model-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.voice-model-head .settings-label {
+  margin-right: auto;
+}
+
+.voice-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}

@@ -157,6 +157,8 @@ export function wireLiveRecord(options: {
   let active: Active | null = null;
   /** The recording being saved, while it is. */
   let saving: Promise<LiveRecording | null> | null = null;
+  /** The recording being saved: narration finished just after the stop still joins its log until it is written. */
+  let closing: Active | null = null;
   let done: LiveRecording | null = null;
   let error: string | null = null;
 
@@ -296,8 +298,9 @@ export function wireLiveRecord(options: {
     for (const off of a.off) { try { off(); } catch { /* the view went away first */ } }
     const ms = Math.min(RECORD_MAX_MS, Math.max(1, now() - a.startedAt));
     if (a.waiting) { const held = a.waiting; a.waiting = null; keep(a, held, ms, true); }
+    closing = a;
     saving = save(a, ms, why).catch((e: Error) => { error = `The recording could not be saved: ${e.message}`; return null; })
-      .then((r) => { saving = null; done = r; tell(); return r; });
+      .then((r) => { saving = null; closing = null; done = r; tell(); return r; });
     tell();
     return saving;
   };
@@ -345,9 +348,13 @@ export function wireLiveRecord(options: {
       }
     }
     rmSync(a.raw, { recursive: true, force: true });
+    // Narration that came while this was saved joins the log in time order; key frames keep pointing at their steps.
+    const steps = [...a.steps].sort((x, y) => x.at - y.at);
+    for (const k of keyFrames) if (k.step !== null) k.step = steps.indexOf(a.steps[k.step] as LiveStep);
+    closing = null;
     const recording: LiveRecording = {
       id: a.id, projectId: a.projectId, url: a.url, startedAt: a.startedAt, ms, viewWidth: a.viewWidth, folder: a.folder,
-      clip, clipWhy, keyFrames, steps: a.steps, cut: a.cut, stopped: why,
+      clip, clipWhy, keyFrames, steps, cut: a.cut, stopped: why,
     };
     writeFileSync(join(a.folder, 'recording.json'), `${JSON.stringify({ version: 1, ...recording }, null, 1)}\n`, { mode: 0o600 });
     return recording;
@@ -363,11 +370,17 @@ export function wireLiveRecord(options: {
 
   ipc.handle('live:recordStart', async (event) => (ok(event) ? start() : state()));
   ipc.handle('live:recordStop', async (event) => (options.trusted(event) ? end('owner') : null));
-  ipc.handle('live:recordSay', (event, text: unknown) => {
-    if (!options.trusted(event) || !active || typeof text !== 'string') return false;
-    const before = active.steps.length;
-    step(active, { type: 'said', time: now(), text });
-    return active.steps.length > before;
+  // Narration (voice input): `at` is when the words began, on the window's clock; kept inside the recording.
+  // Narration (voice input): `at` is when the words began, on the window's clock; kept inside the recording. The last
+  // sentence is often heard after the stop: it still joins the recording while that is being saved.
+  ipc.handle('live:recordSay', (event, text: unknown, at: unknown) => {
+    const a = active ?? closing;
+    if (!options.trusted(event) || !a || typeof text !== 'string') return false;
+    const before = a.steps.length;
+    const t = Math.min(now(), a.startedAt + RECORD_MAX_MS);
+    const time = typeof at === 'number' && Number.isFinite(at) ? Math.min(t, Math.max(a.startedAt, at)) : t;
+    step(a, { type: 'said', time, text }, !active);
+    return a.steps.length > before;
   });
   ipc.handle('live:recordFile', async (event, rawProject: unknown, rawId: unknown, rawFile: unknown) => {
     if (!options.trusted(event)) return null;

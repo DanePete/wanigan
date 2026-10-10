@@ -70,6 +70,7 @@ import { LibraryPanel } from './live/Library';
 import { PagesTab } from './live/Pages';
 import { SnapPanel, type SnapShot } from './live/Snap';
 import { RecordAnnounce, RecordButton, RecordReview, useRecordEscape, useRecorder } from './live/Record';
+import { LiveVoice } from './live/Voice';
 import { LayerTray } from './live/Tray';
 import { useLayer } from './live/use-layer';
 import { pagePath } from '../lib/live-layer';
@@ -1041,8 +1042,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               <ToolSeparator />
               <IconButton icon="camera" label="Snap" keys={LIVE_TIP.snap} pressed={!!snap} disabled={!hasScript || !!view?.error} onClick={() => void startSnap()} />
               <RecordButton rec={rec} disabled={!!view?.error} onToggle={toggleRecord} />
-              {/* Voice lands here next (another branch): speaking instead of typing. A place, not a control, until it does. */}
-              <span className="tool-slot" data-slot="voice" />
+              {/* Voice: speaking instead of typing, and narrating a recording (components/live/Voice.tsx). */}
+              <span className="tool-slot" data-slot="voice"><LiveVoice rec={rec} /></span>
             </>
           ) : null}
         </ToolGroup>

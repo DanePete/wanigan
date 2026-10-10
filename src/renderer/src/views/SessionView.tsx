@@ -29,6 +29,7 @@ import { LimitsLeft } from '../components/LimitsLeft';
 import { Ask } from '../components/Ask';
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/Attachments';
 import { LivePane } from '../components/Live';
+import { VoiceInput } from '../components/VoiceInput';
 import { useLiveSplit, useSessionEdits } from '../lib/live';
 import { useAppState } from '../lib/settings';
 import { liveFor } from '@shared/settings';
@@ -111,14 +112,15 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
 
   useEffect(() => { setConfirmStop(false); setTurnOpen(null); setUndoing(false); }, [sessionId]);
 
-  // ⌘⇧D shows or hides the panel; ⌘⇧M moves between the composer and the terminal (whose Tab is the program's).
+  // ⌘⇧D shows or hides the panel; ⌘⇧E moves between the composer and the terminal (whose Tab is the program's).
+  // ⌘⇧M is voice input's, in every box (shared/shortcuts.ts VOICE_TOGGLE).
   const keyState = useRef({ panelOpen, live });
   keyState.current = { panelOpen, live };
   useEffect(() => {
     const mac = isMac();
     const onKey = (e: KeyboardEvent): void => {
       if (!(mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) || !e.shiftKey || e.altKey) return;
-      if (e.code !== 'KeyD' && e.code !== 'KeyM') return;
+      if (e.code !== 'KeyD' && e.code !== 'KeyE') return;
       if (document.querySelector('[aria-modal="true"]')) return;
       e.preventDefault();
       e.stopPropagation();
@@ -419,15 +421,14 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
           id="composer"
           rows={1}
           value={text}
-          aria-keyshortcuts={isMac() ? 'Meta+Shift+M' : 'Control+Shift+M'}
+          aria-keyshortcuts={isMac() ? 'Meta+Shift+E' : 'Control+Shift+E'}
           onChange={(e) => setText(e.target.value)}
           placeholder={provider === 'shell' ? 'Send to the shell' : waits ? `Message ${agent}: it goes when the agent is idle` : `Message ${agent}`}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
         />
         <div className="composer-tools">
           {takesFiles ? <AttachButton onPick={attach.pick} tour="session-attach" /> : null}
-          {/* Voice input (its own branch) is merged here, beside the paperclip: an empty slot until then. */}
-          <span className="composer-slot composer-voice" data-slot="voice" />
+          <VoiceInput target={input} label="Speak to the agent" />
           <span className="composer-hint" aria-hidden="true">
             <KeyCaps keys={['Enter']} /> sends <span className="composer-hint-sep">·</span> <KeyCaps keys={['Shift', 'Enter']} /> new line
             <span className="composer-hint-sep">·</span> <KeyCaps shortcut={COMPOSER_KEYS} /> terminal

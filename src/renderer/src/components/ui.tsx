@@ -334,8 +334,9 @@ export function useFocusTrap(box: RefObject<HTMLElement | null>, onClose: () => 
       ?? available(focusable);
     target?.focus();
     const onKey = (e: KeyboardEvent): void => {
-      // An open dropdown's list sits outside the box; its keys are its own.
-      if ((e.target as Element | null)?.closest?.('.sel-list')) return;
+      // An open dropdown's list sits outside the box; its keys are its own. So are a popover's opened from inside it
+      // (voice input's prompt): Escape closes the popover, not the dialog under it.
+      if ((e.target as Element | null)?.closest?.('.sel-list, .popover')) return;
       // Escape belongs to a terminal (its program), and to an input method composing text.
       if (e.key === 'Escape' && (e.isComposing || (e.target as Element | null)?.closest?.('.xterm'))) return;
       if (e.key === 'Escape') { e.stopPropagation(); close.current(); }

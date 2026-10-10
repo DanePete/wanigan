@@ -55,3 +55,5 @@ mac:
     NSDocumentsFolderUsageDescription: Wanigan runs coding agents in the projects you open.
     NSDesktopFolderUsageDescription: Wanigan runs coding agents in the projects you open.
     NSDownloadsFolderUsageDescription: Wanigan runs coding agents in the projects you open.
+    # Voice input turns speech into text on this Mac (src/main/voice.ts); the audio never leaves it.
+    NSMicrophoneUsageDescription: Wanigan turns what you say into text on this Mac, for voice input. The audio never leaves it.
