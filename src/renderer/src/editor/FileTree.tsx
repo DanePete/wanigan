@@ -12,6 +12,7 @@ import type { DirEntry } from '@shared/files';
 import { bridge, call } from '../lib/api';
 import { Icon } from '../components/icons';
 import { Button, IconButton } from '../components/ui';
+import { Panel } from '../components/Panel';
 import { openInEditor } from './store';
 
 /** Installed code: listed, quieter, and opened read-only by the core. */
@@ -62,7 +63,7 @@ export function focusFileTree(): void {
   document.querySelector<HTMLElement>('.code-tree [role="treeitem"][tabindex="0"]')?.focus();
 }
 
-export function FileTree({ projectId, cardId, label, activePath }: {
+export function FileTree({ projectId, cardId, label, activePath, onClose }: {
   projectId: string;
   /** A card's own worktree; null is the project folder. */
   cardId: string | null;
@@ -70,6 +71,8 @@ export function FileTree({ projectId, cardId, label, activePath }: {
   label: string;
   /** The file open in the editor, when it is in this checkout. */
   activePath: string | null;
+  /** Put the files away (the editor's own button brings them back). */
+  onClose?: () => void;
 }) {
   const rootKey = `${projectId}|${cardId ?? ''}`;
   const kept = remembered.get(rootKey);
@@ -213,13 +216,15 @@ export function FileTree({ projectId, cardId, label, activePath }: {
 
   const top = folders.get('');
   return (
-    <div className="code-tree">
-      <div className="code-tree-head">
-        <Icon name="folder" size={14} />
-        <span className="code-tree-title" title={label}>{label}</span>
-        <IconButton icon="refresh" label="Read the folders again" onClick={readAll} />
-        <IconButton icon="up" label="Close every folder" disabled={!open.size} onClick={() => { setOpen(new Set()); setFocus(null); }} />
-      </div>
+    <Panel side="left" className="code-tree" label="the project’s files" onClose={onClose} resizable sizeKey="code-tree" size={280} minSize={200} maxSize={480}
+      title={<span className="code-tree-title" data-tip={label}>{label}</span>}
+      actions={(
+        <>
+          <IconButton icon="refresh" size="s" label="Read the folders again" onClick={readAll} />
+          {/* Only while a folder is open: a disabled quiet button still draws a box (the foundation's disabled look). */}
+          {open.size ? <IconButton icon="up" size="s" label="Close every folder" onClick={() => { setOpen(new Set()); setFocus(null); }} /> : null}
+        </>
+      )}>
       {top?.error && !top.entries ? (
         <div className="code-tree-note" role="alert">
           <p className="error-text">{top.error}</p>
@@ -227,7 +232,7 @@ export function FileTree({ projectId, cardId, label, activePath }: {
         </div>
       ) : !top?.entries ? <p className="code-tree-note faint">Reading {label}…</p>
         : !rows.length ? <p className="code-tree-note faint">This folder is empty.</p> : null}
-      <ul className="code-tree-list" role="tree" aria-label={`Files in ${label}`} ref={list} onKeyDown={onKey} hidden={!rows.length}>
+      <ul className="code-tree-list" role="tree" aria-label={`Files in ${label}`} ref={list} onKeyDown={onKey} hidden={!rows.length} data-tour="code-files">
         {rows.map((row) => {
           const isOpen = row.kind === 'dir' && open.has(row.path);
           const folder = row.kind === 'dir' ? folders.get(row.path) : undefined;
@@ -239,7 +244,7 @@ export function FileTree({ projectId, cardId, label, activePath }: {
               aria-level={row.depth + 1} aria-setsize={row.size} aria-posinset={row.at}
               aria-expanded={row.kind === 'dir' ? isOpen : undefined} aria-selected={marked} aria-busy={busy || undefined}
               className={`code-tree-row${marked ? ' open-file' : ''}${installed ? ' installed' : ''}`} style={{ '--depth': row.depth } as CSSProperties}
-              title={installed ? `${row.path}: installed code, opens read-only` : folder?.error ? `${row.path}: ${folder.error}` : row.path}
+              data-tip={installed ? `${row.path}: installed code, opens read-only` : folder?.error ? `${row.path}: ${folder.error}` : undefined} data-tip-side="right"
               onFocus={() => setFocus(row.path)} onClick={() => choose(row)}>
               <span className="code-tree-twist" aria-hidden="true">{row.kind === 'dir' ? <Icon name="chevron" size={12} /> : null}</span>
               <Icon name={row.kind === 'dir' ? 'folder' : 'file'} size={14} className="code-tree-icon" />
@@ -251,6 +256,6 @@ export function FileTree({ projectId, cardId, label, activePath }: {
           );
         })}
       </ul>
-    </div>
+    </Panel>
   );
 }

@@ -14,7 +14,7 @@ import { pieces } from '@shared/diff';
 import { attempt, call, useQuery } from '../../lib/api';
 import { plural } from '../../lib/format';
 import { Icon } from '../../components/icons';
-import { Button, useToast } from '../../components/ui';
+import { Button, Toggle, useToast } from '../../components/ui';
 import { Confirm, WhoLine, type Where } from './common';
 
 /** Unchanged lines kept on each side of a conflict; the rest fold away. */
@@ -69,7 +69,7 @@ export function Resolver({ where, file, load, busy, busyWhy }: {
     const r = await attempt(() => call('git.resolve', { ...where, path: file.path, digest: c?.digest, ...params }), fail);
     setKeeping(null);
     if (!r) reread();
-    if (r) toast(`${done}${r.left ? ` ${plural(r.left, 'file')} still conflict${r.left === 1 ? 's' : ''}.` : ' Nothing conflicts now: commit to finish.'}`);
+    if (r) toast(`${done}${r.left ? ` ${plural(r.left, 'file')} still conflict${r.left === 1 ? 's' : ''}.` : ' Nothing conflicts now: commit to finish.'}`, 'done');
   };
   // Returned, so the button stays disabled until the file is written.
   const markResolved = (): Promise<void> | undefined => {
@@ -83,7 +83,7 @@ export function Resolver({ where, file, load, busy, busyWhy }: {
   return (
     <section className="resolver" aria-label={`Resolve ${file.path}`}>
       <header className="diff-head resolver-head" tabIndex={-1}>
-        <span className="diff-path mono" title={file.path}>
+        <span className="diff-path mono">
           {file.path.includes('/') ? <span className="diff-dir">{file.path.slice(0, file.path.lastIndexOf('/') + 1)}</span> : null}
           {file.path.split('/').pop()}
         </span>
@@ -96,54 +96,46 @@ export function Resolver({ where, file, load, busy, busyWhy }: {
         <span className="diff-head-end">
           {c && (c.stages.ours || c.stages.theirs) ? (
             <>
-              <Button size="s" tone="quiet" disabled={busy} title={busyWhy ?? `The whole file as ${labels.ours} has it`} onClick={() => resolve({ side: 'ours' }, `Took ${labels.ours}’s ${file.path}.`)}>
+              <Button size="s" tone="quiet" disabled={busy} data-tip={busyWhy ?? `The whole file as ${labels.ours} has it`} onClick={() => resolve({ side: 'ours' }, `Took ${labels.ours}’s ${file.path}.`)}>
                 {sides ? state.ours : `Take ours (${labels.ours})`}
               </Button>
-              <Button size="s" tone="quiet" disabled={busy} title={busyWhy ?? `The whole file as ${labels.theirs} has it`} onClick={() => resolve({ side: 'theirs' }, `Took ${labels.theirs}’s ${file.path}.`)}>
+              <Button size="s" tone="quiet" disabled={busy} data-tip={busyWhy ?? `The whole file as ${labels.theirs} has it`} onClick={() => resolve({ side: 'theirs' }, `Took ${labels.theirs}’s ${file.path}.`)}>
                 {sides ? state.theirs : `Take theirs (${labels.theirs})`}
               </Button>
             </>
           ) : null}
           {parsed && total ? (
-            <Button size="s" tone="primary" icon="check" disabled={busy} title={busyWhy ?? (left ? 'Some conflicts are not chosen yet: their markers would stay' : 'Write the result and stage it')} onClick={markResolved}>
+            <Button size="s" tone="primary" icon="check" disabled={busy} data-tip={busyWhy ?? (left ? 'Some conflicts are not chosen yet: their markers would stay' : 'Write the result and stage it')} onClick={markResolved}>
               Mark resolved
             </Button>
           ) : null}
         </span>
       </header>
       {file.who.length ? <div className="diff-note"><WhoLine who={file.who} /></div> : null}
-      {read.error ? <p className="error-text view-pad">{read.error.message}</p>
-        : !c ? <p className="faint view-pad diff-wait">Reading git’s versions of the file…</p>
+      {read.error ? <p className="error-text resolver-note">{read.error.message}</p>
+        : !c ? <p className="faint resolver-note diff-wait">Reading git’s versions of the file…</p>
           : c.binary || c.tooLarge ? (
-            <p className="resolver-note view-pad">
+            <p className="resolver-note">
               {c.binary ? 'A binary file: there are no lines to choose between.' : 'Too large to resolve line by line here.'} Take one side whole, or resolve it in an editor and mark it resolved as it is.
               {' '}<button type="button" className="linkish" disabled={busy} onClick={() => setKeeping({ left: 0, asIs: true })}>Mark resolved as it is</button>
             </p>
           ) : sides ? (
-            <p className="resolver-note view-pad">
+            <p className="resolver-note">
               {state.what}. {c.stages.theirs ? `${labels.theirs} has a version of it` : `${labels.theirs} has none`}; {c.stages.ours ? `${labels.ours} has one` : `${labels.ours} has none`}.
               {' '}Choose above: keeping a version stages it, deleting removes the file.
             </p>
           ) : parsed ? (
             <>
               {c.edited ? (
-                <p className="resolver-note view-pad">
+                <p className="resolver-note">
                   The file was edited after git marked it ({plural(c.inFile ?? 0, 'conflict')} left in it now). The choices here start from git’s own versions, and writing them replaces those edits.
                   {' '}<button type="button" className="linkish" disabled={busy} onClick={() => setKeeping({ left: c.inFile ?? 0, asIs: true })}>Mark resolved as edited</button>
                 </p>
               ) : null}
               <div className="resolver-tools">
                 {/* Added on both sides, there is nothing they came from. */}
-                {c.stages.base ? (
-                  <label className="resolver-toggle">
-                    <input type="checkbox" checked={showBase} onChange={(e) => setShowBase(e.target.checked)} />
-                    Show what both sides came from
-                  </label>
-                ) : null}
-                <label className="resolver-toggle">
-                  <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} />
-                  Show the whole result
-                </label>
+                {c.stages.base ? <Toggle className="resolver-toggle" checked={showBase} onChange={setShowBase} label="Show what both sides came from" /> : null}
+                <Toggle className="resolver-toggle" checked={preview} onChange={setPreview} label="Show the whole result" />
               </div>
               {preview && result ? (
                 <div className="resolver-preview" aria-label={`${file.path} as it will be written`}>
@@ -240,10 +232,21 @@ function Hunk({ id, hunk, total, lang, labels, showBase, choice, onChoose, disab
     <div className={`resolver-hunk${current ? ' chosen' : ''}`} role="group" aria-labelledby={`${id}-t`}>
       <div className="resolver-hunk-bar">
         <span id={`${id}-t`} className="resolver-hunk-title">Conflict {hunk.index + 1} of {total}</span>
-        <span className="choice-group" role="radiogroup" aria-label={`Resolve conflict ${hunk.index + 1}`}>
-          {CHOICES.map((o) => (
+        {/* Segmented's look; unlike a Segmented, choosing the chosen one again takes the choice back. */}
+        <span className="segmented segmented-s segmented-pill choice-group" role="radiogroup" aria-label={`Resolve conflict ${hunk.index + 1}`}>
+          {CHOICES.map((o, i) => (
             <button key={o.value} type="button" role="radio" aria-checked={current === o.value} className={current === o.value ? 'on' : ''}
-              title={o.hint} disabled={disabled} onClick={() => pick(o.value)}>{o.label}</button>
+              tabIndex={(current ?? 'ours') === o.value ? 0 : -1}
+              data-tip={o.hint} disabled={disabled} onClick={() => pick(o.value)}
+              onKeyDown={(e) => {
+                const by = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+                if (!by) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const next = (i + by + CHOICES.length) % CHOICES.length;
+                e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+                pick(CHOICES[next]!.value);
+              }}>{o.label}</button>
           ))}
         </span>
       </div>

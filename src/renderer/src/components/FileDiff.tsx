@@ -9,9 +9,8 @@ import type { DiffArea } from '@shared/git';
 import { diffHash, highlightDiff, noteTarget, parseDiff, pieces, splitRows, type DiffLine } from '@shared/diff';
 import type { ReviewNote } from '@shared/review-notes';
 import { bridge, useQuery } from '../lib/api';
-import { keyLabel } from '@shared/shortcuts';
 import { Icon } from './icons';
-import { Button } from './ui';
+import { Button, KeyCaps } from './ui';
 
 export const STATUS_LABEL: Record<ChangedFile['status'], string> = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', '?': 'New, untracked', U: 'Conflicted' };
 
@@ -113,7 +112,7 @@ export function FileDiff({
     const at = l ? noteTarget(l) : null;
     if (!l || !at || at.side !== side || !onAdd) return n ?? '';
     return (
-      <button type="button" className="dl-note-add" aria-label={`Leave a note on ${side === 'old' ? 'removed ' : ''}line ${at.line}`} title="Leave a note on this line"
+      <button type="button" className="dl-note-add" aria-label={`Leave a note on ${side === 'old' ? 'removed ' : ''}line ${at.line}`} data-tip="Leave a note on this line"
         onClick={() => { setEditing(keyOf(at)); setDraft(''); }}>{n}</button>
     );
   };
@@ -139,7 +138,7 @@ export function FileDiff({
     };
     return (
       <td className={`dl-pick${extra}`}>
-        <button type="button" className={`dl-pick-box${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={`${label} (Shift-click picks a range)`} onClick={click}>
+        <button type="button" className={`dl-pick-box${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} data-tip={`${label} (Shift-click picks a range)`} onClick={click}>
           {on ? <Icon name="check" size={10} /> : null}
         </button>
       </td>
@@ -170,7 +169,7 @@ export function FileDiff({
             <div className="row-gap">
               <Button size="s" tone="primary" type="submit" disabled={!draft.trim()}>Add note</Button>
               <Button size="s" tone="quiet" onClick={() => setEditing(null)}>Cancel</Button>
-              <span className="faint small">{keyLabel('Mod', mac)}{mac ? '' : '+'}{keyLabel('Enter', mac)} adds it. Notes go to the agent together.</span>
+              <span className="dl-note-hint"><KeyCaps keys={['Mod', 'Enter']} mac={mac} /> adds it. Notes go to the agent together.</span>
             </div>
           </form>
         ) : null}
@@ -187,7 +186,7 @@ export function FileDiff({
   return (
     <section className={`diff${viewed ? ' diff-is-viewed' : ''}${pick ? ' diff-pickable' : ''}`} aria-label={`Changes to ${file.path}`}>
       <header className="diff-head" tabIndex={-1}>
-        <span className="diff-path mono" title={file.path}>{dir ? <span className="diff-dir">{dir}</span> : null}{name}</span>
+        <span className="diff-path mono">{dir ? <span className="diff-dir">{dir}</span> : null}{name}</span>
         <span className="faint small">{STATUS_LABEL[file.status]}</span>
         {!file.binary && (file.additions || file.deletions) ? (
           <span className="fcount">
@@ -199,7 +198,7 @@ export function FileDiff({
           <span className="diff-head-end">
             {actions}
             {onViewed ? (
-              <label className="diff-viewed" title="Viewed files fold away. A change to the file unfolds it again.">
+              <label className="diff-viewed" data-tip="Viewed files fold away. A change to the file unfolds it again.">
                 {/* Ticked before the diff is read, the mark waits for it (WorkingTree). */}
                 <input type="checkbox" checked={!!viewed} onChange={(e) => onViewed(e.target.checked)} aria-label={`${file.path} viewed`} />
                 Viewed

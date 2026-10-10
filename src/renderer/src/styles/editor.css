@@ -14,13 +14,13 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border-top: 1px solid var(--line-strong);
+  border-top: var(--hairline) solid var(--line-strong);
   background: var(--surface);
 }
 
 .editor-drawer[data-dock='right'] {
   border-top: 0;
-  border-left: 1px solid var(--line-strong);
+  border-left: var(--hairline) solid var(--line-strong);
   height: auto;
   /* However wide it was left, the view beside it keeps room for its own bar and tabs (the edge's limit too). */
   max-width: max(var(--dock-min), calc(100% - var(--view-min-beside)));
@@ -67,8 +67,14 @@
   flex: none;
   align-items: stretch;
   min-height: calc(var(--space-8) + var(--space-1));
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   background: var(--bg-rail);
+}
+
+/* On the Code tab the head is the view's toolbar: its height, on the panel. */
+.editor-drawer[data-mode='page'] > .editor-head {
+  min-height: var(--toolbar-h);
+  background: var(--surface);
 }
 
 .editor-tabs {
@@ -86,19 +92,28 @@
   list-style: none;
 }
 
+/* A file's tab: quiet words; the one shown has the underline tabs' water line, never a box. */
 .editor-tab {
   display: flex;
   flex: none;
   align-items: center;
-  max-width: 260px;
-  border-right: 1px solid var(--line);
+  max-width: calc(var(--panel-left-w) + var(--space-3));
   color: var(--muted);
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.editor-tab:hover {
+  background: var(--hover);
+  color: var(--fg);
 }
 
 .editor-tab.active {
-  background: var(--surface);
   color: var(--fg);
-  box-shadow: inset 0 2px 0 var(--water);
+  box-shadow: inset 0 calc(-1 * var(--focus-ring)) 0 var(--water);
+}
+
+.editor-drawer[data-mode='drawer'] .editor-tab.active {
+  background: var(--surface);
 }
 
 .editor-tab-open {
@@ -111,14 +126,18 @@
   border: 0;
   background: none;
   color: inherit;
-  font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  font: 400 var(--text-sm) / var(--lh-sm) var(--font-ui);
   cursor: pointer;
+}
+
+.editor-tab.active .editor-tab-open {
+  font-weight: 500;
 }
 
 .editor-tab-open:focus-visible,
 .editor-tab-close:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--water);
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
 .editor-tab-name {
@@ -171,9 +190,12 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: 2px;
+  gap: var(--gap-hair);
   padding: 0 var(--space-2);
-  border-left: 1px solid var(--line);
+}
+
+.editor-how {
+  margin-left: var(--space-2);
 }
 
 .editor-body {
@@ -208,7 +230,8 @@
 .editor-drawer[data-mode='page'] {
   display: grid;
   flex: 1 1 0;
-  grid-template-columns: var(--code-tree-w) minmax(0, 1fr);
+  /* The files' panel sets its own width (it is resized from its edge), and is nothing when put away. */
+  grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   border-top: 0;
 }
@@ -235,37 +258,39 @@
   vertical-align: middle;
 }
 
+/* The Code tab's files: the left panel (Panel), or the frame a fault in them is shown in. */
 .code-tree {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid var(--line);
-  background: var(--bg-rail);
+  border-right: var(--hairline) solid var(--line);
+  background: var(--surface);
 }
 
-.code-tree-head {
+/* The frame a fault in the files is shown in keeps the panel's room, never the editor's. */
+.editor-drawer[data-mode='page'] > .code-tree:not(.panel) {
+  width: var(--code-tree-w);
+  overflow: auto;
+}
+
+.code-tree > .panel-head {
+  min-height: var(--toolbar-h);
+  padding-top: 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.code-tree > .panel-body {
   display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: calc(var(--space-8) + var(--space-1));
-  padding: 0 var(--space-1) 0 var(--space-3);
-  border-bottom: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.code-tree-head .btn-icon {
-  width: var(--space-6);
-  height: var(--space-6);
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
 }
 
 .code-tree-title {
-  flex: 1;
-  min-width: 0;
+  display: block;
   overflow: hidden;
-  color: var(--fg);
-  font: 600 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  font-size: var(--text-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -296,8 +321,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  min-height: var(--space-6);
-  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth, 0) * var(--space-3));
+  min-height: calc(var(--space-6) + var(--space-1));
+  margin: 0 var(--space-2);
+  padding: 0 var(--space-2) 0 calc(var(--space-1) + var(--depth, 0) * var(--space-3));
+  border-radius: var(--radius-s);
   color: var(--muted);
   font: 400 var(--text-sm) / var(--lh-sm) var(--font-ui);
   white-space: nowrap;
@@ -311,18 +338,17 @@
 
 .code-tree-row:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--water);
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
 /* The file open in the editor. */
 .code-tree-row.open-file {
   background: var(--water-soft);
-  color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--water);
+  color: var(--water-text);
 }
 
 .code-tree-row.open-file:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--water);
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
 /* Installed code (vendor, node_modules): listed, quieter; it opens read-only. */
@@ -374,7 +400,7 @@
   gap: var(--space-2);
   padding: var(--space-1) var(--space-4);
   border: 0;
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
   background: var(--bg-rail);
   color: var(--muted);
   font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
@@ -389,10 +415,10 @@
 
 .editor-collapsed:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--water);
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
-.editor-collapsed kbd {
+.editor-collapsed .keycaps {
   margin-left: auto;
 }
 
@@ -401,21 +427,12 @@
 }
 
 /*
-  In the live view the drawer is its dock: tabs for Code and the live view's
-  own (notes, problems, request), drawn into .dock-panel by
-  components/live/Dock.tsx. Closed, its tabs stay as a strip under the page.
+  In the live view the drawer is its dock: Code and the live view's own (notes, problems, request, DevTools),
+  drawn into .dock-panel by components/live/Dock.tsx. Their tabs wait in the status line (live.css).
 */
 .editor-body[hidden],
 .dock-panel[hidden] {
   display: none;
-}
-
-.dock-tabs {
-  display: flex;
-  flex: none;
-  align-items: center;
-  padding: 0 var(--space-2);
-  border-right: 1px solid var(--line);
 }
 
 .dock-head-fill {
@@ -428,45 +445,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   background: var(--surface);
-}
-
-.dock-collapsed {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-1);
-  /* The Talk to Wanigan button sits over the right end, as it does over the live view's status line. */
-  padding: var(--space-1) calc(var(--fab) + var(--space-5) + var(--space-2)) var(--space-1) var(--space-3);
-  border-top: 1px solid var(--line);
-  background: var(--bg-rail);
-}
-
-.dock-collapsed-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: 0;
-  border-radius: var(--radius-s);
-  background: none;
-  color: var(--muted);
-  font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
-  cursor: pointer;
-}
-
-.dock-collapsed-tab:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.dock-collapsed-tab:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--water);
-}
-
-.dock-collapsed-keys {
-  margin-left: auto;
-  font-size: var(--text-xs);
 }
 
 /* ── inside: breadcrumbs, notices, the text, the status line ───────────── */
@@ -504,9 +482,9 @@
   flex: none;
   align-items: center;
   gap: var(--space-1);
-  min-height: calc(var(--space-6) + var(--space-1));
+  min-height: var(--control-m);
   padding: 0 var(--space-2);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   background: var(--surface);
   font: 400 var(--text-sm) / var(--lh-sm) var(--font-ui);
 }
@@ -517,7 +495,7 @@
   flex: none;
   align-items: center;
   padding-right: var(--space-1);
-  border-right: 1px solid var(--line);
+  border-right: var(--hairline) solid var(--line);
 }
 
 .crumbs-nav .btn-icon {
@@ -556,8 +534,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  max-width: 280px;
-  padding: 2px var(--space-1);
+  max-width: calc(var(--panel-left-w) + var(--space-8));
+  padding: var(--gap-hair) var(--space-1);
   border: 0;
   border-radius: var(--radius-s);
   background: none;
@@ -600,10 +578,10 @@
   left: 0;
   display: flex;
   flex-direction: column;
-  width: 320px;
+  width: calc(var(--panel-right-w) + var(--space-8));
   max-width: 70vw;
-  max-height: 300px;
-  border: 1px solid var(--line-strong);
+  max-height: calc(var(--panel-right-w) + var(--space-2));
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-m);
   background: var(--raised);
   box-shadow: var(--elev-float);
@@ -613,11 +591,11 @@
 
 .crumb-menu-placed {
   position: fixed;
-  width: 340px;
+  width: calc(var(--panel-right-w) + var(--space-12));
 }
 
 .crumbs-recent {
-  width: 380px;
+  width: calc(var(--panel-right-w) + var(--space-12) + var(--space-10));
 }
 
 .crumb-menu-filter,
@@ -626,7 +604,7 @@
   height: calc(var(--space-8) - var(--space-1));
   padding: 0 var(--space-3);
   border: 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   border-radius: 0;
   box-shadow: none;
   background: none;
@@ -705,40 +683,49 @@
   font-size: var(--text-sm);
 }
 
-/* What needs saying about the file. Calm by default; strong (not amber) when your work and theirs differ. */
+/*
+  What needs saying about the file, one line above its text. Quiet by default (a reload, a draft back, someone
+  else's code); amber when your unsaved work and someone else's change differ, because then you decide; red when
+  the file is gone.
+*/
 .editor-notice {
   display: flex;
   flex: none;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  background: var(--water-soft);
+  min-height: var(--control-m);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--sunken);
   color: var(--fg);
   font-size: var(--text-sm);
 }
 
 .editor-notice > svg {
   flex: none;
-  color: var(--water-text);
-}
-
-.editor-notice-strong {
-  background: color-mix(in srgb, var(--water) 22%, var(--surface));
-}
-
-.editor-notice-locked {
-  background: var(--sunken);
-}
-
-.editor-notice-locked > svg {
   color: var(--muted);
+}
+
+.editor-notice-needs {
+  background: var(--amber-soft);
+}
+
+.editor-notice-needs > svg {
+  color: var(--amber);
+}
+
+.editor-notice-gone {
+  background: var(--red-soft);
+}
+
+.editor-notice-gone > svg {
+  color: var(--red);
 }
 
 .editor-notice-text {
   flex: 1;
-  min-width: 220px;
+  min-width: calc(var(--panel-left-w) - var(--space-6));
 }
 
 .editor-status {
@@ -748,7 +735,7 @@
   gap: var(--space-3);
   min-height: var(--space-6);
   padding: 0 var(--space-3);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
   background: var(--bg-rail);
   color: var(--faint);
   font: 400 var(--text-xs) / var(--lh-sm) var(--font-ui);
@@ -774,7 +761,7 @@
 
 .editor-status-toggle {
   padding: 0 var(--space-1);
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-s);
   background: none;
   color: var(--faint);
@@ -792,6 +779,14 @@
 .editor-status .linkish:focus-visible {
   outline: none;
   box-shadow: var(--focus);
+}
+
+/* On the Code tab the same facts are the end of the window's status line. */
+.status-slot .editor-status {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 /* CodeMirror's fold arrows, and the Vim status line it adds below the text. */
@@ -822,13 +817,13 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   background: var(--raised);
 }
 
 .compare-title {
   flex: 1;
-  min-width: 200px;
+  min-width: var(--panel-min-w);
   margin: 0;
   font-weight: 600;
   font-size: var(--text-sm);
@@ -843,7 +838,7 @@
   display: grid;
   flex: none;
   grid-template-columns: 1fr 1fr;
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   color: var(--faint);
   font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
@@ -853,7 +848,7 @@
 }
 
 .compare-labels span + span {
-  border-left: 1px solid var(--line);
+  border-left: var(--hairline) solid var(--line);
 }
 
 .compare-body {
@@ -893,7 +888,7 @@
 }
 
 .compare-body .cm-merge-revert button {
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-s);
   background: var(--surface);
   color: var(--fg);
@@ -913,7 +908,7 @@
   flex: none;
   margin: 0;
   padding: var(--space-1) var(--space-3);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 /* ── quick open ─────────────────────────────────────────────────────────── */

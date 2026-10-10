@@ -79,7 +79,7 @@ const ALLOW = [
     reason: 'the core will not merge into a folder with uncommitted work, or delete a branch whose commits are not merged, and says why; the demo’s Northstar has uncommitted work on purpose',
   },
   {
-    surface: /› Changes › Branches$/, label: /^Name of the new branch$/, problem: /^showed an error: “echo wanigan-crawl” contains a space or a control character, which a git ref cannot\.$/,
+    surface: /› Changes › Branches$/, label: /^Branch name$/, problem: /^showed an error: “echo wanigan-crawl” contains a space or a control character, which a git ref cannot\.$/,
     reason: 'the crawler types words with a space; the field says at once why git refuses that name, and Make the branch stays off',
   },
   {
@@ -715,7 +715,7 @@ function keyChecks(w) {
     'Forward again': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); await page.keyboard.press('Control+Minus'); }, keys: ['Control+Shift+Minus'],
       expect: focused(() => !/^Line 1,/.test(document.querySelector('.editor-status button')?.textContent ?? 'Line 1,')) }],
     'Move to the breadcrumbs': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+Shift+Period'], expect: focused(() => document.activeElement?.classList.contains('crumb-button')) }],
-    'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[title^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
+    'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[data-tip^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
     'Leave the editor': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Escape', 'Tab'], expect: focused(() => !document.activeElement?.closest('.cm-editor')) }],
     'Pull, fast-forward only': [{ at: `#/p/${ns}/changes?branch=${ns}-3`, ready: '.pr-chip', keys: ['Meta+Shift+p'], expect: shows('.status-line:has-text("Already up to date with origin/wanigan/ns-3")') }],
     Fetch: [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+f'], expect: shows('.status-line:has-text("Fetched from origin")') }],
@@ -995,7 +995,11 @@ function checks(w) {
     await page.waitForSelector('.dialog input');
     await page.keyboard.type('Twice');
   }, ['Enter', 'Enter'], 'accounts.add');
-  once('A double Enter records one decision', `#/p/${ns}/decisions`, '.decision', typeInto('#decision-title', 'Only once'), ['Enter', 'Enter'], 'decisions.add');
+  once('A double Enter records one decision', `#/p/${ns}/decisions`, '.decision', async (page) => {
+    await page.click('.records-toolbar button:has-text("New decision")');
+    await page.waitForSelector('#decision-title');
+    await page.keyboard.type('Only once');
+  }, ['Enter', 'Enter'], 'decisions.add');
   once('A double Enter adds one criterion', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#criterion-new', 'Only once'), ['Enter', 'Enter'], 'criteria.add');
   once('A double ⌘Enter comments once', `${board}?card=${ns}-1`, '.drawer .stages', typeInto('#comment-new', 'Only once'), ['Meta+Enter', 'Meta+Enter'], 'cards.comment');
   once('A double Enter saves one board view', board, '.card', async (page) => {

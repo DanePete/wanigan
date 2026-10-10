@@ -24,7 +24,7 @@ export const placeOf = (status: Pick<GitStatus, 'cardKey'>): string => (status.c
 /** A branch or commit name, set as code. */
 export function Ref({ name, kind = 'branch', current = false }: { name: string; kind?: RefName['kind']; current?: boolean }) {
   return (
-    <span className={`ref ref-${kind}${current ? ' ref-current' : ''}`} title={current ? `${name}: checked out here` : kind === 'remote' ? `${name}: where the remote is` : kind === 'tag' ? `Tag ${name}` : name}>
+    <span className={`ref ref-${kind}${current ? ' ref-current' : ''}`} data-tip={current ? `${name}: checked out here` : kind === 'remote' ? `${name}: where the remote is` : kind === 'tag' ? `Tag ${name}` : name}>
       {kind === 'tag' ? <span aria-hidden="true">#</span> : null}
       {name}
       {current ? <span className="visually-hidden"> (checked out)</span> : null}
@@ -33,9 +33,9 @@ export function Ref({ name, kind = 'branch', current = false }: { name: string; 
 }
 
 /** A card's key, stamped like its mark on the board; it opens the card. */
-export function CardBadge({ cardKey }: { cardKey: string }) {
+export function CardBadge({ cardKey, tip, tour }: { cardKey: string; tip?: string; tour?: string }) {
   return (
-    <button type="button" className="card-key-badge" title={`Made for ${cardKey}: open the card`} onClick={(e) => { e.stopPropagation(); openCard(cardKey); }}>
+    <button type="button" className="card-key-badge" data-tour={tour} data-tip={tip ?? `Made for ${cardKey}: open the card`} aria-label={tip ?? `Made for ${cardKey}: open the card`} onClick={(e) => { e.stopPropagation(); openCard(cardKey); }}>
       {cardKey}
     </button>
   );
@@ -56,7 +56,7 @@ export function WhoMarks({ who }: { who: Attribution[] }) {
   if (!first) return null;
   const line = (a: Attribution): string => `${PROVIDER_LABEL[a.provider]} · ${a.title}${a.turns.length ? `, ${turnsText(a.turns)}` : a.live ? ', this turn so far' : ''}${a.shared ? ' (another session shared the folder then)' : ''}`;
   return (
-    <span className={`who${first.live ? ' who-live' : ''}`} title={`Changed by ${who.map(line).join('; ')}`}>
+    <span className={`who${first.live ? ' who-live' : ''}`} data-tip={`Changed by ${who.map(line).join('; ')}`}>
       <Icon name={first.provider === 'shell' ? 'terminal' : first.provider} size={12} />
       <span>{first.cardKey ?? PROVIDER_LABEL[first.provider]}</span>
       {rest.length ? <span className="who-more">+{rest.length}</span> : null}

@@ -322,8 +322,8 @@ try {
       if (marked.sort().join() !== [...new Set(wantMarked)].sort().join() || !wantMarked.includes('PayButton.tsx')) failures.push(`${theme}/git: who-changed marks on ${marked.join(', ')}, git says ${wantMarked.join(', ')}`);
       const banner = await page.textContent('.git-agents').catch(() => '');
       for (const a of status.agents) if (!banner.includes(a.title)) failures.push(`${theme}/git: the agents banner does not name ${a.title}`);
-      const onBar = await page.textContent('.gitbar-name').catch(() => null);
-      if (onBar !== status.branch) failures.push(`${theme}/git: the bar says ${onBar}, git says ${status.branch}`);
+      const onBar = await page.textContent('.git-checkout .git-branch-name').catch(() => null);
+      if (onBar !== status.branch) failures.push(`${theme}/git: the toolbar's checkout says ${onBar}, git says ${status.branch}`);
       const pushCount = await page.$eval('.remote-actions button:last-of-type', (b) => b.textContent).catch(() => '');
       if (!pushCount.includes(String(status.ahead))) failures.push(`${theme}/git: Push says "${pushCount}" with ${status.ahead} to push`);
       const discards = await page.$$eval('.diff-head button', (bs) => bs.filter((b) => /Discard|Delete/.test(b.textContent)).map((b) => b.disabled));
@@ -334,7 +334,7 @@ try {
       const yml = order.indexOf('northstar_checkout.routing.yml');
       if (php < 0 || yml < 0) failures.push(`${theme}/changes: the demo's changed files are ${order.join(', ')}`);
       const slot = (i) => `:nth-match(.diff-slot, ${i + 1})`;
-      await page.click('.changes .toolbar [role="radio"]:has-text("Split")');
+      await page.click('.status-line [role="radio"]:has-text("Split")');
       await page.waitForSelector('.diff-split', { timeout: 3000 }).catch(() => failures.push(`${theme}/changes: Split did not show side by side`));
       await page.click('.changes-files .git-file-main');
       for (let i = 0; i < php; i++) await page.keyboard.press('j');
@@ -395,7 +395,7 @@ try {
       }
       const progress = await page.textContent('.changes-progress');
       if (progress?.trim() !== `3 of ${order.length} viewed`) failures.push(`${theme}/changes: progress says "${progress}"`);
-      await page.click('.changes .toolbar [role="radio"]:has-text("Unified")');
+      await page.click('.status-line [role="radio"]:has-text("Unified")');
       await page.click('.git-file[data-key$="routing.yml"] .git-file-main');
       await page.waitForSelector('.diff-slot[data-path$="routing.yml"] .syn-attr', { timeout: 4000 }).catch(() => failures.push(`${theme}/changes: the YAML keys are not coloured`));
       await page.click('.git-file[data-key$=".html.twig"] .git-file-main');
@@ -498,7 +498,9 @@ try {
       await page.fill('#branch-new-name', 'feature/sticky-summary');
       await page.waitForTimeout(200);
       await page.screenshot({ path: join(out, `${theme}-git-new-branch.png`) });
-      await page.click('.branches-toolbar button:has-text("New branch")');
+      // The new branch is a dialog: Escape puts it away, and nothing was made.
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#branch-new-name', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/git: Escape did not close the new branch dialog`));
 
       // Stashes: git's list, its files, and Save waiting while agents work.
       const stashes = await git('git.stashes');
@@ -508,7 +510,12 @@ try {
       if (stashText.join() !== stashes.map((s) => s.message).join()) failures.push(`${theme}/git: stashes ${stashText.join()} (git: ${stashes.map((s) => s.message).join()})`);
       const stashFiles = await git('git.stashShow', { index: stashes[0].index, sha: stashes[0].sha });
       if ((await page.$$('.stash-diffs .diff')).length !== stashFiles.files.length) failures.push(`${theme}/git: the stash shows a different number of files than git`);
-      if (status.agents.length && !(await page.$('.stash-save button[type="submit"]:disabled'))) failures.push(`${theme}/git: Stash is offered while an agent works in the folder`);
+      // Stashing is the toolbar's, a dialog on any tab: while agents work its Stash waits, and says why.
+      await page.click('.git-toolbar button[aria-label="Stash the changes"]');
+      await page.waitForSelector('.dialog .stash-save', { timeout: 3000 }).catch(() => failures.push(`${theme}/git: the toolbar's Stash did not open its dialog`));
+      if (status.agents.length && !(await page.$('.dialog button[type="submit"][form="stash-save"]:disabled'))) failures.push(`${theme}/git: Stash is offered while an agent works in the folder`);
+      if (status.agents.length && !/is working in the project folder; stashing would change files under it/.test((await page.textContent('.dialog .stash-why').catch(() => '')) ?? '')) failures.push(`${theme}/git: the stash dialog does not say why it waits`);
+      await page.keyboard.press('Escape');
 
       // A card's worktree: its commits since it forked, its pull request through gh.
       await page.goto(`${base}#/p/${ns}/changes?branch=${ns}-3`);
@@ -670,7 +677,7 @@ try {
       await page.goto(`${base}#/p/${ns}/changes`);
       await page.waitForSelector('.dl-add');
       // Left on Split, so the narrow window below shows it falling back to unified.
-      await page.click('.changes .toolbar [role="radio"]:has-text("Split")');
+      await page.click('.status-line [role="radio"]:has-text("Split")');
     }
     // The Remote Control session: its mark, and files pasted or dropped on its terminal join the composer.
     await page.goto(`${base}${attachedHref.replace(/^.*#/, '#')}`);
@@ -1467,7 +1474,7 @@ try {
           return side ? [...document.querySelectorAll('.commit-box input, .commit-box textarea, .commit-go')].some((el) => el.getBoundingClientRect().right > side.right + 1) : false;
         });
         if (clipped) failures.push(`narrow/${name}: the commit box is wider than its column`);
-        if (name === 'narrow-changes' && ((await page.$('.diff-split')) || !/Unified until the window is wider/.test(await page.textContent('.changes .toolbar')))) {
+        if (name === 'narrow-changes' && ((await page.$('.diff-split')) || !/Unified until the window is wider/.test(await page.textContent('.status-line')))) {
           failures.push('narrow/changes: Split did not fall back to unified, saying so');
         }
         const railWidth = await page.$eval('.rail', (r) => Math.round(r.getBoundingClientRect().width));
@@ -2132,7 +2139,7 @@ try {
       const gitFails = (method, params = {}) => page.evaluate(([m, p]) => window.wanigan.call(m, p).then(() => null, (e) => e.message), [method, { id: nsId, ...params }]);
       await page.goto(`${base}#/p/${nsKey}/changes`);
       await page.waitForSelector('.dl-add');
-      await page.click('.changes .toolbar [role="radio"]:has-text("Unified")');
+      await page.click('.status-line [role="radio"]:has-text("Unified")');
 
       // The PHP file's second hunk: staged alone, so the file is in both lists.
       const php = '.diff-slot[data-key="changed:web/modules/custom/northstar_checkout/src/Controller/CheckoutController.php"]';
@@ -2198,7 +2205,7 @@ try {
       // Agents are at work in the folder, so the new branch is made without switching, and says so.
       if (await page.isEnabled('.branch-new-switch input')) failures.push('git/live: Switch to it is offered while agents work in the folder');
       else if (await page.isChecked('.branch-new-switch input')) failures.push('git/live: Switch to it is ticked but cannot be changed');
-      await page.click('.branch-new button:has-text("Make the branch")');
+      await page.click('.dialog button:has-text("Make the branch")');
       await page.waitForSelector('.branch-row:has(.branch-name:text-is("feature/sticky-summary"))', { timeout: 8000 }).catch(() => failures.push('git/live: the new branch is not listed'));
       if ((await git('git.status')).branch !== 'main') failures.push('git/live: making a branch without switching switched');
       await page.click('.branch-row:has(.branch-name:text-is("feature/sticky-summary")) button:has-text("Delete")');
@@ -2249,6 +2256,40 @@ try {
       if (r.operation || r.conflicted.length || r.staged.length) failures.push(`resolve/live: after completing, git has operation ${r.operation}, ${r.conflicted.length} conflicted, ${r.staged.length} staged`);
       if (merged.commits[0]?.parents.length !== 2 || merged.commits[0]?.subject !== message) failures.push(`resolve/live: the newest commit is "${merged.commits[0]?.subject}" with ${merged.commits[0]?.parents.length} parents`);
       if (await page.$('.git-operation')) failures.push('resolve/live: the merge banner stayed after the merge was completed');
+
+      // Decisions and Activity for real (once): a decision recorded from the toolbar's dialog is the one the reader
+      // reads, withdrawing it asks first, and both acts are in Activity, which narrows to what you did.
+      await page.goto(`${base}#/p/${nsKey}/decisions`);
+      await page.waitForSelector('.decision');
+      const decided = 'Prices are whole dollars in cart math';
+      await page.click('.records-toolbar button:has-text("New decision")');
+      await page.fill('#decision-title', decided);
+      await page.click('.dialog button:has-text("Record decision")');
+      await page.waitForSelector(`.records-reader .read-title:text-is("${decided}")`, { timeout: 5000 }).catch(() => failures.push('decisions/live: the decision recorded is not the one the reader shows'));
+      if (!(await page.evaluate(async (id) => (await window.wanigan.call('decisions.list', { projectId: id })).map((x) => x.title), nsId)).includes(decided)) failures.push('decisions/live: the core has no such decision');
+      await page.screenshot({ path: join(out, 'dark-decisions-recorded.png') });
+      await page.click('.records-reader button:has-text("Withdraw")');
+      await page.waitForSelector('.dialog:has-text("Sessions that start from now on are not told it")', { timeout: 3000 }).catch(() => failures.push('decisions/live: Withdraw did not ask first'));
+      await page.click('.dialog-foot button:has-text("Withdraw")');
+      await page.waitForSelector(`.decision:has-text("${decided}")`, { state: 'detached', timeout: 5000 }).catch(() => failures.push('decisions/live: the withdrawn decision is still listed'));
+      await page.goto(`${base}#/p/${nsKey}/activity`);
+      await page.waitForSelector('.activity-item');
+      await page.click('.records-toolbar [role="radio"]:has-text("You")');
+      await page.waitForTimeout(200);
+      const whoDid = await page.$$eval('.activity-item .activity-text strong', (s) => [...new Set(s.map((x) => x.textContent))]);
+      if (!whoDid.length || whoDid.some((w) => !/^You\b/.test(w))) failures.push(`activity/live: “You” shows entries by ${whoDid.join(', ')}`);
+      for (const verb of ['recorded a decision', 'withdrew a decision']) {
+        if (!(await page.$(`.activity-item:has-text("${verb}")`))) failures.push(`activity/live: “You” does not list “${verb}”`);
+      }
+      await page.click(`.activity-item:has-text("withdrew a decision") .record-hit`);
+      if (!/withdrew a decision/.test((await page.textContent('.records-reader').catch(() => '')) ?? '')) failures.push('activity/live: the reader does not read the entry chosen');
+      // An entry's card key still opens its card in one click.
+      await page.click('.records-toolbar [role="radio"]:has-text("Everyone")');
+      const keyed = page.locator('.activity-item .card-key-badge').first();
+      const cardKey = (await keyed.textContent())?.trim();
+      await keyed.click();
+      await page.waitForSelector('.drawer', { timeout: 5000 }).catch(() => failures.push(`activity/live: ${cardKey}’s key did not open its card`));
+      await page.keyboard.press('Escape');
     }
     for (const e of errors) failures.push(`${theme}: ${e}`);
 

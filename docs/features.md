@@ -75,7 +75,7 @@ Status:
 | Change a project's key | A new key renames every card; a key in use or not a key is refused. | `core/board-rules.test.ts` › "a new key renames every card in the project; a key in use or not a key is refused" | added |
 | Close a project | Refused while a session runs; a closed project leaves the rail and Needs you; opening the folder again brings it back whole. | `core/board-rules.test.ts` › "closing a project waits for its sessions, hides it and what it needs, and opening the folder again brings it back whole" | added |
 | Folders the agents worked in | Offered when opening a project: ranked by conversations in 30 days, bounded, and saying when cut. | `core/agent-folders.test.ts` › "folders the agents worked in are ranked by conversations in the last 30 days, then by how recent", "the look is capped and says so when it is cut", "a record names its folder in its first few KB, or not at all"; `scripts/ui-sweep.mjs` › "the busiest folder is not first" | proven |
-| Activity | Every claim, transition and session is recorded and attributable, per project and per card. | `core/board-rules.test.ts` › "activity: every change names who made it, newest first, by project and by card" | corrected (design said "global, filterable by actor"; the view is per project) |
+| Activity | Every claim, transition and session is recorded and attributable, per project and per card. The project's view narrows to what you did or what the agents did, and by words, and reads an entry in full beside the list. | `core/board-rules.test.ts` › "activity: every change names who made it, newest first, by project and by card"; `scripts/ui-sweep.mjs` › "activity/live" (You shows only your entries, the reader reads the one chosen, a card key opens its card) | corrected (design said "global, filterable by actor"; the view is per project, filterable by who) |
 
 ## Cards and the board
 
@@ -353,7 +353,7 @@ Status:
 |---|---|---|---|
 | Pause | No new sessions or claims; live agents asked to wrap up; nothing running killed. | `core/core.test.ts` › "pausing a project blocks new work and asks live Claude sessions to wrap up"; `core/cli.test.ts` › "status: the agent’s card, what was sent back, what else it holds, Ready by priority, decisions, and a pause" | proven |
 | Resume | New work allowed again. | `core/core.test.ts` › "pausing a project blocks new work…" | proven |
-| Decisions | Recorded, edited and withdrawn; each session told those in force when it starts. | `core/board-rules.test.ts` › "each session is told the decisions as they stand when it starts: edited, withdrawn, Claude and Codex alike"; `core/cli.test.ts` › "decisions lists what is in force, and nothing withdrawn" | added |
+| Decisions | Recorded, edited and withdrawn (withdrawing asks first); each session told those in force when it starts. | `core/board-rules.test.ts` › "each session is told the decisions as they stand when it starts: edited, withdrawn, Claude and Codex alike"; `core/cli.test.ts` › "decisions lists what is in force, and nothing withdrawn"; `scripts/ui-sweep.mjs` › "decisions/live" (recorded from the dialog, read in the reader, Withdraw asks first) | added |
 
 ## Jev
 

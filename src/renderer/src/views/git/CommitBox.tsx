@@ -1,10 +1,11 @@
-// The commit box: a summary with its length as it is typed, a description, ⌘↩
-// to commit. Amending asks first, and says when the commit is already pushed.
-// Before anything is committed the staged changes are scanned for secrets; a
-// finding stops the commit until the owner ticks that they read the list. An
-// agent at work in the same checkout is named before the commit is made.
-// "Write with Claude" runs only on a click, reads the staged diff read-only,
-// and says whose plan it uses.
+// The commit box, at the foot of the files' panel: a summary with its length
+// as it is typed, a description, ⌘↩ (Ctrl+Enter) to commit. Amending asks
+// first, and says when the commit is already pushed. Before anything is
+// committed the staged changes are scanned for secrets; a finding stops the
+// commit until the owner ticks that they read the list. An agent at work in
+// the same checkout is named before the commit is made. "Write with Claude"
+// runs only on a click, reads the staged diff read-only, and says whose plan
+// it uses before it is clicked (its tooltip).
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { SUBJECT_HARD, SUBJECT_SOFT, commitMessage, splitMessage, type GitStatus, type LastCommit } from '@shared/git';
 import type { ProjectSummary } from '@shared/model';
@@ -99,7 +100,7 @@ export const CommitBox = forwardRef<CommitBoxHandle, { project: ProjectSummary; 
         ...where, message: amend && !subject.trim() ? '' : commitMessage(subject, body), amend,
         acknowledge: step.acknowledge, agentsAcknowledged: step.agentsOk,
       });
-      toast(`${amend ? 'Amended' : 'Committed'} ${made.short}: ${made.subject}`);
+      toast(`${amend ? 'Amended' : 'Committed'} ${made.short}: ${made.subject}`, 'done');
       setSubject('');
       setBody('');
       setAmend(false);
@@ -121,7 +122,7 @@ export const CommitBox = forwardRef<CommitBoxHandle, { project: ProjectSummary; 
     if (subject.trim() || body.trim()) setReplaced({ subject, body });
     setSubject(r.subject);
     setBody(r.body);
-    toast(`Claude wrote a message${r.cut ? ' from the start of a long diff' : ''}${r.costUsd !== null ? ` (Claude Code reported $${r.costUsd.toFixed(2)})` : ''}. Read it before you commit.`);
+    toast(`Claude wrote a message${r.cut ? ' from the start of a long diff' : ''}${r.costUsd !== null ? ` (Claude Code reported $${r.costUsd.toFixed(2)})` : ''}. Read it before you commit.`, 'done');
   };
 
   const keys = (e: React.KeyboardEvent): void => {
@@ -131,40 +132,39 @@ export const CommitBox = forwardRef<CommitBoxHandle, { project: ProjectSummary; 
     : merging ? `Complete the ${status.operation}` : amend ? 'Amend the last commit'
     : staged ? `Commit ${plural(staged, 'file')} to ${status.branch ?? 'the detached HEAD'}` : 'Nothing staged to commit';
 
+  const why = status.conflicted.length ? 'Resolve the conflicted files first' : !staged && !amend && !merging ? 'Nothing is staged: stage the files this commit should hold'
+    : !subject.trim() && !amend ? 'Write a summary first' : undefined;
+  const plan = `Claude Code reads the staged diff with read-only tools and writes a summary and description, using a turn of ${account?.label ?? 'your Claude account'}’s plan`;
+
   return (
-    <form className="commit-box" aria-label="Commit" onSubmit={(e) => { e.preventDefault(); start(); }}>
+    <form className="commit-box" aria-label="Commit" data-tour="changes-commit" onSubmit={(e) => { e.preventDefault(); start(); }}>
       <div className="commit-subject">
         <label className="visually-hidden" htmlFor={`${id}-s`}>Summary</label>
         <input id={`${id}-s`} ref={subjectBox} value={subject} onChange={(e) => { setSubject(e.target.value); setReplaced(null); }} onKeyDown={keys}
           placeholder={amend && last ? last.subject : 'Summary of the change'} spellCheck autoComplete="off" />
         <span className={`commit-count${length > SUBJECT_HARD ? ' over' : length > SUBJECT_SOFT ? ' long' : ''}`}
-          title={length > SUBJECT_HARD ? `Past ${SUBJECT_HARD} characters, most tools cut the summary off` : length > SUBJECT_SOFT ? `${SUBJECT_SOFT} or fewer reads best in a log` : 'Characters in the summary'}>
+          data-tip={length > SUBJECT_HARD ? `Past ${SUBJECT_HARD} characters, most tools cut the summary off` : length > SUBJECT_SOFT ? `${SUBJECT_SOFT} or fewer reads best in a log` : 'Characters in the summary'}>
           {length}<span className="visually-hidden"> characters</span>
         </span>
       </div>
       <label className="visually-hidden" htmlFor={`${id}-b`}>Description</label>
       <textarea id={`${id}-b`} value={body} onChange={(e) => { setBody(e.target.value); setReplaced(null); }} onKeyDown={keys} rows={3} placeholder="Description (why, and what a reviewer needs to know)" />
       {replaced ? (
-        <p className="commit-replaced small">
+        <p className="commit-replaced">
           Claude’s words replaced yours.{' '}
           <button type="button" className="linkish" onClick={() => { setSubject(replaced.subject); setBody(replaced.body); setReplaced(null); }}>Put mine back</button>
         </p>
       ) : null}
       <div className="commit-tools">
-        <label className="commit-amend">
+        <label className="git-check commit-amend">
           <input type="checkbox" checked={amend} onChange={(e) => void toggleAmend(e.target.checked)} disabled={!status.head || merging} />
           Amend the last commit
         </label>
         <Button size="s" tone="quiet" icon="claude" onClick={write} disabled={!staged || writing}
-          title={staged ? 'Claude Code reads the staged diff with read-only tools and writes a summary and description' : 'Stage what the commit should hold first'}>
+          data-tip={staged ? plan : 'Stage what the commit should hold first'}>
           {writing ? 'Claude is reading…' : 'Write with Claude'}
         </Button>
       </div>
-      <p className="commit-plan">
-        {merging
-          ? <>Completing the {status.operation} commits everything staged, with the message git prepared (edit it above), after checking it for secrets.</>
-          : <>Write with Claude uses a turn of <b>{account?.label ?? 'your Claude account'}</b>’s plan, and reads only what is staged.</>}
-      </p>
       {amend && last?.pushedTo.length ? (
         <p className="commit-warn" role="note">
           {last.short} is already on {last.pushedTo.map((r, i) => <span key={r}>{i ? ', ' : ''}<Ref name={r} kind="remote" /></span>)}. Amending rewrites it, so pushing it again would need a force push, which Wanigan never does.
@@ -173,14 +173,13 @@ export const CommitBox = forwardRef<CommitBoxHandle, { project: ProjectSummary; 
       {findings ? (
         <div className="commit-findings">
           <SecretFindings report={findings.report} acknowledged={ack} onAcknowledge={setAck} />
-          <div className="row-gap commit-findings-actions">
-            <Button tone="danger" size="s" disabled={!ack || busy} onClick={() => run({ ...findings.step, acknowledge: findings.report.digest })}>Commit anyway</Button>
+          <div className="commit-findings-actions">
             <Button tone="quiet" size="s" onClick={() => setFindings(null)}>Cancel</Button>
+            <Button tone="danger" size="s" disabled={!ack || busy} onClick={() => run({ ...findings.step, acknowledge: findings.report.digest })}>Commit anyway</Button>
           </div>
         </div>
       ) : null}
-      <Button tone="primary" type="submit" className="commit-go" disabled={!ready || busy} aria-busy={busy || undefined} hidden={!!findings}
-        title={status.conflicted.length ? 'Resolve the conflicted files first' : !staged && !amend && !merging ? 'Nothing is staged: stage the files this commit should hold' : !subject.trim() && !amend ? 'Write a summary first' : undefined}>
+      <Button tone="primary" type="submit" className="commit-go" disabled={!ready || busy} aria-busy={busy || undefined} hidden={!!findings} data-tip={why}>
         <span className="commit-go-label">{busy ? 'Checking for secrets…' : label}</span>
         {/* While files conflict the keys do nothing, and the room goes to saying what is left. */}
         {status.conflicted.length ? null : <KeyCaps shortcut={{ id: null, label: 'Commit', group: 'In Changes', keys: ['Mod', 'Enter'] }} mac={mac} />}

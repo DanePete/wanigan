@@ -1,7 +1,7 @@
-// How the code editor is laid out and behaves, remembered on this Mac: the
+// How the code editor is laid out and behaves, remembered on this computer: the
 // drawer's height (or width beside the view), whether it is open and which of
 // its tabs it shows (it is the live view's dock too: Code, Notes, Problems,
-// Request), soft wrap, and Vim keys. Never required: without storage the
+// Request), soft wrap, Vim keys, and whether the Code tab shows the files. Never required: without storage the
 // choices last as long as the window.
 import { useSyncExternalStore } from 'react';
 
@@ -17,10 +17,12 @@ export interface EditorPrefs {
   shows: string;
   wrap: boolean;
   vim: boolean;
+  /** The Code tab's files, beside the editor. */
+  tree: boolean;
 }
 
 const KEY = 'wanigan.editor.prefs';
-const DEFAULTS: EditorPrefs = { dock: 'bottom', height: 340, width: 480, open: false, shows: 'code', wrap: false, vim: false };
+const DEFAULTS: EditorPrefs = { dock: 'bottom', height: 340, width: 480, open: false, shows: 'code', wrap: false, vim: false, tree: true };
 export const MIN_SIZE = 160;
 
 function read(): EditorPrefs {
@@ -35,6 +37,7 @@ function read(): EditorPrefs {
       shows: typeof raw.shows === 'string' && /^[a-z][a-z-]{0,31}$/.test(raw.shows) ? raw.shows : DEFAULTS.shows,
       wrap: raw.wrap === true,
       vim: raw.vim === true,
+      tree: raw.tree !== false,
     };
   } catch {
     return DEFAULTS;

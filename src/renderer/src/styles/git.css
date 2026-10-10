@@ -1,28 +1,86 @@
-/* The git workbench: a project's Changes view (views/ChangesView.tsx, views/git/). */
+/*
+  The git workbench: a project's Changes view (views/ChangesView.tsx, views/git/), in Studio's frame
+  (docs/design/2026-10-10-studio.md): one toolbar, the list beside the work as a left panel, the work
+  (the diff, a commit, the branches, a stash) as sheets on the canvas, a merge in progress as the right
+  panel. Tokens only: every colour, size, radius and duration names one.
+*/
 
+/* One commit row, and so the height of the graph drawn in it: Commits.tsx ROW is the same 48 px. */
 .git {
+  --commit-row: var(--space-12);
+  --sheet-gap: var(--space-3);
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  background: var(--bg);
 }
 
-/* ── the bar: checkout, branch, tabs, remote ─────────────────────────────── */
+.git-wait {
+  margin: 0;
+  padding: var(--space-6);
+  color: var(--faint);
+}
 
-.gitbar {
-  display: flex;
-  flex-wrap: wrap;
+.git-more {
+  margin: var(--space-2) 0 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* A choice inside a form: a real checkbox and its words. */
+.git-check {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: var(--space-2) var(--space-6);
-  border-bottom: 1px solid var(--line);
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
 }
 
-.git-scope {
-  max-width: 230px;
+.git-check:has(input:disabled) {
+  cursor: not-allowed;
 }
 
-.gitbar-branch {
+/* ── the toolbar: the parts, the checkout, what leaves and what comes in ── */
+
+.git-toolbar {
+  gap: var(--space-2);
+}
+
+.git-toolbar-gap {
+  flex: 1;
+}
+
+.git-how {
+  display: inline-flex;
+}
+
+.git-tabs {
+  flex: none;
+}
+
+/* Where you are: the branch on a sunk field, as the live view's address is. */
+.git-checkout {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(var(--panel-right-w) + var(--space-10));
+  height: var(--control-s);
+  padding: 0 var(--space-2);
+  border-color: transparent;
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.git-checkout:hover,
+.git-checkout[aria-expanded='true'] {
+  border-color: var(--line-strong);
+  background: var(--sunken);
+}
+
+.git-checkout-in {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -30,75 +88,53 @@
   color: var(--muted);
 }
 
-.gitbar-name {
+.git-checkout-in > svg {
+  flex: none;
+}
+
+.git-checkout-card {
+  flex: none;
+  color: var(--water-text);
+  font: 600 var(--text-xs) / 1 var(--font-mono);
+}
+
+.git-branch-name {
+  min-width: 0;
+  overflow: hidden;
   color: var(--fg);
   font-weight: 500;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.gitbar-up {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+.git-checkout-note {
+  flex: none;
+  color: var(--faint);
+}
+
+.git-checkout-twist {
   color: var(--faint);
 }
 
 .aheadbehind {
   display: inline-flex;
+  flex: none;
+  align-items: center;
   gap: var(--space-1);
   color: var(--muted);
-  font: 500 var(--text-sm) / 1 var(--font-mono);
+  font: 500 var(--text-xs) / 1 var(--font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+.aheadbehind svg {
+  color: var(--green);
+}
+
 .branch-gone {
+  flex: none;
   color: var(--red);
   font-size: var(--text-sm);
-}
-
-.git-tabs {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.git-tabs a {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 26px;
-  padding: 0 var(--space-3);
-  border-radius: calc(var(--radius-m) - 2px);
-  color: var(--muted);
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.git-tabs a:hover {
-  color: var(--fg);
-}
-
-.git-tabs a.on {
-  background: var(--raised);
-  color: var(--fg);
-  box-shadow: 0 0 0 1px var(--line-strong);
-}
-
-.git-tabs .count {
-  min-width: 18px;
-  padding: 0 var(--space-1);
-}
-
-.gitbar-end {
-  margin-left: auto;
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
 }
 
 .remote-actions {
@@ -107,104 +143,134 @@
   gap: var(--space-1);
 }
 
-/* A count inside a button: commits to pull or push. */
-.count-pill {
+/* How many to pull or push, inside the button: its own words' colour on a faint tint of them, so it reads on any tone. */
+.git-btn-count {
   margin-left: var(--space-1);
-  padding: 0 5px;
+  padding: 0 var(--space-1);
   border-radius: var(--radius-round);
   background: color-mix(in srgb, currentcolor 16%, transparent);
-  font: 600 var(--text-xs) / 16px var(--font-mono);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-.git-operation,
-.git-agents {
-  padding-inline: var(--space-6);
+/* One line under the toolbar: agents at work here (why several acts wait), or a merge seen from another part. */
+.git-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-m);
+  padding: var(--space-1) var(--space-4);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
-.git-operation .btn {
+.git-strip > svg {
   flex: none;
+  color: var(--faint);
+}
+
+.git-strip-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.git-strip-needs > svg,
+.git-strip-needs .git-strip-text {
+  color: var(--amber);
+}
+
+.git-strip-go {
+  flex: none;
+  color: var(--water-text);
+  font-weight: 500;
 }
 
 .git-body {
+  display: flex;
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+}
+
+.git-body > * {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ── marks: refs, cards, who changed it ──────────────────────────────────── */
 
 .ref {
   display: inline-flex;
-  align-items: center;
   flex: none;
-  max-width: 200px;
-  height: 18px;
+  align-items: center;
+  max-width: calc(var(--panel-left-w) - var(--space-12));
+  height: var(--count-h);
   padding: 0 var(--space-1);
-  border: 1px solid var(--line-strong);
   border-radius: var(--radius-s);
-  background: var(--raised);
+  background: var(--sunken);
   color: var(--fg);
   font: 500 var(--text-xs) / 1 var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .ref-remote {
-  border-style: dashed;
   background: none;
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
   color: var(--muted);
 }
 
 .ref-tag {
-  border-color: color-mix(in srgb, var(--syn-number) 55%, transparent);
-  color: var(--syn-number);
   background: none;
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
+  color: var(--syn-number);
 }
 
 .ref-current {
-  border-color: var(--fg);
+  background: var(--water-soft);
+  color: var(--water-text);
   font-weight: 600;
 }
 
-/* A card's key on a commit or a branch, stamped as the board stamps it: Wanigan's own record, so in water. */
+/* A card's key on a commit or a branch, as the board writes it: Wanigan's own record, so in water. */
 .card-key-badge {
   display: inline-grid;
-  place-items: center;
   flex: none;
-  height: 18px;
-  min-width: 34px;
+  place-items: center;
+  height: var(--count-h);
   padding: 0 var(--space-1);
-  border: 1.5px solid currentcolor;
+  border: 0;
   border-radius: var(--radius-s);
-  background: none;
+  background: var(--water-soft);
   color: var(--water-text);
-  font: 600 var(--text-2xs) / 1 var(--font-display);
-  letter-spacing: 0.04em;
+  font: 600 var(--text-xs) / 1 var(--font-mono);
   cursor: pointer;
+  vertical-align: middle;
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
 .card-key-badge:hover {
-  background: var(--water-soft);
+  box-shadow: inset 0 0 0 var(--hairline) var(--water-line);
 }
 
 .who {
   display: inline-flex;
-  align-items: center;
-  gap: 3px;
   flex: none;
-  height: 18px;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--count-h);
   padding: 0 var(--space-1);
-  border: 1px solid var(--line);
   border-radius: var(--radius-round);
+  background: var(--sunken);
   color: var(--muted);
   font: 500 var(--text-2xs) / 1 var(--font-mono);
 }
 
 .who-live {
-  border-color: var(--line-strong);
   color: var(--fg);
 }
 
@@ -220,32 +286,51 @@
 }
 
 .who-line strong {
-  font-weight: 500;
   color: var(--fg);
+  font-weight: 500;
 }
 
-/* ── Changes: the lists, the commit box, the diffs ───────────────────────── */
+/* ── Changes: the files' panel ───────────────────────────────────────────── */
 
 .git-changes {
-  display: grid;
-  grid-template-columns: clamp(272px, 27%, 360px) minmax(0, 1fr);
-  flex: 1;
+  display: flex;
+  flex-direction: row;
   min-height: 0;
 }
 
-.changes-side {
+/*
+  The files over the commit box. Tall, the files take the room and scroll on their own; short (the code editor's
+  drawer open beneath), the files keep a few rows and the panel scrolls, so the commit box is never cut or scrolled
+  inside itself.
+*/
+.git-files > .panel-body {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  border-right: 1px solid var(--line);
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.changes-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.changes-delta {
+  display: inline-flex;
+  gap: var(--space-1);
+  font-weight: 400;
 }
 
 .git-changes .changes-files {
-  flex: 1;
-  min-height: 0;
-  padding: var(--space-2) var(--space-2) var(--space-3);
+  flex: 1 1 0;
+  min-height: calc(var(--space-12) * 3);
+  margin: 0;
+  padding: var(--space-1) var(--space-2) var(--space-3);
   overflow-y: auto;
-  border-right: 0;
+  border: 0;
 }
 
 .git-group + .git-group {
@@ -256,10 +341,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: var(--control-s);
   margin: 0;
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
   color: var(--muted);
-  font: 600 var(--text-sm) / var(--lh-md) var(--font-ui);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
 
 .git-group-conflicted .git-group-head {
@@ -267,18 +353,30 @@
 }
 
 .git-group-count {
-  min-width: 20px;
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--count-h);
+  height: var(--count-h);
   padding: 0 var(--space-1);
   border-radius: var(--radius-round);
   background: var(--sunken);
   color: var(--muted);
-  font: 500 var(--text-xs) / 1.5 var(--font-ui);
-  text-align: center;
+  font: 600 var(--text-xs) / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
 }
 
-.git-group-act {
+.git-changes .changes-files .git-group-act {
+  width: auto;
+  height: var(--count-h);
   margin-left: auto;
-  font-weight: 500;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--water-text);
+  font: 500 var(--text-xs) / 1 var(--font-ui);
+}
+
+.git-changes .changes-files .git-group-act:hover {
+  background: var(--water-soft);
 }
 
 .git-group ul {
@@ -293,6 +391,7 @@
   gap: var(--space-1);
   padding: 0 var(--space-1) 0 var(--space-2);
   border-radius: var(--radius-m);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .git-file:hover {
@@ -305,22 +404,27 @@
 
 .git-file-box {
   flex: none;
-  width: 15px;
   margin: 0;
 }
 
-.git-file-main {
+span.git-file-box {
+  width: var(--space-4);
+}
+
+.git-changes .changes-files .git-file-main {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) 0;
-  border: 0;
   background: none;
-  color: var(--fg);
-  text-align: left;
-  cursor: pointer;
+}
+
+.git-changes .changes-files .git-file-main:hover {
+  background: none;
+}
+
+.git-file.active .fname {
+  color: var(--water-text);
 }
 
 .git-file.viewed .fname {
@@ -331,32 +435,48 @@
   color: var(--amber);
 }
 
+.fconflicts {
+  color: var(--amber);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .git-clean {
   display: flex;
   gap: var(--space-2);
   margin: var(--space-4) var(--space-2);
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .git-clean p {
   margin: 0;
+  line-height: var(--leading);
 }
 
 .git-clean svg {
   flex: none;
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
   color: var(--green);
 }
 
+.git-changes .changes-more {
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+/* ── the commit box: the panel's foot ────────────────────────────────────── */
+
 .commit-box {
   display: grid;
-  /* One column the width of the side, never of its widest label. */
+  flex: none;
+  /* One column the width of the panel, never of its widest label. */
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
-  max-height: 68%;
-  overflow-y: auto;
   padding: var(--space-3);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
   background: var(--surface);
 }
 
@@ -377,7 +497,6 @@
   color: var(--faint);
   font: 500 var(--text-xs) / 1 var(--font-mono);
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
 }
 
 .commit-count.long {
@@ -389,8 +508,8 @@
 }
 
 .commit-box textarea {
-  min-height: 64px;
-  max-height: 220px;
+  min-height: calc(var(--space-12) + var(--space-4));
+  max-height: calc(var(--panel-left-w) - var(--space-6));
   font-size: var(--text-sm);
 }
 
@@ -399,37 +518,21 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
 }
 
-.commit-amend {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-.commit-plan,
 .commit-replaced {
   margin: 0;
   color: var(--faint);
   font-size: var(--text-xs);
-  line-height: var(--lh-sm);
-}
-
-.commit-plan b {
-  color: var(--muted);
-  font-weight: 500;
 }
 
 .commit-warn {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--red);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   background: var(--red-soft);
+  color: var(--fg);
   font-size: var(--text-sm);
 }
 
@@ -438,25 +541,30 @@
   gap: var(--space-2);
 }
 
+.commit-findings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .commit-go {
   width: 100%;
-  height: 36px;
 }
 
 .commit-go > span {
   display: flex;
   max-width: 100%;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  min-width: 0;
 }
 
 .commit-go-label {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commit-go kbd {
@@ -465,45 +573,95 @@
   color: inherit;
 }
 
-.btn:disabled.commit-go kbd {
-  opacity: 0.6;
-}
+/* ── Changes: the diff, the hero, as sheets on the canvas ────────────────── */
 
 .changes-main {
+  position: relative;
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.changes-toolbar {
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line);
-}
-
-.changes-main .notes-tray {
-  margin: var(--space-2) var(--space-4);
-}
-
-.changes-main .changes-diff {
+.git .changes-diff,
+:root[data-theme='light'] .git .changes-diff {
   flex: 1;
   min-height: 0;
+  padding: var(--space-4) var(--space-5) var(--space-12);
+  background: var(--bg-canvas);
 }
 
-/* Where each part of the working tree begins in the scroll. */
+/* A file: a sheet with one hairline, its header sticking while the file is on screen. */
+.git .diff,
+.git .resolver {
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--elev-raise);
+  overflow: clip;
+}
+
+.git .diff-slot + .diff-slot {
+  margin-top: var(--sheet-gap);
+}
+
+.git .diff-head {
+  min-height: calc(var(--control-s) + var(--space-3));
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-4);
+  border-bottom-color: var(--line);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  font-size: var(--text-sm);
+}
+
+.git .diff-is-viewed .diff-head {
+  border-radius: var(--radius-l);
+}
+
+.git .diff-path {
+  font-size: var(--text-sm);
+}
+
+/* The buttons drop below a long path rather than squeezing it. */
+.git .diff-head {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+/*
+  A sticky header sticks inside its scroller's padding: the canvas's top padding would hold it that far down,
+  over the file's first lines. Each scroller of sheets has --space-4 at its top, so the header sticks that much higher.
+*/
+.git .changes-diff .diff-head,
+.git .commit-pane .diff-head,
+.git .stash-pane .diff-head {
+  top: calc(-1 * var(--space-4));
+}
+
+.git .diff .view-pad {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Where each part of the working tree begins in the scroll: a label on the canvas, never a box. */
 .git-area-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  margin: var(--space-5) 0 var(--space-2);
+  padding: 0 var(--space-1);
   color: var(--muted);
-  font: 600 var(--text-sm) / var(--lh-md) var(--font-ui);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
 
-.diff-slot + .git-area-head {
-  border-top: var(--space-2) solid var(--bg);
+.git-area-head:first-child {
+  margin-top: 0;
+}
+
+.git-area-count {
+  color: var(--faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .git-area-conflicted {
@@ -511,22 +669,32 @@
 }
 
 .diff-head-end {
-  margin-left: auto;
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-1);
+  margin-left: auto;
 }
 
-.diff-head-end .diff-viewed {
+.git .diff-viewed {
+  height: var(--control-s);
   margin-left: 0;
+  padding: 0 var(--space-2);
+  border-color: var(--line-strong);
+  border-radius: var(--radius-s);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.git .diff-viewed:has(input:checked) {
+  border-color: transparent;
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .diff-note {
   padding: var(--space-1) var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: var(--hairline) solid var(--line);
   color: var(--muted);
   font-size: var(--text-sm);
 }
@@ -536,13 +704,21 @@
   color: var(--amber);
 }
 
-/* Lines picked to stage: a box in a gutter of their own, then a tint over the line. */
+.dl-note-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* Lines picked to stage: a box in a gutter of its own, then a water tint over the line. */
 .dl-col-pick {
-  width: 22px;
+  width: var(--space-6);
 }
 
 .dl-pick {
-  width: 22px;
+  width: var(--space-6);
   padding: 0;
   text-align: center;
   vertical-align: top;
@@ -551,17 +727,17 @@
 .dl-pick-box {
   display: grid;
   place-items: center;
-  width: 13px;
-  height: 13px;
-  margin: 3px auto 0;
+  width: var(--space-3);
+  height: var(--space-3);
+  margin: var(--space-1) auto 0;
   padding: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 3px;
-  background: var(--surface);
+  border: var(--hairline) solid var(--line-strong);
+  border-radius: var(--gap-hair);
+  background: var(--bg-field);
   color: var(--water-ink);
   cursor: pointer;
-  opacity: 0.45;
-  transition: opacity var(--dur-fast) var(--ease);
+  opacity: 0.5;
+  transition: opacity var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .dl:hover .dl-pick-box,
@@ -571,7 +747,7 @@
 }
 
 .dl-pick-box.on {
-  border-color: var(--water);
+  border-color: var(--water-fill);
   background: var(--water-fill);
 }
 
@@ -586,26 +762,27 @@
 
 .dl-picked > td.dl-text,
 .diff-split .dl-text-picked {
-  box-shadow: inset 2px 0 0 var(--water-line);
+  box-shadow: inset var(--gap-hair) 0 0 var(--water-line);
 }
 
+/* Picked lines raise their bar in the file's header, beside the lines they act on. */
 .pick-bar {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  padding: var(--gap-hair) var(--gap-hair) var(--gap-hair) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
+  animation: rise var(--dur) var(--ease);
 }
 
 .pick-count {
+  margin-right: var(--space-1);
   color: var(--water-text);
   font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
-}
-
-/* A file's header with its buttons: the buttons drop below a long path rather than squeezing it. */
-.git-changes .diff-head {
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
 }
 
 .dl-hunk-row {
@@ -616,20 +793,22 @@
 }
 
 .dl-hunk-actions {
-  margin-left: auto;
   display: inline-flex;
   gap: var(--space-1);
+  margin-left: auto;
 }
 
+/* A hunk's own act: the size of a small control's words, on the hunk's line. */
 .hunk-btn {
-  height: 20px;
+  height: calc(var(--lh-md) + var(--gap-hair));
   padding: 0 var(--space-2);
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-s);
-  background: var(--raised);
+  background: var(--surface);
   color: var(--fg);
   font: 500 var(--text-xs) / 1 var(--font-ui);
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .hunk-btn:hover:not(:disabled) {
@@ -644,9 +823,9 @@
 }
 
 .hunk-btn-quiet:hover:not(:disabled) {
-  border-color: var(--red);
+  border-color: transparent;
   background: var(--red-soft);
-  color: var(--fg);
+  color: var(--red);
 }
 
 .hunk-btn:disabled {
@@ -654,17 +833,159 @@
   cursor: not-allowed;
 }
 
-/* ── the conflict resolver ───────────────────────────────────────────────── */
+/* Review notes waiting to go: a bar raised over the foot of the diff, never over a file's controls. */
+.notes-tray {
+  position: absolute;
+  bottom: var(--space-4);
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-5));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
+  transform: translateX(-50%);
+  animation: rise var(--dur) var(--ease);
+}
 
-.fconflicts {
-  color: var(--amber);
+.notes-tray > svg {
+  flex: none;
+  color: var(--water);
+}
+
+.notes-tray-what {
+  display: grid;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.notes-tray-where {
+  color: var(--faint);
   font-size: var(--text-xs);
   white-space: nowrap;
 }
 
-.resolver {
-  border-bottom: 1px solid var(--line-strong);
+.notes-tray-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    translate: 0 var(--rise);
+  }
+}
+
+/* At the status line's end: how far the review has got, and unified or side by side. */
+.changes-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.changes-progress.all {
+  color: var(--green);
+}
+
+.changes-cramped {
+  color: var(--faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+/* ── a merge in progress: the right panel ────────────────────────────────── */
+
+.git-operation > .panel-body {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+}
+
+.git-op-head {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.git-op-what {
+  margin: 0;
+  line-height: var(--leading-loose);
+}
+
+.git-op-sep {
+  color: var(--faint);
+}
+
+.git-op-left {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.git-op-head.needs .git-op-left {
+  color: var(--amber);
+}
+
+.git-op-next {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+}
+
+.git-op-files {
+  display: grid;
+  gap: var(--gap-hair);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.git-op-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-s);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.git-op-file:hover {
+  background: var(--hover);
+}
+
+.git-op-file .fname {
+  flex: 1;
+  min-width: 0;
+}
+
+.git-op-count {
+  flex: none;
+  color: var(--amber);
+  font-size: var(--text-xs);
+}
+
+.git-op-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ── the conflict resolver: a conflicted file's sheet ────────────────────── */
 
 .resolver-head {
   flex-wrap: wrap;
@@ -679,7 +1000,7 @@
 .resolver-count {
   padding: 0 var(--space-2);
   border-radius: var(--radius-round);
-  font: 500 var(--text-xs) / 20px var(--font-ui);
+  font: 600 var(--text-xs) / var(--lh-md) var(--font-ui);
   white-space: nowrap;
 }
 
@@ -695,28 +1016,23 @@
 
 .resolver-note {
   margin: 0;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--hairline) solid var(--line);
   color: var(--muted);
   font-size: var(--text-sm);
+  line-height: var(--leading);
 }
 
 .resolver-tools {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
+  gap: var(--space-2) var(--space-6);
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: var(--hairline) solid var(--line);
 }
 
-.resolver-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
+.resolver-tools .toggle {
   font-size: var(--text-sm);
-  cursor: pointer;
 }
 
 .resolver-body,
@@ -725,7 +1041,7 @@
 }
 
 .resolver-preview {
-  max-height: 640px;
+  max-height: calc(var(--space-12) * 13);
   overflow: auto;
 }
 
@@ -734,7 +1050,7 @@
 }
 
 .resolver-lines .dl-no {
-  width: 48px;
+  width: var(--space-12);
 }
 
 .resolver-lines .dl-text {
@@ -742,27 +1058,30 @@
 }
 
 .resolver-context .resolver-lines {
-  opacity: 0.8;
+  color: var(--muted);
 }
 
 .resolver-fold {
   margin: var(--space-1) 0;
   padding: var(--space-1) var(--space-3);
-  border-block: 1px dashed var(--line);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
   color: var(--faint);
   font-size: var(--text-xs);
 }
 
+/* One conflict: the choice is the event, so its bar carries amber until chosen. Inside the sheet, no second border. */
 .resolver-hunk {
   margin: var(--space-3) 0;
-  border: 1px solid var(--amber-line);
   border-radius: var(--radius-m);
-  background: var(--surface);
-  overflow: hidden;
+  background: var(--bg);
+  box-shadow: inset var(--space-1) 0 0 var(--amber-fill);
+  overflow: clip;
+  transition: box-shadow var(--dur) var(--ease);
 }
 
 .resolver-hunk.chosen {
-  border-color: var(--line-strong);
+  box-shadow: inset var(--space-1) 0 0 var(--water);
 }
 
 .resolver-hunk-bar {
@@ -770,13 +1089,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  background: var(--amber-soft);
-}
-
-.resolver-hunk.chosen .resolver-hunk-bar {
-  background: var(--raised);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
 }
 
 .resolver-hunk-title {
@@ -784,43 +1097,15 @@
 }
 
 .choice-group {
-  display: inline-flex;
   flex-wrap: wrap;
   margin-left: auto;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.choice-group button {
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: calc(var(--radius-m) - 2px);
-  background: none;
-  color: var(--muted);
-  font: 500 var(--text-sm) / 1 var(--font-ui);
-  cursor: pointer;
-}
-
-.choice-group button:hover:not(:disabled) {
-  color: var(--fg);
-}
-
-.choice-group button.on {
-  background: var(--water-fill);
-  color: var(--water-ink);
-}
-
-.choice-group button:disabled {
-  color: var(--faint);
-  cursor: not-allowed;
 }
 
 .resolver-sides {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-left: var(--space-1);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .resolver-sides.three {
@@ -828,12 +1113,11 @@
 }
 
 .resolver-side + .resolver-side {
-  border-left: 1px solid var(--line);
+  border-left: var(--hairline) solid var(--line);
 }
 
 .resolver-side {
   min-width: 0;
-  box-shadow: inset 0 3px 0 var(--side);
 }
 
 .side-ours { --side: var(--lane-0); }
@@ -850,8 +1134,8 @@
 }
 
 .side-mark {
-  width: 8px;
-  height: 8px;
+  width: var(--dot);
+  height: var(--dot);
   border-radius: var(--radius-round);
   background: var(--side);
 }
@@ -861,16 +1145,18 @@
 }
 
 .resolver-result {
-  border-top: 1px solid var(--line);
+  margin-left: var(--space-1);
   padding-bottom: var(--space-2);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--surface);
 }
 
 .resolver-result .resolver-side-head svg {
-  color: var(--water-text);
+  color: var(--green);
 }
 
 .resolver-chosen .dl-text {
-  box-shadow: inset 2px 0 0 var(--water-line);
+  box-shadow: inset var(--gap-hair) 0 0 var(--water-line);
 }
 
 .resolver-edit {
@@ -900,21 +1186,20 @@
   }
 
   .resolver-sides.three .resolver-side + .resolver-side {
+    border-top: var(--hairline) solid var(--line);
     border-left: 0;
-    border-top: 1px solid var(--line);
   }
 }
 
-/* ── secret-scan findings ────────────────────────────────────────────────── */
+/* ── what a secret scan found ────────────────────────────────────────────── */
 
 .secret-findings {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
-  border-left-width: 3px;
   border-radius: var(--radius-m);
   background: var(--red-soft);
+  box-shadow: inset var(--space-1) 0 0 var(--red);
   font-size: var(--text-sm);
 }
 
@@ -943,7 +1228,7 @@
 
 .secret-list li {
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .secret-where {
@@ -958,7 +1243,7 @@
 .secret-excerpt {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-s);
-  background: var(--sunken);
+  background: var(--surface);
   font: 400 var(--text-xs) / var(--lh-sm) var(--font-mono);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -972,61 +1257,59 @@
 }
 
 .secret-ack input {
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
 }
 
-/* ── Commits: the graph and a commit read in full ────────────────────────── */
+/* ── Commits: the history in the left panel, a commit read in full ───────── */
 
 .commits {
-  display: grid;
-  grid-template-columns: minmax(380px, 1.15fr) minmax(0, 1fr);
-  flex: 1;
+  display: flex;
   min-height: 0;
 }
 
-.commits-list {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border-right: 1px solid var(--line);
+.commits-list > .panel-body {
+  padding: 0;
 }
 
 .commits-toolbar {
-  padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
 }
 
 .commits-filter {
-  width: 220px;
+  flex: 1 1 var(--space-12);
+  width: auto;
+  min-width: calc(var(--space-12) * 3);
+  height: var(--control-s);
 }
 
 .commit-rows {
-  flex: 1;
-  min-height: 0;
+  min-height: 100%;
   margin: 0;
-  padding: 0 0 var(--space-4);
-  overflow: auto;
+  padding: var(--space-1) 0 var(--space-4);
   list-style: none;
 }
 
 .commit-rows:focus-visible {
-  border-radius: 0;
-  box-shadow: inset 0 0 0 2px var(--water-line);
+  outline: none;
+  box-shadow: inset 0 0 0 var(--focus-ring) var(--water);
 }
 
 .commit-row {
-  display: grid;
-  grid-template-columns: var(--graph-w) minmax(0, 1fr) minmax(0, max-content) max-content max-content;
+  display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: 34px;
-  padding: 0 var(--space-4) 0 var(--space-2);
+  gap: var(--space-2);
+  height: var(--commit-row);
+  padding: 0 var(--space-3) 0 var(--space-2);
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .commit-rows:not(.graphed) .commit-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) max-content max-content;
   padding-left: var(--space-4);
 }
 
@@ -1038,44 +1321,63 @@
   background: var(--water-soft);
 }
 
+.commit-row > .graph {
+  flex: none;
+}
+
 .commit-main {
+  display: grid;
+  flex: 1;
+  gap: var(--gap-hair);
+  min-width: 0;
+}
+
+.commit-line {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  overflow: hidden;
 }
 
 .commit-subject {
   min-width: 0;
-  margin-left: var(--space-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.commit-row.on .commit-subject {
+  color: var(--water-text);
+  font-weight: 500;
 }
 
 .is-merge .commit-subject {
   color: var(--muted);
 }
 
+.commit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .commit-author {
-  max-width: 130px;
+  min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: var(--text-sm);
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .commit-when {
-  color: var(--faint);
-  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .commit-hash {
-  color: var(--faint);
+  margin-left: auto;
   font-size: var(--text-xs);
 }
 
@@ -1098,18 +1400,18 @@
 
 .graph-dot {
   fill: currentcolor;
-  stroke: var(--bg);
+  stroke: var(--surface);
   stroke-width: 2;
 }
 
 .graph-merge {
-  fill: var(--bg);
+  fill: var(--surface);
   stroke: currentcolor;
   stroke-width: 2;
 }
 
 .commit-row.on .graph-dot:not(.graph-merge) {
-  stroke: color-mix(in srgb, var(--water) 13%, var(--bg));
+  stroke: color-mix(in srgb, var(--water) 13%, var(--surface));
 }
 
 .graph-head {
@@ -1126,23 +1428,30 @@
 .lane-4 { color: var(--lane-4); }
 .lane-5 { color: var(--lane-5); }
 
-.commit-pane {
+/* The commit read in full: its header and its files, sheets on the canvas. */
+.commit-pane,
+:root[data-theme='light'] .commit-pane {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: var(--sunken);
+  background: var(--bg-canvas);
 }
 
-:root[data-theme='light'] .commit-pane {
-  background: var(--surface);
+.commit-view {
+  display: grid;
+  gap: var(--sheet-gap);
+  padding: var(--space-4) var(--space-5) var(--space-12);
 }
 
 .commit-view-head {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-5) var(--space-6) var(--space-4);
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  padding: var(--space-5) var(--space-6);
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--elev-raise);
 }
 
 .commit-view-title {
@@ -1151,13 +1460,9 @@
   gap: var(--space-2);
 }
 
-.commit-view-title .card-key-badge {
-  transform: translateY(-2px);
-}
-
 .commit-view-head h2 {
   margin: 0;
-  font: 600 var(--text-xl) / var(--leading-tight) var(--font-ui);
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
   overflow-wrap: anywhere;
 }
 
@@ -1165,8 +1470,8 @@
   max-width: 72ch;
   margin: 0;
   color: var(--muted);
-  white-space: pre-wrap;
   line-height: var(--leading);
+  white-space: pre-wrap;
 }
 
 .commit-facts {
@@ -1177,16 +1482,14 @@
 
 .commit-avatar {
   display: grid;
-  place-items: center;
   flex: none;
-  width: 32px;
-  height: 32px;
+  place-items: center;
+  width: var(--control-m);
+  height: var(--control-m);
   border-radius: var(--radius-round);
-  background: var(--raised);
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  background: var(--sunken);
   color: var(--muted);
-  font: 600 var(--text-xs) / 1 var(--font-display);
-  letter-spacing: 0.04em;
+  font: 600 var(--text-xs) / 1 var(--font-ui);
 }
 
 .commit-by {
@@ -1208,8 +1511,10 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
+  padding-top: var(--space-3);
+  border-top: var(--hairline) solid var(--line);
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .commit-sha {
@@ -1217,8 +1522,6 @@
 }
 
 .commit-ids .btn-icon {
-  width: 26px;
-  height: 26px;
   margin-left: calc(-1 * var(--space-2));
 }
 
@@ -1242,82 +1545,111 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-6);
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-1);
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
-/* ── Branches ────────────────────────────────────────────────────────────── */
+.commit-files-head strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.commit-files-note {
+  color: var(--faint);
+}
+
+.commit-diffs {
+  display: grid;
+  gap: var(--sheet-gap);
+}
+
+/* ── Branches: the list is the work ──────────────────────────────────────── */
 
 .branches {
-  flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-6) var(--space-8);
+  padding: var(--space-5) var(--space-5) var(--space-12);
+  background: var(--bg-canvas);
+}
+
+.branches-sheet {
+  max-width: calc(var(--panel-right-w) * 3.4);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-5) var(--space-5);
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--elev-raise);
 }
 
 .branches-toolbar {
-  padding: var(--space-3) 0;
-}
-
-.branch-new {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
 }
 
-.branch-new input#branch-new-name {
-  flex: 1 1 240px;
-  width: auto;
+.branches-toolbar .search-field {
+  flex: 0 1 calc(var(--panel-left-w) + var(--space-8));
+  height: var(--control-s);
 }
 
-.branch-new-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+.branches-count {
+  flex: 1;
+  color: var(--faint);
   font-size: var(--text-sm);
-  color: var(--muted);
-}
-
-.branch-new-why {
-  flex-basis: 100%;
-  margin: 0;
 }
 
 .branch-group + .branch-group {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 
 .branch-group-head {
-  margin: var(--space-2) 0;
-  font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.branch-group-count {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.branch-none {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .branch-list {
+  display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
 }
 
 .branch-row {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) minmax(0, max-content) max-content;
+  grid-template-columns: var(--space-5) minmax(0, 1fr) minmax(0, max-content) max-content;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  min-height: var(--space-12);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-m);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .branch-row + .branch-row {
-  border-top: 1px solid var(--line);
+  box-shadow: 0 calc(-1 * var(--hairline)) 0 var(--line);
+}
+
+.branch-row:hover {
+  background: var(--hover);
 }
 
 .branch-row.current {
@@ -1331,20 +1663,19 @@
 }
 
 .branch-row.current .branch-mark {
-  color: var(--fg);
+  color: var(--water);
 }
 
 .branch-main {
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
   min-width: 0;
 }
 
 .branch-name-line {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1) var(--space-2);
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -1356,8 +1687,13 @@
   white-space: nowrap;
 }
 
+.branch-row.current .branch-name {
+  color: var(--water-text);
+}
+
 .branch-flag {
-  color: var(--muted);
+  flex: none;
+  color: var(--faint);
   font-size: var(--text-xs);
 }
 
@@ -1367,8 +1703,8 @@
 
 .branch-last {
   display: flex;
+  gap: var(--space-1);
   min-width: 0;
-  overflow: hidden;
   color: var(--muted);
   font-size: var(--text-sm);
   white-space: nowrap;
@@ -1380,88 +1716,102 @@
   text-overflow: ellipsis;
 }
 
+.branch-when {
+  flex: none;
+  color: var(--faint);
+}
+
 .branch-track {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+.branch-note {
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .branch-row-actions {
   display: inline-flex;
   justify-content: flex-end;
   gap: var(--space-1);
-  min-width: 220px;
 }
 
 .plain-commits {
-  margin: var(--space-2) 0;
-  padding: 0;
-  list-style: none;
   display: grid;
   gap: var(--space-1);
+  max-height: calc(var(--space-12) * 5);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  list-style: none;
   font-size: var(--text-sm);
 }
 
-/* ── Stashes ─────────────────────────────────────────────────────────────── */
+.plain-sha {
+  color: var(--faint);
+}
+
+.plain-by {
+  color: var(--faint);
+}
+
+/* The new branch dialog. */
+.branch-new .field {
+  margin-bottom: var(--space-3);
+}
+
+.branch-new-why {
+  margin: var(--space-3) 0 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.branch-new-why.error-text {
+  color: var(--red);
+}
+
+/* ── Stashes: the list in the left panel, a stash read in full ───────────── */
 
 .stashes {
-  display: grid;
-  grid-template-columns: clamp(272px, 30%, 380px) minmax(0, 1fr);
-  flex: 1;
+  display: flex;
   min-height: 0;
 }
 
-.stash-side {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: auto;
-  border-right: 1px solid var(--line);
-  padding: var(--space-3);
+.panel-count {
+  margin-left: var(--space-1);
+  color: var(--faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.stash-save {
-  display: grid;
-  gap: var(--space-2);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--line);
-}
-
-.stash-save p {
-  margin: 0;
-}
-
-.stash-untracked {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-sm);
-}
-
-.stash-head {
-  display: flex;
-  gap: var(--space-2);
-  margin: var(--space-4) var(--space-2) var(--space-2);
-  font: 600 var(--text-sm) / var(--lh-md) var(--font-ui);
-  color: var(--muted);
+.stash-side > .panel-body {
+  padding: var(--space-1) var(--space-2) var(--space-3);
 }
 
 .stash-none {
-  margin: 0 var(--space-2);
+  margin: var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .stash-list {
+  display: grid;
+  gap: var(--gap-hair);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .stash-row {
-  width: 100%;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
+  width: 100%;
   padding: var(--space-2);
   border: 0;
   border-radius: var(--radius-m);
@@ -1469,12 +1819,12 @@
   color: var(--fg);
   text-align: left;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
 }
 
-.stash-row svg {
+.stash-row > svg {
   flex: none;
-  margin-top: 2px;
-  color: var(--muted);
+  color: var(--faint);
 }
 
 .stash-row:hover {
@@ -1485,10 +1835,14 @@
   background: var(--water-soft);
 }
 
+.stash-row.on .stash-message {
+  color: var(--water-text);
+}
+
 .stash-text {
+  display: grid;
   flex: 1;
   min-width: 0;
-  display: grid;
 }
 
 .stash-message {
@@ -1499,54 +1853,85 @@
 }
 
 .stash-meta {
-  color: var(--muted);
+  overflow: hidden;
+  color: var(--faint);
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stash-index {
+  flex: none;
+  color: var(--faint);
   font-size: var(--text-xs);
 }
 
 .stash-pane {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5) var(--space-12);
+  background: var(--bg-canvas);
 }
 
 .stash-pane-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sheet-gap);
+  padding: var(--space-4) var(--space-5);
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--elev-raise);
+}
+
+.stash-pane-title {
+  flex: 1;
+  min-width: 0;
 }
 
 .stash-pane-head h2 {
-  margin: 0 0 var(--space-1);
-  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
+  margin: 0;
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
+  overflow-wrap: anywhere;
 }
 
 .stash-pane-head p {
-  margin: 0;
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .stash-actions {
   display: inline-flex;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .stash-diffs {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  background: var(--sunken);
+  display: grid;
+  align-content: start;
+  gap: var(--sheet-gap);
 }
 
-:root[data-theme='light'] .stash-diffs {
-  background: var(--surface);
+/* The stash dialog. */
+.stash-save .field {
+  margin-bottom: var(--space-3);
+}
+
+.stash-why {
+  margin: var(--space-3) 0 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
+}
+
+.stash-why.error-text {
+  color: var(--red);
 }
 
 /* ── push, pull requests ─────────────────────────────────────────────────── */
@@ -1577,9 +1962,16 @@
   flex: 1 1 100%;
   min-width: 0;
   overflow: hidden;
-  font-family: var(--font-mono);
+  color: var(--faint);
+  font: var(--text-sm) / var(--lh-sm) var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.push-note,
+.push-by {
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .push-refusal,
@@ -1588,27 +1980,26 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--red);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   background: var(--red-soft);
+  box-shadow: inset var(--space-1) 0 0 var(--red);
 }
 
 .push-refusal svg {
   flex: none;
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
   color: var(--red);
 }
 
 .push-commits {
   display: grid;
+  max-height: calc(var(--space-12) * 6);
   margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-  max-height: 300px;
+  padding: var(--space-1) 0;
   overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+  list-style: none;
 }
 
 .push-commits li {
@@ -1617,10 +2008,6 @@
   align-items: baseline;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-}
-
-.push-commits li + li {
-  border-top: 1px solid var(--line);
 }
 
 .push-sha {
@@ -1640,6 +2027,7 @@
   align-items: center;
   gap: var(--space-2);
   color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .push-clean svg {
@@ -1648,36 +2036,54 @@
 
 .dialog-foot-note {
   margin-right: auto;
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .pr-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--gap-hair);
+}
+
+/* The pull request and its Ask GitHub again: one sunk group, so its refresh is never read as Fetch beside it. */
+.pr-wrap:has(.pr-chip) {
+  padding-right: var(--gap-hair);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.pr-wrap .pr-chip {
+  background: none;
+}
+
+.pr-wrap .btn-icon:hover {
+  background: var(--hover);
 }
 
 .pr-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 26px;
+  height: var(--control-s);
   padding: 0 var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-round);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
   color: var(--fg);
   font-size: var(--text-sm);
   text-decoration: none;
   white-space: nowrap;
+  transition: box-shadow var(--dur-fast) var(--ease);
 }
 
 a.pr-chip:hover {
-  border-color: var(--line-strong);
-  background: var(--hover);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
   text-decoration: none;
 }
 
 .pr-off,
 .pr-wait {
+  background: none;
   color: var(--faint);
 }
 
@@ -1685,8 +2091,7 @@ a.pr-chip:hover {
   font: 500 var(--text-sm) / 1 var(--font-mono);
 }
 
-.pr-open svg,
-.pr-draft svg {
+.pr-chip > svg {
   color: var(--muted);
 }
 
@@ -1708,7 +2113,7 @@ a.pr-chip:hover {
 .pr-checks > span {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .pr-passed {
@@ -1724,9 +2129,9 @@ a.pr-chip:hover {
 }
 
 .pr-ring {
-  width: 9px;
-  height: 9px;
-  border: 1.5px solid currentcolor;
+  width: var(--space-2);
+  height: var(--space-2);
+  border: var(--hairline) solid currentcolor;
   border-top-color: transparent;
   border-radius: var(--radius-round);
 }
@@ -1753,38 +2158,21 @@ a.pr-chip:hover {
   margin: 0;
 }
 
+.pr-form .field {
+  margin-bottom: 0;
+}
+
 .pr-base {
   width: auto;
-  max-width: 220px;
-  padding-block: var(--space-1);
+  max-width: calc(var(--panel-left-w) - var(--space-6));
+  font-size: var(--text-sm);
 }
 
-/* Narrow windows: the lists take less, and the busiest rows wrap. */
-@media (max-width: 1180px) {
-  .gitbar {
-    padding-inline: var(--space-4);
-  }
-
-  .git-changes {
-    grid-template-columns: 272px minmax(0, 1fr);
-  }
-
-  .commits {
-    grid-template-columns: minmax(340px, 1fr) minmax(0, 1fr);
-  }
-
-  .commit-author {
-    display: none;
-  }
-
-  .branch-row-actions {
-    min-width: 0;
-  }
-}
+/* ── narrow windows: the panels take less, and the busiest rows wrap ─────── */
 
 @media (max-width: 900px) {
   .branch-row {
-    grid-template-columns: 20px minmax(0, 1fr) max-content;
+    grid-template-columns: var(--space-5) minmax(0, 1fr);
   }
 
   .branch-row-actions {
