@@ -54,7 +54,8 @@ function audioOf(clip) {
 const timeout = setTimeout(() => { print({ error: 'the harness timed out' }); app.exit(2); }, (job.timeoutSec ?? 240) * 1000);
 
 app.whenReady().then(async () => {
-  const worker = utilityProcess.fork(join(root, 'out/main/voice-worker.js'), [], { serviceName: 'Wanigan Voice (test)', stdio: 'pipe' });
+  // The built worker, or (job.worker) the same file inside a packed app.asar, as a packaged app forks it.
+  const worker = utilityProcess.fork(job.worker ?? join(root, 'out/main/voice-worker.js'), [], { serviceName: 'Wanigan Voice (test)', stdio: 'pipe' });
   let stderr = '';
   worker.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
   worker.stdout?.on('data', () => {});

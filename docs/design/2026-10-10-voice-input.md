@@ -162,15 +162,25 @@ getUserMedia → AudioContext at 16 kHz     permission: media, audio only,      
   milliseconds from the first sample), and while one is still going, transcribes what it has so far whenever the
   engine is free (volatile words).
 - **Silence and noise never reach the model.** Every Whisper model invents words for silence ("you", "thank you") and
-  noise (see the tables). The detector is energy-based with a floor that follows the quietest moment of the last
-  second and a half: speech is modulated (syllables, gaps between words) and rises well above that floor; steady noise
-  does not, and digital silence is under an absolute floor. A stretch must hold for at least 0.2 s of voiced frames to
-  count. A test proves silence and steady noise give no text and no model call. (Silero VAD agreed with it on every
-  clean and noisy clip in Phase 1; it would add a second model to download for no measured gain.)
+  noise (see the tables). The detector is energy-based with a floor that follows the quietest frame around each one
+  (a second and a half before it, a third of a second after: each frame is decided that much late): speech is
+  modulated (syllables, gaps between words) and rises well above that floor; steady noise does not, and digital
+  silence is under an absolute floor (-62 dBFS). A stretch must hold at least 0.2 s of voiced frames, and its voiced
+  core must hold 8 dB between its loud and quiet frames (90th and 10th percentiles): Phase 1's speech held 12–27 dB,
+  clean, noisy or in 18 languages, and room noise under 4. That second rule catches noise that starts after silence
+  (it rises over the old floor) and the tail of noise before silence (the floor looks ahead into the quiet), which
+  the engine's tests caught. Volatile words are asked of the model only for a stretch that passes both so far. On
+  Phase 1's 108 clips it finds every sentence from its start and gives nothing for silence or loud room noise, where
+  the prototype's slowly rising floor called the room noise speech. Tests prove silence, steady noise and noise
+  beside silence give no text and no model call. (Silero VAD agreed with it on every clean and noisy clip; it would
+  add a second model to download for no measured gain.)
 - **Bounded.** One model loaded, one transcription at a time, at most four threads (one fewer than the cores). A
   spoken stretch is cut at 25 s (Whisper's window is 30 s); audio waiting in a stream is capped at two minutes; an
   audio message over one second is refused. The main process watches the worker's memory and stops it above 1.5 GB
   (fast) or 2.5 GB (accurate), saying so.
+- **Language.** transformers.js 4.3.1 transcribes as English when no language is given, so with Detect the worker
+  runs the encoder once, reads the language token Whisper chooses in one decoder step, and transcribes in that
+  language: the method behind the per-language numbers above.
 - **The control.** One reusable `VoiceInput` (`components/VoiceInput.tsx`): a mic `IconButton` beside the box it
   belongs to. Pressed, it listens (water fill, a ring that follows the voice); volatile words show above it while the
   owner speaks; each final goes in at the caret of its box as ordinary, editable, undoable text. ⌘⇧M (Ctrl+Shift+M on
@@ -183,6 +193,17 @@ getUserMedia → AudioContext at 16 kHz     permission: media, audio only,      
   (SHA-256 of each file against the pinned value; a file that does not match is deleted, never used), with progress,
   Stop and Remove, into `<Wanigan's data>/voice/models/`. Free disk space is checked first. No download ever happens
   without the owner's click.
+
+### Where it is
+
+| Place | File | What it writes into |
+|---|---|---|
+| The live view's note composer, its voice slot (a chosen part's note, a snap's and a recording's explanation) | `components/live/Notes.tsx` | the explanation box |
+| The live editor's toolbar, its voice slot after Snap and Record | `components/Live.tsx`, `components/live/Voice.tsx` | narration into a recording; else the note box |
+| The Request tab's hook search | `components/live/Request.tsx` | the search box (one line, no full stop) |
+| Talk to Wanigan | `components/Chat.tsx` | the question |
+| A session's message to its agent | `views/SessionView.tsx` | the message |
+| Settings › Voice | `components/VoiceSettings.tsx`, one line in `views/SettingsView.tsx` | — |
 
 ## Permissions, per OS
 
@@ -215,6 +236,25 @@ moment the words began:
 - **When**: Settings › Voice › "Narrate recordings" listens from a recording's start to its stop; without it, the mic
   beside the recording's Stop narrates this recording only. The chords start and stop narration while a recording
   runs and no box is being typed into.
+
+## What was proven, and what was not
+
+- The built worker in an Electron utilityProcess, driven as the app drives it (`scripts/voice-harness.mjs`), wrote
+  "Move the Northwind banner below the search box." from macOS `say` with the fast model, and "Move the North Wind
+  Banner below the search box." with the accurate one; three seconds of silence and of steady noise made no model
+  call (`main/voice-real.test.ts`, with `WANIGAN_VOICE_MODELS`). French and Japanese came back in their own scripts.
+- The same worker ran from inside an `app.asar` packed from exactly what electron-builder ships (`out/**` and the
+  production dependencies better-sqlite3, node-addon-api, node-pty and qrcode-generator), and transcribed the same.
+  The lockfile marks transformers.js, onnxruntime-web, onnxruntime-node, sharp and `@img/*` as dev-only, and that
+  asar holds no onnxruntime-node, sharp or `@img` file: its only native files are node-pty's and better-sqlite3's.
+- In the real app (Electron 44, the demo), `window.wanigan.voice.start()` handed a port through the main process
+  and the preload to the page, audio sent over it reached the worker, the final came back, and an unknown and an
+  oversized message were refused by name.
+- The window's capture (getUserMedia, the AudioContext at 16 kHz, the AudioWorklet's 100 ms chunks, the port) runs
+  in the voice sweep against a stream an AudioContext makes; the microphone is never opened in a test.
+- Not seen: a real microphone. On the test machine, the agent-launched Electron could not open even Chromium's
+  fake audio device (getUserMedia never settled, with no permission request logged) and its audio graph rendered
+  silence; the sweep's headless Chromium did not have that problem. Not yet run on Windows, Linux or an Intel Mac.
 
 ## What it is not
 
