@@ -229,7 +229,8 @@ try {
 
     // ── Settings › Voice, and the sheet's keys.
     {
-      const { page, context } = await open(theme, {}, '#/settings');
+      // Settings is one section at a time: Voice is its own, beside Live view.
+      const { page, context } = await open(theme, {}, '#/settings/voice');
       const section = page.locator('section[aria-labelledby="set-voice"]');
       await section.waitFor({ timeout: 10_000 }).catch(() => fail(t('settings: no Voice section')));
       await section.scrollIntoViewIfNeeded().catch(() => {});
