@@ -1373,9 +1373,14 @@ export function livePage(): void {
   /**
    * Tag the elements the main process accepted (by their place in each edit's last find) with `data-wl-edit`, and
    * no others; with the layer on, patch the words of text edits on their elements (a later edit's words win), and put
-   * back the words of every element no longer patched. Returns how many elements carry a tag.
+   * back the words of every element no longer patched. Name the layer's stylesheet generation on the root (`gate`),
+   * or none with the layer off: the main process's sheets hold only for the generation named (compileLayer), since a
+   * user-origin sheet cannot be taken out once injected. Returns how many elements carry a tag.
    */
-  function layerSet(set: { tags: Record<string, number[]>; texts: { id: string; value: string }[]; on: boolean }): number {
+  function layerSet(set: { tags: Record<string, number[]>; texts: { id: string; value: string }[]; on: boolean; gate?: string | null }): number {
+    const root = document.documentElement;
+    if (set.on && typeof set.gate === 'string' && /^g\d{1,9}$/.test(set.gate)) root.setAttribute('data-wl-layer', set.gate);
+    else root.removeAttribute('data-wl-layer');
     const want = new Map<Element, string[]>();
     for (const [id, picks] of Object.entries(set.tags ?? {})) {
       if (!EDIT_ID.test(id) || !Array.isArray(picks)) continue;

@@ -86,6 +86,20 @@ test('the preview sheet targets only tagged elements, always wins, and keeps the
   assert.equal(layerSelector('e1'), '[data-wl-edit~="e1"][data-wl-edit~="e1"]');
 });
 
+test('a gated sheet holds only while the page’s root names its generation, the root itself included', () => {
+  const edits = [
+    edit({ id: 'e1', change: { type: 'style', values: { color: '#123456' } } }),
+    edit({ id: 'e3', scope: 'site', change: { type: 'token', name: '--color-accent', value: '#c0ffee' } }),
+  ];
+  const g = ':root[data-wl-layer="g7"]';
+  assert.equal(compileLayer(edits, [], 'g7'), [
+    `${g} [data-wl-edit~="e1"][data-wl-edit~="e1"], ${g}[data-wl-edit~="e1"][data-wl-edit~="e1"] { color: #123456 !important; }`,
+    `${g} { --color-accent: #c0ffee !important; }`,
+  ].join('\n'), 'a user-origin sheet cannot be taken out once injected: one the root no longer names holds nothing');
+  for (const bad of ['7', 'g', 'g1"] body {', 'G7', 'g1234567890']) assert.equal(compileLayer(edits, [], bad), '', `nothing for a gate of ${JSON.stringify(bad)}`);
+  assert.equal(compileLayer(edits, []), compileLayer(edits, [], null), 'no gate, as before');
+});
+
 test('a value that slipped past the edit check still cannot break out of the sheet', () => {
   const css = compileLayer([edit({ id: 'e1', change: { type: 'style', values: { color: 'red; } body { display: none' } } })], []);
   assert.equal(css, '');

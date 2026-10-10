@@ -227,9 +227,12 @@ export function judge(found: readonly WidthFindings[]): { ok: boolean; failed: V
 }
 
 /** The noise floor a verdict states: the largest of each number over its widths. */
-export const verdictNoise = (found: readonly WidthFindings[]): Noise => ({
-  maxDiff: Math.max(0, ...found.map((w) => w.noise.maxDiff)),
-  pixels: Math.max(0, ...found.map((w) => w.noise.pixels)),
+export const verdictNoise = (found: readonly WidthFindings[]): Noise => widestNoise(found.map((w) => w.noise));
+
+/** The widest of several noise floors: the largest of each number. */
+export const widestNoise = (floors: readonly Noise[]): Noise => ({
+  maxDiff: Math.max(0, ...floors.map((n) => n.maxDiff)),
+  pixels: Math.max(0, ...floors.map((n) => n.pixels)),
 });
 
 /** The edits a failed verdict is about: those its differences name; every edit when one is not tied to any (a leak). */

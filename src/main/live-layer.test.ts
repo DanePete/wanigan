@@ -161,15 +161,19 @@ test('applying resolves an edit by its part’s identity, tags what it found, an
     const applied = await w.apply();
     const find = w.page.calls.find((c) => c.name === 'layerFind');
     assert.deepEqual(find?.args, [[{ id: e.id, parts: ['p1'], inner: 'h2:nth-of-type(1)', selector: null, text: true }], true], 'the part whose identity it is, and only that one, checked by its text');
-    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [], on: true });
-    assert.deepEqual(w.sheets.inserted, [compileLayer([e], [])]);
+    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [], on: true, gate: 'g1' });
+    assert.deepEqual(w.sheets.inserted, [compileLayer([e], [], 'g1')], 'its rules hold only while the page’s root names its generation');
     assert.deepEqual(w.sheets.origins, ['user'], 'the user origin: its !important outranks the page’s, layered or not');
     assert.match(w.sheets.inserted[0]!, new RegExp(`\\[data-wl-edit~="${e.id}"\\]\\[data-wl-edit~="${e.id}"\\] \\{ color: #123456 !important; \\}`));
     assert.deepEqual(applied, { page: '/paddling', shown: [{ id: e.id, elements: 1 }], orphaned: [], elsewhere: [], off: false });
     assert.deepEqual(w.marks, [], 'nothing changed state');
-    // Applied again, the old sheet goes once the new one is in: one stylesheet, replaced whole.
+    // Applied again: a new generation, and the page is switched to it in the same call that tags. The old sheet is let
+    // go of only after, and holds nothing either way (Electron cannot take a user-origin sheet out).
     await w.apply();
-    assert.deepEqual([w.sheets.inserted.length, w.sheets.removed], [2, ['key-1']]);
+    assert.deepEqual([w.sheets.inserted.length, w.sheets.removed, w.page.set?.gate], [2, ['key-1'], 'g2']);
+    assert.ok(w.sheets.inserted[1]!.includes(':root[data-wl-layer="g2"]') && !w.sheets.inserted[1]!.includes('"g1"'));
+    const order = w.page.calls.filter((c) => c.name === 'layerSet').length;
+    assert.equal(order, 2);
   } finally { w.done(); }
 });
 
@@ -233,6 +237,32 @@ test('a container whose children’s words changed is orphaned: a block keyed by
   } finally { w.done(); }
 });
 
+test('words the layer’s own text edit saved are not other words: a style on that element, or a card around it, still resolves', async () => {
+  // A heading was retyped through the layer and saved: the site renders the new words. A style on the heading and one on
+  // the card around it were keyed to the old words.
+  const saved = edit({ label: 'Heading', state: 'implemented', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const style = edit();
+  const cardStyle = edit({ label: 'Card', target: { part: card(0), inner: null, selector: null, textHash: layerTextHash('Paddling 101 Learn the strokes') } });
+  const w = wire({ edits: [saved, style, cardStyle] });
+  try {
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')], '': [holding('Paddling 102 Learn the strokes')] } };
+    const applied = await w.apply();
+    assert.deepEqual(applied.orphaned, [], 'none orphaned by words the layer itself saved');
+    assert.deepEqual(applied.shown.map((s) => s.id), [saved.id, style.id, cardStyle.id]);
+    // A card that moved into the place, with other words, is still told apart.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Canoeing 201')], '': [holding('Canoeing 201 Longer trips')] } };
+    assert.deepEqual((await w.apply()).orphaned.map((o) => o.id).sort(), [style.id, cardStyle.id, saved.id].sort());
+  } finally { w.done(); }
+  // A draft that was never saved does not vouch for anything: its words are not the site's.
+  const draft = edit({ label: 'Heading', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const keyed = edit();
+  const d = wire({ edits: [draft, keyed] });
+  try {
+    d.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')] } };
+    assert.deepEqual((await d.apply()).orphaned.map((o) => o.id), [keyed.id], 'the site shows other words, and no saved edit of the layer explains them');
+  } finally { d.done(); }
+});
+
 test('the same stored thing shown twice on a page is one identity: an edit for it reaches both, and is not orphaned', async () => {
   const e = edit();
   // The same card (one entity, one identity) rendered in the page and again in a sidebar teaser.
@@ -269,14 +299,15 @@ test('a text edit patches its element’s words, and still resolves once the sit
   try {
     w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
     await w.apply();
-    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [{ id: e.id, value: 'Paddling 102' }], on: true });
+    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [{ id: e.id, value: 'Paddling 102' }], on: true, gate: 'g1' });
     w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')] } };
     assert.deepEqual((await w.apply()).orphaned, [], 'its own new words are not other words');
+    const sheetsBefore = w.sheets.inserted.length;
     const off = await w.show(false);
     assert.equal(off.off, true);
     assert.deepEqual(off.shown, []);
-    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [], on: false }, 'tags may stay; words go back');
-    assert.equal(w.sheets.removed.length, w.sheets.inserted.length, 'no stylesheet left');
+    assert.deepEqual(w.page.set, { tags: { [e.id]: [0] }, texts: [], on: false, gate: null }, 'tags may stay; words go back; the root names no generation, so no sheet holds');
+    assert.equal(w.sheets.inserted.length, sheetsBefore, 'nothing new is injected to switch it off');
     const onAgain = await w.show(true);
     assert.equal(onAgain.off, false);
   } finally { w.done(); }
@@ -360,24 +391,24 @@ const painted = (b: Bitmap, r: { x: number; y: number; width: number; height: nu
 const heading = (id: string, color: string): ElementSnap => ({ edit: id, n: 0, element: 'h2.card__title', values: { color, text: 'Paddling 101' }, box: { x: 20, y: 40, width: 100, height: 24 } });
 
 /** A render seam: the design and the result as each case draws them, small pages at every width. */
-function renders(e: LayerEdit, draw: { design: (b: Bitmap) => Bitmap; result: (b: Bitmap, n: number) => Bitmap; designColor?: string }): LayerRender {
-  let results = 0;
+function renders(e: LayerEdit, draw: { design: (b: Bitmap, n: number, width: number) => Bitmap; result: (b: Bitmap, n: number, width: number) => Bitmap; designColor?: string }): LayerRender {
+  let results = 0, designs = 0;
   return async (r) => {
     const base = blank(64, 200);
-    if (r.design) return { png: Buffer.from(`design-${r.width}`), bitmap: draw.design(base), elements: [heading(e.id, draw.designColor ?? 'rgb(18, 52, 86)')], found: [e.id] };
-    return { png: Buffer.from(`result-${r.width}`), bitmap: draw.result(base, results++), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] };
+    if (r.design) return { png: Buffer.from(`design-${r.width}`), bitmap: draw.design(base, designs++, r.width), elements: [heading(e.id, draw.designColor ?? 'rgb(18, 52, 86)')], found: [e.id] };
+    return { png: Buffer.from(`result-${r.width}`), bitmap: draw.result(base, results++, r.width), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id] };
   };
 }
 
-test('a verification renders the result twice and the design once at each width, and passes when they match', async () => {
+test('a verification renders the result and the design twice each at each width, and passes when they match', async () => {
   const e = edit({ state: 'implemented' });
   const w = wire({ edits: [e], render: renders(e, { design: (b) => painted(b, { x: 20, y: 40, width: 40, height: 24 }, 18), result: (b) => painted(b, { x: 20, y: 40, width: 40, height: 24 }, 18) }) });
   try {
     const verdict = await w.verify(e.id);
     assert.deepEqual([verdict.ok, verdict.failed, verdict.widths, verdict.noise, verdict.differences], [true, null, [390, 1440], { maxDiff: 0, pixels: 0 }, []]);
     assert.deepEqual(w.renders.map((r) => [r.width, r.design, r.url, r.path, r.token, r.partition]), [
-      [390, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [390, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [390, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'],
-      [1440, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [1440, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [1440, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'],
+      [390, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [390, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [390, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [390, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'],
+      [1440, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [1440, false, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [1440, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'], [1440, true, `${BASE}paddling`, '/paddling', TOKEN, 'persist:wanigan-live-p1'],
     ]);
     assert.deepEqual(w.marks.map((m) => [m.id, m.state, m.verdict?.ok]), [[e.id, 'verified', true]]);
     const [first] = verdict.pictures;
@@ -430,6 +461,39 @@ test('the noise floor forgives what the result does not repeat exactly, and no m
     const v = await w.verify(e.id, { widths: [390] });
     assert.deepEqual([v.ok, v.noise], [true, { maxDiff: 1, pixels: 3 }]);
   } finally { w.done(); }
+});
+
+test('the design is rendered twice too: what it does not repeat exactly is noise, as the result’s is', async () => {
+  const e = edit({ state: 'implemented' });
+  // The result repeats itself exactly; the design does not, by one level at a few pixels away from the edit.
+  const jitter = (b: Bitmap) => painted(b, { x: 2, y: 2, width: 3, height: 1 }, 254);
+  const w = wire({ edits: [e], render: renders(e, { design: (b, n) => (n % 2 ? jitter(b) : b), result: (b) => b }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.noise], [true, null, { maxDiff: 1, pixels: 3 }], 'a leak no bigger than the design’s own jitter is not a leak');
+  } finally { w.done(); }
+});
+
+test('every width is judged against the one floor the verdict states, the largest over both versions and every width', async () => {
+  const e = edit({ state: 'implemented' });
+  // At 390 the two results happen to match exactly; at 1440 they differ by four levels at many pixels. The design
+  // differs from the result at 390 by one level at a few pixels away from the edit: well inside the stated floor.
+  const at1440 = (b: Bitmap, n: number) => (n % 2 ? painted(b, { x: 0, y: 100, width: 64, height: 20 }, 251) : b);
+  const w = wire({ edits: [e], render: renders(e, {
+    design: (b, _n, width) => (width === 390 ? painted(b, { x: 2, y: 2, width: 5, height: 1 }, 254) : b),
+    result: (b, n, width) => (width === 1440 ? at1440(b, n) : b),
+  }) });
+  try {
+    const v = await w.verify(e.id);
+    assert.deepEqual([v.ok, v.failed, v.noise], [true, null, { maxDiff: 4, pixels: 1280 }], 'one floor, stated and used');
+  } finally { w.done(); }
+  // Past the stated floor, the same leak still fails.
+  const f = edit({ state: 'implemented' });
+  const x = wire({ edits: [f], render: renders(f, { design: (b) => painted(b, { x: 2, y: 2, width: 5, height: 1 }, 200), result: (b) => b }) });
+  try {
+    const v = await x.verify(f.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'rest']);
+  } finally { x.done(); }
 });
 
 test('only an implemented edit is verified, an edit the design cannot find fails, and nothing is asked without the live view or trust', async () => {
