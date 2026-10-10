@@ -238,7 +238,11 @@ export interface LiveRegion {
   piece: string | null;
   /** The theme hook Drupal said rendered it. */
   hook: string | null;
-  /** A field the site's helper marked (data-wl-field): `entity_type:id:field_name`, what a hand edit to its words saves to. */
+  /**
+   * A field the site's helper marked (data-wl-field), what a hand edit to its words saves to:
+   * `entity_type:id:field_name:field_type:langcode:revision:changed` (the translation the page rendered, the revision it
+   * showed, and when that translation last changed; a save over anything newer is refused).
+   */
   field: string | null;
   /** Drupal's template file name suggestions for it, most specific first, without `.html.twig`. */
   suggestions: string[];
