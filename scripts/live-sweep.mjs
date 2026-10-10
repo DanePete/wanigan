@@ -17,7 +17,9 @@
 // window is wide) and following the choice from the page, Notes, Problems and
 // Request in the dock beneath the page with the code editor (its keys, and
 // what it shows kept on this Mac), the status line, and every key the live
-// view lists on the shortcut sheet. Then the page script itself, in a
+// view lists on the shortcut sheet; the bar and the project's tab bar fitting,
+// nothing drawn over anything or cut off, at 1280, 1440 and 1920 px with the
+// dock beside and beneath. Then the page script itself, in a
 // real Chromium page of made-up markup: the trace's part marks read and paired,
 // a lens painted, a part dragged to a new place and put back, and the dock's
 // keys taken from the page.
@@ -28,6 +30,7 @@ import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
+import { fitProblems } from './ui-fit.mjs';
 
 const out = join(root, '.artifacts', 'live');
 mkdirSync(out, { recursive: true });
@@ -1077,6 +1080,28 @@ try {
       await p5.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="problems"]', { timeout: 8000 })
         .catch(() => fail(t('dock kept: back in the live view the dock did not come back on Problems')));
       await ctx.close();
+    }
+
+    // The bar fits whatever width the page gets: at three window widths, with the dock open beside and beneath it, no
+    // control of the live view's bar or the project's tab bar is drawn over another or cut off (scripts/ui-fit.mjs
+    // measures what is drawn, labels and keys included).
+    for (const width of [1280, 1440, 1920]) {
+      for (const side of ['right', 'bottom']) {
+        const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+        await ctx.addInitScript(BRIDGE);
+        await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); localStorage.setItem('wanigan.editor.prefs', '${JSON.stringify({ dock: side, open: true, shows: 'notes' })}'); } catch {}`);
+        await ctx.addInitScript(liveStub, liveFixture);
+        await ctx.addInitScript(LIVE_DEFAULTS);
+        const p6 = await ctx.newPage();
+        const at = `fit ${width} px, the dock ${side === 'right' ? 'beside' : 'beneath'}`;
+        await p6.goto(`${base}#/p/NS/live`);
+        await p6.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t(`${at}: no layers`)));
+        await p6.waitForSelector(`.editor-drawer[data-dock="${side}"]:not([hidden]) .live-docked[data-tab="notes"]`, { timeout: 5000 }).catch(() => fail(t(`${at}: the dock is not open`)));
+        await p6.waitForTimeout(200);
+        for (const problem of await p6.evaluate(fitProblems)) fail(t(`${at}: ${problem}`));
+        await p6.screenshot({ path: join(out, `${theme}-fit-${width}-${side}.png`), animations: 'disabled' });
+        await ctx.close();
+      }
     }
   }
 

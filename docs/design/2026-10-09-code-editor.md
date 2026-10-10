@@ -107,7 +107,9 @@ files) and `git`, so Changes refetches.
 
 - **The drawer** sits beneath the view, or beside it (a button), opens and
   closes with ⌘J, and is resized by its edge (dragged, or with the arrow keys,
-  Home and End on it). Its height and width, the dock, whether it is open,
+  Home and End on it); beside a view it always leaves the view 640 px
+  (`--view-min-beside`) for its bar and tabs, however wide it was left. Its
+  height and width, the dock, whether it is open,
   the tab it shows, wrap and Vim are kept on this Mac. In the live view the
   page above it shrinks with it; in a session it sits under the terminal (and
   the live view beside it).
