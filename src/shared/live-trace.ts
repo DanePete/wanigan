@@ -81,6 +81,9 @@
 //   domain). WordPress's say the line of each in its property's
 //   `description`, and its template parts say whether their file was read
 //   (a `template.words` variable: `read …`, or `not read: <why>`).
+// - A WordPress term's name where a page shows it (a menu item built from a
+//   term, an archive's heading, a list of categories): `term-<id>`, a string
+//   saved through wp_update_term(), its `shows` saying where else it shows.
 
 export const TRACE_VERSION = 1;
 

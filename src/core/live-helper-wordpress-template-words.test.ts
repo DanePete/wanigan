@@ -7,8 +7,9 @@
 // is); the words typed into its HTML and the strings it prints through a gettext function become targets on that
 // part, each saying why it is not saved here, its file and line, and its text domain; what its PHP computes is never
 // offered; a parent's file under an active child says the change belongs in a copy in the child theme; a plugin's
-// template and a file too large to read say so. Made-up sites only (acme, northwind); nothing here touches a site;
-// it needs PHP.
+// template and a file too large to read say so; and a term's name a menu or an archive heading shows is a target
+// saved through wp_update_term(), saying where else it shows. Made-up sites only (acme, northwind); nothing here
+// touches a site; it needs PHP.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -266,7 +267,7 @@ echo json_encode($out, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 type Saved = [{ ok: boolean; error?: string }, number];
 interface Result { trace: unknown; saved: Saved; again: Saved; empty: Saved; updated: [number, string, { name: string }][] }
 
-describe('the words a classic theme’s template files write, under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {
+describe('the words a classic theme’s template files write, and the term names a page shows, under a stand-in WordPress', { skip: php ? false : 'PHP is not installed here' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'wg-wp-template-words-'));
   const site = join(dir, 'site');
   const plugin = join(dir, 'wanigan-live.php');
@@ -386,5 +387,30 @@ describe('the words a classic theme’s template files write, under a stand-in W
     const huge = part('template-parts/huge.php');
     assert.equal(variable(huge, 'template.words'), 'not read: it is larger than 256 KB');
     assert.deepEqual(targetsOf(huge).filter((t) => /^words\./.test(t.id)), []);
+  });
+
+  test('a term’s name a menu or an archive heading shows is a target with its reach, saved through wp_update_term()', () => {
+    const term: EditTarget = {
+      id: 'term-5', kind: 'field', label: 'Name of the category “Trips”', via: 'schema',
+      schema: { type: 'string', title: 'Name', minLength: 1 }, value: 'Trips', revisions: false,
+      shows: 'the category’s archive, every menu built from it and every list that names it',
+    };
+    assert.deepEqual(trace.edits.find((e) => e.id === 'term-5'), term);
+    assert.ok(part('Link: Trips').edits?.includes('term-5'), 'a menu item built from the term, with no text of its own');
+    assert.ok(!part('Link: Contact').edits?.some((e) => e.startsWith('term-')), 'a link with its own text shows that text');
+    assert.ok(part('Page template: archive.php').edits?.includes('term-5'), 'the archive’s heading, where the template printed it');
+    assert.ok(part('footer.php').edits?.includes('term-7'), 'a list of categories');
+    assert.equal(trace.edits.find((e) => e.id === 'term-7')?.label, 'Name of the category “Gear & rentals”');
+    // Saved as the term editor saves it, slashed; then refused over a name the site no longer has, and empty.
+    assert.deepEqual(r.saved, [{ ok: true }, 200]);
+    assert.deepEqual(r.updated, [[5, 'category', { name: 'Paddle trips' }]]);
+    assert.equal(r.again[1], 409);
+    assert.match(r.again[0].error ?? '', /The category’s name changed on the site since the page was shown/);
+    assert.equal(r.empty[1], 400, 'a name is required');
+  });
+
+  test('a user who may not rename the term is told so on its target', () => {
+    const refused = parseTrace(run(['edit_term']).trace) as LiveTrace;
+    assert.equal(refused.edits.find((e) => e.id === 'term-5')?.why, 'Your WordPress user cannot rename this category (edit_term).');
   });
 });

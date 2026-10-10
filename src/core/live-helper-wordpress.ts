@@ -225,6 +225,8 @@ final class Wanigan_Live {
 	private static $private = array();
 	private static $post_edits = array();
 	private static $options_seen = array();
+	/** @var array<string,array<int,string>> Terms whose names a part printed (an archive's heading, a list of categories), by part: term id => taxonomy. */
+	private static $terms_seen = array();
 	private static $describe = array();
 	private static $whose = array();
 	private static $prev_handler = null;
@@ -757,6 +759,12 @@ final class Wanigan_Live {
 		foreach (array('option_blogname' => 'blogname', 'option_blogdescription' => 'blogdescription') as $hook => $option) {
 			add_filter($hook, function ($value) use ($option) { Wanigan_Live::option_seen($option); return $value; }, PHP_INT_MAX);
 		}
+		// general-template.php single_term_title(): an archive's heading (get_the_archive_title(), the query title block)
+		// prints the queried term's name through one of these.
+		foreach (array('single_cat_title', 'single_tag_title', 'single_term_title') as $hook) add_filter($hook, array(self::class, 'term_title'), PHP_INT_MAX);
+		// class-walker-category.php start_el(): each category a list of them names (wp_list_categories(), the categories
+		// widget and block).
+		add_filter('list_cats', array(self::class, 'term_listed'), PHP_INT_MAX, 2);
 	}
 
 	public static function candidates(array $templates): void {
@@ -1373,6 +1381,26 @@ final class Wanigan_Live {
 		if ($part && $part !== self::$main) self::$options_seen[$part][$option] = true;
 	}
 
+	/** single_term_title()'s filters: the queried term's name, printed by the part rendering now (an archive's heading). */
+	public static function term_title($name) {
+		$term = self::$front && !self::$busy ? get_queried_object() : null;
+		if ($term instanceof WP_Term) self::term_seen((int) $term->term_id, (string) $term->taxonomy);
+		return $name;
+	}
+
+	/** list_cats: one category's name in a list the part rendering now prints. */
+	public static function term_listed($name, $term = null) {
+		if (self::$front && !self::$busy && $term instanceof WP_Term) self::term_seen((int) $term->term_id, (string) $term->taxonomy);
+		return $name;
+	}
+
+	/** Noted while the page renders, its target made once the page is done (build()): no query here. Never the document title in the head. */
+	private static function term_seen(int $id, string $taxonomy): void {
+		if (doing_action('wp_head')) return;
+		$part = self::top_part();
+		if ($part && (isset(self::$terms_seen[$part]) ? count(self::$terms_seen[$part]) : 0) < 200) self::$terms_seen[$part][$id] = $taxonomy;
+	}
+
 	/* ── queries, logs, errors ──────────────────────────────────────────── */
 
 	/**
@@ -1710,6 +1738,15 @@ final class Wanigan_Live {
 			if (!isset($parts[$part])) continue;
 			foreach (array_keys($options) as $o) $parts[$part]['edits'][] = self::option_edit($o);
 			$parts[$part]['edits'] = array_values(array_unique($parts[$part]['edits']));
+		}
+		// A term's name where a part printed it: an archive's heading, a list of categories.
+		foreach (self::$terms_seen as $part => $terms) {
+			if (!isset($parts[$part])) continue;
+			foreach ($terms as $tid => $taxonomy) {
+				$e = self::term_edit((int) $tid, (string) $taxonomy);
+				if ($e) $parts[$part]['edits'][] = $e;
+			}
+			if (isset($parts[$part]['edits'])) $parts[$part]['edits'] = array_values(array_unique($parts[$part]['edits']));
 		}
 		// What saving each edit target runs besides core.
 		foreach (self::$edits as $eid => $e) {
@@ -2672,6 +2709,45 @@ final class Wanigan_Live {
 	}
 
 	/**
+	 * Whose a template file is, for what its words say (Wanigan_Live_Template_Words): its path in the project, the
+	 * theme it is in and in which role (template_identity()), where a child theme's copy of a parent's file goes,
+	 * whether the theme gets its updates from outside the project, and whether WordPress found the file through its
+	 * template lookup (locate_template(), which takes a child theme's copy first). A file outside the active theme and
+	 * its parent: whose it is, as whose() says.
+	 */
+	private static function template_about(string $file, array $m): array {
+		$f = wp_normalize_path($file);
+		$rel = self::rel($f);
+		$about = array('shown' => $rel !== null ? $rel : $f, 'looked_up' => !empty($m['main']) || !empty($m['looked_up']), 'role' => null);
+		$identity = self::template_identity($f);
+		if ($identity) {
+			$about['role'] = $identity['role'];
+			$about['path'] = $identity['path'];
+			$about['theme'] = self::theme_title($identity['theme']);
+			if ($identity['role'] === 'parent') {
+				$about['child'] = self::theme_title(get_stylesheet());
+				$to = untrailingslashit(wp_normalize_path(get_stylesheet_directory())) . '/' . $identity['path'];
+				$r = self::rel($to);
+				$about['copy'] = $r !== null ? $r : $to;
+			}
+			$about['outside'] = $identity['role'] === 'theme' && self::whose($f)[0] === 'theme';
+			return $about;
+		}
+		$w = self::whose($f);
+		$about['kind'] = $w[3];
+		$about['package'] = $w[1];
+		$about['yours'] = $w[0] === 'yours';
+		return $about;
+	}
+
+	/** A theme's own name, from its style.css (theme.php wp_get_theme()), or its folder's. */
+	private static function theme_title(string $slug): string {
+		$theme = wp_get_theme($slug);
+		$name = $theme && $theme->exists() ? trim(wp_strip_all_tags((string) $theme->get('Name'))) : '';
+		return $name !== '' ? self::cut($name, 60) : $slug;
+	}
+
+	/**
 	 * template-loader.php tries each template type in order; get_query_template() applies
 	 * "{$type}_template_hierarchy" and locate_template() takes the first that exists (child theme, parent theme,
 	 * then wp-includes/theme-compat). In a block theme, locate_block_template() looks for a wp_template of the same
@@ -2719,45 +2795,6 @@ final class Wanigan_Live {
 			$out[] = $alt;
 		}
 		return $out;
-	}
-
-	/**
-	 * Whose a template file is, for what its words say (Wanigan_Live_Template_Words): its path in the project, the
-	 * theme it is in and in which role (template_identity()), where a child theme's copy of a parent's file goes,
-	 * whether the theme gets its updates from outside the project, and whether WordPress found the file through its
-	 * template lookup (locate_template(), which takes a child theme's copy first). A file outside the active theme and
-	 * its parent: whose it is, as whose() says.
-	 */
-	private static function template_about(string $file, array $m): array {
-		$f = wp_normalize_path($file);
-		$rel = self::rel($f);
-		$about = array('shown' => $rel !== null ? $rel : $f, 'looked_up' => !empty($m['main']) || !empty($m['looked_up']), 'role' => null);
-		$identity = self::template_identity($f);
-		if ($identity) {
-			$about['role'] = $identity['role'];
-			$about['path'] = $identity['path'];
-			$about['theme'] = self::theme_title($identity['theme']);
-			if ($identity['role'] === 'parent') {
-				$about['child'] = self::theme_title(get_stylesheet());
-				$to = untrailingslashit(wp_normalize_path(get_stylesheet_directory())) . '/' . $identity['path'];
-				$r = self::rel($to);
-				$about['copy'] = $r !== null ? $r : $to;
-			}
-			$about['outside'] = $identity['role'] === 'theme' && self::whose($f)[0] === 'theme';
-			return $about;
-		}
-		$w = self::whose($f);
-		$about['kind'] = $w[3];
-		$about['package'] = $w[1];
-		$about['yours'] = $w[0] === 'yours';
-		return $about;
-	}
-
-	/** A theme's own name, from its style.css (theme.php wp_get_theme()), or its folder's. */
-	private static function theme_title(string $slug): string {
-		$theme = wp_get_theme($slug);
-		$name = $theme && $theme->exists() ? trim(wp_strip_all_tags((string) $theme->get('Name'))) : '';
-		return $name !== '' ? self::cut($name, 60) : $slug;
 	}
 
 	/**
@@ -2900,6 +2937,12 @@ final class Wanigan_Live {
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'menu-item', 'item' => $item->ID, 'custom' => $custom);
 		$p['edits'][] = $id;
+		// nav-menu.php wp_setup_nav_menu_item(): an item built from a term with no text of its own shows the term's
+		// name, which only the term keeps.
+		if ($menu_item->type === 'taxonomy' && (string) $item->post_title === '') {
+			$term = self::term_edit((int) $menu_item->object_id, (string) $menu_item->object);
+			if ($term) $p['edits'][] = $term;
+		}
 		$p['variables'] = array(
 			array('name' => 'type', 'type' => 'string', 'preview' => $menu_item->type . ' (' . $menu_item->object . ')'),
 			array('name' => 'url', 'type' => 'string', 'preview' => self::cut((string) $menu_item->url, 400)),
@@ -2917,6 +2960,30 @@ final class Wanigan_Live {
 		if ($w = self::cannot('manage_options', 'change site settings')) $target['why'] = $w;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'option', 'field' => $option === 'blogname' ? 'title' : 'description');
+		return $id;
+	}
+
+	/**
+	 * A term's name (a category, a tag, a custom taxonomy's term), saved through taxonomy.php wp_update_term() as the
+	 * term editor saves it, its slug and the rest kept. A name shows wherever the term does: its archive, every menu
+	 * built from it and every list that names it, so the target says so (its shows) and the window asks first.
+	 */
+	private static function term_edit(int $term_id, string $taxonomy): ?string {
+		$id = 'term-' . $term_id;
+		if (isset(self::$edits[$id])) return $id;
+		$term = get_term($term_id, $taxonomy);
+		if (!$term instanceof WP_Term) return null;
+		$tax = get_taxonomy($term->taxonomy);
+		$noun = $tax && isset($tax->labels->singular_name) ? strtolower(wp_strip_all_tags((string) $tax->labels->singular_name)) : 'term';
+		$name = wp_strip_all_tags(html_entity_decode((string) $term->name, ENT_QUOTES, 'UTF-8'));
+		$target = array(
+			'id' => $id, 'kind' => 'field', 'label' => 'Name of the ' . $noun . ' “' . $name . '”', 'via' => 'schema',
+			'schema' => array('type' => 'string', 'title' => 'Name', 'minLength' => 1), 'value' => (string) $term->name, 'revisions' => false,
+			'shows' => 'the ' . $noun . '’s archive, every menu built from it and every list that names it',
+		);
+		if ($w = self::cannot('edit_term', 'rename this ' . $noun, (int) $term->term_id)) $target['why'] = $w;
+		self::$edits[$id] = $target;
+		self::$private[$id] = array('type' => 'term', 'term' => (int) $term->term_id, 'taxonomy' => (string) $term->taxonomy, 'name' => (string) $term->name, 'noun' => $noun);
 		return $id;
 	}
 
@@ -4912,6 +4979,9 @@ final class Wanigan_Live {
 			case 'copy':
 				$result = self::copy_template($p, (array) $value);
 				break;
+			case 'term':
+				$result = self::save_term($p, $value);
+				break;
 			default:
 				$result = new WP_Error('wanigan', 'Wanigan does not know how to save that.');
 		}
@@ -4939,6 +5009,21 @@ final class Wanigan_Live {
 		if (is_wp_error($result)) return $result;
 		$after = self::latest_revision($post->ID);
 		return $after && $after !== $before ? array('revision' => $after) : array();
+	}
+
+	/**
+	 * A term's name through taxonomy.php wp_update_term(), slashed as it expects: it merges what the term already
+	 * stores, so its slug, parent and description stay as they are, and runs core's term filters (pre_term_name:
+	 * sanitize_text_field, kses). Refused when the name changed on the site since the page was shown.
+	 */
+	private static function save_term(array $p, $value) {
+		$term = get_term((int) $p['term'], (string) $p['taxonomy']);
+		if (!$term instanceof WP_Term) return new WP_Error('wanigan', 'That ' . $p['noun'] . ' is gone.');
+		if ($why = self::cannot('edit_term', 'rename this ' . $p['noun'], (int) $term->term_id)) return new WP_Error('wanigan', $why);
+		if ((string) $term->name !== (string) $p['name']) return new WP_Error('wanigan', 'The ' . $p['noun'] . '’s name changed on the site since the page was shown: reload it and try again.');
+		if (!is_string($value) || trim($value) === '') return new WP_Error('wanigan', 'A ' . $p['noun'] . ' needs a name.');
+		$done = wp_update_term((int) $term->term_id, (string) $term->taxonomy, wp_slash(array('name' => $value)));
+		return is_wp_error($done) ? $done : array();
 	}
 
 	private static function latest_revision(int $pid): ?int {
