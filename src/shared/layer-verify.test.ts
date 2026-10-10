@@ -3,9 +3,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  against, applyMask, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, parseVerdict,
-  unionDiff, verdictNoise, verifyWidths, withinNoise, zonesOf, type Bitmap, type ElementSnap, type PixelArea, type WidthFindings,
+  against, applyMask, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, maskedOf, masksAmong, noiseFloor, parseVerdict, traceMasks,
+  unionDiff, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf, type Bitmap, type ElementSnap, type PixelArea, type RenderMask, type WidthFindings,
 } from './layer-verify.ts';
+import type { TracePart } from './live-trace.ts';
 
 /** A page of one colour, as a capture gives it. */
 function page(width: number, height: number, rgb: [number, number, number] = [255, 255, 255]): Bitmap {
@@ -209,4 +210,89 @@ test('two comparisons pictured as one: the larger difference per pixel, masked o
   const u = unionDiff(a, b);
   assert.deepEqual([u.pixels, u.maxDiff, [...u.diff]], [2, 255, [255, 0, 0, 55, 0, 0, 0, 0]]);
   assert.deepEqual([...(u.masked ?? [])], [0, 0, 0, 0, 0, 0, 1, 1]);
+});
+
+/* ── masks ── */
+
+test('what is left out is compared nowhere, a touched element is compared all the same, and the floor is measured over what is left', () => {
+  const once = page(100, 100);
+  // A block that changes between renders (a random order) at the top of the page, and the edited heading inside it.
+  const again = paint(once, { x: 0, y: 0, width: 100, height: 30 }, [40, 40, 40]);
+  const block = { x: 0, y: 0, width: 100, height: 30 };
+  const heading = { x: 10, y: 10, width: 20, height: 10 };
+  assert.deepEqual(noiseFloor(once, again), { maxDiff: 215, pixels: 3000 }, 'unmasked, the whole block is noise');
+  assert.deepEqual(noiseFloor(once, again, [block], [heading]), { maxDiff: 215, pixels: 200 }, 'masked, only the heading inside it still counts');
+  assert.deepEqual(noiseFloor(once, again, [block]), { maxDiff: 0, pixels: 0 });
+  const d = applyMask(diffBitmaps(again, once), [block], [heading]);
+  assert.equal(d.masked?.[0], 1, 'left out');
+  assert.equal(d.masked?.[10 * 100 + 10], 0, 'the touched element is not');
+  assert.equal(d.diff[0], 0);
+  // A leak far from the block is still a leak, and no longer forgiven by the block's noise.
+  const leaked = paint(again, { x: 0, y: 80, width: 10, height: 2 }, [200, 200, 200]);
+  const floor = noiseFloor(once, again, [block], [heading]);
+  const rest = comparePixels(applyMask(diffBitmaps(leaked, again), [block], [heading]), zonesOf([snap('e1', heading)], [], 0), 100).rest;
+  assert.ok(!withinNoise(rest, { ...floor, pixels: 0, maxDiff: 0 }) && rest.pixels === 20, 'only the leak is counted');
+  assert.equal(applyMask(d, []), d, 'nothing to leave out: the comparison as it was');
+});
+
+test('what a verdict says it left out: by name and why, at the widths, near an edit or not, and nothing that left nothing out', () => {
+  const m = (label: string, rects: RenderMask['rects']): RenderMask => ({ label, why: 'made for each user', rects, held: false });
+  const masked = maskedOf([
+    { width: 390, masks: [m('Who’s online (block)', [{ x: 0, y: 0, width: 50, height: 20 }]), m('Cart (block)', [{ x: 0, y: 100, width: 10, height: 10 }])], keep: [{ x: 0, y: 95, width: 40, height: 40 }] },
+    { width: 1440, masks: [m('Who’s online (block)', [{ x: 0, y: 0, width: 50, height: 20 }]), m('Who’s online (block)', [{ x: 0, y: 0, width: 50, height: 20 }]), m('Empty (block)', [{ x: 0, y: 0, width: 0, height: 20 }])], keep: [{ x: 40, y: 10, width: 40, height: 40 }] },
+  ]);
+  assert.deepEqual(masked, [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390, 1440], nearEdit: true }],
+    'the cart wholly inside an edited element is compared, an empty box left nothing out, and one overlapping an edited element says so');
+});
+
+test('a mask the helper held still is compared when every render was held alike, and left out otherwise', () => {
+  const held: RenderMask = { label: 'Recent (view)', why: 'kept 60 seconds at most', rects: [{ x: 0, y: 0, width: 10, height: 10 }], held: true };
+  const user: RenderMask = { label: 'Account menu (block)', why: 'made for each user', rects: [{ x: 0, y: 20, width: 10, height: 10 }], held: false };
+  const at = (t: number) => ({ t, s: 7, views: [] });
+  assert.deepEqual(masksAmong([{ masks: [held, user], steady: at(1) }, { masks: [held, user], steady: at(1) }]), [user, user]);
+  assert.deepEqual(masksAmong([{ masks: [held, user], steady: at(1) }, { masks: [held], steady: at(2) }]), [held, user, held], 'held at two times: what changes with time is left out');
+  assert.deepEqual(masksAmong([{ masks: [held], steady: at(1) }, { masks: [], steady: null }]), [held], 'one render the helper did not hold');
+});
+
+test('a Drupal part is left out by its own cache metadata, innermost first: what core bubbled up from a part inside is that part’s', () => {
+  const part = (id: string, label: string, parent: string | null, cache: TracePart['cache'] | null, more: Partial<TracePart> = {}): TracePart =>
+    ({ id, kind: 'block', label, ...(parent ? { parent } : {}), ...(cache ? { cache } : {}), ...more });
+  const req = ['languages:language_interface', 'theme', 'user.permissions', 'headers:X-Wanigan-Live'];
+  const parts: TracePart[] = [
+    part('p1', 'Content', null, { tags: [], contexts: [...req, 'user'], maxAge: 60 }),
+    part('p2', 'Article', 'p1', { tags: [], contexts: [...req, 'user'], maxAge: 60 }, { kind: 'entity' }),
+    part('p3', 'Posted', 'p2', { tags: [], contexts: req, maxAge: 60 }, { kind: 'field' }),
+    part('p4', 'Comments', 'p2', { tags: [], contexts: [...req, 'user'], maxAge: 'permanent' }, { kind: 'field' }),
+    part('p5', 'Branding', null, { tags: [], contexts: req, maxAge: 'permanent' }),
+    part('p6', 'Messages', null, { tags: [], contexts: req, maxAge: 'permanent', status: 'placeholder' }),
+    part('p7', 'Random picks', null, { tags: [], contexts: req, maxAge: 0, status: 'placeholder' }),
+    part('p8', 'Picks', 'p7', { tags: [], contexts: req, maxAge: 0, status: 'uncacheable' }, { kind: 'view', identity: { kind: 'config', type: 'view', id: 'picks:block_1' } }),
+    part('p9', 'Pager', null, { tags: [], contexts: [...req, 'url.query_args:page', 'cookies:acme', 'headers:Accept', 'ip', 'session'], maxAge: 'permanent' }),
+    part('p10', 'Footer', null, null),
+  ];
+  const masks = traceMasks({ parts }, null);
+  assert.deepEqual(masks, [
+    { part: 'p3', label: 'Posted (field)', why: 'kept 60 seconds at most', held: false },
+    { part: 'p4', label: 'Comments (field)', why: 'made for each user', held: false },
+    { part: 'p6', label: 'Messages (block)', why: 'built late, apart from the page (a placeholder)', held: false },
+    { part: 'p8', label: 'Picks (view)', why: 'built afresh for every request (never cached)', held: false },
+    { part: 'p9', label: 'Pager (block)', why: 'made for the address’s query; made for a cookie; made for a request header; made for the visitor’s address; made for each session', held: false },
+  ], 'the article and the content around the field are not left out; the placeholder around the view is put off for the view’s reason');
+  // Held at one time with the view's order seeded: a kept-for-a-while part and that view are compared against renders held alike.
+  const heldMasks = traceMasks({ parts }, { t: 1, s: 7, views: ['picks:block_1'] });
+  assert.deepEqual(heldMasks.map((m) => [m.part, m.held]), [['p3', true], ['p4', false], ['p6', false], ['p8', true], ['p9', false]]);
+  assert.equal(traceMasks({ parts }, { t: 1, s: 7, views: [] }).find((m) => m.part === 'p8')?.held, false, 'a view the helper did not seed stays left out');
+});
+
+test('a WordPress block the helper marked says why in words, and an unknown reason is still said', () => {
+  assert.equal(varyWhy('random-order'), 'shows its items in a random order');
+  assert.equal(varyWhy('relative-date'), 'shows a date relative to now');
+  assert.equal(varyWhy('weather'), 'changes between renders, its site helper says (weather)');
+});
+
+test('the difference picture shows what was left out in pale green, the same in either channel order', () => {
+  const result = page(3, 1, [0, 0, 0]);
+  const d = applyMask(diffBitmaps(result, result), [{ x: 2, y: 0, width: 1, height: 1 }]);
+  const pic = diffPicture(result, d, { maxDiff: 0, pixels: 0 });
+  assert.deepEqual([...pic.data.slice(8, 12)], [200, 232, 200, 255]);
 });

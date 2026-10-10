@@ -958,6 +958,25 @@ try {
   const putBack = await inner();
   if (putBack[0] !== title || putBack[1] !== tag) fail(`page script: words not put back exactly: ${JSON.stringify(putBack.slice(0, 2))}`);
   await words.close();
+
+  // The verification's masks: where the trace's parts are on the page, and the blocks a helper marked as changing
+  // between renders (data-wanigan-vary, held still or not), in document pixels.
+  const areas = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  await areas.setContent(`<!doctype html><html><body style="margin:0;font:14px sans-serif">
+<!-- wl:part id="p-picks" --><section style="height:120px;margin:40px 0 0">Picks</section><!-- /wl:part id="p-picks" -->
+<div data-wl-block="core/gallery" data-wanigan-vary="random-order" style="height:80px">Gallery</div>
+<p data-wl-block="core/post-date" data-wanigan-vary="relative-date" data-wanigan-held="time" style="height:20px;margin:0">3 days ago</p>
+</body></html>`);
+  await areas.addScriptTag({ content: script });
+  const got = await areas.evaluate(() => window.__wl.layerAreas(['p-picks', 'p-gone']));
+  const picks = got?.parts?.['p-picks'];
+  if (JSON.stringify(picks) !== JSON.stringify([{ x: 0, y: 40, width: 900, height: 120 }]) || 'p-gone' in (got?.parts ?? {})) fail(`page script: a part's boxes for the masks were ${JSON.stringify(got?.parts)}`);
+  const vary = JSON.stringify(got?.vary);
+  if (vary !== JSON.stringify([
+    { reason: 'random-order', held: null, name: 'core/gallery', box: { x: 0, y: 160, width: 900, height: 80 } },
+    { reason: 'relative-date', held: 'time', name: 'core/post-date', box: { x: 0, y: 240, width: 900, height: 20 } },
+  ])) fail(`page script: the blocks marked as changing between renders were ${vary}`);
+  await areas.close();
 } finally {
   await browser.close();
   gateway.kill('SIGTERM');

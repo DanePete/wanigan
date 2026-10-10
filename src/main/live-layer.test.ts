@@ -14,7 +14,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  beforeCheck, beforeKept, madeOn, pathOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 
@@ -1128,6 +1128,76 @@ test('an edit made real on the page after the page from before was kept: step 3 
   assert.match((beforeCheck(self, { ...kept, widths: {}, failed: { 390: 'The page did not load within 30 seconds.' } }, [390], [self]) as { why: string }).why, /could not be rendered when it was made real: The page did not load/);
   assert.match((beforeCheck(self, { ...kept, widths: { 390: { ...kept.widths['390']!, found: false } } }, [390], [self]) as { why: string }).why, /not on its page from before/);
   assert.equal(beforeKept({ ...kept, inSite: ['Not An Id'] }), null, 'what is read back is checked');
+});
+
+/* ── what the site says changes between renders ── */
+
+test('a part the site says changes between renders is left out of the pixel steps and named; the floor is measured over the rest, so a leak elsewhere is no longer forgiven', async () => {
+  const e = edit({ state: 'implemented' });
+  // A random-order view at the foot of the page draws differently each render; the result also changed a band in the
+  // middle of the page by a little, which the view's noise would forgive page-wide.
+  const VIEW = { x: 0, y: 170, width: 64, height: 30 };
+  const views = (n: number) => (b: Bitmap): Bitmap => painted(b, VIEW, n % 2 ? 40 : 220);
+  const leak = (b: Bitmap): Bitmap => painted(b, { x: 0, y: 100, width: 8, height: 2 }, 250);
+  const masked = (mask: boolean): LayerRender => {
+    let n = 0;
+    return async (r) => ({
+      png: Buffer.from('x'), bitmap: r.design ? views(n++)(blank(64, 200)) : leak(views(n++)(blank(64, 200))), elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id],
+      ...(mask ? { masks: [{ label: 'Picks (view)', why: 'built afresh for every request (never cached)', rects: [VIEW], held: false }] } : {}),
+    });
+  };
+  const without = wire({ edits: [e], render: masked(false) });
+  try {
+    const v = await without.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.noise.maxDiff, v.masked], [true, 180, []], 'unmasked, the view’s noise forgives the leak (as before masks)');
+  } finally { without.done(); }
+  const w = wire({ edits: [e], render: masked(true) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed, v.noise], [false, 'rest', { maxDiff: 0, pixels: 0 }], 'masked, the floor is what is left, and the leak shows');
+    assert.ok(v.differences.every((d) => d.kind === 'leak' && d.rect.y >= 96 && d.rect.y < 110), 'only the leak, never the view');
+    assert.deepEqual(v.masked, [{ label: 'Picks (view)', why: 'built afresh for every request (never cached)', widths: [390], nearEdit: false }]);
+  } finally { w.done(); }
+});
+
+test('an edited element inside a part that changes between renders is compared all the same, and the verdict says the part was near it', async () => {
+  const e = edit({ state: 'implemented' });
+  const BLOCK = { x: 0, y: 0, width: 64, height: 120 };
+  // The design's heading is another colour than the result's: inside the masked block, it must still fail.
+  const w = wire({ edits: [e], render: async (r) => ({
+    png: Buffer.from('x'), bitmap: r.design ? painted(blank(64, 200), { x: 20, y: 40, width: 40, height: 24 }, 18) : blank(64, 200),
+    elements: [heading(e.id, 'rgb(18, 52, 86)')], found: [e.id], masks: [{ label: 'Account menu (block)', why: 'made for each user', rects: [BLOCK], held: false }],
+  }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'pixels'], 'the edited element is never left out');
+    assert.deepEqual(v.masked, [{ label: 'Account menu (block)', why: 'made for each user', widths: [390], nearEdit: true }]);
+  } finally { w.done(); }
+});
+
+test('a render’s masks: the trace’s parts by their boxes on the page, and the blocks a helper marked, checked as they come back', () => {
+  const traced: LiveTrace = { ...trace(), parts: [
+    { id: 'p1', kind: 'block', label: 'Who’s online', cache: { tags: [], contexts: ['user'], maxAge: 'permanent' } },
+    { id: 'p2', kind: 'block', label: 'Gone', cache: { tags: [], contexts: ['user'], maxAge: 'permanent' } },
+  ] };
+  const areas = areasOf({
+    parts: { p1: [{ x: 0, y: 10, width: 300, height: 40 }, { x: 0, y: 0, width: 0, height: 10 }], 'bad id!': [{ x: 0, y: 0, width: 1, height: 1 }] },
+    vary: [
+      { reason: 'random-order', held: null, name: 'core/gallery', box: { x: 0, y: 100, width: 200, height: 80 } },
+      { reason: 'relative-date', held: 'time', name: 'core/post-date', box: { x: 0, y: 200, width: 80, height: 20 } },
+      { reason: '<script>', held: null, name: 'core/x', box: { x: 0, y: 0, width: 1, height: 1 } },
+      { reason: 'today', held: null, name: 'not a block name', box: { x: 0, y: 0, width: 10, height: 10 } },
+    ],
+  });
+  assert.deepEqual(Object.keys(areas.parts), ['p1'], 'a box with no area, and an id the trace could not have, are dropped');
+  assert.deepEqual(masksOf(traced, null, areas), [
+    { label: 'Who’s online (block)', why: 'made for each user', rects: [{ x: 0, y: 10, width: 300, height: 40 }], held: false },
+    { label: 'The core/gallery block', why: 'shows its items in a random order', rects: [{ x: 0, y: 100, width: 200, height: 80 }], held: false },
+    { label: 'The core/post-date block', why: 'shows a date relative to now', rects: [{ x: 0, y: 200, width: 80, height: 20 }], held: false },
+    { label: 'A block', why: 'shows today’s date', rects: [{ x: 0, y: 0, width: 10, height: 10 }], held: false },
+  ], 'a part not on the page has no box; a reason the page made up is dropped; a held mark counts only when the helper confirmed the hold');
+  assert.equal(masksOf(null, { t: 1, s: 1, views: [] }, areas)[1]?.held, true, 'confirmed: the relative date was held still');
+  assert.deepEqual(areasOf('nothing'), { parts: {}, vary: [] });
 });
 
 test('a render that never answers fails its verification, saying so, and the next verification still runs', { timeout: 10_000 }, async () => {

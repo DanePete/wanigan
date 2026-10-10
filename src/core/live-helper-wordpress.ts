@@ -18,6 +18,8 @@
 // docs/research/2026-10-09-wordpress-core-live-trace.md.
 // Design: docs/design/2026-10-08-live-view.md.
 
+import { WORDPRESS_VERIFY_SOURCE } from './live-helper-wordpress-verify.ts';
+
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
 /** A line of the file: how Wanigan knows a file of that name is its own. */
@@ -32,7 +34,7 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  return SOURCE.split('__WANIGAN_TOKEN__').join(token)
+  return (SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);

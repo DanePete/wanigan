@@ -1411,6 +1411,30 @@ export function livePage(): void {
     return out;
   }
 
+  /**
+   * For the verification's masks: where each of these trace parts is (its roots' boxes in document pixels), and every
+   * element a site helper marked as changing between renders (`data-wanigan-vary`, the WordPress helper's by block
+   * type: why, whether it held that change still for this request, and the block's name).
+   */
+  function layerAreas(parts: string[]): unknown {
+    if (!regions.length || mutations !== scannedAt) scan();
+    const byPart = new Map<string, Region>();
+    for (const r of regions) if (r.part) byPart.set(r.part, r);
+    const box = (el: Element): { x: number; y: number; width: number; height: number } => {
+      const b = el.getBoundingClientRect();
+      return { x: b.left + scrollX, y: b.top + scrollY, width: b.width, height: b.height };
+    };
+    const out: Record<string, unknown[]> = {};
+    for (const id of (Array.isArray(parts) ? parts : []).slice(0, 5_000)) {
+      const r = typeof id === 'string' ? byPart.get(id) : undefined;
+      if (r) out[id] = rootsOf(r).slice(0, 50).map(box).filter((b) => b.width > 0 && b.height > 0);
+    }
+    const vary = Array.from(document.querySelectorAll('[data-wanigan-vary]')).slice(0, 500).map((el) => ({
+      reason: el.getAttribute('data-wanigan-vary'), held: el.getAttribute('data-wanigan-held'), name: el.getAttribute('data-wl-block'), box: box(el),
+    }));
+    return { parts: out, vary };
+  }
+
   /** For making a text edit real: how many elements it tags, the field the helper marked around the first, and its words as the site has them. */
   function layerOf(id: string): { count: number; field: string | null; words: string | null; plain: boolean } {
     const els = taggedFor(id);
@@ -1426,7 +1450,7 @@ export function livePage(): void {
 
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas,
     /** Picking: the page's keys are its, not the live view's (live-page-goto.ts asks). */
     busy: () => !!picking,
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
