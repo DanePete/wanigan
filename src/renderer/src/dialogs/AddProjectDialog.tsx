@@ -1,9 +1,18 @@
+// Open a project: a folder, by path or chosen, or one the agents have worked in
+// lately. The first launch opens it by itself; Wanigan writes nothing into the folder.
 import { useState } from 'react';
 import type { AccountProvider, AgentFolder } from '@shared/model';
 import { attempt, bridge, call, useQuery } from '../lib/api';
 import { plural } from '../lib/format';
 import { navigate } from '../lib/router';
-import { Button, Dialog, Field, useToast } from '../components/ui';
+import { Badge, Button, Dialog, Field, useToast } from '../components/ui';
+import { Section } from '../components/Panel';
+
+/** An example path in this platform's own shape. */
+function examplePath(): string {
+  const p = bridge().platform;
+  return p === 'win32' ? 'C:\\Users\\you\\Projects\\site' : p === 'darwin' ? '/Users/you/Projects/site' : '/home/you/projects/site';
+}
 
 export function AddProjectDialog({ onClose }: { onClose: () => void }) {
   const toast = useToast();
@@ -12,14 +21,14 @@ export function AddProjectDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const choose = async (): Promise<void> => {
     const picked = await bridge().pickFolder();
-    if (picked) { setPath(picked); setError(null); if (!name) setName(picked.split('/').filter(Boolean).pop() ?? ''); }
+    if (picked) { setPath(picked); setError(null); if (!name) setName(picked.split(/[\\/]/).filter(Boolean).pop() ?? ''); }
   };
 
   const open = async (): Promise<void> => {
     if (!path.trim()) return;
     const project = await attempt(() => call('projects.add', { path: path.trim(), ...(name.trim() ? { name: name.trim() } : {}) }), setError);
     if (!project) return;
-    toast(`${project.name} is open. Its key is ${project.key}.`);
+    toast(`${project.name} is open. Its key is ${project.key}.`, 'done');
     onClose();
     navigate({ name: 'project', projectKey: project.key, view: 'board' });
   };
@@ -30,16 +39,16 @@ export function AddProjectDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={<><Button tone="quiet" onClick={onClose}>Cancel</Button><Button tone="primary" onClick={() => open()} disabled={!path.trim()}>Open project</Button></>}
     >
-      <p className="faint">A project is a folder you work in: usually a repository. It gets its own board, sessions and history. Wanigan writes nothing into it.</p>
-      <h3 className="dialog-section">Folder</h3>
-      <Field label="Path">{(id) => (
-        <div className="input-row">
-          <input id={id} className="mono" value={path} onChange={(e) => { setPath(e.target.value); setError(null); }} placeholder="/Users/you/Projects/site" onKeyDown={(e) => { if (e.key === 'Enter') void open(); }} />
-          <Button icon="folder" onClick={() => choose()}>Choose…</Button>
-        </div>
-      )}</Field>
-      <Field label="Name" hint="Optional. Defaults to the folder’s name.">{(id) => <input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
-      {error ? <p className="error-text" role="alert">{error}</p> : null}
+      <p className="faint">A project is a folder you work in, usually a repository, with its own board, sessions and history. Wanigan writes nothing into it.</p>
+      <Section title="Folder">
+        <Field label="Path" error={error}>{(id) => (
+          <div className="input-row">
+            <input id={id} className="mono" value={path} onChange={(e) => { setPath(e.target.value); setError(null); }} placeholder={examplePath()} onKeyDown={(e) => { if (e.key === 'Enter') void open(); }} />
+            <Button icon="folder" onClick={() => choose()}>Choose…</Button>
+          </div>
+        )}</Field>
+        <Field label="Name" hint="Optional. Defaults to the folder’s name.">{(id) => <input id={id} value={name} onChange={(e) => setName(e.target.value)} />}</Field>
+      </Section>
       <AgentFolderList onError={setError} />
     </Dialog>
   );
@@ -73,9 +82,8 @@ function AgentFolderList({ onError }: { onError: (message: string) => void }) {
     if (project) setOpened((o) => [...o, project.name]);
   };
   return (
-    <section className="suggestions agent-folders" aria-labelledby="agent-folders-title">
-      <h3 id="agent-folders-title" className="dialog-section">Folders your agents have worked in</h3>
-      {found.error ? <p className="faint small">Wanigan could not read them: {found.error.message}</p>
+    <Section title="Folders your agents have worked in" className="suggestions agent-folders">
+      {found.error ? <p className="error-text small" role="alert">Wanigan could not read them: {found.error.message}</p>
         : !found.data ? <p className="faint small">Reading your agents’ conversations…</p>
           : !folders.length ? <p className="faint small">None in the last {found.data.days} days that are not open already.</p>
             : (
@@ -83,8 +91,8 @@ function AgentFolderList({ onError }: { onError: (message: string) => void }) {
                 {shown.map((f) => (
                   <li key={f.path}>
                     <span className="suggestion-text">
-                      <span className="suggestion-name">{f.name}{f.git ? <span className="tag">git</span> : null}</span>
-                      <span className="suggestion-path mono faint" title={f.path}>{f.path}</span>
+                      <span className="suggestion-name">{f.name}{f.git ? <Badge>git</Badge> : null}</span>
+                      <span className="suggestion-path mono faint" data-tip={f.path}>{f.path}</span>
                       <span className="suggestion-meta faint">
                         {plural(f.conversations, 'conversation')}, {lastOne(f.lastAt)} · {f.agents.map((a) => AGENT_LABEL[a]).join(' and ')}{f.git ? '' : ' · not a git repository'}
                       </span>
@@ -105,6 +113,6 @@ function AgentFolderList({ onError }: { onError: (message: string) => void }) {
           From the last {found.data.days} days of Claude Code and Codex conversations in your accounts. Read only.{found.data.cut ? ` ${found.data.cut}` : ''}
         </p>
       ) : null}
-    </section>
+    </Section>
   );
 }

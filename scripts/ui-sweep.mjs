@@ -1198,7 +1198,7 @@ try {
     // The project's settings are in its name's menu, in the project bar.
     await page.click('.project-name-button');
     await page.click('.menu-list [role="menuitem"]:has-text("Project settings")');
-    await page.waitForSelector('.dialog .dialog-section');
+    await page.waitForSelector('.dialog .section-label');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-project-settings.png`) });
     await page.keyboard.press('Escape');
@@ -2020,6 +2020,14 @@ try {
     }));
     if (alerts.roles.join() !== 'alert,status') failures.push(`${theme}/alerts: roles ${alerts.roles.join()}, wanted one urgent alert and one status`);
     if (alerts.seen !== open.length) failures.push(`${theme}/alerts: told the app it showed ${alerts.seen} of ${open.length}`);
+    // Said in the status line's own place, above it: the work moves up, and nothing is drawn over it.
+    const placed = await page.evaluate(() => {
+      const list = document.querySelector('.alerts')?.getBoundingClientRect();
+      const line = document.querySelector('.status-line')?.getBoundingClientRect();
+      const work = document.querySelector('.work')?.getBoundingClientRect();
+      return { inHost: !!document.querySelector('.status-host > .alerts'), above: !!list && !!line && list.bottom <= line.top + 0.5, clear: !!list && !!work && list.top >= work.bottom - 0.5 };
+    });
+    if (!placed.inHost || !placed.above || !placed.clear) failures.push(`${theme}/alerts: not said in the status line's place, clear of the view (${JSON.stringify(placed)})`);
     await page.screenshot({ path: join(out, `${theme}-alerts.png`) });
     await page.click('.alert[role="alert"] button:has-text("Open")');
     await page.waitForSelector('.xterm-rows', { timeout: 8000 }).catch(() => failures.push(`${theme}/alerts: Open did not go to the session asking`));

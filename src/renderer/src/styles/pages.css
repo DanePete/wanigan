@@ -1,82 +1,4 @@
-/* List, decisions and activity. */
-
-.list-wrap {
-  display: flex;
-  flex-direction: column;
-}
-
-.table {
-  width: calc(100% - 2 * var(--space-8));
-  margin: 0 var(--space-8) var(--space-8);
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: var(--text-md);
-}
-
-.table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0;
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--bg);
-  text-align: left;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.table th button,
-.table th:not(:has(button)) {
-  padding: var(--space-2) var(--space-3);
-}
-
-.table th button {
-  width: 100%;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.table td {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-
-.table tbody tr {
-  cursor: pointer;
-}
-
-.table tbody tr:hover td {
-  background: var(--hover);
-}
-
-.table-title {
-  white-space: normal !important;
-  width: 50%;
-}
-
-.status {
-  font-size: var(--text-sm);
-  text-transform: capitalize;
-  color: var(--muted);
-}
-
-.status-review {
-  color: var(--water-text);
-}
-
-.status-done {
-  color: var(--green);
-}
-
-.status-working {
-  color: var(--fg);
-}
+/* Settings and its sections, Accounts, the shared dialog bits; and, until their views move them, decisions, activity, changes and the diff. */
 
 /* ── decisions ───────────────────────────────────────────────────────────── */
 
@@ -307,19 +229,19 @@
   font-size: var(--text-sm);
 }
 
-.status-green {
+.account-status.status-green {
   color: var(--muted);
 }
 
-.status-amber {
+.account-status.status-amber {
   color: var(--amber);
 }
 
-.status-red {
+.account-status.status-red {
   color: var(--red);
 }
 
-.status-faint {
+.account-status.status-faint {
   color: var(--faint);
 }
 
@@ -409,9 +331,51 @@
   margin-top: 3px;
 }
 
-.dialog-section {
-  margin: var(--space-5) 0 var(--space-1);
-  font: 600 var(--text-md) / 1.2 var(--font-ui);
+/* A dialog's sections space themselves (components.css); a dialog's row of a control and its word. */
+.dialog .section {
+  margin-top: var(--space-4);
+}
+
+.dialog-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ── the shortcut sheet (dialogs/ShortcutSheet.tsx) ──────────────────────── */
+
+/* The search stays in reach while the groups scroll under it. */
+.shortcuts-find {
+  position: sticky;
+  top: calc(-1 * var(--space-2));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  background: var(--raised);
+}
+
+.shortcuts-find .search-field {
+  flex: 1;
+  width: auto;
+}
+
+.shortcuts-found {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+.shortcuts .keycaps {
+  gap: var(--space-1);
+}
+
+.shortcuts-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .key-input {
@@ -827,23 +791,22 @@
 }
 
 .suggestions ul {
-  list-style: none;
-  margin: var(--space-2) 0 var(--space-2);
-  padding: 0;
   display: grid;
-  gap: 1px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  overflow: hidden;
-  background: var(--line);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
+/* In the dialog's sheet: rows the hairline divides, never a bordered box inside it. */
 .suggestions li {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface);
+  padding: var(--space-2) 0;
+}
+
+.suggestions li + li {
+  border-top: var(--hairline) solid var(--line);
 }
 
 .suggestion-text {
@@ -867,69 +830,12 @@
   font-size: var(--text-xs);
 }
 
-.suggestion-name .tag {
+.suggestion-name .badge {
   margin-left: var(--space-2);
 }
 
 .agent-folders > p {
   margin: var(--space-1) 0;
-}
-
-.suggestions-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.scope-picker select {
-  width: auto;
-  padding: var(--space-1) var(--space-3);
-}
-
-.branch-line {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-1);
-}
-
-.branch-actions {
-  margin: var(--space-2) 0;
-  flex-wrap: wrap;
-}
-
-.branch-path {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-/* An approved card's pull request: what will be pushed where, then its link. */
-.pr-confirm {
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.pr-confirm p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.branch-pr {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-  font-size: var(--text-sm);
-}
-
-.branch-pr a {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 /* What an account's limits have left: one row per window, the bar in water until it is used up (red). */

@@ -494,50 +494,6 @@
   white-space: nowrap;
 }
 
-/* The core could not start, or is from another build: said above any view. */
-.core-problem {
-  flex: none;
-  display: grid;
-  gap: var(--space-2);
-  margin: var(--space-4) var(--space-6) 0;
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--red);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-}
-
-.core-problem.other-build {
-  border-left-color: var(--water);
-}
-
-.core-problem h2 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
-.core-problem p {
-  margin: 0;
-  max-width: 90ch;
-}
-
-.core-problem-reason {
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
-  overflow-wrap: anywhere;
-}
-
-.core-problem .mono {
-  overflow-wrap: anywhere;
-}
-
-.core-problem-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-1);
-}
-
 /* ── Settings and its sections (shell/SettingsNav.tsx) ───────────────────── */
 
 .settings-frame {

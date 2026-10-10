@@ -1,18 +1,22 @@
 // Alerts while Wanigan is in front: a new permission request, failure or review
-// somewhere other than what is on screen arrives as a card, top-right, with a
-// way to go to it. Urgent ones stay until handled or dismissed; the rest fade.
+// somewhere other than what is on screen arrives as a line in the status line's
+// own place, above it, pushing the work up rather than covering a control, with
+// a way to go to it. Urgent ones stay until handled or dismissed; the rest fade.
 // The app decides what to offer (shared/notifications.ts); this says back what
 // it showed, so nothing counts as announced that nobody saw.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Need, NeedKind } from '@shared/model';
 import { ALERT_FADE_MS, URGENT_KINDS, needKey, needRoute, notificationFor, onScreen, type Viewing } from '@shared/notifications';
 import { bridge } from '../lib/api';
 import { forgetStale } from '../lib/forget';
 import type { Location } from '../lib/router';
 import { Icon, type IconName } from './icons';
-import { Button, ProjectMark } from './ui';
+import { Button, IconButton, ProjectMark } from './ui';
 
-const MAX_SHOWN = 4;
+const MAX_SHOWN = 3;
+/** A fading line is taken away once its leaving (alerts.css, --dur) has played. */
+const LEAVE_MS = 200;
 
 interface Alert {
   key: string;
@@ -84,16 +88,22 @@ export function Alerts({ needs, location }: { needs: Need[] | undefined; locatio
     if (dismiss) void bridge().alertsDismissed([key]).catch(() => {});
   }, []);
 
+  // Where they are said: the status line's own place, which is under every view (App.tsx).
+  const [host, setHost] = useState<Element | null>(null);
+  useEffect(() => { setHost(document.querySelector('.status-host')); }, [location, alerts.length]);
+
   if (!alerts.length) return null;
   // Urgent first, then newest first.
   const shown = [...alerts].reverse().sort((a, b) => Number(b.urgent) - Number(a.urgent)).slice(0, MAX_SHOWN);
   const more = alerts.length - shown.length;
-  return (
-    <section className="alerts" aria-label="Alerts">
+  const list = (
+    <section className={`alerts${host ? '' : ' alerts-floating'}`} aria-label="Alerts">
       {shown.map((a) => <AlertCard key={a.key} alert={a} onRemove={remove} />)}
       {more ? <a className="alerts-more" href="#/needs">{more} more in Needs you</a> : null}
     </section>
   );
+  // With no status line on screen (a view broke it), they float at the window's foot instead of going unsaid.
+  return createPortal(list, host ?? document.body);
 }
 
 function AlertCard({ alert, onRemove }: { alert: Alert; onRemove: (key: string, dismiss: boolean) => void }) {
@@ -110,7 +120,7 @@ function AlertCard({ alert, onRemove }: { alert: Alert; onRemove: (key: string, 
         // Being read counts as using it.
         if (held.current) { arm(); return; }
         setLeaving(true);
-        timer = setTimeout(() => onRemove(key, false), 260);
+        timer = setTimeout(() => onRemove(key, false), LEAVE_MS);
       }, ALERT_FADE_MS);
     };
     arm();
@@ -128,17 +138,16 @@ function AlertCard({ alert, onRemove }: { alert: Alert; onRemove: (key: string, 
       onFocus={() => { held.current = true; }}
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) held.current = false; }}
     >
-      <span className="alert-icon" aria-hidden="true"><Icon name={ICON[need.kind]} size={16} /></span>
-      <div className="alert-text">
-        <p className="alert-where"><ProjectMark projectKey={need.projectKey} size="s" /><span>{need.projectName}</span></p>
-        <p className="alert-title">{title}</p>
-        {body && body !== title ? <p className="alert-body">{body}</p> : null}
-      </div>
+      <span className="alert-icon" aria-hidden="true"><Icon name={ICON[need.kind]} size={15} /></span>
+      <ProjectMark projectKey={need.projectKey} size="s" />
+      <p className="alert-text">
+        <span className="alert-title">{title}</span>
+        {body && body !== title ? <span className="alert-body">{body}</span> : null}
+        <span className="alert-where">{need.projectName}</span>
+      </p>
       <div className="alert-actions">
         <Button size="s" tone={urgent ? 'attention' : 'plain'} onClick={() => { window.location.hash = needRoute(need); onRemove(key, true); }}>Open</Button>
-        <button type="button" className="alert-x" aria-label={`Dismiss: ${title}`} title="Dismiss" onClick={() => onRemove(key, true)}>
-          <Icon name="close" size={14} />
-        </button>
+        <IconButton icon="close" size="s" label={`Dismiss: ${title}`} onClick={() => onRemove(key, true)} />
       </div>
     </article>
   );
