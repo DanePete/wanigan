@@ -295,7 +295,7 @@ test('what a verification says whatever it decided: the page before compared or 
     masked: [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390], nearEdit: false }, { label: 'The core/gallery block', why: 'shows its items in a random order', widths: [390, 1440], nearEdit: true }],
   };
   assert.equal(verdictHeadline(v), 'Verified at 390 and 1440 px: the site renders it as designed.');
-  assert.equal(beforeWords(v), 'The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.');
+  assert.equal(beforeWords(v), 'The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px, where up to 10 of 255 is two loads of the same page.');
   assert.equal(cutWords(v.cut![0]!), 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px, and nothing below that.');
   assert.equal(heldWords(v), 'The site’s helper held relative dates and random orders still for every render, so they were compared rather than left out.');
   assert.deepEqual(v.masked!.map(maskWords), [

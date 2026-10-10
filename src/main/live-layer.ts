@@ -112,7 +112,8 @@ import { storedContentOf, type StoredContent, type StoredUndone, type StoredWord
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { MARKUP, asWords, decodeRefs, retypeRich } from '../shared/rich-text.ts';
-import { movedTo, parseFieldMark, sameSite, type LiveSite } from '../shared/live.ts';
+import { cleanRegions } from '../shared/live-agent.ts';
+import { movedTo, parseFieldMark, sameSite, type LiveRegion, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
@@ -595,6 +596,8 @@ export interface LayerRenderRequest {
   edits: LayerEdit[];
   /** Every edit in the layer's log: whose saved words the page shows now, so an element they changed is still found. */
   log?: readonly LayerEdit[];
+  /** Read the page's parts too (the page script's scan), on the layout pictured: Compare's Before names changes by them. */
+  scan?: boolean;
   design: boolean;
   /** Read the whole page element by element too (layerPage): what step 3 compares with a page from before. */
   whole?: boolean;
@@ -616,6 +619,8 @@ export interface LayerRendered {
   elements: ElementSnap[];
   /** The edits that found their elements in this render. */
   found: string[];
+  /** The page's parts as the page script names them, on this render's layout, when asked (`scan`): what Compare names a change by. */
+  regions?: LiveRegion[];
   /** The token edits' custom properties as the page's root computes them, by name; a name missing was not read. */
   tokens?: Record<string, string>;
   /** The page went on below the capture limit (VERIFY_MAX_HEIGHT): how tall it is. Nothing below the limit is compared. */
@@ -832,7 +837,8 @@ function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenP
         const masks = [...masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null))), ...lateMasks(added ? { late: added } : null)];
         const png = await page.shoot(height, true);
         if (!png) return { error: 'The page could not be pictured.' };
-        return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady, ...(whole ? { page: snapshot ?? null } : {}) };
+        const regions = r.scan ? cleanRegions(await run<unknown>('window.__wl ? window.__wl.scan() : []', [])) : undefined;
+        return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady, ...(whole ? { page: snapshot ?? null } : {}), ...(regions ? { regions } : {}) };
       };
       const show = async (on: boolean): Promise<void> => {
         if (on) {
@@ -1884,7 +1890,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     } catch { return null; }
   };
   /** The page shown, as the site renders it without the layer, at a width: what Before is compared with, and what Keep keeps. */
-  const pageNow = async (projectId: string, path: string, width: number, hold: Hold): Promise<{ png: Buffer } | { error: string }> => {
+  const pageNow = async (projectId: string, path: string, width: number, hold: Hold): Promise<{ png: Buffer; regions: LiveRegion[] } | { error: string }> => {
     const site = await core<LiveSite>('live.site', { projectId });
     if (!site.url || !site.token) return { error: 'The site helper is not installed: Wanigan renders the page through it.' };
     const url = new URL(path, new URL(site.url).origin).toString();
@@ -1892,16 +1898,16 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const partition = options.partition(projectId, site.url, site.token);
     const limit = options.renderMs ?? RENDER_MS + 60_000;
     const got = await deadline<LayerRendered | { error: string }>(
-      render({ projectId, partition, url, base: site.url, token: site.token, width, path, edits: [], log: (await snapshotOf(projectId)).edits, design: false, hold }), limit,
+      render({ projectId, partition, url, base: site.url, token: site.token, width, path, edits: [], log: (await snapshotOf(projectId)).edits, design: false, hold, scan: true }), limit,
       () => ({ error: `The page did not render at ${width} px in time.` }),
     ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
-    return 'error' in got ? got : { png: got.png };
+    return 'error' in got ? got : { png: got.png, regions: got.regions ?? [] };
   };
-  const shotOf = (png: Buffer, url: string): LiveCompareShot => {
+  const shotOf = (png: Buffer, url: string, regions: LiveRegion[] = []): LiveCompareShot => {
     // A PNG's size is in its header: width and height, four bytes each, from byte 16. One device pixel per CSS pixel.
     if (png.length < 24 || png.readUInt32BE(0) !== 0x89504e47) return { error: 'That picture of the page could not be read.' };
     const width = png.readUInt32BE(16), height = png.readUInt32BE(20);
-    return { data: png.toString('base64'), width, height, cssWidth: width, cssHeight: height, cut: height >= VERIFY_MAX_HEIGHT, url, status: 200, regions: [] };
+    return { data: png.toString('base64'), width, height, cssWidth: width, cssHeight: height, cut: height >= VERIFY_MAX_HEIGHT, url, status: 200, regions };
   };
   const keptShot = (raw: unknown, rawWidth: unknown): Promise<{ before: LiveCompareShot; now: LiveCompareShot } | { error: string }> => inTurn(async () => {
     const here = shown();
@@ -1920,7 +1926,8 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!file || !hold || !existsSync(file)) return { error: 'That picture of the page is not kept any more.' };
     const now = await pageNow(here.cur.projectId, here.path, width, hold);
     if ('error' in now) return now;
-    return { before: shotOf(readFileSync(file), here.url), now: shotOf(now.png, here.url) };
+    // The page's parts as they are now name each change; the picture kept and the page now are laid out alike.
+    return { before: shotOf(readFileSync(file), here.url), now: shotOf(now.png, here.url, now.regions) };
   });
   /** Keep this page as it is: rendered now at the kept widths, a few kept per page, the oldest let go. */
   const keepPage = (): Promise<LiveKeptPage | { error: string }> => inTurn(async () => {

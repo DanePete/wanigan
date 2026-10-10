@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  LATE_WHY, UNSTABLE_WHY, against, applyMask, compareElements, compareOutside, comparePixels, diffBitmaps, diffPicture, editsAt, judge, lateMasks, maskedOf, masksAmong,
+  ACROSS_LOADS, LATE_WHY, UNSTABLE_WHY, against, applyMask, compareElements, compareOutside, comparePixels, diffBitmaps, diffPicture, editsAt, judge, lateMasks, maskedOf, masksAmong,
   noiseFloor, onlyWhere, parseVerdict, reachOf, sameWordsMoved, traceMasks, unionDiff, unstableOf, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf,
   type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type RenderMask, type WidthFindings,
 } from './layer-verify.ts';
@@ -117,6 +117,20 @@ test('the steps decide in order: styles before pixels before the rest, at any wi
   assert.deepEqual(verdictNoise([{ ...w(390, []), noise: { maxDiff: 3, pixels: 2 } }, { ...w(1440, []), noise: { maxDiff: 1, pixels: 9 } }]), { maxDiff: 3, pixels: 9 });
 });
 
+test('compared with a page from another load, what two loads of a picture differ by is not a leak; more than that is', () => {
+  // Seen on the Northstar demo: the mug photo 7 of 255 apart over 147,982 pixels between the page kept and the page now,
+  // with nothing changed, while the floor of the verification's own two renders was 1.
+  const photo = (maxDiff: number): PixelArea => ({ maxDiff, pixels: 147_982, differences: [{ kind: 'leak', width: 1440, rect: { x: 96, y: 240, width: 640, height: 656 }, pixels: 147_982, maxDiff }] });
+  const quiet: PixelArea = { maxDiff: 0, pixels: 0, differences: [] };
+  const w = (before: PixelArea): WidthFindings => ({ width: 1440, noise: { maxDiff: 1, pixels: 40 }, elements: [], pixels: { near: quiet, rest: quiet }, before: [before] });
+  assert.equal(judge([w(photo(7))]).ok, true, 'two loads of the same photo');
+  assert.equal(judge([w(photo(ACROSS_LOADS))]).ok, true);
+  const real = judge([w(photo(ACROSS_LOADS + 1))]);
+  assert.deepEqual([real.ok, real.failed], [false, 'rest'], 'past what two loads differ by, the page changed');
+  // Within one verification, the floor its own renders measured still decides.
+  assert.equal(judge([{ width: 1440, noise: { maxDiff: 1, pixels: 40 }, elements: [], pixels: { near: quiet, rest: photo(7) } }]).ok, false, 'the rest of today’s page is held to today’s floor');
+});
+
 test('a failed verdict goes back to the edits it names, or to all of them when a leak names none', () => {
   const style = { kind: 'style', edit: 'e2', width: 390, element: 'h2', property: 'color', design: 'red', result: 'blue' } as const;
   assert.deepEqual(editsAt({ ok: false, differences: [style] }, ['e1', 'e2']), ['e2']);
@@ -202,7 +216,9 @@ test('step 3 against the page from before fails the rest of the page, and its le
   assert.equal(failed.failed, 'rest');
   assert.deepEqual(failed.differences, [{ ...leak.differences[0], against: { edit: 'e2', at: 1_700_000_000_000 } }]);
   assert.deepEqual(editsAt({ ok: false, differences: failed.differences }, ['e1', 'e2']), ['e2'], 'only the edit whose page from before it was');
-  assert.equal(judge([w([{ ...leak, maxDiff: 1, pixels: 1 }])]).ok, false, 'held to the same floor as the rest');
+  // A page from another load: what two loads differ by is allowed (ACROSS_LOADS), past it the floor holds as for the rest.
+  assert.equal(judge([w([{ ...leak, maxDiff: ACROSS_LOADS, pixels: 1 }])]).ok, true, 'within what two loads of a page differ by');
+  assert.equal(judge([w([{ ...leak, maxDiff: ACROSS_LOADS + 1, pixels: 1 }])]).ok, false, 'past it, held to the floor');
 });
 
 test('two comparisons pictured as one: the larger difference per pixel, masked only where both left it out', () => {

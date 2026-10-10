@@ -659,6 +659,9 @@ try {
       await page.waitForSelector('.live-stage-compare:has-text("Nothing kept of this page yet")', { timeout: 3000 }).catch(() => fail(t('compare: with nothing kept, Before does not say so')));
       n = await mark();
       await page.locator('.live-stage-compare').getByRole('button', { name: 'Keep this page as it is' }).first().click();
+      if (!(await page.locator('.live-stage-compare .cmp-head').evaluate((h) => { const x = h.querySelector('button[aria-label^="Back to the page"]'); const first = h.firstElementChild; return !!x && !!first && Math.abs(x.getBoundingClientRect().top - first.getBoundingClientRect().top) < 12; }).catch(() => false))) {
+        fail(t('compare: Before’s header wraps its close button onto a line of its own'));
+      }
       await page.waitForSelector('.live-stage-compare input.cmp-range[aria-label^="Before"]', { timeout: 4000 }).catch(() => fail(t('compare: a page kept was not laid over the page now')));
       const asked = await since(n);
       if (!asked.includes('layerKeep') || !asked.some((c) => /^layerKeptShot page:p-\d+ 1440$/.test(c))) fail(t(`compare: keeping and comparing asked ${JSON.stringify(asked)}`));
@@ -1500,7 +1503,7 @@ try {
       await page.waitForSelector('.live-tray-edit[data-state="verified"] img[alt="The site at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a passing verdict shows no pictures')));
       // Passing: compared with the page as it was before too, held still, and what was left out said; no difference listed.
       const passing = (await rowOf('Fresh loaves').innerText()).replace(/\s+/g, ' ');
-      for (const w of ['The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.',
+      for (const w of ['The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px, where up to 10 of 255 is two loads of the same page.',
         'The site’s helper held relative dates and random orders still for every render', 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px',
         'Who’s online (block): made for each user, at 390 and 1440 px.',
         'Noise floor: up to 3 of 255 in 12 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width, over what was not left out.',

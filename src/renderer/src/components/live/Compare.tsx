@@ -182,7 +182,7 @@ export function ComparePanel({ project, site, envs, masks, page, shownEnv, width
         ) : null}
         <Segmented<CompareWidth> size="s" label="Width" value={before ? keptWidth : width} onChange={setWidth}
           options={(before ? COMPARE_WIDTHS.filter((w) => (KEPT_WIDTHS as readonly number[]).includes(w)) : COMPARE_WIDTHS).map((w) => ({ value: w, label: WIDTH_LABEL[w], hint: `${w} CSS pixels wide (${COMPARE_WIDTHS.indexOf(w) + 1})` }))} />
-        {before ? <Button size="s" tone="quiet" icon="camera" disabled={!live || keeping} onClick={() => void keepNow()}>{keeping ? 'Keeping the page…' : 'Keep this page as it is'}</Button> : null}
+        {before ? <Button size="s" tone="quiet" icon="camera" disabled={!live || keeping} onClick={() => void keepNow()} data-tip="Keep this page as it is now, to compare with after it changes">{keeping ? 'Keeping…' : 'Keep this page'}</Button> : null}
         <span className="small cmp-path" data-tip={localUrl}>Page <span className="mono">{path}</span></span>
         <Button size="s" tone="quiet" icon="refresh" disabled={!taken} onClick={() => setAgain((n) => n + 1)}>Take again</Button>
         <IconButton icon="close" label="Back to the page (Escape)" onClick={onClose} />

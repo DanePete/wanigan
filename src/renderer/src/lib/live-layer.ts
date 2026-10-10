@@ -20,6 +20,7 @@ import type {
   LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
 import { layerElementKey } from '../../../shared/design-layer.ts';
+import { ACROSS_LOADS } from '../../../shared/layer-verify.ts';
 import { fragileWhy, kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
 import { identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
@@ -233,7 +234,7 @@ export function verdictHeadline(v: LayerVerdict): string {
 /** Whether step 3 compared the result with the page as it was before the edit was made real, or why not; null on a verdict kept before it could. */
 export function beforeWords(v: LayerVerdict): string | null {
   if (!v.before) return null;
-  if (v.before.ran) return `The rest of the page was also compared with the page as it was just before this was made real, at ${widthsWords(v.before.widths)}.`;
+  if (v.before.ran) return `The rest of the page was also compared with the page as it was just before this was made real, at ${widthsWords(v.before.widths)}, where up to ${ACROSS_LOADS} of 255 is two loads of the same page.`;
   return `Not compared with the page as it was before it was made real: ${v.before.why}`;
 }
 

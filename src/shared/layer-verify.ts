@@ -107,6 +107,18 @@ export function noiseFloor(first: Bitmap, second: Bitmap, out: readonly LayerRec
 /** Whether an area's differences are within the noise floor: both numbers. */
 export const withinNoise = (area: Noise, noise: Noise): boolean => area.maxDiff <= noise.maxDiff && area.pixels <= noise.pixels;
 
+/**
+ * What two loads of the same page differ by, for step 3's comparison with a page from before: the page now and the one
+ * kept were rendered minutes or days apart, each in a window of its own, and a GPU decodes a scaled picture a little
+ * differently from one load to the next when nothing changed: up to 7 of 255 on a settled demo page, over a whole photo
+ * (docs/research/2026-10-09-design-layer-probes.md, 2). The floor measured in one verification cannot see that: its two
+ * renders of a version can happen to match (a style verified on the Northstar demo failed step 3 on its mug photo, 7
+ * levels over 147,982 pixels, after passing once when they did not). Within this, a difference is the loads'.
+ */
+export const ACROSS_LOADS = 10;
+/** Whether an area compared with a page from another load is within the floor, or within what two loads differ by. */
+export const withinLoads = (area: Noise, noise: Noise): boolean => area.maxDiff <= ACROSS_LOADS || withinNoise(area, noise);
+
 /* ── masks: what the site says changes between renders ──────────────────── */
 
 /**
@@ -641,7 +653,7 @@ export function judge(found: readonly WidthFindings[]): { ok: boolean; failed: V
       if (step === 'pixels' && !withinNoise(w.pixels.near, w.noise)) { failed = true; differences.push(...w.pixels.near.differences); }
       if (step === 'rest' && !withinNoise(w.pixels.rest, w.noise)) { failed = true; differences.push(...w.pixels.rest.differences); }
       if (step === 'rest' && w.outside?.length) { failed = true; differences.push(...w.outside); }
-      if (step === 'rest') for (const b of w.before ?? []) if (!withinNoise(b, w.noise)) { failed = true; differences.push(...b.differences); }
+      if (step === 'rest') for (const b of w.before ?? []) if (!withinLoads(b, w.noise)) { failed = true; differences.push(...b.differences); }
     }
     if (failed) return { ok: false, failed: step, differences: differences.slice(0, MAX_DIFFERENCES) };
   }
