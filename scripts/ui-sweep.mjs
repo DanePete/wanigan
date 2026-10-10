@@ -1645,16 +1645,16 @@ try {
         await siteMenu('Local');
         if ((await cmp.evaluate(() => window.__wgLive.shows.at(-1)))?.env !== null) failures.push(`${theme}/live: Local was not shown again as the local site`);
 
-        // Compare: both sides taken at the view's width, the hosted one never with a token. It is drawn in the stage,
-        // where the page is (no dialog over the window): the bar, the side panel and the status line stay, and the
-        // site's own view steps aside under it without loading anything.
+        // Compare: both sides taken at the view's width, the hosted one never with a token. It is drawn on the canvas,
+        // where the page is (no dialog over the window): the toolbar, the Structure panel and the status line's mode stay,
+        // and the site's own view steps aside under it without loading anything.
         const page0 = await cmp.evaluate(() => ({ shows: window.__wgLive.shows.length, reloads: window.__wgLive.reloads, hides: window.__wgLive.hides }));
         await siteMenu('Compare Local with Live');
         await cmp.waitForSelector('.cmp-frame canvas', { timeout: 10000 }).catch(() => failures.push(`${theme}/compare: the pictures never showed`));
         const drawn = await cmp.evaluate(() => {
           const panel = document.querySelector('.live-stage-compare')?.getBoundingClientRect();
           const stage = document.querySelector('.live-stage')?.getBoundingClientRect();
-          const side = document.querySelector('.live-side')?.getBoundingClientRect();
+          const side = document.querySelector('.live-structure')?.getBoundingClientRect();
           return {
             inStage: !!document.querySelector('.live-stage > .live-stage-compare'), dialog: !!document.querySelector('.dialog, .scrim'),
             fills: !!panel && !!stage && Math.abs(panel.left - stage.left) < 1 && Math.abs(panel.right - stage.right) < 1 && Math.abs(panel.top - stage.top) < 1 && Math.abs(panel.bottom - stage.bottom) < 1,
@@ -1663,7 +1663,7 @@ try {
           };
         });
         if (!drawn.inStage || drawn.dialog || !drawn.fills) failures.push(`${theme}/compare: it is not drawn in the stage where the page is (${JSON.stringify(drawn)})`);
-        if (!drawn.side) failures.push(`${theme}/compare: the bar, the side panel or the status line did not stay beside Compare`);
+        if (!drawn.side) failures.push(`${theme}/compare: the toolbar, Structure or the status line did not stay beside Compare`);
         if (drawn.covered !== true) failures.push(`${theme}/compare: the site's view did not step aside under Compare`);
         await cmp.waitForSelector('.cmp-summary', { timeout: 5000 }).catch(() => {});
         const asked = await cmp.evaluate(() => window.__wgLive.shots.slice(-2));
@@ -1714,7 +1714,7 @@ try {
         // 2: both taken again at a tablet's width. Compare's 2, not the page's: the live view keeps its own width.
         await cmp.keyboard.press('2');
         await cmp.waitForFunction(() => window.__wgLive.shots.filter((r) => r.width === 768).length === 2, null, { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: 2 did not take both at 768 px`));
-        if ((await cmp.getAttribute('.live-widths button[aria-label^="Full width"]', 'aria-pressed')) !== 'true') failures.push(`${theme}/compare: 2 in Compare narrowed the live page too`);
+        if ((await cmp.getAttribute('.live-widths button[aria-label^="Full width"]', 'aria-checked')) !== 'true') failures.push(`${theme}/compare: 2 in Compare narrowed the live page too`);
         await cmp.waitForSelector('.cmp-change', { timeout: 8000 }).catch(() => {});
         await cmp.waitForTimeout(250);
         await cmp.screenshot({ path: join(out, `${theme}-live-compare-tablet.png`) });

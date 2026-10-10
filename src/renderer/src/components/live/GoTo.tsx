@@ -621,7 +621,7 @@ function GoTo({ project, address = null, initialQuery = null, onClose, onHelper 
             spellCheck={false}
             autoComplete="off"
           />
-          {host ? <span className="goto-host mono" title={origin ?? undefined}>{host}</span> : null}
+          {host ? <span className="goto-host mono" data-tip={origin ?? undefined}>{host}</span> : null}
         </div>
         {notice}
         <div className="goto-results" id={`goto-${uid}-list`} role="listbox" aria-label={acting ? `What to do with ${where(acting.row).label}` : 'Pages'}>
@@ -730,7 +730,7 @@ function ResultRow({ row, id, active, onHover, onChoose, mac }: {
       </span>
       <span className="goto-side">
         {status ? <span className="goto-status">{status}</span> : null}
-        {item.changed ? <span className="goto-when" title={new Date(item.changed).toLocaleString()}>{ago(item.changed)}</span> : null}
+        {item.changed ? <span className="goto-when" data-tip={new Date(item.changed).toLocaleString()}>{ago(item.changed)}</span> : null}
         {active && ((item.actions?.length ?? 0) > 0 || item.edit) ? <Icon name="chevron" size={14} /> : null}
       </span>
     </div>

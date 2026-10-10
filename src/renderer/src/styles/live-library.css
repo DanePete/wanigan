@@ -49,14 +49,14 @@
 }
 
 /* One entry: its picture, its name and where it comes from, and Place when the page takes it. */
+/* An entry: a row of the panel, a tint under the pointer, never a box in the panel's box. */
 .live-library-entry {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
+  border-radius: var(--radius-l);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .live-library-entry[draggable='true'] {
@@ -64,7 +64,7 @@
 }
 
 .live-library-entry:hover {
-  border-color: var(--line-strong);
+  background: var(--hover);
 }
 
 .live-library-open {
@@ -87,7 +87,7 @@
 .live-library-what {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .live-library-name {
@@ -113,7 +113,7 @@
   width: calc(var(--space-12) * 2);
   height: calc(var(--space-12) + var(--space-3));
   overflow: hidden;
-  border: 1px solid var(--line);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line);
   border-radius: var(--radius-s);
   background: var(--sunken);
   color: var(--faint);
@@ -144,7 +144,7 @@
 .live-library-detail-title {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .live-library-detail-title .live-side-title {
@@ -175,7 +175,7 @@
   max-height: calc(var(--space-12) * 5);
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-s);
   background: var(--sunken);
   cursor: zoom-in;
@@ -189,7 +189,7 @@
 .live-library-shot-why {
   min-height: calc(var(--space-12) + var(--space-3));
   padding: var(--space-2);
-  border: 1px dashed var(--line-strong);
+  border: var(--hairline) dashed var(--line-strong);
   border-radius: var(--radius-s);
   overflow-wrap: anywhere;
 }
@@ -201,7 +201,7 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px dashed var(--line-strong);
+  border: var(--hairline) dashed var(--line-strong);
   border-radius: var(--radius-m);
   background: var(--sunken);
   color: var(--muted);
@@ -209,7 +209,7 @@
 
 .live-library-nopicture > svg {
   flex: none;
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
   color: var(--faint);
 }
 
@@ -221,7 +221,7 @@
 
 .live-library-large img {
   max-width: 100%;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
 }
 
 .live-library-facts {
@@ -250,8 +250,8 @@
 
 .live-library-id .btn-icon,
 .live-library-files .btn-icon {
-  width: 24px;
-  height: 24px;
+  width: var(--space-6);
+  height: var(--space-6);
 }
 
 .live-library-add {
@@ -292,9 +292,9 @@
 
 .live-library-prop {
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
   padding: var(--space-1) 0;
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .live-library-prop:first-child {
@@ -307,7 +307,7 @@
 
 .live-library-files li {
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
   min-width: 0;
 }
 
@@ -336,8 +336,8 @@
 }
 
 .live-library-site-head .btn-icon {
-  width: 24px;
-  height: 24px;
+  width: var(--space-6);
+  height: var(--space-6);
 }
 
 .live-library-site-list,
@@ -393,9 +393,9 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   column-gap: var(--space-2);
-  row-gap: 2px;
+  row-gap: var(--gap-hair);
   padding: var(--space-1) 0;
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .live-library-place:first-child {

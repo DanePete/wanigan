@@ -55,7 +55,7 @@ export function CardLooks({ card }: { card: CardDetail }) {
             <li key={look.id} className={look.ok ? undefined : 'live-look-refused'}>
               <Icon name={look.tool === 'live_diff' ? 'layers' : look.tool === 'live_problems' ? 'alert' : 'eye'} size={14} />
               <span>{lookSentence(look)}{when ? <span className="faint">, {when}</span> : null}: {look.said}</span>
-              <span className="faint evidence-by" title={look.sessionTitle}>{ago(look.at)}</span>
+              <span className="faint evidence-by" data-tip={look.sessionTitle}>{ago(look.at)}</span>
             </li>
           );
         })}

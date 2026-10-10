@@ -10,7 +10,7 @@ import type { ProjectSummary } from '@shared/model';
 import { attempt, call, forProject, useQuery } from '../../lib/api';
 import { Icon } from '../icons';
 import { MenuButton, type MenuItem } from '../Menu';
-import { Button, useToast } from '../ui';
+import { Button, Dot, useToast } from '../ui';
 import '../../styles/live-compare.css';
 
 /** A project's environments, kept and found, refetched when the site's settings change. */
@@ -21,7 +21,7 @@ export function useEnvs(projectId: string, on = true): LiveEnvs | null {
 /** What a hosted environment is, in one line: said wherever one can be opened. */
 export const HOSTED_NOTE = 'Opening a hosted environment, or comparing with it, sends requests to that site, only when you do. '
   + 'It opens read-only, in a private session of its own: no cookies shared with your local site, never the helper’s token, '
-  + 'its certificate checked as any browser would (or, for a copy of the site on this Mac, by your own mkcert authority, '
+  + 'its certificate checked as any browser would (or, for a copy of the site on this computer, by your own mkcert authority, '
   + 'as the Local tab is), and nothing sent that could change it.';
 
 const SHOW = 'Show this page on';
@@ -31,7 +31,7 @@ const SHOW = 'Show this page on';
  * and the site settings, in one place at the left of the bar. Beside a
  * terminal (`compact`) it holds the settings alone.
  */
-export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, compact = false }: {
+export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, compact = false, state = 'muted', where = null }: {
   envs: readonly LiveEnv[];
   /** The environment shown, or null for the local site. */
   shown: LiveEnv | null;
@@ -41,10 +41,14 @@ export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, 
   onCompare: () => void;
   onSettings: () => void;
   compact?: boolean;
+  /** How the page shown is: loaded (green), failed (red), loading or read-only (quiet). */
+  state?: 'green' | 'red' | 'muted';
+  /** What the view shows and follows ("Drupal · following every session in Acme"): its tooltip. */
+  where?: string | null;
 }) {
   const items: MenuItem[] = [];
   if (!compact) {
-    items.push({ id: 'local', group: SHOW, kind: 'radio', checked: !shown, label: 'Local', detail: 'This Mac, following the agents', run: () => onShow(null) });
+    items.push({ id: 'local', group: SHOW, kind: 'radio', checked: !shown, label: 'Local', detail: 'This computer, following the agents', run: () => onShow(null) });
     for (const e of envs) {
       const host = (() => { try { return new URL(e.url).host; } catch { return e.url; } })();
       items.push({ id: `env-${e.id}`, group: SHOW, kind: 'radio', checked: shown?.id === e.id, label: e.name, detail: `${host} · read-only`, run: () => onShow(e.id) });
@@ -58,12 +62,12 @@ export function SiteMenu({ envs, shown, onShow, compare, onCompare, onSettings, 
   items.push({ id: 'settings', group: 'This site', icon: 'settings', label: 'Site settings…', detail: 'Its address, the helper, the hosted environments', run: onSettings });
   const name = shown?.name ?? 'Local';
   return (
-    <MenuButton className="btn-quiet btn-s live-site-menu" items={items} width={340} notes={envs.length && !compact ? { [SHOW]: HOSTED_NOTE } : undefined}
+    <MenuButton className={compact ? 'btn-quiet btn-icon live-site-menu' : 'btn-plain btn-s live-site-menu'} items={items} width={340} notes={envs.length && !compact ? { [SHOW]: HOSTED_NOTE } : undefined}
       label={compact ? 'Site settings' : `Site: ${name} shown. Environments, Compare and Site settings`}
-      title={compact ? 'Site settings' : 'The environments to show this page on, Compare, and the site settings'}>
-      <Icon name={compact ? 'settings' : shown ? 'open' : 'desktop'} size={14} />
+      tip={compact ? 'Site settings' : where ? `${where}. Environments, Compare and Site settings` : 'The environments to show this page on, Compare, and the site settings'}>
+      {compact ? <Icon name="settings" size={16} /> : <Dot tone={state} />}
       {compact ? null : <span>{name}</span>}
-      <Icon name="down" size={12} />
+      {compact ? null : <Icon name="down" size={12} />}
     </MenuButton>
   );
 }

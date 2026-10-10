@@ -313,9 +313,9 @@ try {
       await page.goto(`${base}#/p/${ns}/live`);
       await page.waitForSelector('.live-bar', { timeout: 8000 }).catch(() => fail('the live view did not open'));
       // Picked once the page has loaded and its parts are known, as the owner would.
-      await page.waitForSelector('.live-side .live-layer', { timeout: 8000 }).catch(() => fail('the live view listed no parts'));
+      await page.waitForSelector('.live-structure .live-layer', { timeout: 8000 }).catch(() => fail('the live view listed no parts'));
       await page.waitForTimeout(400);
-      await page.click('.live-bar button:has-text("Pick")');
+      await page.click('.live-bar button[aria-keyshortcuts="P"]');
       // Code, one of the four verbs on the part (its key is .): the template, at the words picked.
       await page.waitForSelector('.live-verbs button[aria-keyshortcuts="."]:not([disabled])', { timeout: 8000 }).catch(() => fail('a picked part has no Code'));
       await page.focus('.live-inspector .live-side-title');

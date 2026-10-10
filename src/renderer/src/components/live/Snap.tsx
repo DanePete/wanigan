@@ -23,11 +23,11 @@ import type { LiveComponent, LiveRegion } from '@shared/live';
 import { clampRect, partLine, partsInArea, rectFrom, snapContext, type Rect, type SnapMark, type SnapTool } from '@shared/live-snap';
 import type { TracePart } from '@shared/live-trace';
 import type { ProjectSummary } from '@shared/model';
-import { keyLabel } from '@shared/shortcuts';
 import { bridge } from '../../lib/api';
 import { liveBridge, useCoversLive } from '../../lib/live';
 import { isTyping } from '../../lib/live-goto';
-import { Button, IconButton } from '../ui';
+import { Button, IconButton, tipProps } from '../ui';
+import { LIVE_TIP } from './keys';
 import { Icon, type IconName } from '../icons';
 import { NoteComposer, draftFor } from './Notes';
 import { drawSnap, flatten, snapColors } from './snap-draw';
@@ -202,7 +202,6 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
     });
   }, [shot, area, scope, regions, traceParts, traced, componentName, errors]);
 
-  const chord = (...k: string[]): string => k.map((x) => keyLabel(x, mac)).join(mac ? '' : '+');
   return (
     <section className="live-stage-snap" aria-labelledby={titleId} data-phase={phase}>
       <div className="live-snap-head">
@@ -214,7 +213,7 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
         </ol>
         <span className="live-snap-spacer" />
         {phase !== 'area' ? <Button size="s" tone="quiet" icon="back" onClick={back} aria-keyshortcuts="Escape">Back</Button> : null}
-        <IconButton icon="close" label="Close the snap (Escape)" onClick={onClose} />
+        <IconButton icon="close" label="Close the snap" keys={LIVE_TIP.stop} onClick={onClose} />
       </div>
       <div className="visually-hidden" role="status" aria-live="polite">{said}</div>
       {failed ? (
@@ -230,9 +229,9 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
         <>
           <div className="live-snap-bar">
             <p className="small">Drag over the part to send, or:</p>
-            <Button size="s" icon="desktop" onClick={whole} aria-keyshortcuts="W" title="Everything the view shows (W)">Whole view <kbd className="live-key">W</kbd></Button>
-            <Button size="s" icon="layers" onClick={() => void takePage()} aria-keyshortcuts="F"
-              title="The whole page, top to bottom, loaded again at this width in a hidden window (F)">Full page <kbd className="live-key">F</kbd></Button>
+            <Button size="s" icon="desktop" onClick={whole} {...tipProps('Everything the view shows', { id: null, label: 'Whole view', group: 'In the live view', keys: ['W'] })}>Whole view</Button>
+            <Button size="s" icon="layers" onClick={() => void takePage()}
+              {...tipProps('The whole page, top to bottom, loaded again at this width in a hidden window', { id: null, label: 'Full page', group: 'In the live view', keys: ['F'] })}>Full page</Button>
           </div>
           <AreaPicker image={image} onChoose={chose} />
         </>
@@ -242,16 +241,16 @@ export function SnapPanel({ first, project, regions, traceParts, traced, compone
             <div className="live-snap-tools" role="radiogroup" aria-label="Tool">
               {SNAP_TOOLS.map((x) => (
                 <button key={x.id} type="button" role="radio" aria-checked={tool === x.id} className={`btn btn-quiet btn-s${tool === x.id ? ' on' : ''}`}
-                  aria-keyshortcuts={x.key} aria-label={`${x.label} (${x.key})`} title={`${x.hint} (${x.key})`} onClick={() => setTool(x.id)}>
-                  <Icon name={x.icon} size={14} /><span className="live-tool-name">{x.label}</span><kbd className="live-key" aria-hidden="true">{x.key}</kbd>
+                  aria-label={x.label} {...tipProps(x.hint, { id: null, label: x.label, group: 'In the live view', keys: [x.key] })} onClick={() => setTool(x.id)}>
+                  <Icon name={x.icon} size={14} /><span className="live-tool-name">{x.label}</span>
                 </button>
               ))}
             </div>
-            <IconButton icon="undo" label={`Undo (${chord('Mod', 'Z')})`} disabled={!marks.length} onClick={undo} aria-keyshortcuts={mac ? 'Meta+Z' : 'Control+Z'} />
-            <IconButton icon="redo" label={`Redo (${chord('Shift', 'Mod', 'Z')})`} disabled={!undone.length} onClick={redo} aria-keyshortcuts={mac ? 'Shift+Meta+Z' : 'Shift+Control+Z'} />
+            <IconButton icon="undo" label="Undo the last mark" disabled={!marks.length} onClick={undo} keys={{ id: null, label: 'Undo', group: 'In the live view', keys: ['Mod', 'Z'] }} />
+            <IconButton icon="redo" label="Redo the mark" disabled={!undone.length} onClick={redo} keys={{ id: null, label: 'Redo', group: 'In the live view', keys: ['Shift', 'Mod', 'Z'] }} />
             <span className="live-snap-spacer" />
-            <Button size="s" tone="primary" icon="send" onClick={ask} aria-keyshortcuts={mac ? 'Meta+Enter' : 'Control+Enter'} title={`Write what is wrong and send it, or save it to Notes (${chord('Mod', 'Enter')})`}>
-              Ask an agent <kbd className="live-key" aria-hidden="true">{chord('Mod', 'Enter')}</kbd>
+            <Button size="s" tone="primary" icon="send" onClick={ask} {...tipProps('Write what is wrong and send it, or save it to Notes', { id: null, label: 'Ask an agent', group: 'In the live view', keys: ['Mod', 'Enter'] })}>
+              Ask an agent
             </Button>
           </div>
           <MarkCanvas image={image} crop={crop} marks={marks} tool={tool} scale={scale} onMark={add} />

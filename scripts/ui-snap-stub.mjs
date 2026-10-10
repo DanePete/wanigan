@@ -12,6 +12,7 @@ export function snapStub() {
   const w = window.__wgLive;
   const live = window.wanigan.live;
   w.sent = [];
+  w.noAgents = false;
   w.consoleErrors = [];
   w.clip = null;
   const listeners = new Set();
@@ -107,8 +108,18 @@ export function snapStub() {
   // What the note composer hands the core, kept for the sweep (the core still gets it: the demo's own).
   const call = window.wanigan.call.bind(window.wanigan);
   window.wanigan.call = (method, params) => {
-    if (method === 'attachments.save') w.sent.push({ method, name: params.name, data: params.data });
-    if (method === 'sessions.queue') w.sent.push({ method, text: params.text, attachments: params.attachments.length });
+    if (method === 'attachments.save') w.sent.push({ method, name: params.name, data: params.data, session: params.to?.session ?? null });
+    // No agent session running here (`noAgents`): the composer offers to start one on the note.
+    if (method === 'sessions.list' && params?.live && w.noAgents) return Promise.resolve([]);
+    if (method === 'sessions.start') {
+      return call(method, params).then((s) => { w.sent.push({ method, provider: params.provider, projectId: params.projectId, session: s.id }); return s; });
+    }
+    if (method === 'sessions.queue') {
+      const sent = { method, session: params.id, text: params.text, attachments: params.attachments.length, queued: null };
+      w.sent.push(sent);
+      // The core's own answer: how many messages wait for that session now.
+      return call(method, params).then((r) => { sent.queued = r.queued; return r; });
+    }
     return call(method, params);
   };
 }
