@@ -73,6 +73,14 @@
 // - `/_wanigan/piece/...` renders one library entry alone, at the path the
 //   library names for it, with example props; the rendered piece says it is
 //   `data-wanigan-piece="ready"` (or `"failed"`, with why) once it is drawn.
+// - Words a template writes, on the template's part, offered with why they are
+//   not saved here (`template-override`, read-only strings, a `why`; never
+//   saved): `words.tpl.<hash>` for the runs of words typed into it,
+//   `words.t.<hash>` for the strings it prints through a translation function
+//   (Drupal's t(); WordPress's gettext functions, one target per text
+//   domain). WordPress's say the line of each in its property's
+//   `description`, and its template parts say whether their file was read
+//   (a `template.words` variable: `read …`, or `not read: <why>`).
 
 export const TRACE_VERSION = 1;
 

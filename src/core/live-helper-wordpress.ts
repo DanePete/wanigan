@@ -25,6 +25,7 @@ import { WORDPRESS_WORDS_SOURCE } from './live-helper-wordpress-words.ts';
 import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
 import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
 import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
+import { WORDPRESS_TEMPLATE_WORDS_SOURCE } from './live-helper-wordpress-template-words.ts';
 
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
@@ -42,8 +43,8 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
   // The site-adapter base right after the core, then the stored-words search and the plugins' adapters for it (each
   // registers itself, and is used only when its plugin is active): page builders first, as they are asked in the order
-  // they registered.
-  const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE;
+  // they registered. The words a template file writes are read with the stored-words matcher, so they come after it.
+  const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE + WORDPRESS_TEMPLATE_WORDS_SOURCE;
   return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
@@ -781,6 +782,8 @@ final class Wanigan_Live {
 			$extra = array();
 			$src = self::source($file, 1);
 			if ($src) $extra['source'] = $src;
+			// Found through locate_template() (get_header(), get_template_part()), which takes a child theme's copy first.
+			$looked_up = false;
 			if (self::$candidates) {
 				$alts = array();
 				foreach (self::$candidates as $c) {
@@ -788,7 +791,7 @@ final class Wanigan_Live {
 					$alt = array('name' => $c, 'exists' => $located !== '');
 					$r = $located !== '' ? self::rel($located) : null;
 					if ($r !== null) $alt['file'] = $r;
-					if ($located !== '' && wp_normalize_path($located) === wp_normalize_path($file)) $alt['chosen'] = true;
+					if ($located !== '' && wp_normalize_path($located) === wp_normalize_path($file)) $alt['chosen'] = $looked_up = true;
 					$alts[] = $alt;
 				}
 				$extra['alternatives'] = $alts;
@@ -796,7 +799,7 @@ final class Wanigan_Live {
 			}
 			if (is_array($args) && $args) $extra['variables'] = self::variables($args, 'args');
 			$id = self::open('template', $name, $extra);
-			self::$meta[$id] = array('file' => wp_normalize_path($file));
+			self::$meta[$id] = array('file' => wp_normalize_path($file), 'looked_up' => $looked_up);
 			echo self::begin_mark($id);
 			self::$meta[$id]['marked'] = true;
 		} finally {
@@ -2648,6 +2651,22 @@ final class Wanigan_Live {
 		if (empty($m['canvas'])) {
 			$e = self::override_edit($file);
 			if ($e) $p['edits'][] = $e;
+			// What the file writes: its runs of words, and the strings it prints through a translation function, each
+			// offered with why it is not saved here (Wanigan_Live_Template_Words, below), and whether it was read at all.
+			// Read from the file once the page is done, never from the database.
+			// A failure here costs this part its words, never the page its trace.
+			try {
+				$read = Wanigan_Live_Template_Words::read($file);
+				$targets = is_array($read) ? Wanigan_Live_Template_Words::targets($file, self::template_about($file, $m)) : array();
+			} catch (Throwable $e) {
+				$read = 'listing its words failed (' . self::cut($e->getMessage(), 200) . ')';
+				$targets = array();
+			}
+			$p['variables'][] = array('name' => 'template.words', 'type' => 'string', 'preview' => is_array($read) ? Wanigan_Live_Template_Words::summary($read) : 'not read: ' . $read);
+			foreach ($targets as $t) {
+				if (!isset(self::$edits[$t['id']])) self::$edits[$t['id']] = $t;
+				$p['edits'][] = $t['id'];
+			}
 		}
 		return $p;
 	}
@@ -2700,6 +2719,45 @@ final class Wanigan_Live {
 			$out[] = $alt;
 		}
 		return $out;
+	}
+
+	/**
+	 * Whose a template file is, for what its words say (Wanigan_Live_Template_Words): its path in the project, the
+	 * theme it is in and in which role (template_identity()), where a child theme's copy of a parent's file goes,
+	 * whether the theme gets its updates from outside the project, and whether WordPress found the file through its
+	 * template lookup (locate_template(), which takes a child theme's copy first). A file outside the active theme and
+	 * its parent: whose it is, as whose() says.
+	 */
+	private static function template_about(string $file, array $m): array {
+		$f = wp_normalize_path($file);
+		$rel = self::rel($f);
+		$about = array('shown' => $rel !== null ? $rel : $f, 'looked_up' => !empty($m['main']) || !empty($m['looked_up']), 'role' => null);
+		$identity = self::template_identity($f);
+		if ($identity) {
+			$about['role'] = $identity['role'];
+			$about['path'] = $identity['path'];
+			$about['theme'] = self::theme_title($identity['theme']);
+			if ($identity['role'] === 'parent') {
+				$about['child'] = self::theme_title(get_stylesheet());
+				$to = untrailingslashit(wp_normalize_path(get_stylesheet_directory())) . '/' . $identity['path'];
+				$r = self::rel($to);
+				$about['copy'] = $r !== null ? $r : $to;
+			}
+			$about['outside'] = $identity['role'] === 'theme' && self::whose($f)[0] === 'theme';
+			return $about;
+		}
+		$w = self::whose($f);
+		$about['kind'] = $w[3];
+		$about['package'] = $w[1];
+		$about['yours'] = $w[0] === 'yours';
+		return $about;
+	}
+
+	/** A theme's own name, from its style.css (theme.php wp_get_theme()), or its folder's. */
+	private static function theme_title(string $slug): string {
+		$theme = wp_get_theme($slug);
+		$name = $theme && $theme->exists() ? trim(wp_strip_all_tags((string) $theme->get('Name'))) : '';
+		return $name !== '' ? self::cut($name, 60) : $slug;
 	}
 
 	/**
