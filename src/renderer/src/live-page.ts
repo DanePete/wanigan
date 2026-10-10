@@ -1206,8 +1206,13 @@ export function livePage(): void {
   const TEXT_MAX = 500_000;
   /** Each edit's elements as the last kept layerFind found them, in document order. */
   let layerFound = new Map<string, Element[]>();
+  /**
+   * An element whose words the layer patched: its own text nodes and exactly what each held before, a text node the
+   * layer had to add (to an element with none), and its words as the site rendered them.
+   */
+  type Patch = { nodes: Text[]; values: string[]; added: Text | null; was: string };
   /** Elements whose words the layer patched, and exactly what they held before. */
-  const patched = new Map<Element, string>();
+  const patched = new Map<Element, Patch>();
   const NOT_SHOWN = /^(script|style|link|meta|template|noscript)$/i;
   const STEP_NAME = /^[A-Za-z][A-Za-z0-9-]{0,40}$/;
   const SAFE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,80}$/;
@@ -1215,8 +1220,8 @@ export function livePage(): void {
 
   /** An element's own words as the site rendered them: a patched element's are what it held before the layer. */
   function siteWords(el: Element): string | null {
-    const was = patched.get(el);
-    if (was !== undefined) return words(was) || null;
+    const p = patched.get(el);
+    if (p) return words(p.was) || null;
     return ownText(el);
   }
 
@@ -1233,7 +1238,7 @@ export function livePage(): void {
     for (let n = walker.nextNode(); n && out.length < TEXT_MAX; n = walker.nextNode()) {
       const parent = n.parentElement;
       if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName)) continue;
-      const was = site ? patched.get(parent) : undefined;
+      const was = site ? patched.get(parent)?.was : undefined;
       // As textContent joins them: no space added between one node's words and the next's.
       if (was !== undefined) { if (!done.has(parent)) { done.add(parent); out += was; } continue; }
       out += n.nodeValue ?? '';
@@ -1362,12 +1367,42 @@ export function livePage(): void {
     return out;
   }
 
-  /** Write words into an element that holds only words, touching its one text node when it has one. */
-  function writeWords(el: Element, text: string): void {
-    if (el.textContent === text) return;
+  /** An element's own text nodes, in order. */
+  const ownTexts = (el: Element): Text[] => Array.from(el.childNodes).filter((n): n is Text => n.nodeType === Node.TEXT_NODE);
+
+  /**
+   * Write words into an element, changing only its own text nodes: the words go into the first that held any, the
+   * others that held words are emptied, and every other child (the helper's wl:part comments around the words, blank
+   * text between them) is left exactly as it is. An element with an element inside it holds words that are not all its
+   * own, and is not written to. What each node held is kept the first time, for putting back.
+   */
+  function writeWords(el: Element, text: string): boolean {
+    if (el.children.length) return false;
+    let p = patched.get(el);
+    if (!p) {
+      const nodes = ownTexts(el);
+      p = { nodes, values: nodes.map((n) => n.nodeValue ?? ''), added: null, was: el.textContent ?? '' };
+      patched.set(el, p);
+    }
+    const kept = p;
+    const holding = kept.nodes.filter((n, i) => n.parentNode === el && /\S/.test(kept.values[i] ?? ''));
+    const into = holding[0] ?? (kept.added?.parentNode === el ? kept.added : null);
     layerTouched.add(el);
-    const only = el.childNodes.length === 1 && el.firstChild?.nodeType === Node.TEXT_NODE ? el.firstChild : null;
-    if (only) only.nodeValue = text; else el.textContent = text;
+    if (into) {
+      if (into.nodeValue !== text) into.nodeValue = text;
+      for (const n of holding.slice(1)) if (n.nodeValue) n.nodeValue = '';
+    } else {
+      kept.added = document.createTextNode(text);
+      el.appendChild(kept.added);
+    }
+    return true;
+  }
+
+  /** Put back exactly what an element held before the layer wrote to it: each own text node's words, and no node it added. */
+  function putBack(el: Element, p: Patch): void {
+    layerTouched.add(el);
+    p.nodes.forEach((n, i) => { if (n.parentNode === el && n.nodeValue !== p.values[i]) n.nodeValue = p.values[i] ?? ''; });
+    if (p.added?.parentNode === el) p.added.remove();
   }
 
   /**
@@ -1396,15 +1431,12 @@ export function livePage(): void {
         for (const [el, ids] of want) if (ids.includes(t.id) && el instanceof HTMLElement && !el.children.length) next.set(el, t.value);
       }
     }
-    for (const [el, was] of [...patched]) {
+    for (const [el, p] of [...patched]) {
       if (next.has(el) && el.isConnected) continue;
-      if (el.isConnected) writeWords(el, was);
+      if (el.isConnected) putBack(el, p);
       patched.delete(el);
     }
-    for (const [el, value] of next) {
-      if (!patched.has(el)) patched.set(el, el.textContent ?? '');
-      writeWords(el, value);
-    }
+    for (const [el, value] of next) writeWords(el, value);
     redraw();
     return want.size;
   }
