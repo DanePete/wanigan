@@ -143,6 +143,15 @@ runs `_wp_apply_block_content_filters()` (7.1; `do_shortcode()`,
 the part its source and history, and make its top-level blocks belong to the
 `wp_template_part` the Site Editor would save.
 
+A block's words in a template or part save through `/wp/v2/templates` or
+`/wp/v2/template-parts` (below), each saying it shows on every page that uses
+that template or part; while the template is still the theme's file, the first
+save makes the database copy the Site Editor makes
+(`class-wp-rest-templates-controller.php update_item()` inserts a
+`wp_template` post that shadows the file, which is never written). The REST
+path also runs `inject_ignored_hooked_blocks_metadata_attributes()`
+(`rest_pre_insert_wp_template`), which a direct `wp_update_post()` would skip.
+
 ## Blocks
 
 **Core path.** `blocks.php do_blocks()` parses (`parse_blocks()`, filterable
@@ -200,9 +209,14 @@ interactive block, and dequeues assets of a block that rendered empty.
   loads content).
 - *Block bindings*: `class-wp-block-bindings-source.php get_value()` applies
   `block_bindings_source_value` (6.7+). The bound attribute is shown with its
-  source; a `core/post-meta` binding links the meta's edit target, using the
-  context `process_block_bindings()` just gave the block. `core/post-data` and
-  `core/term-data` (6.9) are shown, not linked. Pattern overrides are read-only.
+  source. A `core/post-meta` binding on an attribute bindings support for that
+  block type (`get_block_bindings_supported_attributes()`, 6.9) gets its own
+  target: the field of the post in the context `process_block_bindings()` just
+  gave the block, saved through that post's REST `meta`, when
+  `block-bindings/post-meta.php` would read the field (registered
+  `show_in_rest`, not protected), the type supports `custom-fields` and the
+  user has `edit_post_meta`. `core/post-data`, `core/term-data` (6.9) and a
+  plugin's source say why they are not saved here. Pattern overrides: below.
 - *Block hooks*: `apply_block_hooks_to_content_from_post_object()` runs on
   `the_content` at priority 8 and inserts hooked blocks before `do_blocks()`;
   hooked blocks are not in the stored post, which the mapping below handles.
@@ -220,6 +234,27 @@ attributes without `metadata.ignoredHookedBlocks`, inner HTML). When block
 hooks or a filter shifted the index, the one stored sibling that matches is
 taken, or none. Unmapped blocks get no block edit.
 
+Two renders put a block's words in another post than the page's:
+
+- *Synced patterns*: `blocks/block.php render_block_core_block()` (7.1) parses
+  the `wp_block` post, makes its blocks the same `core/block` instance's inner
+  blocks and renders that instance again (`render(['dynamic' => false])`). The
+  second render's frame maps those blocks into `post:<ref>` for their edits
+  only; their identity stays a component within the placement, since one
+  pattern may be placed twice on a page.
+- *Navigation*: `blocks/navigation.php` renders a published `wp_navigation`
+  post's blocks (empty freeform runs dropped by
+  `block_core_navigation_filter_out_empty_blocks()`, block hooks applied) by
+  calling each one's `render()` directly, so no `pre_render_block` names their
+  parent. A block whose start is seen with nothing pending is matched to the
+  index-th named block of the stored list its parent frame holds, checked as
+  above; a submenu's own inner render and the callback's direct one both map.
+  A Navigation block with no `ref` renders a fallback built on every request
+  (`block_core_navigation_get_fallback_blocks()`), which no stored menu owns.
+- *Theme patterns*: `blocks/pattern.php` renders a `core/pattern`'s content from
+  the registry on every request; blocks inside it are mapped nowhere and their
+  words are said to be the pattern file's.
+
 **Block edits** (`block-attributes`, `via: schema`). The schema is built from
 the block type's `attributes` (`class-wp-block-type.php`: block.json plus the
 attributes block supports register). PHP cannot run a block's JavaScript
@@ -228,21 +263,44 @@ attributes block supports register). PHP cannot run a block's JavaScript
   delimiter;
 - an attribute sourced from markup (`source` `rich-text`, `html`, `text` or
   `attribute`, with a `selector`): the first element the selector matches in
-  the block's own HTML (what the editor's parser reads), when it holds plain
-  text (rich text) or the attribute itself; written with
-  `WP_HTML_Tag_Processor::set_modifiable_text()` (6.7+, escapes) or
-  `set_attribute()`. A selector with combinators must match exactly one
-  element.
+  the block's own HTML (what the editor's parser reads). Rich text is the HTML
+  the element holds, formatting and all, up to the block's first inner block,
+  where `class-wp-block.php WP_Block::replace_html()` stops a bound attribute's
+  splice since 7.1; the offsets come from a `WP_HTML_Processor` subclass, as
+  `get_block_bindings_processor()` builds one (the bookmarks that hold them are
+  protected). New rich text goes through `wp_kses_post()` (core's renderer does
+  so whatever the user may post; a user with `unfiltered_html` skips kses on
+  save), is normalized by `WP_HTML_Processor` (6.7+) so every tag it opens
+  closes inside the element, and may hold words and inline tags only (the
+  editor's formats in `format-library.js`, and tags the element already held);
+  a comment is refused, since one could close the block's delimiter. An
+  attribute is written with `set_attribute()`. A selector with combinators
+  must match exactly one element.
 
-Everything else is listed `readOnly` with the reason (the editor writes the
-markup from it; it is bound; it has formatting; it is empty). Saving parses the
-stored content, refuses when its hash differs from the trace's (the post
-changed since the page was shown) or when
-`serialize_blocks(parse_blocks($content)) !== $content` (writing back would
-change other blocks), checks the target block's fingerprint, applies the
-change, serializes, and saves through the store's REST route. 6.9's
-`WP_Block_Processor` could splice one block's bytes instead; the round-trip
-check was chosen because it refuses rather than guesses.
+Everything else is listed `readOnly` with its cause: "WordPress keeps no such
+thing" (only the block's editor script writes the markup from it; its element
+is absent until that script writes it) or "Wanigan does not do this yet" (a
+`query`, `raw` or `tag` source; an element holding only inner blocks whose
+attribute core does not splice). `rest_validate_value_from_schema()` does not
+enforce `readOnly`, so a save refuses a read-only property sent changed.
+Saving parses the stored content, refuses when its hash differs from the
+trace's (the post changed since the page was shown), checks the target block's
+fingerprint, applies the change, and writes that block alone: 6.9's
+`WP_Block_Processor` gives every block's byte spans (depth rises before an
+opener, a void block or an HTML span, falls before a closer), the opening
+delimiter is rewritten only when the attributes changed and each run of the
+block's own HTML only where it changed, and the result must parse back as the
+block written before it is saved through the store's REST route. Without the
+block processor, the whole store is written only when
+`serialize_blocks(parse_blocks($content)) === $content`, as before. Moving,
+inserting and taking out blocks still use that rule.
+
+A placement of a synced pattern keeps per-placement words in its own
+`core/block` delimiter, `content[metadata.name][attribute]`
+(`render_block_core_block()`, `block-bindings/pattern-overrides.php`), for the
+attributes the pattern binds to `core/pattern-overrides` (or `__default`).
+Those are a target of their own, saved in the host's store with the same
+one-block splice; sending the pattern's own value takes the override away.
 
 ## Content, titles, excerpts, featured images
 
@@ -278,6 +336,14 @@ the `rest_after_insert_*` hooks are exactly the block editor's. A post type
 without `show_in_rest` says so. Meta keeps revisions only when registered with
 `revisions_enabled` (6.4+).
 
+An image's alt in the media library (`_wp_attachment_image_alt`) is a target of
+its own beside an image block, a featured image (block or
+`the_post_thumbnail()`) and the site logo, saved through `/wp/v2/media`
+`alt_text` (`class-wp-rest-attachments-controller.php update_item()`), with no
+revision. It is what `wp_get_attachment_image()`, a featured image that does
+not link and `get_custom_logo()` print; an image block's own alt is in its
+markup (`img[alt]`, read by `render_block_core_image()`), a block attribute.
+
 **Racing an editor.** `wp-admin/includes/post.php wp_check_post_lock()` reads
 `_edit_lock` ("time:user", live for `wp_check_post_lock_window`, 150 seconds).
 A post locked by anyone, the owner included, is refused with who holds it: the
@@ -306,9 +372,14 @@ calling its callback, then `dynamic_sidebar_after`.
 `class-wp-widget.php display_callback()` applies `widget_display_callback`.
 The widget area is a part bracketed by marks at the two actions; each widget's
 marks ride in its own `before_widget` and `after_widget` (a widget that does not
-print them is unmarked and dropped). A widget whose class sets
-`show_instance_in_rest` (the block, text and HTML widgets do) is editable
-through `/wp/v2/widgets`, which runs the widget's own `update()`; others say
+print them is unmarked and dropped). Any `WP_Widget` is editable through
+`/wp/v2/widgets`, which runs the widget's own `update()`: raw where its class
+sets `show_instance_in_rest` (the block, custom HTML and media widgets do),
+otherwise serialized and base64'd with `wp_hash()` of it, as
+`class-wp-rest-widgets-controller.php` hands it out in edit context and checks
+it on save (the classic Text widget is the common case). A widget outside
+`WP_Widget` with an update callback saves only through its own form's fields,
+which the helper cannot read; one with none keeps nothing to save. Both say
 so. Reordering and moving between areas use `wp_set_sidebars_widgets()` (which
 adds `array_version` to the option).
 
