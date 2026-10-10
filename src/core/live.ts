@@ -29,6 +29,11 @@ import type { Ctx } from './context.ts';
 import { names } from './safe-fs.ts';
 
 const MAX_CONFIG = 256 * 1024;
+/**
+ * Wanigan's own WordPress helper is read back to know it as Wanigan's (its mark) and its version: one file holding the
+ * whole plugin, past MAX_CONFIG since it learned where an entry is used. Bounded all the same.
+ */
+const MAX_HELPER_FILE = 2 * 1024 * 1024;
 /** A screenshot larger than this is not kept (a full page at 2x is a few megabytes). */
 const MAX_SHOT = 24 * 1024 * 1024;
 /** A card keeps its newest screenshots; older ones go. */
@@ -337,7 +342,7 @@ export class Live {
     } else if (platform === 'wordpress') {
       const plan = wordpressPlan(root);
       kind = 'wordpress';
-      text = plan.refused ? null : readText(join(plan.folder, WORDPRESS_HELPER_FILE));
+      text = plan.refused ? null : readText(join(plan.folder, WORDPRESS_HELPER_FILE), MAX_HELPER_FILE);
       if (!text?.includes(WORDPRESS_HELPER_MARK)) return null;
     } else {
       return null;
@@ -440,7 +445,7 @@ export class Live {
     if (plan.refused) throw new CoreError('refused', plan.refused);
     return this.exclusive(projectId, async () => {
       const file = join(plan.folder, WORDPRESS_HELPER_FILE);
-      if (existsSync(file) && !(readText(file) ?? '').includes(WORDPRESS_HELPER_MARK)) {
+      if (existsSync(file) && !(readText(file, MAX_HELPER_FILE) ?? '').includes(WORDPRESS_HELPER_MARK)) {
         throw new CoreError('refused', `${file} already exists and Wanigan did not write it. Nothing was changed.`);
       }
       const token = randomBytes(24).toString('hex');
@@ -461,7 +466,7 @@ export class Live {
     const plan = wordpressPlan(root);
     return this.exclusive(projectId, async () => {
       const file = join(plan.folder, WORDPRESS_HELPER_FILE);
-      if ((readText(file) ?? '').includes(WORDPRESS_HELPER_MARK)) rmSync(file, { force: true });
+      if ((readText(file, MAX_HELPER_FILE) ?? '').includes(WORDPRESS_HELPER_MARK)) rmSync(file, { force: true });
       // The folder goes only if installing made it and nothing else has been put in it since.
       if (madeFolder) { try { rmdirSync(plan.folder); } catch { /* not empty, or already gone */ } }
       await excludeFromGit(root, file, false, false);
