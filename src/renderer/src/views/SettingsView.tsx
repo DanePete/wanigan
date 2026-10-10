@@ -9,6 +9,7 @@ import { Button, Segmented, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
 import { useAppState } from '../lib/settings';
+import { setTheme, useTheme, type ThemeChoice } from '../lib/theme';
 import '../styles/live.css';
 
 export function SettingsView({ projects }: { projects: ProjectSummary[] | undefined }) {
@@ -19,12 +20,37 @@ export function SettingsView({ projects }: { projects: ProjectSummary[] | undefi
       </header>
       <div className="view-body">
         <div className="view-pad settings">
+          <AppearanceSettings />
           <GeneralSettings />
           <LiveViewSettings />
           <UpdateSettings />
           <LocalModelsSettings />
           <PhoneSettings />
           <JevSettings projects={projects} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const THEMES: readonly { value: ThemeChoice; label: string }[] = [
+  { value: 'system', label: 'Match the system' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+/** Light, dark, or whatever the system is set to: kept in this window, on this computer (it was the rail's switch). */
+function AppearanceSettings() {
+  const { choice } = useTheme();
+  return (
+    <section className="settings-group" aria-labelledby="set-appearance">
+      <header className="account-group-head">
+        <h2 id="set-appearance">Appearance</h2>
+      </header>
+      <div className="settings-row settings-notify">
+        <div className="settings-notify-head">
+          <span className="settings-label">Theme</span>
+          <Segmented<ThemeChoice> label="Theme" value={choice} options={THEMES} onChange={setTheme} />
         </div>
       </div>
     </section>

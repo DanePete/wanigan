@@ -13,7 +13,7 @@ const EDGE = 8;
 
 interface Place { left: number; top: number; maxHeight: number }
 
-export function Popover({ anchor, open, onClose, label, side = 'bottom', align = 'start', width = 320, className, children }: {
+export function Popover({ anchor, open, onClose, label, side = 'bottom', align = 'start', width = 320, beside, className, children }: {
   /** The control that opens it: it is placed beside it, and focus returns to it. */
   anchor: RefObject<HTMLElement | null>;
   open: boolean;
@@ -25,6 +25,8 @@ export function Popover({ anchor, open, onClose, label, side = 'bottom', align =
   /** Which edge of the control it lines up with: start (left, or top beside it) or end (right, or bottom). */
   align?: 'start' | 'end';
   width?: number;
+  /** Opening to the right, clear of what holds the control (the rail, for its bell): a selector for that box. */
+  beside?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -42,7 +44,8 @@ export function Popover({ anchor, open, onClose, label, side = 'bottom', align =
     let top: number;
     let maxHeight: number;
     if (side === 'right') {
-      left = Math.min(r.right + GAP, innerWidth - w - EDGE);
+      const edge = beside ? anchor.current.closest(beside)?.getBoundingClientRect().right ?? r.right : r.right;
+      left = Math.min(edge + GAP, innerWidth - w - EDGE);
       maxHeight = innerHeight - 2 * EDGE;
       top = align === 'end' ? Math.max(EDGE, r.bottom) : Math.max(EDGE, r.top);
     } else {
@@ -50,7 +53,7 @@ export function Popover({ anchor, open, onClose, label, side = 'bottom', align =
       if (side === 'top') { maxHeight = r.top - GAP - EDGE; top = r.top - GAP; } else { maxHeight = innerHeight - r.bottom - GAP - EDGE; top = r.bottom + GAP; }
     }
     setPlace({ left, top, maxHeight });
-  }, [open, side, align, width, anchor]);
+  }, [open, side, align, width, anchor, beside]);
 
   // Placed upward (or bottom-aligned beside), it grows from its anchor's edge: measured once drawn.
   useLayoutEffect(() => {

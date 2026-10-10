@@ -90,12 +90,13 @@ test('Go › Open File… is ⌘P, and View › Code Editor shows or hides the e
   assert.deepEqual(sent, ['command quick-open', 'command toggle-editor']);
 });
 
-test('the View menu shows or hides the sidebar with ⌘\\', () => {
+test('the View menu sends no command that is gone: the rail is always shown, so nothing toggles it', () => {
   const { menu, find, click, sent } = build();
-  const toggle = find('Toggle Sidebar', menu('View'));
-  assert.equal(toggle.accelerator, 'CmdOrCtrl+\\');
-  click(toggle);
-  assert.deepEqual(sent, ['command toggle-rail']);
+  const view = menu('View');
+  assert.equal(view.some((i) => i.label === 'Toggle Sidebar'), false);
+  assert.equal(view.some((i) => i.accelerator === 'CmdOrCtrl+\\'), false, '⌘\\ is free');
+  click(find('Code Editor', view));
+  assert.deepEqual(sent, ['command toggle-editor']);
 });
 
 test('Check for Updates… sits under About, and is absent where the app never checks', () => {

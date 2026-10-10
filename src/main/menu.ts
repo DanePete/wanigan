@@ -94,7 +94,8 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
     {
       label: 'View',
       submenu: [
-        item('Toggle Sidebar', 'toggle-rail'), item('Code Editor', 'toggle-editor'), { type: 'separator' },
+        // No sidebar toggle: the rail is always its 60 px (docs/design/2026-10-10-studio.md).
+        item('Code Editor', 'toggle-editor'), { type: 'separator' },
         { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
         { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],

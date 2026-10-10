@@ -239,7 +239,9 @@ try {
 
     await check('segmented-keyboard', null, async page => {
       await page.goto(`${base}#/needs`);
-      await page.locator('.rail-action').filter({ hasText: 'New card' }).click();
+      // New card, as the app menu sends it (the rail has no New card since Studio: ⌘K, C and the menu do).
+      await page.waitForSelector('.rail-projects a');
+      await page.evaluate(() => window.__wgCommand('new-card'));
       const group = page.locator('.dialog [role="radiogroup"]').first();
       const options = group.getByRole('radio');
       const count = await options.count();
@@ -304,7 +306,9 @@ try {
       assert.doesNotMatch(text, /sends nothing else|coming soon|working with Apple|macOS requires/i);
       assert.match(text, /connection metadata/i);
       assert.match(text, /manual|download.*install/i);
-      const rail = await page.locator('.rail-update-ask').textContent();
+      // The question is in the notification tray, behind the rail's bell.
+      await page.locator('.rail button[aria-label^="Notifications"]').click();
+      const rail = await page.locator('.tray-update-ask').textContent();
       assert.doesNotMatch(rail, /sends nothing else/i);
       assert.match(rail, /connection metadata/i);
       await settings.scrollIntoViewIfNeeded();
@@ -708,7 +712,8 @@ try {
 
     await check('modal-focusable-links', null, async (page) => {
       await page.goto(base);
-      await page.locator('.rail-action').filter({ hasText: 'New card' }).click();
+      await page.waitForSelector('.rail-projects a');
+      await page.evaluate(() => window.__wgCommand('new-card'));
       await page.waitForSelector('.dialog');
       await page.evaluate(() => {
         const box = document.querySelector('.dialog');

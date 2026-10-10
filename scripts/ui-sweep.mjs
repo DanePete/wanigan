@@ -97,7 +97,8 @@ try {
 
     await page.goto(base);
     await page.waitForSelector('.rail-projects a');
-    const nsHref = await page.$eval('.rail-projects a[title*="northstar"]', (a) => a.getAttribute('href'));
+    // The rail's tiles carry the project's name (its key is what they show).
+    const nsHref = await page.$eval('.rail-projects a[aria-label^="Northstar"]', (a) => a.getAttribute('href'));
     const ns = nsHref.match(/#\/p\/([^/]+)/)[1];
     const sessionHref = await (async () => {
       await page.goto(`${base}#/running`);
@@ -900,7 +901,7 @@ try {
         .map((o) => `${o.querySelector('.palette-label')?.textContent}=${o.querySelector('.keycaps')?.textContent}`),
     }));
     for (const g of ['Go to', 'Projects', 'Cards', 'Commands']) if (!untyped.groups.includes(g)) failures.push(`${theme}/palette: no ${g} group (${untyped.groups.join(', ')})`);
-    for (const want of ['Needs you=GthenN', 'Board=GthenB', 'New session=⌘T', 'Collapse or expand the sidebar=⌘\\']) {
+    for (const want of ['Needs you=GthenN', 'Board=GthenB', 'New session=⌘T', 'Settings=⌘,']) {
       if (!untyped.caps.includes(want)) failures.push(`${theme}/palette: no key caps ${want} (${untyped.caps.join(' | ')})`);
     }
     await page.screenshot({ path: join(out, `${theme}-palette-empty.png`) });
@@ -1001,7 +1002,9 @@ try {
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-open-project-agents.png`) });
     await page.keyboard.press('Escape');
-    await page.click(`button[aria-label$="settings"]`);
+    // The project's settings are in its name's menu, in the project bar.
+    await page.click('.project-name-button');
+    await page.click('.menu-list [role="menuitem"]:has-text("Project settings")');
     await page.waitForSelector('.dialog .dialog-section');
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-project-settings.png`) });
@@ -1012,40 +1015,41 @@ try {
     await page.screenshot({ path: join(out, `${theme}-pause.png`) });
     await page.keyboard.press('Escape');
 
-    // ⌘\ folds the rail to icons and back. The fold is remembered, every item keeps its name, and
-    // pointing at one names it beside the rail.
+    // The rail is its 60 px, always (Studio): every item has a name and a tooltip, pointing at a project names it beside
+    // the rail with its key, the keyboard brings the same tooltip, and ⌘\ folds nothing (there is nothing to fold).
     await page.goto(`${base}#/p/${ns}/board`);
     await page.waitForSelector('.card');
-    await page.keyboard.press('Meta+Backslash');
-    await page.waitForSelector('.rail.collapsed', { timeout: 3000 }).catch(() => failures.push(`${theme}/rail: ⌘\\ did not fold the rail`));
-    await page.reload();
-    await page.waitForSelector('.card');
-    await page.waitForTimeout(400);
-    const folded = await page.evaluate(() => {
+    const railNow = () => page.evaluate(() => {
       const rail = document.querySelector('.rail');
+      const controls = [...(rail?.querySelectorAll('a, button') ?? [])];
       return {
-        collapsed: !!rail?.classList.contains('collapsed'),
         width: Math.round(rail?.getBoundingClientRect().width ?? 0),
         main: Math.round(document.querySelector('.main')?.getBoundingClientRect().left ?? 0),
-        unnamed: [...(rail?.querySelectorAll('a, button') ?? [])].filter((el) => !(el.getAttribute('aria-label') || el.textContent?.trim())).map((el) => el.outerHTML.slice(0, 60)),
+        unnamed: controls.filter((el) => !(el.getAttribute('aria-label') || el.textContent?.trim())).map((el) => el.outerHTML.slice(0, 60)),
+        untipped: controls.filter((el) => !el.getAttribute('data-tip')).map((el) => el.outerHTML.slice(0, 60)),
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       };
     });
-    if (!folded.collapsed) failures.push(`${theme}/rail: the fold was not remembered across a reload`);
-    if (folded.width > 60 || folded.main !== folded.width) failures.push(`${theme}/rail: folded to ${folded.width}px with the view at ${folded.main}px`);
-    if (folded.unnamed.length) failures.push(`${theme}/rail: folded items with no name: ${folded.unnamed.join(' ')}`);
-    if (folded.overflow) failures.push(`${theme}/rail: horizontal overflow with the rail folded`);
+    const railed = await railNow();
+    if (railed.width !== 60 || railed.main !== 60) failures.push(`${theme}/rail: ${railed.width}px wide with the view at ${railed.main}px`);
+    if (railed.unnamed.length) failures.push(`${theme}/rail: items with no name: ${railed.unnamed.join(' ')}`);
+    if (railed.untipped.length) failures.push(`${theme}/rail: items with no tooltip: ${railed.untipped.join(' ')}`);
+    if (railed.overflow) failures.push(`${theme}/rail: horizontal overflow`);
     await page.hover(`.rail-projects a[href*="/p/${ns}/"]`);
-    await page.waitForSelector('.rail-tip', { timeout: 2000 }).catch(() => failures.push(`${theme}/rail: pointing at a project did not name it`));
-    if (!/Northstar/.test((await page.textContent('.rail-tip').catch(() => '')) ?? '')) failures.push(`${theme}/rail: the tip does not name the project`);
-    await page.screenshot({ path: join(out, `${theme}-rail-collapsed.png`) });
+    await page.waitForSelector('.tooltip', { timeout: 2000 }).catch(() => failures.push(`${theme}/rail: pointing at a project did not name it`));
+    const tipped = { text: (await page.textContent('.tooltip').catch(() => '')) ?? '', keys: (await page.textContent('.tooltip-keys').catch(() => '')) ?? '' };
+    if (!/Northstar/.test(tipped.text)) failures.push(`${theme}/rail: the tip does not name the project (${tipped.text})`);
+    if (!/^⌘\d$/.test(tipped.keys)) failures.push(`${theme}/rail: the project's tip does not give its key (${tipped.keys})`);
+    await page.screenshot({ path: join(out, `${theme}-rail-tip.png`) });
     await page.mouse.move(700, 450);
+    await page.keyboard.press('Shift');
+    await page.focus('.rail-search');
+    await page.waitForSelector('.tooltip:has-text("Search and commands")', { timeout: 2000 }).catch(() => failures.push(`${theme}/rail: focusing Search by keyboard did not name it`));
+    if ((await page.textContent('.tooltip-keys').catch(() => '')) !== '⌘K') failures.push(`${theme}/rail: Search’s tip does not give ⌘K`);
     await page.keyboard.press('Meta+Backslash');
-    await page.waitForSelector('.rail:not(.collapsed)', { timeout: 3000 }).catch(() => failures.push(`${theme}/rail: ⌘\\ did not open the rail again`));
-    // Back to no choice made (forgotten, and the window reloaded), so a narrow window folds it on its own below.
-    await page.evaluate(() => localStorage.removeItem('wanigan.rail'));
-    await page.reload();
-    await page.waitForSelector('.card');
+    await page.waitForTimeout(300);
+    if ((await railNow()).width !== 60) failures.push(`${theme}/rail: ⌘\\ changed the rail`);
+    await page.keyboard.press('Escape');
 
     // History: ⌘⇧T from anywhere in a project, search, the reader, and continuing as another account.
     await page.goto(`${base}#/p/${ns}/board`);
@@ -1242,12 +1246,13 @@ try {
         if (name === 'narrow-changes' && ((await page.$('.diff-split')) || !/Unified until the window is wider/.test(await page.textContent('.changes .toolbar')))) {
           failures.push('narrow/changes: Split did not fall back to unified, saying so');
         }
-        if (!(await page.$('.rail.collapsed'))) failures.push(`narrow/${name}: the rail did not fold on its own below 1180px`);
+        const railWidth = await page.$eval('.rail', (r) => Math.round(r.getBoundingClientRect().width));
+        if (railWidth !== 60) failures.push(`narrow/${name}: the rail is ${railWidth}px, not its 60`);
         const hidden = await page.$$eval('.rail-projects a', (links) => links.filter((a) => {
           const r = a.getBoundingClientRect();
           return r.top < 0 || r.bottom > window.innerHeight;
         }).map((a) => a.textContent));
-        if (hidden.length) failures.push(`narrow/${name}: projects out of sight in the folded rail: ${hidden.join(', ')}`);
+        if (hidden.length) failures.push(`narrow/${name}: projects out of sight in the rail: ${hidden.join(', ')}`);
         await page.screenshot({ path: join(out, `${name}.png`) });
         if (name === 'narrow-chat') await page.keyboard.press('Escape');
       }
@@ -1720,17 +1725,22 @@ try {
     await page.goto(`${base}#/settings`);
     await page.waitForSelector('#set-general');
 
-    // Updates: the rail asks once, nothing is checked before a yes, and a new version is news in the rail and in Settings.
+    // Updates: the notification tray asks once (the bell says there is something), nothing is checked before a yes,
+    // and a new version is news in the tray and in Settings.
     const calmApp = await page.evaluate(() => window.__wgApp);
     await page.evaluate(() => window.__wgSetApp({ ...window.__wgApp, settings: { ...window.__wgApp.settings, updateChecks: 'ask' }, updates: { state: 'never' } }));
-    await page.waitForSelector('.rail-update-ask', { timeout: 3000 }).catch(() => failures.push(`${theme}/updates: the rail never asked whether to check daily`));
+    const bell = '.rail button[aria-label^="Notifications"]';
+    await page.waitForSelector(`${bell}[aria-label*="new"]`, { timeout: 3000 }).catch(() => failures.push(`${theme}/updates: the bell does not say something waits`));
+    await page.click(bell);
+    await page.waitForSelector('.tray-update-ask', { timeout: 3000 }).catch(() => failures.push(`${theme}/updates: the tray never asked whether to check daily`));
     const updateCopy = await page.textContent('section[aria-labelledby="set-updates"]') ?? '';
     if (!/install.*manually|manual.*install/i.test(updateCopy)) failures.push(`${theme}/updates: Settings does not explain manual installation`);
     if (/working with Apple|coming soon|macOS requires/i.test(updateCopy)) failures.push(`${theme}/updates: Settings promises an unimplemented installer`);
     await page.screenshot({ path: join(out, `${theme}-updates-ask.png`) });
     if ((await page.evaluate(() => window.__wgUpdateLog)).length) failures.push(`${theme}/updates: checked before the owner answered`);
-    await page.click('.rail-update-ask button:has-text("Check daily")');
-    await page.waitForSelector('.rail-update-ask', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/updates: answering did not put the question away`));
+    await page.click('.tray-update-ask button:has-text("Check daily")');
+    await page.waitForSelector('.tray-update-ask', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/updates: answering did not put the question away`));
+    await page.keyboard.press('Escape');
     if ((await page.evaluate(() => window.__wgApp.settings.updateChecks)) !== 'daily') failures.push(`${theme}/updates: "Check daily" did not reach the app`);
     if (!(await page.isChecked('section[aria-labelledby="set-updates"] .check-row input'))) failures.push(`${theme}/updates: Settings does not show the daily check as on`);
     await page.evaluate(() => {
@@ -1745,7 +1755,9 @@ try {
     });
     await page.click('section[aria-labelledby="set-updates"] button:has-text("Check now")');
     await page.waitForSelector('.update-found', { timeout: 3000 }).catch(() => failures.push(`${theme}/updates: a new version found by Check now is not shown`));
-    if (!(await page.$('.rail-update'))) failures.push(`${theme}/updates: the rail does not say a new version is out`);
+    await page.click(bell);
+    await page.waitForSelector('.tray-update:has-text("is available")', { timeout: 3000 }).catch(() => failures.push(`${theme}/updates: the tray does not say a new version is out`));
+    await page.keyboard.press('Escape');
     if (!/Wanigan 2\.0\.0-alpha\.3 is available/.test(await page.textContent('.update-found') ?? '')) failures.push(`${theme}/updates: the new version is not named`);
     await page.screenshot({ path: join(out, `${theme}-updates-available.png`) });
     await page.click('.update-found button:has-text("Download")');
@@ -1862,7 +1874,7 @@ try {
       await page.click('.turn-change button:has-text("Undo this turn")', { timeout: 8000 }).catch(() => failures.push('dark/undo: no Undo this turn'));
       await page.waitForSelector('.dialog .undo-files li', { timeout: 8000 });
       await page.click('.dialog-foot button:has-text("Undo turn 3")');
-      await page.waitForSelector('.toast-info:has-text("Undone. Claude Code doesn’t know yet")', { timeout: 8000 }).catch(() => failures.push('dark/undo: no toast saying the agent does not know'));
+      await page.waitForSelector('.status-line:has-text("Undone. Claude Code doesn’t know yet")', { timeout: 8000 }).catch(() => failures.push('dark/undo: the status line does not say the agent does not know'));
       await page.waitForSelector('.tl-Undo:has-text("You undid turn 3: 2 files")', { timeout: 8000 }).catch(() => failures.push('dark/undo: the timeline does not record the undo'));
       await page.waitForSelector('.turn-change button:has-text("Redo")', { timeout: 8000 }).catch(() => failures.push('dark/undo: no Redo after undoing'));
       await page.waitForTimeout(300);
@@ -1906,7 +1918,7 @@ try {
       await boxes[1]?.click();
       await boxes[2]?.click({ modifiers: ['Shift'] });
       await page.click(`${css} .pick-bar button:has-text("Stage lines")`);
-      await page.waitForSelector('.toast-info:has-text("Staged 2 lines of pay-button.css")', { timeout: 8000 }).catch(() => failures.push('git/live: staging picked lines did not say so'));
+      await page.waitForSelector('.status-line:has-text("Staged 2 lines of pay-button.css")', { timeout: 8000 }).catch(() => failures.push('git/live: staging picked lines did not say so'));
       s = await git('git.status');
       if (s.staged.find((f) => f.path.endsWith('pay-button.css'))?.additions !== 2) failures.push(`git/live: picked lines staged ${JSON.stringify(s.staged.find((f) => f.path.endsWith('pay-button.css')))}`);
 
@@ -1923,7 +1935,7 @@ try {
       await page.waitForSelector('.secret-findings', { timeout: 8000 });
       await page.check('.secret-findings .secret-ack input');
       await page.click('.commit-findings button:has-text("Commit anyway")');
-      await page.waitForSelector('.toast-info:has-text("Committed")', { timeout: 8000 }).catch(() => failures.push('git/live: the commit did not say it was made'));
+      await page.waitForSelector('.status-line:has-text("Committed")', { timeout: 8000 }).catch(() => failures.push('git/live: the commit did not say it was made'));
       const log = await git('git.log', { limit: 1 });
       if (log.commits[0]?.subject !== 'Give the pay button an accessible name') failures.push(`git/live: the newest commit is "${log.commits[0]?.subject}"`);
       s = await git('git.status');
@@ -1935,7 +1947,7 @@ try {
       await page.waitForSelector('.dialog .secret-findings', { timeout: 8000 }).catch(() => failures.push('git/live: the push scan did not find the key in the commit'));
       await page.check('.dialog .secret-ack input');
       await page.click('.dialog button:has-text("Push anyway")');
-      await page.waitForSelector(`.toast-info:has-text("Pushed ${plan.total} commits to origin/main")`, { timeout: 15000 }).catch(() => failures.push('git/live: the push did not say what it pushed'));
+      await page.waitForSelector(`.status-line:has-text("Pushed ${plan.total} commits to origin/main")`, { timeout: 15000 }).catch(() => failures.push('git/live: the push did not say what it pushed'));
       const after = await git('git.pushPlan');
       if (!/Nothing to push/.test(after.refusal ?? '')) failures.push(`git/live: after pushing, the plan says "${after.refusal}"`);
       if ((await git('git.status')).ahead !== 0) failures.push('git/live: still ahead of origin after pushing');
@@ -1973,7 +1985,7 @@ try {
       const n = await copyHunks.count();
       for (let i = 0; i < n; i++) await copyHunks.nth(i).locator(`[role="radio"]:text-is("${picks[i] ?? 'Ours'}")`).click();
       await page.click(`.resolver[aria-label="Resolve ${copyPath}"] .resolver-head button:has-text("Mark resolved")`);
-      await page.waitForSelector(`.toast-info:has-text("Resolved ${copyPath}. 1 file still conflicts.")`, { timeout: 8000 }).catch(() => failures.push('resolve/live: marking copy.ts resolved did not say one file is left'));
+      await page.waitForSelector(`.status-line:has-text("Resolved ${copyPath}. 1 file still conflicts.")`, { timeout: 8000 }).catch(() => failures.push('resolve/live: marking copy.ts resolved did not say one file is left'));
       let r = await git('git.status', { cardId: ns13 });
       if (r.conflicted.map((f) => f.path).join() !== totalsPath || !r.staged.some((f) => f.path === copyPath)) failures.push(`resolve/live: after copy.ts, git has conflicted ${r.conflicted.map((f) => f.path)} and staged ${r.staged.map((f) => f.path)}`);
       const written = await git('git.diff', { cardId: ns13, path: copyPath, area: 'staged' });
@@ -1983,7 +1995,7 @@ try {
       if (/^[+ ](?:<{7}|={7}|>{7}|\|{7})/m.test(written.diff)) failures.push('resolve/live: the staged copy.ts still holds conflict markers');
       // The added file: the card's own version, whole.
       await page.click(`.resolver[aria-label="Resolve ${totalsPath}"] button:has-text("Take ours (${midway.branch})")`);
-      await page.waitForSelector('.toast-info:has-text("Nothing conflicts now")', { timeout: 8000 }).catch(() => failures.push('resolve/live: taking ours for totals.ts did not say nothing conflicts'));
+      await page.waitForSelector('.status-line:has-text("Nothing conflicts now")', { timeout: 8000 }).catch(() => failures.push('resolve/live: taking ours for totals.ts did not say nothing conflicts'));
       r = await git('git.status', { cardId: ns13 });
       if (r.conflicted.length || r.operation !== 'merge') failures.push(`resolve/live: after both files git has ${r.conflicted.length} conflicted, operation ${r.operation}`);
       await page.waitForFunction(() => document.querySelector('.commit-go-label')?.textContent === 'Complete the merge', null, { timeout: 8000 })
@@ -1993,7 +2005,7 @@ try {
       await page.waitForTimeout(250);
       await page.screenshot({ path: join(out, 'dark-git-resolve-complete.png') });
       await page.click('.commit-go');
-      await page.waitForSelector(`.toast-info:has-text("Committed")`, { timeout: 8000 }).catch(() => failures.push('resolve/live: completing the merge did not say it committed'));
+      await page.waitForSelector(`.status-line:has-text("Committed")`, { timeout: 8000 }).catch(() => failures.push('resolve/live: completing the merge did not say it committed'));
       r = await git('git.status', { cardId: ns13 });
       const merged = await git('git.log', { cardId: ns13, limit: 1 });
       if (r.operation || r.conflicted.length || r.staged.length) failures.push(`resolve/live: after completing, git has operation ${r.operation}, ${r.conflicted.length} conflicted, ${r.staged.length} staged`);
@@ -2030,7 +2042,8 @@ try {
       await broken.waitForSelector('.srow', { timeout: 8000 }).catch(() => failures.push(`${theme}/crash: Reload this view did not bring the view back`));
     }
 
-    // An error toast stays until it is dismissed, and can retry what failed.
+    // A failure with Retry is a toast, in the status line's own place above it (never over a control): it stays until
+    // it is dismissed, and can retry what failed.
     const shellSession = await broken.evaluate(async () => {
       const list = await window.wanigan.call('sessions.list', { live: true });
       const projects = await window.wanigan.call('projects.list', {});
@@ -2044,7 +2057,7 @@ try {
       await broken.evaluate(() => window.__wgFail.add('sessions.queue'));
       await broken.fill('#composer', 'echo retried-$((40+2))');
       await broken.press('#composer', 'Enter');
-      await broken.waitForSelector('.toast-error', { timeout: 3000 }).catch(() => failures.push(`${theme}/toast: no error toast`));
+      await broken.waitForSelector('.status-host > .toast-error', { timeout: 3000 }).catch(() => failures.push(`${theme}/toast: no error toast above the status line`));
       await broken.waitForTimeout(4000);
       if (!(await broken.$('.toast-error'))) failures.push(`${theme}/toast: the error left before anyone dismissed it`);
       await broken.screenshot({ path: join(out, `${theme}-toast-error.png`) });

@@ -9,11 +9,13 @@ import { PALETTE_GROUPS, PER_GROUP, arrange, step, type PaletteGroup } from '@sh
 import { SAID_MIN_QUERY, saidCutText, type SaidHit, type SaidSearch } from '@shared/said';
 import { GIT_COMMANDS, keyLabel, shortcutFor, type CommandId, type GitCommandId } from '@shared/shortcuts';
 import { bridge, call, useQuery } from '../lib/api';
-import { PROJECT_VIEWS, navigate, type ProjectView } from '../lib/router';
+import { LIVE_VIEW, PROJECT_VIEWS, navigate, type ProjectView } from '../lib/router';
 import { setTheme } from '../lib/theme';
-import { STATE_LABEL, ago } from '../lib/format';
+import { STATE_LABEL, ago, fileManager } from '../lib/format';
 import { Icon, type IconName } from '../components/icons';
 import { KeyCaps } from '../components/ui';
+import { openNotifications } from '../components/NotificationTray';
+import { openSettingsSection } from '../shell/SettingsNav';
 import type { DialogState } from '../App';
 import { useCoversLive } from '../lib/live';
 
@@ -85,13 +87,19 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
       ({ id, group, label, icon, command: id, ...(detail ? { detail } : {}) });
     const out: Item[] = [
       keyed('go-needs', 'Go to', 'needs', 'Needs you'),
-      keyed('go-running', 'Go to', 'running', 'Running'),
+      keyed('go-running', 'Go to', 'sessions', 'Sessions, every project'),
       // G then a letter, in the open project: shown here so the chords can be found.
       ...(currentProject ? PROJECT_VIEWS.map((v) => keyed(`go-${v.view}` as CommandId, 'Go to', VIEW_ICON[v.view], v.label)) : []),
-      keyed('go-accounts', 'Go to', 'account', 'Accounts'),
-      { id: 'go-skills', group: 'Go to', label: 'Skills', icon: 'skill', run: () => navigate({ name: 'skills' }) },
-      { id: 'go-mcp', group: 'Go to', label: 'MCP servers', icon: 'plug', run: () => navigate({ name: 'mcp' }) },
+      ...(currentProject ? [{ id: 'go-live', group: 'Go to' as const, label: LIVE_VIEW.label, detail: 'the project’s site', icon: VIEW_ICON.live,
+        run: () => navigate({ name: 'project', projectKey: currentProject.key, view: LIVE_VIEW.view }) }] : []),
       keyed('settings', 'Go to', 'settings', 'Settings'),
+      // What was the sidebar's: Settings' sections now, each one step from here too.
+      keyed('go-accounts', 'Go to', 'account', 'Accounts', 'Settings'),
+      { id: 'go-skills', group: 'Go to', label: 'Skills', detail: 'Settings', icon: 'skill', run: () => navigate({ name: 'skills' }) },
+      { id: 'go-mcp', group: 'Go to', label: 'MCP servers', detail: 'Settings', icon: 'plug', run: () => navigate({ name: 'mcp' }) },
+      ...([['set-appearance', 'Appearance', 'sun'], ['set-live', 'Live view settings', 'live'], ['set-updates', 'Updates', 'pull'],
+        ['set-local', 'Local models', 'local'], ['set-phone', 'Phone', 'phone'], ['set-jev', 'Jev', 'board']] as const).map(([id, label, icon]): Item => (
+        { id: `go-${id}`, group: 'Go to', label, detail: 'Settings', icon, whenTyped: true, run: () => openSettingsSection(id) })),
     ];
     projects.forEach((p, i) => {
       out.push({
@@ -123,9 +131,13 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
     if (currentProject) for (const c of GIT_COMMANDS) out.push({ ...keyed(c.id, 'Commands', GIT_ICON[c.id], `Git: ${c.label}`, currentProject.key), whenTyped: true });
     out.push(
       { id: 'open-project', group: 'Commands', label: 'Open a project…', icon: 'folder', run: () => setDialog({ kind: 'project' }) },
-      ...(currentProject ? [keyed('history', 'Commands', 'history'), keyed('quick-open', 'Commands', 'file', 'Open a file…'), keyed('toggle-editor', 'Commands', 'code', 'Show or hide the code editor')] : []),
-      keyed('toggle-rail', 'Commands', 'sidebar'),
+      ...(currentProject ? [
+        keyed('history', 'Commands', 'history'), keyed('quick-open', 'Commands', 'file', 'Open a file…'), keyed('toggle-editor', 'Commands', 'code', 'Show or hide the code editor'),
+        keyed('live-goto', 'Commands', 'live', 'Go to a page of the site…', currentProject.key),
+        { id: 'show-folder', group: 'Commands' as const, label: `Show ${currentProject.name} in ${fileManager(bridge().platform)}`, icon: 'folder' as const, whenTyped: true, run: () => void bridge().openPath(currentProject.path) },
+      ] : []),
       keyed('shortcuts', 'Commands', 'question'),
+      { id: 'notifications', group: 'Commands', label: 'Notifications', detail: 'what just happened, and what failed', icon: 'bell', run: () => openNotifications() },
       { id: 'theme-dark', group: 'Commands', label: 'Theme: dark', icon: 'moon', run: () => setTheme('dark') },
       { id: 'theme-light', group: 'Commands', label: 'Theme: light', icon: 'sun', run: () => setTheme('light') },
       { id: 'theme-system', group: 'Commands', label: 'Theme: match the system', icon: 'auto', run: () => setTheme('system') },
@@ -239,7 +251,7 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
         <div className="palette-foot" aria-hidden="true">
           <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
           <span><kbd>{keyLabel('Enter', mac)}</kbd> open</span>
-          <span><kbd>esc</kbd> close</span>
+          <span><kbd>{keyLabel('Esc', mac)}</kbd> close</span>
           {q.length && q.length < SAID_MIN_QUERY ? <span className="palette-foot-end">Type {SAID_MIN_QUERY} letters to search what agents said</span> : null}
         </div>
         <div className="visually-hidden" aria-live="polite">{announce}</div>

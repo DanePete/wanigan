@@ -222,7 +222,8 @@ export function pageHelpers() {
       hash: location.hash,
       modals: document.querySelectorAll('[aria-modal="true"], [role="dialog"], .sel-list').length,
       crashes: [...document.querySelectorAll('.view-crash h2')].map((h) => text(h.textContent)),
-      errors: [...document.querySelectorAll('.toast-error .toast-text, .error-text')].map((t) => text(t.textContent)),
+      // A failure is said by a toast, the status line or the place it happened.
+      errors: [...document.querySelectorAll('.toast-error .toast-text, .status-error .status-text, .error-text')].map((t) => text(t.textContent)),
       focus: active && active !== document.body && !active.hasAttribute('data-crawl') ? `${active.tagName}:${nameOf(active)}` : null,
       storage,
       calls: log.calls.length, rejected: log.rejected.length, bridge: log.bridge.length, mutations: log.mutations,

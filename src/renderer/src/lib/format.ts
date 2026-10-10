@@ -56,3 +56,8 @@ export function actorName(actor: Actor, sessions?: ReadonlyMap<string, Session>)
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** What the operating system calls its file manager, for "Show in …": never a Mac word on Windows or Linux. */
+export function fileManager(platform: string): string {
+  return platform === 'darwin' ? 'Finder' : platform === 'win32' ? 'File Explorer' : 'the file manager';
+}

@@ -21,6 +21,8 @@ export interface MenuItem {
   icon?: IconName;
   /** Its key, as the shortcut table writes keys (`['Shift', 'C']`). */
   keys?: string[];
+  /** The keys are pressed one after the other (G then H), not together. */
+  sequence?: boolean;
   disabled?: boolean;
   /** A choice among several (an environment) or a switch (drag handles): ticked when on. */
   checked?: boolean;
@@ -35,7 +37,7 @@ interface Place { left: number; top: number; width: number; maxHeight: number }
 const GAP = 4;
 const MAX_HEIGHT = 460;
 
-export function MenuButton({ label, items, notes, children, className, title, align = 'start', width = 300, disabled, openRef, onOpen }: {
+export function MenuButton({ label, items, notes, children, className, title, tip, align = 'start', width = 300, disabled, openRef, onOpen }: {
   /** The button's accessible name. */
   label: string;
   items: readonly MenuItem[];
@@ -45,6 +47,8 @@ export function MenuButton({ label, items, notes, children, className, title, al
   children: ReactNode;
   className?: string;
   title?: string;
+  /** What its tooltip says (Tooltip.tsx), when more than its name. */
+  tip?: string;
   /** Which edge of the button the menu lines up with. */
   align?: 'start' | 'end';
   width?: number;
@@ -164,6 +168,7 @@ export function MenuButton({ label, items, notes, children, className, title, al
   return (
     <>
       <button ref={button} type="button" className={`btn menu-button${className ? ` ${className}` : ''}`} title={title}
+        {...(tip ? { 'data-tip': tip, 'data-tip-side': 'bottom' } : {})}
         aria-label={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? listId : undefined} disabled={disabled}
         onClick={() => (open ? close() : show())} onKeyDown={onButtonKey}>
         {children}
@@ -181,7 +186,7 @@ export function MenuButton({ label, items, notes, children, className, title, al
                   role={item.kind === 'radio' ? 'menuitemradio' : item.kind === 'check' ? 'menuitemcheckbox' : 'menuitem'}
                   aria-checked={item.kind ? !!item.checked : undefined}
                   aria-disabled={item.disabled || undefined}
-                  aria-keyshortcuts={item.keys ? item.keys.map((k) => (k === 'Mod' ? (mac ? 'Meta' : 'Control') : k)).join('+') : undefined}
+                  aria-keyshortcuts={item.keys && !item.sequence ? item.keys.map((k) => (k === 'Mod' ? (mac ? 'Meta' : 'Control') : k)).join('+') : undefined}
                   aria-describedby={g.group && notes?.[g.group] ? noteId(g.group) : undefined}
                   className={`sel-opt menu-item${i === active ? ' active' : ''}`}
                   onMouseMove={() => { if (!item.disabled && active !== i) setActive(i); }}
@@ -194,7 +199,7 @@ export function MenuButton({ label, items, notes, children, className, title, al
                     <span>{item.label}</span>
                     {item.detail ? <span className="sel-detail">{item.detail}</span> : null}
                   </span>
-                  {item.keys ? <span className="menu-keys" aria-hidden="true"><KeyCaps keys={item.keys} mac={mac} /></span> : null}
+                  {item.keys ? <span className="menu-keys" aria-hidden="true"><KeyCaps keys={item.keys} sequence={item.sequence} mac={mac} /></span> : null}
                 </div>
               ))}
               {g.group && notes?.[g.group] ? <p id={noteId(g.group)} className="menu-note">{notes[g.group]}</p> : null}

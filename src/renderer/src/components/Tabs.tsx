@@ -6,7 +6,7 @@
 //   panel beneath is a TabPanel.
 // - NavTabs: the same look for places, as links (the project bar's views):
 //   each is a page of its own, so it is a link with aria-current, not a tab.
-import { useId, type ReactNode } from 'react';
+import { useId, type ReactNode, type RefObject } from 'react';
 import type { CommandId, Shortcut } from '@shared/shortcuts';
 import { tipProps } from './ui';
 
@@ -89,9 +89,16 @@ export interface NavItem {
 }
 
 /** Places as pill tabs: links, the current one marked. `children` follow the links inside the track (a ··· menu). */
-export function NavTabs({ label, items, children, className }: { label: string; items: readonly NavItem[]; children?: ReactNode; className?: string }) {
+export function NavTabs({ label, items, children, className, stripRef }: {
+  label: string;
+  items: readonly NavItem[];
+  children?: ReactNode;
+  className?: string;
+  /** The strip itself, for keeping the current tab in view where it scrolls. */
+  stripRef?: RefObject<HTMLElement | null>;
+}) {
   return (
-    <nav className={`tabs tabs-pill${className ? ` ${className}` : ''}`} aria-label={label}>
+    <nav ref={stripRef} className={`tabs tabs-pill${className ? ` ${className}` : ''}`} aria-label={label}>
       {items.map((t) => (
         <a key={t.href} href={t.href} className={t.current ? 'active' : ''} aria-current={t.current ? 'page' : undefined}
           {...tipProps(t.tip ?? t.label, t.keys, 'bottom')}>

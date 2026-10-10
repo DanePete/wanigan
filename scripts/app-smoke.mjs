@@ -146,16 +146,18 @@ try {
       const alert = await win.waitForSelector('.alert', { timeout: 15_000 }).then((el) => el.textContent()).catch(() => null);
       results.push(alert && /failed/.test(alert) ? 'a session failing elsewhere showed as an alert in the focused window' : `FAIL: no alert for a failed session (${alert})`);
     }
-    // Updates. Nothing is checked before the owner answers the rail; then
+    // Updates. Nothing is checked before the owner answers the tray (the rail's bell); then
     // Check for Updates… goes through Electron's own network stack, redirected
     // to a stand-in GitHub on this machine, and the menu answers with a dialog
     // whose Download opens the disk image the check found.
     const updatesFile = join(dataDir, 'electron', 'updates.json');
     const untouched = await win.evaluate(async () => (await window.wanigan.appState())?.updates?.state);
-    const asking = await win.waitForSelector('.rail-update-ask', { timeout: 5000 }).then(() => true, () => false);
+    await win.click('.rail button[aria-label^="Notifications"]').catch(() => {});
+    const asking = await win.waitForSelector('.tray-update-ask', { timeout: 5000 }).then(() => true, () => false);
+    await win.keyboard.press('Escape');
     results.push(untouched === 'never' && asking && !existsSync(updatesFile)
-      ? 'the rail asks whether to check for updates daily, and nothing was checked before an answer'
-      : `FAIL: before an answer (status ${untouched}, rail asks ${asking}, results kept ${existsSync(updatesFile)})`);
+      ? 'the tray asks whether to check for updates daily, and nothing was checked before an answer'
+      : `FAIL: before an answer (status ${untouched}, tray asks ${asking}, results kept ${existsSync(updatesFile)})`);
     const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
     const next = `${Number(version.split('.')[0]) + 1}.0.0`;
     const tagPage = `https://github.com/DanePete/wanigan/releases/tag/v${next}`;
@@ -193,11 +195,13 @@ try {
       results.push(said[0] === `Wanigan ${next} is available [Download/Release Notes/Later]` && opened.join() === dmg
         ? `the menu named ${next} in a dialog, and Download opened its disk image`
         : `FAIL: the dialog said ${JSON.stringify(said)} and opened ${JSON.stringify(opened)}`);
-      const news = await win.waitForSelector('.rail-update', { timeout: 5000 }).then(() => true, () => false);
+      await win.click('.rail button[aria-label^="Notifications"]').catch(() => {});
+      const news = await win.waitForSelector('.tray-update', { timeout: 5000 }).then(() => true, () => false);
+      await win.keyboard.press('Escape');
       const kept = existsSync(updatesFile) ? JSON.parse(readFileSync(updatesFile, 'utf8')) : null;
       results.push(news && kept?.state === 'available' && kept.release.version === next && (statSync(updatesFile).mode & 0o777) === 0o600
-        ? 'the rail says a new version is out, and the result is kept for the owner only'
-        : `FAIL: after the check (rail shows it ${news}, kept ${JSON.stringify(kept)})`);
+        ? 'the tray says a new version is out, and the result is kept for the owner only'
+        : `FAIL: after the check (tray shows it ${news}, kept ${JSON.stringify(kept)})`);
     } finally {
       github.close();
     }

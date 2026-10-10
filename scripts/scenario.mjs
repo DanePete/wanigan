@@ -512,7 +512,7 @@ try {
       await drawer().getByRole('button', { name: /^Merge into / }).click();
       await drawer().locator('.branch-actions').first().getByRole('button', { name: 'Merge', exact: true }).click();
       await sleep(2000);
-      return (await page.locator('.toast').allTextContents()).at(-1) ?? '';
+      return (await page.locator('.toast, .status-message').allTextContents()).at(-1) ?? '';
     };
     sh('printf "\\nWork in progress.\\n" >> README.md', site);
     const head = sh('git rev-parse HEAD', site);
@@ -520,7 +520,7 @@ try {
     sh('git checkout -- README.md', site);
     if (!/uncommitted changes/.test(refused) || sh('git rev-parse HEAD', site) !== head) throw new Error(`a dirty folder did not refuse: ${refused}`);
     const merged = await merge();
-    await page.locator('.toast').getByRole('button').first().click().catch(() => {});
+    await page.locator('.toast, .status-message').getByRole('button').first().click().catch(() => {});
     const done = (await call('cards.get', { id: keys.feature })).status === 'done';
     let pr = 'no confirm (card not done)';
     if (done) {
@@ -544,7 +544,7 @@ try {
     const said = await page.locator('.dialog').innerText();
     await page.locator('.dialog').getByRole('button', { name: 'Pause project' }).click();
     await sleep(1000);
-    const toast = (await page.locator('.toast').allTextContents()).at(-1) ?? '';
+    const toast = (await page.locator('.toast, .status-message').allTextContents()).at(-1) ?? '';
     await go(`#/p/CS/s/${shell}`);
     await typeIn(`wanigan claim ${keys.idea}`);
     await sleep(2000);
@@ -565,7 +565,7 @@ try {
     await sleep(1000);
     const s = (await call('sessions.get', { id: shell })).session;
     if (!s.cardId) throw new Error('the session has no card');
-    return (await page.locator('.toast').allTextContents()).at(-1);
+    return (await page.locator('.toast, .status-message').allTextContents()).at(-1);
   });
 
   await step('8. Talk to Wanigan: what needs me, and what the agents did', async () => {

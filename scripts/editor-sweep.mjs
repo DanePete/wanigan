@@ -376,9 +376,14 @@ try {
       if (!(await page.$('.editor-drawer[data-mode="drawer"]:not([hidden])'))) fail('the drawer’s open state was not kept across a reload');
       await page.keyboard.press('Meta+j');
       await page.waitForSelector('.editor-drawer:not([hidden])', { state: 'detached', timeout: 3000 }).catch(() => fail('⌘J did not close the drawer kept open'));
+      // Studio's project bar: five views as tabs, the rest under ··· (each still one step, and G then its key).
       const tabs = await page.$$eval('.topbar .tabs a', (a) => a.map((x) => x.textContent.replace(/\d+$/, '').trim()));
-      if (tabs.join() !== 'Board,List,Sessions,History,Changes,Code,Decisions,Activity,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
-      const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'title');
+      if (tabs.join() !== 'Board,Sessions,Changes,Code,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
+      await page.click('.topbar .project-more');
+      const more = await page.$$eval('.menu-list [role="menuitemradio"]', (items) => items.map((i) => i.querySelector('.sel-text')?.textContent?.trim()));
+      if (more.join() !== 'History,Decisions,Activity,List') fail(`the project's other views are ${more.join(', ')}`);
+      await page.keyboard.press('Escape');
+      const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'data-tip');
       if (tip !== 'Code (G then E)') fail(`the Code tab's tip is "${tip}"`);
       // G then E, from the board.
       await page.keyboard.press('g');
@@ -505,8 +510,10 @@ try {
       const onTab = await page.evaluate(() => {
         const d = document.querySelector('.editor-drawer');
         const bar = document.querySelector('.topbar').getBoundingClientRect();
+        // Beneath the work is the frame's status line: the editor fills the view down to it.
+        const floor = document.querySelector('.status-host')?.getBoundingClientRect().top ?? innerHeight;
         const r = d.getBoundingClientRect();
-        return { same: d.querySelector('.cm-editor') === window.__codeView, drawers: document.querySelectorAll('.editor-drawer').length, top: Math.round(r.top - bar.bottom), bottom: Math.round(innerHeight - r.bottom), text: [...d.querySelectorAll('.cm-line')].map((l) => l.textContent).join('\n') };
+        return { same: d.querySelector('.cm-editor') === window.__codeView, drawers: document.querySelectorAll('.editor-drawer').length, top: Math.round(r.top - bar.bottom), bottom: Math.round(floor - r.bottom), text: [...d.querySelectorAll('.cm-line')].map((l) => l.textContent).join('\n') };
       });
       if (!onTab.same || onTab.drawers !== 1) fail('the Code tab is not the drawer’s own editor');
       if (Math.abs(onTab.top) > 1 || Math.abs(onTab.bottom) > 1) fail(`the editor does not fill the view (${onTab.top}px under the bar, ${onTab.bottom}px above the bottom)`);
@@ -525,7 +532,8 @@ try {
       await page.waitForSelector('.editor-tab.active:not(.unsaved)', { timeout: 3000 }).catch(() => fail('Revert left the file unsaved'));
 
       // ⌘J on the Code tab puts the editor away: back to the view before it, the drawer closed.
-      await page.click('.topbar .tabs a:text-is("List")');
+      await page.click('.topbar .project-more');
+      await page.click('.menu-list [role="menuitemradio"]:has-text("List")');
       await page.waitForSelector('.table tbody tr');
       await page.click('.topbar .tabs a:text-is("Code")');
       await page.waitForSelector('.editor-drawer[data-mode="page"]');

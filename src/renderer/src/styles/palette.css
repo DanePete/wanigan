@@ -1,14 +1,13 @@
-/* ⌘K: the search field, results in groups, and the keys that move through them. */
+/* ⌘K: the search field, results in groups, and the keys that move through them (Studio: a sheet, 12 px corners). */
 
 .palette {
   display: flex;
   flex-direction: column;
-  width: min(680px, 100%);
+  width: min(640px, 100%);
   max-height: calc(100vh - 12vh - var(--space-6));
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-l);
+  border-radius: var(--radius-xl);
   background: var(--raised);
-  box-shadow: var(--elev-float);
+  box-shadow: var(--elev-sheet);
   overflow: hidden;
   animation: rise var(--dur) var(--ease);
 }
@@ -19,18 +18,18 @@
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--hairline) solid var(--line);
   color: var(--faint);
 }
 
 .palette-input input,
 .palette-input input:focus {
-  height: 52px;
+  height: var(--space-12);
   padding: 0;
   border: 0;
   box-shadow: none;
   background: none;
-  font-size: var(--text-lg);
+  font-size: var(--text-title);
 }
 
 .palette-results {
@@ -46,7 +45,7 @@
 }
 
 .palette-group-head {
-  padding: var(--space-2) var(--space-3) var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-1);
   color: var(--faint);
   font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
@@ -55,8 +54,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 36px;
-  padding: var(--space-2) var(--space-3);
+  min-height: calc(var(--menu-row) + var(--space-1));
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-m);
   color: var(--muted);
   cursor: pointer;
@@ -64,11 +63,16 @@
 
 .palette-option > svg {
   flex: none;
+  color: var(--faint);
 }
 
 .palette-option.active {
   background: var(--water-soft);
   color: var(--fg);
+}
+
+.palette-option.active > svg {
+  color: var(--water-text);
 }
 
 .palette-label {
@@ -90,12 +94,10 @@
   font-size: var(--text-sm);
 }
 
+/* A result's keys, right-aligned: the same caps the shortcut sheet shows. */
 .palette-option .keycaps {
-  margin-left: var(--space-1);
-}
-
-.palette-option .keycaps kbd {
-  min-width: 20px;
+  margin-left: auto;
+  padding-left: var(--space-2);
 }
 
 /* What agents said: the words around the match, then where it was said. */
@@ -104,14 +106,14 @@
 }
 
 .palette-said > svg {
-  margin-top: 2px;
+  margin-top: var(--gap-hair);
 }
 
 .palette-stack {
   display: grid;
   flex: 1;
   min-width: 0;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .palette-snippet {
@@ -133,8 +135,8 @@
   font-weight: 600;
   text-decoration: underline;
   text-decoration-color: var(--water-text);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
+  text-decoration-thickness: var(--focus-ring);
+  text-underline-offset: var(--track-pad);
 }
 
 .palette-note {
@@ -156,7 +158,7 @@
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-2) var(--space-4);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
   color: var(--faint);
   font-size: var(--text-xs);
 }
@@ -164,11 +166,11 @@
 .palette-foot > span {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--gap-hair);
 }
 
 .palette-foot kbd {
-  margin-right: 2px;
+  margin-right: var(--gap-hair);
 }
 
 .palette-foot-end {

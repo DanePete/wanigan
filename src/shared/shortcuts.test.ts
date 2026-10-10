@@ -15,7 +15,6 @@ test('app chords work anywhere, a focused terminal included', () => {
     assert.deepEqual(matchKey(key('3', { metaKey: true }), at({ typing })), { id: 'project-3' });
     assert.deepEqual(matchKey(key('/', { metaKey: true }), at({ typing })), { id: 'shortcuts' });
     assert.deepEqual(matchKey(key(',', { metaKey: true }), at({ typing })), { id: 'settings' });
-    assert.deepEqual(matchKey(key('\\', { metaKey: true }), at({ typing })), { id: 'toggle-rail' });
   }
 });
 
@@ -173,7 +172,7 @@ test('menus carry the same chords, written for each platform', () => {
   assert.equal(menuAccelerator('new-session'), 'CmdOrCtrl+T');
   assert.equal(menuAccelerator('shortcuts'), 'CmdOrCtrl+/');
   assert.equal(menuAccelerator('project-4'), 'CmdOrCtrl+4');
-  assert.equal(menuAccelerator('toggle-rail'), 'CmdOrCtrl+\\');
+  assert.equal(menuAccelerator('history'), 'CmdOrCtrl+Shift+T');
   assert.equal(menuAccelerator('go-needs'), undefined, 'a sequence is not an accelerator');
   assert.equal(menuSequence('go-needs', true), 'G then N');
   assert.equal(menuSequence('new-card', true), 'C');
@@ -182,13 +181,14 @@ test('menus carry the same chords, written for each platform', () => {
   assert.equal(shortcutText(SHORTCUTS.find((s) => s.id === 'palette')!, false), 'Ctrl+K');
 });
 
-test('⌘\\ is the sidebar’s alone, and Control-\\ stays with the terminal', () => {
+test('⌘\\ is no one’s: the rail is always its 60 px, and Control-\\ stays with the terminal', () => {
   const chord = (keys: string[]): string => keys.join('+');
   const owners = SHORTCUTS.filter((s) => [s.keys, ...(s.alt ?? [])].some((k) => chord(k) === 'Mod+\\'));
-  assert.deepEqual(owners.map((s) => s.id), ['toggle-rail']);
+  assert.deepEqual(owners.map((s) => s.id), []);
+  for (const typing of [false, true]) assert.equal(matchKey(key('\\', { metaKey: true }), at({ typing })), null, '⌘\\ is not taken from a view or a terminal');
   assert.equal(matchKey(key('\\', { ctrlKey: true }), at({ typing: true })), null, 'Control-\\ quits a shell program');
   assert.equal(matchKey(key('\\'), at()), null);
-  assert.equal(shortcutText(shortcutFor('toggle-rail')!, true), '⌘\\');
+  assert.equal(COMMAND_IDS.has('toggle-rail'), false, 'the menu cannot send a command that is gone');
 });
 
 test('a command’s keys are read from the table, a project’s chord its own digit', () => {

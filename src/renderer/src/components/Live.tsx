@@ -41,6 +41,7 @@ import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { liveBridge, useLiveCovered } from '../lib/live';
 import { anchorGoTo, isTyping, showingOrigin, useGoToKeys } from '../lib/live-goto';
 import { navigate } from '../lib/router';
+import { useOwnStatusLine } from '../lib/notices';
 import { useAppState } from '../lib/settings';
 import { liveFor, type AppSettings } from '@shared/settings';
 import { Icon } from './icons';
@@ -273,6 +274,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   shots: boolean;
   outlineFirst: string[] | null; onEdit: () => void;
 }) {
+  // The live view draws its own status line (.live-status, below) until the live pass moves it into the frame's
+  // StatusLine: the frame's steps aside while this one shows, and outcomes here float as toasts, as before.
+  useOwnStatusLine(!compact);
   const toast = useToast();
   const live = liveBridge() as NonNullable<ReturnType<typeof liveBridge>>;
   // Components and templates are Drupal's own; other kinds of site have none to map.

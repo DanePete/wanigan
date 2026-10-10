@@ -1,4 +1,7 @@
-/* The frame: rail on the left, the view in the middle, the card drawer over the right. */
+/*
+  The frame (Studio): the rail on the left (60 px), the view in the middle with
+  its dock and the status line beneath, the card drawer over the right.
+*/
 
 .app {
   display: grid;
@@ -12,6 +15,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
 }
 
 /* The view and, when it is open, the code editor's drawer beneath it (editor.css puts it beside instead). */
@@ -27,446 +31,160 @@
   min-width: 0;
 }
 
-/* ── rail ─────────────────────────────────────────────────────────────────── */
+/* ── the rail ─────────────────────────────────────────────────────────────── */
 
 .rail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  padding: var(--space-3) var(--space-3) var(--space-3);
-  padding-top: calc(var(--space-8) + var(--space-2)); /* clears the macOS traffic lights */
+  padding: var(--space-3) 0;
   background: var(--bg-rail);
-  border-right: 1px solid var(--line);
+  border-right: var(--hairline) solid var(--line);
   -webkit-app-region: drag;
+}
+
+/* On a Mac the window's own buttons sit at the top left: the mark starts below them, level with the bar's line. */
+:root[data-platform='darwin'] .rail {
+  padding-top: calc(var(--topbar-h) + var(--space-1));
 }
 
 .rail > * {
   -webkit-app-region: no-drag;
 }
 
-.rail-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-1) var(--space-2);
-}
-
-.rail-orb {
+.rail-mark {
+  position: relative;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-round);
-}
-
-.rail-name {
-  font: 600 var(--text-xl) / 1 var(--font-display);
-  letter-spacing: 0.01em;
-}
-
-.rail-actions {
-  display: grid;
-  gap: var(--space-1);
+  width: var(--rail-tile);
+  height: var(--rail-tile);
   margin-bottom: var(--space-2);
-}
-
-.rail-action {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 34px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-  color: var(--fg);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
-}
-
-.rail-action .rail-label {
-  flex: 1;
-  text-align: left;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.rail-action:hover {
-  background: var(--hover);
-}
-
-.rail-action.primary {
-  background: var(--water-fill);
-  border-color: var(--water-fill);
-  color: var(--water-ink);
-}
-
-.rail-action.primary kbd {
-  color: var(--water-ink);
-  border-color: rgb(0 0 0 / 0.2);
-  opacity: 0.7;
-}
-
-.rail-action.primary:hover {
-  filter: brightness(1.06);
-}
-
-.rail-action:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.rail-nav,
-.rail-projects {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 1px;
-}
-
-.rail-nav a,
-.rail-projects a {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 32px;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-m);
-  color: var(--muted);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.rail-nav .rail-label,
-.rail-project-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-nav a:hover,
-.rail-projects a:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.rail-nav a.active,
-.rail-projects a.active {
-  background: var(--surface);
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.rail-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: var(--space-4);
-  padding: 0 var(--space-2);
-}
-
-.rail-section h2 {
-  margin: 0;
-  font: 600 var(--text-sm) / 1 var(--font-ui);
-  color: var(--faint);
-}
-
-.rail-add {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: var(--radius-s);
-  background: none;
-  color: var(--faint);
-  cursor: pointer;
-}
-
-.rail-add:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.rail-projects {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  align-content: start;
-}
-
-.rail-warn {
-  font-size: var(--text-xs);
-  color: var(--red);
-}
-
-.rail-empty button {
-  width: 100%;
-  padding: var(--space-3);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-m);
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.rail-empty button:hover {
-  color: var(--fg);
-  border-color: var(--water-line);
-}
-
-.live-dot {
-  width: 7px;
-  height: 7px;
   border-radius: var(--radius-round);
-  background: var(--water);
 }
 
-.rail-foot {
-  display: grid;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
+.rail-mark:hover {
+  text-decoration: none;
 }
 
-.rail-search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 32px;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-m);
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.rail-search .rail-label {
-  flex: 1;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.rail-search:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.rail-foot-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-}
-
+/* The core's state, on the mark's corner: nothing while it runs, a ring while it connects, red when it is gone. */
 .core-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-right: auto;
-  font-size: var(--text-xs);
-  color: var(--faint);
-  white-space: nowrap;
+  position: absolute;
+  right: var(--gap-hair);
+  bottom: var(--gap-hair);
+  display: grid;
 }
 
 .core-dot {
-  width: 6px;
-  height: 6px;
+  width: var(--dot);
+  height: var(--dot);
   border-radius: var(--radius-round);
-  background: var(--green);
+  box-shadow: 0 0 0 var(--gap-hair) var(--bg-rail);
+}
+
+.core-connected .core-dot {
+  display: none;
 }
 
 .core-connecting .core-dot {
-  background: var(--amber);
+  background: var(--bg-rail);
+  box-shadow: inset 0 0 0 var(--ring) var(--faint), 0 0 0 var(--gap-hair) var(--bg-rail);
 }
 
 .core-unavailable .core-dot {
   background: var(--red);
 }
 
-.core-unavailable {
-  color: var(--red);
-}
-
-.theme-switch,
-.rail-toggle {
+.rail-item {
+  position: relative;
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-l);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.rail-item:hover {
+  background: var(--hover);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.rail-item.active {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+/* A count on an item's corner: amber for Needs you, quiet for the rest. */
+.rail-badge {
+  position: absolute;
+  top: calc(-1 * var(--gap-hair));
+  right: calc(-1 * var(--space-1));
+  min-width: calc(var(--count-h) - var(--gap-hair));
+  height: calc(var(--count-h) - var(--gap-hair));
+  font-size: var(--text-2xs);
+  box-shadow: 0 0 0 var(--gap-hair) var(--bg-rail);
+}
+
+.rail-rule {
+  flex: none;
+  width: calc(var(--rail-tile) - var(--space-3));
+  height: var(--hairline);
+  margin: var(--space-1) 0;
+  border: 0;
+  background: var(--line-strong);
+}
+
+.rail-projects {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: var(--gap-hair) 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.rail-add {
+  display: grid;
+  place-items: center;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  padding: 0;
+  border: var(--hairline) dashed var(--line-strong);
+  border-radius: var(--radius-l);
   background: none;
   color: var(--faint);
   cursor: pointer;
 }
 
-.theme-switch:hover,
-.rail-toggle:hover {
-  background: var(--hover);
+.rail-add:hover {
+  border-color: var(--water-line);
   color: var(--fg);
 }
 
-.count {
-  min-width: 20px;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-round);
-  background: var(--sunken);
-  color: var(--muted);
-  font: 500 var(--text-xs) / 1.5 var(--font-ui);
-  text-align: center;
-}
-
-.count.hot {
-  background: var(--amber-fill);
-  color: var(--amber-fill-ink);
-}
-
-/* ── the rail folded to icons (⌘\) ───────────────────────────────────────── */
-
-:root[data-rail='collapsed'] {
-  --rail-w: var(--rail-w-folded);
-}
-
-/* The rail's width moves; the view beside it is laid out once more, at the end of a short glide. */
-@media (prefers-reduced-motion: no-preference) {
-  .app {
-    transition: grid-template-columns var(--dur) var(--ease);
-  }
-}
-
-/* Folded, the projects keep their full height and a short window scrolls the
-   whole rail instead, so no project hides inside a tiny list. */
-.rail.collapsed {
-  padding-left: var(--space-2);
-  padding-right: var(--space-2);
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.rail.collapsed .rail-projects {
-  flex: none;
-  overflow: visible;
-}
-
-.rail.collapsed .rail-foot {
-  gap: var(--space-1);
-  margin-top: auto;
-}
-
-/* Labels leave the screen but stay every item's accessible name. */
-.rail.collapsed .rail-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.rail.collapsed .rail-name,
-.rail.collapsed .keycaps,
-.rail.collapsed .rail-paused {
-  display: none;
-}
-
-.rail.collapsed .rail-brand {
-  justify-content: center;
-  padding: 0 0 var(--space-2);
-}
-
-.rail.collapsed .rail-action,
-.rail.collapsed .rail-search {
-  justify-content: center;
-  height: 32px;
-  padding: 0;
-}
-
-.rail.collapsed .rail-nav a,
-.rail.collapsed .rail-projects a {
-  position: relative;
-  justify-content: center;
-  min-height: 32px;
-  padding: 0;
-}
-
-.rail.collapsed .rail-section {
-  justify-content: center;
-  margin-top: var(--space-2);
-  padding: var(--space-2) 0 0;
-  border-top: 1px solid var(--line);
-}
-
-.rail.collapsed .rail-projects .missing .pmark {
-  color: var(--red);
-}
-
-.rail.collapsed .rail-projects .paused .pmark {
-  border-style: dashed;
-}
-
-/* Counts become small badges on the icon's corner. */
-.rail.collapsed .count {
-  position: absolute;
-  top: -2px;
-  right: calc(-1 * var(--space-1));
-  min-width: 16px;
-  padding: 0 var(--space-1);
-  font: 600 var(--text-2xs) / var(--lh-sm) var(--font-ui);
-}
-
-.rail.collapsed .live-dot {
-  position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
-}
-
-.rail.collapsed .rail-empty button {
-  display: grid;
-  place-items: center;
-  padding: var(--space-2) 0;
-}
-
-.rail.collapsed .rail-foot-row {
-  flex-direction: column;
-  padding: 0;
-}
-
-.rail.collapsed .core-status {
-  justify-content: center;
-  height: 20px;
-  margin-right: 0;
-}
-
-/* What a folded item is called, beside the rail: hover or focus. */
-.rail-tip {
-  position: fixed;
-  z-index: 70;
+.rail-foot {
   display: flex;
+  flex: none;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  margin-left: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-s);
-  background: var(--raised);
-  box-shadow: var(--elev-raise);
-  color: var(--fg);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-
-.rail-tip-keys {
-  color: var(--faint);
-  font: 500 var(--text-xs) / 1 var(--font-mono);
+  gap: var(--space-1);
+  padding-top: var(--space-2);
 }
 
 /* ── views ────────────────────────────────────────────────────────────────── */
@@ -491,16 +209,18 @@
   padding: var(--space-6) var(--space-8);
 }
 
+/* A view's bar: 48 px on the panel, one hairline beneath. The project's is the project bar (below). */
 .topbar {
-  /* A view's bar narrows with the window and with the dock beside it: see the tabs below. */
   container: topbar / inline-size;
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 var(--space-6);
+  gap: var(--space-2) var(--space-4);
   min-height: var(--topbar-h);
-  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-8);
-  border-bottom: 1px solid var(--line);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
   -webkit-app-region: drag;
 }
 
@@ -530,66 +250,125 @@
   gap: var(--space-2);
 }
 
-.tabs {
-  display: flex;
-  align-items: stretch;
-  align-self: stretch;
-  gap: var(--space-1);
-  margin-bottom: calc(-1 * var(--space-2) - 1px);
+/* ── the project bar (views/ProjectView.tsx) ─────────────────────────────── */
+
+.project-bar {
+  flex-wrap: nowrap;
+  height: var(--topbar-h);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  gap: var(--space-3);
 }
 
-.tabs a {
-  display: flex;
+.project-name {
+  flex: none;
+  min-width: 0;
+  max-width: var(--project-name-w);
+  margin: 0;
+  font: inherit;
+}
+
+.project-name-button {
+  max-width: 100%;
+  height: var(--control-m);
+  padding: 0 var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: 600 var(--text-md) / 1 var(--font-ui);
+}
+
+.project-name-button > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.project-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-tabs {
+  flex: 0 1 auto;
+}
+
+.project-more > svg {
+  color: var(--faint);
+}
+
+/* What the project's agents are doing: Wanigan's mark, water while sessions run, glass while none do. Never yellow. */
+.presence {
+  display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-3);
-  border-bottom: 2px solid transparent;
+  height: var(--control-m);
+  margin-left: auto;
+  padding: 0 var(--space-3) 0 var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--sunken);
   color: var(--muted);
-  font-weight: 500;
-  text-decoration: none;
+  white-space: nowrap;
 }
 
-.tabs a:hover {
-  color: var(--fg);
+.presence-mark {
+  width: var(--mark-presence);
+  height: var(--mark-presence);
+  border-radius: var(--radius-round);
+  background: var(--orb-glass);
+  box-shadow: inset 0 0 0 var(--ring) var(--orb-edge);
 }
 
-.tabs a.active {
-  color: var(--fg);
-  border-bottom-color: var(--water);
+.presence.working .presence-mark {
+  background: var(--orb-water);
+}
+
+.project-bar .topbar-tools {
+  margin-left: 0;
 }
 
 /*
-  Too narrow for the tabs between the title and the tools (a small window, the dock beside the view): the
-  tabs take a row of their own under them, closer together, and scroll sideways when even that is not
-  enough, the tab shown kept in view (ProjectView.tsx). Nothing runs under the dock.
+  Narrower (a small window, the dock beside the view): the words beside the mark
+  and Pause give way to their icons (their names stay for screen readers and in
+  their tooltips), the name gives way to an ellipsis, and at the last the tabs
+  scroll in their own strip, the tab shown kept in view (ProjectView.tsx).
 */
-@container topbar (max-width: 1080px) {
-  .topbar > .tabs {
-    order: 1;
-    flex: 1 0 100%;
-    min-width: 0;
-    min-height: var(--space-8);
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: thin;
+@container topbar (max-width: 900px) {
+  .project-bar .presence-text,
+  .project-bar .topbar-tools .btn > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
-  .topbar > .topbar-tools {
-    margin-left: auto;
+  .project-bar .presence {
+    padding: 0 var(--space-1);
   }
 
-  .topbar > .tabs a {
-    flex: none;
+  .project-bar .topbar-tools .btn {
+    width: var(--icon-btn-w);
+    padding: 0;
+  }
+
+  .project-name {
+    max-width: var(--project-name-w-narrow);
   }
 }
 
 @container topbar (max-width: 700px) {
-  .topbar > .tabs {
-    gap: 0;
+  .project-tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
   }
 
-  .topbar > .tabs a {
-    padding: 0 var(--space-2);
+  .project-name {
+    max-width: calc(var(--project-name-w-narrow) - var(--space-8));
   }
 }
 
@@ -667,54 +446,6 @@
 }
 
 
-a.rail-search {
-  text-decoration: none;
-}
-
-/* A new version is out: news in water, never the amber that means you are needed. */
-.rail-update,
-.rail-update:hover {
-  color: var(--water-text);
-}
-
-/* Asked once, until answered: whether to check GitHub for new versions daily. */
-.rail-update-ask {
-  display: grid;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-  font-size: var(--text-sm);
-  line-height: var(--leading);
-}
-
-.rail-update-ask p {
-  margin: 0;
-}
-
-.rail-update-ask .faint {
-  font-size: var(--text-xs);
-}
-
-.rail-update-answers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-a.rail-search.active {
-  background: var(--surface);
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.rail-paused {
-  display: inline-grid;
-  place-items: center;
-  color: var(--muted);
-}
 
 .banner-paused {
   background: var(--sunken);
@@ -803,4 +534,72 @@ a.rail-search.active {
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-1);
+}
+
+/* ── Settings and its sections (shell/SettingsNav.tsx) ───────────────────── */
+
+.settings-frame {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.settings-nav {
+  flex: none;
+  width: var(--panel-min-w);
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-2);
+  border-right: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.settings-nav ul {
+  display: grid;
+  gap: var(--gap-hair);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.settings-nav-title {
+  margin: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--faint);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-m);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--hover);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.settings-nav-item.active {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.settings-frame-view {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }

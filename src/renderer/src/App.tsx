@@ -6,8 +6,9 @@ import { bridge, useQuery } from './lib/api';
 import { LIVE_VIEW, PROJECT_VIEWS, beforeCode, gitHref, href, navigate, openCard, parse, useLocation, type Route } from './lib/router';
 import { INTENT_TAB, requestGit, type GitIntent } from './lib/git-intent';
 import { Rail } from './shell/Rail';
-import { useRail } from './lib/rail';
+import { SettingsFrame } from './shell/SettingsNav';
 import { NotAnswering, ToastProvider } from './components/ui';
+import { StatusLine } from './components/StatusLine';
 import { TooltipHost } from './components/Tooltip';
 import { NeedsView } from './views/NeedsView';
 import { RunningView } from './views/RunningView';
@@ -86,8 +87,7 @@ function Shell() {
   }, [route, project?.name, sessionTitle, location.card]);
 
   const projectKeys = useMemo(() => projects.data?.map((p) => p.key) ?? [], [projects.data]);
-  const rail = useRail();
-  const runCommand = useCommands({ dialog, setDialog, projectId: project?.id, projects: projectKeys, toggleRail: rail.toggle });
+  const runCommand = useCommands({ dialog, setDialog, projectId: project?.id, projects: projectKeys });
 
   useEffect(() => bridge().onNavigate((hash) => { window.location.hash = hash; }), []);
 
@@ -102,15 +102,11 @@ function Shell() {
 
   return (
     <div className={`app${location.card ? ' with-drawer' : ''}`}>
-      <ViewBoundary name="The sidebar" compact>
+      <ViewBoundary name="The rail" compact>
         <Rail
           projects={projects.data}
           needs={needs.data}
           location={location}
-          collapsed={rail.collapsed}
-          onToggle={rail.toggle}
-          onNewSession={() => setDialog({ kind: 'session', ...(project ? { projectId: project.id } : {}) })}
-          onNewCard={() => setDialog({ kind: 'card', ...(project ? { projectId: project.id } : {}) })}
           onAddProject={() => setDialog({ kind: 'project' })}
           onPalette={() => setDialog({ kind: 'palette' })}
         />
@@ -130,19 +126,19 @@ function Shell() {
         {route.name === 'needs' ? (
           <NeedsView needs={needs.data} projects={projects.data} loading={needs.loading && !needs.data} onAddProject={() => setDialog({ kind: 'project' })}
             error={needs.error ?? projects.error} onRetry={() => { needs.reload(); projects.reload(); }} />
-        ) : route.name === 'accounts' ? (
-          <AccountsView projects={projects.data} />
-        ) : route.name === 'skills' ? (
-          <SkillsView projects={projects.data} />
-        ) : route.name === 'mcp' ? (
-          <McpView projects={projects.data} />
-        ) : route.name === 'settings' ? (
-          <SettingsView projects={projects.data} />
+        ) : route.name === 'accounts' || route.name === 'skills' || route.name === 'mcp' || route.name === 'settings' ? (
+          // Settings, with what was the sidebar's Accounts, Skills and MCP servers as its sections.
+          <SettingsFrame route={route}>
+            {route.name === 'accounts' ? <AccountsView projects={projects.data} />
+              : route.name === 'skills' ? <SkillsView projects={projects.data} />
+                : route.name === 'mcp' ? <McpView projects={projects.data} />
+                  : <SettingsView projects={projects.data} />}
+          </SettingsFrame>
         ) : route.name === 'running' ? (
           <RunningView projects={projects.data} needs={needs.data} onNewSession={() => setDialog({ kind: 'session' })} />
         ) : route.name === 'project' ? (
           project ? (
-            <ProjectView project={project} view={route.view} setDialog={setDialog} />
+            <ProjectView project={project} projects={projects.data ?? [project]} view={route.view} setDialog={setDialog} />
           ) : projects.error ? <NotAnswering error={projects.error} onRetry={projects.reload} /> : (
             <Missing loading={projects.loading} what={`project ${route.projectKey}`} />
           )
@@ -157,6 +153,10 @@ function Shell() {
           <EditorDrawer project={project ?? null} page={route.name === 'project' && route.view === 'code'} />
         </ViewBoundary>
         </div>
+        {/* What just happened, under every view and its dock; a failure to act on now is said above it. */}
+        <ViewBoundary name="The status line" compact frame={() => null}>
+          <StatusLine onKeys={() => setDialog({ kind: 'shortcuts' })} />
+        </ViewBoundary>
       </main>
       {location.card ? (
         <ViewBoundary name={`Card ${location.card}`} resetKey={location.card} compact onClose={() => openCard(null)}
@@ -207,12 +207,11 @@ function Missing({ loading, what }: { loading: boolean; what: string }) {
  * what a key means, and this one place runs it, whether it came from the
  * keyboard or the app menu.
  */
-function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
+function useCommands({ dialog, setDialog, projectId, projects }: {
   dialog: DialogState;
   setDialog: (d: DialogState) => void;
   projectId: string | undefined;
   projects: string[];
-  toggleRail: () => void;
 }): (id: CommandId, from: 'key' | 'menu') => boolean {
   const pendingG = useRef<number>(0);
   /** A key toggles the palette and the sheet; the menu only opens them, so the two can never cancel out. */
@@ -233,7 +232,6 @@ function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
         // Not consumed: the drawer listens for Escape too.
         if (location.hash.includes('card=')) openCard(null);
         return false;
-      case 'toggle-rail': toggleRail(); return true;
       case 'quick-open': {
         // Over a card's worktree when the Changes view shows one; otherwise the project folder.
         if (!currentProject()) return false;
@@ -299,7 +297,7 @@ function useCommands({ dialog, setDialog, projectId, projects, toggleRail }: {
         return true;
       }
     }
-  }, [dialog, setDialog, projectId, projects, toggleRail]);
+  }, [dialog, setDialog, projectId, projects]);
 
   useEffect(() => {
     const mac = bridge().platform === 'darwin';

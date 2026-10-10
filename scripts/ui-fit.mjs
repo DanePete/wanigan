@@ -78,6 +78,9 @@ export function fitProblems() {
   // The live view's status line: what was said, what the view follows, the keys; never drawn under the dock.
   const status = document.querySelector('.live-status');
   if (status) fits('the status line', status, [...status.children].filter(visible), room(status));
+  // The frame's status line (Studio), where a view has not kept its own: the same rule.
+  const frameLine = document.querySelector('.status-line');
+  if (frameLine) fits('the frame’s status line', frameLine, [...frameLine.children].filter(visible), room(frameLine));
 
   // The project's bar: its title, its tools, and its tabs. Tabs may scroll within their own strip, but the strip,
   // the tab shown and everything else must be whole, and the bar must stay inside the view beside the dock.

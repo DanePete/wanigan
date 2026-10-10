@@ -1011,6 +1011,7 @@ input[type='radio'] {
 .sel-detail {
   font-size: var(--text-sm);
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .sel-extra {

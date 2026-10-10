@@ -154,7 +154,8 @@ function plan(w) {
     { name: 'New card', hash: board, open: press('c'), scope: '.dialog' },
     { name: 'New session', hash: board, open: press('Meta+t'), scope: '.dialog', ready: '.dialog .model-row' },
     { name: 'Open a project', hash: board, open: click('.rail-add'), scope: '.dialog', ready: '.dialog .agent-folders li' },
-    { name: 'Project settings', hash: board, open: click('.topbar-tools button[aria-label$=" settings"]'), scope: '.dialog' },
+    // The project's settings are in its name's menu in the project bar (Studio).
+    { name: 'Project settings', hash: board, open: async (page) => { await click('.project-name-button')(page); await click('.menu-list [role="menuitem"]:has-text("Project settings")')(page); }, scope: '.dialog' },
     { name: 'Pause a project', hash: board, open: click('.topbar-tools button:has-text("Pause")'), scope: '.dialog', ready: '.dialog .plain-list' },
     { name: 'Make a session a card', session: shell, open: click('.topbar-tools button:has-text("Make this a card")'), scope: '.dialog' },
     { name: 'Undo a turn', session: stock, open: click('.turn-change button:has-text("Undo this turn")'), scope: '.dialog', ready: '.dialog .undo-files li' },
@@ -655,7 +656,6 @@ function keyChecks(w) {
     'History of the open project': [{ at: board, keys: ['Meta+Shift+t'], expect: hashIs(`#/p/${ns}/history`) }],
     'Keyboard shortcuts': [{ at: board, keys: ['Meta+Slash'], expect: shows('.shortcuts') }, { at: board, keys: ['Shift+Slash'], expect: shows('.shortcuts') }],
     Settings: [{ at: board, keys: ['Meta+Comma'], expect: hashIs('#/settings') }],
-    'Collapse or expand the sidebar': [{ at: board, keys: ['Meta+Backslash'], expect: shows('.rail.collapsed') }],
     'Close the open card': [{ at: `${board}?card=${ns}-1`, ready: '.drawer .stages', keys: ['Escape'], expect: gone('.drawer') }],
     'Needs you': [{ at: board, keys: ['g', 'n'], expect: hashIs('#/needs') }],
     Running: [{ at: board, keys: ['g', 'r'], expect: hashIs('#/running') }],
@@ -710,8 +710,8 @@ function keyChecks(w) {
     'Move to the breadcrumbs': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+Shift+Period'], expect: focused(() => document.activeElement?.classList.contains('crumb-button')) }],
     'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[title^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
     'Leave the editor': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Escape', 'Tab'], expect: focused(() => !document.activeElement?.closest('.cm-editor')) }],
-    'Pull, fast-forward only': [{ at: `#/p/${ns}/changes?branch=${ns}-3`, ready: '.pr-chip', keys: ['Meta+Shift+p'], expect: shows('.toast:has-text("Already up to date with origin/wanigan/ns-3")') }],
-    Fetch: [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+f'], expect: shows('.toast:has-text("Fetched from origin")') }],
+    'Pull, fast-forward only': [{ at: `#/p/${ns}/changes?branch=${ns}-3`, ready: '.pr-chip', keys: ['Meta+Shift+p'], expect: shows('.status-line:has-text("Already up to date with origin/wanigan/ns-3")') }],
+    Fetch: [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+f'], expect: shows('.status-line:has-text("Fetched from origin")') }],
     'Switch branch': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+b'], expect: focused(() => location.hash.endsWith('/changes/branches') && document.activeElement?.closest('.branches-toolbar') !== null && document.activeElement?.tagName === 'INPUT') }],
     'New branch': [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+b'], expect: focused(() => document.activeElement?.id === 'branch-new-name') }],
     'Next commit': [
@@ -936,7 +936,8 @@ function checks(w) {
 
   list.push(['Typing in a dialog keeps its place while the core sends news', async (page) => {
     await openAt(page, board, { ready: '.card' });
-    await page.click('.topbar-tools button[aria-label$=" settings"]');
+    await page.click('.project-name-button');
+    await page.click('.menu-list [role="menuitem"]:has-text("Project settings")');
     const field = page.locator('.dialog input[placeholder^="npm install"]');
     await field.click();
     // ⌘→, the Mac's end of line: End moves the caret only while nothing around the field can

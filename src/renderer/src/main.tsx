@@ -30,9 +30,13 @@ import './styles/alerts.css';
 import './styles/local.css';
 import './styles/pairing.css';
 import './lib/theme';
+import { bridge } from './lib/api';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+
+// The frame leaves room for a Mac's window buttons; elsewhere it does not need to (shell.css).
+document.documentElement.dataset.platform = bridge().platform;
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>

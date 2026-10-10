@@ -5,7 +5,7 @@
 // a new version when one is out. Opening the tray reads it; the bell counts
 // what is unread, red when a failure is among it, never amber (amber is
 // "needs you", which is the rail's Needs you).
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAppState } from '../lib/settings';
 import { navigate } from '../lib/router';
 import { actionable, useNotices, type Notice } from '../lib/notices';
@@ -15,6 +15,13 @@ import { Popover } from './Popover';
 import { Button, Count, IconButton, tipProps, useToast } from './ui';
 
 const ICON: Record<Notice['tone'], IconName> = { info: 'note', done: 'check', error: 'alert' };
+
+let opener: (() => void) | null = null;
+
+/** Open the tray from elsewhere (the palette's Notifications). */
+export function openNotifications(): void {
+  opener?.();
+}
 
 export function NotificationBell() {
   const { list, unread, unreadErrors, markRead, dismiss, act, clear } = useNotices();
@@ -27,6 +34,11 @@ export function NotificationBell() {
     if (open) { setOpen(false); markRead(); } else setOpen(true);
   };
   const close = (): void => { setOpen(false); markRead(); };
+  useEffect(() => {
+    const show = (): void => { bell.current?.focus(); setOpen(true); };
+    opener = show;
+    return () => { if (opener === show) opener = null; };
+  }, []);
   return (
     <>
       <button ref={bell} type="button" className={`rail-item${open ? ' active' : ''}`} aria-label={label} aria-haspopup="dialog" aria-expanded={open}
@@ -34,7 +46,7 @@ export function NotificationBell() {
         <Icon name="bell" size={20} />
         {waiting ? <Count n={waiting} tone={unreadErrors ? 'red' : 'water'} className="rail-badge" /> : null}
       </button>
-      <Popover anchor={bell} open={open} onClose={close} label="Notifications" side="right" align="end" width={360} className="tray">
+      <Popover anchor={bell} open={open} onClose={close} label="Notifications" side="right" align="end" width={360} beside=".rail" className="tray">
         <div className="tray-head">
           <h2 className="tray-title">Notifications</h2>
           {list.length ? <Button size="s" tone="quiet" onClick={clear}>Clear all</Button> : null}

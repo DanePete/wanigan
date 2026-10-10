@@ -94,8 +94,7 @@
   /* ── sizes of the frame ──────────────────────────────────────────────────
      The rail, the project bar, a view's tool bar and the status line; the
      two panels beside the work; the controls' heights. */
-  --rail-w: 252px;
-  --rail-w-folded: 56px;
+  --rail-w: 60px;
   --rail-tile: 40px;
   --topbar-h: 48px;
   --toolbar-h: 50px;
@@ -122,6 +121,9 @@
   --count-h: 18px;
   --mark-rail: 34px;
   --mark-presence: 18px;
+  /* The project's name in its bar, at its widest and where the bar is narrow. */
+  --project-name-w: 260px;
+  --project-name-w-narrow: 160px;
   /* A popover beside the rail: the notification tray. */
   --tray-w: 360px;
   /* The live view's side panel, wider for the library and the design layer's tray, and wider still with the tree beside a chosen part. */

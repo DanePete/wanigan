@@ -10,7 +10,7 @@
 import { PROJECT_VIEWS, type ProjectView } from './views.ts';
 
 export type CommandId =
-  | 'palette' | 'new-session' | 'new-card' | 'shortcuts' | 'settings' | 'close-card' | 'history' | 'toggle-rail'
+  | 'palette' | 'new-session' | 'new-card' | 'shortcuts' | 'settings' | 'close-card' | 'history'
   | 'quick-open' | 'toggle-editor' | 'live-goto'
   | 'go-needs' | 'go-running' | 'go-accounts' | 'go-settings'
   | `go-${ProjectView}`
@@ -56,7 +56,6 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: 'history', label: 'History of the open project', group: 'Anywhere', keys: ['Mod', 'Shift', 'T'] },
   { id: 'shortcuts', label: 'Keyboard shortcuts', group: 'Anywhere', keys: ['Mod', '/'], alt: [['?']] },
   { id: 'settings', label: 'Settings', group: 'Anywhere', keys: ['Mod', ','] },
-  { id: 'toggle-rail', label: 'Collapse or expand the sidebar', group: 'Anywhere', keys: ['Mod', '\\'] },
   { id: 'close-card', label: 'Close the open card', group: 'Anywhere', keys: ['Esc'] },
   { id: 'quick-open', label: 'Open a file of the open project', group: 'Anywhere', keys: ['Mod', 'P'] },
   { id: 'toggle-editor', label: 'Show or hide the code editor', group: 'Anywhere', keys: ['Mod', 'J'] },
@@ -193,7 +192,6 @@ export function matchKey(e: KeyInput, state: KeyState): KeyMatch {
     if (k === 't' && !e.shiftKey) return { id: 'new-session' };
     if ((k === '/' || k === '?') && !e.shiftKey) return { id: 'shortcuts' };
     if (k === ',' && !e.shiftKey) return { id: 'settings' };
-    if (k === '\\' && !e.shiftKey) return { id: 'toggle-rail' };
     if (/^[1-9]$/.test(k) && !e.shiftKey) return { id: `project-${Number(k)}` as CommandId };
     if (k === 'p') return { id: e.shiftKey ? 'git-pull' : 'quick-open' };
     if (k === 'j' && !e.shiftKey) return { id: 'toggle-editor' };
