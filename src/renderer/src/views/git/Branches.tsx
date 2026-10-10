@@ -228,7 +228,7 @@ export function NewBranchDialog({ project, where, status, onClose, onDone }: {
     )}>
       <form id="branch-new" className="branch-new" onSubmit={(e) => { e.preventDefault(); void create(); }} aria-label="New branch">
         <div className="field">
-          <label htmlFor="branch-new-name">Name</label>
+          <label htmlFor="branch-new-name">Branch name</label>
           <input id="branch-new-name" className="mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="feature/name" spellCheck={false} autoComplete="off"
             aria-invalid={!!problem} aria-describedby="branch-new-why" data-autofocus />
         </div>

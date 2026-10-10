@@ -86,10 +86,10 @@ try {
     } else failures.push('no session with turns in the demo');
     await go('#/p/NS/changes', '.dl-add');
     await shot('changes', theme);
-    await win.click('.changes .toolbar [role="radio"]:has-text("Split")');
+    await win.click('.status-line [role="radio"]:has-text("Split")');
     await win.waitForSelector('.diff-split', { timeout: 5_000 }).catch(() => failures.push('split never showed'));
     await shot('changes-split', theme);
-    await win.click('.changes .toolbar [role="radio"]:has-text("Unified")');
+    await win.click('.status-line [role="radio"]:has-text("Unified")');
 
     // Git: lines picked for staging, the commit box stopping a key, the history, branches,
     // the push confirmation and a merge being resolved. Nothing here is committed or pushed.

@@ -79,7 +79,7 @@ const ALLOW = [
     reason: 'the core will not merge into a folder with uncommitted work, or delete a branch whose commits are not merged, and says why; the demo’s Northstar has uncommitted work on purpose',
   },
   {
-    surface: /› Changes › Branches$/, label: /^Name of the new branch$/, problem: /^showed an error: “echo wanigan-crawl” contains a space or a control character, which a git ref cannot\.$/,
+    surface: /› Changes › Branches$/, label: /^Branch name$/, problem: /^showed an error: “echo wanigan-crawl” contains a space or a control character, which a git ref cannot\.$/,
     reason: 'the crawler types words with a space; the field says at once why git refuses that name, and Make the branch stays off',
   },
   {
