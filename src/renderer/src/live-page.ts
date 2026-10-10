@@ -509,6 +509,10 @@ export function livePage(): void {
     bar.el.style.top = `${top}px`;
     bar.el.style.right = `${Math.max(4, innerWidth - rect.right - 2)}px`;
     if (bar.el.parentNode !== root) root.appendChild(bar.el);
+    // Right-aligned to the part, but never off the page's left edge: a narrow part near it (a card's title on the
+    // Northstar demo) had its bar cut off there, Style and Move out of sight.
+    const wide = bar.el.getBoundingClientRect();
+    if (wide.left < 4) bar.el.style.right = `${Math.max(4, innerWidth - 4 - wide.width)}px`;
     // A narrow part: its name and its bar would meet above it, so the bar goes under it instead.
     const a = name?.getBoundingClientRect();
     const b = bar.el.getBoundingClientRect();

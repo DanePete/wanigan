@@ -2332,6 +2332,15 @@ try {
     if (drawn.bar.join() !== 'Style,Move,Take out,Ask an agent') fail(`page script: the chosen part's action bar holds ${JSON.stringify(drawn.bar)}`);
     if (!drawn.chip) fail('page script: the chosen part has no name chip');
     await page.screenshot({ path: join(out, 'page-script-action-bar.png') });
+    // A narrow part near the page's left edge keeps its whole bar on the page (a card's title on the Northstar demo had
+    // its bar cut off at the left, Style and Move out of sight).
+    const hoursWidth = (w) => page.evaluate((v) => { const d = [...document.querySelectorAll('div')].find((x) => x.textContent === 'Opening hours'); if (d) d.style.width = v; }, w);
+    await hoursWidth('60px');
+    await page.evaluate((i) => window.__wl.outline([i], 'Opening hours', 'pick'), at['p-hours']);
+    const barLeft = await page.evaluate(() => document.getElementById('__wanigan_live_overlay').shadowRoot.querySelector('[role="toolbar"]')?.getBoundingClientRect().left ?? -999);
+    if (barLeft < 0) fail(`page script: a narrow part's action bar runs off the page's left edge (its left at ${Math.round(barLeft)} px)`);
+    await hoursWidth('');
+    await page.evaluate((i) => window.__wl.outline([i], 'Opening hours', 'pick'), at['p-hours']);
     await page.evaluate(() => { window.__got = null; window.__wl.awaitGoto([]).then((v) => { window.__got = v; }); });
     const move = await page.evaluate(() => {
       const b = [...document.getElementById('__wanigan_live_overlay').shadowRoot.querySelectorAll('[role="toolbar"] button')].find((x) => x.textContent === 'Move');
