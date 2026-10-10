@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { wordpressHelper } from './live-helper-wordpress.ts';
 import { parseTrace, type EditTarget } from '../shared/live-trace.ts';
+import { WORDPRESS_INLINE_TAGS } from '../shared/rich-text.ts';
 
 const TOKEN = '9a'.repeat(24);
 
@@ -709,6 +710,12 @@ interface Result {
   templates: Record<string, Record<string, Record<string, unknown>>>;
   options: Record<string, unknown>;
 }
+
+test('the inline tags the edit sheet says are kept are the ones the helper keeps in new rich text', () => {
+  const m = /const INLINE = array\(([^)]*)\);/.exec(wordpressHelper(TOKEN));
+  assert.ok(m, 'the helper names its inline tags');
+  assert.deepEqual(m[1]!.split(',').map((t) => t.trim().replace(/'/g, '').toLowerCase()), [...WORDPRESS_INLINE_TAGS]);
+});
 
 test('the plugin fits in what the core reads of an installed helper to know it, with room to grow', () => {
   // src/core/live.ts reads the installed file back under MAX_HELPER_FILE (2 MiB) to find its mark and version; past

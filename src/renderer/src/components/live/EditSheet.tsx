@@ -4,10 +4,14 @@
 // of the site's session, and closes itself when the site says it saved; a
 // target the helper describes with a schema is a small form drawn here, saved
 // through the main process. Either way the page reloads with the change.
+// Formatted text (a string the schema calls HTML) is edited as its words when it
+// holds no tag, sent escaped, and as its HTML when it holds inline tags, with the
+// tags the site keeps said (shared/live-schema.ts htmlMode()).
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { LiveRegion } from '@shared/live';
 import { placeSheet, type Box } from '@shared/live-lens';
-import { draftOf, schemaForm, valueOf, type Draft, type SchemaField, type SchemaForm } from '@shared/live-schema';
+import { draftOf, htmlMode, schemaForm, valueOf, type Draft, type SchemaField, type SchemaForm } from '@shared/live-schema';
+import { WORDPRESS_INLINE_TAGS, tagsIn } from '@shared/rich-text';
 import type { SaveAi } from '@shared/live-ai';
 import { saveOf, type EditTarget, type LiveTrace } from '@shared/live-trace';
 import { liveBridge, useCoversLive, useLiveCovers } from '../../lib/live';
@@ -81,7 +85,7 @@ export function EditSheet({ request, stage, device, cms, trace, onClose, onSaved
       {/* Before anything is saved: what else saving it runs, which Wanigan cannot see into. */}
       <SavesNote save={saveOf(trace, target)} ai={trace?.ai} />
       {native ? (box && !error ? <NativeForm target={target} /> : null)
-        : <SchemaEdit target={target} aiClient={!!trace?.ai?.client} onSaved={(revision, ai, sent) => onSaved(target, revision, ai, sent)} onClose={onClose} onError={setError} />}
+        : <SchemaEdit target={target} cms={cms} wordpress={trace?.platform === 'wordpress'} aiClient={!!trace?.ai?.client} onSaved={(revision, ai, sent) => onSaved(target, revision, ai, sent)} onClose={onClose} onError={setError} />}
     </div>
   );
 }
@@ -118,8 +122,11 @@ function NativeForm({ target }: { target: EditTarget }) {
   );
 }
 
-function SchemaEdit({ target, aiClient, onSaved, onClose, onError }: {
+function SchemaEdit({ target, cms, wordpress, aiClient, onSaved, onClose, onError }: {
   target: EditTarget;
+  cms: string;
+  /** The trace is the WordPress helper's: formatted text is kept by its rules (the inline tags it keeps). */
+  wordpress: boolean;
   /** WordPress core's AI Client is on the site: the owner may stop it for this one save. */
   aiClient: boolean;
   onSaved: (revision: string | null, ai: SaveAi | null, sent: unknown) => void; onClose: () => void; onError: (e: string | null) => void;
@@ -153,7 +160,12 @@ function SchemaEdit({ target, aiClient, onSaved, onClose, onError }: {
   // Enter in a field and the Save button are one submit; a second while saving does nothing.
   return (
     <form className="live-sheet-body" onSubmit={(e) => { e.preventDefault(); void once(save); }} noValidate>
-      {form.fields.map((f) => <FieldInput key={f.name || 'value'} field={f} value={draft[f.name]} error={errors[f.name] ?? null} onChange={(v) => set(f.name, v)} />)}
+      {form.fields.map((f) => {
+        const mode = htmlMode(form, f, target.value);
+        const was = form.object ? (target.value as Record<string, unknown> | undefined)?.[f.name] : target.value;
+        return <FieldInput key={f.name || 'value'} field={f} html={mode ? { mode, holds: typeof was === 'string' ? tagsIn(was) : [], wordpress, cms } : null}
+          value={draft[f.name]} error={errors[f.name] ?? null} onChange={(v) => set(f.name, v)} />;
+      })}
       {form.kept.length ? <p className="faint small">Kept as they are (not drawn here): {form.kept.join(', ')}.</p> : null}
       {aiClient ? (
         <div className="field">
@@ -174,16 +186,30 @@ function SchemaEdit({ target, aiClient, onSaved, onClose, onError }: {
   );
 }
 
-function FieldInput({ field: f, value, error, onChange }: { field: SchemaField; value: Draft[string] | undefined; error: string | null; onChange: (v: Draft[string]) => void }) {
+/** A string the schema calls HTML: edited as its words, or as its HTML; the tags it holds now; whose rules keep it. */
+interface HtmlField { mode: 'words' | 'markup'; holds: string[]; wordpress: boolean; cms: string }
+
+/** What a field of formatted text says under it: how what is typed is saved, and, as HTML, which tags the site keeps. */
+function htmlHint(h: HtmlField): string {
+  if (h.mode === 'words') return 'Its words, as the page shows them. What you type is saved as words: an & or a < stays a character, never markup.';
+  const own = h.holds.filter((t) => !(WORDPRESS_INLINE_TAGS as readonly string[]).includes(t));
+  return h.wordpress
+    ? `Formatted text, shown as its HTML: change the words between the tags. Only these inline tags are kept: ${WORDPRESS_INLINE_TAGS.map((t) => `<${t}>`).join(' ')}${own.length ? `, and ${own.map((t) => `<${t}>`).join(' ')}, which it holds already` : ''}. WordPress refuses any other tag, and cleans what it keeps (wp_kses_post()).`
+    : `Formatted text, shown as its HTML: change the words between the tags. ${h.cms} cleans the markup when it saves.`;
+}
+
+function FieldInput({ field: f, html, value, error, onChange }: { field: SchemaField; html: HtmlField | null; value: Draft[string] | undefined; error: string | null; onChange: (v: Draft[string]) => void }) {
   const id = `live-schema-${f.name || 'value'}`;
-  const described = [f.description ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(' ') || undefined;
+  // Formatted text says how it is saved in place of the site's description of it, which speaks of HTML; as HTML, both.
+  const description = html?.mode === 'words' ? null : f.description;
+  const described = [description ? `${id}-hint` : null, html ? `${id}-html` : null, error ? `${id}-error` : null].filter(Boolean).join(' ') || undefined;
   const text = typeof value === 'string' ? value : '';
   const common = { id, 'aria-invalid': error ? true : undefined, 'aria-describedby': described, 'aria-required': f.required || undefined } as const;
   const control = (() => {
     switch (f.kind) {
       case 'string':
         return f.multiline
-          ? <textarea {...common} rows={4} value={text} maxLength={f.maxLength ?? undefined} onChange={(e) => onChange(e.target.value)} />
+          ? <textarea {...common} className={html?.mode === 'markup' ? 'mono' : undefined} spellCheck={html?.mode === 'markup' ? false : undefined} rows={4} value={text} maxLength={f.maxLength ?? undefined} onChange={(e) => onChange(e.target.value)} />
           : <input {...common} value={text} maxLength={f.maxLength ?? undefined} onChange={(e) => onChange(e.target.value)} />;
       case 'number':
         return <input {...common} inputMode={f.integer ? 'numeric' : 'decimal'} value={text} onChange={(e) => onChange(e.target.value)} />;
@@ -218,9 +244,10 @@ function FieldInput({ field: f, value, error, onChange }: { field: SchemaField; 
           <span>{f.title}</span>
         </label>
       ) : f.kind === 'strings' ? <span className="field-label" id={`${id}-label`}>{f.title}{f.required ? ' *' : ''}</span>
-        : <label htmlFor={id}>{f.title}{f.required ? ' *' : ''}</label>}
+        : <label htmlFor={id}>{f.title}{html?.mode === 'markup' ? ' (HTML)' : ''}{f.required ? ' *' : ''}</label>}
       {control}
-      {f.description ? <p className="field-hint" id={`${id}-hint`}>{f.description}</p> : null}
+      {description ? <p className="field-hint" id={`${id}-hint`}>{description}</p> : null}
+      {html ? <p className="field-hint" id={`${id}-html`}>{htmlHint(html)}</p> : null}
       {f.kind === 'string' && f.maxLength !== null ? <p className="field-hint">{text.length} of {f.maxLength}</p> : null}
       {error ? <p className="field-error small" id={`${id}-error`}>{error}</p> : null}
     </div>

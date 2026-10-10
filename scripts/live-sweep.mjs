@@ -24,6 +24,26 @@ import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 
 const out = join(root, '.artifacts', 'live');
+
+/**
+ * The made-up trace, as a WordPress helper's: the opening hours block offers a paragraph's words alone, and a paragraph
+ * with a link and bold in it, each the HTML its schema says it is.
+ */
+function richTrace(base) {
+  const words = (id, label, content) => ({
+    id, kind: 'block-attributes', label, via: 'schema', revisions: true, value: { content },
+    schema: { type: 'object', additionalProperties: false, properties: { content: { type: 'string', title: 'Words', contentMediaType: 'text/html', description: 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats).' } } },
+  });
+  const added = [
+    words('e-rich-words', 'Paragraph block in page “Hours”', 'Fish &amp; chips on Fridays'),
+    words('e-rich-markup', 'Paragraph block with a link in page “Hours”', 'Ask about <a href="/cakes">cakes</a> &amp; <strong>pies</strong>'),
+  ];
+  return {
+    ...base, platform: 'wordpress',
+    parts: base.parts.map((p) => (p.id === 'p-hours' ? { ...p, edits: [...(p.edits ?? []), ...added.map((e) => e.id)] } : p)),
+    edits: [...base.edits, ...added],
+  };
+}
 mkdirSync(out, { recursive: true });
 const failures = [];
 const fail = (what) => { failures.push(what); console.error(`✗ ${what}`); };
@@ -921,6 +941,52 @@ try {
       await cta.getByRole('button', { name: /^Place Call to action/ }).click();
       await p4.waitForFunction(() => window.__wgLive.spec?.placing?.entry === 'pal.b.acme_cta_block', null, { timeout: 3000 })
         .catch(() => fail(t('handles off: Place did not arm the page, so placing did nothing')));
+      await ctx.close();
+    }
+
+    // Formatted text on a WordPress site (a string the schema calls HTML): words alone are edited as words and sent
+    // escaped, never as markup; inline tags are shown as the HTML they are, with the tags WordPress keeps said.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
+      await ctx.addInitScript(liveStub, liveFixture);
+      await ctx.addInitScript(LIVE_DEFAULTS);
+      await ctx.addInitScript((tr) => { window.__wgLive.platform = 'wordpress'; window.__wgLive.answer = { state: 'ok', trace: tr }; }, richTrace(liveFixture.trace));
+      const p5 = await ctx.newPage();
+      const s5 = (name) => p5.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled' });
+      await p5.goto(`${base}#/p/NS/live`);
+      await p5.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('rich: no layers')));
+      const openTarget = async (label) => {
+        // From the layers, or from the part's details when it is still the chosen one after a save.
+        const edit = p5.getByRole('button', { name: /^Edit Opening hours/ });
+        if (!(await edit.isVisible().catch(() => false))) await p5.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
+        await edit.click();
+        await p5.getByRole('menuitem', { name: new RegExp(`^${label}`) }).click();
+        await p5.waitForSelector('.live-sheet form', { timeout: 3000 }).catch(() => fail(t(`rich: ${label} did not open its sheet`)));
+      };
+      await openTarget('Paragraph block in page “Hours”');
+      const box = p5.getByLabel('Words', { exact: true });
+      if ((await box.inputValue().catch(() => null)) !== 'Fish & chips on Fridays') fail(t(`rich: words alone were not shown as words (${await box.inputValue().catch(() => 'no box')})`));
+      if (!(await p5.locator('.live-sheet').innerText()).includes('What you type is saved as words: an & or a < stays a character, never markup.')) fail(t('rich: the sheet does not say typed words are saved as words'));
+      await box.fill('Fish & chips <b>every</b> Friday');
+      await s5('edit-rich-words');
+      await p5.locator('.live-sheet button[type="submit"]').click();
+      await p5.waitForSelector('.toast-info:has-text("Saved Paragraph block")', { timeout: 3000 }).catch(() => fail(t('rich: saving the words did not say so')));
+      const sent = await p5.evaluate(() => window.__wgLive.calls.find((c) => c.startsWith('editSave e-rich-words')));
+      if (sent !== 'editSave e-rich-words {"content":"Fish &amp; chips &lt;b&gt;every&lt;/b&gt; Friday"}') fail(t(`rich: typed text went as ${sent}`));
+      await p5.waitForSelector('.live-status-said:has-text("saved, and the site holds it after reloading")', { timeout: 4000 })
+        .catch(async () => fail(t(`rich: the escaped words were not read back as held (${await p5.locator('.live-status-said').first().innerText().catch(() => 'no status line')})`)));
+
+      await openTarget('Paragraph block with a link in page “Hours”');
+      const html = p5.getByLabel('Words (HTML)', { exact: true });
+      if ((await html.inputValue().catch(() => null)) !== 'Ask about <a href="/cakes">cakes</a> &amp; <strong>pies</strong>') fail(t('rich: inline tags were not shown as the HTML they are'));
+      const said = await p5.locator('.live-sheet').innerText();
+      for (const want of ['Only these inline tags are kept: <strong> <em> <a>', 'WordPress refuses any other tag']) if (!said.includes(want)) fail(t(`rich: the HTML sheet does not say "${want}"`));
+      await s5('edit-rich-markup');
+      await p5.keyboard.press('Escape');
+      await p5.waitForSelector('.live-sheet', { state: 'detached', timeout: 3000 }).catch(() => fail(t('rich: Escape did not close the sheet')));
+      if ((await p5.evaluate(() => window.__wgLive.calls.filter((c) => c.startsWith('editSave')).length)) !== 1) fail(t('rich: closing the HTML sheet saved something'));
       await ctx.close();
     }
   }

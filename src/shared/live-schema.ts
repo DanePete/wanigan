@@ -10,6 +10,13 @@
 // and for the main process to refuse a value that could not be right. Regular
 // expressions from a schema (`pattern`) are never run here: they come from the
 // site, and one written badly could hang the window or the main process.
+//
+// A string the schema calls HTML (`contentMediaType: 'text/html'`: a block's
+// rich text, a navigation label) never takes typed text as markup. Holding no
+// tag, it is edited as its words and sent escaped (src/shared/rich-text.ts);
+// holding inline tags, it is edited as the HTML it is, said to be so.
+
+import { escapeText, plainWords } from './rich-text.ts';
 
 const MAX_TEXT = 20_000;
 const MAX_ITEMS = 200;
@@ -24,7 +31,8 @@ interface Base {
 }
 
 export type SchemaField =
-  | Base & { kind: 'string'; multiline: boolean; minLength: number | null; maxLength: number | null }
+  /** `html`: the schema says the value is HTML (`contentMediaType: 'text/html'`); see htmlMode(). */
+  | Base & { kind: 'string'; multiline: boolean; minLength: number | null; maxLength: number | null; html: boolean }
   | Base & { kind: 'number'; integer: boolean; minimum: number | null; maximum: number | null }
   | Base & { kind: 'boolean' }
   | Base & { kind: 'choice'; options: { value: string | number; label: string }[] }
@@ -84,7 +92,8 @@ function field(name: string, raw: unknown, required: boolean): SchemaField | nul
   switch (typeOf(raw)) {
     case 'string': {
       const maxLength = count(raw.maxLength);
-      return { ...base, kind: 'string', minLength: count(raw.minLength), maxLength, multiline: raw.format === 'textarea' || maxLength === null || maxLength > 255 };
+      const html = raw.contentMediaType === 'text/html';
+      return { ...base, kind: 'string', minLength: count(raw.minLength), maxLength, multiline: html || raw.format === 'textarea' || maxLength === null || maxLength > 255, html };
     }
     case 'integer':
     case 'number':
@@ -129,14 +138,28 @@ export function schemaForm(schema: unknown): SchemaForm | null {
 /** What a form holds while the owner types: text for text and numbers, true or false, a choice, a list of text. */
 export type Draft = Record<string, string | boolean | string[]>;
 
+/** One field's value in a target's current value. */
+const fieldOf = (form: SchemaForm, f: SchemaField, value: unknown): unknown => (form.object ? (isObj(value) ? value[f.name] : undefined) : value);
+
+/**
+ * How a string the schema calls HTML is edited: as its `words` when it holds no tag (and no reference rich-text.ts
+ * cannot read): shown decoded, sent escaped, so a typed `<` or `&` is a character; as `markup` when it holds tags,
+ * shown as the HTML it is. Null for every other field.
+ */
+export function htmlMode(form: SchemaForm, f: SchemaField, value: unknown): 'words' | 'markup' | null {
+  if (f.kind !== 'string' || !f.html) return null;
+  const v = fieldOf(form, f, value);
+  return typeof v !== 'string' || plainWords(v) !== null ? 'words' : 'markup';
+}
+
 /** The draft for a form, from the target's current value. */
 export function draftOf(form: SchemaForm, value: unknown): Draft {
-  const at = (f: SchemaField): unknown => (form.object ? (isObj(value) ? value[f.name] : undefined) : value);
+  const at = (f: SchemaField): unknown => fieldOf(form, f, value);
   const draft: Draft = {};
   for (const f of form.fields) {
     const v = at(f);
     switch (f.kind) {
-      case 'string': draft[f.name] = typeof v === 'string' ? v.slice(0, MAX_TEXT) : ''; break;
+      case 'string': draft[f.name] = typeof v === 'string' ? (htmlMode(form, f, value) === 'words' ? plainWords(v) ?? '' : v).slice(0, MAX_TEXT) : ''; break;
       case 'number': draft[f.name] = typeof v === 'number' && Number.isFinite(v) ? String(v) : ''; break;
       case 'boolean': draft[f.name] = v === true; break;
       case 'choice': { const at = f.options.findIndex((o) => o.value === v); draft[f.name] = at >= 0 ? String(at) : ''; break; }
@@ -190,7 +213,16 @@ export function valueOf(form: SchemaForm, draft: Draft, current: unknown): { val
     const d = draft[f.name];
     let v: unknown;
     switch (f.kind) {
-      case 'string': v = typeof d === 'string' ? d : ''; if (v === '' && !f.required) v = undefined; break;
+      case 'string': {
+        v = typeof d === 'string' ? d : '';
+        // HTML that held no tag: the words typed go escaped, and words left as they were go back as they were kept.
+        if (htmlMode(form, f, current) === 'words' && v !== '') {
+          const was = fieldOf(form, f, current);
+          v = typeof was === 'string' && plainWords(was) === v ? was : escapeText(v as string);
+        }
+        if (v === '' && !f.required) v = undefined;
+        break;
+      }
       case 'number': {
         const t = typeof d === 'string' ? d.trim() : '';
         v = t === '' ? undefined : Number(t);
