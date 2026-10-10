@@ -18,7 +18,9 @@
 //   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
 //   called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
 // - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
-//   helperSave path, as the logged-in user). Styles and tokens go to an agent as a brief; anything else says why.
+//   helperSave path, as the logged-in user), to exactly the content, translation and item the edit's target names
+//   (saveTarget): never the default language, never the first item that holds the same words. Styles and tokens go
+//   to an agent as a brief; anything else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
@@ -44,7 +46,7 @@ import { TRACE_ID, identityKey, kindKey, type LiveTrace, type PartIdentity, type
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
 import { folderOf, inHiddenWindow } from './live-capture.ts';
-import type { HelperSaved, LiveCurrent, LiveViewHooks } from './live-view.ts';
+import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
 
@@ -174,6 +176,22 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
   return edits.map((e) => (lost.has(e.id) ? { ...e, state: 'orphaned' } : e.state === 'orphaned' && back.has(e.id) ? { ...e, state: 'draft' } : e));
 }
 
+/**
+ * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
+ * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
+ * around its element (`type:id:field:fieldtype[:langcode]`) is checked to be that field. Anything else is why not:
+ * the words are never saved to a field, a translation or an item the target does not name.
+ */
+export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
+  const [type, , name] = field.split(':');
+  if (!part || part.kind !== 'entity' || !part.field) {
+    return 'Its target is not a field of content the helper names, so Wanigan cannot say which content, translation and item the words would be saved to. An agent can make the change from a brief.';
+  }
+  if (part.type !== type || part.field !== name) return 'The field marked around its element is not the one its target names. Reload the page, then try again.';
+  if (!part.langcode) return 'Its target does not say which translation it was made on, so the words are saved to none. Reload the page, then try again.';
+  return { uuid: part.id, langcode: part.langcode, item: part.item ?? null };
+}
+
 /** What the tray calls an element, by its name. */
 const NAMES: Record<string, string> = {
   h1: 'Heading', h2: 'Heading', h3: 'Heading', h4: 'Heading', h5: 'Heading', h6: 'Heading', p: 'Paragraph', a: 'Link', button: 'Button',
@@ -298,8 +316,8 @@ export interface LiveLayerOptions {
   run: Run;
   /** The shown page's trace (live-inspect.ts). */
   trace: () => Promise<LiveTraceAnswer>;
-  /** The helper's save of words to a plain text field, as the view's user (live-view.ts). */
-  helperSave: (field: string, before: string, after: string) => Promise<HelperSaved | null>;
+  /** The helper's save of words to a plain text field, as the view's user, at the content, translation and item named (live-view.ts). */
+  helperSave: (field: string, before: string, after: string, at?: SaveAt) => Promise<HelperSaved | null>;
   /** The partition a render of a project's page runs in, prepared with its trust and the helper's token (live-view.ts). */
   partition: (projectId: string, url: string, token: string | null) => string;
   /** A project's view session, for asking a hidden render's trace (live-view.ts). */
@@ -477,7 +495,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (typeof at.field !== 'string') return none('These words are not in a plain text field the site helper marks: they come from a template, a setting or formatted text. An agent can make the change from a brief.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
-    const saved = await options.helperSave(at.field, at.words, value);
+    // Exactly the field, translation and item the edit's target names: never the first item that happens to hold the
+    // same words, never the content's default language.
+    const where = saveTarget(edit.target.part, at.field);
+    if (typeof where === 'string') return none(where);
+    const saved = await options.helperSave(at.field, at.words, value, where);
     if (!saved) return none('The live view has no helper for this site.');
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
     await core('live.layerMark', { projectId: cur.projectId, id, state: 'implemented' });

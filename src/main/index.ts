@@ -165,7 +165,7 @@ function wireBridge(): void {
   layerHooks = wireLiveLayer({
     ipc: ipcMain, trusted, enabled: liveEnabled, client: () => core.get(), dataDir,
     current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback), trace: () => inspect.trace(),
-    helperSave: (field, before, after) => view.helperSave(field, before, after),
+    helperSave: (field, before, after, at) => view.helperSave(field, before, after, at),
     partition: (id, url, token) => view.partition(id, null, url, token), sessionFor: (id, url) => view.sessionFor(id, url),
     askTrace, pageScript: () => view.pageScript(),
   }).hooks;

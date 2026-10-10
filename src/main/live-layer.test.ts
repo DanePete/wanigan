@@ -16,6 +16,9 @@ const TOKEN = ['stand', 'in', 'token'].join('-');
 const BASE = 'https://acme.example.test/';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
+/** A made-up article's title field in French, as the Drupal helper names it (its UUID, not its id). */
+const UUID = 'c0ffee00-0000-4000-8000-000000000012';
+const title = (over: Partial<Extract<PartIdentity, { kind: 'entity' }>> = {}): PartIdentity => ({ kind: 'entity', type: 'node', id: UUID, bundle: 'article', langcode: 'fr', field: 'title', ...over });
 const trace = (): LiveTrace => ({
   version: 1, platform: 'drupal', id: '0123456789abcdef', url: '/paddling', at: 1, total: { ms: 1 }, edits: [],
   parts: [
@@ -23,6 +26,8 @@ const trace = (): LiveTrace => ({
     { id: 'p2', kind: 'component', label: 'Card', identity: card(1) },
     { id: 'p3', kind: 'component', label: 'Hero', identity: { kind: 'component', name: 'acme:hero', within: null, nth: 0 } },
     { id: 'p4', kind: 'block', label: 'Footer note' },
+    { id: 'p6', kind: 'field', label: 'Title', identity: title() },
+    { id: 'p7', kind: 'field', label: 'Tags #2', identity: title({ field: 'field_tags', item: 'delta:1' }) },
   ],
 });
 
@@ -90,7 +95,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
   const { page, run } = modelPage();
   let edits = over.edits ?? [];
   const marks: { id: string; state: string; verdict?: LayerVerdict }[] = [];
-  const saves: [string, string, string][] = [];
+  const saves: unknown[][] = [];
   const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
   let url = over.url ?? `${BASE}paddling`;
   const webContents = {
@@ -122,7 +127,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     current: () => ({ projectId: 'p1', base: BASE, token: TOKEN, env: null, webContents: webContents as never }),
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
-    helperSave: async (field, before, after) => { saves.push([field, before, after]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    helperSave: async (field, before, after, at) => { saves.push([field, before, after, at]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
     partition: () => 'persist:wanigan-live-p1',
     sessionFor: () => null,
     askTrace: async () => ({ state: 'missing' }),
@@ -337,12 +342,12 @@ test('the picked element is keyed to the innermost part with an identity, with w
 });
 
 test('making an edit real: words go through the helper’s save, a style goes to an agent, and the core is told', async () => {
-  const retyped = edit({ change: { type: 'text', value: 'Paddling 102' } });
+  const retyped = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
   const style = edit();
   const every = edit({ scope: 'kind', change: { type: 'text', value: 'Same everywhere' } });
   const w = wire({ edits: [retyped, style, every] });
   try {
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] }, p6: { '': [words('Pagayer 101', 'node:12:title:string:fr')] } };
     await w.apply();
     assert.deepEqual(await w.implement(style.id), { ok: false, id: style.id, route: 'agent', why: 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' });
     const kind = await w.implement(every.id);
@@ -350,7 +355,8 @@ test('making an edit real: words go through the helper’s save, a style goes to
     assert.deepEqual(w.saves, [], 'nothing was saved for either');
     const done = await w.implement(retyped.id);
     assert.deepEqual(done, { ok: true, id: retyped.id, state: 'implemented', revision: '42' });
-    assert.deepEqual(w.saves, [['node:12:title:string', 'Paddling 101', 'Paddling 102']], 'the field the helper marked, the words the site has, the new words');
+    assert.deepEqual(w.saves, [['node:12:title:string:fr', 'Pagayer 101', 'Pagayer 102', { uuid: UUID, langcode: 'fr', item: null }]],
+      'the field the helper marked, the words the site has, the new words, and the content, translation and item the target names');
     assert.deepEqual(w.marks.at(-1), { id: retyped.id, state: 'implemented' });
     assert.equal(w.sheets.reloads, 1, 'the page shows what the site now has');
     const again = await w.implement(retyped.id);
@@ -359,14 +365,14 @@ test('making an edit real: words go through the helper’s save, a style goes to
 });
 
 test('words with no field the helper marks, or a refusal from the site, are said and nothing is marked', async () => {
-  const loose = edit({ change: { type: 'text', value: 'New words' } });
+  const loose = edit({ label: 'Title', change: { type: 'text', value: 'New words' }, target: { part: title(), inner: null, selector: null, textHash: layerTextHash('Paddling 101') } });
   const w = wire({ edits: [loose], saved: { ok: false, error: 'The user you are logged in as in the live view may not change this.' } });
   try {
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
+    w.page.parts = { p6: { '': [words('Paddling 101')] } };
     await w.apply();
     const unmarked = await w.implement(loose.id);
     assert.ok(!unmarked.ok && unmarked.route === 'none' && /not in a plain text field/.test(unmarked.why));
-    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
+    w.page.parts = { p6: { '': [words('Paddling 101', 'node:12:title:string:fr')] } };
     await w.apply();
     const refused = await w.implement(loose.id);
     assert.deepEqual(refused, { ok: false, id: loose.id, route: 'none', why: 'The user you are logged in as in the live view may not change this.' });
@@ -374,6 +380,37 @@ test('words with no field the helper marks, or a refusal from the site, are said
     w.go(`${BASE}about`);
     const away = await w.implement(loose.id);
     assert.ok(!away.ok && /Open \/paddling in the live view first/.test(away.why));
+  } finally { w.done(); }
+});
+
+test('words are saved only to the field, translation and item the edit’s target names', async () => {
+  // The second of two tags that hold the same words, in French: the save names that item and that translation.
+  const tag = edit({ label: 'Tag', change: { type: 'text', value: 'Kayak' }, target: { part: title({ field: 'field_tags', item: 'delta:1' }), inner: null, selector: null, textHash: layerTextHash('Canoe') } });
+  // A heading in a card component whose words a field marked around it holds: the target names no field.
+  const inCard = edit({ change: { type: 'text', value: 'Paddling 102' } });
+  // The target names the body, but the field marked around its element is the title.
+  const otherField = edit({ label: 'Body', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title({ field: 'body' }), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  // A target from a helper that named no language.
+  const noLanguage = edit({ label: 'Title', change: { type: 'text', value: 'Pagayer 102' }, target: { part: title({ langcode: undefined }), inner: null, selector: null, textHash: layerTextHash('Pagayer 101') } });
+  const traced: LiveTrace = { ...trace(), parts: [...trace().parts, { id: 'p8', kind: 'field', label: 'Body', identity: title({ field: 'body' }) }, { id: 'p9', kind: 'field', label: 'Title', identity: title({ langcode: undefined }) }] };
+  const w = wire({ edits: [tag, inCard, otherField, noLanguage], trace: traced });
+  try {
+    w.page.parts = {
+      p7: { '': [words('Canoe', 'node:12:field_tags:string:fr')] },
+      p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string:fr')] },
+      p8: { '': [words('Pagayer 101', 'node:12:title:string:fr')] },
+      p9: { '': [words('Pagayer 101', 'node:12:title:string:fr')] },
+    };
+    await w.apply();
+    assert.equal((await w.implement(tag.id)).ok, true);
+    assert.deepEqual(w.saves, [['node:12:field_tags:string:fr', 'Canoe', 'Kayak', { uuid: UUID, langcode: 'fr', item: 'delta:1' }]], 'that item, in that translation, of that content');
+    const refusals = [await w.implement(inCard.id), await w.implement(otherField.id), await w.implement(noLanguage.id)];
+    assert.deepEqual(refusals.map((r) => (r.ok ? 'saved' : r.route)), ['none', 'none', 'none']);
+    assert.match(refusals[0]!.ok ? '' : refusals[0]!.why, /not a field of content the helper names/);
+    assert.match(refusals[1]!.ok ? '' : refusals[1]!.why, /not the one its target names/);
+    assert.match(refusals[2]!.ok ? '' : refusals[2]!.why, /which translation/);
+    assert.equal(w.saves.length, 1, 'nothing else was saved');
+    assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[tag.id, 'implemented']]);
   } finally { w.done(); }
 });
 

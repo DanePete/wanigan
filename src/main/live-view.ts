@@ -59,10 +59,12 @@ export interface LiveViewWiring {
   current(): LiveCurrent | null;
   /**
    * Save words to a plain text field through the site helper (`POST /_wanigan/save`), as the user logged in in the
-   * view: what the window's helperSave and the design layer's implement both do. Null when the view shows no local
-   * site with a helper.
+   * view: what the window's helperSave and the design layer's implement both do. `at` is where the design layer's edit
+   * was made (the content's UUID, its translation, the item): the save goes there and nowhere else. The window's
+   * own save names none: its translation is the one the page marked, and the field's one item holding the words.
+   * Null when the view shows no local site with a helper.
    */
-  helperSave(field: unknown, before: unknown, after: unknown): Promise<HelperSaved | null>;
+  helperSave(field: unknown, before: unknown, after: unknown, at?: SaveAt | null): Promise<HelperSaved | null>;
   /** Run code in the page script's isolated world (putting the script in first); `fallback` when it cannot. */
   run<T>(code: string, fallback: T): Promise<T>;
   /**
@@ -115,6 +117,9 @@ export interface LiveCurrent {
 
 /** What a helper save came to: the site's answer, or how it did not answer. */
 export interface HelperSaved { ok: boolean; error: string | null; label: string | null; failure?: LiveFailure | null; revision?: string | null }
+
+/** Where words are saved, as an edit's target names it: the content's UUID, its translation, and the item (`delta:<n>`, `ref:<type>:<uuid>`), or null for the one item holding the words. */
+export interface SaveAt { uuid: string; langcode: string; item: string | null }
 
 /** Where what is built on the view hears of it: a project's session locked down, a view made or gone. */
 export interface LiveViewHooks {
@@ -554,14 +559,21 @@ export function wireLiveView(options: {
     return token ? { wc: view.webContents, origin: new URL(view.webContents.getURL() || base).origin, token, id: projectId } : null;
   };
 
-  const helperSave = async (field: unknown, before: unknown, after: unknown): Promise<HelperSaved | null> => {
+  const helperSave = async (field: unknown, before: unknown, after: unknown, at?: SaveAt | null): Promise<HelperSaved | null> => {
     const site = local();
     if (!site) return null;
     if (typeof field !== 'string' || !/^[a-z0-9_]+:[^:\s]{1,64}:[a-z0-9_]+/.test(field) || typeof before !== 'string' || typeof after !== 'string') return { ok: false, error: 'That is not a field Wanigan can save to.', label: null };
+    const name = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
+    if (at && (!name.test(at.uuid) || !/^[A-Za-z0-9_-]{1,32}$/.test(at.langcode) || (at.item !== null && !/^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\d{1,6})$/.test(at.item)))) {
+      return { ok: false, error: 'That is not a place in the content Wanigan can save to.', label: null };
+    }
     try {
       const res = await site.wc.session.fetch(`${site.origin}/_wanigan/save`, {
         method: 'POST', credentials: 'include', headers: { 'X-Wanigan-Live': site.token, Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, before: before.slice(0, 2_000), after: after.slice(0, 2_000) }),
+        body: JSON.stringify({
+          field, before: before.slice(0, 2_000), after: after.slice(0, 2_000),
+          ...(at ? { uuid: at.uuid, langcode: at.langcode, ...(at.item ? { item: at.item } : {}) } : {}),
+        }),
       });
       const data = await res.json().catch(() => null) as { ok?: boolean; error?: string; label?: string; revision?: unknown } | null;
       return data && typeof data === 'object' ? {

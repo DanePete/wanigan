@@ -267,11 +267,14 @@ function wanigan_live_preprocess_field(array &$variables) {
   if (!$entity instanceof FieldableEntityInterface || $entity->isNew()) {
     return;
   }
+  // The language last: the translation the page rendered, which a save of
+  // these words goes to (LiveController::save()).
   $variables['attributes']['data-wl-field'] = implode(':', [
     $entity->getEntityTypeId(),
     (string) $entity->id(),
     (string) ($element['#field_name'] ?? ''),
     (string) ($element['#field_type'] ?? ''),
+    $entity->language()->getId(),
   ]);
 }
 
@@ -365,7 +368,9 @@ use Drupal\\Core\\Access\\AccessResult;
 use Drupal\\Core\\Access\\AccessResultInterface;
 use Drupal\\Core\\Controller\\ControllerBase;
 use Drupal\\Core\\Entity\\ContentEntityInterface;
+use Drupal\\Core\\Entity\\EntityInterface;
 use Drupal\\Core\\Entity\\RevisionLogInterface;
+use Drupal\\Core\\Field\\FieldItemInterface;
 use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
 use Drupal\\wanigan_live\\Library\\Library;
@@ -437,18 +442,37 @@ final class LiveController extends ControllerBase {
   }
 
   /**
-   * Saves new words to a plain text field, as the logged-in user.
+   * Saves new words to one item of a plain text field, in one translation,
+   * as the logged-in user.
+   *
+   * The field is named as the page marked it (data-wl-field: entity type,
+   * id, field name, field type, and the language the page rendered). The
+   * design layer names its edit's target too: the content's UUID, its
+   * language, and the item (a value's delta:<n>, a reference's
+   * ref:<type>:<uuid>). The words go to that translation, never another,
+   * and to that item only, which must hold the words before. Without an
+   * item, the one item holding the words before is saved; two that hold
+   * them are refused, never guessed between. A refusal saves nothing.
    */
   public function save(Request $request): JsonResponse {
     $body = json_decode((string) $request->getContent(), TRUE);
     if (!is_array($body)) {
       return $this->refuse('The request was not JSON.', 400);
     }
-    [$type, $id, $name] = array_pad(explode(':', (string) ($body['field'] ?? '')), 3, '');
+    [$type, $id, $name, , $marked] = array_pad(explode(':', (string) ($body['field'] ?? '')), 5, '');
     $before = $this->words((string) ($body['before'] ?? ''));
     $after = trim((string) ($body['after'] ?? ''));
     if ($type === '' || $id === '' || $name === '' || $after === '') {
       return $this->refuse('Which field, and what words?', 400);
+    }
+    $given = static fn (string $key): ?string => is_string($body[$key] ?? NULL) && $body[$key] !== '' ? $body[$key] : NULL;
+    $langcode = $given('langcode') ?? ($marked !== '' ? $marked : NULL);
+    $item = $given('item');
+    $uuid = $given('uuid');
+    if (($langcode !== NULL && !preg_match('/^[A-Za-z0-9_-]{1,32}$/', $langcode))
+      || ($item !== NULL && !preg_match('~^(?:ref:[A-Za-z0-9_.:/@+-]{1,200}|delta:\\d{1,6})$~', $item))
+      || ($uuid !== NULL && !preg_match('~^[A-Za-z0-9_.:/@+-]{1,200}$~', $uuid))) {
+      return $this->refuse('Which translation, and which item of the field?', 400);
     }
     if (!$this->entityTypeManager()->hasDefinition($type)) {
       return $this->refuse('There is no such kind of content.', 404);
@@ -457,6 +481,22 @@ final class LiveController extends ControllerBase {
     if (!$entity instanceof ContentEntityInterface || !$entity->hasField($name)) {
       return $this->refuse('There is no such content, or it has no such field.', 404);
     }
+    if ($uuid !== NULL && $entity->uuid() !== $uuid) {
+      return $this->refuse('The field marked on the page is not in the content this edit was made on. Reload, and try again.', 409);
+    }
+    if ($langcode === NULL) {
+      // A page from before the language was marked: only content with one
+      // translation has one place for the words.
+      if (count($entity->getTranslationLanguages()) > 1) {
+        return $this->refuse('The page did not say which translation these words are in, so they are not saved to any. Reload, and try again.', 409);
+      }
+    }
+    elseif (!$entity->hasTranslation($langcode)) {
+      return $this->refuse('This content has no translation in that language, so the words are not saved to another one. Translate it in Drupal first.', 409);
+    }
+    else {
+      $entity = $entity->getTranslation($langcode);
+    }
     if (!$entity->access('update') || !$entity->get($name)->access('edit')) {
       return $this->refuse('The user you are logged in as in the live view may not change this. Log in there as someone who may.', 403);
     }
@@ -464,16 +504,25 @@ final class LiveController extends ControllerBase {
     if (!in_array($field->getFieldDefinition()->getType(), ['string', 'string_long'], TRUE)) {
       return $this->refuse('This field holds formatted text or another kind of value, so new words typed on the page could lose its formatting. Change it in Drupal, or ask an agent.', 409);
     }
-    $delta = NULL;
-    foreach ($field as $i => $item) {
-      if ($this->words((string) $item->value) === $before) {
-        $delta = $i;
-        break;
+    $deltas = [];
+    foreach ($field as $i => $value) {
+      if ($item !== NULL ? $this->names($value, (int) $i, $item) : $this->words((string) $value->value) === $before) {
+        $deltas[] = (int) $i;
       }
     }
-    if ($delta === NULL) {
+    if ($item !== NULL && count($deltas) !== 1) {
+      return $this->refuse('The item this edit was made on is not in the field any more: it changed since the page loaded. Reload, and try again.', 409);
+    }
+    if ($item !== NULL && $this->words((string) $field->get($deltas[0])->value) !== $before) {
+      return $this->refuse('That item of the field no longer holds those words: it changed since the page loaded. Reload, and try again.', 409);
+    }
+    if (!$deltas) {
       return $this->refuse('The field no longer holds those words: it changed since the page loaded. Reload, and try again.', 409);
     }
+    if (count($deltas) > 1) {
+      return $this->refuse('More than one item of this field holds those words, and the page did not say which one it showed, so none is changed. Change it in Drupal.', 409);
+    }
+    $delta = $deltas[0];
     $field->get($delta)->value = $after;
     if ($entity->getEntityType()->isRevisionable()) {
       $entity->setNewRevision(TRUE);
@@ -490,7 +539,24 @@ final class LiveController extends ControllerBase {
       }
     }
     $entity->save();
-    return $this->json(['ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label()]);
+    // The revision the words are in, where the content keeps revisions.
+    $revision = $entity->getEntityType()->isRevisionable() ? $entity->getRevisionId() : NULL;
+    return $this->json(['ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label(), 'revision' => $revision !== NULL ? (string) $revision : NULL]);
+  }
+
+  /**
+   * Whether a field item is the one an identity names: a value by its delta,
+   * a reference by the entity it refers to.
+   */
+  private function names(FieldItemInterface $value, int $delta, string $item): bool {
+    if (preg_match('/^delta:(\\d{1,6})$/', $item, $m)) {
+      return $delta === (int) $m[1];
+    }
+    if (preg_match('/^ref:([^:]+):(.+)$/', $item, $m)) {
+      $target = $value->entity ?? NULL;
+      return $target instanceof EntityInterface && $target->getEntityTypeId() === $m[1] && $target->uuid() === $m[2];
+    }
+    return FALSE;
   }
 
   /**

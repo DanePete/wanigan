@@ -318,7 +318,10 @@ or the project.
    elements that is on this page, and its computed values as `before`.
 3. `layerImplement(id)` makes a text edit real where it is plain words in a
    plain text field the helper can save (`helperSave`, as the logged-in user,
-   a revision where the site keeps them), and marks it `implemented`. Anything
+   a revision where the site keeps them), to exactly the content, translation
+   and item its target's identity names (its UUID, langcode and item, never
+   the default language or the first item holding the same words; a target
+   that names no field is refused), and marks it `implemented`. Anything
    else answers `route: 'agent'` (styles, until phase 3) or `route: 'none'`,
    with why.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
