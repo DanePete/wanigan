@@ -280,10 +280,10 @@ function between(p: Pixels, x: number, y: number, q: Pixels, qx: number, qy: num
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
-    // A little past the range, more where it is wide: a scaled picture's filter overshoots at an edge or a speckle,
+    // A little past the range, more where it is wide: a scaled picture’s filter overshoots at an edge or a speckle,
     // and a flat area (no range) keeps its own colour to within 2 levels.
     const v = p.data[at + ch]!;
-    const room = 2 + (hi - lo) / 3;
+    const room = 2 + (hi - lo) / 2;
     if (v < lo - room || v > hi + room) return false;
   }
   return true;
