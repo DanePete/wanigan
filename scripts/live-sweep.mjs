@@ -361,11 +361,12 @@ try {
         await page.locator('.live-layer', { hasText: 'Search' }).first().click();
         await page.waitForSelector('.live-split-part .live-inspector', { timeout: 3000 }).catch(() => fail(t('layers: choosing Search showed no details beside the tree')));
         const split = await page.evaluate(() => {
-          const tree = document.querySelector('.live-split-tree .live-tree')?.getBoundingClientRect();
+          const tree = document.querySelector('.live-split-tree:has(.live-tree)')?.getBoundingClientRect();
           const part = document.querySelector('.live-split-part')?.getBoundingClientRect();
-          return { tree: !!tree, above: !!tree && !!part && tree.bottom <= part.top + 1 && tree.height > 0 };
+          const side = document.querySelector('.live-side');
+          return { tree: !!tree, above: !!tree && !!part && tree.bottom <= part.top + 1 && tree.height > 0 && part.height > tree.height, top: side?.scrollTop };
         });
-        if (!split.tree || !split.above) fail(t(`layers: with a part chosen the tree is not above its details (${JSON.stringify(split)})`));
+        if (!split.tree || !split.above || split.top !== 0) fail(t(`layers: with a part chosen the tree is not above its details, both in view (${JSON.stringify(split)})`));
         if ((await marked()) !== 'Search') fail(t(`layers: the tree marks ${await marked() || 'nothing'}, not Search`));
         const folded = await rowsNow();
         if (folded >= rowsAlone) fail(t(`layers: the tree is not folded to Search's branch (${folded} rows, ${rowsAlone} alone)`));
@@ -427,6 +428,8 @@ try {
 
       // The dock beneath the page: Code, Notes, Problems, Request. Closed, its tabs wait in a strip; ⇧] and ⇧[ step
       // through them, opening it; ⌘J is the code editor's (from Notes it shows Code, then hides the dock).
+      // Closed first (it was left on Request above).
+      if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
       const strip = await page.$$eval('.dock-collapsed button', (els) => els.map((e) => e.textContent.trim()));
       if (strip.join() !== 'Code,Notes,Problems,Request') fail(t(`layout: the closed dock offers ${strip.join(', ')}`));
       await nobody();

@@ -5,7 +5,7 @@
 // both (WIDE, the same width as the stylesheet's). The tree keeps the chosen
 // part marked as the choice changes from the page. Escape, in either, goes
 // back to the tree alone, unfolded as it was.
-import { useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 
 /** From this window width the tree sits beside the chosen part (live.css says the same). */
 const WIDE = '(min-width: 1680px)';
@@ -38,6 +38,13 @@ export function LayersPane({ part, before, tree, after, onBack }: {
   onBack: () => void;
 }) {
   const beside = useTreeBeside();
+  const box = useRef<HTMLDivElement>(null);
+  // With a part chosen the panel itself no longer scrolls (the tree and the details each do): it starts at its top.
+  const chosen = !!part;
+  useLayoutEffect(() => {
+    const side = box.current?.closest<HTMLElement>('.live-side');
+    if (chosen && side) side.scrollTop = 0;
+  }, [chosen]);
   const keys = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (!part || e.defaultPrevented || e.key !== 'Escape' || (e.target as Element).closest('input, textarea, select, [role="menu"], .sel-list')) return;
     e.preventDefault();
@@ -45,7 +52,7 @@ export function LayersPane({ part, before, tree, after, onBack }: {
   };
   // One shape whether a part is chosen or not, so the tree is never mounted again: it keeps what is open.
   return (
-    <div className={`live-split${part ? ' with-part' : ''}`} data-beside={part && beside ? '' : undefined}>
+    <div className={`live-split${part ? ' with-part' : ''}`} data-beside={part && beside ? '' : undefined} ref={box}>
       <div className="live-split-tree" onKeyDown={keys}>
         {part ? null : before}
         {tree}

@@ -616,8 +616,10 @@
   flex-shrink: 0;
 }
 
+/* The panel is the tree's container: above the details the tree takes a share of its height, whatever the dock leaves. */
 .live-side.with-part {
   overflow: hidden;
+  container-type: size;
 }
 
 .live-side > .live-split.with-part {
@@ -625,12 +627,14 @@
   min-height: 0;
 }
 
+/* The tree's rows reach into the panel's padding (.live-tree's margin): its box does too, so they are not cut off. */
 .live-split.with-part > .live-split-tree {
   flex: none;
   max-height: var(--live-tree-above);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2) var(--space-3);
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--line);
 }
 
@@ -658,7 +662,8 @@
   .live-split.with-part > .live-split-tree {
     width: var(--live-split-tree);
     max-height: none;
-    padding: 0 var(--space-4) 0 0;
+    margin: 0 0 0 calc(-1 * var(--space-2));
+    padding: 0 var(--space-3) 0 var(--space-2);
     border-bottom: 0;
     border-right: 1px solid var(--line);
   }

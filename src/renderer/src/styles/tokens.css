@@ -67,9 +67,9 @@
   --live-side-w: 340px;
   --live-side-wide: 440px;
   --live-side-split: 640px;
-  /* The tree beside a chosen part's details, and its height above them. */
+  /* The tree beside a chosen part's details, and its height above them: a share of the side panel (its container). */
   --live-split-tree: 260px;
-  --live-tree-above: 30vh;
+  --live-tree-above: 40cqh;
   /* The Code tab's files, beside the editor. */
   --code-tree-w: 264px;
   --rail-w-folded: 56px;

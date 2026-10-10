@@ -31,6 +31,17 @@ function visibleRows(layers: readonly Layer[], open: ReadonlySet<string>, depth 
   return out;
 }
 
+/** Bring a row into view in the box that scrolls it, and only there: the panel around the tree stays where it is. */
+function reveal(row: HTMLElement): void {
+  let box = row.parentElement;
+  while (box && !(box.scrollHeight > box.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+  if (!box) return;
+  const r = row.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  if (r.top < b.top) box.scrollTop -= b.top - r.top;
+  else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+}
+
 export function Layers({ regions, components, selected, fold = false, changed, onHover, onSelect, partName }: {
   regions: LiveRegion[];
   components: Map<string, LiveComponent>;
@@ -51,6 +62,13 @@ export function Layers({ regions, components, selected, fold = false, changed, o
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const tree = useRef<HTMLUListElement>(null);
+  // Where the pointer last really was: a fold moving rows under a still pointer is not the owner pointing at another part.
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const pointed = (e: { clientX: number; clientY: number }): boolean => {
+    const was = pointer.current;
+    pointer.current = { x: e.clientX, y: e.clientY };
+    return !was || was.x !== e.clientX || was.y !== e.clientY;
+  };
 
   // The top level starts open, and so does the way down to every component and piece of content (what the
   // owner came to find), and to what is chosen or changed.
@@ -66,23 +84,17 @@ export function Layers({ regions, components, selected, fold = false, changed, o
     });
   }, [layers, regions, changed, selected]);
 
-  // Folded to the chosen part's branch: the top level, and the way down to it. What was open comes back unfolded.
-  const unfolded = useRef<Set<string> | null>(null);
-  useEffect(() => {
+  // Folded to the chosen part's branch: the top level, and the way down to it. Derived in the same render as the
+  // choice, so the tree never shows a frame of the old one; what is opened or closed while folded lasts until the
+  // choice changes. `open` itself is left alone, so the tree comes back unfolded exactly as it was.
+  const folded = useMemo(() => {
     const path = fold && selected !== null ? pathTo(layers, selected) : [];
-    if (!path.length) {
-      const was = unfolded.current;
-      unfolded.current = null;
-      if (was) setOpen(was);
-      return;
-    }
-    setOpen((was) => {
-      unfolded.current ??= was;
-      return new Set(path.slice(0, -1).map((l) => l.key));
-    });
+    return path.length ? new Set(path.slice(0, -1).map((l) => l.key)) : null;
   }, [fold, selected, layers]);
+  const [foldFlips, setFoldFlips] = useState<{ base: ReadonlySet<string>; open: ReadonlySet<string> } | null>(null);
+  const shown: ReadonlySet<string> = folded ? (foldFlips?.base === folded ? foldFlips.open : folded) : open;
 
-  const rows = useMemo(() => visibleRows(layers, open), [layers, open]);
+  const rows = useMemo(() => visibleRows(layers, shown), [layers, shown]);
   // The chosen row is where the keys start, and is brought into view, however it was chosen (the page, the library).
   const chosenKey = useMemo(() => (selected === null ? null : pathTo(layers, selected).at(-1)?.key ?? null), [layers, selected]);
   useEffect(() => { if (chosenKey) setFocus(chosenKey); }, [chosenKey]);
@@ -93,7 +105,7 @@ export function Layers({ regions, components, selected, fold = false, changed, o
     // Once its row is drawn (folding to it may draw it a moment later), and once: the owner may scroll away.
     const row = tree.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(chosenKey)}"]`);
     if (!row) return;
-    row.scrollIntoView({ block: 'nearest' });
+    reveal(row);
     scrolledTo.current = chosenKey;
   }, [chosenKey, rows]);
   const changedKeys = useMemo(() => {
@@ -114,11 +126,15 @@ export function Layers({ regions, components, selected, fold = false, changed, o
     setFocus(key);
     requestAnimationFrame(() => tree.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)?.focus());
   };
-  const flip = (key: string, to?: boolean): void => setOpen((was) => {
-    const next = new Set(was);
-    if (to ?? !next.has(key)) next.add(key); else next.delete(key);
-    return next;
-  });
+  const flip = (key: string, to?: boolean): void => {
+    const toggled = (was: ReadonlySet<string>): Set<string> => {
+      const next = new Set(was);
+      if (to ?? !next.has(key)) next.add(key); else next.delete(key);
+      return next;
+    };
+    if (folded) setFoldFlips({ base: folded, open: toggled(shown) });
+    else setOpen(toggled);
+  };
 
   const keys = (e: KeyboardEvent<HTMLUListElement>): void => {
     const at = rows.findIndex((r) => r.layer.key === current);
@@ -131,11 +147,11 @@ export function Layers({ regions, components, selected, fold = false, changed, o
       case 'Home': move(rows[0]?.layer.key ?? null); break;
       case 'End': move(rows.at(-1)?.layer.key ?? null); break;
       case 'ArrowRight':
-        if (layer.children.length && !open.has(layer.key)) flip(layer.key, true);
+        if (layer.children.length && !shown.has(layer.key)) flip(layer.key, true);
         else if (layer.children.length) move(layer.children[0]?.key ?? null);
         break;
       case 'ArrowLeft':
-        if (layer.children.length && open.has(layer.key)) flip(layer.key, false);
+        if (layer.children.length && shown.has(layer.key)) flip(layer.key, false);
         else move(row.parent);
         break;
       case 'Enter':
@@ -150,9 +166,10 @@ export function Layers({ regions, components, selected, fold = false, changed, o
   if (!layers.length) return null;
   return (
     <div className="live-layers">
-      <ul className="live-tree" role="tree" aria-label="Parts of this page" ref={tree} onKeyDown={keys} onMouseLeave={() => onHover(null, null)}>
+      <ul className="live-tree" role="tree" aria-label="Parts of this page" ref={tree} onKeyDown={keys}
+        onMouseMove={(e) => { pointer.current = { x: e.clientX, y: e.clientY }; }} onMouseLeave={() => { pointer.current = null; onHover(null, null); }}>
         {rows.map(({ layer, depth }) => {
-          const isOpen = open.has(layer.key);
+          const isOpen = shown.has(layer.key);
           const chosen = layer.regions.some((r) => r.index === selected) || layer.merged.some((r) => r.index === selected);
           const theirs = layer.name.origin === 'contrib' || layer.name.origin === 'core';
           const label = layer.regions.length > 1 ? `${layer.name.title} ×${layer.regions.length}` : layer.name.title;
@@ -162,7 +179,7 @@ export function Layers({ regions, components, selected, fold = false, changed, o
               className={`live-layer${chosen ? ' on' : ''}${theirs ? ' theirs' : ''}`} style={{ '--depth': depth } as CSSProperties}
               title={layer.merged.length ? layer.merged.map((m) => nameOf(m).title).join(' › ') : undefined}
               onFocus={() => setFocus(layer.key)}
-              onMouseEnter={() => onHover(layer.regions, label)}
+              onMouseEnter={(e) => { if (pointed(e)) onHover(layer.regions, label); }}
               onClick={() => { setFocus(layer.key); onSelect(layer.region); }}>
               {layer.children.length ? (
                 <span className={`live-layer-twist${isOpen ? ' open' : ''}`} aria-hidden="true"
