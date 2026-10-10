@@ -1,5 +1,6 @@
 // Whether a bar's controls fit: none drawn over another, none cut off by the
-// bar or by what holds it. Measured in the page from each control's box and
+// bar or by what holds it (the live view's bar and status line, the project's
+// tab bar). Measured in the page from each control's box and
 // every box drawn inside it (a label or a key that spills out of its button
 // counts where it is drawn), not from what the stylesheet intends. Used by
 // the live sweep for the live view's bar and the project's tab bar, at the
@@ -73,6 +74,10 @@ export function fitProblems() {
   const bar = document.querySelector('.live-bar');
   if (!bar) problems.push('no live bar');
   else fits('the live bar', bar, controls(bar, 'button, input, select, .live-lens-pick'), room(bar));
+
+  // The live view's status line: what was said, what the view follows, the keys; never drawn under the dock.
+  const status = document.querySelector('.live-status');
+  if (status) fits('the status line', status, [...status.children].filter(visible), room(status));
 
   // The project's bar: its title, its tools, and its tabs. Tabs may scroll within their own strip, but the strip,
   // the tab shown and everything else must be whole, and the bar must stay inside the view beside the dock.

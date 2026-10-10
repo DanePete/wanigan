@@ -14,9 +14,12 @@
 /* ── the bar ─────────────────────────────────────────────────────────────── */
 
 .live-bar {
+  /* What the bar shows depends on the width the page gets (the window, the rail, the dock beside it): see below. */
+  container: live-bar / inline-size;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2) var(--space-1);
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -36,16 +39,22 @@
   }
 }
 
-/* Three groups: the site (one menu), the page (where, how wide, which lens), the tools (Pick, and the rest). */
+/*
+  Three groups: the site (one menu), the page (where, how wide, which lens), the tools (Pick, and the rest).
+  A group is never narrower than what it holds (nothing in it is drawn over the next group); the page's
+  address field is what gives. As the bar narrows: the address gives up its hint, then shrinks to its least
+  (it opens Go to, which is as wide as it needs); then the tools show their icons alone (each keeps its name
+  as its accessible name and its tooltip); then the tools take a row of their own, their names back.
+*/
 .live-bar-group {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-1);
-  min-width: 0;
 }
 
 .live-bar-page {
-  flex: 1;
+  flex: 1 1 0;
 }
 
 .live-bar-site {
@@ -76,10 +85,11 @@
   color: var(--water-ink);
 }
 
-/* Where a page is typed: it opens Go to over itself (components/live/GoTo.tsx). */
+/* Where a page is typed: it opens Go to over itself (components/live/GoTo.tsx). It takes what the bar has left. */
 .live-address {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 0;
+  width: 0;
+  min-width: var(--live-address-min);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -132,6 +142,39 @@
 /* Beside a terminal the address needs the room: the hint gives it up. */
 .live-compact .live-address-hint {
   display: none;
+}
+
+@container live-bar (max-width: 1160px) {
+  .live-address-hint {
+    display: none;
+  }
+}
+
+@container live-bar (max-width: 960px) {
+  .live-bar-tools .live-tool-name,
+  .live-bar-tools .live-key,
+  .live-lens-pick .live-key {
+    display: none;
+  }
+}
+
+@container live-bar (max-width: 740px) {
+  .live:not(.live-compact) .live-bar-tools {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .live:not(.live-compact) .live-bar-tools .live-tool-name,
+  .live:not(.live-compact) .live-bar-tools .live-key {
+    display: inline;
+  }
+
+  .live-lens-pick > svg {
+    display: none;
+  }
 }
 
 /* ── the stage and its side ──────────────────────────────────────────────── */
@@ -341,6 +384,7 @@
   work now. The Talk to Wanigan button sits over its right end.
 */
 .live-status {
+  container: live-status / inline-size;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -396,7 +440,8 @@
   font-size: var(--text-2xs);
 }
 
-@media (max-width: 1280px) {
+/* The keys are a reminder: where the line has no room for them (a small window, the dock beside), they give way. */
+@container live-status (max-width: 1000px) {
   .live-status-keys {
     display: none;
   }

@@ -820,21 +820,23 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           {!compact ? <LensPicker lens={lens} onChange={setLens} disabled={!hasScript} openRef={lensOpen} /> : null}
         </div>
         <div className="live-bar-group live-bar-tools" role="group" aria-label="Tools">
+          {/* Named by aria-label too: in a narrow bar the names give way to the icons (live.css), never the accessible name. */}
           <Button size="s" tone={picking ? 'primary' : 'quiet'} icon="pick" onClick={() => void pick()} disabled={!hasScript} aria-keyshortcuts="P"
+            aria-label={picking ? 'Picking… (P or Escape stops)' : 'Pick (P)'}
             title={hasScript ? 'Point at something on the page to see what made it, or walk the page with the arrows: Enter picks, P or Escape stops (P)' : 'This build of Wanigan has no page script'} aria-pressed={picking}>
-            {picking ? 'Picking…' : 'Pick'}<kbd className="live-key" aria-hidden="true">P</kbd>
+            <span className="live-tool-name">{picking ? 'Picking…' : 'Pick'}</span><kbd className="live-key" aria-hidden="true">P</kbd>
           </Button>
           {!compact ? (
             <Button size="s" tone={library ? 'primary' : 'quiet'} icon="pieces" onClick={() => setLibrary(!library)} aria-keyshortcuts="Shift+B" aria-pressed={library}
-              title="The site’s component library: what it can place, pictured, and added to the page from there (⇧B)">
-              Library<kbd className="live-key" aria-hidden="true">⇧B</kbd>
+              aria-label="Library (⇧B)" title="The site’s component library: what it can place, pictured, and added to the page from there (⇧B)">
+              <span className="live-tool-name">Library</span><kbd className="live-key" aria-hidden="true">⇧B</kbd>
             </Button>
           ) : null}
           {!compact ? (
             <Button size="s" tone={tray ? 'primary' : 'quiet'} icon="brush" onClick={() => openTray(!tray)} aria-keyshortcuts="Shift+E" aria-pressed={tray}
               aria-label={`Edits${layer.drafts ? `, ${layer.drafts} ${layer.drafts === 1 ? 'draft' : 'drafts'}` : ''}: the design layer (⇧E)`}
               title="Your edits to the page, kept in Wanigan’s design layer: made real in the site and verified from here (⇧E)">
-              Edits{layer.drafts ? <span className="live-layer-count" aria-hidden="true">{layer.drafts}</span> : null}<kbd className="live-key" aria-hidden="true">⇧E</kbd>
+              <span className="live-tool-name">Edits</span>{layer.drafts ? <span className="live-layer-count" aria-hidden="true">{layer.drafts}</span> : null}<kbd className="live-key" aria-hidden="true">⇧E</kbd>
             </Button>
           ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CardSummary, ProjectSummary, Session } from '@shared/model';
 import { attempt, bridge, call, forProject, useQuery } from '../lib/api';
 import { shortcutFor } from '@shared/shortcuts';
@@ -13,12 +13,37 @@ import { ChangesView } from './ChangesView';
 import { HistoryView } from './HistoryView';
 import type { DialogState } from '../App';
 
+/**
+ * Where the tabs scroll (a narrow view: shell.css), the tab shown stays in view: when it changes, and when the
+ * strip is resized (the window, the dock beside the view). Only the strip scrolls, never the view.
+ */
+function useShownTabInView(view: View) {
+  const strip = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = strip.current;
+    if (!el) return undefined;
+    const reveal = (): void => {
+      const tab = el.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!tab || el.scrollWidth <= el.clientWidth) return;
+      const left = tab.offsetLeft - el.offsetLeft;
+      if (left < el.scrollLeft) el.scrollLeft = left;
+      else if (left + tab.offsetWidth > el.scrollLeft + el.clientWidth) el.scrollLeft = left + tab.offsetWidth - el.clientWidth;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [view]);
+  return strip;
+}
+
 export function ProjectView({ project, view, setDialog }: { project: ProjectSummary; view: View; setDialog: (d: DialogState) => void }) {
   const toast = useToast();
   const [pausing, setPausing] = useState(false);
   const [settings, setSettings] = useState(false);
   const resume = (): Promise<void> => attempt(() => call('projects.resume', { id: project.id }), (m) => toast(m, 'error'))
     .then((r) => { if (r) toast(`${project.name} resumed.`); });
+  const tabs = useShownTabInView(view);
   return (
     <section className={`view${view === 'code' ? ' view-code' : ''}`} aria-labelledby="project-title">
       <header className="topbar">
@@ -26,7 +51,7 @@ export function ProjectView({ project, view, setDialog }: { project: ProjectSumm
           <ProjectMark projectKey={project.key} />
           <h1 id="project-title">{project.name}</h1>
         </div>
-        <nav className="tabs" aria-label={`${project.name} views`}>
+        <nav className="tabs" aria-label={`${project.name} views`} ref={tabs}>
           {PROJECT_VIEWS.map((v) => (
             <a
               key={v.view}

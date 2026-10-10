@@ -261,8 +261,9 @@ function Resizer({ dock, size, what }: { dock: 'bottom' | 'right'; size: number;
   const limit = (): number => {
     const work = document.querySelector('.work')?.getBoundingClientRect();
     const room = work ? (dock === 'bottom' ? work.height : work.width) : 2000;
-    // Beside the view, the view keeps room for its own bar and tabs.
-    return Math.max(MIN_SIZE, room - (dock === 'bottom' ? MIN_SIZE : 640));
+    // Beside the view, the view keeps room for its own bar and tabs: the same room the stylesheet keeps (--view-min-beside).
+    const keep = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--view-min-beside')) || 640;
+    return Math.max(MIN_SIZE, room - (dock === 'bottom' ? MIN_SIZE : keep));
   };
   const clamp = (n: number): number => Math.round(Math.max(MIN_SIZE, Math.min(limit(), n)));
   const commit = (n: number): void => setPrefs(dock === 'bottom' ? { height: clamp(n) } : { width: clamp(n) });
