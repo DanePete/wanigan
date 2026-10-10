@@ -16,7 +16,7 @@ import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/l
 import { folderOf } from './live-capture.ts';
 import { saveSchemaEdit } from './live-edit-save.ts';
 import {
-  areasOf, beforeCheck, beforeKept, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
+  areasOf, beforeCheck, beforeKept, madeBy, madeOn, masksOf, pathOf, steadyOf, traceProblem, wireLiveLayer,
   type BeforeKept, type LayerBeforeRender, type LayerRender, type LayerRenderRequest,
 } from './live-layer.ts';
 import type { HelperSaved, SaveAt } from './live-view.ts';
@@ -956,6 +956,15 @@ test('WordPress: an element no named part holds is looked up in the templates ar
     for (const e of [inHeader, inPlugin, byPlugin]) assert.ok(!/cannot tell/.test(JSON.stringify(await w.implement(e.id))), 'the trace knew the file');
     assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []]);
   } finally { w.done(); }
+});
+
+test('WordPress: words in no template are said by what made their part, and by nothing the trace does not know', () => {
+  const at = (file: string, pkg: string, owner: 'theme' | 'plugin' | 'yours' = 'plugin') => ({ file, line: 3, owner, package: pkg });
+  assert.match(madeBy({ id: 's', kind: 'shortcode', label: '[northwind_events]', source: at('wp-content/plugins/northwind-events/northwind-events.php', 'northwind-events') }) ?? '', /^These words come from the plugin “northwind-events”: its code \(wp-content\/plugins\/northwind-events\/northwind-events\.php\)/);
+  assert.match(madeBy({ id: 'm', kind: 'widget', label: 'Hours widget', source: at('wp-content/mu-plugins/acme-hours.php', 'acme-hours', 'yours') }) ?? '', /the plugin “acme-hours”/, 'a must-use plugin is a plugin too');
+  assert.match(madeBy({ id: 't', kind: 'shortcode', label: '[acme_badge]', source: at('wp-content/themes/acme/inc/badge.php', 'acme', 'theme') }) ?? '', /^These words come from the theme “acme”: its code \(wp-content\/themes\/acme\/inc\/badge\.php\) made this part/);
+  assert.equal(madeBy({ id: 'n', kind: 'menu', label: 'Link: About', identity: { kind: 'config', type: 'menu_item', id: '31' } }), null, 'a menu item made by core, from nothing the trace says: unknown');
+  assert.equal(madeBy(null), null);
 });
 
 test('WordPress: an edit on one element of a template file loaded in several places reaches only the places showing its words', async () => {

@@ -501,9 +501,9 @@ const writtenWhy = (w: Written, fallback: string): string => [w.target.why ?? fa
 
 /**
  * WordPress: why words nothing the page offers holds, and no template around them writes, are not saved here, by what
- * the trace knows of the part they sit in (the innermost): made by a plugin, named by the file its code is in; made by
- * the PHP of a theme template the helper read, which is not guessed at; in a template the helper did not read, with
- * why. Null when the trace knows none of these: the caller says nothing holds them.
+ * the trace knows of the part they sit in (the innermost): made by a plugin, or by the theme's own code, named by the
+ * file it is in; made by the PHP of a theme template the helper read, which is not guessed at; in a template the
+ * helper did not read, with why. Null when the trace knows none of these: the caller says nothing holds them.
  */
 export function madeBy(p: TracePart | null): string | null {
   if (!p) return null;
@@ -513,7 +513,13 @@ export function madeBy(p: TracePart | null): string | null {
     const name = (p.source?.package || plugin[1] || '').replace(/\.php$/, '');
     return `These words come from the plugin “${name}”: its code (${file}) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. They change where the plugin keeps them: in its settings if it has one for them, or in its code, which Wanigan does not change.`;
   }
-  if (p.identity?.kind !== 'template') return null;
+  if (p.identity?.kind !== 'template') {
+    // A part the theme's own code made (a shortcode or widget it registers): code, which an agent can change.
+    const theme = file ? /(?:^|\/)themes\/([^/]+)\//.exec(file) : null;
+    return file && theme
+      ? `These words come from the theme “${p.source?.package || theme[1]}”: its code (${file}) made this part of the page, and nothing here holds them, so Wanigan does not save them from here. An agent can change that code from a brief.`
+      : null;
+  }
   const shown = file ?? p.identity.path;
   const read = p.variables?.find((v) => v.name === 'template.words')?.preview ?? '';
   if (/^read\b/.test(read)) {
