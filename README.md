@@ -202,6 +202,20 @@ WordPress and other sites can each be on or off.
   Builder), with undo; and the Go to launcher's list of pages. It names no module: anything
   built on Drupal core shows up through it. How it hooks core:
   [docs/research/2026-10-09-drupal-core-live-trace.md](docs/research/2026-10-09-drupal-core-live-trace.md).
+  The WordPress helper traces each render through WordPress core's hooks the
+  same way, and saves a part's change through core's REST API as you, where
+  core keeps it: a post's fields and meta; a block's words with their
+  formatting, or beside its nested blocks, written as that one block (cleaned
+  as core cleans bound rich text); words bound to a post field, in that field;
+  a synced pattern's words for every page that uses it, or one placement's own;
+  a template's or template part's words (the first save copies the theme's
+  file into the database, as the Site Editor does); a navigation menu's labels;
+  a classic widget's settings; an image's alt in the media library, beside an image
+  block's own. Each says where it shows. What WordPress keeps nowhere it can
+  write (a static block's settings, words from a theme's pattern file, a
+  fallback menu's links) says so, and so does what Wanigan does not do yet.
+  How it hooks core:
+  [docs/research/2026-10-09-wordpress-core-live-trace.md](docs/research/2026-10-09-wordpress-core-live-trace.md).
 - **The component library** (⇧B): everything the site can place, as its core
   lists it through the helper: Drupal's single-directory components and the
   block library's blocks, WordPress's block types, patterns and block styles.
@@ -670,8 +684,14 @@ verification results and the behavior that remains unverified.
   tested against ddev 1.25's JSON and a stand-in ddev; a real `ddev start` from
   the app has not been run, and ddev's wording when Docker is not running was
   read from its binary, not seen. Not built yet: Serve this card (switching which checkout ddev
-  serves), a component's props form, saving WordPress content by hand, and
-  Canvas pieces by their own ids. The Drupal helper's Layout Builder moves, and
+  serves), a component's props form, the design layer making words typed on a
+  WordPress page real (the window still sends them to a save only the Drupal
+  helper answers), and Canvas pieces by their own ids. The WordPress helper's
+  newer edits (formatted and nested words, one block written alone, bound
+  words, synced patterns and their overrides, template words, navigation
+  labels, widgets without REST instances, media alt) are tested under a
+  stand-in WordPress only: none has been saved on a real site yet, nor an
+  edited block opened in the block editor to see it called valid. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
   site. Retyped words saved on WordPress (a title, a menu link's text) are
   tested with stand-in pages, traces and a stand-in site, not yet seen against

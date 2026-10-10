@@ -126,6 +126,19 @@ final class Wanigan_Live {
 	const SECRET = '/pass|pwd|secret|token|nonce|auth|cookie|salt|session|api[_-]?key|private[_-]?key|credential|signature|hash/i';
 	/** A name, id or store a part's identity may carry: what parseIdentity() in src/shared/live-trace.ts accepts. */
 	const IDENT = '#^[A-Za-z0-9_.:/@+-]{1,200}$#';
+	/**
+	 * How every refusal that is not a permission, a lock or a change since the trace begins: with its cause. Either
+	 * WordPress core stores nothing that could be changed (the thing is code, or core keeps no such value), or core could
+	 * and Wanigan does not yet.
+	 */
+	const NO_SUCH = 'WordPress keeps no such thing: ';
+	const NOT_YET = 'Wanigan does not do this yet: ';
+	/**
+	 * The inline tags the block editor's own formats write (wp-includes/js/dist/format-library.js: bold, italic, link,
+	 * code, strikethrough, underline, inline colour, subscript, superscript, keyboard, language, inline image) and a
+	 * line break: what new rich text may hold, besides tags its element already had.
+	 */
+	const INLINE = array('STRONG', 'EM', 'A', 'CODE', 'S', 'SPAN', 'MARK', 'SUB', 'SUP', 'KBD', 'BDO', 'IMG', 'BR');
 
 	/**
 	 * Filters whose callbacks shape a part's output or data. While one of these runs for a traced part, each of its
@@ -858,13 +871,17 @@ final class Wanigan_Live {
 	private static function pending_block(array $args) {
 		$parsed = isset($args[2]) && is_array($args[2]) ? $args[2] : array();
 		$parent = isset($args[3]) ? $args[3] : null;
-		$p = (object) array('name' => isset($parsed['blockName']) ? $parsed['blockName'] : null, 'block' => $parsed, 'steps' => array(), 'start' => hrtime(true), 'q0' => self::$qcount, 'qms0' => self::$qms, 'map' => null, 'parent' => null);
+		$p = (object) array('name' => isset($parsed['blockName']) ? $parsed['blockName'] : null, 'block' => $parsed, 'steps' => array(), 'start' => hrtime(true), 'q0' => self::$qcount, 'qms0' => self::$qms, 'map' => null, 'smap' => null, 'parent' => null, 'frame' => null);
 		$i = $parent instanceof WP_Block ? self::frame_index(spl_object_id($parent)) : (self::$stack ? count(self::$stack) - 1 : null);
 		if ($i !== null) {
 			$index = self::$stack[$i]['children']++;
 			$map = self::$stack[$i]['map'];
 			if ($map && $p->name !== null) $p->map = self::map_child($map, $index, $parsed);
+			// Where its words are stored when that is not this page's own markup: a synced pattern's post.
+			$smap = isset(self::$stack[$i]['smap']) ? self::$stack[$i]['smap'] : null;
+			if (!$p->map && $smap && $p->name !== null) $p->smap = self::map_child($smap, $index, $parsed);
 			$p->parent = self::$stack[$i]['part'];
+			$p->frame = $i;
 		}
 		self::$pending_block = $p;
 		return $p;
@@ -905,7 +922,10 @@ final class Wanigan_Live {
 		$oid = spl_object_id($block);
 		$top = end(self::$stack);
 		if ($top && isset($top['block']) && $top['block'] === $oid) {
-			self::$stack[] = array('type' => 're', 'part' => $top['part'], 'block' => $oid, 'children' => 0, 'map' => null);
+			// blocks/block.php (7.1) renders a synced pattern's blocks as this same core/block's inner blocks: they are
+			// stored in the pattern's own wp_block post, and this placement is the host its overrides are kept in.
+			$ref = $block->name === 'core/block' && isset($block->attributes['ref']) ? (int) $block->attributes['ref'] : 0;
+			self::$stack[] = array('type' => 're', 'part' => $top['part'], 'block' => $oid, 'children' => 0, 'map' => null, 'smap' => $ref ? array('store' => 'post:' . $ref, 'path' => array()) : null, 'host' => $ref ? $top['part'] : null);
 			return;
 		}
 		$p = self::$pending_block;
@@ -916,10 +936,41 @@ final class Wanigan_Live {
 			self::$stack[] = array('type' => 'skip', 'part' => self::top_part(), 'block' => $oid, 'children' => 0, 'map' => null);
 			return;
 		}
+		// The frame it renders in: the one pre_render_block named, or, for a block another block's render callback
+		// renders directly (navigation renders its menu's blocks this way), the one on top.
+		$at = $p ? $p->frame : (self::$stack ? count(self::$stack) - 1 : null);
+		$parent = $at !== null && isset(self::$stack[$at]) ? self::$stack[$at] : array();
+		$smap = $p ? $p->smap : null;
+		if (!$p && !empty($parent['smap']) && $at !== null) {
+			$index = isset(self::$stack[$at]['direct']) ? self::$stack[$at]['direct'] : 0;
+			self::$stack[$at]['direct'] = $index + 1;
+			$smap = self::map_direct($parent['smap'], $index, $block->parsed_block);
+		}
 		$id = self::open('block', self::block_label($block->name), array(), array('block' => $oid), $p);
 		self::$meta[$id] = array('block' => $block->name, 'parsed' => $block->parsed_block, 'map' => $p ? $p->map : null, 'context' => is_array($block->context) ? $block->context : array());
+		if (!self::$meta[$id]['map'] && $smap) self::$meta[$id]['smap'] = $smap;
+		if (!empty($parent['host'])) self::$meta[$id]['host'] = $parent['host'];
+		// blocks/pattern.php renders a registered pattern's blocks from the registry each time: no store holds them.
+		if (!self::$meta[$id]['map'] && !$smap && !empty($parent['pattern'])) self::$meta[$id]['pattern'] = $parent['pattern'];
+		$f = count(self::$stack) - 1;
 		// Its inner blocks are found in the same stored tree.
-		if ($p && $p->map) self::$stack[count(self::$stack) - 1]['map'] = $p->map;
+		if ($p && $p->map) self::$stack[$f]['map'] = $p->map;
+		elseif ($smap) self::$stack[$f]['smap'] = $smap;
+		if (!empty($parent['host'])) self::$stack[$f]['host'] = $parent['host'];
+		if ($block->name === 'core/pattern' && !empty($block->attributes['slug'])) self::$stack[$f]['pattern'] = (string) $block->attributes['slug'];
+		elseif (!empty($parent['pattern'])) self::$stack[$f]['pattern'] = $parent['pattern'];
+		if (isset($parent['nav'])) self::$meta[$id]['nav'] = $parent['nav'];
+		if ($block->name === 'core/navigation') {
+			// blocks/navigation.php renders a published wp_navigation post's blocks (the ref, or the older navigationMenuId),
+			// each directly; with none, a fallback it builds each time.
+			$ref = isset($block->attributes['ref']) ? (int) $block->attributes['ref'] : (isset($block->attributes['navigationMenuId']) ? (int) $block->attributes['navigationMenuId'] : 0);
+			$menu = $ref ? get_post($ref) : null;
+			$ref = $menu instanceof WP_Post && $menu->post_type === 'wp_navigation' && $menu->post_status === 'publish' ? $ref : 0;
+			self::$stack[$f]['nav'] = $ref;
+			self::$stack[$f]['smap'] = $ref ? array('store' => 'post:' . $ref, 'path' => array()) : null;
+		} elseif (isset($parent['nav'])) {
+			self::$stack[$f]['nav'] = $parent['nav'];
+		}
 	}
 
 	/** "render_block_{$name}"'s last callback: the block's output, final. */
@@ -1649,7 +1700,11 @@ final class Wanigan_Live {
 		$field = isset($m['field']) ? $m['field'] : null;
 		if ($field === 'the_title') $p['edits'] = array($edits['title']);
 		elseif ($field === 'the_excerpt') $p['edits'] = isset($edits['excerpt']) ? array($edits['excerpt']) : array();
-		elseif ($field === 'post_thumbnail_html') $p['edits'] = isset($edits['featured']) ? array($edits['featured']) : array();
+		elseif ($field === 'post_thumbnail_html') {
+			$p['edits'] = isset($edits['featured']) ? array($edits['featured']) : array();
+			$alt = self::attachment_alt_edit((int) get_post_thumbnail_id($post));
+			if ($alt) $p['edits'][] = $alt;
+		}
 		else {
 			$p['edits'] = array_values($edits);
 			$p['variables'] = self::post_variables($post, $edits);
@@ -1701,7 +1756,7 @@ final class Wanigan_Live {
 		$noun = $type ? strtolower($type->labels->singular_name) : 'post';
 		$why = self::post_why($post, $noun);
 		$route = rest_get_route_for_post($post);
-		if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves its fields here. Change it in wp-admin.';
+		if (!$why && $route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves its fields. Change it in wp-admin.';
 		$revisions = post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post);
 		$title = $post->post_title !== '' ? '“' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”' : $noun . ' ' . $pid;
 		$out = array();
@@ -1856,19 +1911,37 @@ final class Wanigan_Live {
 			$nav = get_post((int) $attrs['ref']);
 			if ($nav && current_user_can('edit_theme_options')) $edits[] = self::link_edit('menu-link', 'Edit the navigation “' . $nav->post_title . '” in the Site Editor', admin_url('site-editor.php?p=' . rawurlencode('/wp_navigation/' . $nav->ID) . '&canvas=edit'), 'edit_theme_options', true);
 		}
-		if (!empty($m['bindings'])) {
-			foreach ($m['bindings'] as $b) {
-				if ($b['source'] === 'core/post-meta' && !empty($b['args']['key']) && isset($m['context']['postId'])) {
-					$post = get_post((int) $m['context']['postId']);
-					if ($post) {
-						$pe = self::post_edits($post);
-						if (isset($pe['meta:' . $b['args']['key']])) $edits[] = $pe['meta:' . $b['args']['key']];
-					}
-				}
+		$bound = isset($attrs['metadata']['bindings']) && is_array($attrs['metadata']['bindings']) ? $attrs['metadata']['bindings'] : array();
+		$supported = $bound ? self::spliced_attributes($name) : array();
+		foreach ($bound as $attr => $b) {
+			if (is_array($b) && isset($b['source']) && $b['source'] === 'core/post-meta' && in_array($attr, $supported, true)) {
+				$e = self::bound_edit($name, (string) $attr, $b, $m, $type);
+				if ($e) $edits[] = $e;
 			}
 		}
 		if (!empty($m['map'])) {
 			$e = self::block_edit($name, $type, $m['map']);
+			if ($e) $edits[] = $e;
+		} elseif (!empty($m['smap'])) {
+			// Stored in a synced pattern's own post: its words change every page that uses the pattern.
+			$e = self::block_edit($name, $type, $m['smap']);
+			if ($e) $edits[] = $e;
+		} elseif (!empty($m['pattern']) && self::has_words($type)) {
+			$edits[] = self::pattern_words($name, (string) $m['pattern']);
+		} elseif (isset($m['nav']) && $m['nav'] === 0 && self::has_words($type)) {
+			$edits[] = self::fallback_words($name);
+		}
+		if (!empty($m['host'])) {
+			$e = self::placement_edit($name, $type, $m, $attrs);
+			if ($e) $edits[] = $e;
+		}
+		// The image's alt in the media library, beside a block's own: what core prints wherever it prints the attachment.
+		$attachment = 0;
+		if ($name === 'core/image' && !empty($attrs['id'])) $attachment = (int) $attrs['id'];
+		elseif ($name === 'core/post-featured-image' && isset($m['context']['postId'])) $attachment = (int) get_post_thumbnail_id((int) $m['context']['postId']);
+		elseif ($name === 'core/site-logo') $attachment = (int) get_theme_mod('custom_logo');
+		if ($attachment) {
+			$e = self::attachment_alt_edit($attachment);
 			if ($e) $edits[] = $e;
 		}
 		if ($edits) $p['edits'] = $edits;
@@ -1972,9 +2045,11 @@ final class Wanigan_Live {
 	 * $attributes, block.json plus the attributes block supports add). WordPress builds a static block's markup in
 	 * the editor (its JavaScript save function), so a change made here may only be one the markup itself holds:
 	 * - a dynamic block that saved no markup: any attribute in its comment delimiter;
-	 * - a sourced attribute ("source": "rich-text", "html", "text" or "attribute" with a selector) whose element
-	 *   holds plain text, or whose attribute it is: the markup changes, and the editor reads it back the same.
-	 * Everything else is listed read-only, saying why.
+	 * - a sourced attribute ("source": "rich-text", "html", "text" or "attribute" with a selector): the HTML its
+	 *   element holds, formatting and all, up to its first inner block (as class-wp-block.php replace_html() splices
+	 *   bound rich text since 7.1), or the attribute it is. The markup changes, and the editor reads it back.
+	 * Everything else is listed read-only, saying why: what only the block's editor script writes is not something
+	 * WordPress keeps anywhere PHP can write it.
 	 */
 	private static function block_edit(string $name, $type, array $map): ?string {
 		$store = $map['store'];
@@ -1989,6 +2064,7 @@ final class Wanigan_Live {
 		foreach ($node['innerContent'] as $chunk) if (is_string($chunk)) $own .= $chunk;
 		$empty = trim($own) === '';
 		$bindings = isset($node['attrs']['metadata']['bindings']) && is_array($node['attrs']['metadata']['bindings']) ? $node['attrs']['metadata']['bindings'] : array();
+		$supported = $bindings ? self::spliced_attributes($name) : array();
 		$props = array();
 		$value = array();
 		$writable = 0;
@@ -1999,20 +2075,30 @@ final class Wanigan_Live {
 			$source = isset($def['source']) ? $def['source'] : null;
 			$why = null;
 			$current = null;
-			if (isset($bindings[$attr]) || (isset($bindings['__default']) && $source !== null)) {
-				$why = 'Bound to ' . (isset($bindings[$attr]['source']) ? $bindings[$attr]['source'] : 'a source') . ': it shows that source’s value, so change it there.';
+			// class-wp-block.php process_block_bindings() binds only the attributes bindings support for this block type.
+			if ((isset($bindings[$attr]) || isset($bindings['__default'])) && in_array($attr, $supported, true)) {
+				$b = isset($bindings[$attr]) ? $bindings[$attr] : $bindings['__default'];
+				// In the synced pattern's own post, an overridable block's words are the pattern's own: what every
+				// placement shows unless it overrides them.
+				$patterns_own = !empty($info['shared']) && is_array($b) && isset($b['source']) && $b['source'] === 'core/pattern-overrides';
+				if (!$patterns_own) $why = self::bound_why($b);
 			}
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (isset($def['default']) ? $def['default'] : null);
-				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'The editor’s own bookkeeping.';
-				if (!$why && !$dynamic) $why = 'WordPress writes this block’s markup from this setting in the editor, so it can change only there.';
-				if (!$why && !$empty) $why = 'This block saved markup the editor checks against its settings, so it can change only in the editor.';
+				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'Wanigan does not change this: it is the editor’s own bookkeeping (the block’s name, bindings and lock).';
+				if (!$why && !$dynamic) $why = self::NO_SUCH . 'this block’s markup is written from this setting by the block’s editor script, and WordPress has no PHP version of that script. Change it in the editor.';
+				if (!$why && !$empty) $why = self::NO_SUCH . 'this block saved markup its editor script wrote from its settings, and WordPress has no PHP version of that script to write it again. Change it in the editor.';
 			} elseif (in_array($source, array('rich-text', 'html', 'text'), true) || $source === 'attribute') {
-				$found = self::sourced($node, $def);
+				$found = self::sourced($node, $def, $name, $attr);
 				$current = $found['value'];
 				if (!$why && $found['why']) $why = $found['why'];
+				if (!$why && $name === 'core/image' && $attr === 'alt') $schema['description'] = 'This image block’s own alt text, kept in its markup. The image’s alt in the media library is a separate edit: that one is what a featured image or the site logo prints.';
+				if (!$why && $source !== 'attribute') {
+					$schema['contentMediaType'] = $source === 'text' ? 'text/plain' : 'text/html';
+					if ($source !== 'text') $schema['description'] = 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats). Saved as WordPress saves bound rich text: cleaned by wp_kses_post(), spliced into the block’s own element.';
+				}
 			} else {
-				$why = 'Read from the block’s markup (' . $source . '), which Wanigan does not rewrite.';
+				$why = self::NOT_YET . 'it is read from the block’s markup as “' . $source . '”, which Wanigan does not write. Change it in the editor.';
 			}
 			if ($why) {
 				$schema['readOnly'] = true;
@@ -2025,13 +2111,187 @@ final class Wanigan_Live {
 		}
 		$post = isset($info['post']) ? get_post($info['post']) : null;
 		$noun = $info['noun'];
-		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'], 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
+		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'] . (!empty($info['reach']) ? ' (' . $info['reach'] . ')' : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
 		$why = $info['why'];
 		if (!$why && !$writable) $why = 'Nothing in this block can change here: each setting says why. Change it in the editor.';
-		if (!$why && !self::round_trips($store)) $why = 'Writing this ' . $noun . '’s blocks back would change other parts of it (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged), so Wanigan does not save it. Change it in the editor.';
+		if (!$why) $why = self::writable_alone($store, $map['path'], $noun);
 		if ($why) $target['why'] = $why;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'block', 'store' => $store, 'path' => $map['path'], 'fp' => md5(serialize_block($node)), 'hash' => md5(self::$trees[$store]['content']), 'name' => $name);
+		return $id;
+	}
+
+	/**
+	 * One placement's own words for a block inside a synced pattern: blocks/block.php render_block_core_block() reads
+	 * them from the host core/block's "content" attribute, keyed by the inner block's metadata.name, and
+	 * block-bindings/pattern-overrides.php gives them to the block, so they change that placement only. Offered for the
+	 * attributes the pattern lets be overridden (a core/pattern-overrides binding, or "__default" for all of them), and
+	 * saved in the host's own comment delimiter, which is plain JSON: no markup to keep in step.
+	 */
+	private static function placement_edit(string $name, $type, array $m, array $attrs): ?string {
+		$mname = isset($attrs['metadata']['name']) && is_string($attrs['metadata']['name']) ? $attrs['metadata']['name'] : '';
+		$bindings = isset($attrs['metadata']['bindings']) && is_array($attrs['metadata']['bindings']) ? $attrs['metadata']['bindings'] : array();
+		if ($mname === '' || !$bindings || !$type) return null;
+		$open = array();
+		foreach (self::spliced_attributes($name) as $attr) {
+			$b = isset($bindings[$attr]) ? $bindings[$attr] : (isset($bindings['__default']) ? $bindings['__default'] : null);
+			if (is_array($b) && isset($b['source']) && $b['source'] === 'core/pattern-overrides' && isset($type->attributes[$attr]) && is_array($type->attributes[$attr])) $open[] = $attr;
+		}
+		if (!$open) return null;
+		$host = isset(self::$meta[$m['host']]) ? self::$meta[$m['host']] : array();
+		$hparsed = isset($host['parsed']) && is_array($host['parsed']) ? $host['parsed'] : array();
+		$ref = isset($hparsed['attrs']['ref']) ? get_post((int) $hparsed['attrs']['ref']) : null;
+		$title = $ref ? self::cut(wp_strip_all_tags($ref->post_title), 60) : '';
+		$hmap = isset($host['map']) ? $host['map'] : null;
+		$id = 'po-' . self::short(($hmap ? $hmap['store'] . '|' . implode('.', $hmap['path']) : $m['host']) . '|' . $mname);
+		if (isset(self::$edits[$id])) return $id;
+		$info = $hmap ? self::store_info($hmap['store']) : null;
+		$hnode = $hmap ? self::node($hmap['store'], $hmap['path']) : null;
+		$content = $hnode && isset($hnode['attrs']['content']) && is_array($hnode['attrs']['content']) ? $hnode['attrs']['content'] : array();
+		$mine = isset($content[$mname]) && is_array($content[$mname]) ? $content[$mname] : array();
+		$pattern = !empty($m['smap']) ? self::node($m['smap']['store'], $m['smap']['path']) : null;
+		$props = array();
+		$value = array();
+		$own = array();
+		foreach ($open as $attr) {
+			$def = $type->attributes[$attr];
+			$schema = self::attribute_schema($def);
+			unset($schema['source']);
+			if (isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true)) $schema['contentMediaType'] = 'text/html';
+			$schema['description'] = 'This placement’s own ' . $attr . '. The pattern’s own value takes the override away.';
+			$props[$attr] = $schema;
+			$own[$attr] = null;
+			if ($pattern) {
+				$own[$attr] = isset($def['source']) ? self::sourced($pattern, $def, $name, $attr)['value'] : (isset($pattern['attrs'][$attr]) ? $pattern['attrs'][$attr] : null);
+			}
+			$v = array_key_exists($attr, $mine) ? $mine[$attr] : $own[$attr];
+			if ($v !== null) $value[$attr] = $v;
+		}
+		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words in this placement of the synced pattern “' . $title . '” only' . ($info ? ', in ' . $info['label'] : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info ? $info['revisions'] : false);
+		$why = null;
+		if (!$hmap || !$info || !$hnode) $why = self::NOT_YET . 'this placement of the pattern is not stored in a post, template or template part here (it is inside another pattern), so Wanigan does not write its overrides.';
+		elseif (isset($hnode['attrs']['overrides']) || array_filter($content, function ($c) { return is_array($c) && isset($c['values']); })) $why = self::NOT_YET . 'this placement keeps its overrides in an older shape the block editor updates when it opens the page. Open it in the editor once.';
+		elseif ($info['why']) $why = $info['why'];
+		if (!$why) $why = self::writable_alone($hmap['store'], $hmap['path'], $info['noun']);
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		if ($hnode) self::$private[$id] = array('type' => 'override', 'store' => $hmap['store'], 'path' => $hmap['path'], 'fp' => md5(serialize_block($hnode)), 'hash' => md5(self::$trees[$hmap['store']]['content']), 'name' => $mname, 'block' => $name, 'attrs' => $open, 'own' => $own);
+		return $id;
+	}
+
+	/** Whether a block type holds words: an attribute read from its markup, or one block.json gives the content role. */
+	private static function has_words($type): bool {
+		if (!$type) return false;
+		foreach ((array) $type->attributes as $def) {
+			if (is_array($def) && (isset($def['source']) || (isset($def['role']) && $def['role'] === 'content'))) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Words a block shows from a theme's registered pattern placed by reference (core/pattern): blocks/pattern.php renders
+	 * the pattern's content from the registry on every request, so they are in no template, part or post. They are the
+	 * pattern file's, code.
+	 */
+	private static function pattern_words(string $name, string $slug): string {
+		$id = 'from-pattern-' . self::short($slug . '|' . $name);
+		if (!isset(self::$edits[$id])) {
+			self::$edits[$id] = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words from the theme’s pattern “' . $slug . '”', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'these words come from the pattern ' . self::pattern_label($slug) . ', which WordPress renders from the theme’s file each time; no template or post stores them. Change them in that file (Code), or in the Site Editor, which can turn the pattern into the template’s own blocks.');
+		}
+		return $id;
+	}
+
+	/**
+	 * Words in a Navigation block that names no menu: blocks/navigation.php builds its links as a fallback on every
+	 * render (block_core_navigation_get_fallback_blocks(): the newest menu's blocks, or the page list), so no stored menu
+	 * belongs to the block. Making one (WP_REST_Navigation_Fallback_Controller) is a change to the site the owner has to
+	 * choose.
+	 */
+	private static function fallback_words(string $name): string {
+		$id = 'nav-fallback-' . self::short($name);
+		if (!isset(self::$edits[$id])) {
+			self::$edits[$id] = array('id' => $id, 'kind' => 'menu-link', 'label' => self::block_label($name) . ' words in a Navigation block with no menu chosen', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'this Navigation block names no menu, so WordPress builds its links as a fallback each time it renders (the newest menu, or the list of pages), and no stored menu belongs to it. Choose a menu for the block in the Site Editor; then its labels change here.');
+		}
+		return $id;
+	}
+
+	/**
+	 * An image's alt text in the media library (_wp_attachment_image_alt), saved through /wp/v2/media alt_text
+	 * (class-wp-rest-attachments-controller.php update_item()). Core prints it wherever it prints the attachment itself:
+	 * wp_get_attachment_image(), a featured image that does not link, the site logo. An image block keeps its own alt in
+	 * its markup, which this does not change.
+	 */
+	private static function attachment_alt_edit(int $aid): ?string {
+		$att = $aid ? get_post($aid) : null;
+		if (!$att instanceof WP_Post || $att->post_type !== 'attachment') return null;
+		$id = 'media-alt-' . $aid;
+		if (isset(self::$edits[$id])) return $id;
+		$file = basename((string) get_attached_file($aid));
+		$target = array('id' => $id, 'kind' => 'field', 'label' => 'Alt text of the image “' . ($file !== '' ? $file : $aid) . '” in the media library (shows wherever WordPress prints the image from the library: a featured image, the site logo; an image block keeps its own)', 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => 'Alt text', 'description' => 'What the image says to someone who cannot see it. Saved on the image in the media library, with no revision.'), 'value' => (string) get_post_meta($aid, '_wp_attachment_image_alt', true), 'revisions' => false);
+		$route = rest_get_route_for_post($att);
+		$why = $route === '' ? self::NOT_YET . 'attachments are not in the REST API on this site, which is how Wanigan saves.' : self::cannot('edit_post', 'change this image', $aid);
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		self::$private[$id] = array('type' => 'post', 'post' => $aid, 'field' => 'alt_text', 'route' => $route);
+		return $id;
+	}
+
+	/** Why a bound attribute is not changed in the block's own markup: where its value comes from instead. */
+	private static function bound_why($b): string {
+		$source = is_array($b) && isset($b['source']) ? (string) $b['source'] : '';
+		$key = is_array($b) && isset($b['args']['key']) ? (string) $b['args']['key'] : '';
+		switch ($source) {
+			case 'core/post-meta':
+				return 'Bound to the post field “' . $key . '”: the page shows that field, so its words are saved there (its own edit, “kept in the field”), not in this block.';
+			case 'core/pattern-overrides':
+				return 'Each placement of the synced pattern can give this its own words (“in this placement only”); the pattern’s own words are in the pattern.';
+			case 'core/post-data':
+				return self::NOT_YET . 'it shows the post’s ' . ($key !== '' ? $key : 'data') . ', which WordPress works out from the post itself. Change the post.';
+			case 'core/term-data':
+				return self::NOT_YET . 'it shows the term’s ' . ($key !== '' ? $key : 'data') . '. Change the term.';
+			case '':
+				return self::NO_SUCH . 'it is bound to a source WordPress does not name.';
+		}
+		return self::NO_SUCH . 'it shows a value from “' . $source . '”, a source WordPress core has no way to save to (a plugin provides it). Change it where that plugin keeps it.';
+	}
+
+	/**
+	 * Words a block shows from a post's meta (block-bindings/post-meta.php): saved to that field through the post's
+	 * REST route, as the editor's binding saves them (setValues() editEntityRecord()), when core's binding can read the
+	 * field (registered for REST and not protected), the post type saves meta over REST (custom-fields) and the user
+	 * may edit that field (edit_post_meta). It shows wherever that field shows.
+	 */
+	private static function bound_edit(string $name, string $attr, array $b, array $m, $type): ?string {
+		$key = isset($b['args']['key']) ? (string) $b['args']['key'] : '';
+		$post = isset($m['context']['postId']) ? get_post((int) $m['context']['postId']) : null;
+		if ($key === '' || !$post instanceof WP_Post) return null;
+		$pid = $post->ID;
+		$id = 'bound-' . $pid . '-' . self::short($key);
+		if (isset(self::$edits[$id])) return $id;
+		$pt = get_post_type_object($post->post_type);
+		$noun = $pt ? strtolower($pt->labels->singular_name) : 'post';
+		$registered = get_registered_meta_keys('post', $post->post_type) + get_registered_meta_keys('post', '');
+		$reg = isset($registered[$key]) && is_array($registered[$key]) ? $registered[$key] : array();
+		$secret = (bool) preg_match(self::SECRET, $key);
+		$schema = array('type' => isset($reg['type']) ? $reg['type'] : 'string', 'title' => self::block_label($name) . ' ' . $attr);
+		$def = $type && isset($type->attributes[$attr]) && is_array($type->attributes[$attr]) ? $type->attributes[$attr] : array();
+		if (isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true)) {
+			$schema['contentMediaType'] = 'text/html';
+			$schema['description'] = 'The field’s value: WordPress prints it in the block as rich text, cleaned by wp_kses_post().';
+		}
+		$target = array('id' => $id, 'kind' => 'meta', 'label' => self::block_label($name) . ' words, kept in the field “' . $key . '” of ' . $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '” (shows wherever that field shows)', 'via' => 'schema', 'schema' => $schema, 'value' => $secret ? null : get_post_meta($pid, $key, true), 'revisions' => !empty($reg['revisions_enabled']));
+		$route = rest_get_route_for_post($post);
+		$why = null;
+		if (is_protected_meta($key, 'post')) $why = self::NO_SUCH . 'the field “' . $key . '” is protected (its name starts with _), and WordPress’s post-meta binding does not read protected fields: the page shows the block’s own saved words.';
+		elseif (empty($reg['show_in_rest'])) $why = self::NO_SUCH . 'the field “' . $key . '” is not registered for the REST API, and WordPress’s post-meta binding reads only fields that are: the page shows the block’s own saved words.';
+		elseif ($secret) $why = 'Wanigan does not show or change a value that looks like a secret.';
+		elseif (!post_type_supports($post->post_type, 'custom-fields')) $why = self::NOT_YET . 'this ' . $noun . ' type does not support custom fields, so its REST route, which is how Wanigan saves, does not save the field.';
+		elseif ($route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves. Change it in wp-admin.';
+		else $why = self::post_why($post, $noun);
+		if (!$why && is_user_logged_in() && !current_user_can('edit_post_meta', $pid, $key)) $why = 'Your WordPress user cannot change the field “' . $key . '” of this ' . $noun . ' (edit_post_meta).';
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		self::$private[$id] = array('type' => 'post', 'post' => $pid, 'field' => 'meta', 'key' => $key, 'route' => $route);
 		return $id;
 	}
 
@@ -2047,54 +2307,96 @@ final class Wanigan_Live {
 	}
 
 	/**
-	 * A sourced attribute's value in a block's own markup, found the way the editor's parser does (the first element
-	 * its selector matches), and whether it can be written back: plain text only for rich text, and a selector with
-	 * no combinators unless it matches exactly one element.
+	 * A sourced attribute's value in a block's own markup, found as the editor's parser finds it (the first element its
+	 * selector matches), and whether it can be written back. Rich text is the HTML its element holds, up to the block's
+	 * first inner block, which is where class-wp-block.php replace_html() stops a bound attribute's splice since 7.1.
 	 */
-	private static function sourced(array $node, array $def): array {
-		if (!empty($node['innerBlocks'])) return array('value' => null, 'why' => 'This block has inner blocks around its own markup; change it in the editor.');
+	private static function sourced(array $node, array $def, string $name = '', string $attr = ''): array {
 		$selector = isset($def['selector']) ? (string) $def['selector'] : '';
-		if ($selector === '') return array('value' => null, 'why' => 'It is read from the whole block’s markup; change it in the editor.');
-		$p = self::find_element((string) $node['innerHTML'], $selector);
-		if (!$p) return array('value' => null, 'why' => 'Its element (' . $selector . ') is not in the saved markup.');
+		if ($selector === '') return array('value' => null, 'why' => self::NOT_YET . 'it is read from the whole block’s markup. Change it in the editor.');
+		$html = (string) $node['innerHTML'];
+		$reader = self::select($html, $selector);
+		if (is_string($reader)) return array('value' => null, 'why' => $reader);
+		if (!$reader) return array('value' => null, 'why' => self::NO_SUCH . 'its element (' . $selector . ') is not in the saved markup. The block’s editor script writes it only when it has a value, and WordPress has no PHP version of that script. Add it in the editor.');
 		if ($def['source'] === 'attribute') {
-			$v = $p->get_attribute((string) $def['attribute']);
+			$v = $reader->get_attribute((string) $def['attribute']);
 			return array('value' => is_string($v) ? $v : null, 'why' => null);
 		}
-		$tag = $p->get_tag();
-		if (!$p->next_token()) return array('value' => null, 'why' => 'Its element could not be read.');
-		if ($p->get_token_name() === $tag && $p->is_tag_closer()) return array('value' => '', 'why' => 'It is empty; add words in the editor first.');
-		if ($p->get_token_name() !== '#text') return array('value' => null, 'why' => 'It has formatting (links, bold, other tags); change it in the editor.');
-		$text = $p->get_modifiable_text();
-		if ($p->next_token() && $p->get_token_name() === $tag && $p->is_tag_closer()) return array('value' => $text, 'why' => null);
-		// Formatted: its words, for showing, read up to the element's own closer.
-		$depth = 1;
-		do {
-			$name = $p->get_token_name();
-			if ($name === '#text') $text .= $p->get_modifiable_text();
-			elseif ($name === $tag) $depth += $p->is_tag_closer() ? -1 : 1;
-		} while ($depth > 0 && $p->next_token());
-		return array('value' => $text, 'why' => 'It has formatting (links, bold, other tags); change it in the editor.');
+		$span = self::content_span($reader, $node);
+		if (!$span) return array('value' => null, 'why' => self::NOT_YET . 'its element’s end tag is not in the saved markup, so where its words stop is not known.');
+		$inner = substr($html, $span[0], $span[1] - $span[0]);
+		// An element that holds the block's inner blocks and no words of its own: only an attribute WordPress itself
+		// splices there (bindings' supported attributes) is known to be written there by the block.
+		if ($span[2] && trim($inner) === '' && !in_array($attr, self::spliced_attributes($name), true)) {
+			return array('value' => null, 'why' => self::NOT_YET . 'its element holds the block’s inner blocks and no words of its own, and WordPress does not say the block writes words there. Change it in the editor.');
+		}
+		return array('value' => $def['source'] === 'text' ? self::text_of($inner) : $inner, 'why' => null);
 	}
 
-	/** html-api WP_HTML_Tag_Processor at the first element a simple selector matches, or null. */
-	private static function find_element(string $html, string $selector) {
-		$alternatives = array_map('trim', explode(',', $selector));
+	/** The attributes core splices into a block's markup itself (block-bindings.php, 6.9+), or core 7.1's list. */
+	private static function spliced_attributes(string $name): array {
+		if (function_exists('get_block_bindings_supported_attributes')) return (array) get_block_bindings_supported_attributes($name);
+		$list = array('core/paragraph' => array('content'), 'core/heading' => array('content'), 'core/list-item' => array('content'), 'core/image' => array('id', 'url', 'title', 'alt', 'caption'), 'core/button' => array('url', 'text', 'linkTarget', 'rel'));
+		return isset($list[$name]) ? $list[$name] : array();
+	}
+
+	/**
+	 * html-api WP_HTML_Processor over a fragment, able to say where an element's content begins and ends: the class
+	 * class-wp-block.php get_block_bindings_processor() builds for the same splice, a subclass because the bookmarks
+	 * that hold byte offsets are protected. Null when this WordPress has no such processor (before 6.6).
+	 */
+	private static function html_reader(string $html) {
+		if (!class_exists('WP_HTML_Processor') || !defined('WP_HTML_Processor::CONSTRUCTOR_UNLOCK_CODE') || !method_exists('WP_HTML_Processor', 'get_current_depth') || !method_exists('WP_HTML_Processor', 'expects_closer')) return null;
+		$reader = new class('', WP_HTML_Processor::CONSTRUCTOR_UNLOCK_CODE) extends WP_HTML_Processor {
+			/**
+			 * At an element's opener: the byte offsets of what it holds, from the end of its opener to the start of its
+			 * matching closer, found by depth as replace_rich_text() finds them. Null for a void element, or for a closer
+			 * the markup does not have (one the parser implied, which cannot be bookmarked).
+			 */
+			public function wanigan_inner(): ?array {
+				if ($this->is_tag_closer() || !$this->expects_closer()) return null;
+				$depth = $this->get_current_depth();
+				$tag = $this->get_tag();
+				if (!$this->set_bookmark('wanigan')) return null;
+				$opener = $this->bookmarks['_wanigan'];
+				$start = $opener->start + $opener->length;
+				while ($this->next_token() && $this->get_current_depth() >= $depth) {
+					// Inside the element.
+				}
+				if (!$this->is_tag_closer() || $this->get_tag() !== $tag || !$this->set_bookmark('wanigan')) return null;
+				$end = $this->bookmarks['_wanigan']->start;
+				return $end >= $start ? array($start, $end) : null;
+			}
+		};
+		return $reader::create_fragment($html);
+	}
+
+	/**
+	 * The element a sourced attribute's selector names in a block's own markup: the first, in document order, that any
+	 * of the selector's comma-separated parts matches, as the editor's parser takes it. A part with combinators is
+	 * matched by its last compound, so it is used only when exactly one element could match. A reader stopped at the
+	 * element's opener; null when no element matches; a string saying why the markup could not be read.
+	 */
+	private static function select(string $html, string $selector) {
+		$wanted = array();
+		foreach (array_map('trim', explode(',', $selector)) as $alt) {
+			$parts = preg_split('/[\s>+~]+/', $alt);
+			if (!preg_match('/^([a-zA-Z][a-zA-Z0-9-]*)?((?:\.[a-zA-Z0-9_-]+)*)$/', (string) end($parts), $mm) || ($mm[1] === '' && $mm[2] === '')) return self::NOT_YET . 'its selector (' . $selector . ') is more than Wanigan reads.';
+			$wanted[] = array(strtoupper($mm[1]), array_values(array_filter(explode('.', $mm[2]))));
+		}
 		$combined = (bool) preg_match('/[\s>+~]/', $selector);
-		$p = new WP_HTML_Tag_Processor($html);
+		$reader = self::html_reader($html);
+		if (!$reader) return self::NOT_YET . 'this WordPress has no HTML processor (6.6 or later) to read the block’s markup with.';
 		$found = null;
 		$count = 0;
 		$i = 0;
-		while ($p->next_tag()) {
+		while ($reader->next_tag()) {
 			$i++;
-			foreach ($alternatives as $alt) {
-				$parts = preg_split('/[\s>+~]+/', $alt);
-				$last = end($parts);
-				if (!preg_match('/^([a-zA-Z][a-zA-Z0-9-]*)?((?:\.[a-zA-Z0-9_-]+)*)$/', $last, $mm)) return null;
-				if ($mm[1] !== '' && strtoupper($mm[1]) !== $p->get_tag()) continue;
+			foreach ($wanted as $w) {
+				if ($w[0] !== '' && $w[0] !== $reader->get_tag()) continue;
 				$ok = true;
-				foreach (array_filter(explode('.', $mm[2])) as $class) {
-					if (!$p->has_class($class)) $ok = false;
+				foreach ($w[1] as $class) {
+					if (!$reader->has_class($class)) $ok = false;
 				}
 				if (!$ok) continue;
 				$count++;
@@ -2103,10 +2405,129 @@ final class Wanigan_Live {
 			}
 			if ($found !== null && !$combined) break;
 		}
-		if ($found === null || ($combined && $count !== 1)) return null;
-		$p = new WP_HTML_Tag_Processor($html);
-		for ($j = 0; $j < $found; $j++) $p->next_tag();
-		return $p;
+		if ($found === null && $reader->get_last_error()) return self::NOT_YET . 'WordPress’s HTML processor stopped reading this block’s markup (' . $reader->get_last_error() . ').';
+		if ($found === null) return null;
+		if ($combined && $count !== 1) return self::NOT_YET . 'its selector (' . $selector . ') could name more than one element here.';
+		$reader = self::html_reader($html);
+		for ($j = 0; $j < $found; $j++) $reader->next_tag();
+		return $reader;
+	}
+
+	/**
+	 * What an element holds in a block's own markup (innerHTML), as byte offsets there: from the end of its opener to
+	 * its closer, or to the block's first inner block inside it (class-wp-block.php, 7.1), and whether an inner block
+	 * cut it short. Null when its end is not in the markup.
+	 */
+	private static function content_span($reader, array $node): ?array {
+		$span = $reader->wanigan_inner();
+		if (!$span) return null;
+		$at = 0;
+		foreach ($node['innerContent'] as $chunk) {
+			if (is_string($chunk)) {
+				$at += strlen($chunk);
+				continue;
+			}
+			if ($at >= $span[0] && $at < $span[1]) return array($span[0], $at, true);
+		}
+		return array($span[0], $span[1], false);
+	}
+
+	/** A fragment's text, as the editor's "text" source reads it. */
+	private static function text_of(string $html): string {
+		$reader = self::html_reader($html);
+		$text = '';
+		while ($reader && $reader->next_token()) {
+			if ($reader->get_token_name() === '#text') $text .= $reader->get_modifiable_text();
+		}
+		return $text;
+	}
+
+	/** The tag names a fragment holds. */
+	private static function tags_in(string $html): array {
+		$out = array();
+		$reader = self::html_reader($html);
+		while ($reader && $reader->next_tag()) $out[$reader->get_tag()] = true;
+		return $out;
+	}
+
+	/**
+	 * New rich text for an element, made safe as core's own splice makes bound rich text safe: wp_kses_post() whatever
+	 * the user may post (class-wp-block.php replace_html(); a user with unfiltered_html skips kses on save), then
+	 * normalized by WP_HTML_Processor so every tag it opens it closes inside the element. It may hold words and inline
+	 * formatting: the editor's own formats, and tags the element already held. A comment never: one could close the
+	 * block's delimiter. A WP_Error says why not.
+	 */
+	private static function rich_text(string $value, string $current) {
+		if (!class_exists('WP_HTML_Processor') || !method_exists('WP_HTML_Processor', 'serialize')) return new WP_Error('wanigan', self::NOT_YET . 'this WordPress has no HTML processor that writes markup (6.7 or later).');
+		$fragment = WP_HTML_Processor::create_fragment(wp_kses_post($value));
+		$html = $fragment ? $fragment->serialize() : null;
+		if (!is_string($html)) return new WP_Error('wanigan', self::NOT_YET . 'WordPress’s HTML processor cannot read that markup, so Wanigan does not write it.');
+		$allowed = array_flip(self::INLINE) + self::tags_in($current);
+		$check = WP_HTML_Processor::create_fragment($html);
+		while ($check && $check->next_token()) {
+			$type = $check->get_token_type();
+			if ($type === '#text') continue;
+			if ($type !== '#tag') return new WP_Error('wanigan', 'Words go here, with inline formatting; a comment or other markup cannot (it could end the block early).');
+			if (!isset($allowed[$check->get_tag()])) return new WP_Error('wanigan', 'Words go here, with inline formatting (bold, italic, links and the editor’s other formats); a <' . strtolower($check->get_tag()) . '> cannot.');
+		}
+		if (!$check || $check->get_last_error()) return new WP_Error('wanigan', self::NOT_YET . 'WordPress’s HTML processor cannot read that markup, so Wanigan does not write it.');
+		if (strpos($html, '<!--') !== false || strpos($html, '-->') !== false) return new WP_Error('wanigan', 'Words go here, with inline formatting; a comment cannot (it could end the block early).');
+		return $html;
+	}
+
+	/**
+	 * A block with the bytes [start, end) of its own markup (innerHTML) replaced, kept in step in innerContent, where
+	 * each run of its own markup sits between its inner blocks. Null when the bytes cross an inner block.
+	 */
+	private static function splice_node(array $node, int $start, int $end, string $text): ?array {
+		$at = 0;
+		foreach ($node['innerContent'] as $i => $chunk) {
+			if (!is_string($chunk)) continue;
+			$len = strlen($chunk);
+			if ($start >= $at && $end <= $at + $len) {
+				$node['innerContent'][$i] = substr($chunk, 0, $start - $at) . $text . substr($chunk, $end - $at);
+				$node['innerHTML'] = substr((string) $node['innerHTML'], 0, $start) . $text . substr((string) $node['innerHTML'], $end);
+				return $node;
+			}
+			$at += $len;
+		}
+		return null;
+	}
+
+	/**
+	 * A sourced attribute written into a block's own markup, or why not: rich text spliced into its element up to its
+	 * first inner block, text escaped there, an attribute set on its element. A copy of the attribute some tool left
+	 * in the comment delimiter is kept in step, so the two never disagree.
+	 */
+	private static function write_sourced(array $node, string $attr, array $def, $v) {
+		$source = $def['source'];
+		$html = (string) $node['innerHTML'];
+		$reader = self::select($html, isset($def['selector']) ? (string) $def['selector'] : '');
+		if (is_string($reader)) return new WP_Error('wanigan', $reader);
+		if (!$reader) return new WP_Error('wanigan', 'The element for ' . $attr . ' is not in the block any more: reload the page and try again.');
+		if ($source === 'attribute') {
+			$reader->set_attribute((string) $def['attribute'], (string) $v);
+			$updated = $reader->get_updated_html();
+			// Where the markup changed: the bytes between what stayed the same at each end.
+			$a = 0;
+			$max = min(strlen($html), strlen($updated));
+			while ($a < $max && $html[$a] === $updated[$a]) $a++;
+			$b = 0;
+			while ($b < $max - $a && $html[strlen($html) - 1 - $b] === $updated[strlen($updated) - 1 - $b]) $b++;
+			$node = self::splice_node($node, $a, strlen($html) - $b, substr($updated, $a, strlen($updated) - $b - $a));
+			$written = (string) $v;
+		} else {
+			$span = self::content_span($reader, $node);
+			if (!$span) return new WP_Error('wanigan', self::NOT_YET . 'the end of ' . $attr . '’s element is not in the saved markup.');
+			$current = substr($html, $span[0], $span[1] - $span[0]);
+			$written = $source === 'text' ? htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') : self::rich_text((string) $v, $current);
+			if (is_wp_error($written)) return $written;
+			$node = self::splice_node($node, $span[0], $span[1], $written);
+			if ($source === 'text') $written = (string) $v;
+		}
+		if (!$node) return new WP_Error('wanigan', self::NOT_YET . 'the words of ' . $attr . ' run across one of the block’s inner blocks.');
+		if (array_key_exists($attr, $node['attrs'])) $node['attrs'][$attr] = $written;
+		return $node;
 	}
 
 	/* templates */
@@ -2244,35 +2665,38 @@ final class Wanigan_Live {
 	/* widgets and menus */
 
 	/**
-	 * A widget's settings, when its widget class shares them with core's REST API (show_instance_in_rest): saved
-	 * through /wp/v2/widgets, which runs the widget's own update() to clean them.
+	 * A widget's settings, saved through /wp/v2/widgets, which runs the widget's own update() to clean them
+	 * (class-wp-rest-widgets-controller.php save_widget()). A widget class that shares its instance with REST
+	 * (show_instance_in_rest) takes it raw; any other WP_Widget takes it serialized with its wp_hash(), as a GET in
+	 * edit context hands it out. A widget registered outside WP_Widget saves only through its own form's fields, and one
+	 * registered to display only has no update callback: core keeps nothing for it.
 	 */
 	private static function finish_widget(array $p, array $m): array {
-		global $wp_registered_widgets;
+		global $wp_registered_widgets, $wp_registered_widget_updates, $wp_registered_sidebars;
 		$wid = $m['widget'];
 		$id = 'widget-' . self::short($wid);
-		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'], 'via' => 'schema', 'revisions' => false);
+		$area = isset($m['sidebar']) && isset($wp_registered_sidebars[$m['sidebar']]['name']) ? (string) $wp_registered_sidebars[$m['sidebar']]['name'] : '';
+		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'] . ($area !== '' ? ' (shows on every page that shows the widget area “' . $area . '”)' : ''), 'via' => 'schema', 'revisions' => false);
 		$widget = isset($wp_registered_widgets[$wid]['callback'][0]) ? $wp_registered_widgets[$wid]['callback'][0] : null;
 		$parsed = function_exists('wp_parse_widget_id') ? wp_parse_widget_id($wid) : array();
 		if ($widget instanceof WP_Widget && isset($parsed['number'])) {
 			$settings = $widget->get_settings();
 			$instance = isset($settings[$parsed['number']]) ? $settings[$parsed['number']] : array();
 			$p['variables'] = self::variables(is_array($instance) ? $instance : array(), 'instance');
-			if (!empty($widget->widget_options['show_instance_in_rest'])) {
-				$props = array();
-				foreach ((array) $instance as $k => $v) {
-					if (is_scalar($v) && !preg_match(self::SECRET, (string) $k)) $props[$k] = array('type' => is_bool($v) ? 'boolean' : (is_int($v) ? 'integer' : (is_float($v) ? 'number' : 'string')));
-				}
-				$target['schema'] = array('type' => 'object', 'properties' => $props);
-				$target['value'] = (object) array_intersect_key((array) $instance, $props);
-				if (!$props) $target['why'] = 'This widget has no simple settings to change here; use Appearance › Widgets.';
-			} else {
-				$target['why'] = 'This widget does not share its settings with core’s API (show_instance_in_rest is off); change it in Appearance › Widgets.';
+			$props = array();
+			foreach ((array) $instance as $k => $v) {
+				if (is_scalar($v) && !preg_match(self::SECRET, (string) $k)) $props[$k] = array('type' => is_bool($v) ? 'boolean' : (is_int($v) ? 'integer' : (is_float($v) ? 'number' : 'string')));
 			}
+			$target['schema'] = array('type' => 'object', 'properties' => $props);
+			$target['value'] = (object) array_intersect_key((array) $instance, $props);
+			if (!$props) $target['why'] = self::NOT_YET . 'this widget has no simple settings (text, numbers, switches) to change here. Use Appearance › Widgets.';
 			$d = self::describe(array($widget, 'widget'));
 			if ($d['source']) $p['source'] = $d['source'];
 		} else {
-			$target['why'] = 'This widget is not a WP_Widget, so core’s widget API cannot change it; use Appearance › Widgets.';
+			$base = isset($parsed['id_base']) ? $parsed['id_base'] : $wid;
+			$target['why'] = isset($wp_registered_widget_updates[$base])
+				? self::NOT_YET . 'this widget is not a WP_Widget, so its settings are whatever its own form posts, which Wanigan cannot read. Change it in Appearance › Widgets.'
+				: self::NO_SUCH . 'this widget was registered to display only, with no update callback, so WordPress keeps no settings for it to save. Its words are its code’s.';
 		}
 		if (!isset($target['why']) && ($w = self::cannot('edit_theme_options', 'change widgets'))) $target['why'] = $w;
 		self::$edits[$id] = $target;
@@ -2497,7 +2921,7 @@ final class Wanigan_Live {
 			$c['inserts'] = array();
 			foreach ($palette as $e) if ($e['kind'] === 'block' || $e['kind'] === 'pattern') $c['inserts'][] = $e['id'];
 			$why = $info['why'];
-			if (!$why && !self::round_trips($l['store'])) $why = 'Writing these blocks back would change other parts of ' . $info['label'] . ' (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged).';
+			if (!$why && !self::round_trips($l['store'])) $why = self::NOT_YET . 'moving blocks writes ' . $info['label'] . ' back whole, and that would change other parts of it (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged).';
 			if ($why) $c['why'] = $why;
 			$c['removes'] = !$why;
 			if ($why) $c['removeWhy'] = $why;
@@ -2630,10 +3054,15 @@ final class Wanigan_Live {
 				$noun = $type ? strtolower($type->labels->singular_name) : 'post';
 				$why = self::post_why($post, $noun);
 				$route = rest_get_route_for_post($post);
-				if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves blocks here.';
+				if (!$why && $route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves blocks.';
 				$info = array('content' => $post->post_content, 'route' => $route, 'post' => $post->ID, 'label' => $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”', 'noun' => $noun, 'changes' => 'content', 'revisions' => post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post), 'why' => $why);
 				// A synced pattern (core's wp_block) is one post shown in every post, template and part that uses it.
-				if ($post->post_type === 'wp_block') $info['shared'] = true;
+				if ($post->post_type === 'wp_block') {
+					$info['shared'] = true;
+					$info['reach'] = 'changes every page that uses this synced pattern';
+				}
+				// A navigation menu (wp_navigation) shows wherever a Navigation block names it.
+				if ($post->post_type === 'wp_navigation') $info['reach'] = 'shows wherever this menu shows';
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
@@ -2642,6 +3071,10 @@ final class Wanigan_Live {
 				$why = self::cannot('edit_theme_options', 'change templates');
 				if (!$why && $tpl->wp_id) $why = self::lock((int) $tpl->wp_id, $m[1] === 'tp' ? 'template part' : 'template');
 				$info = array('content' => (string) $tpl->content, 'route' => '/wp/v2/' . ($m[1] === 'tp' ? 'template-parts' : 'templates') . '/' . $tpl->id, 'post' => $tpl->wp_id ? (int) $tpl->wp_id : null, 'label' => ($m[1] === 'tp' ? 'the template part “' : 'the template “') . $tpl->title . '”', 'noun' => $m[1] === 'tp' ? 'template part' : 'template', 'changes' => 'configuration', 'revisions' => true, 'why' => $why);
+				// class-wp-rest-templates-controller.php update_item(): a template still read from the theme's file is saved
+				// as a new wp_template(_part) post that shadows the file, which is never written; Reset in the Site Editor
+				// deletes the copy.
+				$info['reach'] = 'shows on every page that uses this ' . $info['noun'] . (!$tpl->wp_id ? '; the first save makes a database copy of the theme’s file, as the Site Editor does' : '');
 			}
 		}
 		if ($info && !isset(self::$trees[$store])) self::$trees[$store] = array('content' => $info['content'], 'blocks' => parse_blocks($info['content']));
@@ -2685,6 +3118,29 @@ final class Wanigan_Live {
 		return $match === null ? null : array('store' => $store, 'path' => array_merge($map['path'], array($match)));
 	}
 
+	/**
+	 * Where a block another block's render callback rendered directly sits in its stored tree: the index-th block (empty
+	 * freeform runs are dropped first, as blocks/navigation.php drops them), checked as map_child() checks.
+	 */
+	private static function map_direct(array $map, int $index, array $parsed): ?array {
+		$store = $map['store'];
+		if (!self::store_info($store)) return null;
+		$siblings = $map['path'] ? (self::node($store, $map['path'])['innerBlocks'] ?? array()) : self::$trees[$store]['blocks'];
+		$named = array();
+		foreach ($siblings as $i => $s) {
+			if (!empty($s['blockName'])) $named[] = $i;
+		}
+		if (isset($named[$index]) && self::same_block($siblings[$named[$index]], $parsed)) return array('store' => $store, 'path' => array_merge($map['path'], array($named[$index])));
+		$match = null;
+		foreach ($named as $i) {
+			if (self::same_block($siblings[$i], $parsed)) {
+				if ($match !== null) return null;
+				$match = $i;
+			}
+		}
+		return $match === null ? null : array('store' => $store, 'path' => array_merge($map['path'], array($match)));
+	}
+
 	private static function same_block(array $a, array $b): bool {
 		$strip = function ($attrs) {
 			$attrs = is_array($attrs) ? $attrs : array();
@@ -2695,6 +3151,112 @@ final class Wanigan_Live {
 		return (isset($a['blockName']) ? $a['blockName'] : null) === (isset($b['blockName']) ? $b['blockName'] : null)
 			&& $strip(isset($a['attrs']) ? $a['attrs'] : array()) == $strip(isset($b['attrs']) ? $b['attrs'] : array())
 			&& (isset($a['innerHTML']) ? $a['innerHTML'] : '') === (isset($b['innerHTML']) ? $b['innerHTML'] : '');
+	}
+
+	/**
+	 * Why one block of a store cannot be written back alone, or null: saving writes that block alone (splice_block()),
+	 * or, where WordPress has no block processor, the whole store, only when it reads back byte for byte.
+	 */
+	private static function writable_alone(string $store, array $path, string $noun): ?string {
+		$spans = self::store_spans($store);
+		if ($spans === null) return self::round_trips($store) ? null : self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $noun . '’s blocks back whole would change other parts of it. Change it in the editor.';
+		if ($spans === false || !isset($spans[implode('.', $path)])) return self::NOT_YET . 'WordPress’s block processor does not find this block where the block parser puts it, so Wanigan does not write it. Change it in the editor.';
+		return null;
+	}
+
+	/** The spans of a store's blocks as the trace saw it (spans()), worked out once. */
+	private static function store_spans(string $store) {
+		if (!isset(self::$trees[$store])) return false;
+		if (!array_key_exists('spans', self::$trees[$store])) self::$trees[$store]['spans'] = self::spans(self::$trees[$store]['content']);
+		return self::$trees[$store]['spans'];
+	}
+
+	/**
+	 * Where each block sits in stored markup, by its path (the indexes parse_blocks() gives: at the top, freeform HTML
+	 * between blocks counts; inside a block, only blocks do): the byte span of its opening delimiter, of each run of its
+	 * own HTML in order (innerContent's strings), and where it ends. From class-wp-block-processor.php (6.9+), which
+	 * walks the delimiters without parsing the document: depth goes up before an opener, a void block or an HTML span,
+	 * and down before a closer. Null when this WordPress has no block processor; false when the markup does not read
+	 * as one tree of blocks.
+	 */
+	private static function spans(string $content) {
+		if (!class_exists('WP_Block_Processor')) return null;
+		$p = new WP_Block_Processor($content);
+		$out = array();
+		$open = array();
+		$top = 0;
+		while ($p->next_token()) {
+			$depth = $p->get_depth();
+			$span = $p->get_span();
+			if (!$span) return false;
+			if ($p->is_html()) {
+				if ($depth !== count($open) + 1) return false;
+				if (!$open) $top++;
+				else $out[$open[count($open) - 1]['key']]['chunks'][] = array($span->start, $span->length);
+				continue;
+			}
+			$type = $p->get_delimiter_type();
+			if ($type === WP_Block_Processor::CLOSER) {
+				if (!$open || $depth !== count($open) - 1) return false;
+				$b = array_pop($open);
+				$out[$b['key']]['end'] = $span->start + $span->length;
+				continue;
+			}
+			if ($depth !== count($open) + 1) return false;
+			if ($open) {
+				$i = count($open) - 1;
+				$path = array_merge($open[$i]['path'], array($open[$i]['children']++));
+			} else {
+				$path = array($top++);
+			}
+			$key = implode('.', $path);
+			$out[$key] = array('start' => $span->start, 'opener' => $span->length, 'void' => $type === WP_Block_Processor::VOID, 'chunks' => array());
+			if ($type === WP_Block_Processor::VOID) $out[$key]['end'] = $span->start + $span->length;
+			else $open[] = array('path' => $path, 'key' => $key, 'children' => 0);
+		}
+		if ($open || $p->get_last_error()) return false;
+		return $out;
+	}
+
+	/**
+	 * Stored markup with one block changed and every other byte as it was, as class-wp-block-processor.php's own example
+	 * replaces one block by its span: the block's opening delimiter is rewritten only when its attributes changed, and
+	 * each run of its own HTML only where it changed, so its inner blocks are not rewritten either. Read back before it
+	 * is used: those bytes must parse as the block written. Null when this WordPress has no block processor.
+	 */
+	private static function splice_block(string $content, array $path, array $old, array $new) {
+		$spans = self::spans($content);
+		if ($spans === null) return null;
+		$key = implode('.', $path);
+		$lost = new WP_Error('wanigan', self::NOT_YET . 'WordPress’s block processor does not find that block where the block parser puts it, so Wanigan does not write it. Change it in the editor.');
+		if ($spans === false || !isset($spans[$key])) return $lost;
+		$s = $spans[$key];
+		$before = array_values(array_filter($old['innerContent'], 'is_string'));
+		$after = array_values(array_filter($new['innerContent'], 'is_string'));
+		if (count($before) !== count($s['chunks']) || count($after) !== count($before)) return $lost;
+		$edits = array();
+		if ($new['attrs'] !== $old['attrs']) $edits[] = array($s['start'], $s['opener'], self::opener((string) $new['blockName'], (array) $new['attrs'], $s['void']));
+		foreach ($after as $i => $chunk) {
+			if ($chunk === $before[$i]) continue;
+			if (substr($content, $s['chunks'][$i][0], $s['chunks'][$i][1]) !== $before[$i]) return $lost;
+			$edits[] = array($s['chunks'][$i][0], $s['chunks'][$i][1], $chunk);
+		}
+		if (!$edits) return $content;
+		usort($edits, function ($a, $b) { return $b[0] - $a[0]; });
+		$out = $content;
+		$grew = 0;
+		foreach ($edits as $e) {
+			$out = substr($out, 0, $e[0]) . $e[2] . substr($out, $e[0] + $e[1]);
+			$grew += strlen($e[2]) - $e[1];
+		}
+		$read = array_values(array_filter(parse_blocks(substr($out, $s['start'], $s['end'] - $s['start'] + $grew)), function ($b) { return !empty($b['blockName']); }));
+		if (count($read) !== 1 || serialize_block($read[0]) !== serialize_block($new)) return new WP_Error('wanigan', self::NOT_YET . 'the block did not read back as it was written, so nothing was saved. Change it in the editor.');
+		return $out;
+	}
+
+	/** A block's opening delimiter, as blocks.php get_comment_delimited_block_content() writes one. */
+	private static function opener(string $name, array $attrs, bool $void): string {
+		return '<!-- wp:' . strip_core_block_namespace($name) . ' ' . ($attrs ? serialize_block_attributes($attrs) . ' ' : '') . ($void ? '/-->' : '-->');
 	}
 
 	/** Whether blocks.php serialize_blocks( parse_blocks( $content ) ) gives the content back byte for byte. */
@@ -4103,6 +4665,16 @@ final class Wanigan_Live {
 		$valid = rest_validate_value_from_schema($value, $public['schema'], 'value');
 		if (is_wp_error($valid)) self::answer(array('ok' => false, 'error' => $valid->get_error_message()), 400);
 		$value = rest_sanitize_value_from_schema($value, $public['schema'], 'value');
+		// rest_validate_value_from_schema() does not enforce readOnly: a property the target says cannot change here may
+		// come back only as it was.
+		if (is_array($value) && isset($public['schema']['properties']) && is_array($public['schema']['properties'])) {
+			$was = isset($public['value']) ? (array) $public['value'] : array();
+			foreach ($value as $k => $v) {
+				$s = isset($public['schema']['properties'][$k]) ? $public['schema']['properties'][$k] : null;
+				if (!is_array($s) || empty($s['readOnly'])) continue;
+				if (!array_key_exists($k, $was) || wp_json_encode($was[$k]) !== wp_json_encode($v)) self::answer(array('ok' => false, 'error' => $k . ' cannot change here. ' . (isset($s['description']) ? $s['description'] : '')), 400);
+			}
+		}
 		switch ($p['type']) {
 			case 'post':
 				$result = self::save_post_field($p, $value);
@@ -4120,6 +4692,9 @@ final class Wanigan_Live {
 				break;
 			case 'block':
 				$result = self::save_block($p, (array) $value);
+				break;
+			case 'override':
+				$result = self::save_override($p, (array) $value);
 				break;
 			case 'copy':
 				$result = self::copy_template($p, (array) $value);
@@ -4166,48 +4741,102 @@ final class Wanigan_Live {
 		if (!$widget instanceof WP_Widget || !isset($parsed['number'])) return new WP_Error('wanigan', 'That widget is gone.');
 		$settings = $widget->get_settings();
 		$instance = isset($settings[$parsed['number']]) ? (array) $settings[$parsed['number']] : array();
-		return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('raw' => array_merge($instance, $value))));
+		$new = array_merge($instance, $value);
+		if (!empty($widget->widget_options['show_instance_in_rest'])) return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('raw' => $new)));
+		// Any other WP_Widget: its instance serialized, with wp_hash() of it, as the controller hands it out and checks it.
+		$serialized = serialize($new);
+		return self::rest('POST', '/wp/v2/widgets/' . $wid, array('instance' => array('encoded' => base64_encode($serialized), 'hash' => wp_hash($serialized))));
 	}
 
 	/**
 	 * A block's attributes or sourced text, written into the stored tree it was rendered from and saved through the
-	 * store's REST route; refused when the stored content changed since the trace.
+	 * store's REST route, that block alone; refused when the stored content changed since the trace, or the block moved.
 	 */
 	private static function save_block(array $p, array $value) {
 		$info = self::fresh_store($p['store']);
 		if (is_wp_error($info)) return $info;
 		if (md5($info['content']) !== $p['hash']) return new WP_Error('wanigan', 'This ' . $info['noun'] . ' changed since the page was shown: reload it and try again.');
 		$blocks = parse_blocks($info['content']);
-		if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', 'Writing this ' . $info['noun'] . '’s blocks back would change other parts of it, so Wanigan does not save it.');
 		$node = self::node_in($blocks, $p['path']);
 		if (!$node || md5(serialize_block($node)) !== $p['fp']) return new WP_Error('wanigan', 'That block is not where it was: reload the page and try again.');
+		$old = $node;
 		$type = WP_Block_Type_Registry::get_instance()->get_registered($p['name']);
 		if (!$type) return new WP_Error('wanigan', 'That block type is no longer registered.');
+		$changed = false;
 		foreach ($value as $attr => $v) {
 			$def = isset($type->attributes[$attr]) ? $type->attributes[$attr] : null;
 			if (!is_array($def)) return new WP_Error('wanigan', 'The block has no setting called ' . $attr . '.');
 			$source = isset($def['source']) ? $def['source'] : null;
 			if ($source === null) {
+				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (array_key_exists('default', $def) ? $def['default'] : null);
+				if ($current === $v) continue;
 				if (array_key_exists('default', $def) && $def['default'] === $v) unset($node['attrs'][$attr]);
 				else $node['attrs'][$attr] = $v;
+				$changed = true;
 				continue;
 			}
-			$html = (string) $node['innerHTML'];
-			$el = self::find_element($html, (string) $def['selector']);
-			if (!$el) return new WP_Error('wanigan', 'The element for ' . $attr . ' is not in the block any more.');
-			if ($source === 'attribute') {
-				$el->set_attribute((string) $def['attribute'], (string) $v);
-			} else {
-				$tag = $el->get_tag();
-				if (!$el->next_token() || $el->get_token_name() !== '#text') return new WP_Error('wanigan', 'The text of ' . $attr . ' has formatting now; change it in the editor.');
-				$el->set_modifiable_text((string) $v);
-			}
-			$html = $el->get_updated_html();
-			$node['innerHTML'] = $html;
-			$node['innerContent'] = array($html);
+			// A value sent back as it was stays as it is: cleaning it again could rewrite markup nobody changed.
+			$now = self::sourced($node, $def, $p['name'], (string) $attr);
+			if ($now['value'] === $v) continue;
+			if ($now['why']) return new WP_Error('wanigan', $now['why']);
+			$node = self::write_sourced($node, (string) $attr, $def, $v);
+			if (is_wp_error($node)) return $node;
+			$changed = true;
 		}
-		$blocks = self::replace_node($blocks, $p['path'], $node);
-		return self::save_store($p['store'], $info, serialize_blocks($blocks));
+		if (!$changed) return array();
+		return self::write_block($p['store'], $info, $blocks, $p['path'], $old, $node);
+	}
+
+	/**
+	 * One placement's own words for a block in a synced pattern, written into the host core/block's "content" attribute
+	 * as the editor writes them (content[metadata.name][attribute]) and saved through the host's own store. A value equal
+	 * to the pattern's own takes the override away, as the editor's reset does.
+	 */
+	private static function save_override(array $p, array $value) {
+		$info = self::fresh_store($p['store']);
+		if (is_wp_error($info)) return $info;
+		if (md5($info['content']) !== $p['hash']) return new WP_Error('wanigan', 'This ' . $info['noun'] . ' changed since the page was shown: reload it and try again.');
+		$blocks = parse_blocks($info['content']);
+		$host = self::node_in($blocks, $p['path']);
+		if (!$host || md5(serialize_block($host)) !== $p['fp']) return new WP_Error('wanigan', 'That placement of the pattern is not where it was: reload the page and try again.');
+		$type = WP_Block_Type_Registry::get_instance()->get_registered($p['block']);
+		$old = $host;
+		$content = isset($host['attrs']['content']) && is_array($host['attrs']['content']) ? $host['attrs']['content'] : array();
+		$mine = isset($content[$p['name']]) && is_array($content[$p['name']]) ? $content[$p['name']] : array();
+		foreach ($value as $attr => $v) {
+			if (!in_array($attr, $p['attrs'], true)) return new WP_Error('wanigan', 'The pattern does not let ' . $attr . ' be overridden.');
+			$own = isset($p['own'][$attr]) ? $p['own'][$attr] : null;
+			$now = array_key_exists($attr, $mine) ? $mine[$attr] : $own;
+			if ($now === $v) continue;
+			$def = $type && isset($type->attributes[$attr]) && is_array($type->attributes[$attr]) ? $type->attributes[$attr] : array();
+			if (is_string($v) && isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true) && $v !== $own) {
+				$v = self::rich_text($v, (string) $now);
+				if (is_wp_error($v)) return $v;
+			}
+			if ($v === $own) unset($mine[$attr]);
+			else $mine[$attr] = $v;
+		}
+		if ($mine) $content[$p['name']] = $mine;
+		else unset($content[$p['name']]);
+		if ($content) $host['attrs']['content'] = $content;
+		else unset($host['attrs']['content']);
+		if ($host === $old) return array();
+		return self::write_block($p['store'], $info, $blocks, $p['path'], $old, $host);
+	}
+
+	/**
+	 * One changed block written into its store and saved through the store's REST route: alone, every other byte as it
+	 * was (splice_block()); where WordPress has no block processor, the whole store, only when it reads back byte for
+	 * byte.
+	 */
+	private static function write_block(string $store, array $info, array $blocks, array $path, array $old, array $new) {
+		$content = self::splice_block($info['content'], $path, $old, $new);
+		if ($content === null) {
+			if (serialize_blocks($blocks) !== $info['content']) return new WP_Error('wanigan', self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $info['noun'] . '’s blocks back whole would change other parts of it.');
+			$content = serialize_blocks(self::replace_node($blocks, $path, $new));
+		}
+		if (is_wp_error($content)) return $content;
+		return self::save_store($store, $info, $content);
 	}
 
 	private static function replace_node(array $blocks, array $path, array $node): array {
