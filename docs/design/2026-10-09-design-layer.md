@@ -246,7 +246,14 @@ shows only in the floor.
    words also changed in one other place"), never a failure; anything else
    that changed is a difference named by its element. Pixels are compared
    only inside elements that kept their place and size and hold nothing that
-   moved. With no page from before (an edit made real elsewhere), or another
+   moved. What the page decides for itself is set aside, with everything in
+   it, and named among what was masked: an element a script added after the
+   page arrived (not in the HTML the server sent, found by lining the page up
+   with that HTML child by child, so it does not move its siblings' paths
+   either: a marketing form, a chat bubble), and an element the page's two
+   renders of the same version did not agree on (present in one only, or with
+   other words or values). An element the server sent, that both renders
+   agree on and the save changed, still fails. With no page from before (an edit made real elsewhere), or another
    edit made real on the page since, the verdict says this could not run, and
    why.
 4. **States and edges.** Hover, focus and active forced on the touched
@@ -303,6 +310,10 @@ before adding it:
   verified, and named in the verdict. What nothing declares (a theme's own
   `rand()` or `time()`, remote embeds, script-driven content) is not masked:
   it raises the noise floor.
+- What a script adds after the page arrives, and whatever the page does not
+  agree on with itself between two renders, is set aside, not compared;
+  a script that changes the server's own elements in the same way on every
+  visit is compared, as the page shows it.
 - Step 3 against the page from before runs only where one was kept just
   before the edit was made real, and no other edit has been made real on
   that page since; otherwise the verdict says it did not run.

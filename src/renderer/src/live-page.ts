@@ -1469,13 +1469,80 @@ export function livePage(): void {
     return { parts: out, vary };
   }
 
+  /** Elements a script added after the server sent the page, as layerLate last found them; null until it runs. */
+  let late: WeakSet<Element> | null = null;
+
+  /**
+   * For the verification: which elements of the page are not in the HTML the server sent (`html`, as the main process
+   * read the response), so a script added them after it arrived (a marketing form, a chat bubble, a consent banner).
+   * The page as sent is parsed apart (DOMParser runs no script), and each element's children are lined up with the
+   * children the server sent it, in order, by name, id and classes (a script may add classes to what it finds; it
+   * cannot make a server's element out of its own); a child with none to line up with was added, and so was all of
+   * it. What is never shown, and the page script's own overlay, are left out of the lining up. Answers the outermost
+   * of each, with its name and box; layerPage leaves them out after.
+   */
+  function layerLate(html: string): unknown {
+    late = null;
+    if (typeof html !== 'string' || !html || !document.body) return null;
+    let server: Document;
+    try { server = new DOMParser().parseFromString(html, 'text/html'); } catch { return null; }
+    if (!server.body) return null;
+    const found = new WeakSet<Element>();
+    const roots: Element[] = [];
+    const kids = (el: Element): Element[] => Array.from(el.children).filter((c) => !NOT_SHOWN.test(c.localName) && c.id !== HOST_ID);
+    const score = (l: Element, srv: Element): number => {
+      if (l.localName !== srv.localName) return 0;
+      let v = 1;
+      if (l.id || srv.id) v += l.id === srv.id ? 4 : -0.5;
+      const mine = Array.from(l.classList), theirs = new Set(Array.from(srv.classList));
+      if (mine.length || theirs.size) v += mine.filter((c) => theirs.has(c)).length / Math.max(mine.length, theirs.size);
+      // Between two alike, the one shaped like it: as many children, the same first one.
+      if (l.children.length === srv.children.length) v += 0.25;
+      if (l.firstElementChild?.localName === srv.firstElementChild?.localName) v += 0.25;
+      return v;
+    };
+    const added = (el: Element): void => { found.add(el); if (roots.length < 500) roots.push(el); };
+    const align = (live: Element, srv: Element, depth: number): void => {
+      const L = kids(live), S = kids(srv);
+      const n = L.length, m = S.length;
+      // Past what can be lined up quickly, or deeper than any page goes, nothing under here is called added.
+      if (depth > 200 || n * m > 250_000) return;
+      const w = m + 1;
+      const best = new Float64Array((n + 1) * w);
+      for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+          const sc = score(L[i] as Element, S[j] as Element);
+          best[i * w + j] = Math.max(best[(i + 1) * w + j]!, best[i * w + j + 1]!, sc > 0 ? sc + best[(i + 1) * w + j + 1]! : 0);
+        }
+      }
+      let i = 0, j = 0;
+      while (i < n) {
+        const l = L[i] as Element;
+        if (j < m) {
+          const sc = score(l, S[j] as Element);
+          if (sc > 0 && best[i * w + j] === sc + best[(i + 1) * w + j + 1]!) { align(l, S[j] as Element, depth + 1); i++; j++; continue; }
+          if (best[i * w + j] !== best[(i + 1) * w + j]) { j++; continue; }
+        }
+        added(l);
+        i++;
+      }
+    };
+    align(document.body, server.body, 0);
+    late = found;
+    return roots.map((el) => {
+      const b = el.getBoundingClientRect();
+      return { n: elementName(el), b: [b.left + scrollX, b.top + scrollY, b.width, b.height].map((v) => Math.round(v * 100) / 100) };
+    });
+  }
+
   /**
    * For step 3 against the page as it was: every element of the page (at most `max`, in document order, the page
    * script's own overlay and what is never shown left out), each by its path from <body> (`tag:nth-of-type(n)` steps,
    * so the same element is found in another render however the layout moved), what the tray calls it, its box in
    * document pixels, its own words (its text nodes', not its children's), its computed values for `props` (each an
    * index into one table of values, so a page of thousands of elements stays small), and whether it is an edited
-   * element or inside one.
+   * element or inside one. What a script added after the page arrived (layerLate) is left out, all of it, and not
+   * counted in its siblings' paths, so a form added before them does not move them; it is answered apart (`late`).
    */
   function layerPage(props: string[], max: number): unknown {
     const keys = (Array.isArray(props) ? props : []).filter((p) => typeof p === 'string' && /^[a-z-]{1,40}$/.test(p)).slice(0, 60);
@@ -1488,12 +1555,18 @@ export function livePage(): void {
       return i;
     };
     const elements: unknown[] = [];
+    const added: unknown[] = [];
     let cut = false;
     const walk = (parent: Element, path: string): void => {
       const seen = new Map<string, number>();
       for (const el of Array.from(parent.children)) {
         if (elements.length >= limit) { cut = true; return; }
         if (!STEP_NAME.test(el.localName)) continue;
+        if (late?.has(el)) {
+          const b = el.getBoundingClientRect();
+          if (added.length < 500) added.push({ n: elementName(el), b: [b.left + scrollX, b.top + scrollY, b.width, b.height].map((v) => Math.round(v * 100) / 100) });
+          continue;
+        }
         const n = (seen.get(el.localName) ?? 0) + 1;
         seen.set(el.localName, n);
         if (NOT_SHOWN.test(el.localName) || el.id === HOST_ID) continue;
@@ -1509,7 +1582,7 @@ export function livePage(): void {
       }
     };
     if (document.body) walk(document.body, 'body');
-    return { keys, table, elements, cut };
+    return { keys, table, elements, cut, ...(late ? { late: added } : {}) };
   }
 
   /**
@@ -1730,7 +1803,7 @@ export function livePage(): void {
 
   w.__wl = {
     scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
-    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerType, layerTry, retypeAt,
+    layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),
     /** Picking, or typing on the page: the page's keys are its, not the live view's (live-page-goto.ts asks). */

@@ -118,6 +118,8 @@ const QUIET_CSS = '*,*::before,*::after{caret-color:transparent!important;scroll
 const DOCUMENT_HEIGHT = 'Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))';
 const FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
 const LOAD_MS = 30_000;
+/** A page's HTML read back for the verification at most this long; a longer one is not read. */
+const HTML_MAX = 4_000_000;
 /** How long one step may wait on the page: a read, a clock tick, a resize, a picture. Settling waits 13 s at most. */
 export const STEP_MS = 20_000;
 /** How long a render may take once its page has loaded. */
@@ -182,6 +184,8 @@ export interface HiddenPage {
   shoot(height: number, stable?: boolean): Promise<Buffer | null>;
   /** The main document's response headers, names in lower case; null unless the network was watched, or none came. */
   headers(): Record<string, string> | null;
+  /** The main document as the server sent it (the response body, before any script ran); null unless the network was watched, or it cannot be read. */
+  html(): Promise<string | null>;
   /** Where the page tried to send the browser off the site, if it did. */
   left(): string | null;
 }
@@ -242,7 +246,7 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
   wc.setBackgroundThrottling(false);
   const cdp = wc.debugger;
   /** Document responses as the protocol reported them: which frame, and its headers. */
-  const documents: { frameId: string; headers: Record<string, string> }[] = [];
+  const documents: { frameId: string; headers: Record<string, string>; requestId: string | null }[] = [];
   let mainFrame: string | null = null;
   // A page that throws answers the fallback; one that does not answer in time is stuck, and that is not swallowed.
   const read = async <R>(code: string, fallback: R, world: number): Promise<R> => {
@@ -269,11 +273,11 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
       await command('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK });
     }
     if (o.network) {
-      cdp.on('message', (_event, method, params: { type?: string; frameId?: string; response?: { headers?: Record<string, unknown> } }) => {
+      cdp.on('message', (_event, method, params: { type?: string; frameId?: string; requestId?: string; response?: { headers?: Record<string, unknown> } }) => {
         if (method !== 'Network.responseReceived' || params.type !== 'Document' || !params.frameId || documents.length >= 50) return;
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(params.response?.headers ?? {})) if (typeof v === 'string') headers[k.toLowerCase()] = v.slice(0, 4_000);
-        documents.push({ frameId: params.frameId, headers });
+        documents.push({ frameId: params.frameId, headers, requestId: typeof params.requestId === 'string' ? params.requestId : null });
       });
       await command('Network.enable');
     }
@@ -350,6 +354,19 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
       headers() {
         const mine = documents.filter((d) => d.frameId === mainFrame);
         return mine.at(-1)?.headers ?? null;
+      },
+      async html() {
+        const id = documents.filter((d) => d.frameId === mainFrame).at(-1)?.requestId;
+        if (!id) return null;
+        try {
+          const got = await within('its HTML was read', () => cdp.sendCommand('Network.getResponseBody', { requestId: id })) as { body?: unknown; base64Encoded?: unknown };
+          if (typeof got.body !== 'string') return null;
+          const text = got.base64Encoded === true ? Buffer.from(got.body, 'base64').toString('utf8') : got.body;
+          return text.length <= HTML_MAX ? text : null;
+        } catch (error) {
+          if (error instanceof Stuck) throw error;
+          return null;
+        }
       },
       left: () => left,
     };
