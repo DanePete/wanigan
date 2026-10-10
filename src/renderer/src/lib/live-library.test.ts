@@ -38,6 +38,9 @@ const trace = (): LiveTrace => ({
     { id: 'p2', kind: 'component', label: 'Card', identity: { kind: 'component', name: 'acme:card', within: null, nth: 1 } },
     { id: 'p3', kind: 'block', label: 'Acme branding', identity: { kind: 'config', type: 'block', id: 'acme_branding', plugin: 'system_branding_block' } },
     { id: 'p4', kind: 'region', label: 'Sidebar' },
+    // The same block placed by a page's layout (Layout Builder), and a menu: neither is a placement in a region.
+    { id: 'p5', kind: 'block', label: 'Branding in a layout', identity: { kind: 'config', type: 'layout_builder_component', id: 'node:0a1b2c3d-0000-4000-8000-000000000014/7e57ab1e-0000-4000-8000-000000000001', plugin: 'system_branding_block' } },
+    { id: 'p6', kind: 'menu', label: 'Main navigation', identity: { kind: 'config', type: 'menu', id: 'main' } },
   ],
   palette: [{ id: 'pal.b.acme_cta_block', kind: 'block', label: 'Call to action' }],
   collections: [
@@ -95,13 +98,15 @@ test('where the page uses an entry is what the trace names as it, and the pageâ€
   const regions = [
     region(0, { part: 'p1', component: 'acme:card' }), region(1, { part: 'p2', component: 'acme:card' }),
     region(2, { part: 'p3', block: 'system_branding_block@acme_branding' }), region(3, { component: 'acme:card' }),
+    // A theme's block template that prints no attributes drops the page's mark: the trace's identity still says what it is.
+    region(4, { part: 'p5' }), region(5, { part: 'p6' }),
   ];
   const parts = partIndex(regions, t);
   const cards = usesOnPage(card, 'drupal', t, regions, parts);
   assert.ok(cards.known);
   assert.deepEqual(cards.known && cards.uses.map((u) => [u.part, u.label, u.regions]), [['p1', 'Card', [0]], ['p2', 'Card', [1]], [null, 'acme:card', [3]]]);
   const brand = usesOnPage(branding, 'drupal', t, regions, parts);
-  assert.deepEqual(brand.known && brand.uses.map((u) => u.part), ['p3']);
+  assert.deepEqual(brand.known && brand.uses.map((u) => [u.part, u.label, u.regions]), [['p3', 'Acme branding', [2]], ['p5', 'Branding in a layout', [4]]], 'placed in a region, and placed by a layout');
   const none = usesOnPage(cta, 'drupal', t, regions, parts);
   assert.deepEqual(none, { known: true, uses: [] });
   assert.equal(usesOnPage(hero, 'wordpress', t, regions, parts).known, false);
