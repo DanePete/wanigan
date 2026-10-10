@@ -7,9 +7,15 @@
 // palette, the component library (listed, searched, pictured, an entry's
 // details, placing one, a WordPress library's patterns and styles, an outdated
 // helper), taking a part out (at once, or asked first with its reach), the
-// design layer (a style and words made edits of it, the tray with their reach
-// and state, made real, verified, failing, discarded, undone, redone, orphaned
-// and retired, the page without it), and the
+// design layer (a style and words made edits of it, once per Enter, the tray
+// with their reach, state and what it means, made real where main would and
+// refused where it would not, undo waiting while words are saved, a block's
+// words saved to its own template with that reach said first and the write
+// said when the mark is refused, Put back refused while the layer holds them,
+// verified failing then passing with the edit staying in the site, never twice
+// across the tray closing, a style's note to an agent, discarded, undone,
+// redone, orphaned and retired, the page without it, the keyboard given back),
+// and the
 // states without a trace; and the layout itself: the bar's
 // three groups and its site menu, the five verbs on a chosen part with the
 // note under them, a part chosen in the tree offering what a pick offers, the
@@ -398,12 +404,16 @@ try {
     }
 
     // ── The design layer: a style tried and words retyped on a chosen part are edits of the layer, shown on the page
-    // through it; the tray (Edits, ⇧E) lists them with before → after, reach and state, and makes them real, verifies
-    // them (passing and failing), discards, undoes and redoes, says why one is orphaned, and shows the page without it.
+    // through it; the tray (Edits, ⇧E) lists them with before → after, reach, state and what the state means, and makes
+    // them real (words through a field the site stores; refused, with main's reasons, where main refuses; a block's
+    // words its own template writes, with that template's reach said first), verifies them (failing and passing, the
+    // edit staying in the site), discards, undoes and redoes, says why one is orphaned, and shows the page without it.
+    // The stand-in plays the core's transitions and main's refusals, so what passes here is what they allow.
     {
       const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
       const mark = async () => (await calls()).length;
       const since = async (n) => (await calls()).slice(n);
+      const counted = async (n, re) => (await since(n)).filter((c) => re.test(c)).length;
       const nobody = () => page.evaluate(() => document.activeElement?.blur());
       const edits = page.locator('.live-bar-tools button[aria-keyshortcuts="Shift+E"]');
       // An edit's row, by a line of its before → after (a verdict's words may name the same property).
@@ -414,6 +424,9 @@ try {
       const stateOf = (text) => rowOf(text).getAttribute('data-state').catch(() => null);
       const rowsAre = (n, what) => page.waitForFunction((k) => document.querySelectorAll('.live-tray-edit').length === k, n, { timeout: 3000 })
         .catch(async () => fail(t(`layer: ${what}: the tray lists ${(await page.$$('.live-tray-edit')).length} edits, not ${n}`)));
+      const rowSays = (text, words, what) => page.waitForFunction(([x, w]) => [...document.querySelectorAll('.live-tray-edit')]
+        .find((e) => e.querySelector('.live-layer-lines')?.textContent.includes(x))?.textContent.replace(/\s+/g, ' ').includes(w), [text, words], { timeout: 4000 })
+        .catch(async () => fail(t(`layer: ${what} (${(await rowOf(text).innerText().catch(() => '')).replace(/\s+/g, ' ')})`)));
       const backToLayers = async () => { if (await page.$('.live-inspector')) await page.getByRole('button', { name: 'Back to the layers' }).click(); };
       // A picture of what was just checked: scrolled to it, without the toasts that would cover it (they were checked).
       const layerShot = async (name, at = null) => {
@@ -421,6 +434,28 @@ try {
         await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done())));
         await page.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled', style: '.toasts { visibility: hidden !important; }' });
       };
+      const set = (values) => page.evaluate((v) => Object.assign(window.__wgLive, v), values);
+      const openTray = async () => {
+        if (!(await page.$('.live-tray'))) await edits.click();
+        await page.waitForSelector('.live-tray-edit', { timeout: 3000 }).catch(() => fail(t('layer: Edits did not open the tray')));
+      };
+      const closeTray = async () => {
+        if (!(await page.$('.live-tray'))) return;
+        await page.locator('.live-tray .live-side-title').focus();
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.live-tray', { state: 'detached', timeout: 3000 }).catch(() => fail(t('layer: Escape did not close the tray')));
+      };
+      const notesTab = async () => { await closeTray(); await page.getByRole('radio', { name: /^Notes/ }).click(); };
+      /** Choose a part in the tree and open Retype the words on it, with the new words typed. */
+      const retype = async (part, words) => {
+        await backToLayers();
+        await page.locator('.live-layer', { hasText: part }).first().click();
+        await page.getByRole('button', { name: new RegExp(`^Edit ${part}`) }).click();
+        await page.getByRole('menuitem', { name: /^Retype the words/ }).click();
+        await page.waitForSelector('.live-layer-edit textarea', { timeout: 3000 }).catch(() => fail(t(`layer: Retype the words on ${part} opened nothing to type in`)));
+        await page.locator('.live-layer-edit textarea').fill(words);
+      };
+      const added = (words) => page.waitForSelector(`.live-layer-added:has-text("${words}")`, { timeout: 3000 }).catch(() => fail(t(`layer: “${words}” was not said to be in the layer`)));
       await page.locator('.toast .toast-x').click().catch(() => {});
       await page.getByRole('radio', { name: 'Layers' }).click();
       await backToLayers();
@@ -456,116 +491,232 @@ try {
       if (!(await since(n)).includes('layerAdd style kind')) fail(t('layer: the style was not added for every instance'));
       await page.getByRole('button', { name: 'Done' }).click();
 
-      // Retyped words are a text draft; markup no part names is said to be fragile before the edit is made.
-      await backToLayers();
-      await page.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
-      await page.getByRole('button', { name: /^Edit Opening hours/ }).click();
-      await page.getByRole('menuitem', { name: /^Retype the words/ }).click();
-      await page.waitForSelector('.live-layer-edit textarea', { timeout: 3000 }).catch(() => fail(t('layer: Retype the words opened nothing to type in')));
-      if (!(await page.locator('.live-layer-edit .live-layer-fragile').count())) fail(t('layer: words no part names were not said to be fragile before the edit'));
-      await page.locator('.live-layer-edit textarea').fill('Open every day, 7 to 6');
+      // Retyped words are a text draft; markup no part names is said to be fragile before the edit is made, and how:
+      // its words guard it. Enter adds it once: not when an input method confirms a word, not again while it is held.
+      await retype('Opening hours', 'Open every day, 7 to 6');
+      const fragileFirst = await page.locator('.live-layer-edit .live-layer-fragile').innerText().catch(() => '');
+      if (!/Its words guard it: if that place shows other words, the edit is set aside as orphaned/.test(fragileFirst)) fail(t(`layer: words no part names were not said to be fragile, and how, before the edit (${fragileFirst})`));
       await layerShot('layer-words');
       n = await mark();
+      await page.locator('.live-layer-edit textarea').evaluate((el) => {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true }));
+      });
+      await added('Open every day, 7 to 6');
+      const adds = await counted(n, /^layerAdd text this$/);
+      if (adds !== 1) fail(t(`layer: an input method’s Enter, then Enter held, made ${adds} drafts, not one`));
+      // A field the site stores (an article's body), and a block whose words its own template writes.
+      await retype('Body', 'Fresh loaves daily');
+      if (!(await page.locator('.live-layer-edit').innerText()).includes('For this element.')) fail(t('layer: Retype does not say what it reaches'));
       await page.keyboard.press('Enter');
-      await page.waitForSelector('.live-layer-added:has-text("Open every day, 7 to 6")', { timeout: 3000 }).catch(() => fail(t('layer: retyped words were not said to be in the layer')));
-      if (!(await since(n)).includes('layerAdd text this')) fail(t('layer: the words were not added as a text edit'));
+      await added('Fresh loaves daily');
+      await retype('Copyright', '© 2026 Acme Bakery');
+      await page.keyboard.press('Enter');
+      await added('© 2026 Acme Bakery');
 
-      // The tray, from the bar's key: the three drafts on this page, each with before → after, its reach and its state.
+      // The tray, from the bar's key: the five drafts on this page, each with before → after, its reach, its state and what it means.
       await page.locator('.live-inspector .live-side-title').focus();
       await page.keyboard.press('Shift+E');
       await page.waitForSelector('.live-tray-edit', { timeout: 3000 }).catch(() => fail(t('layer: ⇧E did not open the tray')));
       if ((await edits.getAttribute('aria-pressed')) !== 'true') fail(t('layer: the bar’s Edits is not shown as on'));
       if (await page.$('.live-tree, .live-inspector')) fail(t('layer: the tray shares the panel with the layers'));
       if (!/Edits/.test(await page.locator('.live-tray .live-side-title').innerText())) fail(t('layer: the tray has no title'));
-      await rowsAre(3, 'three drafts');
+      await rowsAre(5, 'five drafts');
       if ((await page.locator('.live-tray-page .live-section-title').first().innerText()).toLowerCase() !== 'the front page, / · this page') fail(t('layer: the tray’s page is not named'));
       const want = [
-        ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft']],
+        ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft', 'An agent makes it in the theme, and the layer cannot tell yet when one has']],
         ['font-size', ['16px', '22px', 'For every event node (3 elements on this page).', 'Draft']],
-        ['Open every day', ['Opening hours', 'Open every day, 7 to 6', 'For this element.', 'Fragile: no part of the site names its element', 'Draft']],
+        ['Open every day', ['Opening hours', 'Open every day, 7 to 6', 'For this element.', 'Fragile: No part of the site names this element', 'Its words guard it', 'Draft', 'the site does not have it']],
+        ['Fresh loaves', ['Body', 'Fresh loaves daily', 'For this element.', 'Draft']],
+        ['Acme Bakery', ['Copyright', '© 2026 Acme Bakery', 'For this element.', 'Draft']],
       ];
       for (const [row, says] of want) {
-        const text = await rowOf(row).innerText().catch(() => '');
-        for (const w of says) if (!text.includes(w)) fail(t(`layer: the ${row} edit does not say "${w}" (${text.replace(/\s+/g, ' ')})`));
+        const text = (await rowOf(row).innerText().catch(() => '')).replace(/\s+/g, ' ');
+        for (const w of says) if (!text.includes(w)) fail(t(`layer: the ${row} edit does not say "${w}" (${text})`));
       }
-      if (!/^Edits, 3 drafts/.test(await edits.getAttribute('aria-label'))) fail(t(`layer: the bar says ${await edits.getAttribute('aria-label')}`));
+      if (!/^Edits, 5 drafts/.test(await edits.getAttribute('aria-label'))) fail(t(`layer: the bar says ${await edits.getAttribute('aria-label')}`));
       await layerShot('layer-tray');
 
       // Undo and redo say what they would do, and do it.
-      const undo = page.locator('.live-tray-tools button', { hasText: /^Undo/ });
+      const undo = page.locator('.live-tray-tools button', { hasText: /^(Undo|Nothing to undo)/ });
       const redo = page.locator('.live-tray-tools button', { hasText: /^(Redo|Nothing to redo)/ });
-      if ((await undo.innerText()) !== 'Undo: take “Opening hours (no part names it)” out of the layer') fail(t(`layer: Undo says "${await undo.innerText()}"`));
+      if ((await undo.innerText()) !== 'Undo: take “Copyright (block)” out of the layer') fail(t(`layer: Undo says "${await undo.innerText()}"`));
       if ((await redo.innerText()) !== 'Nothing to redo' || !(await redo.isDisabled())) fail(t('layer: Redo offers something before anything was undone'));
       await undo.click();
-      await rowsAre(2, 'undo');
-      if (await rowOf('Open every day').count()) fail(t('layer: undo did not take the words out of the tray'));
-      if ((await redo.innerText()) !== 'Redo: put “Opening hours (no part names it)” back in the layer') fail(t(`layer: Redo says "${await redo.innerText()}"`));
+      await rowsAre(4, 'undo');
+      if (await rowOf('Acme Bakery').count()) fail(t('layer: undo did not take the words out of the tray'));
+      if ((await redo.innerText()) !== 'Redo: put “Copyright (block)” back in the layer') fail(t(`layer: Redo says "${await redo.innerText()}"`));
       await redo.click();
-      await rowsAre(3, 'redo');
+      await rowsAre(5, 'redo');
       // Discard takes a draft out; undo brings it back.
       await rowOf('font-size').getByRole('button', { name: /^Discard/ }).click();
-      await rowsAre(2, 'discard');
+      await rowsAre(4, 'discard');
       if ((await undo.innerText()) !== 'Undo: bring back “Spring open house (content)”') fail(t(`layer: after a discard Undo says "${await undo.innerText()}"`));
       await undo.click();
-      await rowsAre(3, 'undoing the discard');
+      await rowsAre(5, 'undoing the discard');
       if (!(await rowOf('font-size').count())) fail(t('layer: undo did not bring back the discarded edit'));
+      // Every control is named by what it shows, and only an answer's words are announced, never a whole form.
+      const misnamed = await page.$$eval('.live-tray button[aria-label]', (bs) => bs
+        .filter((b) => b.innerText.trim() && !b.getAttribute('aria-label').startsWith(b.innerText.trim())).map((b) => `${b.innerText.trim()} / ${b.getAttribute('aria-label')}`));
+      if (misnamed.length) fail(t(`layer: controls whose names do not begin with what they show: ${misnamed.join('; ')}`));
 
-      // Making words real saves them (implemented), then Verify: failing at the styles, failing at the pixels, then passing.
+      // Words in markup no part names, and words in a field the site refused: said, and no template is offered for either.
+      await rowOf('Open every day').getByRole('button', { name: 'Make it real: “Opening hours (no part names it)”' }).click();
+      await rowSays('Open every day', 'markup no part of the page’s trace names', 'words no part names were made real, or not said why not');
+      if (await rowOf('Open every day').getByRole('button', { name: /^Look in its template/ }).count()) fail(t('layer: a template was offered for markup no part names'));
+      if ((await stateOf('Open every day')) !== 'draft') fail(t('layer: words no part names changed state'));
+      await set({ saveRefusal: 'The field no longer holds those words: it was changed since the page was shown. Reload the page, then try again.' });
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Make it real/ }).click();
+      await rowSays('Fresh loaves', 'The field no longer holds those words', 'the site’s refusal was not said');
+      if (await rowOf('Fresh loaves').getByRole('button', { name: /^Look in its template/ }).count()) fail(t('layer: a template was offered after the site refused a field it stores'));
+      if (await page.$$eval('.live-tray [role="status"]', (els) => els.filter((e) => e.querySelector('button, textarea, input, select')).length)) fail(t('layer: a status region holds controls, not only its words'));
+
+      // Made real through the field it is kept in: while the site saves, undo, redo and discard wait, and the tray closed
+      // and opened again does not start it twice. Closed, the keyboard goes back to the bar's Edits.
+      await set({ implementMs: 900 });
       n = await mark();
-      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
-      await stateIs('Open every day', 'implemented', 'Make it real on words did not mark them implemented');
-      if (!(await since(n)).some((c) => /^layerImplement l-\d+$/.test(c))) fail(t('layer: the words were not made real through the main process'));
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Make it real/ }).click();
+      await page.waitForSelector('.live-tray:has-text("undo, redo and discard wait")', { timeout: 2000 }).catch(() => fail(t('layer: saving to the site was not said')));
+      if (!(await undo.isDisabled())) fail(t('layer: Undo was offered while words were being saved to the site'));
+      if (!(await rowOf('Acme Bakery').getByRole('button', { name: /^Discard/ }).isDisabled())) fail(t('layer: Discard was offered while words were being saved to the site'));
+      await closeTray();
+      await page.waitForFunction(() => document.activeElement?.matches('.live-bar button[aria-keyshortcuts="Shift+E"]'), null, { timeout: 2000 })
+        .catch(() => fail(t('layer: closing the tray did not give the keyboard back to Edits')));
+      await page.keyboard.press('Shift+E');
+      await page.waitForSelector('.live-tray-edit', { timeout: 3000 }).catch(() => fail(t('layer: ⇧E from the bar did not open the tray again')));
+      if (!(await rowOf('Fresh loaves').getByRole('button', { name: /^Make it real/ }).isDisabled().catch(() => true))) fail(t('layer: opened again while the words were being saved, the tray offers to save them again'));
+      await stateIs('Fresh loaves', 'implemented', 'Make it real on a field did not mark the words implemented');
+      await set({ implementMs: 0 });
+      if ((await counted(n, /^layerImplement /)) !== 1) fail(t('layer: the words were made real more than once'));
       await page.waitForSelector('.toast:has-text("in the site, as revision 217")', { timeout: 3000 }).catch(() => fail(t('layer: making the words real did not say so')));
-      if ((await rowOf('Open every day').innerText()).includes('In the site, not verified') === false) fail(t('layer: an implemented edit does not say it is not verified'));
-      await page.evaluate(() => { window.__wgLive.verdict = 'styles'; });
-      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
-      await page.waitForSelector('.live-tray-edit:has-text("Open every day") .live-tray-verdict.failed', { timeout: 4000 }).catch(() => fail(t('layer: a failing verification was not shown')));
-      const failing = (await rowOf('Open every day').innerText()).replace(/\s+/g, ' ');
-      for (const w of ['Not verified at 390 and 1440 px', 'Step 1 of 3, the styles and boxes of the edited elements failed; the steps after it did not run.',
-        'At 1440 px, h3.teaser__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.', 'Noise floor: up to 3 of 255 in 12 pixels']) {
+      if (!(await rowOf('Fresh loaves').innerText()).includes('In the site, not verified')) fail(t('layer: an implemented edit does not say it is not verified'));
+
+      // Verify: failing at the styles, then at the pixels, the edit staying in the site; then passing.
+      await set({ verdict: 'styles' });
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Verify/ }).click();
+      await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") .live-tray-verdict.failed', { timeout: 4000 }).catch(() => fail(t('layer: a failing verification was not shown')));
+      const failing = (await rowOf('Fresh loaves').innerText()).replace(/\s+/g, ' ');
+      for (const w of ['Not verified at 390 and 1440 px', 'Step 1 of 3, the styles and boxes of the edited elements failed; the steps after it were not judged.',
+        'At 1440 px, h3.teaser__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.', 'Noise floor: up to 3 of 255 in 12 pixels', 'Checked just now.']) {
         if (!failing.includes(w)) fail(t(`layer: a failing verdict does not say "${w}"`));
       }
-      if ((await stateOf('Open every day')) !== 'draft') fail(t('layer: a failing verification did not send the edit back to draft'));
-      await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="Difference at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a failing verdict shows no difference picture')));
-      await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="The design at 1440 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a verdict shows no design picture')));
-      await layerShot('layer-verify-failed', '.live-tray-edit[data-state="draft"] .live-tray-verdict.failed');
-      await rowOf('Open every day').getByRole('button', { name: 'Difference at 390 px, larger' }).click();
+      if ((await stateOf('Fresh loaves')) !== 'implemented') fail(t('layer: a failing verification took the edit out of the site'));
+      await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") img[alt="Difference at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a failing verdict shows no difference picture')));
+      await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") img[alt="The design at 1440 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a verdict shows no design picture')));
+      await layerShot('layer-verify-failed', '.live-tray-edit[data-state="implemented"] .live-tray-verdict.failed');
+      await rowOf('Fresh loaves').getByRole('button', { name: 'Difference at 390 px, larger' }).click();
       await page.waitForSelector('.dialog .live-tray-large img[alt="Difference at 390 px"]', { timeout: 3000 }).catch(() => fail(t('layer: a verification picture did not open larger')));
       await page.keyboard.press('Escape');
-      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
-      await page.evaluate(() => { window.__wgLive.verdict = 'pixels'; });
-      await stateIs('Open every day', 'implemented', 'made real again, the words are not implemented');
-      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
+      await set({ verdict: 'pixels' });
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Verify/ }).click();
       await page.waitForSelector('.live-tray-edit:has-text("At 390 px, 1,840 pixels differ around it, by up to 172 of 255, in a 320 × 60 box at 24, 910.")', { timeout: 4000 })
         .catch(() => fail(t('layer: a verdict failing at the pixels does not say where, and by how much')));
-      if (!(await rowOf('Open every day').innerText()).includes('Step 2 of 3, the pixels around the edited elements failed')) fail(t('layer: a verdict failing at the pixels does not say its step'));
-      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
-      await page.evaluate(() => { window.__wgLive.verdict = 'pass'; });
-      await stateIs('Open every day', 'implemented', 'made real again, the words are not implemented');
+      if (!(await rowOf('Fresh loaves').innerText()).includes('Step 2 of 3, the pixels around the edited elements failed')) fail(t('layer: a verdict failing at the pixels does not say its step'));
+      // Passing, slowly: closed and opened again meanwhile, the tray says it still runs and does not verify twice.
+      await set({ verdict: 'pass', verifyMs: 1200 });
       n = await mark();
-      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Verify/ }).click();
+      await closeTray();
+      await page.keyboard.press('Shift+E');
+      await page.waitForSelector('.live-tray-edit', { timeout: 3000 }).catch(() => fail(t('layer: ⇧E did not open the tray again')));
+      const still = rowOf('Fresh loaves').getByRole('button', { name: /^Verifying…/ });
+      if (!(await still.count()) || !(await still.isDisabled())) fail(t('layer: opened again, the tray does not say the verification still runs'));
       await page.waitForSelector('.live-tray-edit[data-state="verified"] .live-tray-verdict.ok', { timeout: 4000 }).catch(() => fail(t('layer: a passing verification was not shown')));
-      if (!(await rowOf('Open every day').innerText()).includes('Verified at 390 and 1440 px: the site renders it as designed.')) fail(t('layer: a passing verdict does not say so'));
-      if (!(await since(n)).some((c) => /^layerVerify l-\d+$/.test(c))) fail(t('layer: Verify did not ask the main process'));
+      await set({ verifyMs: 80 });
+      if ((await counted(n, /^layerVerify /)) !== 1) fail(t('layer: the edit was verified twice'));
+      if (await page.locator('.live-tray-edit[data-state="verified"] [role="alert"]').count()) fail(t('layer: a verified edit says it was not verified'));
+      if (!(await rowOf('Fresh loaves').innerText()).includes('Verified at 390 and 1440 px: the site renders it as designed.')) fail(t('layer: a passing verdict does not say so'));
       await page.waitForSelector('.live-tray-edit[data-state="verified"] img[alt="The site at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a passing verdict shows no pictures')));
-      if (await rowOf('Open every day').getByRole('button', { name: /^Discard/ }).count()) fail(t('layer: an edit in the site can be discarded'));
+      if (await rowOf('Fresh loaves').getByRole('button', { name: /^Discard/ }).count()) fail(t('layer: an edit in the site can be discarded'));
       await layerShot('layer-verified', '.live-tray-edit[data-state="verified"] .live-tray-verdict');
 
-      // A style made real goes to an agent as intent: why, and the note to an agent with the edit attached; no session.
-      await rowOf('color').getByRole('button', { name: /^Make .* real$/ }).click();
+      // A block's words that nothing the site stores holds: the template that rendered the block itself is offered as
+      // its own action, its reach said before the save; never the footer around it, which holds the same words.
+      const block = 'themes/custom/acme/templates/block--copyright.html.twig';
+      const footer = 'themes/custom/acme/templates/region--footer.html.twig';
+      await rowOf('Acme Bakery').getByRole('button', { name: /^Make it real/ }).click();
+      await rowSays('Acme Bakery', 'Nothing this page offers to edit holds exactly these words', 'nothing stored holding a block’s words was not said');
+      const look = rowOf('Acme Bakery').getByRole('button', { name: /^Look in its template/ });
+      if (!(await look.count())) fail(t('layer: nothing the site stores holds the words, and the template was not offered'));
+      await look.click();
+      const save = rowOf('Acme Bakery').getByRole('button', { name: /^Save to block--copyright\.html\.twig, line 2/ });
+      await save.waitFor({ timeout: 3000 }).catch(() => fail(t('layer: the block’s own template was not found')));
+      const reachFirst = (await rowOf('Acme Bakery').innerText()).replace(/\s+/g, ' ');
+      for (const w of [`${block}, line 2: the template that rendered this element`, 'every page that uses it shows the new words, not only this element', 'Verify compares this page only']) {
+        if (!reachFirst.includes(w)) fail(t(`layer: before the save, the template’s reach does not say "${w}"`));
+      }
+      if (reachFirst.includes('region--footer')) fail(t('layer: the template around the block was offered'));
+      await layerShot('layer-template', '.live-tray-template');
+      // Read again just before writing: the page shown without the layer does not show the edit, and nothing is written.
+      n = await mark();
+      const without = page.getByRole('button', { name: 'Show the page without the layer' });
+      await without.click();
+      await save.click();
+      await rowSays('Acme Bakery', 'The page is shown without the layer', 'a save while the edit was not shown was not refused');
+      if (await counted(n, /^saveText /)) fail(t('layer: a template was written while the edit was not shown'));
+      await without.click();
+      // The core refuses the mark: the write is said all the same (a toast, the page reloaded), and so is the refusal.
+      await rowOf('Acme Bakery').getByRole('button', { name: 'Look again' }).click();
+      await save.waitFor({ timeout: 3000 }).catch(() => fail(t('layer: looking again did not find the template')));
+      await set({ refuseMark: 'That edit is not in the layer now: it was undone or discarded.' });
+      n = await mark();
+      await save.click();
+      await page.waitForSelector('.toast:has-text("Saved “Copyright (block)” to block--copyright.html.twig (line 2)")', { timeout: 3000 }).catch(() => fail(t('layer: a template written was not said when the layer refused to mark it')));
+      await rowSays('Acme Bakery', 'The layer could not mark this edit implemented: That edit is not in the layer now', 'the refused mark was not said');
+      if (!(await since(n)).includes('reload')) fail(t('layer: the page was not reloaded after the template was written'));
+      if ((await stateOf('Acme Bakery')) !== 'draft') fail(t('layer: the layer says the site has words it refused to record'));
+      const written = await page.evaluate(([b, f]) => [window.__wgLive.templates[b], window.__wgLive.templates[f]], [block, footer]);
+      if (!written[0]?.includes('© 2026 Acme Bakery') || written[1]?.includes('Acme Bakery')) fail(t(`layer: the wrong template was written (${JSON.stringify(written)})`));
+      await layerShot('layer-template-unmarked', '.live-tray-edit:has-text("Acme Bakery") [role="alert"]');
+      // The layer does not hold them: Notes › Saved by hand puts them back.
+      await notesTab();
+      const savedRows = page.locator('.live-edits li', { hasText: 'Acme Bakery' });
+      await savedRows.first().waitFor({ timeout: 3000 }).catch(() => fail(t('layer: the template save is not listed in Notes › Saved by hand')));
+      await savedRows.first().getByRole('button', { name: 'Put back' }).click().catch(() => fail(t('layer: words the layer does not hold cannot be put back')));
+      await page.waitForSelector('.toast:has-text("Put back “Copyright”")', { timeout: 3000 }).catch(() => fail(t('layer: putting the words back was not said')));
+      if ((await page.evaluate((b) => window.__wgLive.templates[b], block)).includes('Acme Bakery')) fail(t('layer: Put back did not put the words back'));
+      // Saved again, and marked: the edit says its reach, and while the layer holds it as in the site, no Put back.
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      await openTray();
+      await rowOf('Acme Bakery').getByRole('button', { name: /^Make it real/ }).click();
+      await rowOf('Acme Bakery').getByRole('button', { name: /^Look in its template/ }).click();
+      await save.waitFor({ timeout: 3000 }).catch(() => fail(t('layer: the template was not found again after it was put back')));
+      await save.click();
+      await stateIs('Acme Bakery', 'implemented', 'a template save did not mark the edit implemented');
+      await rowSays('Acme Bakery', 'For every page that uses block--copyright.html.twig: its words were saved to that template, line 2', 'an edit saved to a template does not say its reach');
+      if ((await undo.innerText()) !== 'Nothing to undo: the newest edit is in the site' || !(await undo.isDisabled())) fail(t(`layer: with the newest edit in the site Undo says "${await undo.innerText()}"`));
+      await layerShot('layer-template-saved', '.live-tray-edit[data-state="implemented"]');
+      await notesTab();
+      const held = page.locator('.live-edits li', { hasText: 'Acme Bakery' }).first();
+      if (!(await held.innerText()).includes('In the design layer as in the site, which it never takes back: put back by hand')) fail(t(`layer: Saved by hand does not say the layer holds the words (${await held.innerText()})`));
+      if (await held.getByRole('button', { name: 'Put back' }).count()) fail(t('layer: words the layer holds as in the site can be put back'));
+      await page.locator('.live-edits').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+      await layerShot('layer-put-back-held');
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      await openTray();
+
+      // A style made real goes to an agent as intent: why, and the note to an agent carries the style; no session.
+      await rowOf('color').getByRole('button', { name: /^Make it real/ }).click();
       await page.waitForSelector('.live-tray-edit:has-text("color") .live-tray-answer:has-text("A style goes into the theme’s CSS")', { timeout: 3000 })
         .catch(() => fail(t('layer: a style made real did not say it goes to an agent')));
-      const note = rowOf('color').locator('textarea[aria-label="What should change here?"]');
-      if ((await note.getAttribute('placeholder').catch(() => null)) !== 'Anything to add? (optional)') fail(t('layer: the note to an agent does not carry the style'));
       if ((await stateOf('color')) !== 'draft') fail(t('layer: a style sent to an agent changed state'));
       await layerShot('layer-agent', '.live-tray-answer');
+      await rowOf('color').getByRole('button', { name: 'Add to notes' }).click();
+      await page.waitForSelector('.toast:has-text("Added to the notes")', { timeout: 3000 }).catch(() => fail(t('layer: the note to an agent was not kept')));
+      await notesTab();
+      const kept = await page.locator('.live-notes li').first().innerText().catch(() => '');
+      if (!kept.includes('color #c0392b')) fail(t(`layer: the note to an agent does not carry the style (${kept.replace(/\s+/g, ' ')})`));
+      await page.getByRole('button', { name: 'Remove note 1' }).click();
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      await openTray();
 
       // An orphaned edit says why, and can only be discarded; it is never shown on what is there now.
       await page.evaluate(() => { const l = window.__wgLive.layer; const e = l.edits.find((x) => x.scope === 'kind'); e.state = 'orphaned'; l.why[e.id] = 'Its element shows other words now.'; });
       await page.getByRole('button', { name: /^Reload/ }).first().click();
       await page.waitForSelector('.live-tray-edit[data-state="orphaned"] .live-tray-why:has-text("Orphaned: Its element shows other words now.")', { timeout: 4000 })
         .catch(() => fail(t('layer: an orphaned edit does not say why')));
-      if (await rowOf('font-size').getByRole('button', { name: /^Make .* real$/ }).count()) fail(t('layer: an orphaned edit can be made real'));
+      if (await rowOf('font-size').getByRole('button', { name: /^Make it real/ }).count()) fail(t('layer: an orphaned edit can be made real'));
       if (!(await rowOf('font-size').getByRole('button', { name: /^Discard/ }).count())) fail(t('layer: an orphaned edit cannot be discarded'));
       await layerShot('layer-orphaned', '.live-tray-edit[data-state="orphaned"]');
 
@@ -585,13 +736,11 @@ try {
 
       // Retiring a verified edit archives it: out of the tray. Escape closes the tray, and the panel shows the part
       // chosen before it opened: the tray never hides the layers or the Inspector for good.
-      await rowOf('Open every day').getByRole('button', { name: /^Retire/ }).click();
-      await page.waitForSelector('.toast:has-text("Retired “Opening hours (no part names it)”")', { timeout: 3000 }).catch(() => fail(t('layer: retiring did not say so')));
-      await rowsAre(2, 'retire');
-      await page.locator('.live-tray .live-side-title').focus();
-      await page.keyboard.press('Escape');
-      await page.waitForSelector('.live-tray', { state: 'detached', timeout: 3000 }).catch(() => fail(t('layer: Escape did not close the tray')));
-      if ((await page.locator('.live-inspector .live-side-title').innerText().catch(() => '')) !== 'Opening hours') fail(t('layer: closing the tray did not bring back the part chosen'));
+      await rowOf('Fresh loaves').getByRole('button', { name: /^Retire/ }).click();
+      await page.waitForSelector('.toast:has-text("Retired “Body (field)”")', { timeout: 3000 }).catch(() => fail(t('layer: retiring did not say so')));
+      await rowsAre(4, 'retire');
+      await closeTray();
+      if ((await page.locator('.live-inspector .live-side-title').innerText().catch(() => '')) !== 'Copyright') fail(t('layer: closing the tray did not bring back the part chosen'));
       // Opened from the page's key too, as the Library is.
       await nobody();
       await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 3000 }).catch(() => fail(t('layer: the view is not waiting for its keys from the page')));

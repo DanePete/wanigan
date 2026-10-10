@@ -12,10 +12,15 @@
 // never a website; so are a verification's pictures.
 //
 // The design layer is played on both sides: the core's log (live.layer*, an
-// in-memory list with undo and redo replayed as the core does) and the main
-// process's (layer*: a picked part keyed by what the made-up trace says it is,
-// the layer applied, words made real, a verdict that passes or fails as
-// __wgLive.verdict says).
+// in-memory list with undo and redo replayed as the core does, and marks only
+// along the core's transitions, src/core/live-layer.ts) and the main process's
+// (layer*: a picked part keyed by what the made-up trace says it is, the layer
+// applied, words made real only where main would make them real and refused
+// with main's reasons everywhere else, a verdict that passes or fails as
+// __wgLive.verdict says and is recorded as main records it). Words saved by
+// hand to the owner's templates (live.findText, saveText, edits, revert) are
+// kept in memory with the core's rules: exactly once, never a core template,
+// put back only while the file is as the save left it.
 
 /** The made-up trace the helper would send for the wireframe: every section of the Inspector and the request has something in it. */
 export function trace() {
@@ -251,7 +256,7 @@ export function liveStub(f) {
       { part: 'p-news', label: 'Latest news', block: 'views_block:news-block_1@acme_news', rect: [sideX + 12, 548, sideW - 24, 200], parent: 'p-sidebar' },
       { part: 'p-hours', label: 'Opening hours', block: 'block_content:hours@acme_hours', rect: [sideX + 12, 760, sideW - 24, 140], parent: 'p-sidebar' },
       { part: 'p-footer', label: 'Footer', hook: 'region', file: 'themes/custom/acme/templates/region--footer.html.twig', rect: [0, 1094, w, 120], parent: null },
-      { part: 'p-copyright', label: 'Copyright', block: 'block_content:copyright@acme_copyright', rect: [24, 1124, 320, 40], parent: 'p-footer' },
+      { part: 'p-copyright', label: 'Copyright', block: 'block_content:copyright@acme_copyright', file: 'themes/custom/acme/templates/block--copyright.html.twig', rect: [24, 1124, 320, 40], parent: 'p-footer' },
     ];
   }
 
@@ -276,7 +281,16 @@ export function liveStub(f) {
     answer: { state: 'ok', trace: f.trace }, outdated: false, calls: [], drops: [], printGen: 0, unchanged: false,
     // The design layer: the core's log, whether the page shows it, why an edit is orphaned, which region each edit is
     // on, the verdict a verification gives ('pass', 'styles' or 'pixels'), and whether words have a field to save to.
-    layer: { edits: [], done: [], undone: [], seq: 0, on: true, why: {}, region: {} }, verdict: 'pass', wordsField: true, picked: null,
+    layer: { edits: [], done: [], undone: [], seq: 0, on: true, why: {}, region: {} }, verdict: 'pass', picked: null,
+    // How long making words real and verifying take (to catch what happens meanwhile), a refusal the site answers the
+    // next field save with, and a refusal the core answers the next mark with.
+    implementMs: 0, verifyMs: 80, saveRefusal: null, refuseMark: null,
+    // The owner's templates, by the path the site names them with, and the words saved to them by hand.
+    templates: {
+      'themes/custom/acme/templates/block--copyright.html.twig': '<p class="copyright">\n  Copyright\n</p>\n',
+      'themes/custom/acme/templates/region--footer.html.twig': '<footer>\n  {{ content }}\n  <a href="/copyright">Copyright</a>\n</footer>\n',
+    },
+    liveEdits: [],
     // The component library: what library() answers (null: the Drupal one), the WordPress one to switch to, the
     // entries each libraryPictures() call asked for, and the pictures that fail.
     libraryAnswer: null, drupalLibrary: f.library, wpLibrary: f.wpLibrary, pictureAsks: [], failing: ['block:northwind_hours_block'],
@@ -296,11 +310,75 @@ export function liveStub(f) {
   window.wanigan.call = (method, params) => {
     if (method === 'live.site') return Promise.resolve(site(params.projectId));
     if (method === 'live.parts') return Promise.resolve({ docroot: '/tmp/acme/web', components: [{ id: 'acme:hero', name: 'Hero', description: 'A wide banner with a heading, words and buttons.', dir: '/tmp/acme/web/themes/custom/acme/components/hero', files: ['hero.component.yml', 'hero.twig', 'hero.css'], props: [{ name: 'heading', type: 'string', title: 'Heading', required: true }, { name: 'ctas', type: 'array', title: 'Buttons', required: false }] }] });
-    if (method === 'live.edits') return Promise.resolve([]);
+    if (method === 'live.edits' || method === 'live.findText' || method === 'live.saveText' || method === 'live.revert') {
+      try { return Promise.resolve(handCore(method, params)); } catch (e) { return Promise.reject(e); }
+    }
     if (method.startsWith('live.layer')) {
       try { return Promise.resolve(layerCore(method, params)); } catch (e) { return Promise.reject(e); }
     }
     return real(method, params);
+  };
+  // The core's events for what the stand-in answers itself (live.edits, live.layer*): to the window's listeners as the
+  // core's would come.
+  const heard = new Set();
+  const listen = window.wanigan.on.bind(window.wanigan);
+  window.wanigan.on = (l) => { const off = listen(l); heard.add(l); return () => { off(); heard.delete(l); }; };
+  const emit = (event, data) => { for (const l of heard) l(event, data); };
+
+  /* ── words saved by hand to the owner's templates, as the core keeps them (src/core/live.ts), in memory ── */
+  const fold = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+  /** Where folded words are in a template: any run of whitespace matches a space, whole words only. */
+  const places = (content, words) => {
+    if (!words) return [];
+    const re = new RegExp(`(?<![\\w])${words.split(' ').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')}(?![\\w])`, 'g');
+    return [...content.matchAll(re)].slice(0, 50);
+  };
+  const lineAt = (content, index) => content.slice(0, index).split('\n').length;
+  const findText = (file, text) => {
+    const content = window.__wgLive.templates[file];
+    if (typeof content !== 'string') return { path: '', count: 0, line: null, refused: 'That template is not in this project.' };
+    const found = places(content, fold(text));
+    const path = `/tmp/acme/web/${file}`;
+    const refused = !found.length ? 'Those words are not written in this template: they come from content, configuration or a variable.'
+      : file.startsWith('core/') ? 'That template is Drupal core’s. Override it in your theme instead (the part’s details say how).'
+        : found.length > 1 ? `Those words are in this template ${found.length} times, so Wanigan cannot tell which one you changed.` : null;
+    return { path, count: found.length, line: found[0] ? lineAt(content, found[0].index) : null, refused };
+  };
+  const handCore = (method, p) => {
+    const w = window.__wgLive;
+    switch (method) {
+      case 'live.edits': return w.liveEdits.slice().reverse().map(({ file, content, ...e }) => ({ ...e, revertable: !e.revertedAt && w.templates[file] === content }));
+      case 'live.findText': return findText(p.file, p.text);
+      case 'live.saveText': {
+        const found = findText(p.file, p.before);
+        if (found.refused) throw refuse(found.refused);
+        const next = fold(p.after);
+        if (!next) throw Object.assign(new Error('The new words are empty.'), { code: 'invalid' });
+        const was = w.templates[p.file];
+        const at = places(was, fold(p.before))[0];
+        const content = was.slice(0, at.index) + next + was.slice(at.index + at[0].length);
+        w.templates[p.file] = content;
+        const edit = { id: `t-${w.liveEdits.length + 1}`, projectId: p.projectId, path: found.path, line: found.line, before: fold(at[0]), after: next, createdAt: Date.now(), revertedAt: null, file: p.file, content, was };
+        w.liveEdits.push(edit);
+        w.calls.push(`saveText ${p.file}`);
+        emit('liveEdits', { projectId: p.projectId });
+        const { file, content: _c, was: _w, ...out } = edit;
+        return { ...out, revertable: true };
+      }
+      case 'live.revert': {
+        const e = w.liveEdits.find((x) => x.id === p.id);
+        if (!e) throw Object.assign(new Error('No such edit.'), { code: 'not_found' });
+        if (e.revertedAt) throw refuse('That edit was already put back.');
+        if (w.templates[e.file] !== e.content) throw refuse('The template has changed since that edit, so putting the old words back could undo other work. Change it by hand or ask an agent.');
+        w.templates[e.file] = e.was;
+        e.revertedAt = Date.now();
+        w.calls.push(`revert ${e.file}`);
+        emit('liveEdits', { projectId: e.projectId });
+        const { file, content, was, ...out } = e;
+        return { ...out, revertable: false };
+      }
+      default: throw new Error(`The stand-in has no ${method}.`);
+    }
   };
 
   /* ── the design layer's log, as the core keeps it (src/core/live-layer.ts), in memory ── */
@@ -314,6 +392,23 @@ export function liveStub(f) {
     return e;
   };
   const strip = ({ listed, ...e }) => e;
+  /** The core's transitions (src/core/live-layer.ts NEXT): once in the site, only forward. */
+  const NEXT = { draft: ['implemented', 'orphaned'], implemented: ['verified'], orphaned: ['draft'], verified: ['retired'], retired: [] };
+  const said = (st) => (st === 'implemented' ? 'implemented (in the site, not yet verified)' : st);
+  /** Why a move is refused, as the core says it (src/core/live-layer.ts why). */
+  const whyNot = (from, to) => {
+    if (from === 'retired') return 'A retired edit is archived: it does not change again.';
+    if (to === 'verified') return `Only an implemented edit is verified; this one is ${said(from)}. Make it real first.`;
+    if (to === 'retired') return `Only a verified edit is retired; this one is ${said(from)}.`;
+    if (to === 'implemented') return from === 'orphaned'
+      ? 'An orphaned edit no longer finds its element: it goes back to draft when it does, and is made real from there.'
+      : `Only a draft becomes implemented; this one is ${said(from)}.`;
+    if (from === 'implemented') return to === 'orphaned'
+      ? 'An implemented edit is in the site: a page where its element is not found does not take it out of the layer.'
+      : 'An implemented edit is in the site: it does not go back to draft. A verification that failed is kept with it, and says what differs.';
+    if (to === 'orphaned') return `Only a draft becomes orphaned; this one is ${said(from)}.`;
+    return `A ${from} edit does not go back to draft.`;
+  };
   const snapshot = (projectId) => {
     const l = L();
     const top = l.done.at(-1), next = l.undone.at(-1);
@@ -369,8 +464,19 @@ export function liveStub(f) {
       }
       case 'live.layerMark': {
         const e = editOf(p.id);
-        e.state = p.state;
-        if (p.verdict) e.verdict = p.verdict;
+        // A refusal the sweep asked for, once: the core refusing to record what happened.
+        const once = window.__wgLive.refuseMark;
+        if (once) { window.__wgLive.refuseMark = null; throw refuse(once); }
+        const from = e.state, to = p.state, verdict = p.verdict ?? null;
+        if (!NEXT[from]) throw Object.assign(new Error('A state is draft, implemented, verified, retired or orphaned.'), { code: 'invalid' });
+        if (to === from && !verdict) return snapshot(p.projectId);
+        if (to !== from && !NEXT[from].includes(to)) throw refuse(whyNot(from, to));
+        if (to === 'verified' && !verdict?.ok) throw refuse('An edit is verified only by a verification that passed.');
+        if (verdict && to !== 'verified' && !(from === 'implemented' && to === 'implemented')) throw refuse(`A verification’s verdict is kept only on an edit in the site; this one is ${said(from)}.`);
+        if (verdict?.ok && to !== 'verified') throw refuse('A verification that passed marks the edit verified.');
+        e.state = to;
+        if (verdict) e.verdict = verdict;
+        emit('liveLayer', { projectId: p.projectId });
         return snapshot(p.projectId);
       }
       default: throw new Error(`The stand-in has no ${method}.`);
@@ -532,7 +638,7 @@ export function liveStub(f) {
     async capture() { return null; },
     async problems() { return []; },
     async mutations() { return 0; },
-    async picked() { return null; },
+    async picked() { const i = window.__wgLive.picked; return typeof i === 'number' ? pickOf(i) : null; },
     async helperChanged() { return 1; },
     async helperSave() { return { ok: true, error: null, label: 'Article 12' }; },
     async hasScript() { return true; },
@@ -607,6 +713,14 @@ export function liveStub(f) {
           label: `${name} (content)`, kindLabel: 'every event node', kindCount: 3, before, fragile: false,
         };
       }
+      // The article's body, a field the helper marks (Drupal), for this translation: words made real go through it.
+      if (r.part === 'p-body') {
+        return { target: { part: { kind: 'entity', type: 'node', id: 'c0ffee00-0000-4000-8000-000000000012', bundle: 'article', langcode: 'en', field: 'body' }, inner: null, selector: null, textHash }, label: 'Body (field)', kindLabel: 'the Body field of every article', kindCount: 1, before, fragile: false };
+      }
+      // A reusable block whose words its own template writes: nothing the site stores holds them.
+      if (r.part === 'p-copyright') {
+        return { target: { part: { kind: 'config', type: 'block', id: 'acme_copyright', plugin: 'block_content:0a1b2c3d-0000-4000-8000-0000000000c1' }, inner: null, selector: null, textHash }, label: 'Copyright (block)', kindLabel: 'this reusable block wherever it is placed in a region', kindCount: 1, before, fragile: false };
+      }
       if (r.part === 'p-hero') {
         return { target: { part: { kind: 'component', name: 'acme:hero', within: null, nth: 0 }, inner: null, selector: null, textHash }, label: 'Hero (component)', kindLabel: 'every Hero component', kindCount: 1, before, fragile: false };
       }
@@ -626,21 +740,47 @@ export function liveStub(f) {
       return out;
     },
     async layerShow(on) { window.__wgLive.calls.push(`layerShow ${on}`); window.__wgLive.layer.on = on; return window.wanigan.live.layerApply(); },
+    // Main's implement (src/main/live-layer.ts), played: the same refusals in the same order, words saved only to a
+    // field of content the target names (Drupal's field the helper marks), and nothing the site stores holding a
+    // block's words written in its template.
     async layerImplement(id) {
       window.__wgLive.calls.push(`layerImplement ${id}`);
-      const e = window.__wgLive.layer.edits.find((x) => x.id === id && x.listed);
-      if (!e) return { ok: false, id, route: 'none', why: 'That edit is not in the layer.' };
+      const w = window.__wgLive;
+      if (w.implementMs) await new Promise((done) => setTimeout(done, w.implementMs));
+      const none = (why) => ({ ok: false, id, route: 'none', why });
+      const e = w.layer.edits.find((x) => x.id === id && x.listed);
+      if (!e) return none('That edit is not in the layer.');
       if (e.change.type === 'style') return { ok: false, id, route: 'agent', why: 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' };
       if (e.change.type === 'token') return { ok: false, id, route: 'agent', why: 'A token is the theme’s: changing it natively is a code change, which an agent makes from a brief, on your click.' };
-      if (!window.__wgLive.wordsField) return { ok: false, id, route: 'none', why: 'These words are not in a plain text field the site helper marks: they come from a template, a setting or formatted text. An agent can make the change from a brief.' };
-      e.state = 'implemented';
-      // The site now has the words: the page reloads, and the layer applies again after it.
+      if (e.change.type !== 'text') return none('Only words and styles are made real from the layer so far.');
+      if (e.state === 'implemented' || e.state === 'verified') return none('It is in the site already.');
+      if (e.state === 'orphaned') return none('Its element is not on its page any more, so there is nothing to save it to.');
+      if (e.state !== 'draft') return none(`It is ${e.state}.`);
+      if (e.scope !== 'this') return none('Words are saved one element at a time: make this edit for one element, not every instance.');
+      if (e.page !== '/') return none(`Open ${e.page} in the live view first: words are saved from the page they are on.`);
+      if (!w.layer.on || w.layer.region[e.id] === undefined) return none('Its element is not tagged on this page. Reload the page, then try again.');
+      const part = e.target.part;
+      const field = part?.kind === 'entity' && part.field ? `node:12:${part.field}:string:${part.langcode ?? 'en'}` : null;
+      if (field) {
+        if (!part.langcode) return none('Its target does not say which translation it was made on, so the words are saved to none. Reload the page, then try again.');
+        const refused = w.saveRefusal;
+        if (refused) { w.saveRefusal = null; return none(refused); }
+      } else {
+        if (!part) return none('Its element is in markup no part of the page’s trace names, so Wanigan cannot tell what holds these words.');
+        return none('Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.');
+      }
+      // The site has the words: the page reloads, and the layer applies again after it, whatever the core records.
       setTimeout(() => { for (const l of listeners.state) l({ ...state(), loading: true }); setTimeout(tell, 40); }, 10);
+      try {
+        layerCore('live.layerMark', { projectId, id, state: 'implemented' });
+      } catch (err) {
+        return none(`The words are saved in the site (revision 217), but the layer could not mark this edit implemented: ${err.message} Do not save it again; it is in the site.`);
+      }
       return { ok: true, id, state: 'implemented', revision: '217' };
     },
     async layerVerify(id) {
       window.__wgLive.calls.push(`layerVerify ${id}`);
-      await new Promise((done) => setTimeout(done, 80));
+      await new Promise((done) => setTimeout(done, window.__wgLive.verifyMs));
       const e = window.__wgLive.layer.edits.find((x) => x.id === id && x.listed);
       if (!e) throw new Error('That edit is not in the layer.');
       if (e.state !== 'implemented') throw new Error(`Only an implemented edit is verified; this one is ${e.state}. Make it real first.`);
@@ -652,8 +792,12 @@ export function liveStub(f) {
         ? [{ kind: 'style', edit: id, width: 1440, element: 'h3.teaser__title', property: 'color', design: 'rgb(192, 57, 43)', result: 'rgb(20, 20, 20)' }]
         : how === 'pixels' ? [{ kind: 'pixels', edit: id, width: 390, rect: { x: 24, y: 910, width: 320, height: 60 }, pixels: 1840, maxDiff: 172 }] : [];
       const verdict = { at: Date.now(), ok: how === 'pass', failed: how === 'pass' ? null : how, widths: [390, 1440], noise: { maxDiff: 3, pixels: 12 }, differences, pictures };
-      e.state = verdict.ok ? 'verified' : 'draft';
-      e.verdict = verdict;
+      // Recorded as main records it: verified, or still implemented with the failed verdict (its words are in the site).
+      try {
+        layerCore('live.layerMark', { projectId, id, state: verdict.ok ? 'verified' : 'implemented', verdict });
+      } catch (err) {
+        throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: “${e.label}”: ${err.message}`);
+      }
       return verdict;
     },
     async layerPicture(path) {
