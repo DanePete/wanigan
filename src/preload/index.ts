@@ -172,6 +172,7 @@ const bridge: WaniganBridge = {
   },
   live,
   platform: process.platform,
+  toursOff: process.env.WANIGAN_TOURS === 'off',
 };
 
 contextBridge.exposeInMainWorld('wanigan', bridge);
