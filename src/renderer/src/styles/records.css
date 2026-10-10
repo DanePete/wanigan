@@ -213,17 +213,17 @@ button.record,
   gap: var(--space-4);
 }
 
-.reader-title {
+.read-title {
   margin: 0;
   font: 500 var(--text-md) / var(--leading) var(--font-ui);
   overflow-wrap: anywhere;
 }
 
-.reader-title strong {
+.read-title strong {
   font-weight: 600;
 }
 
-.reader-body {
+.read-body {
   margin: 0;
   color: var(--fg);
   line-height: var(--leading);
@@ -231,22 +231,22 @@ button.record,
   overflow-wrap: anywhere;
 }
 
-.reader-detail {
+.read-detail {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-m);
   background: var(--sunken);
   font: var(--text-sm) / var(--lh-md) var(--font-mono);
 }
 
-.reader-none,
-.reader-fact {
+.read-none,
+.read-fact {
   margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: var(--leading);
 }
 
-.reader-acts {
+.read-acts {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);

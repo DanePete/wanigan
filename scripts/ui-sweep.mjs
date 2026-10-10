@@ -2146,7 +2146,7 @@ try {
       await page.click('.records-toolbar button:has-text("New decision")');
       await page.fill('#decision-title', decided);
       await page.click('.dialog button:has-text("Record decision")');
-      await page.waitForSelector(`.records-reader .reader-title:text-is("${decided}")`, { timeout: 5000 }).catch(() => failures.push('decisions/live: the decision recorded is not the one the reader shows'));
+      await page.waitForSelector(`.records-reader .read-title:text-is("${decided}")`, { timeout: 5000 }).catch(() => failures.push('decisions/live: the decision recorded is not the one the reader shows'));
       if (!(await page.evaluate(async (id) => (await window.wanigan.call('decisions.list', { projectId: id })).map((x) => x.title), nsId)).includes(decided)) failures.push('decisions/live: the core has no such decision');
       await page.screenshot({ path: join(out, 'dark-decisions-recorded.png') });
       await page.click('.records-reader button:has-text("Withdraw")');

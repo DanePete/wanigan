@@ -101,15 +101,15 @@ export function DecisionsView({ project }: { project: ProjectSummary }) {
                 <DecisionEdit id={current.id} title={current.title} body={current.body} onDone={() => setEditing(null)} />
               ) : (
                 <>
-                  <h3 className="reader-title">{current.title}</h3>
-                  {current.body.trim() ? <p className="reader-body">{current.body.trim()}</p> : <p className="reader-none">No detail.</p>}
+                  <h3 className="read-title">{current.title}</h3>
+                  {current.body.trim() ? <p className="read-body">{current.body.trim()}</p> : <p className="read-none">No detail.</p>}
                   <Section title="In force">
-                    <p className="reader-fact">
+                    <p className="read-fact">
                       Recorded {ago(current.createdAt)}{current.updatedAt !== current.createdAt ? `, changed ${ago(current.updatedAt)}` : ''}.
                       {' '}Every session that starts in {project.name} is told it.
                     </p>
                   </Section>
-                  <div className="decision-actions reader-acts">
+                  <div className="decision-actions read-acts">
                     <Button size="s" icon="pencil" onClick={() => setEditing(current.id)}>Edit</Button>
                     <Button size="s" tone="quiet" icon="trash" onClick={() => setWithdrawing(current)}>Withdraw</Button>
                   </div>
@@ -180,7 +180,7 @@ function DecisionEdit({ id, title, body, onDone }: { id: string; title: string; 
         <label htmlFor={`db-${id}`}>Detail</label>
         <textarea id={`db-${id}`} value={b} onChange={(e) => setB(e.target.value)} rows={6} />
       </div>
-      <div className="reader-acts">
+      <div className="read-acts">
         <Button tone="quiet" size="s" onClick={onDone}>Cancel</Button>
         <Button tone="primary" size="s" type="submit" disabled={!t.trim()}>Save</Button>
       </div>

@@ -126,24 +126,24 @@ export function ActivityView({ project }: { project: ProjectSummary }) {
           <Panel side="right" open={reader} onClose={() => setReader(false)} className="records-reader" label="The entry" title="Entry"
             resizable sizeKey="activity-reader" size={380} minSize={292} maxSize={600}>
             <div data-tour="activity-reader">
-              <h3 className="reader-title"><strong>{actorName(current.actor, sessionMap)}</strong> {current.verb}</h3>
-              <p className="reader-fact">
+              <h3 className="read-title"><strong>{actorName(current.actor, sessionMap)}</strong> {current.verb}</h3>
+              <p className="read-fact">
                 <time dateTime={new Date(current.at).toISOString()}>{new Date(current.at).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })}</time>
                 {' · '}{ago(current.at)}
               </p>
               {current.detail ? (
-                <Section title="Detail"><p className="reader-body reader-detail">{current.detail}</p></Section>
+                <Section title="Detail"><p className="read-body read-detail">{current.detail}</p></Section>
               ) : null}
               {card ? (
                 <Section title="Card">
-                  <p className="reader-fact"><span className="mono">{card.key}</span> {card.title}</p>
-                  <div className="reader-acts"><Button size="s" icon="open" onClick={() => openCard(card.key)}>Open the card</Button></div>
+                  <p className="read-fact"><span className="mono">{card.key}</span> {card.title}</p>
+                  <div className="read-acts"><Button size="s" icon="open" onClick={() => openCard(card.key)}>Open the card</Button></div>
                 </Section>
               ) : null}
               {session ? (
                 <Section title="Session">
-                  <p className="reader-fact">{session.title}</p>
-                  <div className="reader-acts">
+                  <p className="read-fact">{session.title}</p>
+                  <div className="read-acts">
                     <a className="btn btn-plain btn-s" href={href({ name: 'session', projectKey: project.key, sessionId: session.id })}>
                       <Icon name="terminal" size={14} /><span>Open the session</span>
                     </a>
