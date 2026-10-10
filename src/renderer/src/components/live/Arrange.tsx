@@ -249,6 +249,9 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
   const key = useMemo(() => JSON.stringify(spec), [spec]);
   const specRef = useRef(spec);
   specRef.current = spec;
+  // The drop handler is read when a drop comes, not a reason to arm again: it changes with what the page shows.
+  const onDropRef = useRef(onDrop);
+  onDropRef.current = onDrop;
   useEffect(() => {
     const s = specRef.current;
     if (!live || !armed || pending || (!s.collections.length && !s.groups.length && !s.placing)) return undefined;
@@ -261,12 +264,12 @@ export function useArrange({ project, platform, trace, parts, regions, layers, e
         const drop = await live.arrange(s);
         if (!alive) return;
         if (!drop) { if (s.placing) setPlacing(null); return; }
-        await onDrop(drop);
+        await onDropRef.current(drop);
         if (s.placing) { setPlacing(null); return; }
       }
     })();
     return () => { alive = false; void live.disarm(); };
-  }, [live, key, armed, pending, onDrop, checks]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, key, armed, pending, checks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── the keyboard ─────────────────────────────────────────────────────── */
 

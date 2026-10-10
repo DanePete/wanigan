@@ -473,6 +473,11 @@ try {
       await page.waitForSelector('.status-line .live-status:has-text("Typing on the page")', { timeout: 2000 })
         .catch(() => fail(t('layout: E on words alone did not type on them on the page')));
       if (!(await since(n)).includes('layerType')) fail(t('layout: E on words alone did not ask the page to type on them'));
+      // Typing outlives its own start: arming the page for a drag ends typing (as the page script does), and the
+      // window once re-armed it as typing began, so the Type tool started and stopped in the same moment.
+      await page.waitForTimeout(700);
+      if (!(await page.evaluate(() => window.__wgLive.typing !== null && window.__wgLive.typing !== undefined))) fail(t('layout: typing on the page ended by itself as it began'));
+      if ((await since(n)).includes('arrange')) fail(t('layout: the page was armed for a drag while words were typed on it'));
       if (await page.$('[role="menu"]')) fail(t('layout: E on words alone opened the Edit menu as well'));
       await page.keyboard.press('Escape');
       await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTypeEnd false'), n, { timeout: 2000 }).catch(() => fail(t('layout: Escape in the window did not put the words back')));

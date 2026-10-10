@@ -442,7 +442,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const editCheck = useRef<Promise<WriteCheck> | null>(null);
   const arrange = useArrange({
     project, platform: site.platform, trace: traceData, parts, regions, layers, page: view?.url ?? url, checks,
-    enabled: hasScript && !compact && !picking && !editing && !view?.loading && !view?.error, handles: arrangeOn,
+    // Never while words are typed on the page: arming it ends the typing (the page script's arrange keeps the words
+    // and stops), so a re-arm as typing began ended it at once and the Type tool did nothing.
+    enabled: hasScript && !compact && !picking && !editing && !layer.typing && !view?.loading && !view?.error, handles: arrangeOn,
     onSaved: (label) => setSaved((was) => ({ ...was, parts: new Set([...was.parts, label.replace(/^(Moved|Added) /, '').split(',')[0] as string]) })),
   });
   const helperSite = site.platform === 'drupal' || site.platform === 'wordpress';

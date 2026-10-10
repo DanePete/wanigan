@@ -885,6 +885,9 @@ export function liveStub(f) {
     onKey(l) { listeners.key.add(l); return () => listeners.key.delete(l); },
     // `armed`: the page waits for a drop now (a reload disarms it, and the window arms it again once the page is back).
     arrange(spec) {
+      // As the page script does: arming the page keeps any words being typed and ends the typing first.
+      window.__wgLive.calls.push('arrange');
+      window.__wgLive.typed?.(window.__wgLive.typing);
       arranging?.(null);
       window.__wgLive.spec = spec;
       window.__wgLive.armed = true;
@@ -1087,6 +1090,8 @@ export function liveStub(f) {
       const pick = await window.wanigan.live.picked();
       if (!target || !pick?.own) return { ended: 'refused', why: 'Only words can be typed on the page, and this element holds more than words: pick the words themselves.' };
       const w = window.__wgLive;
+      // As the page script does: typing disarms the page (a pending drag answers null).
+      if (arranging) { const a = arranging; arranging = null; w.armed = false; a(null); }
       w.typing = pick.own;
       w.type = (words) => { w.typing = words; draw(); };
       draw();
