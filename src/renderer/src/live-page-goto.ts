@@ -2,8 +2,10 @@
 // isolated world as live-page.ts (live-page-entry.ts runs both): Shift+Space on
 // the page, when nothing there is being typed into, is answered to the window
 // the way a pick is (the main process waits on `awaitGoto()`), and so are the
-// live view's own keys the window passes in (P picks, 1 2 3 widths…); and what the
-// page says it is, and the pages it links to, for finding where to go next.
+// live view's own keys the window passes in (P picks, 1 2 3 widths…) and a
+// double-click on the chosen part's words, which types on them ('retype'); and
+// what the page says it is, and the pages it links to, for finding where to go
+// next.
 // It imports nothing.
 
 export function livePageGoto(): void {
@@ -54,9 +56,23 @@ export function livePageGoto(): void {
     answer(goto ? 'goto' : (other as { id: string }).id);
   }, true);
 
+  // A double-click on the chosen part's own words types on them, as Retype the words does: answered as a key is, and
+  // the page's own double-click never hears it. Anywhere else it is the page's.
+  addEventListener('dblclick', (e) => {
+    if (!waiting || e.button !== 0) return;
+    const at = wl.retypeAt as ((node: unknown) => boolean) | undefined;
+    if (!at?.(e.composedPath()[0] ?? e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const answer = waiting;
+    waiting = null;
+    answer('retype');
+  }, true);
+
   /**
-   * Wait for Shift+Space, which answers 'goto', or for one of `take` (the live
-   * view's keys), which answers its id. A newer wait replaces this one, which
+   * Wait for Shift+Space, which answers 'goto', for one of `take` (the live
+   * view's keys), which answers its id, or for a double-click on the chosen
+   * part's words, which answers 'retype'. A newer wait replaces this one, which
    * then answers null.
    */
   wl.awaitGoto = (take?: unknown): Promise<string | null> => {
