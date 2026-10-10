@@ -19,6 +19,7 @@ const live: LiveBridge = {
   reload: (hard) => invoke('live:reload', hard === true) as Promise<void>,
   css: () => invoke('live:css') as Promise<number>,
   restyled: () => invoke('live:restyled') as Promise<number[]>,
+  settled: () => invoke('live:settled') as Promise<number>,
   hideAdmin: (hide) => invoke('live:hideAdmin', hide) as Promise<boolean>,
   go: (url) => invoke('live:go', url) as Promise<boolean>,
   back: () => invoke('live:back') as Promise<void>,

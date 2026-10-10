@@ -2253,6 +2253,18 @@ try {
   await page.addScriptTag({ content: pageScriptSource(script) });
   if (pageErrors.length) fail(`page script: sent twice, the page logged ${JSON.stringify(pageErrors)}`);
   if (!(await page.evaluate(() => window.__wl === window.__first))) fail('page script: sent twice, the page script installed itself again');
+  // settled(): a save's held reload lets go once the page's own entrance animations have run (a title rising in on load
+  // showed blank, then rising, take wordpress-w2); nothing running answers at once; an endless one is not waited for.
+  {
+    const ap = await browser.newPage({ viewport: { width: 600, height: 400 } });
+    await ap.setContent(`<!doctype html><style>@keyframes rise { from { opacity: 0 } to { opacity: 1 } } h1.in { animation: rise 600ms both } .spin { animation: rise 1s infinite }</style><h1>Made-up title</h1><div class="spin">.</div>`);
+    await ap.addScriptTag({ content: pageScriptSource(script) });
+    const idle = await ap.evaluate(() => window.__wl.settled());
+    if (idle > 120) fail(`page script: settled() with only an endless animation waited ${idle} ms`);
+    const ran = await ap.evaluate(() => { document.querySelector('h1').classList.add('in'); return window.__wl.settled(); });
+    if (ran < 450 || ran > 1600) fail(`page script: settled() during a 600 ms entrance animation answered after ${ran} ms`);
+    await ap.close();
+  }
   // The chosen part kept in view as the view changes size (back from a session's split, where the page was narrower,
   // the same offset is another place): in the resize event, so the first frame at the new size already shows it (take
   // editor-e10, 55.4 s: three frames of the description first). A part scrolled away from is not taken back.

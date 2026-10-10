@@ -651,8 +651,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
         watchLate();
         await fetchTrace().catch(() => {});
         layerLoaded.current();
-        // The layer goes back on as the page settles: a moment more, then the page itself.
-        window.setTimeout(() => setHolding(false), 500);
+        // The layer goes back on as the page settles, and the page's own entrance animations finish: then the page.
+        await live.settled().catch(() => 0);
+        window.setTimeout(() => setHolding(false), 300);
         return refreshProblems();
       });
     } else setHolding(false);

@@ -1365,6 +1365,25 @@ export function livePage(): void {
    * holding it. A rule for the whole page (html, body, :root) or for more than 40 elements styles everything and is
    * no part to outline. Empty when nothing was swapped, or nothing it changed is on this page.
    */
+  /**
+   * Once the page's own running animations have finished (a theme's titles rising in on load, say), at most `max` ms:
+   * a save's held reload lets go after them, not into them (the title blank, then rising, take wordpress-w2). Wanigan's
+   * own overlay and endless animations (spinners) are not waited for.
+   */
+  async function settled(max = 1500): Promise<number> {
+    const t0 = performance.now();
+    const running = (): Animation[] => document.getAnimations().filter((a) => {
+      if (a.playState !== 'running') return false;
+      const t = a.effect?.getComputedTiming();
+      if (!t || !Number.isFinite(Number(t.endTime))) return false;
+      const target = (a.effect as KeyframeEffect | null)?.target;
+      return !(target instanceof Element && target.closest(`#${HOST_ID}`));
+    });
+    const left = running();
+    if (left.length) await Promise.race([Promise.all(left.map((a) => a.finished.catch(() => null))), new Promise((r) => setTimeout(r, max))]);
+    return Math.round(performance.now() - t0);
+  }
+
   async function restyled(): Promise<number[]> {
     const pending = swapped;
     swapped = null;
@@ -2161,7 +2180,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, choose, css, restyled, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, choose, css, restyled, settled, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
     layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, layerColors, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),

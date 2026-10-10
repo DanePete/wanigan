@@ -628,6 +628,11 @@ export function wireLiveView(options: {
     if (swapped <= 0) view?.webContents.reload();
     return swapped;
   });
+  ipcMain.handle('live:settled', async (event) => {
+    if (!ok(event)) return 0;
+    const ms = await run<number>('window.__wl && window.__wl.settled ? window.__wl.settled() : 0', 0);
+    return typeof ms === 'number' && Number.isFinite(ms) ? ms : 0;
+  });
   ipcMain.handle('live:restyled', async (event) => {
     if (!ok(event)) return [];
     const found = await run<number[]>('window.__wl && window.__wl.restyled ? window.__wl.restyled() : []', []);

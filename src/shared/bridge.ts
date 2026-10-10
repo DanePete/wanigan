@@ -199,6 +199,8 @@ export interface LiveBridge {
    * no part as its source). Waits for the new copies to load.
    */
   restyled(): Promise<number[]>;
+  /** Once the page's own running animations have finished (at most 1.5 s): how long that took, in ms. */
+  settled(): Promise<number>;
   /** Hide the site's own admin bars in the view (Drupal's toolbar, top bar and sidebar; WordPress's admin bar), or show them; kept across loads. Answers what is now in force. */
   hideAdmin(hide: boolean): Promise<boolean>;
   /** The site's own status messages on each page the view loads (hidden in the page, said in Wanigan's pop-up there): for the window's tray. */

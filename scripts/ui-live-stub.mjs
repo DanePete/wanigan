@@ -816,6 +816,7 @@ export function liveStub(f) {
     async reload() { window.__wgLive.calls.push('reload'); setTimeout(tell, 30); },
     async css() { return 0; },
     async restyled() { return []; },
+    async settled() { window.__wgLive.calls.push('settled'); return 0; },
     async hideAdmin(hide) { window.__wgLive.calls.push(`hideAdmin ${hide}`); window.__wgLive.hideAdmin = hide; return hide; },
     async go(url) { window.__wgLive.calls.push(`go ${url}`); return true; },
     async back() {}, async forward() {}, async open() {},
