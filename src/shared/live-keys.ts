@@ -11,11 +11,13 @@
 // layer's edits: E alone edits the chosen part. [ and ] step through the side
 // panel's tabs; ⇧[ and ⇧] (a key event names them { and }) step through the
 // tabs of the dock beneath the page: the code editor, the notes, the problems
-// and the request.
+// and the request. ⇧S snaps a picture of the page to mark up and send, and ⇧R
+// starts or stops recording it (S alone is Compare's slider, R alone follows G
+// to Running).
 
 export type LiveKeyId =
   | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'dock-previous' | 'dock-next'
-  | 'compare' | 'library' | 'edits'
+  | 'compare' | 'library' | 'edits' | 'snap' | 'record'
   | 'edit' | 'move' | 'code' | 'alone' | 'take-out';
 
 export interface LiveKeySpec {
@@ -42,6 +44,9 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'compare', key: 'c', shift: true, page: true, focusWindow: true },
   { id: 'library', key: 'b', shift: true, page: true, focusWindow: true },
   { id: 'edits', key: 'e', shift: true, page: true, focusWindow: true },
+  { id: 'snap', key: 's', shift: true, page: true, focusWindow: true },
+  // Recording goes on with the keyboard where it was: the owner goes on using the page.
+  { id: 'record', key: 'r', shift: true, page: true, focusWindow: false },
   { id: 'edit', key: 'e', shift: false, page: false, focusWindow: false },
   { id: 'move', key: 'm', shift: false, page: false, focusWindow: false },
   { id: 'code', key: '.', shift: false, page: false, focusWindow: false },

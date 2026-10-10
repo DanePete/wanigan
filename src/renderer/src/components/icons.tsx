@@ -66,6 +66,14 @@ const paths = {
   live: 'M3 4.5h14v11H3zM3 7.5h14M5.3 6h.01M7.3 6h.01',
   pick: 'M10 2.8v3M10 14.2v3M2.8 10h3M14.2 10h3M10 12.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z',
   camera: 'M3.5 6.5h3l1.5-2h4l1.5 2h3v9h-13zM10 13.2a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z',
+  // Record, and a snap's markup tools: a box, an arrow, a highlighter, a label, a blur.
+  record: 'M10 16a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM10 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
+  box: 'M4 5h12v10H4z',
+  arrow: 'M4.5 15.5 15 5M9 5h6v6',
+  highlight: 'M11.5 4 16 8.5l-6 6H7.5l-1.5-1.5V10.5zM5 16h10',
+  text: 'M5 5h10M10 5v10M8 15h4',
+  blur: 'M4 4h4v4H4zM12 4h4v4h-4zM8 8h4v4H8zM4 12h4v4H4zM12 12h4v4h-4z',
+  crop: 'M6 3v11h11M3 6h11v11',
   pieces: 'M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4zM11 11h5v5h-5z',
   // what made a part of a live page, and what can be done to it by hand.
   layers: 'M10 3.5 17 7l-7 3.5L3 7zM3 10.5l7 3.5 7-3.5M3 14l7 3.5 7-3.5',
@@ -86,6 +94,7 @@ const paths = {
   // A place with its part taken out: the place stays, and so does what it showed (never a bin: nothing is deleted).
   takeOut: 'M3.5 3.5h13v13h-13zM6.5 10h7',
   undo: 'M7.5 6 4 9.5 7.5 13M4.5 9.5H12a4 4 0 0 1 0 8h-2',
+  redo: 'M12.5 6 16 9.5 12.5 13M15.5 9.5H8a4 4 0 0 0 0 8h2',
   code: 'M7 6 3 10l4 4M13 6l4 4-4 4M11.2 4.5l-2.4 11',
   save: 'M4 3.5h9.5l2.5 2.5v10.5H4zM7 3.5v4h6v-4M7 16.5v-5h6v5',
   forward: 'M8 5.5l4.5 4.5L8 14.5',
