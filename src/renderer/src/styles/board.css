@@ -115,7 +115,7 @@
   }
 }
 
-@container board-toolbar (max-width: 1360px) {
+@container board-toolbar (max-width: 1320px) {
   .board-types .chip .type > span:last-child {
     position: absolute;
     width: var(--hairline);
