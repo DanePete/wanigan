@@ -23,6 +23,7 @@ import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
 import { DRUPAL_USAGE_FILES } from './live-helper-drupal-usage.ts';
 import { DRUPAL_VERIFY_FILES, DRUPAL_VERIFY_MODULE, DRUPAL_VERIFY_SERVICES } from './live-helper-drupal-verify.ts';
 import { DRUPAL_WORDS_FILES } from './live-helper-drupal-words.ts';
+import { DRUPAL_ADAPTER_FILES } from './live-helper-drupal-adapters.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -844,4 +845,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_USAGE_FILES,
   ...DRUPAL_VERIFY_FILES,
   ...DRUPAL_WORDS_FILES,
+  ...DRUPAL_ADAPTER_FILES,
 };
