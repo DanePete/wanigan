@@ -88,7 +88,7 @@ function kindPart(identity: PartIdentity, trace: LiveTrace | null): Pick<TracePa
   const seen = key ? trace?.parts.find((p) => p.identity && kindKey(p.identity) === key) : undefined;
   if (seen) return seen;
   const label = identity.kind === 'component' || identity.kind === 'block' ? identity.name
-    : identity.kind === 'entity' ? identity.field ?? identity.type : identity.id;
+    : identity.kind === 'entity' ? identity.field ?? identity.type : identity.kind === 'template' ? identity.path : identity.id;
   return { label, identity };
 }
 
@@ -338,6 +338,7 @@ export function identityWords(i: PartIdentity): string {
     case 'component': return `component ${i.name}${i.within ? ` inside ${i.within}` : ''}, number ${i.nth + 1} of its name there`;
     case 'config': return `${i.type} ${i.id}${i.plugin ? ` (${i.plugin})` : ''}`;
     case 'block': return `block ${i.name} at ${i.path.join('.')} in ${i.store}`;
+    case 'template': return `template file ${i.path} of the ${i.role === 'parent' ? 'parent theme' : i.role === 'child' ? 'active child theme' : 'theme'} ${i.theme}`;
   }
 }
 

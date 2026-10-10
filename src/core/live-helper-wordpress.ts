@@ -2886,13 +2886,17 @@ final class Wanigan_Live {
 	 * - A block in stored markup: block, by its store (post:<ID>, tpl:<template id>, tp:<template part id>), its path
 	 *   among the blocks there and its name. A template part block is the wp_template_part it shows, wherever it sits.
 	 * - A widget, a menu item, a block template: config widget, menu_item, wp_template.
+	 * - A theme's PHP template file (header.php, a template part, the page template the hierarchy chose): template, by
+	 *   the theme's folder, the file's path in it, and whether that theme is the active one, its child, or the parent of
+	 *   the active child (template_identity()).
 	 * - A block rendered from no store of its own (inside a synced pattern, from a theme file): component, by its name,
 	 *   the key of the nearest part around it with an identity, and which of its name it is there, in render order.
 	 *   That waits for the page (prune()), which says where each part sits.
 	 *
-	 * Named only from what the trace already holds. A part with nothing stable to name (a PHP template, a widget area,
-	 * a shortcode, a featured image, an excerpt WordPress made from the content) has none, and so does one with any
-	 * value parseIdentity() would refuse, and never a cleaned-up value, which could name something else.
+	 * Named only from what the trace already holds. A part with nothing stable to name (a template file outside the
+	 * active theme and its parent, core's block template canvas, a widget area, a shortcode, a featured image, an excerpt
+	 * WordPress made from the content) has none, and so does one with any value parseIdentity() would refuse, and never a
+	 * cleaned-up value, which could name something else.
 	 */
 	private static function identify(array $parts): array {
 		$parents = array();
@@ -2951,6 +2955,29 @@ final class Wanigan_Live {
 		if (isset($m['widget'])) return self::config_identity('widget', $m['widget']);
 		if (isset($m['item'])) return self::config_identity('menu_item', $m['item']);
 		if (!empty($m['menu'])) return self::entity_identity('term', $m['menu'], 'nav_menu', null);
+		if (isset($m['file']) && empty($m['canvas'])) return self::template_identity((string) $m['file']);
+		return null;
+	}
+
+	/**
+	 * A theme's PHP template file, by the theme's folder (its stylesheet or template slug), the file's path inside it,
+	 * and its role: the active theme with no parent ('theme'), the active child theme ('child'), or the parent of the
+	 * active child ('parent'), whose files an update of that theme overwrites. Null for a file outside both (a plugin's,
+	 * core's fallback), and for a name parseIdentity() would refuse.
+	 */
+	private static function template_identity(string $file): ?array {
+		$f = wp_normalize_path($file);
+		$child = is_child_theme();
+		$themes = array(array(get_stylesheet_directory(), get_stylesheet(), $child ? 'child' : 'theme'));
+		if ($child) $themes[] = array(get_template_directory(), get_template(), 'parent');
+		foreach ($themes as $t) {
+			$dir = untrailingslashit(wp_normalize_path((string) $t[0])) . '/';
+			if (strpos($f, $dir) !== 0) continue;
+			$theme = self::ident($t[1]);
+			$path = self::ident(substr($f, strlen($dir)));
+			if ($theme === null || strpos($theme, '/') !== false || $path === null || array_intersect(explode('/', $path), array('', '.', '..'))) return null;
+			return array('kind' => 'template', 'theme' => $theme, 'path' => $path, 'role' => $t[2]);
+		}
 		return null;
 	}
 
@@ -2983,6 +3010,8 @@ final class Wanigan_Live {
 				return implode('|', array('config', $i['type'], $i['id']));
 			case 'block':
 				return implode('|', array('block', $i['store'], implode('.', $i['path']), $i['name']));
+			case 'template':
+				return implode('|', array('template', $i['theme'], $i['path']));
 		}
 		return '';
 	}

@@ -239,12 +239,27 @@ export type PartKind = (typeof PART_KINDS)[number];
  *   part (`wp_template_part`, its `theme//slug` id).
  * - `block`: a WordPress block in stored markup: where (`post:12`,
  *   `tpl:<id>`, `tp:<id>`), its path among the blocks there, and its name.
+ * - `template`: a WordPress theme's PHP template file (header.php, a template
+ *   part, the page template a classic theme's hierarchy chose), by the theme's
+ *   folder name (its slug) and the file's path inside that theme, with which
+ *   theme it is (`role`): the active theme, which has no parent (`theme`); the
+ *   active theme, a child theme (`child`); or the parent of the active child
+ *   (`parent`), whose files an update of that theme overwrites. The role says
+ *   where a change belongs and is not part of the key: the same file is the
+ *   same part whichever theme is active. A file outside the active theme and
+ *   its parent (a plugin's, core's fallback) has no identity. Block themes'
+ *   templates and template parts are `config`, as before.
  */
 export type PartIdentity =
   | { kind: 'entity'; type: string; id: string; bundle?: string; langcode?: string; field?: string; item?: string }
   | { kind: 'component'; name: string; within: string | null; nth: number }
   | { kind: 'config'; type: string; id: string; plugin?: string }
-  | { kind: 'block'; store: string; path: number[]; name: string };
+  | { kind: 'block'; store: string; path: number[]; name: string }
+  | { kind: 'template'; theme: string; path: string; role: TemplateRole };
+
+/** Which theme a template file is in: the active theme with no parent, the active child theme, or its parent. */
+export type TemplateRole = 'theme' | 'child' | 'parent';
+const TEMPLATE_ROLES: readonly TemplateRole[] = ['theme', 'child', 'parent'];
 
 /** A machine name, id, UUID or store as a helper reports it: plain, bounded, no spaces or control characters. */
 const IDENT = /^[A-Za-z0-9_.:/@+-]{1,200}$/;
@@ -285,6 +300,13 @@ export function parseIdentity(raw: unknown): PartIdentity | null {
       const path = Array.isArray(v.path) && v.path.length > 0 && v.path.length <= 64 && v.path.every((x) => Number.isInteger(x) && x >= 0 && x < 10_000) ? v.path as number[] : null;
       return store && n && path ? { kind: 'block', store, path, name: n } : null;
     }
+    case 'template': {
+      // A path inside the theme, never out of it: an agent's brief names the file.
+      const theme = name(v.theme), path = name(v.path);
+      const role = TEMPLATE_ROLES.find((r) => r === v.role);
+      if (!theme || theme.includes('/') || !path || !role || path.startsWith('/') || path.split('/').some((s) => s === '' || s === '.' || s === '..')) return null;
+      return { kind: 'template', theme, path, role };
+    }
     default: return null;
   }
 }
@@ -296,13 +318,14 @@ export function identityKey(i: PartIdentity): string {
     case 'component': return ['component', i.name, i.within ?? '', String(i.nth)].join('|');
     case 'config': return ['config', i.type, i.id].join('|');
     case 'block': return ['block', i.store, i.path.join('.'), i.name].join('|');
+    case 'template': return ['template', i.theme, i.path].join('|');
   }
 }
 
 /**
  * What every instance of a part's kind shares, for an edit scoped to `kind`: the same field of the same bundle, the
  * same component or block type, the same block plugin. Null when a part has no kind beyond itself (a menu link, a
- * template).
+ * template, a theme's template file).
  */
 export function kindKey(i: PartIdentity): string | null {
   switch (i.kind) {
@@ -310,6 +333,7 @@ export function kindKey(i: PartIdentity): string | null {
     case 'component': return `component|${i.name}`;
     case 'block': return `component|${i.name}`;
     case 'config': return i.plugin ? `plugin|${i.type}|${i.plugin}` : null;
+    case 'template': return null;
   }
 }
 
