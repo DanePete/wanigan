@@ -1,9 +1,11 @@
-// The Changes tab: what is conflicted, staged, changed and untracked (and, in a
-// card's worktree, what its commits changed), every file's diff in one scroll
-// the way a review reads, and the commit box. A file, a hunk or picked lines
+// The Changes tab: every file's diff in one scroll, the way a review reads, as
+// the hero on the canvas; beside it the left panel of what is conflicted,
+// staged, changed and untracked (and, in a card's worktree, what its commits
+// changed), with the commit box at its foot. A file, a hunk or picked lines
 // are staged, unstaged or discarded from the diff itself; a discard says
 // plainly what is lost before it happens. J and K move between files, V marks
-// one viewed, S stages or unstages it.
+// one viewed, S stages or unstages it. How far the review has got, and
+// unified or side by side, wait at the status line's end.
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { DiffArea, GitStatus, StatusEntry } from '@shared/git';
 import { LIVE_STATES, type CardSummary, type ProjectSummary } from '@shared/model';
@@ -12,7 +14,9 @@ import { attempt, call, forProject, useQuery } from '../../lib/api';
 import { PROVIDER_LABEL, plural } from '../../lib/format';
 import { Icon } from '../../components/icons';
 import { Select } from '../../components/Select';
-import { Button, Empty, Segmented, useToast } from '../../components/ui';
+import { Button, EmptyState, IconButton, Segmented, useToast } from '../../components/ui';
+import { Panel } from '../../components/Panel';
+import { StatusSlot } from '../../components/StatusLine';
 import { FileDiff, STATUS_LABEL, type DiffLayout, type HunkPick } from '../../components/FileDiff';
 import { CommitBox, type CommitBoxHandle } from './CommitBox';
 import { Resolver } from './Resolver';
@@ -65,11 +69,21 @@ export interface WorkingTreeHandle { focusCommit(): void }
 
 export const WorkingTree = forwardRef<WorkingTreeHandle, {
   project: ProjectSummary; where: Where; status: GitStatus; scoped: CardSummary | null; onReload: () => void;
-}>(function WorkingTree({ project, where, status, scoped, onReload }, handle) {
+  /** The files' panel is shown (the toolbar's list button). */
+  list: boolean; onList: (on: boolean) => void;
+  /** What stands beside the diff on the right: a merge in progress. */
+  aside?: ReactNode;
+}>(function WorkingTree({ project, where, status, scoped, onReload, list: listOpen, onList, aside }, handle) {
   const toast = useToast();
   const fail = (m: string): void => toast(m, 'error');
   const commitBox = useRef<CommitBoxHandle>(null);
-  useImperativeHandle(handle, () => ({ focusCommit: () => commitBox.current?.focus() }), []);
+  // The box is in the files' panel: put away, the panel comes back first.
+  useImperativeHandle(handle, () => ({
+    focusCommit: () => {
+      if (!listOpen) onList(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => commitBox.current?.focus()));
+    },
+  }), [listOpen, onList]);
 
   const entries = useMemo<Entry[]>(() => AREAS.flatMap(({ area, of }) => of(status).map((file) => ({ key: `${area}:${file.path}`, area, file }))), [status]);
   const entriesKey = entries.map((e) => e.key).join('\0');
@@ -323,7 +337,7 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
             ? <Button size="s" tone="primary" onClick={() => part(e, 'unstage', p)}>Unstage lines</Button>
             : <Button size="s" tone="primary" onClick={() => part(e, 'stage', p)}>Stage lines</Button>}
           {e.area === 'changed' ? (
-            <Button size="s" tone="quiet" disabled={busyHere} title={agentsWhy}
+            <Button size="s" tone="quiet" disabled={busyHere} data-tip={agentsWhy}
               onClick={() => setDiscarding({ entry: e, pick: p, what: `${plural(linesIn(p), 'picked line')} of ${e.file.path}` })}>Discard lines</Button>
           ) : null}
           <Button size="s" tone="quiet" onClick={() => clearPick(e.key)}>Clear</Button>
@@ -337,7 +351,7 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
         return (
           <>
             <Button size="s" icon="push" onClick={() => stageFiles([e.file])}>Stage</Button>
-            <Button size="s" tone="quiet" icon="trash" disabled={busyHere} title={agentsWhy}
+            <Button size="s" tone="quiet" icon="trash" disabled={busyHere} data-tip={agentsWhy}
               aria-label={e.area === 'untracked' ? `Delete ${e.file.path}` : `Discard the changes to ${e.file.path}`}
               onClick={() => setDiscarding({ entry: e, pick: null, what: e.file.path })}>{e.area === 'untracked' ? 'Delete' : 'Discard'}</Button>
           </>
@@ -352,7 +366,7 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
     return (
       <>
         <button type="button" className="hunk-btn" onClick={(ev) => { if (ev.detail < 2) void part(e, 'stage', h); }}>Stage hunk</button>
-        <button type="button" className="hunk-btn hunk-btn-quiet" disabled={busyHere} title={agentsWhy}
+        <button type="button" className="hunk-btn hunk-btn-quiet" disabled={busyHere} data-tip={agentsWhy}
           onClick={() => setDiscarding({ entry: e, pick: h, what: `this hunk of ${e.file.path} (${plural(linesIn(h), 'changed line')})` })}>Discard hunk</button>
       </>
     );
@@ -368,9 +382,9 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
         lastArea = e.area;
         const count = entries.filter((x) => x.area === e.area).length;
         out.push(
-          <div key={`head-${e.area}`} className={`git-area-head git-area-${e.area}`}>
-            {areaTitle(e.area, status)} <span className="faint">{count}</span>
-          </div>,
+          <h3 key={`head-${e.area}`} className={`git-area-head git-area-${e.area}`}>
+            {areaTitle(e.area, status)} <span className="git-area-count">{count}</span>
+          </h3>,
         );
       }
       if (e.area === 'conflicted') {
@@ -411,18 +425,27 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
 
   const cramped = preferred === 'split' && !wide;
   const groups = AREAS.map(({ area }) => ({ area, list: entries.filter((e) => e.area === area) })).filter((g) => g.list.length);
+  const allViewed = entries.length > 0 && viewedCount === entries.length;
 
   return (
-    <div className="changes git-changes">
-      <div className="changes-side">
-        <div className="changes-files" aria-label="Changed files">
+    <div className="git-changes">
+      <Panel side="left" open={listOpen} onClose={() => onList(false)} className="changes-side git-files" label="Changed files" resizable sizeKey="git-files"
+        size={300} minSize={248} maxSize={520}
+        title={(
+          <span className="changes-summary">
+            <span>{totals.files ? `${plural(totals.files, 'file')} changed` : 'Nothing uncommitted'}</span>
+            {totals.files ? <span className="changes-delta"><span className="add">+{totals.additions}</span><span className="del">−{totals.deletions}</span></span> : null}
+          </span>
+        )}
+        actions={<IconButton icon="refresh" size="s" label="Read git again" onClick={onReload} />}>
+        <div className="changes-files" aria-label="Changed files" data-tour="changes-files">
           {groups.length ? groups.map(({ area, list }) => (
             <section key={area} className={`git-group git-group-${area}`} aria-labelledby={`git-group-${area}`}>
               <h3 className="git-group-head" id={`git-group-${area}`}>
                 <span>{areaTitle(area, status)}</span>
                 <span className="git-group-count">{list.length}</span>
-                {area === 'staged' ? <button type="button" className="linkish small git-group-act" onClick={(ev) => { if (ev.detail < 2) void unstageFiles(list.map((e) => e.file)); }}>Unstage all</button> : null}
-                {area === 'changed' || area === 'untracked' ? <button type="button" className="linkish small git-group-act" onClick={(ev) => { if (ev.detail < 2) void stageFiles(list.map((e) => e.file)); }}>Stage all</button> : null}
+                {area === 'staged' ? <button type="button" className="git-group-act" onClick={(ev) => { if (ev.detail < 2) void unstageFiles(list.map((e) => e.file)); }}>Unstage all</button> : null}
+                {area === 'changed' || area === 'untracked' ? <button type="button" className="git-group-act" onClick={(ev) => { if (ev.detail < 2) void stageFiles(list.map((e) => e.file)); }}>Stage all</button> : null}
               </h3>
               <ul>
                 {list.map((e) => {
@@ -434,22 +457,24 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
                       {area === 'branch' ? <span className="git-file-box" aria-hidden="true" /> : (
                         <input type="checkbox" className="git-file-box" checked={area === 'staged'}
                           aria-label={area === 'staged' ? `Unstage ${e.file.path}` : area === 'conflicted' ? `Mark ${e.file.path} resolved` : `Stage ${e.file.path}`}
-                          // A conflicted file with markers still in it is resolved below; ticked off, it would be refused.
+                          // A conflicted file with markers still in it is resolved in the diff; ticked off, it would be refused.
                           disabled={area === 'conflicted' && !!e.file.hunks}
-                          title={area === 'staged' ? 'Staged: untick to unstage'
-                            : area === 'conflicted' ? (e.file.hunks ? `It still has ${plural(e.file.hunks, 'conflict')}: resolve ${e.file.hunks === 1 ? 'it' : 'them'} below, or in an editor, then tick it` : 'Tick when it is resolved')
+                          data-tip={area === 'staged' ? 'Staged: untick to unstage'
+                            : area === 'conflicted' ? (e.file.hunks ? `It still has ${plural(e.file.hunks, 'conflict')}: resolve ${e.file.hunks === 1 ? 'it' : 'them'} in the diff, or in an editor, then tick it` : 'Tick when it is resolved')
                               : 'Tick to stage'}
                           onChange={() => void toggle(e)} />
                       )}
-                      <button type="button" className="git-file-main" onClick={() => go(i, false)} aria-current={i === current ? 'true' : undefined}>
-                        <span className={`fstatus fstatus-${letter}`} title={STATUS_LABEL[e.file.status]}>{letter}</span>
-                        <span className="fpath" title={e.file.from ? `${e.file.from} → ${e.file.path}` : e.file.path}>
+                      <button type="button" className="git-file-main" onClick={() => go(i, false)} aria-current={i === current ? 'true' : undefined}
+                        data-tip={`${STATUS_LABEL[e.file.status]}: ${e.file.from ? `${e.file.from} → ${e.file.path}` : e.file.path}`}>
+                        <span className={`fstatus fstatus-${letter}`} aria-hidden="true">{letter}</span>
+                        <span className="visually-hidden">{STATUS_LABEL[e.file.status]}: </span>
+                        <span className="fpath">
                           <span className="fname">{e.file.path.split('/').pop()}</span>
                           <span className="fdir">{e.file.path.includes('/') ? e.file.path.slice(0, e.file.path.lastIndexOf('/')) : ''}</span>
                         </span>
                         <span className="fcount">
                           {area === 'conflicted' ? <span className="fconflicts">{e.file.hunks ? plural(e.file.hunks, 'conflict') : e.file.conflict}</span>
-                            : seen ? <span className="fviewed" title="Viewed"><Icon name="check" size={13} /><span className="visually-hidden">Viewed</span></span>
+                            : seen ? <span className="fviewed"><Icon name="check" size={13} /><span className="visually-hidden">Viewed</span></span>
                             : e.file.binary ? <span className="faint">binary</span> : <>
                               {e.file.additions ? <span className="add">+{e.file.additions}</span> : null}
                               {e.file.deletions ? <span className="del">−{e.file.deletions}</span> : null}
@@ -464,62 +489,59 @@ export const WorkingTree = forwardRef<WorkingTreeHandle, {
             </section>
           )) : (
             <div className="git-clean">
-              <Icon name="check" size={18} />
+              <Icon name="check" size={16} />
               <p><strong>Nothing to commit.</strong> The working tree matches {status.branch ? <Ref name={status.branch} current /> : 'HEAD'}{status.head ? ` at ${status.head.slice(0, 7)}` : ''}.</p>
             </div>
           )}
           {status.omitted ? <p className="changes-more">and {plural(status.omitted, 'more untracked file')}, not listed. A folder git should ignore?</p> : null}
         </div>
         <CommitBox ref={commitBox} project={project} where={where} status={status} />
-      </div>
+      </Panel>
 
       <div className="changes-main">
-        <div className="toolbar changes-toolbar">
-          <span className="changes-summary" title={scoped ? `Uncommitted in ${scoped.key}’s worktree, and what its commits changed` : 'Uncommitted changes in this folder, from any session or from you'}>
-            <strong>{totals.files ? `${plural(totals.files, 'file')} changed` : 'Nothing uncommitted'}</strong>
-            {totals.files ? <><span className="add">+{totals.additions}</span><span className="del">−{totals.deletions}</span></> : null}
-            {totals.committed ? <span className="faint">{plural(totals.committed, 'file')} committed since {status.forkedFrom ?? 'its base'}</span> : null}
-          </span>
-          {entries.length ? (
-            <span className={`changes-progress${viewedCount === entries.length ? ' all' : ''}`} role="status">
-              {viewedCount === entries.length ? <Icon name="check" size={14} /> : null}
-              {viewedCount === entries.length ? `All ${entries.length} viewed` : `${viewedCount} of ${entries.length} viewed`}
-            </span>
-          ) : null}
-          <span className="toolbar-end">
-            {cramped ? <span className="faint small">Unified until the window is wider</span> : null}
-            <Segmented size="s" label="Diff layout" value={preferred} onChange={choose} options={[
-              { value: 'unified', label: 'Unified', hint: 'One column: removed lines above the lines that replace them' },
-              { value: 'split', label: 'Split', hint: cramped ? 'Side by side needs a wider window; the diff stays unified until there is room' : 'The old file on the left, the new on the right' },
-            ]} />
-            <Button size="s" tone="quiet" icon="refresh" onClick={onReload}>Refresh</Button>
-          </span>
+        <div className="changes-diff" ref={setScroller} onScroll={onScroll} data-tour="changes-diff">
+          {entries.length ? diffs : (
+            <EmptyState icon="check" title="Nothing to review">
+              {status.ahead ? `${plural(status.ahead, 'commit')} on ${status.branch} ${status.ahead === 1 ? 'is' : 'are'} not pushed yet.` : 'Agents’ edits and yours show here as they happen.'}
+            </EmptyState>
+          )}
         </div>
         {notes.length ? (
           <div className="notes-tray" role="region" aria-label="Review notes">
-            <strong>{plural(notes.length, 'review note')}</strong>
-            <span className="faint small">{scoped ? `on ${scoped.key}’s branch` : 'on this folder'}</span>
+            <Icon name="note" size={15} />
+            <span className="notes-tray-what">
+              <strong>{plural(notes.length, 'review note')}</strong>
+              <span className="notes-tray-where">{scoped ? `on ${scoped.key}’s branch` : 'on this folder'}</span>
+            </span>
             <span className="notes-tray-end">
               {!scoped && agents.length > 1 ? (
                 <Select label="Send to" size="s" value={sendTo ?? ''} onChange={setChosen}
                   options={agents.map((s) => ({ value: s.id, label: s.title, detail: `${PROVIDER_LABEL[s.provider]}${s.cardKey ? ` · ${s.cardKey}` : ''}` }))} />
               ) : null}
+              <Button size="s" tone="quiet" onClick={() => setNotes([])}>Clear</Button>
               <Button size="s" tone="primary" icon="send" disabled={!sendTo && !scoped} onClick={() => sendNotes()}
-                title={sendTo ? 'One message, queued until the agent is idle' : scoped ? 'No session is running on it: the notes go on the card' : 'Start a session to send these'}>
+                data-tip={sendTo ? 'One message, queued until the agent is idle' : scoped ? 'No session is running on it: the notes go on the card' : 'Start a session to send these'}>
                 {sendTo ? `Send to ${sendToName}` : scoped ? `Add to ${scoped.key}` : 'No agent running'}
               </Button>
-              <Button size="s" tone="quiet" onClick={() => setNotes([])}>Clear</Button>
             </span>
           </div>
         ) : null}
-        <div className="changes-diff" ref={setScroller} onScroll={onScroll}>
-          {entries.length ? diffs : (
-            <Empty title="Nothing to review">
-              {status.ahead ? `${plural(status.ahead, 'commit')} on ${status.branch} ${status.ahead === 1 ? 'is' : 'are'} not pushed yet.` : 'Agents’ edits and yours show here as they happen.'}
-            </Empty>
-          )}
-        </div>
       </div>
+      {aside}
+
+      <StatusSlot>
+        {entries.length ? (
+          <span className={`changes-progress${allViewed ? ' all' : ''}`} role="status">
+            {allViewed ? <Icon name="check" size={13} /> : null}
+            {allViewed ? `All ${entries.length} viewed` : `${viewedCount} of ${entries.length} viewed`}
+          </span>
+        ) : null}
+        {cramped ? <span className="changes-cramped">Unified until the window is wider</span> : null}
+        <Segmented size="s" label="Diff layout" value={preferred} onChange={choose} options={[
+          { value: 'unified', label: 'Unified', hint: 'One column: removed lines above the lines that replace them' },
+          { value: 'split', label: 'Split', hint: cramped ? 'Side by side needs a wider window; the diff stays unified until there is room' : 'The old file on the left, the new on the right' },
+        ]} />
+      </StatusSlot>
 
       {discarding ? (
         <Confirm danger title={discarding.entry.area === 'untracked' && !discarding.pick ? `Delete ${discarding.what}?` : `Discard ${discarding.what}?`}

@@ -10,7 +10,7 @@ import { attempt, call, useQuery } from '../../lib/api';
 import { useGitIntent } from '../../lib/git-intent';
 import { ago, plural } from '../../lib/format';
 import { Icon } from '../../components/icons';
-import { Button, Dialog, IconButton, useToast } from '../../components/ui';
+import { Button, Dialog, Field, IconButton, tipProps, useToast } from '../../components/ui';
 import { Confirm, Ref, SecretFindings, type Where } from './common';
 
 export function RemoteActions({ where, status, onReload }: { where: Where; status: GitStatus; onReload: () => void }) {
@@ -55,18 +55,19 @@ export function RemoteActions({ where, status, onReload }: { where: Where; statu
     } else if (noRemote) toast(`${noRemote}.`); else void fetch();
   });
   const pushReady = status.branch && (status.ahead > 0 || !status.upstream || status.upstreamGone);
+  const pullWhy = agents ?? (status.upstream ? `Fast-forward ${status.branch} to ${status.upstream}` : `${status.branch ?? 'HEAD'} has no upstream to pull from`);
+  const pushWhy = noRemote ?? (!status.branch ? 'HEAD is detached: switch to a branch to push' : !status.upstream ? `Push ${status.branch} and set its upstream` : `Push to ${status.upstream}`);
   return (
-    <span className="remote-actions">
-      <Button size="s" tone="quiet" icon="refresh" onClick={fetch} disabled={!remote || busy !== null} title={noRemote ?? 'Fetch every remote, and forget branches deleted there'}>
-        {busy === 'fetch' ? 'Fetching…' : 'Fetch'}
+    <span className="remote-actions" data-tour="changes-remote">
+      <IconButton icon="refresh" size="s" keys="git-fetch" onClick={fetch} disabled={!remote || busy !== null}
+        label={noRemote ? `Fetch: ${noRemote.toLowerCase()}` : busy === 'fetch' ? 'Fetching…' : 'Fetch every remote, and forget branches deleted there'} />
+      <Button size="s" icon="pull" onClick={() => pull()} disabled={!status.upstream || busy !== null || !!agents} {...tipProps(pullWhy, 'git-pull')}
+        aria-label={status.behind ? `Pull, ${status.behind} to pull` : 'Pull'}>
+        {busy === 'pull' ? 'Pulling…' : 'Pull'}{status.behind ? <span className="git-btn-count" aria-hidden="true">{status.behind}</span> : null}
       </Button>
-      <Button size="s" icon="pull" onClick={() => pull()} disabled={!status.upstream || busy !== null || !!agents}
-        title={agents ?? (status.upstream ? `Fast-forward ${status.branch} to ${status.upstream}` : `${status.branch ?? 'HEAD'} has no upstream to pull from`)}>
-        {busy === 'pull' ? 'Pulling…' : 'Pull'}{status.behind ? <span className="count-pill" aria-label={`${status.behind} to pull`}>{status.behind}</span> : null}
-      </Button>
-      <Button size="s" tone={pushReady ? 'primary' : 'plain'} icon="push" onClick={() => setPushing(true)} disabled={!remote || !status.branch}
-        title={noRemote ?? (!status.upstream ? `Push ${status.branch} and set its upstream` : `Push to ${status.upstream}`)}>
-        Push{status.ahead ? <span className="count-pill" aria-label={`${status.ahead} to push`}>{status.ahead}</span> : null}
+      <Button size="s" tone={pushReady ? 'primary' : 'plain'} icon="push" onClick={() => setPushing(true)} disabled={!remote || !status.branch} {...tipProps(pushWhy, 'git-push')}
+        aria-label={status.ahead ? `Push, ${status.ahead} to push` : 'Push'}>
+        Push{status.ahead ? <span className="git-btn-count" aria-hidden="true">{status.ahead}</span> : null}
       </Button>
       {diverged ? (
         <Confirm title={`Merge ${status.upstream ?? 'the upstream'} into ${status.branch ?? 'this branch'}?`} act={`Merge ${status.upstream ?? 'it'}`} busy={busy !== null}
@@ -113,24 +114,24 @@ function PushDialog({ where, onClose, onDone }: { where: Where; onClose: () => v
   return (
     <Dialog title={title} onClose={onClose} width={600} footer={(
       <>
-        <span className="dialog-foot-note faint small">Wanigan never force-pushes.</span>
+        <span className="dialog-foot-note">Wanigan never force-pushes.</span>
         <Button tone="quiet" onClick={onClose}>Cancel</Button>
         {flagged
           ? <Button tone="danger" disabled={!ack || sending || !!plan?.refusal} onClick={push}>Push anyway</Button>
           : <Button tone="primary" icon="push" disabled={!plan || !!plan.refusal || sending} onClick={push} data-autofocus>{sending ? 'Pushing…' : 'Push'}</Button>}
       </>
     )}>
-      {error ? <p className="error-text push-error">{error}</p> : null}
-      {!plan ? (!error ? <p className="faint">Reading what would be pushed, and checking it for secrets…</p> : null) : (
+      {error ? <p className="error-text push-error" role="alert">{error}</p> : null}
+      {!plan ? (!error ? <p className="git-wait faint">Reading what would be pushed, and checking it for secrets…</p> : null) : (
         <div className="push-plan">
           <p className="push-route">
             {plan.branch ? <Ref name={plan.branch} current /> : null}
             <Icon name="chevron" size={14} />
             {target ? <Ref name={target} kind="remote" /> : <span className="faint">nowhere</span>}
-            {plan.url ? <span className="push-url faint small" title={plan.url}>{plan.url}</span> : null}
+            {plan.url ? <span className="push-url" data-tip={plan.url}>{plan.url}</span> : null}
           </p>
           {plan.setUpstream && !plan.refusal ? (
-            <p className="small">{plan.branch} has no upstream yet. This makes {target} on the remote and sets it as {plan.branch}’s upstream, so pulls and later pushes know where to go.</p>
+            <p className="push-note">{plan.branch} has no upstream yet. This makes {target} on the remote and sets it as {plan.branch}’s upstream, so pulls and later pushes know where to go.</p>
           ) : null}
           {plan.refusal ? <p className="push-refusal" role="alert"><Icon name="alert" size={15} /> {plan.refusal}</p> : null}
           {plan.commits.length ? (
@@ -139,15 +140,15 @@ function PushDialog({ where, onClose, onDone }: { where: Where; onClose: () => v
                 <li key={c.hash}>
                   <span className="mono push-sha">{c.short}</span>
                   <span className="push-subject">{c.subject}</span>
-                  <span className="faint small">{c.author} · {ago(c.at)}</span>
+                  <span className="push-by">{c.author} · {ago(c.at)}</span>
                 </li>
               ))}
             </ol>
           ) : null}
-          {plan.total > plan.commits.length ? <p className="faint small">and {plural(plan.total - plan.commits.length, 'older commit')}.</p> : null}
+          {plan.total > plan.commits.length ? <p className="push-note">and {plural(plan.total - plan.commits.length, 'older commit')}.</p> : null}
           {scan && !plan.refusal ? (
             flagged ? <SecretFindings report={scan} acknowledged={ack} onAcknowledge={setAck} /> : (
-              <p className="push-clean small"><Icon name="check" size={14} /> Checked {plural(scan.addedLines, 'added line')} in {plural(plan.total, 'commit')} for secrets: none found.</p>
+              <p className="push-clean"><Icon name="check" size={14} /> Checked {plural(scan.addedLines, 'added line')} in {plural(plan.total, 'commit')} for secrets: none found.</p>
             )
           ) : null}
         </div>
@@ -162,24 +163,24 @@ export function PullRequestChip({ where, status }: { where: Where; status: GitSt
   const [creating, setCreating] = useState(false);
   if (!status.branch || !status.remotes.length) return null;
   const p = pr.data;
-  if (!p) return <span className="pr-chip pr-wait faint small">{pr.error ? 'Pull request: could not ask gh' : 'Asking GitHub…'}</span>;
-  const again = <IconButton icon="refresh" label="Ask GitHub again" onClick={pr.reload} />;
+  if (!p) return <span className="pr-chip pr-wait" data-tip={pr.error?.message}>{pr.error ? 'Pull request: could not ask gh' : 'Asking GitHub…'}</span>;
+  const again = <IconButton icon="refresh" size="s" label="Ask GitHub again" onClick={pr.reload} />;
   if (p.state === 'none') {
     return (
       <span className="pr-wrap">
         {/* The remote's own main branch takes pull requests; it does not make them. */}
         {p.base === status.branch ? null : p.base ? <Button size="s" tone="quiet" icon="pr" onClick={() => setCreating(true)}>Create pull request</Button>
-          : <span className="pr-chip pr-off small" title={p.message ?? undefined}>No pull request</span>}
+          : <span className="pr-chip pr-off" data-tip={p.message ?? undefined}>No pull request</span>}
         {creating ? <CreatePullRequest where={where} onClose={() => setCreating(false)} onDone={() => { setCreating(false); pr.reload(); }} /> : null}
       </span>
     );
   }
   if (p.state === 'no-gh' || p.state === 'signed-out' || p.state === 'error' || p.state === 'no-branch') {
-    return <span className="pr-wrap"><span className="pr-chip pr-off small" title={p.message ?? undefined}>{p.state === 'no-gh' ? 'GitHub: gh not found' : p.state === 'signed-out' ? 'GitHub: gh not signed in' : 'GitHub: no answer'}</span>{again}</span>;
+    return <span className="pr-wrap"><span className="pr-chip pr-off" data-tip={p.message ?? undefined}>{p.state === 'no-gh' ? 'GitHub: gh not found' : p.state === 'signed-out' ? 'GitHub: gh not signed in' : 'GitHub: no answer'}</span>{again}</span>;
   }
   return (
     <span className="pr-wrap">
-      <a className={`pr-chip pr-${p.state}`} href={p.url ?? undefined} target="_blank" rel="noreferrer" title={`${p.title ?? ''}${p.base ? ` → ${p.base}` : ''}. Open on GitHub.`}>
+      <a className={`pr-chip pr-${p.state}`} href={p.url ?? undefined} target="_blank" rel="noreferrer" data-tip={`${p.title ?? ''}${p.base ? ` → ${p.base}` : ''}. Open on GitHub.`}>
         <Icon name="pr" size={14} />
         <span className="pr-number">#{p.number}</span>
         <span className="pr-state">{STATE[p.state]}</span>
@@ -199,9 +200,9 @@ function Checks({ pr }: { pr: BranchPullRequest }) {
   if (!c) return null;
   return (
     <span className="pr-checks" aria-label={`Checks: ${c.passed} passed, ${c.failed} failed, ${c.pending} running`}>
-      {c.failed ? <span className="pr-failed" title={`${c.failed} failed`}><Icon name="close" size={12} />{c.failed}</span> : null}
-      {c.pending ? <span className="pr-pending" title={`${c.pending} running or waiting`}><span className="pr-ring" aria-hidden="true" />{c.pending}</span> : null}
-      {c.passed ? <span className="pr-passed" title={`${c.passed} passed`}><Icon name="check" size={12} />{c.passed}</span> : null}
+      {c.failed ? <span className="pr-failed"><Icon name="close" size={12} />{c.failed}</span> : null}
+      {c.pending ? <span className="pr-pending"><span className="pr-ring" aria-hidden="true" />{c.pending}</span> : null}
+      {c.passed ? <span className="pr-passed"><Icon name="check" size={12} />{c.passed}</span> : null}
     </span>
   );
 }
@@ -235,8 +236,8 @@ function CreatePullRequest({ where, onClose, onDone }: { where: Where; onClose: 
         <Button tone="primary" icon="pr" disabled={!draft || !!draft.refusal || !title.trim() || !base.trim()} onClick={open}>Open the pull request</Button>
       </>
     )}>
-      {error ? <p className="error-text">{error}</p> : null}
-      {!draft ? <p className="faint">Reading the branch…</p> : (
+      {error ? <p className="error-text" role="alert">{error}</p> : null}
+      {!draft ? <p className="git-wait faint">Reading the branch…</p> : (
         <div className="pr-form">
           {draft.refusal ? <p className="push-refusal" role="alert"><Icon name="alert" size={15} /> {draft.refusal}</p> : null}
           <p className="push-route">
@@ -244,11 +245,10 @@ function CreatePullRequest({ where, onClose, onDone }: { where: Where; onClose: 
             <label className="visually-hidden" htmlFor="pr-base">Into which branch</label>
             <input id="pr-base" className="mono pr-base" value={base} onChange={(e) => setBase(e.target.value)} spellCheck={false} />
           </p>
-          <label className="field-label" htmlFor="pr-title">Title</label>
-          <input id="pr-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-          <label className="field-label" htmlFor="pr-body">Description</label>
-          <textarea id="pr-body" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
-          <p className="faint small">Opened with your own gh, as you. GitHub sees it at once; nothing is merged.</p>
+          <Field label="Title">{(id) => <input id={id} value={title} onChange={(e) => setTitle(e.target.value)} />}</Field>
+          <Field label="Description" hint="Opened with your own gh, as you. GitHub sees it at once; nothing is merged.">
+            {(id) => <textarea id={id} rows={6} value={body} onChange={(e) => setBody(e.target.value)} />}
+          </Field>
         </div>
       )}
     </Dialog>
