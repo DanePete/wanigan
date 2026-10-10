@@ -8,6 +8,7 @@ import { INTENT_TAB, requestGit, type GitIntent } from './lib/git-intent';
 import { Rail } from './shell/Rail';
 import { useRail } from './lib/rail';
 import { NotAnswering, ToastProvider } from './components/ui';
+import { TooltipHost } from './components/Tooltip';
 import { NeedsView } from './views/NeedsView';
 import { RunningView } from './views/RunningView';
 import { AccountsView } from './views/AccountsView';
@@ -52,6 +53,7 @@ export function App() {
       <ViewBoundary name="Wanigan’s window">
         <Shell />
       </ViewBoundary>
+      <TooltipHost />
     </ToastProvider>
   );
 }

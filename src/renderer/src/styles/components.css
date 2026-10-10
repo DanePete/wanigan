@@ -1,0 +1,776 @@
+/*
+  Studio's frame parts (docs/design/studio-components.md): tooltips, tabs, the
+  toolbar and its tool groups, panels and sections, counts, badges and dots,
+  the rail's project tile, the switch, popovers, the status line and the
+  notification tray. Tokens only: no colour, size or duration is written here.
+*/
+
+/* ── tooltip: a control's name and its keys (components/Tooltip.tsx) ────── */
+
+.tooltip {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--tip-max);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
+  color: var(--fg);
+  font: 500 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  pointer-events: none;
+  animation: fade var(--dur-fast) var(--ease);
+}
+
+.tooltip-top {
+  transform: translate(-50%, -100%);
+}
+
+.tooltip-bottom {
+  transform: translateX(-50%);
+}
+
+.tooltip-right {
+  transform: translateY(-50%);
+}
+
+.tooltip-keys {
+  flex: none;
+  color: var(--faint);
+  font: 500 var(--text-xs) / 1 var(--font-mono);
+  white-space: nowrap;
+}
+
+/* ── tabs: pill and underline (components/Tabs.tsx) ─────────────────────── */
+
+.tabs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.tabs-pill {
+  gap: var(--gap-hair);
+  padding: var(--track-pad);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.tabs-pill > a,
+.tabs-pill > button,
+.tabs-pill > .menu-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: calc(var(--control-m) - 2 * var(--track-pad));
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--muted);
+  font-weight: 400;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.tabs-pill > a:hover,
+.tabs-pill > button:hover,
+.tabs-pill > .menu-button:hover {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.tabs-pill > a.active,
+.tabs-pill > button.active,
+.tabs-pill > .menu-button.active {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: var(--elev-raise);
+}
+
+.tabs-pill.tabs-s > * {
+  height: calc(var(--control-s) - 2 * var(--track-pad));
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.tabs-underline {
+  gap: var(--space-4);
+  align-self: stretch;
+}
+
+.tabs-underline > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 0 var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  box-shadow: inset 0 calc(-1 * var(--focus-ring)) 0 transparent;
+  transition: color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.tabs-underline > button:hover {
+  color: var(--fg);
+}
+
+.tabs-underline > button.active {
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: inset 0 calc(-1 * var(--focus-ring)) 0 var(--water);
+}
+
+.tabs-underline.tabs-s > button {
+  font-size: var(--text-sm);
+}
+
+.tabs button:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.tab-count {
+  color: var(--faint);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── toolbar and tool groups (components/Toolbar.tsx) ────────────────────── */
+
+.toolbar-row {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--toolbar-h);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.tool-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-hair);
+  padding: var(--track-pad);
+  border-radius: var(--radius-l);
+  background: var(--sunken);
+}
+
+.tool-group .btn-icon {
+  width: calc(var(--icon-btn-w) + var(--gap-hair));
+  height: var(--icon-btn-h);
+  border-radius: var(--radius-m);
+}
+
+.tool-sep {
+  flex: none;
+  width: var(--hairline);
+  height: calc(var(--icon-btn-h) - var(--space-3));
+  margin: 0 var(--space-1);
+  background: var(--line-strong);
+}
+
+/* ── panels and sections (components/Panel.tsx) ──────────────────────────── */
+
+.panel {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.panel-left {
+  width: var(--panel-left-w);
+  border-right: var(--hairline) solid var(--line);
+}
+
+.panel-right {
+  width: var(--panel-right-w);
+  border-left: var(--hairline) solid var(--line);
+}
+
+.panel-bottom {
+  height: var(--panel-right-w);
+  border-top: var(--hairline) solid var(--line);
+}
+
+.panel-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-m) + var(--space-3));
+  padding: var(--space-2) var(--space-2) 0 var(--space-4);
+}
+
+.panel-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.panel-tabs {
+  flex: none;
+  display: flex;
+  padding: var(--space-3) var(--space-4) 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+}
+
+/* The edge that borders the work: a few pixels to grab, a water line while held or focused. */
+.panel-edge {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.panel-left > .panel-edge,
+.panel-right > .panel-edge {
+  top: 0;
+  bottom: 0;
+  width: var(--space-2);
+  cursor: col-resize;
+}
+
+.panel-left > .panel-edge {
+  right: calc(-1 * var(--space-1));
+}
+
+.panel-right > .panel-edge {
+  left: calc(-1 * var(--space-1));
+}
+
+.panel-bottom > .panel-edge {
+  top: calc(-1 * var(--space-1));
+  right: 0;
+  left: 0;
+  height: var(--space-2);
+  cursor: row-resize;
+}
+
+.panel-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.panel-left > .panel-edge::after,
+.panel-right > .panel-edge::after {
+  width: var(--focus-ring);
+}
+
+.panel-bottom > .panel-edge::after {
+  height: var(--focus-ring);
+}
+
+.panel-edge:hover::after,
+.panel-edge:active::after,
+.panel-edge:focus-visible::after {
+  background: var(--water);
+}
+
+.panel-edge:focus-visible {
+  outline: none;
+}
+
+.section {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.section + .section {
+  margin-top: var(--space-5);
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--lh-sm);
+}
+
+.section-label {
+  flex: 1;
+  margin: 0;
+  color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.section-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* ── counts, badges and dots ─────────────────────────────────────────────── */
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--count-h);
+  height: var(--count-h);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--sunken);
+  color: var(--muted);
+  font: 600 var(--text-xs) / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.count-water {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.count-red {
+  background: var(--red);
+  color: var(--bg);
+}
+
+/* Needs you, and nothing else. */
+.count.hot,
+.count-amber {
+  background: var(--amber-fill);
+  color: var(--amber-fill-ink);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: var(--count-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--muted);
+  font: 500 var(--text-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+}
+
+.badge-water {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.badge-green {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge-red {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: var(--radius-round);
+  background: var(--water);
+}
+
+/* The amber dot carries a ring in amber's words, so it holds 3:1 on a light panel. */
+.dot-amber {
+  background: var(--amber-fill);
+  box-shadow: 0 0 0 var(--hairline) var(--amber);
+}
+
+.dot-red {
+  background: var(--red);
+}
+
+.dot-green {
+  background: var(--green);
+}
+
+.dot-muted {
+  background: var(--faint);
+}
+
+/* ── the rail's project tile ─────────────────────────────────────────────── */
+
+.ptile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--rail-tile);
+  height: var(--rail-tile);
+  border-radius: var(--radius-l);
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
+  color: var(--muted);
+  font: 500 var(--text-xs) / 1 var(--font-mono);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.ptile:hover {
+  background: var(--hover);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.ptile.active {
+  background: var(--water-soft);
+  box-shadow: inset 0 0 0 var(--ring) var(--water);
+  color: var(--water-text);
+  font-weight: 600;
+}
+
+.ptile.missing {
+  color: var(--red);
+}
+
+.ptile.paused {
+  box-shadow: inset 0 0 0 var(--hairline) var(--line-strong);
+  border: var(--hairline) dashed var(--line-strong);
+}
+
+.ptile-key {
+  max-width: calc(var(--rail-tile) - var(--space-2));
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.ptile-dot {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+}
+
+.ptile-paused {
+  position: absolute;
+  bottom: var(--gap-hair);
+  right: var(--track-pad);
+  display: grid;
+  color: var(--faint);
+}
+
+/* ── toggle: a switch that is a real checkbox ────────────────────────────── */
+
+.toggle {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.toggle.disabled {
+  cursor: not-allowed;
+}
+
+.toggle input[type='checkbox'] {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  margin: 0;
+  border-radius: var(--radius-round);
+  background: var(--line-strong);
+  cursor: inherit;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.toggle input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: var(--gap-hair);
+  left: var(--gap-hair);
+  width: calc(var(--toggle-h) - 2 * var(--gap-hair));
+  height: calc(var(--toggle-h) - 2 * var(--gap-hair));
+  border-radius: var(--radius-round);
+  background: var(--toggle-knob);
+  box-shadow: var(--elev-raise);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.toggle input[type='checkbox']:checked {
+  background: var(--water-fill);
+}
+
+.toggle input[type='checkbox']:checked::after {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+}
+
+.toggle input[type='checkbox']:disabled {
+  opacity: 0.5;
+}
+
+.toggle-text {
+  display: grid;
+  gap: var(--gap-hair);
+}
+
+.toggle-hint {
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* ── popover (components/Popover.tsx) ────────────────────────────────────── */
+
+.popover {
+  position: fixed;
+  z-index: 75;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-l);
+  background: var(--raised);
+  box-shadow: var(--elev-float);
+  outline: none;
+  animation: rise var(--dur) var(--ease);
+}
+
+/* ── the status line (components/StatusLine.tsx) ─────────────────────────── */
+
+.status-host {
+  flex: none;
+  display: grid;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  height: var(--status-h);
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-top: var(--hairline) solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* Talk to Wanigan's button sits over the line's right end: the line ends before it. */
+.app:has(> .chat-fab) .status-line {
+  padding-right: calc(var(--fab) + var(--space-5) + var(--space-2));
+}
+
+.status-said {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.status-message {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.status-icon {
+  flex: none;
+  color: var(--faint);
+}
+
+.status-done .status-icon {
+  color: var(--green);
+}
+
+.status-error {
+  color: var(--red);
+}
+
+.status-error .status-icon {
+  color: var(--red);
+}
+
+.status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-slot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.status-slot:empty {
+  display: none;
+}
+
+.status-keys {
+  flex: none;
+}
+
+/* A failure to act on now: a toast in the status line's own place, above it, pushing the work up rather than covering it. */
+.status-urgent {
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: inset var(--track-pad) 0 0 var(--red);
+  border-top: var(--hairline) solid var(--line);
+  animation: none;
+}
+
+/* ── the notification tray (components/NotificationTray.tsx) ─────────────── */
+
+.tray {
+  max-height: min(560px, calc(100vh - 2 * var(--space-4)));
+}
+
+.tray-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.tray-title {
+  flex: 1;
+  margin: 0;
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
+}
+
+.tray-body {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1);
+}
+
+.tray-list {
+  display: grid;
+  gap: var(--hairline);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tray-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1) var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+}
+
+.tray-item.unread {
+  background: var(--water-soft);
+}
+
+.tray-news {
+  margin-bottom: var(--space-1);
+  background: var(--sunken);
+}
+
+.tray-icon {
+  flex: none;
+  margin-top: var(--gap-hair);
+  color: var(--faint);
+}
+
+.tray-done .tray-icon {
+  color: var(--green);
+}
+
+.tray-error .tray-icon {
+  color: var(--red);
+}
+
+.tray-news .tray-icon {
+  color: var(--water-text);
+}
+
+.tray-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: var(--gap-hair);
+}
+
+.tray-text p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.tray-text time {
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+
+.tray-text .faint {
+  font-size: var(--text-xs);
+}
+
+.tray-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.tray-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.tray-empty p {
+  margin: 0;
+}
+
+.tray-empty .tray-empty-title {
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+/* ── empty states ────────────────────────────────────────────────────────── */
+
+.empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: var(--space-10);
+  height: var(--space-10);
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-round);
+  background: var(--sunken);
+  color: var(--muted);
+}

@@ -1,4 +1,5 @@
-// A menu of actions that looks like the rest of Wanigan in both themes: a
+// A menu of actions (Studio: float elevation, 10 px corners, 32 px rows, keys
+// right-aligned in KeyCaps) that looks like the rest of Wanigan in both themes: a
 // button opens it, and it lists commands (ARIA menu button pattern), grouped
 // under headings, each with a quieter second line and its key. The list takes
 // the arrow keys, Home and End, typing to jump, Enter or Space to run, and
@@ -7,10 +8,10 @@
 // is open. Select is for choosing a value; this is for doing something.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { keyLabel } from '@shared/shortcuts';
 import { bridge } from '../lib/api';
 import { useCoversLive } from '../lib/live';
 import { Icon, type IconName } from './icons';
+import { KeyCaps } from './ui';
 
 export interface MenuItem {
   id: string;
@@ -193,9 +194,7 @@ export function MenuButton({ label, items, notes, children, className, title, al
                     <span>{item.label}</span>
                     {item.detail ? <span className="sel-detail">{item.detail}</span> : null}
                   </span>
-                  {item.keys ? (
-                    <span className="menu-keys" aria-hidden="true">{item.keys.map((k) => <kbd key={k}>{keyLabel(k, mac)}</kbd>)}</span>
-                  ) : null}
+                  {item.keys ? <span className="menu-keys" aria-hidden="true"><KeyCaps keys={item.keys} mac={mac} /></span> : null}
                 </div>
               ))}
               {g.group && notes?.[g.group] ? <p id={noteId(g.group)} className="menu-note">{notes[g.group]}</p> : null}

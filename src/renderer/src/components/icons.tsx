@@ -96,6 +96,8 @@ const paths = {
   wrap: 'M3.5 5h13M3.5 10h11a2.5 2.5 0 0 1 0 5H10M11.5 13l-2 2 2 2M3.5 15h3',
   symbol: 'M6 4.5c-1.5 0-2 .8-2 2v1.8c0 .9-.5 1.7-1.5 1.7 1 0 1.5.8 1.5 1.7v1.8c0 1.2.5 2 2 2M14 4.5c1.5 0 2 .8 2 2v1.8c0 .9.5 1.7 1.5 1.7-1 0-1.5.8-1.5 1.7v1.8c0 1.2-.5 2-2 2',
   clock: 'M10 16.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13ZM10 6.5V10l2.5 1.5',
+  // The notification tray, in the rail.
+  bell: 'M5 8.2a5 5 0 0 1 10 0c0 5.3 2.3 6.3 2.3 6.3H2.7S5 13.5 5 8.2ZM8.3 16.8a1.8 1.8 0 0 0 3.4 0',
 } as const;
 
 export type IconName = keyof typeof paths;

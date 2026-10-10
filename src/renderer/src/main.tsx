@@ -11,6 +11,7 @@ import './styles/base.css';
 import './styles/parts.css';
 import './styles/shell.css';
 import './styles/controls.css';
+import './styles/components.css';
 import './styles/palette.css';
 import './styles/board.css';
 import './styles/drawer.css';

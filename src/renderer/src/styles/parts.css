@@ -47,7 +47,7 @@
 
 .empty-title {
   margin: 0 0 var(--space-2);
-  font: 600 var(--text-xl) / var(--leading-tight) var(--font-display);
+  font: 600 var(--text-lg) / var(--leading-tight) var(--font-ui);
 }
 
 .empty-body {

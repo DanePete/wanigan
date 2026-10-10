@@ -109,7 +109,15 @@
   --icon-btn-h: 30px;
   --menu-row: 32px;
   --hairline: 1px;
+  /* The ring around an open project's tile, a hair heavier than the hairline. */
+  --ring: 1.5px;
   --focus-ring: 2px;
+  /* The gap between segments in a track, and the track's own padding. */
+  --gap-hair: 2px;
+  --track-pad: 3px;
+  --tip-max: 320px;
+  --toggle-w: 36px;
+  --toggle-h: 20px;
   --dot: 7px;
   --count-h: 18px;
   --mark-rail: 34px;
@@ -209,6 +217,8 @@
   /* The focus ring is the outline (base.css); this is the same ring as a shadow, for a control that clips it. */
   --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--water);
   --scrim: rgb(3 6 9 / 0.6);
+  /* A switch's knob: white on the water fill and on the track, in both themes. */
+  --toggle-knob: #FFFFFF;
 
   /*
     Syntax in diffs: quiet hues kept clear of the four meanings (no green,
