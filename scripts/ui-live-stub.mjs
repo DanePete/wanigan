@@ -400,7 +400,7 @@ export function liveStub(f) {
   });
   const real = window.wanigan.call.bind(window.wanigan);
   window.wanigan.call = (method, params) => {
-    if (method === 'live.site') return Promise.resolve(site(params.projectId));
+    if (method === 'live.site') { window.__wgLive.siteProject = params.projectId; return Promise.resolve(site(params.projectId)); }
     if (method === 'live.parts') return Promise.resolve({ docroot: '/tmp/acme/web', components: [{ id: 'acme:hero', name: 'Hero', description: 'A wide banner with a heading, words and buttons.', dir: '/tmp/acme/web/themes/custom/acme/components/hero', files: ['hero.component.yml', 'hero.twig', 'hero.css'], props: [{ name: 'heading', type: 'string', title: 'Heading', required: true }, { name: 'ctas', type: 'array', title: 'Buttons', required: false }] }] });
     if (method === 'live.edits' || method === 'live.findText' || method === 'live.saveText' || method === 'live.revert') {
       try { return Promise.resolve(handCore(method, params)); } catch (e) { return Promise.reject(e); }
@@ -575,7 +575,9 @@ export function liveStub(f) {
     }
   };
 
-  const listeners = { state: new Set(), edited: new Set(), key: new Set(), devtools: new Set() };
+  const listeners = { state: new Set(), edited: new Set(), key: new Set(), devtools: new Set(), said: new Set() };
+  // The site's own messages on a load, as main tells them (src/main/live-view.ts sayMessages): the sweep says them.
+  window.__wgSay = (said) => { for (const l of listeners.said) l(said); };
   let host = null;
   /*
    * The page's DevTools (src/main/live-devtools.ts), played: where it is, and a placeholder drawn where the main
@@ -867,6 +869,7 @@ export function liveStub(f) {
     async helperSave() { return { ok: true, error: null, label: 'Article 12' }; },
     async hasScript() { return true; },
     onState(l) { listeners.state.add(l); return () => listeners.state.delete(l); },
+    onSiteMessages(l) { listeners.said.add(l); return () => listeners.said.delete(l); },
     async trace() { window.__wgLive.calls.push('trace'); return window.__wgLive.answer; },
     async paint(items) { shown.paint = items; draw(); return items.length; },
     async focusWindow() {},

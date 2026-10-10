@@ -186,6 +186,8 @@ export interface LiveBridge {
   css(): Promise<number>;
   /** Hide the site's own admin bars in the view (Drupal's toolbar, top bar and sidebar; WordPress's admin bar), or show them; kept across loads. Answers what is now in force. */
   hideAdmin(hide: boolean): Promise<boolean>;
+  /** The site's own status messages on each page the view loads (hidden in the page, said in Wanigan's pop-up there): for the window's tray. */
+  onSiteMessages(listener: (said: { projectId: string; messages: { kind: 'status' | 'warning' | 'error'; text: string }[] }) => void): () => void;
   /** Go to another page of the same site. */
   go(url: string): Promise<boolean>;
   back(): Promise<void>;

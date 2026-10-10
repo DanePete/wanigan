@@ -51,6 +51,11 @@ const live: LiveBridge = {
     ipcRenderer.on('live:state', handler);
     return () => { ipcRenderer.off('live:state', handler); };
   },
+  onSiteMessages(listener) {
+    const handler = (_e: IpcRendererEvent, said: Parameters<Parameters<LiveBridge['onSiteMessages']>[0]>[0]): void => listener(said);
+    ipcRenderer.on('live:siteMessages', handler);
+    return () => { ipcRenderer.off('live:siteMessages', handler); };
+  },
   // The helper's trace, lenses and editing in place (src/main/live-inspect.ts).
   trace: () => ipcRenderer.invoke('live:trace') as ReturnType<LiveBridge['trace']>,
   siteAi: () => ipcRenderer.invoke('live:siteAi') as ReturnType<LiveBridge['siteAi']>,

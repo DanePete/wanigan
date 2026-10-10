@@ -20,7 +20,7 @@ import { loopbackAddress } from '../shared/live-envs.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 import { envId, hostedPage } from './live-compare-request.ts';
 import { PAGE_HAS_SCRIPT, pageScriptSource } from './live-page-source.ts';
-import { ADMIN_CSS, adminSwitch } from '../shared/live-admin.ts';
+import { ADMIN_CSS, SITE_MESSAGES_CSS, adminSwitch, siteMessagesOf } from '../shared/live-admin.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
 const WORLD = 4242;
@@ -406,6 +406,16 @@ export function wireLiveView(options: {
     } catch { /* a page that went away mid-load */ }
   };
 
+  /** The site's own messages on the page just loaded: shown in Wanigan's pop-up in the page, and told to the window. */
+  const sayMessages = async (): Promise<void> => {
+    const shownFor = projectId;
+    const messages = siteMessagesOf(await run<unknown>('window.__wl && window.__wl.siteMessages ? window.__wl.siteMessages() : []', []));
+    if (!messages.length) return;
+    await run(`window.__wl && window.__wl.saySite ? window.__wl.saySite(${JSON.stringify(messages)}, 'Drupal') : 0`, 0);
+    const w = options.window();
+    if (w && !w.isDestroyed() && shownFor) w.webContents.send('live:siteMessages', { projectId: shownFor, messages });
+  };
+
   const run = async <T>(code: string, fallback: T): Promise<T> => {
     const wc = view?.webContents;
     if (!wc || wc.isDestroyed() || !script()) return fallback;
@@ -459,7 +469,10 @@ export function wireLiveView(options: {
       void inject();
       // The site's admin bars, hidden when the owner asked: the sheet goes into every page, inert until switched on.
       void wc.insertCSS(ADMIN_CSS, { cssOrigin: 'user' }).then(() => (hideAdmin ? run(adminSwitch(true), false) : false)).catch(() => {});
+      // The site's own status messages, always hidden: their words are said Wanigan's way once the page has loaded.
+      void wc.insertCSS(SITE_MESSAGES_CSS, { cssOrigin: 'user' }).catch(() => {});
     });
+    wc.on('did-finish-load', () => { void sayMessages(); });
     wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) logged = []; });
     wc.on('console-message', (details) => {
       // Electron's own advice to app developers is not the site's problem.

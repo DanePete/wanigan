@@ -51,7 +51,7 @@ import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
 import { fitProblems } from './ui-fit.mjs';
 import { pageScriptSource } from '../src/main/live-page-source.ts';
-import { ADMIN_ATTR, ADMIN_CSS } from '../src/shared/live-admin.ts';
+import { ADMIN_ATTR, ADMIN_CSS, SITE_MESSAGES_CSS } from '../src/shared/live-admin.ts';
 
 const out = join(root, '.artifacts', 'live');
 
@@ -378,6 +378,14 @@ try {
           await shown.click();
           await page.waitForFunction((n) => window.__wgLive.calls.slice(n).includes('hideAdmin false'), k, { timeout: 2000 }).catch(() => fail(t('layout: showing the admin bars again did not ask the view to')));
         }
+      }
+      // The site's own messages, hidden in the page, kept in Wanigan's tray in its words: another project's never.
+      {
+        await page.evaluate(() => window.__wgSay({ projectId: 'someone-else', messages: [{ kind: 'status', text: 'Not this project’s.' }] }));
+        await page.evaluate(() => window.__wgSay({ projectId: window.__wgLive.siteProject, messages: [{ kind: 'status', text: 'Product Acme Mug has been updated.' }] }));
+        await page.waitForFunction(() => /Drupal says: Product Acme Mug has been updated\./.test(document.body.textContent ?? ''), null, { timeout: 2000 })
+          .catch(() => fail(t('layout: the site’s message was not said in Wanigan’s words')));
+        if (await page.evaluate(() => /Not this project’s/.test(document.body.textContent ?? ''))) fail(t('layout: another project’s site message was said here'));
       }
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
@@ -1954,6 +1962,30 @@ try {
     await admin.evaluate((a) => document.documentElement.toggleAttribute(a, false), ADMIN_ATTR);
     if (JSON.stringify(await read()) !== JSON.stringify(before)) fail('admin bars: switched off, the page did not come back as it was');
     await admin.close();
+  }
+  {
+    // The site's own messages, in Drupal core's own markup (status-messages.html.twig, and message.js's for a script's):
+    // read with their kinds and words (never the hidden heading), said in Wanigan's pop-up, and hidden by the sheet.
+    const said = await browser.newPage({ viewport: { width: 1000, height: 600 } });
+    await said.setContent(`<!doctype html><html><body><main>
+<div data-drupal-messages>
+  <div role="contentinfo" aria-label="Status message"><h2 class="visually-hidden">Status message</h2>Product <em>Acme Mug</em> has been updated.</div>
+  <div role="contentinfo" aria-label="Warning message"><h2 class="visually-hidden">Warning message</h2><ul><li>Stock is low.</li><li>Check the price.</li></ul></div>
+  <div role="contentinfo" aria-label="Error message"><div role="alert"><h2 class="visually-hidden">Error message</h2>The image could not be saved.</div></div>
+  <div data-drupal-message-type="status" role="contentinfo" aria-label="Status message"><h2 class="visually-hidden">Status message</h2>Added to your basket.</div>
+</div><h1>Acme Mug</h1></main></body></html>`);
+    await said.addScriptTag({ content: script });
+    await said.addStyleTag({ content: SITE_MESSAGES_CSS });
+    const read = await said.evaluate(() => window.__wl.siteMessages());
+    const want = [['status', 'Product Acme Mug has been updated.'], ['warning', 'Stock is low. · Check the price.'], ['error', 'The image could not be saved.'], ['status', 'Added to your basket.']];
+    if (JSON.stringify(read.map((m) => [m.kind, m.text])) !== JSON.stringify(want)) fail(`site messages: read as ${JSON.stringify(read)}`);
+    if ((await said.evaluate(() => getComputedStyle(document.querySelector('[data-drupal-messages]')).display)) !== 'none') fail('site messages: the sheet did not hide Drupal’s messages');
+    if ((await said.evaluate((m) => window.__wl.saySite(m, 'Drupal'), read)) !== 4) fail('site messages: the pop-up did not say all four');
+    const pop = await said.evaluate(() => { const h = document.getElementById('wanigan-site-say'); return h ? h.shadowRoot.textContent : null; });
+    if (!pop || !/^Drupal says/.test(pop) || !pop.includes('Error: The image could not be saved.')) fail(`site messages: the pop-up says ${JSON.stringify(pop)}`);
+    await said.evaluate(() => window.__wl.saySite([], 'Drupal'));
+    if (await said.evaluate(() => !!document.getElementById('wanigan-site-say'))) fail('site messages: an empty list did not take the pop-up away');
+    await said.close();
   }
   const regions = await page.evaluate(() => window.__wl.scan());
   const at = Object.fromEntries(regions.filter((r) => r.part).map((r) => [r.part, r.index]));

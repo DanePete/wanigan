@@ -27,5 +27,30 @@ export const ADMIN_CSS = [
   `${on} body.toolbar-vertical, ${on} body.toolbar-tray-open { margin-inline-start: 0 !important; margin-inline-end: 0 !important; }`,
 ].join('\n');
 
+/**
+ * The site's own status messages, hidden in the view and in every render window, always: Drupal core prints them in the
+ * page (`[data-drupal-messages]`, and the empty fallback core/misc/message.js fills), where they push the page down and
+ * come and go between one render and the next (a one-time login's, a save's). Wanigan says their words instead, in a
+ * pop-up of its own that goes after a moment (live-page-say.ts) and in its notification tray. WordPress core prints
+ * none on a site's pages.
+ */
+export const SITE_MESSAGES_CSS = '[data-drupal-messages], [data-drupal-messages-fallback] { display: none !important; }';
+
+export interface SiteMessage { kind: 'status' | 'warning' | 'error'; text: string }
+
+/** What the page script answered for the site's messages, as main passes it on: at most 6, each a known kind and words. */
+export function siteMessagesOf(raw: unknown): SiteMessage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SiteMessage[] = [];
+  for (const m of raw.slice(0, 6)) {
+    if (!m || typeof m !== 'object') continue;
+    const { kind, text } = m as { kind?: unknown; text?: unknown };
+    if ((kind !== 'status' && kind !== 'warning' && kind !== 'error') || typeof text !== 'string') continue;
+    const words = text.replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (words) out.push({ kind, text: words });
+  }
+  return out;
+}
+
 /** The page script line that switches the hiding on or off in the page shown. */
 export const adminSwitch = (hide: boolean): string => `document.documentElement.toggleAttribute(${JSON.stringify(ADMIN_ATTR)}, ${hide ? 'true' : 'false'}); ${hide ? 'true' : 'false'}`;

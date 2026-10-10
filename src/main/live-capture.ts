@@ -25,6 +25,7 @@
 import { createHash } from 'node:crypto';
 import type { BrowserWindowConstructorOptions, Debugger, WebContents } from 'electron';
 import { sameSite } from '../shared/live.ts';
+import { SITE_MESSAGES_CSS } from '../shared/live-admin.ts';
 
 /** Everything moving stopped, so a picture is the same each time it is taken. */
 export const STILL_CSS = '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}';
@@ -287,6 +288,8 @@ export async function inHiddenWindow<T>(o: HiddenOptions, during: (page: HiddenP
     const loaded = await deadline(wc.loadURL(o.url, fresh).then(() => true, () => false), LOAD_MS, () => false);
     if (left) return { error: `${o.what} sent the browser off the site, to ${originOf(left)}; Wanigan does not follow it.` };
     if (!loaded) return { error: `${o.what} did not load within ${LOAD_MS / 1000} seconds.` };
+    // The site's own status messages come and go between renders: never in a picture or a comparison (live-admin.ts).
+    await within('its messages were hidden', () => wc.insertCSS(SITE_MESSAGES_CSS, { cssOrigin: 'user' }));
     if (o.network) {
       try {
         const tree = await command('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } };

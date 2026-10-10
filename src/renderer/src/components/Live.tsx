@@ -415,6 +415,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   const [hideAdmin, setHideAdmin] = useState(readHideAdmin);
   // Main keeps it for every page the view loads; told again whenever the window opens a view.
   useEffect(() => { void live.hideAdmin?.(hideAdmin).catch(() => {}); }, [live, hideAdmin]);
+  // The site's own status messages (hidden in the page, said in Wanigan's pop-up there) kept in the notification tray.
+  useEffect(() => live.onSiteMessages?.((said) => {
+    if (said.projectId !== project.id) return;
+    for (const m of said.messages) toast(`Drupal says: ${m.text}`, m.kind === 'error' ? 'error' : m.kind === 'warning' ? 'info' : 'done');
+  }), [live, project.id, toast]);
   const toggleAdmin = (): void => setHideAdmin((v) => {
     try { localStorage.setItem(ADMIN_KEY, v ? '0' : '1'); } catch { /* lasts this window */ }
     return !v;
