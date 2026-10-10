@@ -9,7 +9,7 @@ import { receivesLine } from '@shared/attachments';
 import { CHATTER_TOOL, chatterLine, decodeChatter } from '@shared/chatter';
 import { groupTurns, turnLength, type Turn } from '@shared/turns';
 import type { Checkpoint, SessionCheckpoints } from '@shared/checkpoints';
-import type { Shortcut } from '@shared/shortcuts';
+import { SESSION_COMPOSER_KEYS, SESSION_PANEL_KEYS } from '@shared/shortcuts';
 import { TurnChange, TurnPanel, UndoDialog } from './TurnChanges';
 import { attempt, call, forProject, useQuery } from '../lib/api';
 import { useDraft } from '../lib/draft';
@@ -41,11 +41,10 @@ import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from
 
 /*
  * The session's own keys, handled here (in the capture phase, so a focused
- * terminal does not take them). shared/shortcuts.ts has no group for a session
- * yet, so these are in the tooltips and aria-keyshortcuts but not on the sheet.
+ * terminal does not take them), and listed on the sheet under In a session.
  */
-const PANEL_KEYS: Shortcut = { id: null, label: 'Show or hide the session’s turns and details', group: 'Anywhere', keys: ['Mod', 'Shift', 'D'] };
-const COMPOSER_KEYS: Shortcut = { id: null, label: 'Message the agent, or go back to its terminal', group: 'Anywhere', keys: ['Mod', 'Shift', 'M'] };
+const PANEL_KEYS = SESSION_PANEL_KEYS;
+const COMPOSER_KEYS = SESSION_COMPOSER_KEYS;
 
 type PanelTab = 'turns' | 'details';
 const PANEL_OPEN_KEY = 'wanigan.session.panel';
