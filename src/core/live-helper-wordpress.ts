@@ -948,11 +948,15 @@ final class Wanigan_Live {
 		self::$meta[$id] = array('block' => $block->name, 'parsed' => $block->parsed_block, 'map' => $p ? $p->map : null, 'context' => is_array($block->context) ? $block->context : array());
 		if (!self::$meta[$id]['map'] && $smap) self::$meta[$id]['smap'] = $smap;
 		if (!empty($parent['host'])) self::$meta[$id]['host'] = $parent['host'];
+		// blocks/pattern.php renders a registered pattern's blocks from the registry each time: no store holds them.
+		if (!self::$meta[$id]['map'] && !$smap && !empty($parent['pattern'])) self::$meta[$id]['pattern'] = $parent['pattern'];
 		$f = count(self::$stack) - 1;
 		// Its inner blocks are found in the same stored tree.
 		if ($p && $p->map) self::$stack[$f]['map'] = $p->map;
 		elseif ($smap) self::$stack[$f]['smap'] = $smap;
 		if (!empty($parent['host'])) self::$stack[$f]['host'] = $parent['host'];
+		if ($block->name === 'core/pattern' && !empty($block->attributes['slug'])) self::$stack[$f]['pattern'] = (string) $block->attributes['slug'];
+		elseif (!empty($parent['pattern'])) self::$stack[$f]['pattern'] = $parent['pattern'];
 	}
 
 	/** "render_block_{$name}"'s last callback: the block's output, final. */
@@ -1904,6 +1908,8 @@ final class Wanigan_Live {
 			// Stored in a synced pattern's own post: its words change every page that uses the pattern.
 			$e = self::block_edit($name, $type, $m['smap']);
 			if ($e) $edits[] = $e;
+		} elseif (!empty($m['pattern']) && self::has_words($type)) {
+			$edits[] = self::pattern_words($name, (string) $m['pattern']);
 		}
 		if (!empty($m['host'])) {
 			$e = self::placement_edit($name, $type, $m, $attrs);
@@ -2140,6 +2146,28 @@ final class Wanigan_Live {
 		if ($why) $target['why'] = $why;
 		self::$edits[$id] = $target;
 		if ($hnode) self::$private[$id] = array('type' => 'override', 'store' => $hmap['store'], 'path' => $hmap['path'], 'fp' => md5(serialize_block($hnode)), 'hash' => md5(self::$trees[$hmap['store']]['content']), 'name' => $mname, 'block' => $name, 'attrs' => $open, 'own' => $own);
+		return $id;
+	}
+
+	/** Whether a block type holds words: an attribute read from its markup, or one block.json gives the content role. */
+	private static function has_words($type): bool {
+		if (!$type) return false;
+		foreach ((array) $type->attributes as $def) {
+			if (is_array($def) && (isset($def['source']) || (isset($def['role']) && $def['role'] === 'content'))) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Words a block shows from a theme's registered pattern placed by reference (core/pattern): blocks/pattern.php renders
+	 * the pattern's content from the registry on every request, so they are in no template, part or post. They are the
+	 * pattern file's, code.
+	 */
+	private static function pattern_words(string $name, string $slug): string {
+		$id = 'from-pattern-' . self::short($slug . '|' . $name);
+		if (!isset(self::$edits[$id])) {
+			self::$edits[$id] = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words from the theme’s pattern “' . $slug . '”', 'via' => 'schema', 'revisions' => false, 'why' => self::NO_SUCH . 'these words come from the pattern ' . self::pattern_label($slug) . ', which WordPress renders from the theme’s file each time; no template or post stores them. Change them in that file (Code), or in the Site Editor, which can turn the pattern into the template’s own blocks.');
+		}
 		return $id;
 	}
 
@@ -2973,6 +3001,10 @@ final class Wanigan_Live {
 				$why = self::cannot('edit_theme_options', 'change templates');
 				if (!$why && $tpl->wp_id) $why = self::lock((int) $tpl->wp_id, $m[1] === 'tp' ? 'template part' : 'template');
 				$info = array('content' => (string) $tpl->content, 'route' => '/wp/v2/' . ($m[1] === 'tp' ? 'template-parts' : 'templates') . '/' . $tpl->id, 'post' => $tpl->wp_id ? (int) $tpl->wp_id : null, 'label' => ($m[1] === 'tp' ? 'the template part “' : 'the template “') . $tpl->title . '”', 'noun' => $m[1] === 'tp' ? 'template part' : 'template', 'changes' => 'configuration', 'revisions' => true, 'why' => $why);
+				// class-wp-rest-templates-controller.php update_item(): a template still read from the theme's file is saved
+				// as a new wp_template(_part) post that shadows the file, which is never written; Reset in the Site Editor
+				// deletes the copy.
+				$info['reach'] = 'shows on every page that uses this ' . $info['noun'] . (!$tpl->wp_id ? '; the first save makes a database copy of the theme’s file, as the Site Editor does' : '');
 			}
 		}
 		if ($info && !isset(self::$trees[$store])) self::$trees[$store] = array('content' => $info['content'], 'blocks' => parse_blocks($info['content']));

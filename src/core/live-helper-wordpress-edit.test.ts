@@ -884,6 +884,33 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.equal(back.posts[7], '<!-- wp:block {"ref":12} /-->\n\n<!-- wp:block {"ref":12} /-->');
   });
 
+  test('words in a template and a template part save through /wp/v2/templates and /wp/v2/template-parts, saying where they show and that the first save copies the theme’s file', () => {
+    const part = '<!-- wp:paragraph -->\n<p>Open daily</p>\n<!-- /wp:paragraph -->';
+    const tpl = '<!-- wp:template-part {"slug":"header","theme":"northwind"} /-->\n\n<!-- wp:pattern {"slug":"northwind/hero"} /-->\n\n<!-- wp:heading -->\n<h2 class="wp-block-heading">From the bakery</h2>\n<!-- /wp:heading -->\n\n<!-- wp:post-content /-->';
+    const r = run(page('<!-- wp:paragraph -->\n<p>Hello</p>\n<!-- /wp:paragraph -->', {
+      templates: { wp_template: { 'northwind//page': { content: tpl } }, wp_template_part: { 'northwind//header': { content: part } } },
+      patterns: { 'northwind/hero': '<!-- wp:heading -->\n<h2 class="wp-block-heading">Welcome to Acme</h2>\n<!-- /wp:heading -->' },
+      saves: [
+        { find: 'Paragraph block in the template part “Header”', value: { content: 'Open <strong>every</strong> day' } },
+        { find: 'Heading block in the template “Page”', value: { content: 'From the oven' } },
+      ],
+    }));
+    const inPart = target(r, 'Paragraph block in the template part “Header”');
+    assert.match(inPart.label, /shows on every page that uses this template part/);
+    assert.match(inPart.label, /first save makes a database copy of the theme’s file/);
+    assert.equal(inPart.why, undefined);
+    assert.equal(inPart.revisions, true);
+    assert.match(target(r, 'Heading block in the template “Page”').label, /shows on every page that uses this template/);
+    for (const a of r.answers) assert.ok(a.data.ok, a.data.error);
+    assert.deepEqual(r.rest.map(([m, route]) => `${m} ${route}`), ['POST /wp/v2/template-parts/northwind//header', 'POST /wp/v2/templates/northwind//page']);
+    assert.equal(r.templates.wp_template_part?.['northwind//header']?.content, part.replace('Open daily', 'Open <strong>every</strong> day'));
+    assert.equal(r.templates.wp_template_part?.['northwind//header']?.source, 'custom', 'core made its database copy; the theme’s file is untouched');
+    assert.equal(r.templates.wp_template?.['northwind//page']?.content, tpl.replace('From the bakery', 'From the oven'));
+    // Words a theme's pattern renders are in no template: refused, with why.
+    const fromPattern = target(r, 'Heading words from the theme’s pattern “northwind/hero”');
+    assert.match(fromPattern.why ?? '', /^WordPress keeps no such thing: /);
+  });
+
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
     const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
     const e = target(r, 'Heading block');
