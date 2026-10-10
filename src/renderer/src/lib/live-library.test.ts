@@ -139,7 +139,7 @@ test('where the rest of the site uses an entry is grouped by kind, counted in on
   assert.equal(usageSummary({ ...usage, places: [], found: 0 }), 'Nowhere: nothing the site has stored uses it.');
   assert.equal(usageSummary({ ...usage, places: [], found: 0, complete: false }), 'Nowhere the search reached: nothing it read uses it.');
   assert.equal(placeDetail({ kind: 'content', label: 'About', where: 'core/group › acme/card', via: 'the synced pattern “Footer call”', note: 'Page' }), 'core/group › acme/card · through the synced pattern “Footer call” · Page');
-  assert.equal(placeDetail(usage.places[2]!), 'line 4, include', 'a template’s file is shown on its own');
+  assert.equal(placeDetail(usage.places[2]!), 'line 4, include', 'a file is shown on its own');
   assert.equal(placeAddress('/about?x=1', 'https://acme.example.test/node/1'), 'https://acme.example.test/about?x=1');
   for (const away of ['//elsewhere.example/', 'https://elsewhere.example/', 'about', undefined]) assert.equal(placeAddress(away, 'https://acme.example.test/'), null, String(away));
   assert.equal(placeAddress('/about', null), null, 'no site, nothing to open');

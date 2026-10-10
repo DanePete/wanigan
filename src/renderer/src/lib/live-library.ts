@@ -226,9 +226,9 @@ export function usageSummary(u: EntryUsage): string {
   return `Used in ${u.found} ${u.found === 1 ? 'place' : 'places'}${reached} across the site${listed}.`;
 }
 
-/** What one place says besides its name: where in it, what it is reached through, what to know. */
+/** What one place says besides its name and file: where in it, what it is reached through, what to know. */
 export function placeDetail(p: UsagePlace): string {
-  return [p.where, p.via ? `through ${p.via}` : null, p.note, p.file && p.kind !== 'template' ? p.file : null].filter((x): x is string => !!x).join(' · ');
+  return [p.where, p.via ? `through ${p.via}` : null, p.note].filter((x): x is string => !!x).join(' · ');
 }
 
 /** A place's page (or its settings) as an address in the view: on the site's own origin only; null otherwise. */

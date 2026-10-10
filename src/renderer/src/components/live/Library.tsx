@@ -560,7 +560,7 @@ function Place({ place, site, readOnly, onOpen }: { place: UsagePlace; site: Liv
         {place.count ? <span className="live-library-count">×{place.count}</span> : null}
       </span>
       {detail ? <span className="faint small live-library-place-detail">{detail}</span> : null}
-      {place.kind === 'template' && place.file ? <span className="lib-tag mono live-library-place-file">{place.file}</span> : null}
+      {place.file ? <span className="lib-tag mono live-library-place-file">{place.file}</span> : null}
       {edit ? (
         <Button size="s" tone="quiet" icon="pencil" className="live-library-place-edit" aria-label={`${place.label}: open the site’s own page for changing it`} onClick={() => onOpen(edit, place.label)}>
           Change it
