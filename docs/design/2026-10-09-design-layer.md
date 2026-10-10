@@ -334,8 +334,12 @@ or the project.
    measures the noise floor by rendering each version twice (every width is
    judged against the one floor the verdict states, the largest over both
    versions and every width), then runs the
-   steps in order: computed styles and boxes of the touched elements, pixels
-   around them, then the rest of the page. It keeps the pictures in the data
+   steps in order: computed styles and boxes of the touched elements (a token:
+   its custom property as the root computes it, in both renders), pixels
+   around them, then the rest of the page. Nothing passes for want of a
+   comparison: an edit found but gone when the page was measured, a token
+   whose value was not read, or an edit for a named breakpoint (phase 1 reads
+   no breakpoints, so the design cannot show it) fails, saying so. It keeps the pictures in the data
    folder and tells the core (`verified`, or still `implemented` with the
    verdict, which says what differs: the words are in the site either way).
 

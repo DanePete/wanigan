@@ -338,6 +338,18 @@ test('a text edit patches its element’s words, and still resolves once the sit
   } finally { w.done(); }
 });
 
+test('an edit for a named breakpoint is left out whole: its words are not patched at every width, its styles not shown', async () => {
+  const words102 = edit({ breakpoint: 'wide', change: { type: 'text', value: 'Paddling 102' } });
+  const styled = edit({ breakpoint: 'wide' });
+  const w = wire({ edits: [words102, styled] });
+  try {
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
+    const applied = await w.apply();
+    assert.deepEqual(w.page.set, { tags: {}, texts: [], on: true, gate: 'g1' });
+    assert.deepEqual([applied.shown, applied.orphaned], [[], []]);
+  } finally { w.done(); }
+});
+
 test('the picked element is keyed to the innermost part with an identity, with what its kind reaches', async () => {
   const w = wire();
   try {
@@ -551,6 +563,69 @@ test('every width is judged against the one floor the verdict states, the larges
     const v = await x.verify(f.id, { widths: [390] });
     assert.deepEqual([v.ok, v.failed], [false, 'rest']);
   } finally { x.done(); }
+});
+
+test('an edit found on the page but gone when it was measured fails that width: nothing is verified for want of a comparison', async () => {
+  const e = edit({ state: 'implemented' });
+  // The page re-rendered the element while its clock ran: the tags went with it, so the layer's rules matched nothing
+  // and the design draws the same as the result.
+  const w = wire({ edits: [e], render: async (r) => ({ png: Buffer.from(`x-${r.width}`), bitmap: blank(64, 200), elements: [], found: [e.id] }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'styles']);
+    assert.deepEqual(v.differences, [{ kind: 'style', edit: e.id, width: 390, element: e.label, property: 'element', design: 'its element was not there when the page was measured', result: 'its element was not there when the page was measured' }]);
+    assert.deepEqual(w.marks.map((m) => m.state), ['implemented']);
+  } finally { w.done(); }
+});
+
+test('a token is checked by its custom property on the root in both renders, and never passed for want of one', async () => {
+  const token = edit({ label: 'Accent', scope: 'site', state: 'implemented', target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--color-accent', value: '#c0ffee' } });
+  const on = (design: Record<string, string> | null, result: Record<string, string> | null): LayerRender => async (r) => {
+    const tokens = r.design ? design : result;
+    return { png: Buffer.from('x'), bitmap: blank(64, 200), elements: [], found: [], ...(tokens ? { tokens } : {}) };
+  };
+  const cases: [Record<string, string> | null, Record<string, string> | null, boolean, string | null][] = [
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '#c0ffee' }, true, null],
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '#0a7' }, false, '#0a7'],
+    [{ '--color-accent': '#c0ffee' }, { '--color-accent': '' }, false, 'not set'],
+    [null, null, false, 'not read'],
+  ];
+  for (const [design, result, ok, said] of cases) {
+    const w = wire({ edits: [token], render: on(design, result) });
+    try {
+      const v = await w.verify(token.id, { widths: [390] });
+      assert.equal(v.ok, ok, JSON.stringify([design, result]));
+      if (!ok) {
+        assert.equal(v.failed, 'styles');
+        assert.deepEqual(v.differences, [{ kind: 'style', edit: token.id, width: 390, element: ':root', property: '--color-accent', design: design ? '#c0ffee' : 'not read', result: said }]);
+      }
+    } finally { w.done(); }
+  }
+});
+
+test('a style for a named breakpoint fails as not verifiable yet: the design cannot show it', async () => {
+  const e = edit({ state: 'implemented', breakpoint: 'wide' });
+  const w = wire({ edits: [e], render: renders(e, { design: (b) => b, result: (b) => b }) });
+  try {
+    const v = await w.verify(e.id, { widths: [390] });
+    assert.deepEqual([v.ok, v.failed], [false, 'styles']);
+    assert.equal(v.differences.length, 1);
+    assert.match(v.differences[0]!.kind === 'style' ? `${v.differences[0]!.property}: ${v.differences[0]!.result}` : '', /^breakpoint: not verifiable yet/);
+  } finally { w.done(); }
+});
+
+test('a token verified with other edits does not switch off step 3 for them: a leak away from every element is still a leak', async () => {
+  const style = edit({ state: 'implemented' });
+  const token = edit({ label: 'Accent', scope: 'site', state: 'implemented', target: { part: null, inner: null, selector: null, textHash: null }, change: { type: 'token', name: '--color-accent', value: '#c0ffee' } });
+  const w = wire({ edits: [style, token], render: async (r) => ({
+    png: Buffer.from('x'), bitmap: r.design ? blank(64, 200) : painted(blank(64, 200), { x: 0, y: 150, width: 64, height: 20 }, 0),
+    elements: [heading(style.id, 'rgb(18, 52, 86)')], found: [style.id], tokens: { '--color-accent': '#c0ffee' },
+  }) });
+  try {
+    const v = await w.verify(null, { widths: [390] });
+    assert.equal(v.failed, 'rest', 'the footer changed, away from the heading: a leak, not a difference near the token');
+    assert.ok(v.differences.length > 0 && v.differences.every((d) => d.kind === 'leak'));
+  } finally { w.done(); }
 });
 
 test('only an implemented edit is verified, an edit the design cannot find fails, and nothing is asked without the live view or trust', async () => {

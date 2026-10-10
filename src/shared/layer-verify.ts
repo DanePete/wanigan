@@ -5,6 +5,7 @@
 //
 // - Step 1, styles and boxes: every element an edit touched, tagged the same way in both renders, must have the same
 //   computed values for the layer's properties, the same words and the same box. It says exactly which property.
+//   A token is checked the same way, by its custom property's computed value on the page's root in both renders.
 // - Step 2, pixels in and around the touched elements, within the noise floor.
 // - Step 3, the rest of the page: a difference away from every touched element is a leak.
 // The steps run in that order and the first that fails decides the verdict.
@@ -129,9 +130,27 @@ export function compareElements(design: readonly ElementSnap[], result: readonly
   return out.slice(0, MAX_ELEMENT_DIFFERENCES);
 }
 
+/**
+ * Step 1 for tokens at one width: each token's custom property, as the page's root computes it, the same in the result
+ * as in the design. A value that could not be read, or one the design does not show, is a difference: a token is never
+ * passed for want of a comparison.
+ */
+export function compareTokens(
+  tokens: readonly { edit: string; name: string }[], design: Readonly<Record<string, string>> | undefined, result: Readonly<Record<string, string>> | undefined, width: number,
+): LayerDifference[] {
+  const out: LayerDifference[] = [];
+  for (const t of tokens) {
+    const a = design?.[t.name], b = result?.[t.name];
+    if (a === undefined || b === undefined || !a || a !== b) {
+      out.push({ kind: 'style', edit: t.edit, width, element: ':root', property: t.name, design: a === undefined ? 'not read' : a || 'not set', result: b === undefined ? 'not read' : b || 'not set' });
+    }
+  }
+  return out.slice(0, MAX_ELEMENT_DIFFERENCES);
+}
+
 /* ── steps 2 and 3: pixels near the touched elements, and the rest ───────── */
 
-/** Where an edit shows: a touched element's box in either render, with the margin around it. A token's zone is the whole page. */
+/** Where an edit shows: a touched element's box in either render, with the margin around it. */
 export interface Zone { edit: string | null; rect: LayerRect }
 
 /** The zones of the touched elements, from both renders' boxes, each grown by the margin and kept on the page. */

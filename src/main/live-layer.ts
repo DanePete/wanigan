@@ -17,14 +17,18 @@
 //   A draft of this page that no longer resolves, or resolves to other words, is orphaned and the core is
 //   told; it is a draft again once it resolves. An implemented edit is in the site: the window is told it was not
 //   found on this load, and it stays implemented (never a draft again, never discardable). Without a trace nothing
-//   is resolved by identity, and nothing is called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
+//   is resolved by identity, and nothing is called orphaned for it. Edits for a named breakpoint are left out whole
+//   (not tagged, their words not patched): phase 1 does not read the theme's breakpoints, and a verification fails
+//   them as not verifiable yet.
 // - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
 //   helperSave path, as the logged-in user), to exactly the content, translation and item the edit's target names
 //   (saveTarget): never the default language, never the first item that holds the same words. Styles and tokens go
 //   to an agent as a brief; anything else says why.
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
-//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
+//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
+//   Nothing passes for want of a comparison: an edit found but not there when measured, a token whose custom
+//   property was not read on the root, or an edit for a named breakpoint fails, saying why. Pictures are kept in the data folder under
 //   live-layer/<project>/<edit>/, and the core is told: verified, or still implemented with the failed verdict (its
 //   words are in the site; the verdict says what differs).
 //   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
@@ -40,7 +44,7 @@ import {
   type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  MAX_DIFFERENCES, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -109,6 +113,9 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
   const asked: LayerEdit[] = [];
   for (const e of edits) {
     if (e.state !== 'draft' && e.state !== 'implemented' && e.state !== 'orphaned') continue;
+    // Phase 1 reads no breakpoints: an edit for a named one is left out whole (its styles are not in the sheet, so its
+    // words are not patched either), never shown at every width.
+    if (e.breakpoint !== 'all') continue;
     if (e.change.type === 'token') { if (e.state !== 'orphaned') out.shown.push({ id: e.id, elements: 0 }); continue; }
     // Phase 1 shows words and styles; pictures, inserts and removals are not layer edits yet.
     if (e.change.type !== 'style' && e.change.type !== 'text') continue;
@@ -237,9 +244,25 @@ export interface LayerRendered {
   elements: ElementSnap[];
   /** The edits that found their elements in this render. */
   found: string[];
+  /** The token edits' custom properties as the page's root computes them, by name; a name missing was not read. */
+  tokens?: Record<string, string>;
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
+
+/** A token's name, as compileLayer prints it. */
+const TOKEN_NAME = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
+
+/** The token edits' custom properties, as the page's root computes them: what the page answered, checked, for the names asked. */
+export function tokensOf(raw: unknown, names: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const n of names) {
+    const v = (raw as Record<string, unknown>)[n];
+    if (typeof v === 'string') out[n] = v.trim().slice(0, 2_000);
+  }
+  return out;
+}
 
 /** What the page script's layerSnap answered, checked. */
 export function snapsOf(raw: unknown): ElementSnap[] {
@@ -285,9 +308,14 @@ function renderInWindow(deps: {
       await page.freeze();
       const { height } = await page.grow(VERIFY_MAX_HEIGHT);
       const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
+      // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
+      const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
+      const tokens = names.length
+        ? tokensOf(await run<unknown>(`(() => { const s = getComputedStyle(document.documentElement); const out = {}; for (const n of ${JSON.stringify(names)}) out[n] = s.getPropertyValue(n); return out; })()`, null), names)
+        : {};
       const png = await page.shoot(height, true);
       if (!png) return { error: 'The page could not be pictured.' };
-      return { png, bitmap: await deps.decode(png), elements, found: res.resolved };
+      return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens };
     },
   );
 }
@@ -559,14 +587,27 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // Each version against itself: what this page does not repeat exactly, whichever of the two it is.
       const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap), noiseFloor(design.bitmap, again.bitmap)]);
       const elements = compareElements(design.elements, first.elements, width);
-      // An edit the design cannot find is not verified by finding nothing different.
+      // Nothing is verified by finding nothing different: every edit is compared, or fails saying why not.
+      const measured = (x: LayerRendered, id: string): boolean => x.elements.some((s) => s.edit === id);
+      const tokens: { edit: string; name: string }[] = [];
       for (const e of edits) {
-        if (e.change.type === 'token' || design.found.includes(e.id)) continue;
-        elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'not found on the page', result: first.found.includes(e.id) ? 'on the page' : 'not found on the page' });
+        if (e.breakpoint !== 'all') {
+          // The design shows no edit for a named breakpoint (phase 1 reads none of the theme's), so nothing compares it.
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'breakpoint', design: `only at the theme’s “${e.breakpoint}” breakpoint`, result: 'not verifiable yet: Wanigan does not read the theme’s breakpoints, so the design cannot show it' });
+        } else if (e.change.type === 'token') {
+          tokens.push({ edit: e.id, name: e.change.name });
+        } else if (!design.found.includes(e.id)) {
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'not found on the page', result: first.found.includes(e.id) ? 'on the page' : 'not found on the page' });
+        } else if (!measured(design, e.id) && !measured(first, e.id)) {
+          // Found, then gone before it was measured (the page re-rendered it while its clock ran): its tags went with it,
+          // so neither render shows anything of the edit, and the two are the same for want of it.
+          elements.push({ kind: 'style', edit: e.id, width, element: e.label, property: 'element', design: 'its element was not there when the page was measured', result: 'its element was not there when the page was measured' });
+        }
       }
+      // A token is its custom property on the root, the same in both. It adds no zone: a whole-page zone would make every
+      // difference anywhere near an edit, and step 3 would never run for the edits verified with it.
+      elements.push(...compareTokens(tokens, design.tokens, first.tokens, width));
       const zones: Zone[] = zonesOf(design.elements, first.elements);
-      // A token reaches the whole page: what differs anywhere is its.
-      for (const e of edits) if (e.change.type === 'token') zones.push({ edit: e.id, rect: { x: 0, y: 0, width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER } });
       const d = diffBitmaps(design.bitmap, first.bitmap);
       found.push({ width, noise, elements, pixels: comparePixels(d, zones, width) });
       shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d });
