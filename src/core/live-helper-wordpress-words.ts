@@ -46,8 +46,8 @@ interface Wanigan_Live_Words_Adapter {
 	public static function places(WP_Post $post, string $want, array $hints, string $noun): ?array;
 	/** The core search's places, with any the plugin saves through its own API claimed (writer, label). */
 	public static function claim(array $places, WP_Post $post, string $noun, string $after): array;
-	/** Places outside the post (site-wide), searched only when the post holds the words nowhere. */
-	public static function site_places(string $want): array;
+	/** Places outside the post (site-wide), searched only when the post holds the words nowhere; $after is the new words. */
+	public static function site_places(string $want, string $after): array;
 	/** Saves one place this adapter claimed: array('revision' => ?int, 'undo' => record), or a WP_Error. */
 	public static function write(array $place, array $hit, string $after, WP_Post $post);
 	/** Puts one of its saves back: array('revision' => ?int), or a WP_Error. */
@@ -131,7 +131,7 @@ final class Wanigan_Live_Stored {
 			$site = array();
 			foreach (self::adapters() as $a) {
 				try {
-					$site = array_merge($site, (array) call_user_func(array($a, 'site_places'), $want));
+					$site = array_merge($site, (array) call_user_func(array($a, 'site_places'), $want, $after));
 				} catch (Throwable $e) {
 					continue;
 				}

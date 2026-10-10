@@ -21,6 +21,9 @@
 import { WORDPRESS_USAGE_SOURCE } from './live-helper-wordpress-usage.ts';
 import { WORDPRESS_VERIFY_SOURCE } from './live-helper-wordpress-verify.ts';
 import { WORDPRESS_WORDS_SOURCE } from './live-helper-wordpress-words.ts';
+import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
+import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
+import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
@@ -36,7 +39,10 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  return (SOURCE + WORDPRESS_WORDS_SOURCE + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
+  // The stored-words search, then the plugins' adapters for it (each registers itself, and is used only when its plugin is
+  // active): page builders first, as they are asked in the order they registered.
+  const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE;
+  return (SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);
