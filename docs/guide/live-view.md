@@ -9,8 +9,9 @@ WordPress and other sites can each be on or off.
 
 - **One toolbar.** The site (one menu: Local and the hosted environments to
   show the page on, Compare and Site settings; its tooltip says what the view
-  follows), the page (back, forward, reload, and the address, which opens Go to), the tools
-  (Select, Type on the page, Style and Move, then Snap, Record and Voice), then
+  follows), the page (back, forward, reload, and the address, which opens Go
+  to), the tools (Select, Type on the page, Style and Move, then Snap, Record
+  and Voice), then
   the lens, the widths, the layer's eye (the page without the design layer),
   Edits with its count, and **Make real**, whose menu makes the page's edits
   real, verifies them or opens Edits. A menu at its end holds drag handles,
