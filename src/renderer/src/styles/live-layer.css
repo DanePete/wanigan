@@ -1,0 +1,311 @@
+/*
+  The design layer in the live view: the tray of edits in the side panel
+  (components/live/Tray.tsx) and the Inspector's edits made in the layer
+  (components/live/LayerEdits.tsx). A draft is the water accent (Wanigan's
+  own); in the site and verified is green; a failed verification or an
+  orphaned edit is red. Amber is not used here: nothing in the tray is
+  waiting on the owner the way "needs you" means.
+*/
+
+.live-tray,
+.live-tray-page,
+.live-tray-edit,
+.live-tray-verdict,
+.live-tray-answer {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-tray {
+  gap: var(--space-3);
+}
+
+.live-tray p,
+.live-layer-edit p,
+.live-layer-added p {
+  margin: 0;
+}
+
+.live-tray > *,
+.live-tray-edit > *,
+.live-tray-verdict > * {
+  min-width: 0;
+}
+
+.live-tray-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.live-tray-tools .btn {
+  max-width: 100%;
+}
+
+.live-tray-tools .btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-tray-note {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--water-line);
+  border-radius: var(--radius-m);
+  background: var(--water-soft);
+}
+
+.live-tray-here {
+  color: var(--water);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.live-tray-edits,
+.live-layer-lines,
+.live-tray-differences {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-tray-edits {
+  gap: var(--space-2);
+}
+
+/* One edit: what it is and its state, before → after, its reach, and what can be done to it. */
+.live-tray-edit {
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+.live-tray-edit[data-state='orphaned'] {
+  border-style: dashed;
+}
+
+.live-tray-edit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.live-tray-label {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.live-tray-state {
+  flex: none;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-s);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: var(--leading);
+  white-space: nowrap;
+}
+
+.live-tray-state.draft {
+  background: var(--water-soft);
+  color: var(--water);
+}
+
+.live-tray-state.implemented {
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.live-tray-state.verified {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.live-tray-state.orphaned,
+.live-tray-state.failed {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.live-tray-state.retired {
+  color: var(--faint);
+}
+
+.live-layer-lines li {
+  overflow-wrap: anywhere;
+}
+
+.live-layer-lines .mono {
+  margin-right: var(--space-1);
+}
+
+.live-tray-reach {
+  color: var(--muted);
+}
+
+.live-layer-fragile,
+.live-tray-why {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--red);
+}
+
+.live-tray-why {
+  color: var(--fg);
+}
+
+/* What the last verification said: green when it passed, red when it did not. */
+.live-tray-verdict {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+.live-tray-verdict.ok {
+  border-left: 2px solid var(--green);
+}
+
+.live-tray-verdict.failed {
+  border-left: 2px solid var(--red);
+}
+
+.live-tray-verdict-head {
+  font-weight: 600;
+}
+
+.live-tray-verdict.ok .live-tray-verdict-head {
+  color: var(--green);
+}
+
+.live-tray-verdict.failed .live-tray-verdict-head,
+.live-tray-failed {
+  color: var(--red);
+}
+
+.live-tray-differences li {
+  overflow-wrap: anywhere;
+}
+
+.live-tray-pictures {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-tray-picture-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.live-tray-picture {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  min-width: 0;
+}
+
+.live-tray-picture-open {
+  display: block;
+  max-height: calc(var(--space-12) * 3);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  cursor: zoom-in;
+}
+
+.live-tray-picture-open img {
+  display: block;
+  width: 100%;
+}
+
+.live-tray-picture-none {
+  display: grid;
+  place-items: center;
+  min-height: var(--space-12);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-s);
+}
+
+.live-tray-large {
+  max-height: 70vh;
+  overflow: auto;
+  text-align: center;
+}
+
+.live-tray-large img {
+  max-width: 100%;
+  border: 1px solid var(--line);
+}
+
+/* The Inspector's edits in the layer: the words retyped, the style's reach. */
+.live-layer-edit textarea {
+  width: 100%;
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.live-layer-scope {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.live-layer-scope legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+}
+
+.live-layer-scope-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+
+.live-layer-scope-option:has(input:checked) {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+}
+
+.live-layer-scope-option > span {
+  display: grid;
+  min-width: 0;
+}
+
+.live-layer-scope-option .faint {
+  overflow-wrap: anywhere;
+}
+
+.live-layer-scope-option input {
+  margin-top: var(--space-1);
+}
+
+.live-layer-added strong {
+  font-weight: 600;
+}
+
+/* The bar's Edits: how many drafts wait, beside its name. */
+.live-layer-count {
+  margin-left: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--water-soft);
+  color: var(--water);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-bar .btn-primary .live-layer-count {
+  background: var(--water-ink);
+  color: var(--water);
+}
