@@ -9,7 +9,8 @@
 export function compareStub() {
   const states = new Set();
   let shown = null;
-  const log = { shows: [], shots: [] };
+  // What the window asked of the view: each page shown, each step aside (cover) and back, each reload, each picture.
+  const log = { shows: [], covers: [], reloads: 0, hides: 0, shots: [] };
   window.__wgLive = log;
   window.__wgApp = { ...window.__wgApp, settings: { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false } };
   const tell = () => {
@@ -110,9 +111,9 @@ export function compareStub() {
       return true;
     },
     bounds: () => {},
-    hide: async () => {},
-    cover: async () => null,
-    reload: async () => {},
+    hide: async () => { log.hides += 1; },
+    cover: async (covered) => { log.covers.push(covered); return null; },
+    reload: async () => { log.reloads += 1; },
     css: async () => 0,
     go: async () => true,
     back: async () => {},

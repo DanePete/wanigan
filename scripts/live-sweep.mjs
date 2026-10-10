@@ -13,15 +13,21 @@
 // states without a trace; and the layout itself: the bar's
 // three groups and its site menu, the five verbs on a chosen part with the
 // note under them, a part chosen in the tree offering what a pick offers, the
-// status line, and every key the live view lists on the shortcut sheet. Then the page script itself, in a
+// tree kept beside the chosen part (above it and folded, or beside it when the
+// window is wide) and following the choice from the page, Notes, Problems and
+// Request in the dock beneath the page with the code editor (its keys, and
+// what it shows kept on this Mac), the status line, and every key the live
+// view lists on the shortcut sheet. Then the page script itself, in a
 // real Chromium page of made-up markup: the trace's part marks read and paired,
-// a lens painted, a part dragged to a new place and put back.
+// a lens painted, a part dragged to a new place and put back, and the dock's
+// keys taken from the page.
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
+import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 
 const out = join(root, '.artifacts', 'live');
 mkdirSync(out, { recursive: true });
@@ -33,6 +39,16 @@ const browser = await chromium.launch({ headless: true });
 const option = async (page, button, text) => {
   await page.getByRole('button', { name: button, exact: true }).click();
   await page.locator('.sel-opt', { hasText: text }).first().click();
+};
+
+/** The tab the dock beneath the page shows ('' when it is closed). */
+const dockIs = (page) => page.$eval('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]', (b) => b.textContent).catch(() => '');
+
+/** Open the dock beneath the page on one of its tabs: from its tabs when it is open, from its strip when it is closed. */
+const dockTo = async (page, name, fail) => {
+  await page.locator('.dock-tabs button', { hasText: new RegExp(`^${name}`) }).first().click();
+  await page.waitForSelector(`.editor-drawer:not([hidden]) .live-docked[data-tab="${name.toLowerCase()}"]`, { timeout: 3000 })
+    .catch(() => fail(`dock: choosing ${name} did not show it in the dock`));
 };
 
 try {
@@ -104,13 +120,14 @@ try {
       for (const want of ['Drupal core has no AI API', 'Saving a content item (node)', 'Acme Events (module)', 'never reads a key']) if (!said.includes(want)) fail(t(`inspector: AI on this site does not say "${want}"`));
       if (!(await page.evaluate(() => window.__wgLive.calls.includes('siteAi')))) fail(t('inspector: the site’s AI was not asked for'));
     }
-    const sideways = await page.locator('.live-side').evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    const sideways = await page.$$eval('.live-side, .live-split-part, .live-split-tree', (els) => els.some((el) => el.scrollWidth > el.clientWidth + 1));
     if (sideways) fail(t('inspector: the side panel is wider than itself'));
-    await page.locator('.live-side').evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
+    // The part's details scroll on their own, under the tree that stays above them.
+    await page.locator('.live-split-part').evaluate((el) => { el.scrollTop = 0; el.scrollLeft = 0; });
     await shot('inspector');
-    await page.locator('.live-side').evaluate((el) => { el.scrollTop = el.clientHeight * 0.8; });
+    await page.locator('.live-split-part').evaluate((el) => { el.scrollTop = el.clientHeight * 0.8; });
     await shot('inspector-data');
-    await page.locator('.live-side').evaluate((el) => { el.scrollTop = el.clientHeight * 1.6; });
+    await page.locator('.live-split-part').evaluate((el) => { el.scrollTop = el.clientHeight * 1.6; });
     await shot('inspector-more');
 
     // Moving by the keyboard: Alt+↓ on a block of the sidebar, said aloud; Escape puts it back.
@@ -190,9 +207,9 @@ try {
     await page.keyboard.press('Escape');
     await page.waitForSelector('.live-sheet', { state: 'detached', timeout: 3000 }).catch(() => fail(t('edit: Escape did not close the sheet')));
 
-    // The request behind the page.
+    // The request behind the page, in the dock beneath it.
     await page.getByRole('button', { name: 'Back to the layers' }).click();
-    await page.getByRole('radio', { name: 'Request' }).click();
+    await dockTo(page, 'Request', (w) => fail(t(w)));
     await page.waitForSelector('.live-timeline', { timeout: 3000 }).catch(() => fail(t('request: no hook timeline')));
     const slow = await page.$$eval('.live-hook.slow', (els) => els.length);
     if (slow !== 5) fail(t(`request: ${slow} hooks marked slowest`));
@@ -224,7 +241,7 @@ try {
       const mark = async () => (await calls()).length;
       const pressed = (label) => page.$eval(`.live-widths button[aria-label^="${label}"]`, (b) => b.getAttribute('aria-pressed')).catch(() => null);
       const tabIs = () => page.$eval('.live-side > .segmented [aria-checked="true"]', (b) => b.textContent).catch(() => '');
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       await page.locator('.toast .toast-x').click().catch(() => {});
       await page.getByRole('radio', { name: 'Layers' }).click();
       if (await page.$('.live-inspector')) await page.getByRole('button', { name: 'Back to the layers' }).click();
@@ -334,6 +351,62 @@ try {
       await page.getByRole('button', { name: 'Back to the layers' }).click();
       await page.locator('.toast .toast-x').click().catch(() => {});
 
+      // The tree stays with a chosen part: above its details, folded to the part's branch, the part marked in it; the
+      // mark follows a choice made on the page; Escape goes back to the tree alone, unfolded as it was.
+      {
+        const rowsNow = () => page.$$eval('.live-tree [role="treeitem"]', (r) => r.length);
+        const marked = () => page.$$eval('.live-tree [aria-selected="true"] .live-layer-title', (els) => els.map((e) => e.textContent).join());
+        const rowsAlone = await rowsNow();
+        const heroAt = Number(await page.locator('.live-layer', { hasText: /^Hero/ }).first().getAttribute('data-key'));
+        await page.locator('.live-layer', { hasText: 'Search' }).first().click();
+        await page.waitForSelector('.live-split-part .live-inspector', { timeout: 3000 }).catch(() => fail(t('layers: choosing Search showed no details beside the tree')));
+        const split = await page.evaluate(() => {
+          const tree = document.querySelector('.live-split-tree:has(.live-tree)')?.getBoundingClientRect();
+          const part = document.querySelector('.live-split-part')?.getBoundingClientRect();
+          const side = document.querySelector('.live-side');
+          return { tree: !!tree, above: !!tree && !!part && tree.bottom <= part.top + 1 && tree.height > 0 && part.height > tree.height, top: side?.scrollTop };
+        });
+        if (!split.tree || !split.above || split.top !== 0) fail(t(`layers: with a part chosen the tree is not above its details, both in view (${JSON.stringify(split)})`));
+        if ((await marked()) !== 'Search') fail(t(`layers: the tree marks ${await marked() || 'nothing'}, not Search`));
+        const folded = await rowsNow();
+        if (folded >= rowsAlone) fail(t(`layers: the tree is not folded to Search's branch (${folded} rows, ${rowsAlone} alone)`));
+        await shot('layout-tree-part');
+        // Chosen on the page: the tree follows, folded to the new part's branch.
+        const k = await mark();
+        await page.locator('.live-inspector .live-side-title').focus();
+        await page.keyboard.press('p');
+        await page.waitForFunction((x) => window.__wgLive.calls.slice(x).some((c) => /^pick \d+$/.test(c)), k, { timeout: 3000 }).catch(() => fail(t('layers: P did not pick')));
+        await page.evaluate((i) => window.__wgLive.enter(i), heroAt);
+        await page.waitForFunction(() => document.querySelector('.live-inspector .live-side-title')?.textContent === 'Hero', null, { timeout: 3000 }).catch(() => fail(t('layers: picking Hero on the page did not choose it')));
+        await page.waitForFunction(() => [...document.querySelectorAll('.live-tree [aria-selected="true"] .live-layer-title')].map((e) => e.textContent).join() === 'Hero', null, { timeout: 3000 })
+          .catch(async () => fail(t(`layers: chosen on the page, the tree marks ${await marked() || 'nothing'}, not Hero`)));
+        const heroRow = await page.evaluate(() => {
+          const row = document.querySelector('.live-tree [aria-selected="true"]')?.getBoundingClientRect();
+          const box = document.querySelector('.live-split-tree')?.getBoundingClientRect();
+          return !!row && !!box && row.top >= box.top - 1 && row.bottom <= box.bottom + 1;
+        });
+        if (!heroRow) fail(t('layers: the part chosen on the page is not in view in the tree'));
+        // Escape: the tree alone again, as it was, and the keyboard on it.
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.live-inspector', { state: 'detached', timeout: 3000 }).catch(() => fail(t('layers: Escape did not go back to the tree alone')));
+        if ((await rowsNow()) !== rowsAlone) fail(t(`layers: back alone the tree shows ${await rowsNow()} rows, not the ${rowsAlone} it had`));
+        await page.waitForFunction(() => !!document.activeElement?.closest('.live-tree'), null, { timeout: 2000 }).catch(() => fail(t('layers: Escape left the keyboard nowhere, not on the tree')));
+        // A wide window: the tree beside the part's details, unfolded.
+        await page.setViewportSize({ width: 1920, height: 1000 });
+        await page.locator('.live-layer', { hasText: 'Search' }).first().click();
+        await page.waitForSelector('.live-split-part .live-inspector', { timeout: 3000 });
+        const wide = await page.evaluate(() => {
+          const tree = document.querySelector('.live-split-tree')?.getBoundingClientRect();
+          const part = document.querySelector('.live-split-part')?.getBoundingClientRect();
+          return { beside: !!tree && !!part && tree.right <= part.left + 1 && Math.abs(tree.top - part.top) < 2, rows: document.querySelectorAll('.live-tree [role="treeitem"]').length };
+        });
+        if (!wide.beside) fail(t('layers: in a wide window the tree is not beside the part’s details'));
+        if (wide.rows !== rowsAlone) fail(t(`layers: beside the part the tree is folded (${wide.rows} rows, ${rowsAlone} alone)`));
+        await shot('layout-tree-beside');
+        await page.getByRole('button', { name: 'Back to the layers' }).click();
+        await page.setViewportSize({ width: 1440, height: 900 });
+      }
+
       // The bar's keys, from the window with nothing focused: widths, tabs, lens, Compare.
       await nobody();
       await page.keyboard.press('1');
@@ -342,13 +415,46 @@ try {
       if ((await pressed('Tablet')) !== 'true') fail(t('layout: 2 did not narrow to a tablet'));
       await page.keyboard.press('3');
       if ((await pressed('Full width')) !== 'true') fail(t('layout: 3 did not go back to full width'));
+      // [ and ] step the side panel's tabs, which are Layers and Add now that Notes, Problems and Request are the dock's.
+      const side = await page.$$eval('.live-side > .segmented [role="radio"]', (els) => els.map((e) => e.textContent));
+      if (side.join() !== 'Layers,Add') fail(t(`layout: the side panel's tabs are ${side.join(', ')}`));
       await page.keyboard.press(']');
-      if (!/^Notes/.test(await tabIs())) fail(t(`layout: ] went to ${await tabIs()}`));
+      if (await tabIs() !== 'Add') fail(t(`layout: ] went to ${await tabIs()}`));
       await page.keyboard.press('[');
       if (await tabIs() !== 'Layers') fail(t(`layout: [ went to ${await tabIs()}`));
       await page.keyboard.press('[');
       if (await tabIs() !== 'Add') fail(t(`layout: [ from the first tab went to ${await tabIs()}, not the last`));
       await page.keyboard.press(']');
+
+      // The dock beneath the page: Code, Notes, Problems, Request. Closed, its tabs wait in a strip, each opening it;
+      // ⇧] and ⇧[ open it on the tab it showed, then step through them; ⌘J is the code editor's (from Notes it
+      // shows Code, then hides the dock).
+      if (await page.$('.editor-drawer:not([hidden])')) await page.click('.editor-actions button[aria-label^="Hide the"]');
+      const strip = await page.$$eval('.dock-collapsed button', (els) => els.map((e) => e.textContent.trim()));
+      if (strip.join() !== 'Code,Notes,Problems,Request') fail(t(`layout: the closed dock offers ${strip.join(', ')}`));
+      await page.locator('.dock-collapsed button', { hasText: /^Notes/ }).click();
+      await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: Notes in the closed dock’s strip did not open it there')));
+      await page.click('.editor-actions button[aria-label="Hide the dock"]');
+      await page.waitForSelector('.dock-collapsed', { timeout: 2000 }).catch(() => fail(t('layout: Hide the dock did not close it')));
+      await nobody();
+      await page.keyboard.press('Shift+BracketRight');
+      await page.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="notes"]', { timeout: 3000 }).catch(() => fail(t('layout: ⇧] did not open the dock on Notes, the tab it showed')));
+      if (await tabIs() !== 'Layers') fail(t('layout: ⇧] moved the side panel too'));
+      await page.keyboard.press('Shift+BracketRight');
+      if (!/^Problems/.test(await dockIs(page))) fail(t(`layout: ⇧] with the dock open went to ${await dockIs(page)}, not Problems`));
+      await page.keyboard.press('Shift+BracketLeft');
+      if (!/^Notes/.test(await dockIs(page))) fail(t(`layout: ⇧[ went to ${await dockIs(page)}`));
+      // From the page too, as the page script passes them.
+      await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 3000 });
+      await page.evaluate(() => window.__wgLive.press('dock-next'));
+      await page.waitForFunction(() => /^Problems/.test(document.querySelector('.editor-drawer:not([hidden]) .dock-tabs [aria-checked="true"]')?.textContent ?? ''), null, { timeout: 2000 })
+        .catch(() => fail(t('layout: ⇧] in the page did not step the dock')));
+      if (!(await page.$('.editor-drawer:not([hidden]) .live-docked[data-tab="problems"] .live-side-block'))) fail(t('layout: the dock does not show the problems'));
+      await shot('layout-dock');
+      await page.keyboard.press('Meta+j');
+      await page.waitForSelector('.editor-drawer[data-shows="code"]:not([hidden])', { timeout: 2000 }).catch(() => fail(t('layout: ⌘J on Problems did not show the code editor')));
+      await page.keyboard.press('Meta+j');
+      await page.waitForSelector('.dock-collapsed', { timeout: 2000 }).catch(() => fail(t('layout: ⌘J on the code editor did not close the dock')));
       await page.keyboard.press('Shift+L');
       await page.waitForSelector('.sel-list [role="option"]:has-text("Owner")', { timeout: 2000 }).catch(() => fail(t('layout: ⇧L did not open the lens list')));
       await page.keyboard.press('Escape');
@@ -378,17 +484,18 @@ try {
       await page.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
       await page.fill('.live-inspector textarea[aria-label="What should change here?"]', 'Say the hours for holidays too.');
       await page.keyboard.press('Meta+Enter');
-      await page.waitForSelector('.live-side > .segmented button:has-text("Notes 1")', { timeout: 3000 }).catch(() => fail(t('layout: ⌘↩ in the note box did not add the note')));
+      await page.waitForSelector('.dock-tabs button:has-text("Notes 1")', { timeout: 3000 }).catch(() => fail(t('layout: ⌘↩ in the note box did not add the note')));
       await page.getByRole('button', { name: 'Back to the layers' }).click();
       await nobody();
       await page.keyboard.press('Meta+Shift+Enter');
       await page.waitForSelector('.toast:has-text("Sent the note to")', { timeout: 5000 }).catch(() => fail(t('layout: ⇧⌘↩ did not send the note waiting')));
-      await page.waitForFunction(() => [...document.querySelectorAll('.live-side > .segmented button')].some((b) => b.textContent === 'Notes'), null, { timeout: 3000 })
+      await page.waitForFunction(() => [...document.querySelectorAll('.dock-tabs button')].some((b) => b.textContent.trim() === 'Notes'), null, { timeout: 3000 })
         .catch(() => fail(t('layout: the notes sent are still waiting')));
 
       // One status line: the site, what it follows, the keys that work now, on every tab.
       for (const tab of ['Layers', 'Problems']) {
-        await page.getByRole('radio', { name: new RegExp(`^${tab}`) }).click();
+        if (tab === 'Layers') await page.getByRole('radio', { name: /^Layers/ }).click();
+        else await dockTo(page, tab, (w) => fail(t(w)));
         const status = await page.locator('.live-status').innerText();
         if (!/Drupal · following every session in Northstar/.test(status) || !/pick/.test(status)) fail(t(`layout: on ${tab} the status line reads "${status}"`));
       }
@@ -404,7 +511,7 @@ try {
       const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
       const mark = async () => (await calls()).length;
       const since = async (n) => (await calls()).slice(n);
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       const edits = page.locator('.live-bar-tools button[aria-keyshortcuts="Shift+E"]');
       // An edit's row, by a line of its before → after (a verdict's words may name the same property).
       const rowOf = (text) => page.locator('.live-tray-edit').filter({ has: page.locator('.live-layer-lines li', { hasText: text }) });
@@ -606,7 +713,7 @@ try {
     {
       const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
       const said = () => page.locator('[aria-live="polite"].visually-hidden').innerText().catch(() => '');
-      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const nobody = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => { document.activeElement?.blur(); done(); }))));
       const row = (id) => page.locator(`.live-library-entry[data-entry="${id}"]`);
       const openEntry = async (id) => {
         await row(id).locator('.live-library-open').click();
@@ -852,7 +959,7 @@ try {
     // States without a trace, each said plainly with the next step.
     await page.evaluate(() => { window.__wgLive.answer = { state: 'expired' }; });
     await page.getByRole('button', { name: /^Reload/ }).first().click();
-    await page.getByRole('radio', { name: 'Request' }).click();
+    await dockTo(page, 'Request', (w) => fail(t(w)));
     await page.waitForSelector('.live-trace-note:has-text("This render’s trace is gone")', { timeout: 3000 }).catch(() => fail(t('states: an expired trace was not said')));
     await shot('state-expired');
     await page.evaluate(() => { window.__wgLive.answer = { state: 'down', error: 'connection refused' }; });
@@ -877,7 +984,7 @@ try {
     await p2.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('outdated: no layers')));
     await option(p2, 'Lens', 'Cache');
     await p2.waitForSelector('.live-lens:has-text("Update the helper to see this")', { timeout: 3000 }).catch(() => fail(t('outdated: the Cache lens did not say to update the helper')));
-    await p2.getByRole('radio', { name: 'Request' }).click();
+    await dockTo(p2, 'Request', (w) => fail(t(`outdated: ${w}`)));
     await p2.waitForSelector('.live-request, .live-trace-note:has-text("Update the helper to see this")', { timeout: 3000 }).catch(() => fail(t('outdated: the request did not say to update the helper')));
     await p2.screenshot({ path: join(out, `${theme}-state-outdated.png`), animations: 'disabled' });
     // The library says why there is none, in the main process's words, and offers the update.
@@ -921,6 +1028,35 @@ try {
       await cta.getByRole('button', { name: /^Place Call to action/ }).click();
       await p4.waitForFunction(() => window.__wgLive.spec?.placing?.entry === 'pal.b.acme_cta_block', null, { timeout: 3000 })
         .catch(() => fail(t('handles off: Place did not arm the page, so placing did nothing')));
+      await ctx.close();
+    }
+
+    // The dock is kept on this Mac: what it shows, its side and that it is open come back after the window reloads.
+    // Elsewhere in the project, a tab only the live view has is not shown: the dock steps aside, and comes back with it.
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme, deviceScaleFactor: 2 });
+      await ctx.addInitScript(BRIDGE);
+      await ctx.addInitScript(`try { localStorage.setItem('wanigan.theme', '${theme}'); } catch {}`);
+      await ctx.addInitScript(liveStub, liveFixture);
+      await ctx.addInitScript(LIVE_DEFAULTS);
+      const p5 = await ctx.newPage();
+      await p5.goto(`${base}#/p/NS/live`);
+      await p5.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('dock kept: no layers')));
+      await dockTo(p5, 'Problems', (w) => fail(t(`dock kept: ${w}`)));
+      await p5.click('.editor-actions button[aria-label="Put the dock beside the view"]');
+      await p5.waitForSelector('.editor-drawer[data-dock="right"]:not([hidden])', { timeout: 3000 }).catch(() => fail(t('dock kept: the dock did not go beside the page')));
+      await p5.waitForTimeout(200);
+      await p5.screenshot({ path: join(out, `${theme}-layout-dock-beside.png`), animations: 'disabled' });
+      await p5.reload();
+      await p5.waitForSelector('.live-tree', { timeout: 15_000 }).catch(() => fail(t('dock kept: no layers after the reload')));
+      await p5.waitForSelector('.editor-drawer[data-dock="right"]:not([hidden]) .live-docked[data-tab="problems"]', { timeout: 5000 })
+        .catch(() => fail(t('dock kept: after a reload the dock is not open beside the page on Problems')));
+      await p5.goto(`${base}#/p/NS/board`);
+      await p5.waitForSelector('.card', { timeout: 8000 }).catch(() => fail(t('dock kept: no board')));
+      if (await p5.$('.editor-drawer:not([hidden])')) fail(t('dock kept: the live view’s Problems showed on the board'));
+      await p5.goto(`${base}#/p/NS/live`);
+      await p5.waitForSelector('.editor-drawer:not([hidden]) .live-docked[data-tab="problems"]', { timeout: 8000 })
+        .catch(() => fail(t('dock kept: back in the live view the dock did not come back on Problems')));
       await ctx.close();
     }
   }
@@ -1001,6 +1137,19 @@ try {
     const back = await page.evaluate(() => [...document.querySelectorAll('aside > div')].map((d) => d.textContent.trim()));
     if (back.join() !== 'Search,Latest news,Opening hours') fail(`page script: put back as ${back.join()}`);
   }
+  // The dock's keys from the page: ⇧] and ⇧[ (a key event names them } and {) go to the window, never to the page.
+  for (const [key, want] of [['Shift+BracketRight', 'dock-next'], ['Shift+BracketLeft', 'dock-previous'], ['BracketRight', 'tab-next']]) {
+    await page.evaluate((k) => {
+      window.__got = null;
+      window.__wl.awaitGoto(k).then((v) => { window.__got = v; });
+      document.activeElement?.blur();
+    }, LIVE_PAGE_KEYS);
+    await page.keyboard.press(key);
+    await page.waitForTimeout(100);
+    const got = await page.evaluate(() => window.__got);
+    if (got !== want) fail(`page script: ${key} in the page answered ${got}, not ${want}`);
+  }
+  await page.evaluate(() => { window.__wl.awaitGoto(); });
   await page.close();
 
   // The design layer patches words in place: only the element's own text nodes change, so the helper's wl:part marks

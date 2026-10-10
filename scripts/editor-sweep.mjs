@@ -350,12 +350,12 @@ try {
       if ((await calls()).some((c) => c.startsWith('reload'))) fail('saving a stylesheet reloaded the whole page');
     });
 
-    // Beside the view, then beneath a session; ⌘J hides and shows it.
+    // Beside the view, then beneath a session; ⌘J hides and shows it. In the live view the drawer is its dock, and says so.
     await step('dock', async () => {
-      await page.click('.editor-actions button[aria-label="Put the editor beside the view"]');
+      await page.click('.editor-actions button[aria-label="Put the dock beside the view"]');
       await page.waitForSelector('.editor-drawer[data-dock="right"]');
       await shot('beside');
-      await page.click('.editor-actions button[aria-label="Put the editor beneath the view"]');
+      await page.click('.editor-actions button[aria-label="Put the dock beneath the view"]');
       await page.goto(`${base}#/p/${ns}/s/${agent.id}`);
       await page.waitForSelector('.xterm-rows');
       await settle();
@@ -372,6 +372,10 @@ try {
       await page.goto(`${base}#/p/${ns}/board`);
       await page.reload();
       await page.waitForSelector('.card');
+      // Whether the drawer is open is kept on this Mac: it was open when the window reloaded, so it is open again, empty.
+      if (!(await page.$('.editor-drawer[data-mode="drawer"]:not([hidden])'))) fail('the drawer’s open state was not kept across a reload');
+      await page.keyboard.press('Meta+j');
+      await page.waitForSelector('.editor-drawer:not([hidden])', { state: 'detached', timeout: 3000 }).catch(() => fail('⌘J did not close the drawer kept open'));
       const tabs = await page.$$eval('.topbar .tabs a', (a) => a.map((x) => x.textContent.replace(/\d+$/, '').trim()));
       if (tabs.join() !== 'Board,List,Sessions,History,Changes,Code,Decisions,Activity,Live') fail(`the project's tabs are ${tabs.join(', ')}`);
       const tip = await page.getAttribute('.topbar .tabs a:text-is("Code")', 'title');
