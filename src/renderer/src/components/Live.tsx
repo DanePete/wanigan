@@ -778,7 +778,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     text: 'Picking: point at a part, or walk with ↑ ↓ ← → and press Enter. P or Escape stops.',
   } : comparing && envs.length ? {
     className: 'live-comparing',
-    text: 'Comparing where the page was: the page waits under it as it was, and comes back with Escape.',
+    text: 'Comparing. The page waits under it as it was.',
     action: <Button size="s" tone="quiet" icon="back" onClick={() => setComparing(false)}>Back to the page</Button>,
   } : alone ? {
     className: 'live-alone',
