@@ -197,6 +197,9 @@ const SCENARIOS = String.raw`
   World::make(['en' => $trip()]);
   $out['hidden'] = $ask('find', 'acme-badge', 'acme-label');
   $out['nowhere'] = $ask('find', 'Guided tours daily', 'Tours daily');
+  // Made from tokens at render: a field of tags whose title is a template.
+  World::make(['en' => $trip(['field_tags_meta' => ['acme_meta', 'Page tags', [['value' => serialize(['title' => '[node:title] | [site:name]'])]], []]])]);
+  $out['made'] = $ask('find', 'Northwind trips | Acme', 'Northwind tours | Acme');
   // Every violation refuses it; the workflow's with a 403; access.
   World::make(['en' => $trip()]);
   World::$violations = [['field_acme_layout.0.value', 'This value is not valid JSON.']];
@@ -257,6 +260,7 @@ test('a link’s title and a map item’s words are words; its address and a cla
   assert.deepEqual([hiddenStatus, hidden.reason], [409, 'hidden']);
   assert.equal(hidden.error, 'These words are kept here only inside a class (this content’s “Extras” field): code, not words the page shows, so Wanigan does not change them.');
   assert.deepEqual([(out.modelled as Answer)[0], (out.modelled as Answer)[1].reason], [404, 'nowhere']);
+  assert.deepEqual(out.made, [409, { ok: false, reason: 'made', error: 'These words are made when the page renders, from a template the site fills in (“[node:title]” in this content’s “Page tags” field): they are not kept as words anywhere Wanigan can change them. Change the template where it is set.' }]);
   assert.equal((out.nowhere as Answer)[1].error, 'The site does not keep these words in this content: code or another content item makes them. (Searched: every field of this content Wanigan does not already save words to, in the translation the page showed.)');
 });
 

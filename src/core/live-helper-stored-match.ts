@@ -399,6 +399,50 @@ const BODY = String.raw`
 		}
 	}
 
+	/**
+	 * A tag a template or a dynamic value is written with, which the site replaces when it renders: %%title%%,
+	 * %title%, {{post_title}}, #post_title, [node:title], <o-dynamic>…</o-dynamic>.
+	 */
+	const TEMPLATE = '~%%[A-Za-z0-9_]+%%|%[A-Za-z][A-Za-z0-9_-]*%|\{\{\s*[A-Za-z0-9_.:-]+\s*\}\}|(?<![\w&])#(?:[a-z]+)_[a-z0-9_]+\b|\[[a-z][a-z0-9_-]*:[^\]\s]+\]|<o-dynamic\b[^>]*>.*?</o-dynamic>~s';
+
+	/**
+	 * The template tags in a value whose text, each tag read as any words, is exactly the words the page shows: what
+	 * makes them when the page renders. Walked as in_value() walks (arrays, JSON, serialized lists), each line of a
+	 * string (markup's tags as line ends) compared whole.
+	 */
+	public static function made($value, string $want, $unserialize, int $depth = 0): array {
+		if ($depth > self::MAX_DEPTH || $want === '') return array();
+		if (is_array($value) || $value instanceof \stdClass) {
+			$out = array();
+			foreach ((array) $value as $v) {
+				$out = array_merge($out, self::made($v, $want, $unserialize, $depth + 1));
+				if (count($out) > 4) break;
+			}
+			return $out;
+		}
+		if (!is_string($value) || $value === '' || strlen($value) > self::MAX_STRING) return array();
+		$json = self::json_values($value);
+		if ($json !== null) {
+			$out = array();
+			foreach ($json as $v) $out = array_merge($out, self::made($v[2], $want, null, $depth + 1));
+			return $out;
+		}
+		if ($unserialize !== null) {
+			$held = call_user_func($unserialize, $value);
+			if (is_array($held) || $held instanceof \stdClass) return self::made($held, $want, $unserialize, $depth + 1);
+		}
+		if (!preg_match(self::TEMPLATE, $value)) return array();
+		$text = preg_replace('~<o-dynamic\b[^>]*>.*?</o-dynamic>~s', '{{dynamic}}', $value);
+		if (self::markup($text)) $text = html_entity_decode((string) preg_replace(self::TAG, "\n", $text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+		foreach (preg_split('~\R~u', (string) $text) as $line) {
+			$line = trim($line);
+			if (!preg_match_all(self::TEMPLATE, $line, $tags)) continue;
+			$pieces = array_map(function ($piece) { $n = self::norm($piece, false); return preg_quote($n[0], '~'); }, preg_split(self::TEMPLATE, $line));
+			if (preg_match('~^' . implode('.+?', $pieces) . '$~su', $want)) return $tags[0];
+		}
+		return array();
+	}
+
 	/** Whether a hit is words the page shows (not code). */
 	public static function shown(array $hit): bool {
 		return $hit['kind'] !== 'code';

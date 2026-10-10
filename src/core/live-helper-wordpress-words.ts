@@ -67,6 +67,8 @@ final class Wanigan_Live_Stored {
 	const MAX_WORDS = 2000;
 	/** A block delimiter, as WP_Block_Parser reads one (class-wp-block-parser.php next_token()). */
 	const DELIMITER = '/<!--\s+(?P<closer>\/)?wp:(?P<namespace>[a-z][a-z0-9_-]*\/)?(?P<name>[a-z][a-z0-9_-]*)\s+(?P<attrs>{(?:(?:[^}]+|}+(?=})|(?!}\s+\/?-->).)*+)?}\s+)?(?P<void>\/)?-->/s';
+	/** Options that are never the site's words: transients, Wanigan's own, core's bookkeeping, keys and salts. */
+	const NOT_SETTINGS = '/^(?:_transient_|_site_transient_|wanigan_live|cron$|rewrite_rules$|active_plugins$|recently_activated$|uninstall_plugins$|.*(?:_salt|_key|_nonce|_hash|_token|_secret)$)/';
 	/** What a site's own cache may do, said with every save made through core. */
 	const CACHE = 'If a plugin or theme shows these words from a copy of its own (a cache), the page can show the old words until that copy is made again.';
 
@@ -138,6 +140,11 @@ final class Wanigan_Live_Stored {
 				$again = self::pick($site, $hints, $noun, $after);
 				if (!isset($again['refusal']) || $again['refusal'][2] !== 'nowhere') $picked = $again;
 			}
+		}
+		if (isset($picked['refusal']) && $picked['refusal'][2] === 'nowhere') {
+			// Found nowhere as words: say so only once it is known they are not made from a template, or kept in settings.
+			$why = self::elsewhere($post, $want, $noun);
+			if ($why) $picked = array('refusal' => $why);
 		}
 		if (isset($picked['refusal'])) return self::refuse($picked['refusal'][0], $picked['refusal'][2], $picked['refusal'][1]);
 		$place = $picked['place'];
@@ -282,6 +289,32 @@ final class Wanigan_Live_Stored {
 		return array('place' => $place, 'hit' => $hit);
 	}
 
+	/**
+	 * What words found nowhere as words are, when it can be told: made when the page renders from a template the post
+	 * keeps (%%title%%, {{post_title}} and the like), kept in the site's settings (an option loaded on every request,
+	 * which this search does not change), or made from a template there. [status, words, reason], or null.
+	 */
+	private static function elsewhere(WP_Post $post, string $want, string $noun): ?array {
+		$values = array(array((string) get_post_field('post_content', $post->ID, 'raw'), 'this ' . $noun . '’s stored content'), array((string) get_post_field('post_excerpt', $post->ID, 'raw'), 'this ' . $noun . '’s excerpt'));
+		foreach (array_slice(self::meta_rows($post->ID), 0, self::MAX_META) as $row) {
+			if (!in_array((string) $row['meta_key'], self::OWN, true)) $values[] = array((string) $row['meta_value'], 'this ' . $noun . '’s custom field “' . $row['meta_key'] . '”');
+		}
+		foreach ($values as $v) {
+			$tags = Wanigan_Live_Words_Match::made($v[0], $want, array(self::class, 'unserialize'));
+			if ($tags) return array(409, 'These words are made when the page renders, from a template the site fills in (“' . $tags[0] . '” in ' . $v[1] . '): they are not kept as words anywhere Wanigan can change them. Change the template where it is set.', 'made');
+		}
+		$options = function_exists('wp_load_alloptions') ? (array) wp_load_alloptions() : array();
+		foreach ($options as $name => $raw) {
+			if (!is_string($raw) || preg_match(self::NOT_SETTINGS, (string) $name)) continue;
+			foreach (Wanigan_Live_Words_Match::in_value($raw, $want, (string) $name, array(self::class, 'unserialize')) as $h) {
+				if (Wanigan_Live_Words_Match::shown($h)) return array(409, 'These words are kept in the site’s settings (the option “' . $name . '”), which Wanigan does not change from here yet: change them where the site sets them.', 'settings');
+			}
+			$tags = Wanigan_Live_Words_Match::made($raw, $want, array(self::class, 'unserialize'));
+			if ($tags) return array(409, 'These words are made when the page renders, from a template the site fills in (“' . $tags[0] . '” in the site’s settings, the option “' . $name . '”): they are not kept as words anywhere Wanigan can change them. Change the template where it is set.', 'made');
+		}
+		return null;
+	}
+
 	/** Labels said as a list: "A and B", "A, B and C", and how many more past four. */
 	private static function listed(array $labels, int $count): string {
 		$shown = array_slice($labels, 0, 4);
@@ -292,34 +325,98 @@ final class Wanigan_Live_Stored {
 		return implode(', ', $shown) . ' and ' . $last;
 	}
 
-	/** The post's stored content (or excerpt): the words in its markup, a shortcode's settings, a block's settings. */
+	/**
+	 * The post's stored content (or excerpt): the words in its markup, a shortcode's settings, a block's settings. A
+	 * static block often keeps the same words twice, in its settings (an attribute with no source) and in the markup
+	 * its editor script printed from them: found once in each of one block, they are one place with two copies,
+	 * changed together, or the editor would call the block invalid (and some plugins rebuild it from the old settings).
+	 * Content that is one JSON document (a plugin's table, say) is read by its string values, not as markup.
+	 */
 	private static function content_places(WP_Post $post, string $field, string $want, string $noun): array {
 		$raw = (string) get_post_field($field, $post->ID, 'raw');
 		if ($raw === '' || strlen($raw) > Wanigan_Live_Words_Match::MAX_STRING) return array();
 		$label = 'this ' . $noun . ($field === 'post_content' ? '’s stored content' : '’s excerpt');
 		$base = array('root' => $field, 'field' => $field, 'label' => $label, 'raw' => $raw, 'hash' => md5($raw), 'writer' => 'core', 'revisions' => function_exists('wp_revisions_enabled') && wp_revisions_enabled($post), 'site' => false, 'post' => $post->ID);
+		if (Wanigan_Live_Words_Match::json_values($raw) !== null) {
+			$hits = Wanigan_Live_Words_Match::in_value($raw, $want, null, null);
+			return $hits ? array(array_merge($base, array('label' => $label . ' (in its JSON)', 'hits' => $hits, 'json' => true))) : array();
+		}
+		$html = self::shortcoded($raw, Wanigan_Live_Words_Match::in_html($raw, $want));
+		$blocks = self::blocks($raw, $want);
+		// Which block's markup each word in the markup is in: the innermost around it.
+		foreach ($html as $i => $h) {
+			$in = null;
+			foreach ($blocks as $bi => $b) {
+				if ($b['inner'] && $h['start'] >= $b['inner'][0] && $h['end'] <= $b['inner'][1] && ($in === null || $b['inner'][1] - $b['inner'][0] < $blocks[$in]['inner'][1] - $blocks[$in]['inner'][0])) $in = $bi;
+			}
+			$html[$i]['in_block'] = $in;
+		}
+		foreach ($blocks as $bi => $b) {
+			$kept = array();
+			foreach ($b['hits'] as $ai => $a) {
+				if (Wanigan_Live_Words_Match::shown($a)) $kept[] = $ai;
+			}
+			$printed = array();
+			foreach ($html as $i => $h) {
+				if ($h['in_block'] === $bi && Wanigan_Live_Words_Match::shown($h)) $printed[] = $i;
+			}
+			if (count($kept) !== 1 || count($printed) !== 1) continue;
+			// One block, its settings and its markup: one place, two copies.
+			$h = $html[$printed[0]];
+			$h['copy'] = array('block' => $bi, 'hit' => $b['hits'][$kept[0]]);
+			$h['where'] = ', in its “' . $b['name'] . '” block (in its markup and its settings)';
+			if (!$b['exact'] && $h['stuck'] === '') $h['stuck'] = 'that block’s settings are written in a way WordPress would write differently, so its other settings could change';
+			if ($b['hits'][$kept[0]]['stuck'] !== '' && $h['stuck'] === '') $h['stuck'] = $b['hits'][$kept[0]]['stuck'];
+			$html[$printed[0]] = $h;
+			unset($blocks[$bi]['hits'][$kept[0]]);
+		}
 		$out = array();
-		$hits = self::shortcoded($raw, Wanigan_Live_Words_Match::in_html($raw, $want));
-		if ($hits) $out[] = $base + array('hits' => $hits);
-		// Each block's settings, kept as JSON in its delimiter (block markup's own words are in the markup above).
-		if (strpos($raw, '<!-- wp:') !== false && preg_match_all(self::DELIMITER, $raw, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
-			foreach ($m as $d) {
-				if (!isset($d['attrs']) || $d['attrs'][1] < 0 || $d['attrs'][0] === '' || (isset($d['closer']) && $d['closer'][0] !== '')) continue;
+		if ($html) $out[] = $base + array('hits' => array_values($html), 'blocks' => $blocks);
+		foreach ($blocks as $b) {
+			if (!$b['hits']) continue;
+			$found = array_values($b['hits']);
+			foreach ($found as &$a) {
+				$a['where'] = ', in the settings of its “' . $b['name'] . '” block';
+				if (!$b['exact'] && $a['stuck'] === '') $a['stuck'] = 'that block’s settings are written in a way WordPress would write differently, so its other settings could change';
+			}
+			unset($a);
+			$out[] = array_merge($base, array('root' => $field . ':block:' . $b['at'], 'hits' => $found, 'block' => $b));
+		}
+		return $out;
+	}
+
+	/**
+	 * The blocks in stored content, as WP_Block_Parser delimits them, each with its settings (the JSON in its opening
+	 * delimiter: where it is, what it holds, whether serialize_block_attributes() writes it back byte for byte, where
+	 * the words are in it) and the span of its own markup between its delimiters.
+	 */
+	private static function blocks(string $raw, string $want): array {
+		$out = array();
+		if (strpos($raw, '<!-- wp:') === false || !preg_match_all(self::DELIMITER, $raw, $m, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) return $out;
+		$open = array();
+		foreach ($m as $d) {
+			$name = (isset($d['namespace']) && $d['namespace'][1] >= 0 && $d['namespace'][0] !== '' ? $d['namespace'][0] : 'core/') . $d['name'][0];
+			$end = $d[0][1] + strlen($d[0][0]);
+			if (isset($d['closer']) && $d['closer'][1] >= 0 && $d['closer'][0] !== '') {
+				for ($i = count($open) - 1; $i >= 0; $i--) {
+					if ($out[$open[$i]]['name'] !== $name) continue;
+					$out[$open[$i]]['inner'] = array($out[$open[$i]]['open'], $d[0][1]);
+					array_splice($open, $i);
+					break;
+				}
+				continue;
+			}
+			$block = array('name' => $name, 'open' => $end, 'inner' => null, 'at' => -1, 'len' => 0, 'attrs' => null, 'exact' => false, 'hits' => array());
+			if (isset($d['attrs']) && $d['attrs'][1] >= 0 && $d['attrs'][0] !== '') {
 				$json = rtrim($d['attrs'][0]);
 				$attrs = json_decode($json, true);
-				if (!is_array($attrs)) continue;
-				$found = Wanigan_Live_Words_Match::in_value($attrs, $want, null, null);
-				if (!$found) continue;
-				$name = (isset($d['namespace']) && $d['namespace'][0] !== '' ? $d['namespace'][0] : 'core/') . $d['name'][0];
-				$exact = function_exists('serialize_block_attributes') && serialize_block_attributes($attrs) === $json;
-				foreach ($found as &$h) {
-					$h['where'] = ', in the settings of its “' . $name . '” block';
-					$h['block'] = $name;
-					if (!$exact && $h['stuck'] === '') $h['stuck'] = 'that block’s settings are written in a way WordPress would write differently, so its other settings could change';
+				if (is_array($attrs)) {
+					$block = array_merge($block, array('at' => $d['attrs'][1], 'len' => strlen($json), 'attrs' => $attrs, 'exact' => function_exists('serialize_block_attributes') && serialize_block_attributes($attrs) === $json));
+					$block['hits'] = Wanigan_Live_Words_Match::in_value($attrs, $want, null, null);
 				}
-				unset($h);
-				$out[] = array_merge($base, array('root' => $field . ':block:' . $d['attrs'][1], 'hits' => $found, 'block' => array('at' => $d['attrs'][1], 'len' => strlen($json), 'attrs' => $attrs, 'name' => $name)));
 			}
+			$out[] = $block;
+			if (!(isset($d['void']) && $d['void'][1] >= 0 && $d['void'][0] !== '')) $open[] = count($out) - 1;
 		}
 		return $out;
 	}
@@ -468,24 +565,33 @@ final class Wanigan_Live_Stored {
 	/** Saves one place through core: the post's content or excerpt with wp_update_post(), a custom field with update_metadata_by_mid(). */
 	private static function write(array $place, array $hit, string $after, WP_Post $post, string $noun) {
 		if (isset($place['field'])) {
-			$field = $place['field'];
 			$raw = $place['raw'];
 			if (isset($place['block'])) {
-				$attrs = Wanigan_Live_Words_Match::put($place['block']['attrs'], $hit['steps'], $hit['start'], $hit['end'], Wanigan_Live_Words_Match::insert($hit, $after), null);
-				$new = substr($raw, 0, $place['block']['at']) . serialize_block_attributes($attrs) . substr($raw, $place['block']['at'] + $place['block']['len']);
+				$new = self::with_settings($raw, $place['block'], $hit, $after);
 			}
 			else {
 				$new = Wanigan_Live_Words_Match::put($raw, $hit['steps'], $hit['start'], $hit['end'], Wanigan_Live_Words_Match::insert($hit, $after), null);
+				// The copy its block's settings keep, changed with it: the settings sit before the markup, so their bytes have not moved.
+				if (isset($hit['copy'])) $new = self::with_settings($new, $place['blocks'][$hit['copy']['block']], $hit['copy']['hit'], $after);
 			}
-			return self::write_post_field($post, $field, $raw, $new, $noun);
+			return self::write_post_field($post, $place['field'], $raw, $new, $noun, !empty($place['json']));
 		}
 		$value = self::changed($place, $hit, $after);
 		// What WordPress would store: a sanitize callback registered for the field must leave the rest as it is.
 		if (sanitize_meta($place['key'], $value, 'post', $post->post_type) !== $value) return new WP_Error('wanigan', 'WordPress would change more of the custom field “' . $place['key'] . '” than these words when it saves it (a sanitize callback registered for it), so nothing is saved.');
+		// update_metadata_by_mid() writes that one row (a key may have several, one per value) and unslashes what it is given.
 		$write = is_string($value) ? wp_slash($value) : self::slash_deep($value);
 		if (!update_metadata_by_mid('post', $place['mid'], $write)) return new WP_Error('wanigan', 'WordPress did not save the custom field “' . $place['key'] . '”.');
+		// What plugins keep of the post (a rendered copy, a cache) is let go as core lets it go after a save.
+		clean_post_cache($post->ID);
 		$now = self::meta_raw($post->ID, $place['mid']);
 		return array('revision' => null, 'undo' => array('type' => 'stored', 'writer' => 'core', 'post' => $post->ID, 'mid' => $place['mid'], 'key' => $place['key'], 'before' => $place['raw'], 'after' => md5((string) $now)));
+	}
+
+	/** Stored content with one block's settings changed where a hit in them is, written as serialize_block_attributes() writes them. */
+	private static function with_settings(string $raw, array $block, array $hit, string $after): string {
+		$attrs = Wanigan_Live_Words_Match::put($block['attrs'], $hit['steps'], $hit['start'], $hit['end'], Wanigan_Live_Words_Match::insert($hit, $after), null);
+		return substr($raw, 0, $block['at']) . serialize_block_attributes($attrs) . substr($raw, $block['at'] + $block['len']);
 	}
 
 	/**
@@ -493,9 +599,13 @@ final class Wanigan_Live_Stored {
 	 * type keeps them. Only when core's filters on saving it (sanitize_post_field() in the db context: kses for a user
 	 * who may not post unfiltered HTML, and any plugin's) would store exactly these bytes.
 	 */
-	public static function write_post_field(WP_Post $post, string $field, string $raw, string $new, string $noun) {
+	public static function write_post_field(WP_Post $post, string $field, string $raw, string $new, string $noun, bool $json = false) {
 		$filtered = wp_unslash(sanitize_post_field($field, wp_slash($new), $post->ID, 'db'));
-		if ($filtered !== $new) return new WP_Error('wanigan', 'WordPress would change more of this ' . $noun . ' than these words when it saves it (its filters on saving content: kses, for a user who may not post unfiltered HTML, or a plugin’s), so nothing is saved.');
+		if ($filtered !== $new) {
+			return new WP_Error('wanigan', $json
+				? 'This ' . $noun . '’s stored content is JSON, which WordPress’s filters on saving content (kses for a user who may not post unfiltered HTML, balanceTags, a plugin’s) would change, so nothing is saved: change it in the plugin that keeps it.'
+				: 'WordPress would change more of this ' . $noun . ' than these words when it saves it (its filters on saving content: kses, for a user who may not post unfiltered HTML, or a plugin’s), so nothing is saved.');
+		}
 		$before = Wanigan_Live::revision_of($post->ID);
 		$saved = wp_update_post(array('ID' => $post->ID, $field => wp_slash($new)), true);
 		if (is_wp_error($saved)) return $saved;
@@ -527,6 +637,7 @@ final class Wanigan_Live_Stored {
 		if ($now === null || md5($now) !== $u['after']) return new WP_Error('wanigan', 'It changed again since, so putting it back could undo other work.');
 		$old = self::unserialize((string) $u['before']);
 		update_metadata_by_mid('post', (int) $u['mid'], $old !== null ? self::slash_deep($old) : wp_slash((string) $u['before']));
+		clean_post_cache($post->ID);
 		if (self::meta_raw($post->ID, (int) $u['mid']) !== (string) $u['before']) return new WP_Error('wanigan', 'WordPress put the custom field “' . $u['key'] . '” back, but not byte for byte as it was.');
 		return array('revision' => null);
 	}

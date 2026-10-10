@@ -176,6 +176,9 @@ final class StoredWords {
       $where = array_values(array_unique(array_map($label, $code)));
       return self::refuse(409, 'hidden', 'These words are kept here only inside ' . self::listed($what, count($what)) . ' (' . self::listed($where, count($where)) . '): code, not words the page shows, so Wanigan does not change them.');
     }
+    if (!$shown && ($made = self::made($entity, $want))) {
+      return self::refuse(409, 'made', 'These words are made when the page renders, from a template the site fills in (“' . $made[0] . '” in ' . $made[1] . '): they are not kept as words anywhere Wanigan can change them. Change the template where it is set.');
+    }
     if (!$shown) {
       return self::refuse(404, 'nowhere', 'The site does not keep these words in this content: code or another content item makes them. (Searched: every field of this content Wanigan does not already save words to, in the translation the page showed.)');
     }
@@ -304,6 +307,31 @@ final class StoredWords {
       }
     }
     return $out;
+  }
+
+  /**
+   * A template tag in the content's stored values ([node:title] and the
+   * like) whose text, each tag read as any words, is the words: [the tag,
+   * where], or NULL.
+   */
+  private static function made(ContentEntityInterface $entity, string $want): ?array {
+    foreach ($entity->getFieldDefinitions() as $name => $definition) {
+      if ($definition->isComputed() || in_array($definition->getType(), self::NOT_WORDS, TRUE)) {
+        continue;
+      }
+      foreach ($entity->get($name) as $item) {
+        foreach ($item->getProperties() as $property => $typed) {
+          if (in_array($property, self::NOT_PROPERTIES, TRUE) || !in_array($typed->getDataDefinition()->getDataType(), ['string', 'map', 'any'], TRUE)) {
+            continue;
+          }
+          $tags = WordsMatch::made($typed->getValue(), $want, [self::class, 'unserialize']);
+          if ($tags) {
+            return [$tags[0], 'this content’s “' . $definition->getLabel() . '” field'];
+          }
+        }
+      }
+    }
+    return NULL;
   }
 
   /**

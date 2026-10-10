@@ -78,6 +78,10 @@ function wp_update_post($arr, $wp_error = false) {
 function has_meta($pid) { $out = array(); foreach ($GLOBALS['wl']['meta'] as $mid => $r) if ($r[0] === $pid) $out[] = array('meta_key' => $r[1], 'meta_value' => $r[2], 'meta_id' => (string) $mid, 'post_id' => (string) $pid); return $out; }
 function update_metadata_by_mid($type, $mid, $value, $key = false) { if (!isset($GLOBALS['wl']['meta'][$mid])) return false; $GLOBALS['wl']['meta'][$mid][2] = maybe_serialize(wp_unslash($value)); return true; }
 function add_meta_row($pid, $key, $value) { $mid = $GLOBALS['wl']['next_meta']++; $GLOBALS['wl']['meta'][$mid] = array($pid, $key, is_string($value) ? $value : serialize($value)); return $mid; }
+/** clean_post_cache(): what plugins hook to let go of what they keep of a post. */
+function clean_post_cache($id) { $GLOBALS['wl']['cleaned'][] = (int) $id; }
+/** The options loaded on every request, as stored. */
+function wp_load_alloptions() { return $GLOBALS['wl']['options']; }
 function get_post_meta($id, $key = '', $single = false) { foreach ($GLOBALS['wl']['meta'] as $r) if ($r[0] === (int) $id && $r[1] === $key) return maybe_unserialize($r[2]); return $single ? '' : array(); }
 /** serialize_block_attributes() as core writes a block's settings: JSON with its comment-safe escapes. */
 function serialize_block_attributes($a) {
@@ -329,4 +333,83 @@ test('refusals say why: twice (naming where), only in code, nowhere, inside a wo
   assert.equal((out.block as Answer)[0].ok, true);
   assert.equal((out.block as Answer)[0].where, 'this page’s stored content, in the settings of its “acme/hero” block');
   assert.equal(out.blockAfter, `<!-- wp:acme/hero {"heading":"Northwind ${u('0026')} friends","align":"wide"} /-->`);
+});
+
+const RULES = String.raw`
+  // A static block keeps its title twice: in its settings and in the markup its editor script printed. One place, two copies.
+  wl_page(array('post_content' => '<!-- wp:acme/tab {"title":"Day one","open":true} --><div class="wp-block-acme-tab"><h3>Day one</h3><p>Put in at dawn.</p></div><!-- /wp:acme/tab -->'));
+  $out['pairFind'] = wl_ask('find', 'Day one', 'Day 1 & 2');
+  $out['pair'] = wl_save('Day one', 'Day 1 & 2');
+  $out['pairAfter'] = get_post(12)->post_content;
+  // The same words in a block's settings twice, and once in its markup: not one place.
+  wl_page(array('post_content' => '<!-- wp:acme/tab {"title":"Day one","label":"Day one"} --><div><h3>Day one</h3></div><!-- /wp:acme/tab -->'));
+  $out['pairTwice'] = wl_ask('find', 'Day one', 'Day 1');
+  // Content that is one JSON document (a table plugin's cells), written with unescaped slashes only.
+  $cells = json_encode(array(array('Trip', 'Price'), array('Lake loop', '$40 / day')), JSON_UNESCAPED_SLASHES);
+  wl_page(array('post_content' => $cells));
+  $out['cellsFind'] = wl_ask('find', 'Lake loop', 'Lake loop — long');
+  $out['cells'] = wl_save('Lake loop', 'Lake loop — long');
+  $out['cellsBefore'] = $cells;
+  $out['cellsAfter'] = get_post(12)->post_content;
+  // Saving it would run kses over it for a user who may not post unfiltered HTML: refused, saying why.
+  wl_page(array('post_content' => $cells));
+  $GLOBALS['wl']['content_filter'] = function ($c) { return str_replace('$40 / day', '$40 / day', str_replace('"', '&quot;', $c)); };
+  $out['cellsKses'] = wl_save('Lake loop', 'Lake trip');
+  $GLOBALS['wl']['content_filter'] = null;
+  // Made from a template at render: the words are not kept literally anywhere.
+  wl_page(array('post_content' => '<p>Day trips</p>'));
+  add_meta_row(12, '_acme_seo_title', '%%title%% %%sep%% Acme');
+  $out['made'] = wl_ask('find', 'Northwind trips – Acme', 'Northwind tours – Acme');
+  $GLOBALS['wl']['meta'] = array();
+  // Kept in the site's settings: an option, out of this search's reach.
+  $GLOBALS['wl']['options']['acme_theme_options'] = serialize(array('footer_text' => 'Paddle with Acme since 1999', 'sep' => '&raquo;'));
+  $out['settings'] = wl_ask('find', 'Paddle with Acme since 1999', 'Paddle with Acme');
+  // One custom field key with a row per value: only the row holding the words changes, and a backslash in it stays.
+  wl_page(array('post_content' => '<p>Day trips</p>'));
+  $first = add_meta_row(12, 'acme_feature', 'Dry bags');
+  $second = add_meta_row(12, 'acme_feature', 'Spare paddles (see C:' . chr(92) . 'gear)');
+  $GLOBALS['wl']['cleaned'] = array();
+  $out['rows'] = wl_save('Spare paddles', 'Spare oars');
+  $out['rowsAfter'] = array(wl_meta($first), wl_meta($second), count(has_meta(12)));
+  $out['cleaned'] = $GLOBALS['wl']['cleaned'];
+  $out['undoRow'] = wl_undo($out['rows'][0]['undo']);
+  $out['rowsUndone'] = array(wl_meta($first), wl_meta($second));
+  // Finding writes nothing.
+  $GLOBALS['wl']['updates'] = array();
+  $before = $GLOBALS['wl']['meta'];
+  wl_ask('find', 'Dry bags', 'Dry sacks');
+  $out['findWrites'] = array(count($GLOBALS['wl']['updates']), $before === $GLOBALS['wl']['meta']);
+`;
+
+test('a block’s settings and its markup holding the same words are one place, changed together as core writes settings; JSON content is read as JSON', (t) => {
+  const out = runWords(t, RULES);
+  if (!out) return;
+  assert.equal((out.pairFind as Answer)[0].where, 'this page’s stored content, in its “acme/tab” block (in its markup and its settings)');
+  assert.equal((out.pair as Answer)[0].ok, true);
+  assert.equal(out.pairAfter, `<!-- wp:acme/tab {"title":"Day 1 ${u('0026')} 2","open":true} --><div class="wp-block-acme-tab"><h3>Day 1 &amp; 2</h3><p>Put in at dawn.</p></div><!-- /wp:acme/tab -->`,
+    'both copies: the settings as serialize_block_attributes() escapes them, the markup escaped as markup');
+  const [twice, twiceStatus] = out.pairTwice as Answer;
+  assert.deepEqual([twiceStatus, twice.reason], [409, 'twice']);
+  assert.equal((out.cellsFind as Answer)[0].where, 'this page’s stored content (in its JSON)');
+  assert.equal(out.cellsAfter, (out.cellsBefore as string).replace('"Lake loop"', '"Lake loop — long"'), 'the token re-encoded with the flags that wrote it: slashes and the dash unescaped');
+  const [kses, ksesStatus] = out.cellsKses as Answer;
+  assert.equal(ksesStatus, 409);
+  assert.match(kses.error ?? '', /stored content is JSON, which WordPress’s filters on saving content .* would change, so nothing is saved/);
+});
+
+test('words made from a template, or kept in the site’s settings, are said to be so; one row of a many-row field changes, its backslash kept, and the post’s cache is let go', (t) => {
+  const out = runWords(t, RULES);
+  if (!out) return;
+  const [made, madeStatus] = out.made as Answer;
+  assert.deepEqual([madeStatus, made.reason], [409, 'made']);
+  assert.equal(made.error, 'These words are made when the page renders, from a template the site fills in (“%%title%%” in this page’s custom field “_acme_seo_title”): they are not kept as words anywhere Wanigan can change them. Change the template where it is set.');
+  const [settings, settingsStatus] = out.settings as Answer;
+  assert.deepEqual([settingsStatus, settings.reason], [409, 'settings']);
+  assert.equal(settings.error, 'These words are kept in the site’s settings (the option “acme_theme_options”), which Wanigan does not change from here yet: change them where the site sets them.');
+  assert.equal((out.rows as Answer)[0].ok, true);
+  assert.deepEqual(out.rowsAfter, ['Dry bags', 'Spare oars (see C:\\gear)', 2], 'the other row as it was, both rows still there, the backslash kept');
+  assert.deepEqual(out.cleaned, [12], 'clean_post_cache() after the write');
+  assert.deepEqual(out.undoRow, { revision: null });
+  assert.deepEqual(out.rowsUndone, ['Dry bags', 'Spare paddles (see C:\\gear)']);
+  assert.deepEqual(out.findWrites, [0, true], 'finding writes nothing');
 });
