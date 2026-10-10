@@ -26,6 +26,7 @@ test('the app smoke uses a fake home and never inherits accounts, keys or shell 
     assert.equal(env.PATH, '/usr/bin:/bin:/usr/sbin:/sbin');
     assert.equal(env.GIT_CONFIG_GLOBAL, '/dev/null');
     assert.equal(env.GIT_CONFIG_SYSTEM, '/dev/null');
+    assert.equal(env.WANIGAN_TOURS, 'off', 'no first-launch tour sits over what the smoke clicks');
     for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'TYPESAFE_API_KEY', 'WANIGAN_DEMO', 'NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE', 'ENV', 'BASH_ENV']) {
       assert.equal(env[key], undefined, key);
     }

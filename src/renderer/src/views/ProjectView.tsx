@@ -89,14 +89,14 @@ export function ProjectView({ project, projects, view, setDialog }: { project: P
             <Icon name="down" size={14} />
           </MenuButton>
         </h1>
-        <NavTabs label={`${project.name} views`} className="project-tabs" stripRef={tabs}
+        <NavTabs label={`${project.name} views`} className="project-tabs" stripRef={tabs} tour="project-views"
           items={[
             ...TABBED.map((v) => ({
               href: to(v), label: label(v), current: v === view, tip: tip(v),
               ...(v === 'sessions' && project.liveSessions ? { count: project.liveSessions } : {}),
             })),
             // Always offered: while it is off, the tab says so and switches it on in place.
-            { href: to(LIVE_VIEW.view), label: LIVE_VIEW.label, current: view === LIVE_VIEW.view, tip: 'The project’s local site, following the agents’ edits' },
+            { href: to(LIVE_VIEW.view), label: LIVE_VIEW.label, current: view === LIVE_VIEW.view, tip: 'The project’s local site, following the agents’ edits', tour: 'project-live' },
           ]}>
           <MenuButton label={`More views: History, Decisions, Activity, List${inMore ? `. Showing ${label(view)}` : ''}`} items={moreMenu}
             className={`project-more${inMore ? ' active' : ''}`} width={240} tip="History, Decisions, Activity, List">

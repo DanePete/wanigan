@@ -32,6 +32,8 @@ import { GoToHost } from './components/live/GoTo';
 import { openGoTo } from './lib/live-goto';
 import { toggleDevtoolsTab, wantDevtoolsTab } from './lib/live-devtools';
 import { ShortcutSheet } from './dialogs/ShortcutSheet';
+import { TourHost } from './components/Tour';
+import { tourFor } from './tours';
 import { EditorDrawer } from './editor/EditorDrawer';
 import { openQuickOpen, setEditorOpen, toggleEditor } from './editor/store';
 import { COMMAND_IDS, matchKey, type CommandId } from '@shared/shortcuts';
@@ -156,7 +158,7 @@ function Shell() {
         </div>
         {/* What just happened, under every view and its dock; a failure to act on now is said above it. */}
         <ViewBoundary name="The status line" compact frame={() => null}>
-          <StatusLine onKeys={() => setDialog({ kind: 'shortcuts' })} />
+          <StatusLine onKeys={() => setDialog({ kind: 'shortcuts' })} tour={tourFor(route)} />
         </ViewBoundary>
       </main>
       {location.card ? (
@@ -181,6 +183,7 @@ function Shell() {
       {/* Overlays: if one of these breaks, it steps aside rather than take the window with it. */}
       <ViewBoundary name="Agents talking" frame={() => null}><Chatter projects={projects.data} /></ViewBoundary>
       <ViewBoundary name="Alerts" frame={() => null}><Alerts needs={needs.data} location={location} /></ViewBoundary>
+      <ViewBoundary name="The tour" frame={() => null}><TourHost route={route} projects={projects.data} blocked={dialog !== null} /></ViewBoundary>
     </div>
   );
 }

@@ -16,6 +16,8 @@ export function smokeEnvironment(dataDir: string, inherited: NodeJS.ProcessEnv =
     GIT_CONFIG_NOSYSTEM: '1',
     WANIGAN_DATA_DIR: dataDir,
     WANIGAN_TEST_ACCOUNTS_HOME: home,
+    // The smoke drives the window itself: a first-launch tour would sit over what it clicks.
+    WANIGAN_TOURS: 'off',
     ...(inherited.TMPDIR ? { TMPDIR: inherited.TMPDIR } : {}),
     ...(inherited.LANG ? { LANG: inherited.LANG } : {}),
   };

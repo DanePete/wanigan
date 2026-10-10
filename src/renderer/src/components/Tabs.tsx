@@ -86,21 +86,25 @@ export interface NavItem {
   /** What the tooltip says, when more than the label. */
   tip?: string;
   keys?: Shortcut | CommandId;
+  /** Its name for a guided tour's step (`data-tour`, tours/types.ts). */
+  tour?: string;
 }
 
 /** Places as pill tabs: links, the current one marked. `children` follow the links inside the track (a ··· menu). */
-export function NavTabs({ label, items, children, className, stripRef }: {
+export function NavTabs({ label, items, children, className, stripRef, tour }: {
   label: string;
   items: readonly NavItem[];
   children?: ReactNode;
   className?: string;
+  /** The strip's name for a guided tour's step (`data-tour`, tours/types.ts). */
+  tour?: string;
   /** The strip itself, for keeping the current tab in view where it scrolls. */
   stripRef?: RefObject<HTMLElement | null>;
 }) {
   return (
-    <nav ref={stripRef} className={`tabs tabs-pill${className ? ` ${className}` : ''}`} aria-label={label}>
+    <nav ref={stripRef} className={`tabs tabs-pill${className ? ` ${className}` : ''}`} aria-label={label} data-tour={tour}>
       {items.map((t) => (
-        <a key={t.href} href={t.href} className={t.current ? 'active' : ''} aria-current={t.current ? 'page' : undefined}
+        <a key={t.href} href={t.href} className={t.current ? 'active' : ''} aria-current={t.current ? 'page' : undefined} data-tour={t.tour}
           {...tipProps(t.tip ?? t.label, t.keys, 'bottom')}>
           {t.label}
           {t.count ? <span className="tab-count">{t.count}</span> : null}

@@ -253,3 +253,12 @@
     white-space: nowrap;
   }
 }
+
+/* The other actors a view's How this works can name (components/How.tsx). */
+.how-wanigan { --actor: var(--faint); }
+.how-site { --actor: var(--muted); }
+
+/* A How this works with no side notes: the flow takes the width. */
+.how-alone {
+  grid-template-columns: minmax(0, 1fr);
+}

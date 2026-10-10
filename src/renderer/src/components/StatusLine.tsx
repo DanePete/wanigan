@@ -2,7 +2,8 @@
 // view and its dock. It says the latest outcome (an icon, a sentence, and an
 // action while one can be taken), holds what the view puts at its end
 // (StatusSlot: the dock's tabs waiting, a count, a mode), and ends with the ?
-// that opens the keys. A failure that must be acted on now (one with Retry)
+// that opens the keys, with the compass that plays the view's tour beside it
+// (and, on the view's first visit, the offer of that tour). A failure that must be acted on now (one with Retry)
 // is a toast in the status line's own place, above it, never over a control.
 // Every outcome also goes to the notification tray, with its time.
 import { useEffect, type ReactNode } from 'react';
@@ -11,10 +12,12 @@ import { actionable, useNotices, type Notice } from '../lib/notices';
 import { ago } from '../lib/format';
 import { Icon, type IconName } from './icons';
 import { Button, IconButton } from './ui';
+import { TourOffer, TourReplay } from './Tour';
+import type { Tour } from '../tours';
 
 const ICON: Record<Notice['tone'], IconName> = { info: 'note', done: 'check', error: 'alert' };
 
-export function StatusLine({ onKeys }: { onKeys: () => void }) {
+export function StatusLine({ onKeys, tour = null }: { onKeys: () => void; tour?: Tour | null }) {
   const { latest, urgent, ownLines, showLine, setSlot, act, settle, quiet } = useNotices();
   const hidden = ownLines > 0;
   useEffect(() => (hidden ? undefined : showLine()), [hidden, showLine]);
@@ -45,7 +48,9 @@ export function StatusLine({ onKeys }: { onKeys: () => void }) {
             </span>
           ) : null}
         </div>
+        <TourOffer tour={tour} />
         <div className="status-slot" ref={setSlot} />
+        <TourReplay tour={tour} />
         <IconButton icon="question" size="s" label="Keyboard shortcuts" keys="shortcuts" className="status-keys" onClick={onKeys} />
       </div>
     </div>
