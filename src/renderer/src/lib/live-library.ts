@@ -8,13 +8,16 @@
 // - An entry's props as rows, from the JSON Schema the helper gave.
 // - Whether it can be added to the page shown, through the trace's palette
 //   (shared/live-library.ts paletteEntryFor), or why not.
-// - Where the page shown uses it, as the trace names its parts: this page
-//   only, because nothing Wanigan reads says which other pages do.
+// - Where the page shown uses it, as the trace names its parts.
+// - Where the rest of the site uses it, as the helper's search of stored data
+//   says (LiveBridge.libraryUsage): the places grouped by kind, counted, each
+//   opening in the view where a page shows it, with what the search could not
+//   see said every time.
 import type { LiveRegion } from '../../../shared/live.ts';
 import type { PartIndex } from '../../../shared/live-lens.ts';
 import {
-  LIBRARY_KINDS, entryMatches, paletteEntryFor,
-  type ComponentLibrary, type LibraryEntry, type LibraryKind, type LiveLibraryAnswer,
+  LIBRARY_KINDS, USAGE_KINDS, entryMatches, paletteEntryFor, sitePath,
+  type ComponentLibrary, type EntryUsage, type LibraryEntry, type LibraryKind, type LiveLibraryAnswer, type UsageKind, type UsagePlace,
 } from '../../../shared/live-library.ts';
 import type { LiveTrace, PaletteEntry, TraceCollection, TraceOwner } from '../../../shared/live-trace.ts';
 
@@ -191,4 +194,50 @@ export function usesOnPage(entry: LibraryEntry, platform: 'drupal' | 'wordpress'
   }
   if (!trace && !out.size) return { known: false, why: 'There is no trace for this page yet, so nothing says what on it this is.' };
   return { known: true, uses: [...out.values()] };
+}
+
+/* ── where the rest of the site uses it ────────────────────────────────── */
+
+export const USAGE_TITLE: Record<UsageKind, { one: string; many: string }> = {
+  placement: { one: 'Block placement', many: 'Block placements' },
+  'layout-default': { one: 'Default layout', many: 'Default layouts' },
+  'layout-override': { one: 'Layout of one item', many: 'Layouts of single items' },
+  config: { one: 'Other configuration', many: 'Other configuration' },
+  template: { one: 'Template', many: 'Templates' },
+  'template-part': { one: 'Template part', many: 'Template parts' },
+  content: { one: 'Content', many: 'Content' },
+  'synced-pattern': { one: 'Synced pattern', many: 'Synced patterns' },
+  navigation: { one: 'Navigation menu', many: 'Navigation menus' },
+  pattern: { one: 'Pattern', many: 'Patterns' },
+  widget: { one: 'Widget', many: 'Widgets' },
+};
+
+/** The places of each kind, in the order the kinds are listed and, within one, the order the helper found them. */
+export function usageGroups(u: EntryUsage): { kind: UsageKind; title: string; places: UsagePlace[] }[] {
+  return USAGE_KINDS.map((kind) => ({ kind, title: USAGE_TITLE[kind].many, places: u.places.filter((p) => p.kind === kind) }))
+    .filter((g) => g.places.length > 0);
+}
+
+/** One sentence for the whole answer: how many places, and whether the search read everything it covers. */
+export function usageSummary(u: EntryUsage): string {
+  const reached = u.complete ? '' : ' it reached';
+  if (!u.found) return u.complete ? 'Nowhere: nothing the site has stored uses it.' : 'Nowhere the search reached: nothing it read uses it.';
+  const listed = u.found > u.places.length ? ` (${u.places.length} listed)` : '';
+  return `Used in ${u.found} ${u.found === 1 ? 'place' : 'places'}${reached} across the site${listed}.`;
+}
+
+/** What one place says besides its name: where in it, what it is reached through, what to know. */
+export function placeDetail(p: UsagePlace): string {
+  return [p.where, p.via ? `through ${p.via}` : null, p.note, p.file && p.kind !== 'template' ? p.file : null].filter((x): x is string => !!x).join(' · ');
+}
+
+/** A place's page (or its settings) as an address in the view: on the site's own origin only; null otherwise. */
+export function placeAddress(path: string | undefined, siteUrl: string | null): string | null {
+  const own = sitePath(path);
+  if (!own || !siteUrl) return null;
+  try {
+    const base = new URL(siteUrl);
+    const url = new URL(own, base);
+    return url.origin === base.origin ? url.toString() : null;
+  } catch { return null; }
 }

@@ -651,12 +651,25 @@ try {
       await page.waitForSelector('.live-library-detail img[alt="Hero, rendered alone 390 pixels wide"]', { timeout: 5000 }).catch(() => fail(t('library: Hero’s phone picture is not in its details')));
       const detail = (await page.locator('.live-library-detail').innerText()).replace(/\s+/g, ' ');
       for (const want of ['Component · acme · your code', 'heading *', 'string', 'Default “left”', 'One of “left”, “center”', 'media', 'A picture or a video beside the words.',
-        'Drupal core places a component only inside a template or a field that uses it, not on its own.', 'This page only', 'hero.twig', 'sdc:acme:hero', 'Rendered alone by the site with its own example, in the acme theme.']) {
+        'Drupal core places a component only inside a template or a field that uses it, not on its own.', 'The page shown, as its trace names its parts.', 'hero.twig', 'sdc:acme:hero', 'Rendered alone by the site with its own example, in the acme theme.']) {
         if (!detail.includes(want)) fail(t(`library: Hero’s details do not say "${want}"`));
       }
       const uses = await page.$$eval('.live-library-use', (els) => els.map((e) => e.textContent));
       if (uses.join() !== 'Hero') fail(t(`library: Hero is used on this page as ${JSON.stringify(uses)}`));
       await shot('library-entry');
+
+      // Where the rest of the site uses it: the helper's search, grouped and counted, with what it cannot see.
+      await page.waitForSelector('.live-library-site .live-library-place', { timeout: 3000 }).catch(() => fail(t('usage: Hero’s places across the site never showed')));
+      if (!(await calls()).includes('usage sdc:acme:hero')) fail(t('usage: opening Hero did not ask where it is used'));
+      const site = (await page.locator('.live-library-site').innerText()).replace(/\s+/g, ' ');
+      for (const want of ['Across the site', 'Used in 3 places across the site.', 'Templates 3', 'node--article--full.html.twig', 'line 12, include; line 30, include · theme hook page__front, in acme',
+        'Event teaser component (acme:event-teaser)', 'web/themes/custom/acme/components/event-teaser/event-teaser.twig', 'None of these has a page that is sure to show it.',
+        'What this search cannot see', 'render array of #type component', 'chosen at render time, so any of them may use it: web/themes/custom/acme/templates/field--paragraph.html.twig', 'What it searched']) {
+        if (!site.includes(want)) fail(t(`usage: Hero across the site does not say "${want}" (${site.slice(0, 300)})`));
+      }
+      if (await page.$('.live-library-site .live-library-place-open')) fail(t('usage: a template, which no one page is sure to show, offers to open a page'));
+      await page.locator('.live-library-site').scrollIntoViewIfNeeded();
+      await shot('library-usage');
       await page.locator('.live-library-detail').evaluate((el) => el.closest('.live-side').scrollTop = 10_000);
       await shot('library-entry-more');
       await page.locator('.live-library-shot-open').first().click();
@@ -686,6 +699,39 @@ try {
       await shot('library-no-picture');
       await backToList();
 
+      // A block placed, in a default layout and in one item's own layout: each opens its page, or the site's own
+      // page for changing it, in the view; asking again goes to the site again.
+      await openEntry('block:acme_cta_block');
+      await page.waitForSelector('.live-library-site .live-library-place', { timeout: 3000 }).catch(() => fail(t('usage: the call to action’s places never showed')));
+      const groupsSaid = await page.$$eval('.live-library-site .live-library-usehead', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+      if (groupsSaid.join() !== 'Block placements 2,Default layouts 1,Layouts of single items 1') fail(t(`usage: the call to action’s places are grouped as ${groupsSaid.join(' | ')}`));
+      const placed = (await page.locator('.live-library-site').innerText()).replace(/\s+/g, ' ');
+      for (const want of ['Used in 4 places across the site.', 'Sidebar region, Acme theme · no visibility conditions: any page in this theme', 'shows only where its visibility conditions allow (request_path)',
+        'every Event shown this way without a layout of its own; the page opened is Spring open house', 'section 2 (Two columns), second region', 'visibility conditions']) {
+        if (!placed.includes(want)) fail(t(`usage: the call to action across the site does not say "${want}"`));
+      }
+      const openable = await page.$$eval('.live-library-site .live-library-place-open', (els) => els.map((e) => e.textContent));
+      if (openable.join() !== 'Call to action,Event (Default),About us (Basic page)') fail(t(`usage: the places that open a page are ${openable.join(', ')}`));
+      let sent = (await calls()).length;
+      await page.locator('.live-library-site .live-library-place-open', { hasText: 'About us (Basic page)' }).click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('go https://acme.example.test/about'), sent, { timeout: 3000 }).catch(() => fail(t('usage: a place did not open its page in the view')));
+      sent = (await calls()).length;
+      await page.getByRole('button', { name: 'Call to action, events: open the site’s own page for changing it' }).click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('go https://acme.example.test/admin/structure/block/manage/acme_cta_events'), sent, { timeout: 3000 })
+        .catch(() => fail(t('usage: Change it did not open the placement’s own page in the view')));
+      await page.locator('.live-library-site').scrollIntoViewIfNeeded();
+      await shot('library-usage-block');
+      await page.getByRole('button', { name: 'Search the site again' }).click();
+      await page.waitForFunction(() => window.__wgLive.calls.includes('usage block:acme_cta_block refresh'), null, { timeout: 3000 }).catch(() => fail(t('usage: Search again did not ask the site afresh')));
+      await backToList();
+
+      // A search that did not finish says so, and says it of its count.
+      await openEntry('block:acme_newsletter_block');
+      await page.waitForSelector('.live-library-site .live-library-gaps', { timeout: 3000 }).catch(() => fail(t('usage: a search that stopped does not say so')));
+      const stopped = (await page.locator('.live-library-site').innerText()).replace(/\s+/g, ' ');
+      if (!stopped.includes('Used in 1 place it reached across the site.') || !stopped.includes('The search stopped after 10 seconds')) fail(t(`usage: a search that stopped reads "${stopped.slice(0, 200)}"`));
+      await backToList();
+
       // Placing: Place, then the page shows where it can go; the drop is saved through the palette's insert.
       await row('block:system_branding_block').waitFor();
       if (!(await row('block:system_branding_block').innerText()).includes('Not placeable here')) fail(t('library: a block nothing here takes is not said to be unplaceable'));
@@ -711,6 +757,26 @@ try {
       if (!(await page.locator('.live-library-detail').innerText()).includes('A block style is how a block looks')) fail(t('library: a block style does not say it is not placed'));
       await backToList();
       await shot('library-wordpress');
+      // A WordPress block in posts, a synced pattern, and through that pattern in a page and a template part.
+      await openEntry('block:northwind/testimonial');
+      await page.waitForSelector('.live-library-site .live-library-place', { timeout: 3000 }).catch(() => fail(t('usage: the testimonial’s places never showed')));
+      const wpGroups = await page.$$eval('.live-library-site .live-library-usehead', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+      if (wpGroups.join() !== 'Content 3,Template parts 1,Synced patterns 1') fail(t(`usage: the testimonial’s places are grouped as ${wpGroups.join(' | ')}`));
+      const wp = (await page.locator('.live-library-site').innerText()).replace(/\s+/g, ' ');
+      for (const want of ['Used in 5 places across the site.', 'core/block · through the synced pattern “Kind words” · Page', 'Post; draft', '×2', 'wp-content/themes/northwind/parts/footer.html', 'Block Hooks']) {
+        if (!wp.includes(want)) fail(t(`usage: the testimonial across the site does not say "${want}"`));
+      }
+      sent = (await calls()).length;
+      await page.locator('.live-library-site .live-library-place-open', { hasText: 'Home' }).click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('go https://acme.example.test/'), sent, { timeout: 3000 }).catch(() => fail(t('usage: a page reached through a synced pattern did not open')));
+      await page.locator('.live-library-site').scrollIntoViewIfNeeded();
+      await shot('library-usage-wordpress');
+      await backToList();
+      // A helper without the search says to update it, in the main process's words.
+      await openEntry('block:core/paragraph');
+      await page.waitForSelector('.live-library-site .live-library-why', { timeout: 3000 }).catch(() => fail(t('usage: an outdated helper does not say why there is no search')));
+      if (!(await page.locator('.live-library-site').innerText()).includes('The site helper is older than this Wanigan and cannot say where an entry is used. Update it from the project’s Live tab.')) fail(t('usage: an outdated helper is not said in the main process’s words'));
+      await backToList();
       await page.evaluate(() => { window.__wgLive.libraryAnswer = null; });
       await page.getByRole('button', { name: 'Close the library (⇧B)' }).click();
       if (await page.$('.live-library')) fail(t('library: Close did not close it'));

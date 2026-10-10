@@ -9,9 +9,10 @@
 //   and kept by the library's hash in Wanigan's data folder.
 // - An entry's details: its pictures, where it comes from, its props and
 //   slots from its schema, its files (opened in the Code tab when they are in
-//   the project's folder), why it has no picture when it has none, and where
-//   the page shown uses it. That is this page only: nothing Wanigan reads says
-//   which other pages do, and the panel says so.
+//   the project's folder), why it has no picture when it has none, where the
+//   rest of the site uses it (LiveBridge.libraryUsage: the helper's search of
+//   stored data, each place opening in the view where a page shows it, with
+//   what the search cannot see), and where the page shown uses it.
 // - Adding one goes through the trace's palette and Arrange's placing (the
 //   page shows where it can go), never a second way: drag it onto the page,
 //   Place and click there, or name the place. An entry the page cannot take
@@ -21,19 +22,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject, type RefObject } from 'react';
 import type { LiveRegion, LiveSite } from '@shared/live';
 import type { PartIndex } from '@shared/live-lens';
-import { PICTURES_AT_ONCE, PICTURE_WIDTHS, type ComponentLibrary, type LibraryEntry, type LiveLibraryAnswer } from '@shared/live-library';
+import {
+  PICTURES_AT_ONCE, PICTURE_WIDTHS, usageWhy,
+  type ComponentLibrary, type EntryUsage, type LibraryEntry, type LiveLibraryAnswer, type LiveUsageAnswer, type UsagePlace,
+} from '@shared/live-library';
 import type { LiveTrace, PaletteEntry } from '@shared/live-trace';
 import type { ProjectSummary } from '@shared/model';
 import { call } from '../../lib/api';
 import { liveBridge } from '../../lib/live';
 import {
-  KIND_TITLE, libraryGroups, libraryNext, libraryWhyText, ownerWords, placement, propRows, usesOnPage,
+  KIND_TITLE, USAGE_TITLE, libraryGroups, libraryNext, libraryWhyText, ownerWords, placeAddress, placeDetail, placement, propRows, usageGroups, usageSummary, usesOnPage,
   type PageUse, type Placement,
 } from '../../lib/live-library';
 import { navigate } from '../../lib/router';
 import { openInEditor } from '../../editor/EditButton';
 import { Icon } from '../icons';
-import { Button, CopyButton, Dialog, IconButton } from '../ui';
+import { Button, CopyButton, Dialog, Disclosure, IconButton } from '../ui';
 import { PlaceBy, type useArrange } from './Arrange';
 import { HelperDialog } from './Helper';
 import '../../styles/live-library.css';
@@ -341,6 +345,8 @@ function EntryDetail({ entry, lib, project, site, trace, parts, regions, arrange
         <AddIt place={place} arrange={arrange} trace={trace} />
       </section>
 
+      <SiteUses entry={entry} project={project} site={site} readOnly={readOnly} />
+
       <section className="live-section" aria-label="On this page">
         <h3 className="live-section-title">On this page</h3>
         <Uses uses={uses} regions={regions} label={entry.label} onSelect={onSelect} onHover={onHover} />
@@ -463,7 +469,108 @@ function AddIt({ place, arrange, trace }: { place: Placement; arrange: ReturnTyp
   );
 }
 
-/** Where the page shown uses an entry, as the trace names its parts: this page only, and said so. */
+/**
+ * Where the rest of the site uses an entry, as the helper's search of what the site has stored says: how many places,
+ * each by kind with where in it and what it is reached through, opening in the view where a page shows it (or the
+ * site's own page for changing it); what the search could not read; and, always, what no search of stored data sees.
+ */
+function SiteUses({ entry, project, site, readOnly }: { entry: LibraryEntry; project: ProjectSummary; site: LiveSite; readOnly: boolean }) {
+  const live = liveBridge();
+  const [answer, setAnswer] = useState<LiveUsageAnswer | null>(null);
+  const [asking, setAsking] = useState(false);
+  const asked = useRef(0);
+  const ask = useCallback(async (refresh: boolean): Promise<void> => {
+    if (!live) return;
+    const n = ++asked.current;
+    setAsking(true);
+    const a = await live.libraryUsage(project.id, entry.id, refresh ? { refresh: true } : undefined).catch((e: Error) => ({ state: 'down' as const, error: e.message || 'no answer' }));
+    // Another entry, or a newer ask, was chosen meanwhile: this answer is not its.
+    if (n !== asked.current) return;
+    setAnswer(a);
+    setAsking(false);
+  }, [live, project.id, entry.id]);
+  useEffect(() => { setAnswer(null); void ask(false); }, [ask]);
+  return (
+    <section className="live-section live-library-site" aria-label="Across the site" aria-busy={asking}>
+      <div className="live-library-site-head">
+        <h3 className="live-section-title">Across the site</h3>
+        <IconButton icon="refresh" label={asking ? 'Searching the site…' : 'Search the site again'} disabled={asking} onClick={() => ask(true)} data-loading={asking ? '' : undefined} />
+      </div>
+      {!answer ? <p className="faint small" role="status">Searching what the site has stored…</p>
+        : answer.state !== 'ok' ? (
+          <div className="live-library-site-why">
+            <p className="small live-library-why">{usageWhy(answer)}</p>
+            {answer.state === 'down' || answer.state === 'unreadable' ? <Button size="s" icon="refresh" onClick={() => ask(true)}>Search again</Button> : null}
+          </div>
+        ) : <UsageList usage={answer.usage} site={site} readOnly={readOnly} />}
+    </section>
+  );
+}
+
+function UsageList({ usage, site, readOnly }: { usage: EntryUsage; site: LiveSite; readOnly: boolean }) {
+  const live = liveBridge();
+  const [said, setSaid] = useState<string | null>(null);
+  const groups = usageGroups(usage);
+  const open = (address: string, label: string): void => {
+    if (!live) return;
+    setSaid(null);
+    void live.go(address).then((ok) => { if (!ok) setSaid(`The live view could not open ${label}.`); });
+  };
+  const opens = !readOnly && usage.places.some((p) => p.url || p.edit);
+  const seconds = usage.ms >= 1000 ? `${(usage.ms / 1000).toFixed(1)} s` : `${usage.ms} ms`;
+  return (
+    <div className="live-library-site-list">
+      <p className="small">{usageSummary(usage)}</p>
+      {usage.gaps.length ? (
+        <ul className="live-library-gaps small">{usage.gaps.map((g) => <li key={g}>{g}</li>)}</ul>
+      ) : null}
+      {groups.map((g) => (
+        <div key={g.kind} className="live-library-usegroup" role="group" aria-label={g.title}>
+          <h4 className="live-library-usehead">{g.title} <span className="live-library-count">{g.places.length}</span></h4>
+          <ul className="live-library-places">
+            {g.places.map((p, i) => <Place key={`${i}:${p.label}`} place={p} site={site} readOnly={readOnly} onOpen={open} />)}
+          </ul>
+        </div>
+      ))}
+      {said ? <p className="small live-library-why" role="status">{said}</p> : null}
+      {readOnly && usage.places.some((p) => p.url || p.edit) ? <p className="faint small">A hosted environment is shown: show Local to open these on the local site.</p> : null}
+      {!opens && usage.places.length && !readOnly ? <p className="faint small">None of these has a page that is sure to show it.</p> : null}
+      <div className="live-library-unseen">
+        <p className="small"><span className="live-made-title">What this search cannot see</span></p>
+        <ul className="faint small">{usage.unseen.map((u) => <li key={u}>{u}</li>)}</ul>
+      </div>
+      <Disclosure title="What it searched" summary={`${usage.searched.length} ${usage.searched.length === 1 ? 'source' : 'sources'}, ${seconds}`} className="live-library-searched">
+        <ul className="faint small">{usage.searched.map((x) => <li key={x}>{x}</li>)}</ul>
+      </Disclosure>
+    </div>
+  );
+}
+
+function Place({ place, site, readOnly, onOpen }: { place: UsagePlace; site: LiveSite; readOnly: boolean; onOpen: (address: string, label: string) => void }) {
+  const page = readOnly ? null : placeAddress(place.url, site.url);
+  const edit = readOnly ? null : placeAddress(place.edit, site.url);
+  const detail = placeDetail(place);
+  const what = USAGE_TITLE[place.kind].one.toLowerCase();
+  return (
+    <li className="live-library-place">
+      <span className="live-library-place-name">
+        {page ? (
+          <button type="button" className="live-library-place-open" title={place.url} aria-label={`${place.label}, ${what}: open its page in the live view`} onClick={() => onOpen(page, place.label)}>{place.label}</button>
+        ) : <span className="small">{place.label}</span>}
+        {place.count ? <span className="live-library-count">×{place.count}</span> : null}
+      </span>
+      {detail ? <span className="faint small live-library-place-detail">{detail}</span> : null}
+      {place.kind === 'template' && place.file ? <span className="lib-tag mono live-library-place-file">{place.file}</span> : null}
+      {edit ? (
+        <Button size="s" tone="quiet" icon="pencil" className="live-library-place-edit" aria-label={`${place.label}: open the site’s own page for changing it`} onClick={() => onOpen(edit, place.label)}>
+          Change it
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
+/** Where the page shown uses an entry, as the trace names its parts. */
 function Uses({ uses, regions, label, onSelect, onHover }: {
   uses: ReturnType<typeof usesOnPage>; regions: LiveRegion[]; label: string;
   onSelect: (region: LiveRegion) => void; onHover: (regions: LiveRegion[] | null, label?: string | null) => void;
@@ -489,7 +596,7 @@ function Uses({ uses, regions, label, onSelect, onHover }: {
           })}
         </ul>
       ) : <p className="small">Nothing on this page is {label}.</p>}
-      <p className="faint small">This page only: Wanigan reads the page shown, not the rest of the site, so other pages may use it too.</p>
+      <p className="faint small">The page shown, as its trace names its parts. Across the site, above, is what the site has stored.</p>
     </>
   );
 }

@@ -376,14 +376,12 @@ export const USAGE_KINDS = [
   'layout-default',
   /** Drupal: one content item's own Layout Builder layout. */
   'layout-override',
-  /** Drupal: other configuration that depends on what it shows (a view, a menu, a reusable block). */
-  'config',
+  /** WordPress: a post, page or item of another public type. */
+  'content',
   /** A Drupal Twig template, or a WordPress block template (saved or the theme's file). */
   'template',
   /** WordPress: a template part, saved or the theme's file. */
   'template-part',
-  /** WordPress: a post, page or item of another public type. */
-  'content',
   /** WordPress: a synced pattern (wp_block). */
   'synced-pattern',
   /** WordPress: a navigation menu (wp_navigation). */
@@ -392,6 +390,8 @@ export const USAGE_KINDS = [
   'pattern',
   /** WordPress: a block widget. */
   'widget',
+  /** Drupal: other configuration that depends on what it shows (a view, a menu, a reusable block). */
+  'config',
 ] as const;
 export type UsageKind = (typeof USAGE_KINDS)[number];
 
