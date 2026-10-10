@@ -20,7 +20,11 @@ import type { ProjectSummary } from '@shared/model';
 import { shortcutFor } from '@shared/shortcuts';
 import { bridge, useQuery } from '../lib/api';
 import { Icon } from '../components/icons';
-import { Button, Dialog, Empty, IconButton, KeyCaps } from '../components/ui';
+import { Button, Dialog, EmptyState, IconButton, KeyCaps, tipProps } from '../components/ui';
+import { HowButton } from '../components/How';
+import { useHow } from '../lib/how';
+import type { Shortcut } from '@shared/shortcuts';
+import { CodeHow } from './How';
 import { ViewBoundary } from '../components/ViewBoundary';
 import { FileTree, focusFileTree } from './FileTree';
 import { MIN_SIZE, setPrefs, useEditorPrefs } from './prefs';
@@ -32,6 +36,7 @@ import {
 import '../styles/editor.css';
 
 const CodeSurface = lazy(() => import('./code/CodeSurface'));
+const SAVE_KEYS: Shortcut = { id: null, label: 'Save the file', group: 'In the code editor', keys: ['Mod', 'S'] };
 const STEP = 24;
 
 export function EditorDrawer({ project, page = false }: {
@@ -40,6 +45,7 @@ export function EditorDrawer({ project, page = false }: {
   page?: boolean;
 }) {
   const editor = useEditor();
+  const how = useHow('code');
   const prefs = useEditorPrefs();
   const mac = bridge().platform === 'darwin';
   const tabs = project ? editor.tabs.filter((t) => t.projectId === project.id) : [];
@@ -116,11 +122,11 @@ export function EditorDrawer({ project, page = false }: {
     <>
       {/* The live view's dock, closed: its tabs wait in the status line (components/live/Dock.tsx DockTabs), each opening it. */}
       {project && !visible && !onPage && docked.length > 1 ? null : project && !visible && !onPage && tabs.length ? (
-        <button type="button" className="editor-collapsed" onClick={() => showDock(CODE_TAB.id)} title={`Show the code editor (${mac ? '⌘J' : 'Ctrl+J'})`}>
+        <button type="button" className="editor-collapsed" onClick={() => showDock(CODE_TAB.id)} {...tipProps('Show the code editor', 'toggle-editor')}>
           <Icon name="code" size={14} />
           <span>Code · {files}</span>
           {unsavedHere ? <span className="editor-collapsed-unsaved">{unsavedHere} unsaved</span> : null}
-          <kbd>{mac ? '⌘J' : 'Ctrl+J'}</kbd>
+          <KeyCaps shortcut={shortcutFor('toggle-editor')!} mac={mac} />
         </button>
       ) : null}
       <section className="editor-drawer" data-mode={onPage ? 'page' : 'drawer'} data-dock={onPage ? undefined : prefs.dock} data-shows={onPage ? undefined : shows ?? undefined}
@@ -131,17 +137,19 @@ export function EditorDrawer({ project, page = false }: {
         {project && !onPage ? <Resizer dock={prefs.dock} size={prefs.dock === 'bottom' ? prefs.height : prefs.width} what={what} /> : null}
         {project && onPage ? (
           // Its own boundary: if the files break, the editor beside them (and anything unsaved in it) stays.
-          <ViewBoundary name="The project’s files" compact resetKey={`${project.id}|${active?.cardId ?? ''}`} frame={(panel) => <div className="code-tree">{panel}</div>}>
-            <FileTree key={`${project.id}|${active?.cardId ?? ''}`} projectId={project.id} cardId={active?.cardId ?? null}
-              label={rootLabel(active)} activePath={active?.path ?? null} />
-          </ViewBoundary>
+          prefs.tree ? (
+            <ViewBoundary name="The project’s files" compact resetKey={`${project.id}|${active?.cardId ?? ''}`} frame={(panel) => <div className="code-tree">{panel}</div>}>
+              <FileTree key={`${project.id}|${active?.cardId ?? ''}`} projectId={project.id} cardId={active?.cardId ?? null}
+                label={rootLabel(active)} activePath={active?.path ?? null} onClose={() => setPrefs({ tree: false })} />
+            </ViewBoundary>
+          ) : null
         ) : null}
         {project ? (
           <header className="editor-head">
             {/* The live view's tabs are in the status line; here, which one the dock shows. */}
             {!onPage && docked.length > 1 && !code ? <h2 className="dock-title">{docked.find((t) => t.id === shows)?.label ?? 'The dock'}</h2> : null}
             {code ? (
-            <nav className="editor-tabs" aria-label="Open files">
+            <nav className="editor-tabs" aria-label="Open files" data-tour="code-tabs">
               <ul>
                 {tabs.map((t) => {
                   const name = t.path.split('/').pop() ?? t.path;
@@ -149,7 +157,7 @@ export function EditorDrawer({ project, page = false }: {
                   const unsaved = editor.unsaved.has(t.key);
                   return (
                     <li key={t.key} className={`editor-tab${t.key === activeKey ? ' active' : ''}${unsaved ? ' unsaved' : ''}`}>
-                      <button type="button" className="editor-tab-open" aria-current={t.key === activeKey ? 'true' : undefined} title={t.cardId ? `${rootLabel(t)}: ${t.path}` : t.path}
+                      <button type="button" className="editor-tab-open" aria-current={t.key === activeKey ? 'true' : undefined} data-tip={t.cardId ? `${rootLabel(t)}: ${t.path}` : t.path} data-tip-side="bottom"
                         onClick={() => showTab(project.id, t.key)} onAuxClick={(e) => { if (e.button === 1) askClose(t); }}>
                         <span className="editor-tab-name">{name}</span>
                         {(names.get(name) ?? 0) > 1 && dir ? <span className="editor-tab-dir">{dir.split('/').pop()}</span> : null}
@@ -157,7 +165,7 @@ export function EditorDrawer({ project, page = false }: {
                         {unsaved ? <span className="editor-dot" aria-hidden="true" /> : null}
                         {unsaved ? <span className="visually-hidden">, unsaved</span> : null}
                       </button>
-                      <button type="button" className="editor-tab-close" aria-label={`Close ${name}`} title={`Close ${name}`} onClick={() => askClose(t)}>
+                      <button type="button" className="editor-tab-close" aria-label={`Close ${name}`} data-tip={`Close ${name}`} data-tip-side="bottom" onClick={() => askClose(t)}>
                         <Icon name="close" size={12} />
                       </button>
                     </li>
@@ -167,21 +175,31 @@ export function EditorDrawer({ project, page = false }: {
             </nav>
             ) : <span className="dock-head-fill" />}
             <div className="editor-actions">
+              {onPage ? (
+                <IconButton icon="sidebar" size="s" label={prefs.tree ? 'Hide the files' : 'Show the files'} aria-expanded={prefs.tree} tipSide="bottom"
+                  onClick={() => setPrefs({ tree: !prefs.tree })} />
+              ) : null}
               {code ? (
                 <>
-                  <IconButton icon="search" label={`Open a file (${mac ? '⌘P' : 'Ctrl+P'})`} onClick={() => openQuickOpen(null)} />
-                  <IconButton icon="save" label={`Save (${mac ? '⌘S' : 'Ctrl+S'})`} disabled={!active || !editor.unsaved.has(active.key)}
-                    onClick={() => { if (active) void currentSurface()?.save(active.key); }} />
-                  <IconButton icon="undo" label="Revert to the saved file" disabled={!active || !editor.unsaved.has(active.key)}
-                    onClick={() => { if (active) currentSurface()?.revert(active.key); }} />
+                  <IconButton icon="search" size="s" label="Open a file" keys="quick-open" tipSide="bottom" data-tour="code-open" onClick={() => openQuickOpen(null)} />
+                  {/* With a file open: saving and reverting it (inert until it has changes). */}
+                  {active ? (
+                    <>
+                      <IconButton icon="save" size="s" label="Save" keys={SAVE_KEYS} tipSide="bottom" disabled={!editor.unsaved.has(active.key)}
+                        onClick={() => { void currentSurface()?.save(active.key); }} />
+                      <IconButton icon="undo" size="s" label="Revert to the saved file" tipSide="bottom" disabled={!editor.unsaved.has(active.key)}
+                        onClick={() => { currentSurface()?.revert(active.key); }} />
+                    </>
+                  ) : null}
                 </>
               ) : null}
+              {onPage ? <HowButton onClick={how.show} /> : null}
               {onPage ? null : (
                 <>
-                  <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} label={prefs.dock === 'bottom' ? `Put the ${what} beside the view` : `Put the ${what} beneath the view`}
+                  <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} size="s" tipSide="bottom" label={prefs.dock === 'bottom' ? `Put the ${what} beside the view` : `Put the ${what} beneath the view`}
                     onClick={() => setPrefs({ dock: prefs.dock === 'bottom' ? 'right' : 'bottom' })} />
                   {/* ⌘J is the code editor's: from another tab it shows the editor, so the dock's own Hide says no key there. */}
-                  <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} label={code ? `Hide the ${what} (${mac ? '⌘J' : 'Ctrl+J'})` : 'Hide the dock'}
+                  <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} size="s" tipSide="bottom" label={code ? `Hide the ${what}` : 'Hide the dock'} keys={code ? 'toggle-editor' : undefined}
                     onClick={() => (code ? toggleEditor() : setEditorOpen(false))} />
                 </>
               )}
@@ -203,14 +221,15 @@ export function EditorDrawer({ project, page = false }: {
               <button type="button" className="linkish" onClick={focusFileTree}>choose one from the files</button>.
             </p>
           ) : project && !active ? (
-            <Empty title="No file open" action={<Button tone="primary" icon="search" onClick={() => openQuickOpen(null)}>Open a file…</Button>}>
-              {mac ? '⌘P' : 'Ctrl+P'} finds any file in {project.name}. Files open here from Changes, from a turn’s changes, and from a part picked in the live view.
-            </Empty>
+            <EmptyState icon="code" title="No file open" action={<Button tone="primary" icon="search" keys="quick-open" onClick={() => openQuickOpen(null)}>Open a file…</Button>}>
+              <KeyCaps shortcut={shortcutFor('quick-open')!} mac={mac} /> finds any file in {project.name}. Files open here from Changes, from a turn’s changes, and from a part picked in the live view.
+            </EmptyState>
           ) : null}
         </div>
         {/* What the view on screen shows in its own dock tab (the live view's notes, problems, request): drawn here through a portal. */}
         <div className="dock-panel" ref={setDockHost} hidden={code} role="region" aria-label={docked.find((t) => t.id === shows)?.label.replace(/\s\d+$/, '') ?? 'The dock'} />
       </section>
+      {how.open && onPage && project ? <CodeHow project={project} tabs={tabs.length} unsaved={unsavedHere} onClose={how.hide} /> : null}
       {project && editor.quick ? <QuickOpen project={project} cardKey={editor.quick.cardKey} onClose={closeQuickOpen} /> : null}
       {closing ? (
         <UnsavedDialog tab={closing} onClose={() => setClosing(null)}

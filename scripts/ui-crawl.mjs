@@ -715,7 +715,7 @@ function keyChecks(w) {
     'Forward again': [{ at: changes, ready: '.dl-add', setup: async (page) => { await editing(page); await page.keyboard.press('Meta+ArrowDown'); await page.keyboard.press('Control+Minus'); }, keys: ['Control+Shift+Minus'],
       expect: focused(() => !/^Line 1,/.test(document.querySelector('.editor-status button')?.textContent ?? 'Line 1,')) }],
     'Move to the breadcrumbs': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Meta+Shift+Period'], expect: focused(() => document.activeElement?.classList.contains('crumb-button')) }],
-    'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[title^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
+    'Wrap long lines, or not': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Alt+z'], expect: focused(() => document.querySelector('.editor-status-toggle[data-tip^="Wrap"]')?.getAttribute('aria-pressed') === 'true') }],
     'Leave the editor': [{ at: changes, ready: '.dl-add', setup: editing, keys: ['Escape', 'Tab'], expect: focused(() => !document.activeElement?.closest('.cm-editor')) }],
     'Pull, fast-forward only': [{ at: `#/p/${ns}/changes?branch=${ns}-3`, ready: '.pr-chip', keys: ['Meta+Shift+p'], expect: shows('.status-line:has-text("Already up to date with origin/wanigan/ns-3")') }],
     Fetch: [{ at: `#/p/${ns}/changes`, ready: '.dl-add', keys: ['Meta+Shift+f'], expect: shows('.status-line:has-text("Fetched from origin")') }],

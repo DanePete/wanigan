@@ -212,10 +212,11 @@ try {
       const theirs = readFileSync(join(repo, twig), 'utf8').replace('type="submit"', `type="submit" data-agent-${theme}`);
       writeFileSync(join(repo, twig), theirs);
       await hook(agent.id, 'PostToolUse', { tool_name: 'Write', tool_input: { file_path: join(repo, twig) } });
-      await page.waitForSelector('.editor-notice-strong:has-text("while you were editing it")', { timeout: 6000 }).catch(() => fail('an agent’s edit over unsaved work did not say so'));
+      // Your unsaved work and theirs differ: you decide, so the notice is amber (needs you).
+      await page.waitForSelector('.editor-notice-needs:has-text("while you were editing it")', { timeout: 6000 }).catch(() => fail('an agent’s edit over unsaved work did not say so, as needing you'));
       if ((await text()).includes(`data-agent-${theme}`)) fail('the agent’s change replaced unsaved work');
       await shot('changed');
-      await page.click('.editor-notice-strong button:has-text("Compare and merge")');
+      await page.click('.editor-notice-needs button:has-text("Compare and merge")');
       await page.waitForSelector('.compare .cm-merge-revert button', { timeout: 5000 }).catch(() => fail('the merge view has no arrows to take their change'));
       await shot('merge');
       await page.click('.compare .cm-merge-revert button');
@@ -297,8 +298,8 @@ try {
       await page.waitForFunction(() => document.querySelector('.editor-tab.active .editor-tab-name')?.textContent === 'LowStockBadge.tsx', null, { timeout: 8000 })
         .catch(() => fail('Edit in a turn’s changes did not open the file'));
       // The tab names the card's worktree once the cards have been read.
-      await page.waitForFunction(() => /’s worktree: src\/products\/LowStockBadge\.tsx$/.test(document.querySelector('.editor-tab.active .editor-tab-open')?.getAttribute('title') ?? ''), null, { timeout: 5000 })
-        .catch(async () => fail(`the turn’s file opened from "${await page.getAttribute('.editor-tab.active .editor-tab-open', 'title')}", not the card’s worktree`));
+      await page.waitForFunction(() => /’s worktree: src\/products\/LowStockBadge\.tsx$/.test(document.querySelector('.editor-tab.active .editor-tab-open')?.getAttribute('data-tip') ?? ''), null, { timeout: 5000 })
+        .catch(async () => fail(`the turn’s file opened from "${await page.getAttribute('.editor-tab.active .editor-tab-open', 'data-tip')}", not the card’s worktree`));
       const inTree = await callCore('files.read', { projectId: project.id, cardId: stock.cardId, path: 'src/products/LowStockBadge.tsx' });
       await page.waitForFunction((want) => [...document.querySelectorAll('.editor-code .cm-line')].map((l) => l.textContent).join('\n') === want, inTree.text, { timeout: 5000 })
         .catch(() => fail('the editor does not show the worktree’s copy of the file'));
@@ -476,6 +477,27 @@ try {
       const named = await page.$$eval('.editor-drawer[data-mode="page"] button, .editor-drawer[data-mode="page"] [role="treeitem"]', (els) => els
         .filter((e) => !(e.getAttribute('aria-label') || e.textContent.trim() || e.getAttribute('title'))).map((e) => e.outerHTML.slice(0, 80)));
       if (named.length) fail(`controls on the Code tab without a name: ${named.join(' | ')}`);
+
+      // On the Code tab the file's facts are the end of the window's one status line, not a second bar under the text.
+      const facts = ((await page.textContent('.status-line .editor-status button').catch(() => '')) ?? '').trim();
+      if (!/^Line \d+, column \d+$/.test(facts)) fail(`on the Code tab the status line says "${facts}" for the cursor`);
+      if (await page.$('.editor-drawer[data-mode="page"] .editor-status')) fail('the Code tab draws a status bar of its own under the text');
+      // The files are a panel: put away, the editor takes the room; the editor's own button brings them back as they were.
+      const treeWide = await page.$eval('.code-tree', (t) => Math.round(t.getBoundingClientRect().width));
+      await page.click('.code-tree .panel-head button[aria-label="Close the project’s files"]');
+      await page.waitForSelector('.code-tree', { state: 'detached', timeout: 3000 }).catch(() => fail('closing the files panel did not put it away'));
+      const codeLeft = await page.$eval('.editor-drawer[data-mode="page"] .editor-head', (h) => Math.round(h.getBoundingClientRect().left));
+      if (codeLeft > 61) fail(`with the files put away the editor starts ${codeLeft}px in, not beside the rail`);
+      await page.click('.editor-actions button[aria-label="Show the files"]');
+      await page.waitForSelector('.code-tree [role="treeitem"]', { timeout: 5000 }).catch(() => fail('Show the files did not bring the files back'));
+      if ((await page.$eval('.code-tree', (t) => Math.round(t.getBoundingClientRect().width)).catch(() => 0)) !== treeWide) fail('the files came back at another width');
+      if ((await page.getAttribute(`.code-tree-row[data-path="web/modules/custom/northstar_checkout/northstar_checkout.routing.yml"]`, 'aria-selected')) !== 'true') fail('the files came back without the open file marked');
+      // How Code works: the editor's rules as a picture, from the toolbar.
+      await page.click('.editor-actions button:has-text("How this works")');
+      await page.waitForSelector('.dialog:has-text("How Code works")', { timeout: 3000 }).catch(() => fail('How this works did not open on the Code tab'));
+      if (!/2 MB/.test((await page.textContent('.dialog').catch(() => '')) ?? '')) fail('How Code works does not say how large a file it opens');
+      await shot('code-how');
+      await page.keyboard.press('Escape');
 
       // Leaving: the drawer was closed before the tab, and stays closed, its files kept. The cursor is left at
       // the end of the file, which the tab shows whole and the drawer, shorter, has to scroll to.

@@ -11,7 +11,9 @@ import { EditorView } from '@codemirror/view';
 import { bridge } from '../../lib/api';
 import { ago } from '../../lib/format';
 import { Icon } from '../../components/icons';
-import { Button, IconButton, useToast } from '../../components/ui';
+import { Button, IconButton, tipProps, useToast } from '../../components/ui';
+import { StatusSlot } from '../../components/StatusLine';
+import type { Shortcut } from '@shared/shortcuts';
 import { setPrefs, useEditorPrefs } from '../prefs';
 import { attachSurface, editorState, revealDone, useEditor, type EditorTab } from '../store';
 import { Breadcrumbs } from './Breadcrumbs';
@@ -117,7 +119,9 @@ export default function CodeSurface({ tab, rootLabel, layout = 'drawer' }: { tab
           <Button size="s" icon="refresh" onClick={() => controller.retry(session.tab.key)}>Try again</Button>
         </div>
       ) : null}
-      {ready && controller ? <StatusBar controller={controller} session={session} /> : null}
+      {ready && controller ? (layout === 'page'
+        ? <StatusSlot><StatusBar controller={controller} session={session} /></StatusSlot>
+        : <StatusBar controller={controller} session={session} />) : null}
     </div>
   );
 }
@@ -167,7 +171,7 @@ function Notice({ banner, controller, tabKey }: { banner: Banner; controller: Co
     case 'changed':
     case 'conflict':
       return (
-        <div className="editor-notice editor-notice-strong" role="alert">
+        <div className="editor-notice editor-notice-needs" role="alert">
           <Icon name="merge" size={14} />
           <span className="editor-notice-text">
             <strong>{banner.who} changed this file{banner.kind === 'conflict' ? ' before your save' : ' while you were editing it'}.</strong> Your changes are not saved yet.
@@ -196,7 +200,7 @@ function Notice({ banner, controller, tabKey }: { banner: Banner; controller: Co
       );
     case 'gone':
       return (
-        <div className="editor-notice editor-notice-strong" role="alert">
+        <div className="editor-notice editor-notice-gone" role="alert">
           <Icon name="alert" size={14} />
           <span className="editor-notice-text"><strong>This file is gone from disk</strong> (deleted, moved or renamed). Its text is still here to copy; saving cannot bring it back.</span>
           {close}
@@ -205,7 +209,13 @@ function Notice({ banner, controller, tabKey }: { banner: Banner; controller: Co
   }
 }
 
-/** Where the cursor is and how the file is written; wrap and Vim are switched here. */
+const GOTO_KEYS: Shortcut = { id: null, label: 'Go to a line', group: 'In the code editor', keys: ['Ctrl', 'G'] };
+const WRAP_KEYS: Shortcut = { id: null, label: 'Wrap long lines, or not', group: 'In the code editor', keys: ['Alt', 'Z'] };
+
+/**
+ * Where the cursor is and how the file is written; wrap and Vim are switched here. On the Code tab it is the
+ * end of the window's one status line (StatusSlot); in the drawer, a line under the text.
+ */
 function StatusBar({ controller, session }: { controller: Controller; session: DocSession }) {
   useSyncExternalStore(controller.subscribeCursor, controller.cursorSnapshot);
   const prefs = useEditorPrefs();
@@ -219,22 +229,22 @@ function StatusBar({ controller, session }: { controller: Controller; session: D
   const file = session.file;
   return (
     <footer className="editor-status" aria-label="About this file">
-      <button type="button" className="editor-status-item linkish" title="Go to a line (⌃G)" onClick={() => { gotoLine(controller.view); }}>
+      <button type="button" className="editor-status-item linkish" {...tipProps('Go to a line', GOTO_KEYS)} onClick={() => { gotoLine(controller.view); }}>
         Line {line.number}, column {main.head - line.from + 1}
       </button>
       {count > 1 ? <span className="editor-status-item">{count} cursors</span> : chosen ? <span className="editor-status-item">{chosen} selected</span> : null}
       <span className="editor-status-item editor-status-saving" aria-live="polite">{session.saving ? 'Saving…' : ''}</span>
       <span className="editor-status-end">
         <span className="editor-status-item">{session.language}</span>
-        <span className="editor-status-item" title="Indentation, read from the file">{unit === '\t' ? 'Tabs' : `${unit.length} spaces`}</span>
-        <span className="editor-status-item" title={file.mixedEol ? 'This file mixes line endings; it is saved with the commoner one' : 'Line endings, kept as the file has them'}>
+        <span className="editor-status-item" data-tip="Indentation, read from the file">{unit === '\t' ? 'Tabs' : `${unit.length} spaces`}</span>
+        <span className="editor-status-item" data-tip={file.mixedEol ? 'This file mixes line endings; it is saved with the commoner one' : 'Line endings, kept as the file has them'}>
           {file.eol === 'crlf' ? 'CRLF' : 'LF'}{file.mixedEol ? ' (mixed)' : ''}
         </span>
         <span className="editor-status-item">UTF-8{file.bom ? ' with BOM' : ''}</span>
-        <button type="button" className="editor-status-toggle" aria-pressed={prefs.wrap} title="Wrap long lines (⌥Z)" onClick={() => setPrefs({ wrap: !prefs.wrap })}>
+        <button type="button" className="editor-status-toggle" aria-pressed={prefs.wrap} {...tipProps('Wrap long lines', WRAP_KEYS)} onClick={() => setPrefs({ wrap: !prefs.wrap })}>
           Wrap
         </button>
-        <button type="button" className="editor-status-toggle" aria-pressed={prefs.vim} title="Vim keys" onClick={() => setPrefs({ vim: !prefs.vim })}>
+        <button type="button" className="editor-status-toggle" aria-pressed={prefs.vim} data-tip="Vim keys" onClick={() => setPrefs({ vim: !prefs.vim })}>
           Vim
         </button>
       </span>

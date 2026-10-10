@@ -18,7 +18,7 @@ export function EditButton({ target, label = 'Edit', tone = 'quiet', ...rest }: 
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>) {
   const name = target.path.split('/').pop() ?? target.path;
   return (
-    <Button size="s" tone={tone} icon="code" title={`Open ${target.path} in the code editor`} aria-label={label === 'Edit' ? `Edit ${name}` : undefined}
+    <Button size="s" tone={tone} icon="code" data-tip={`Open ${target.path} in the code editor`} aria-label={label === 'Edit' ? `Edit ${name}` : undefined}
       {...rest} onClick={() => openInEditor(target)}>
       {label}
     </Button>
