@@ -1145,6 +1145,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </MenuButton>
             </span>
           ) : null}
+          {/* Beside a session's terminal: the project's own live view, with every tool, Edits and Compare, on this page. */}
+          {compact ? (
+            <IconButton icon="live" label="Open in the live view" onClick={() => navigate({ name: 'project', projectKey: project.key, view: 'live' })} />
+          ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
           {!compact ? (
             <>
