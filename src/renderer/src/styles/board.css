@@ -950,3 +950,20 @@
   border-radius: var(--radius-s);
   background: var(--sunken);
 }
+
+/* ── New card (dialogs/NewCardDialog.tsx) ────────────────────────────────── */
+
+/* What kind of card, how urgent, and where it lands: one row of choices under the words. */
+.new-card-kinds {
+  gap: var(--space-2) var(--space-5);
+}
+
+.new-card-kinds > .field {
+  flex: none;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.new-card .draft-row {
+  margin-top: calc(-1 * var(--space-1));
+}
