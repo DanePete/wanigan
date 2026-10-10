@@ -18,9 +18,11 @@ import { ListView } from './ListView';
 import { SessionsView } from './SessionsView';
 import type { DialogState } from '../App';
 
-/** The views the bar shows as tabs, in order; the rest are under ··· (and in the palette, by G then their key). */
+/** The views the bar shows as tabs, in order; the rest are under ··· (and in the palette, by G then their key). List is
+ * the board's other mode (its toolbar switches them), so the Board tab is current on it too. */
 const TABBED: readonly View[] = ['board', 'sessions', 'changes', 'code'];
-const MORE: readonly View[] = ['history', 'decisions', 'activity', 'list'];
+const MORE: readonly View[] = ['history', 'decisions', 'activity'];
+const isCurrent = (tab: View, view: View): boolean => tab === view || (tab === 'board' && view === 'list');
 
 /**
  * Where the tabs scroll (a narrow view: shell.css), the tab shown stays in view: when it changes, and when the
@@ -92,14 +94,14 @@ export function ProjectView({ project, projects, view, setDialog }: { project: P
         <NavTabs label={`${project.name} views`} className="project-tabs" stripRef={tabs} tour="project-views"
           items={[
             ...TABBED.map((v) => ({
-              href: to(v), label: label(v), current: v === view, tip: tip(v),
+              href: to(v), label: label(v), current: isCurrent(v, view), tip: tip(v),
               ...(v === 'sessions' && project.liveSessions ? { count: project.liveSessions } : {}),
             })),
             // Always offered: while it is off, the tab says so and switches it on in place.
             { href: to(LIVE_VIEW.view), label: LIVE_VIEW.label, current: view === LIVE_VIEW.view, tip: 'The project’s local site, following the agents’ edits', tour: 'project-live' },
           ]}>
-          <MenuButton label={`More views: History, Decisions, Activity, List${inMore ? `. Showing ${label(view)}` : ''}`} items={moreMenu}
-            className={`project-more${inMore ? ' active' : ''}`} width={240} tip="History, Decisions, Activity, List">
+          <MenuButton label={`More views: History, Decisions, Activity${inMore ? `. Showing ${label(view)}` : ''}`} items={moreMenu}
+            className={`project-more${inMore ? ' active' : ''}`} width={240} tip="History, Decisions, Activity">
             {inMore ? <><span>{label(view)}</span><Icon name="down" size={12} /></> : <Icon name="more" size={16} />}
           </MenuButton>
         </NavTabs>
@@ -130,7 +132,7 @@ export function ProjectView({ project, projects, view, setDialog }: { project: P
       {/* The Code tab has no body of its own: the code editor (editor/EditorDrawer.tsx) fills this place, beside the project's files. */}
       <div className="view-body" hidden={view === 'code'}>
         {view === 'board' ? <Board key={project.id} project={project} setDialog={setDialog} /> : null}
-        {view === 'list' ? <ListView project={project} /> : null}
+        {view === 'list' ? <ListView project={project} setDialog={setDialog} /> : null}
         {view === 'sessions' ? <SessionsView project={project} setDialog={setDialog} /> : null}
         {view === 'history' ? <HistoryView key={project.id} project={project} /> : null}
         {view === 'changes' ? <ChangesView project={project} /> : null}

@@ -8,9 +8,9 @@ import { LENSES, type LensId, type LensView, type LivePaint } from '@shared/live
 import { liveBridge, tokenColor } from '../../lib/live';
 import { plural } from '../../lib/format';
 import { useTheme } from '../../lib/theme';
-import { Icon } from '../icons';
 import { Select } from '../Select';
-import { IconButton } from '../ui';
+import { IconButton, tipProps } from '../ui';
+import { LIVE_TIP } from './keys';
 
 /** The bar's lens list. ⇧L opens it (`openRef`), from the live view or its page. */
 export function LensPicker({ lens, onChange, disabled, openRef }: { lens: LensId; onChange: (lens: LensId) => void; disabled?: boolean; openRef?: MutableRefObject<(() => void) | null> }) {
@@ -24,11 +24,9 @@ export function LensPicker({ lens, onChange, disabled, openRef }: { lens: LensId
     };
   }
   return (
-    <span className="live-lens-pick" title="Colour the page by one question at a time (⇧L)" ref={box}>
-      <Icon name="eye" size={14} />
+    <span className="live-lens-pick" ref={box} {...tipProps('Colour the page by one question at a time', LIVE_TIP.lens)}>
       <Select<LensId> label="Lens" size="s" value={lens} onChange={onChange} disabled={disabled}
         options={LENSES.map((l) => ({ value: l.id, label: l.label, detail: l.hint }))} />
-      <kbd className="live-key" aria-hidden="true">⇧L</kbd>
     </span>
   );
 }
@@ -56,7 +54,7 @@ export function LensStrip({ view, only, onOnly, onHover, onClose, note }: {
           <ul className="live-lens-keys" aria-label={`What the ${meta.label} lens shows`}>
             {view.classes.map((c) => (
               <li key={c.id}>
-                <button type="button" className="live-lens-key" aria-pressed={only === c.id} title={`${c.hint}. Choose to show only these.`}
+                <button type="button" className="live-lens-key" aria-pressed={only === c.id} data-tip={`${c.hint}. Choose to show only these.`}
                   disabled={!c.count && only !== c.id}
                   onClick={() => onOnly(only === c.id ? null : c.id)}
                   onMouseEnter={() => onHover(c.indexes)} onMouseLeave={() => onHover(null)}
@@ -73,8 +71,7 @@ export function LensStrip({ view, only, onOnly, onHover, onClose, note }: {
             : view.unknown ? <span className="faint small">{plural(view.unknown, 'part')} not placed</span> : null}
         </>
       )}
-      <span className="live-lens-esc faint small" aria-hidden="true">Esc for Structure</span>
-      <IconButton icon="close" label="Back to Structure (Escape)" onClick={onClose} />
+      <IconButton icon="close" size="s" label="Back to Structure" keys={{ id: null, label: 'Back to Structure', group: 'In the live view', keys: ['Esc'] }} onClick={onClose} />
     </div>
   );
 }

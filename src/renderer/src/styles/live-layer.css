@@ -51,8 +51,7 @@
 
 .live-tray-note {
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--water-line);
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-l);
   background: var(--water-soft);
 }
 
@@ -80,13 +79,12 @@
 /* One edit: what it is and its state, before → after, its reach, and what can be done to it. */
 .live-tray-edit {
   padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  background: var(--surface);
+  border-radius: var(--radius-l);
+  background: var(--sunken);
 }
 
 .live-tray-edit[data-state='orphaned'] {
-  border-style: dashed;
+  box-shadow: inset 0 0 0 var(--hairline) var(--red);
 }
 
 .live-tray-edit-head {
@@ -118,7 +116,7 @@
 }
 
 .live-tray-state.implemented {
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   color: var(--muted);
 }
 
@@ -151,12 +149,12 @@
 /* Fragile is a warning about how an edit is kept, not a failure: a neutral line. Red is for failed and orphaned. */
 .live-layer-fragile {
   padding-left: var(--space-2);
-  border-left: 2px solid var(--line-strong);
+  border-left: var(--focus-ring) solid var(--line-strong);
 }
 
 .live-tray-why {
   padding-left: var(--space-2);
-  border-left: 2px solid var(--red);
+  border-left: var(--focus-ring) solid var(--red);
 }
 
 .live-tray-why {
@@ -166,7 +164,7 @@
 /* A template save's reach, said before it is saved: every page that uses the template, not only this element. */
 .live-tray-template-reach {
   padding-left: var(--space-2);
-  border-left: 2px solid var(--water-line);
+  border-left: var(--focus-ring) solid var(--water-line);
 }
 
 /* What the last verification said: green when it passed, red when it did not. */
@@ -177,11 +175,11 @@
 }
 
 .live-tray-verdict.ok {
-  border-left: 2px solid var(--green);
+  border-left: var(--focus-ring) solid var(--green);
 }
 
 .live-tray-verdict.failed {
-  border-left: 2px solid var(--red);
+  border-left: var(--focus-ring) solid var(--red);
 }
 
 .live-tray-verdict-head {
@@ -205,7 +203,7 @@
 /* What the verification says whatever it decided, and what it left out: statements, not differences. */
 .live-tray-said {
   padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .live-tray-masked {
@@ -237,7 +235,7 @@
   max-height: calc(var(--space-12) * 3);
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-s);
   background: var(--surface);
   cursor: zoom-in;
@@ -252,7 +250,7 @@
   display: grid;
   place-items: center;
   min-height: var(--space-12);
-  border: 1px dashed var(--line-strong);
+  border: var(--hairline) dashed var(--line-strong);
   border-radius: var(--radius-s);
 }
 
@@ -264,7 +262,7 @@
 
 .live-tray-large img {
   max-width: 100%;
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
 }
 
 /* The Inspector's edits in the layer: the words retyped, the style's reach. */
@@ -292,7 +290,7 @@
   align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-2);
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-m);
   cursor: pointer;
 }
@@ -319,18 +317,3 @@
   font-weight: 600;
 }
 
-/* The bar's Edits: how many drafts wait, beside its name. */
-.live-layer-count {
-  margin-left: var(--space-1);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-round);
-  background: var(--water-soft);
-  color: var(--water-text);
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.live-bar .btn-primary .live-layer-count {
-  background: var(--water-ink);
-  color: var(--water-fill);
-}

@@ -1,105 +1,161 @@
-.drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 40;
-  width: var(--drawer-w);
-  overflow-y: auto;
-  border-left: 1px solid var(--line-strong);
-  background: var(--surface);
-  box-shadow: var(--elev-sheet);
-  animation: slide var(--dur-slow) var(--ease);
-  outline: none;
+/*
+  The card drawer (Studio): the right panel (components/Panel.tsx) beside the
+  work. While a card is open the frame gives it a third column, so the view
+  narrows beside it rather than being covered, and the drawer publishes its
+  width as --drawer-w for what sits beside it. Its title, stage and actions sit
+  above underline tabs that hold to the top as it scrolls. Tokens only.
+*/
+
+.app.with-drawer {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
 }
 
-@keyframes slide {
+.drawer {
+  grid-row: 1;
+  grid-column: 3;
+  min-height: 0;
+  height: 100%;
+  outline: none;
+  animation: drawer-in var(--dur) var(--ease);
+}
+
+/* The view beside it keeps room to work, however wide the drawer was left. */
+.drawer.panel {
+  max-width: max(var(--panel-right-w), calc(100vw - var(--rail-w) - var(--view-min-beside)));
+}
+
+/* The frame drawn when the drawer itself fails (App's ViewBoundary): the same place, a quiet surface. */
+.drawer:not(.panel) {
+  width: var(--panel-right-w);
+  overflow: auto;
+  border-left: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+@keyframes drawer-in {
   from {
-    transform: translateX(24px);
     opacity: 0;
+    transform: translateX(var(--rise));
   }
 }
 
-.drawer-pad {
-  padding: var(--space-5) var(--space-6) var(--space-10);
-}
-
-.drawer-head {
-  display: flex;
+.drawer-key {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-2);
+  min-width: 0;
 }
 
-.drawer-key {
-  font-size: var(--text-sm);
+.drawer-key .mono {
   color: var(--muted);
+  font-size: var(--text-base);
+  font-weight: 500;
 }
 
-.drawer-when {
-  margin-left: var(--space-2);
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The tabs hold to the top of the panel's own scroll, so its body starts flush under the head. */
+.drawer > .panel-body {
+  padding-top: 0;
+  padding-bottom: var(--space-10);
 }
 
-.drawer-head .btn-icon {
-  margin-left: auto;
+.drawer-loading {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
 }
 
+.drawer-loading > span:not(.visually-hidden) {
+  display: block;
+  height: var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+.drawer-loading > span:nth-child(2) {
+  width: 80%;
+  height: var(--space-6);
+}
+
+.drawer-loading > span:nth-child(4) {
+  width: 60%;
+}
+
+/* ── what the card is, and what to do next ───────────────────────────────── */
+
+.drawer-card {
+  display: grid;
+  min-width: 0;
+}
+
+/* Text that reads as text until it is clicked, then edits in place. */
 .editable {
   display: block;
-  width: 100%;
-  padding: var(--space-1) var(--space-2) !important;
+  width: calc(100% + 2 * var(--space-2));
+  min-height: 0;
   margin: 0 calc(-1 * var(--space-2));
-  width: calc(100% + 2 * var(--space-2)) !important;
-  border: 1px solid transparent !important;
-  background: none !important;
-  resize: none;
+  padding: var(--space-1) var(--space-2);
   overflow: hidden;
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-m);
+  background: none;
+  resize: none;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
 .editable:hover {
-  border-color: var(--line) !important;
+  border-color: var(--line-strong);
 }
 
 .editable:focus {
-  border-color: var(--water) !important;
-  background: var(--sunken) !important;
+  border-color: var(--water);
+  background: var(--bg-field);
+  box-shadow: 0 0 0 3px var(--water-soft);
 }
 
 .drawer-title {
-  font: 600 var(--text-2xl) / var(--leading-tight) var(--font-display) !important;
-  margin-bottom: var(--space-4) !important;
+  margin-top: var(--space-1);
+  font: 600 var(--text-xl) / var(--leading-tight) var(--font-ui);
+}
+
+.drawer-when {
+  margin: var(--space-1) 0 var(--space-4);
+  color: var(--faint);
+  font-size: var(--text-sm);
 }
 
 .drawer-body {
-  line-height: var(--leading-loose) !important;
-  min-height: 3em;
+  min-height: calc(var(--lh-md) * 2);
+  line-height: var(--leading-loose);
 }
 
 /* The five stages, as a track. */
 .stages {
-  list-style: none;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-1);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-3);
   padding: 0;
+  list-style: none;
 }
 
 .stages li {
   display: grid;
   gap: var(--space-1);
+  min-width: 0;
   color: var(--faint);
   font-size: var(--text-xs);
 }
 
+.stage-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stage-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line);
+  height: var(--space-1);
+  border-radius: var(--radius-round);
+  background: var(--sunken);
 }
 
 .stages li.past .stage-bar {
@@ -124,79 +180,135 @@
 }
 
 .note-form {
+  display: grid;
   flex: 1;
+  gap: var(--space-2);
+}
+
+.note-form .field {
+  margin: 0;
+}
+
+.drawer-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 calc(-1 * var(--space-4));
+  padding: var(--space-2) var(--space-4) 0;
+  border-bottom: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.drawer-panel {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+  padding-top: var(--space-4);
+}
+
+.drawer-panel > .section + .section {
+  margin-top: 0;
+}
+
+.drawer-panel > .empty {
+  margin: var(--space-6) auto;
+  padding: 0 var(--space-2);
+}
+
+/* What a section from elsewhere draws (Jev's read, the live view's looks and shots): read like a Section. */
+.drawer-section {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.drawer-section > h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.drawer-section > p,
+.drawer-section > .row-gap {
+  margin: 0;
+}
+
+.drawer-notes {
   display: grid;
   gap: var(--space-2);
 }
 
-.note-form label {
-  font-weight: 600;
+.drawer-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
-.flag-line {
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-sm);
+.drawer-note-red {
+  color: var(--red);
+}
+
+.drawer-problem {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.drawer-problem p {
+  margin: 0;
 }
 
 .drawer-fields {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-5);
-  padding: var(--space-4) 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  gap: var(--space-4) var(--space-6);
 }
 
-.drawer-field {
-  display: grid;
-  gap: var(--space-1);
+.drawer-fields .section + .section {
+  margin-top: 0;
 }
 
-.drawer-label {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.drawer-section {
-  margin-top: var(--space-6);
-}
-
-.drawer-section > h3,
-.drawer-section > summary h3 {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-2);
-  font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
-}
-
-.drawer-history summary {
+.claim-facts {
   display: flex;
-  gap: var(--space-2);
   align-items: baseline;
-  cursor: pointer;
-  list-style: none;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
-.drawer-history summary::-webkit-details-marker {
-  display: none;
+.claim-facts > .state,
+.claim-facts > .state-dot {
+  flex: none;
+  transform: translateY(var(--hairline));
 }
+
+.claim-facts strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ── criteria ────────────────────────────────────────────────────────────── */
 
 .criteria {
-  list-style: none;
-  margin: 0 0 var(--space-2);
-  padding: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .criteria li {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-1) var(--space-1) 0;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: var(--gap-hair) var(--gap-hair) var(--gap-hair) var(--space-2);
   border-radius: var(--radius-s);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .criteria li:hover {
@@ -204,16 +316,17 @@
 }
 
 .criteria label {
-  flex: 1;
   display: flex;
-  gap: var(--space-2);
+  flex: 1;
   align-items: flex-start;
-  padding-top: 3px;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
   cursor: pointer;
 }
 
 .criteria input {
-  margin-top: 2px;
+  flex: none;
+  margin-top: var(--gap-hair);
 }
 
 .criteria li.done label span {
@@ -222,9 +335,8 @@
   text-decoration-color: var(--faint);
 }
 
+/* The remove button waits for the pointer or the keys. */
 .criteria .btn-icon {
-  width: 24px;
-  height: 24px;
   opacity: 0;
 }
 
@@ -234,23 +346,25 @@
 }
 
 .inline-add input {
-  background: none !important;
-  border-style: dashed !important;
+  border-style: dashed;
+  background: none;
 }
 
+/* ── evidence (the live view's looks use the same list) ──────────────────── */
+
 .evidence {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: grid;
   gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .evidence li {
   display: grid;
   grid-template-columns: auto 1fr;
-  column-gap: var(--space-2);
   align-items: baseline;
+  column-gap: var(--space-2);
   overflow-wrap: anywhere;
 }
 
@@ -261,38 +375,33 @@
 .evidence li > svg {
   grid-row: 1;
   align-self: center;
+  flex: none;
+  color: var(--muted);
 }
 
-.evidence li > svg {
-  color: var(--muted);
-  flex: none;
+.evidence .linkish {
+  justify-self: start;
+  text-align: left;
 }
 
 .evidence-by {
   font-size: var(--text-xs);
 }
 
+/* ── the conversation ────────────────────────────────────────────────────── */
+
 .comments {
-  list-style: none;
-  margin: 0 0 var(--space-3);
-  padding: 0;
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.comment {
-  padding: var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.comment.mine {
-  background: var(--water-soft);
-}
-
+/* A question waiting on you: needs you, said by amber's stroke beside it. */
 .comment.question {
-  box-shadow: inset 3px 0 0 var(--amber);
-  background: var(--amber-soft);
+  padding-left: var(--space-3);
+  box-shadow: inset var(--track-pad) 0 0 var(--amber);
 }
 
 .comment-head {
@@ -304,32 +413,33 @@
 
 .comment p {
   margin: var(--space-1) 0 0;
-  white-space: pre-wrap;
   line-height: var(--leading-loose);
+  white-space: pre-wrap;
 }
 
 .comment-new {
   display: grid;
-  gap: var(--space-2);
   justify-items: end;
+  gap: var(--space-2);
 }
 
 .history {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
   display: grid;
   gap: var(--space-1);
+  margin: var(--space-1) 0 var(--space-2);
+  padding: 0;
+  color: var(--muted);
   font-size: var(--text-sm);
+  list-style: none;
 }
 
-/* ── AI review ───────────────────────────────────────────────────────────── */
+/* ── review: the AI's verdict and what it cites ──────────────────────────── */
 
 .ai-running {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: 0 0 var(--space-2);
+  margin: 0;
   color: var(--muted);
 }
 
@@ -337,62 +447,73 @@
   background: var(--water);
 }
 
-.ai-verdict {
-  display: flex;
-  align-items: baseline;
+.ai-result {
+  display: grid;
   gap: var(--space-3);
-  margin: 0 0 var(--space-2);
 }
 
-.verdict {
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-round);
+.ai-result > p {
+  margin: 0;
+}
+
+.ai-verdict {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* "Your call": the review needs you, so its words are amber's. */
+.ai-verdict-unsure {
+  color: var(--amber);
   font-size: var(--text-sm);
   font-weight: 600;
 }
 
-.verdict-green {
-  background: var(--green-soft);
-  color: var(--green);
-}
-
-.verdict-red {
-  background: var(--red-soft);
-  color: var(--red);
-}
-
-.verdict-amber {
-  background: var(--amber-soft);
-  color: var(--amber);
-}
-
 .ai-summary {
-  margin: 0 0 var(--space-2);
   line-height: var(--leading-loose);
 }
 
 .ai-notes {
-  margin: 0 0 var(--space-2);
-  color: var(--amber);
+  color: var(--muted);
+}
+
+.ai-check {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ai-check-title {
+  margin: 0;
+  color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+}
+
+.ai-check ol {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
 }
 
 .ai-criteria {
-  list-style: none;
-  margin: 0 0 var(--space-3);
-  padding: 0;
   display: grid;
   gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .ai-c {
   display: grid;
-  grid-template-columns: 20px 1fr;
+  grid-template-columns: var(--space-5) minmax(0, 1fr);
   gap: var(--space-2);
 }
 
 .ai-mark {
-  font-weight: 700;
-  text-align: center;
+  display: grid;
+  place-items: center;
+  height: var(--lh-md);
 }
 
 .ai-c-met .ai-mark {
@@ -425,12 +546,16 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
-  margin-top: var(--space-1) !important;
+  margin-top: var(--space-1);
   font-size: var(--text-xs);
 }
 
+.ai-c .ai-quote {
+  margin-top: var(--space-1);
+}
+
 .ai-quote q {
-  padding: 1px var(--space-1);
+  padding: var(--gap-hair) var(--space-1);
   border-radius: var(--radius-s);
   background: var(--sunken);
   overflow-wrap: anywhere;
@@ -450,66 +575,80 @@
   gap: var(--space-2);
 }
 
-.ai-account select {
-  width: auto;
-  padding: var(--space-1) var(--space-2);
-}
-
-.evidence .linkish {
-  justify-self: start;
-  text-align: left;
-}
-
-.ai-check {
-  margin: 0 0 var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-m);
-  background: var(--sunken);
-}
-
-.ai-check-title {
-  margin: 0 0 var(--space-1);
-  font-weight: 600;
-  font-size: var(--text-sm);
-}
-
-.ai-check ol {
+.ai-ask > p {
   margin: 0;
-  padding-left: var(--space-5);
-  display: grid;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
 }
 
-.claim-facts {
+/* ── the card's branch, merging it, its pull request ─────────────────────── */
+
+.drawer .branch-line {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  margin: 0 0 var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--muted);
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.claim-facts > .state,
-.claim-facts > .state-dot {
-  flex: none;
-  transform: translateY(1px);
+.drawer .changes-pointer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
 }
 
-.claim-facts strong {
-  color: var(--fg);
-  font-weight: 600;
+.drawer .branch-actions {
+  flex-wrap: wrap;
+  margin: 0;
 }
 
-button.drawer-key {
-  padding: 0;
+.drawer .branch-held,
+.drawer .branch-path {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* What will be pushed where, before anything is: words on the panel, not a box inside it. */
+.drawer .pr-confirm {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
   border: 0;
+  border-radius: 0;
   background: none;
-  color: inherit;
-  font: inherit;
-  cursor: copy;
+  box-shadow: inset var(--hairline) 0 0 var(--line-strong);
 }
 
-button.drawer-key:hover {
-  color: var(--water-text);
+.drawer .pr-confirm p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.drawer .branch-pr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.drawer .branch-pr a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A merge that stopped in conflicts waits on you: amber's stroke beside the words and the three ways on, not a tinted box. */
+.drawer .merge-conflict {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-3);
+  border-radius: 0;
+  background: none;
+  box-shadow: inset var(--track-pad) 0 0 var(--amber);
+}
+
+.drawer .merge-conflict p {
+  margin: 0;
 }

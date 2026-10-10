@@ -1,8 +1,149 @@
+/*
+  The board and its List (Studio): one toolbar, the lanes on the canvas with
+  each card a panel on them, and the List as a dense table on the panel. The
+  saved views' panel and the "since you looked" line are here too. Tokens only.
+*/
+
 .board-wrap {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+
+/* ── the toolbar (components/Toolbar.tsx), shared by Board and List ─────── */
+
+.board-toolbar {
+  container: board-toolbar / inline-size;
+}
+
+.board-modes {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The filters, together (a guided tour points at them as one). */
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.board-how {
+  display: inline-flex;
+}
+
+.board-search {
+  flex: 0 1 calc(var(--column-w) - var(--space-8));
+  width: auto;
+  min-width: calc(var(--column-w) - var(--space-12));
+  height: var(--control-s);
+  border-radius: var(--radius-s);
+}
+
+.board-types .chip {
+  padding: 0 var(--space-2);
+}
+
+.board-types .chip .type {
+  gap: var(--space-2);
+  font-size: inherit;
+}
+
+.board-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.board-count {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Priority and agent: one menu, water-tinted while it narrows the cards (a choice made, like a saved view). */
+.board-filter {
+  gap: var(--space-1);
+  max-width: calc(var(--column-w) + var(--space-6));
+}
+
+.board-filter-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-filter.on {
+  border-color: var(--water-line);
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.board-filter > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+/* Where the bar is short of room, the card types keep their marks and give up their words (each keeps its name),
+   then New card keeps its plus (and its name, and its key in its tooltip). */
+@container board-toolbar (max-width: 1160px) {
+  .board-how .btn > span,
+  .board-new > span {
+    position: absolute;
+    width: var(--hairline);
+    height: var(--hairline);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .board-how .btn,
+  .board-new {
+    width: var(--control-s);
+    padding: 0;
+  }
+
+}
+
+@container board-toolbar (max-width: 1080px) {
+  .board-search {
+    flex-basis: calc(var(--column-w) - var(--space-12));
+  }
+}
+
+@container board-toolbar (max-width: 1320px) {
+  .board-types .chip .type > span:last-child {
+    position: absolute;
+    width: var(--hairline);
+    height: var(--hairline);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .board-types .chip {
+    width: var(--control-s);
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+/* ── the canvas and its lanes ────────────────────────────────────────────── */
+
+.board-canvas {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+.board-canvas > .empty {
+  margin: auto;
 }
 
 .board {
@@ -13,7 +154,7 @@
   grid-auto-flow: column;
   grid-auto-columns: minmax(var(--column-w), 1fr);
   gap: var(--space-3);
-  padding: 0 var(--space-6) var(--space-6);
+  padding: var(--space-3) var(--space-4) 0;
   overflow-x: auto;
 }
 
@@ -22,73 +163,99 @@
   flex-direction: column;
   min-height: 0;
   border-radius: var(--radius-l);
-  background: var(--sunken);
-  border: 1px solid transparent;
-  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), box-shadow var(--dur-slow) var(--ease);
 }
 
 .column.drop-target {
-  border-color: var(--water-line);
   background: var(--water-soft);
+  box-shadow: inset 0 0 0 var(--hairline) var(--water-line);
 }
 
+/* Dropped on Working, a card is offered a session rather than moved: the lane says so with a dashed edge. */
 .column-working.drop-target {
-  border-style: dashed;
+  box-shadow: none;
+  outline: var(--hairline) dashed var(--water);
+  outline-offset: calc(-1 * var(--hairline));
+}
+
+/* Shown from "How this works": a ring that stays a moment, then goes. */
+.column.flash {
+  box-shadow: 0 0 0 var(--focus-ring) var(--water);
 }
 
 .column-head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: var(--space-2);
-  height: 44px;
-  flex: none;
-  padding: 0 var(--space-3) 0 var(--space-4);
+  height: var(--space-10);
+  padding: 0 var(--space-1) 0 var(--space-2);
 }
 
 .column-head h2 {
   margin: 0;
-  font: 600 var(--text-md) / 1 var(--font-ui);
+  font: 600 var(--text-base) / var(--lh-md) var(--font-ui);
 }
 
-.column-count {
-  font-size: var(--text-sm);
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.column-count.hot {
-  color: var(--amber);
-  font-weight: 600;
+.column-badge {
+  display: inline-flex;
+  min-width: 0;
 }
 
 .column-add {
   margin-left: auto;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: var(--radius-s);
-  background: none;
   color: var(--faint);
-  cursor: pointer;
 }
 
-.column-add:hover {
-  background: var(--hover);
-  color: var(--fg);
+/* One glyph per column; together they are the legend (the List's status column uses them too). */
+.col-glyph {
+  flex: none;
+  width: calc(var(--space-3) - var(--hairline));
+  height: calc(var(--space-3) - var(--hairline));
+  border: var(--ring) solid var(--faint);
+  border-radius: var(--radius-round);
 }
 
+.col-glyph-inbox {
+  border-style: dashed;
+}
+
+.col-glyph-working {
+  border-color: var(--water);
+  border-right-color: transparent;
+}
+
+.col-glyph-review {
+  border-color: var(--water);
+  background: conic-gradient(var(--water) 0 75%, transparent 75% 100%);
+}
+
+.col-glyph-done {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.col-glyph-archived {
+  border-color: var(--line-strong);
+  background: var(--line-strong);
+}
+
+/* The cards scroll in their lane; a little room around them keeps a focus ring and the open card's ring whole. */
 .column-cards {
-  list-style: none;
-  margin: 0;
-  padding: 0 var(--space-2) var(--space-3);
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: var(--space-2);
-  overflow-y: auto;
   min-height: var(--space-12);
-  flex: 1;
+  margin: 0;
+  padding: var(--space-1) var(--space-1) var(--space-4);
+  overflow-y: auto;
+  list-style: none;
+}
+
+/* The last lane's last card can scroll clear of Talk to Wanigan's button. */
+.column:last-child .column-cards {
+  padding-bottom: var(--fab);
 }
 
 .card-slot {
@@ -97,85 +264,88 @@
 }
 
 .drop-line {
-  height: 2px;
-  margin: -1px var(--space-1);
-  border-radius: 2px;
+  height: var(--focus-ring);
+  margin: 0 var(--space-1);
+  border-radius: var(--radius-round);
   background: var(--water);
 }
 
+.column-empty {
+  padding: var(--space-4) var(--space-2);
+  color: var(--faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .column-more {
-  margin: 0 var(--space-3) var(--space-3);
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-m);
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
+  flex: none;
+  align-self: center;
+  margin: 0 0 var(--space-3);
 }
 
-.column-more:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-/* ── card ─────────────────────────────────────────────────────────────────── */
+/* ── a card: a panel on the canvas, never a box in a box ───────────────── */
 
 .card {
   position: relative;
   display: grid;
   gap: var(--space-2);
   padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-l);
   background: var(--surface);
   box-shadow: var(--elev-raise);
   cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+  transition: box-shadow var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 
 .card:hover {
-  border-color: var(--line-strong);
-  background: var(--raised);
+  box-shadow: var(--elev-raise), 0 0 0 var(--hairline) var(--line-strong);
 }
 
+/* The card the drawer shows: the selection. */
 .card.open {
-  border-color: var(--water);
-  box-shadow: 0 0 0 1px var(--water);
+  box-shadow: 0 0 0 var(--focus-ring) var(--water);
 }
 
 .card.dragging {
-  opacity: 0.35;
+  opacity: 0.4;
 }
 
+/* An agent waiting on a permission: needs you. */
 .card.asking {
-  border-color: var(--amber-line);
-  box-shadow: inset 3px 0 0 var(--amber);
+  box-shadow: var(--elev-raise), inset var(--track-pad) 0 0 var(--amber);
+}
+
+.card.asking.open {
+  box-shadow: 0 0 0 var(--focus-ring) var(--water), inset var(--track-pad) 0 0 var(--amber);
 }
 
 .card-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 16px;
+  min-height: var(--lh-sm);
 }
 
 .card-key {
-  font-size: var(--text-xs);
   color: var(--faint);
+  font-size: var(--text-xs);
 }
 
-.card-head .state {
+.card-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
 .card-title {
-  margin: 0;
-  font-weight: 500;
-  line-height: 1.35;
   display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-weight: 500;
+  line-height: var(--leading);
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .column-done .card-title {
@@ -186,37 +356,125 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--lh-sm);
 }
 
 .meta {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: var(--text-xs);
+  gap: var(--gap-hair);
   color: var(--faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .meta-done {
   color: var(--green);
 }
 
-.board-keys {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-right: var(--space-2);
+/* Sent back is waiting on an agent, not on you: said, not coloured. */
+.card-sent-back {
+  color: var(--muted);
 }
 
-.board-keys kbd {
-  min-width: 16px;
+.card-age {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
+
+.card-age.stuck {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* Who is on a Working card: a quiet well inside the card, one click to its terminal. */
+.claim-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--fg);
+  font-size: var(--text-xs);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.claim-line:hover {
+  background: var(--hover);
+  text-decoration: none;
+}
+
+.claim-line .state {
+  margin: 0;
+}
+
+.claim-who {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.claim-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claim-urgent {
+  flex: 1;
+  color: var(--amber);
+}
+
+.claim-line.stopped .claim-what {
+  color: var(--faint);
+}
+
+.claim-line > svg {
+  flex: none;
+  color: var(--faint);
+}
+
+/* While the board is read: the shape of cards, not a jump when they arrive. */
+.card-skeleton {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.card-skeleton span {
+  display: block;
+  height: var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+.card-skeleton span:first-child {
+  width: 40%;
+}
+
+.card-skeleton span:last-child {
+  width: 85%;
+  height: var(--space-3);
+}
+
+/* ── since you looked: one line on the canvas, opening to the cards behind it ── */
 
 .since {
-  margin: 0 var(--space-6) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
+  flex: none;
+  margin: var(--space-3) var(--space-4) 0;
+  border-radius: var(--radius-l);
   background: var(--surface);
+  box-shadow: var(--elev-raise);
   font-size: var(--text-sm);
 }
 
@@ -234,10 +492,10 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  min-height: 32px;
+  min-height: var(--control-m);
   padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
   border: 0;
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-l);
   background: none;
   color: var(--fg);
   text-align: left;
@@ -278,20 +536,15 @@
   color: var(--faint);
 }
 
-.since .btn-icon {
-  width: 24px;
-  height: 24px;
-}
-
 .since-detail {
   display: grid;
   gap: var(--space-1);
   margin: 0;
   /* Under the words of the line, past its chevron. */
-  padding: var(--space-2) var(--space-4) var(--space-3) calc(var(--space-3) + 14px + var(--space-2));
-  border-top: 1px solid var(--line);
-  list-style: none;
+  padding: var(--space-2) var(--space-4) var(--space-3) var(--space-8);
+  border-top: var(--hairline) solid var(--line);
   color: var(--muted);
+  list-style: none;
 }
 
 .since-detail li {
@@ -307,205 +560,7 @@
   gap: var(--space-1) var(--space-2);
 }
 
-/* ── toolbar additions ───────────────────────────────────────────────── */
-
-.select-field select {
-  width: auto;
-  height: 30px;
-  padding: 0 var(--space-2);
-  font-size: var(--text-sm);
-  background-color: var(--surface);
-}
-
-/* Narrower before the toolbar wraps, full width when there is room for it. */
-.board-wrap .search-field {
-  flex: 1 1 150px;
-  width: auto;
-  max-width: 200px;
-}
-
-.board-count {
-  white-space: nowrap;
-}
-
-.how-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 28px;
-  padding: 0 var(--space-3) 0 var(--space-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-m);
-  background: var(--surface);
-  color: var(--fg);
-  font: 500 var(--text-sm) / 1 var(--font-ui);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.how-btn:hover {
-  background: var(--raised);
-  border-color: var(--water-line);
-}
-
-.how-q {
-  display: inline-grid;
-  place-items: center;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: var(--water-fill);
-  color: var(--water-ink);
-  font: 700 var(--text-xs) / 1 var(--font-ui);
-}
-
-/* ── column headers ──────────────────────────────────────────────────── */
-
-/* One glyph per column; together they are the legend. */
-.col-glyph {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  flex: none;
-  border: 1.5px solid var(--faint);
-}
-
-.col-glyph-inbox {
-  border-style: dashed;
-}
-
-.col-glyph-working {
-  border-color: var(--water);
-  border-right-color: transparent;
-}
-
-.col-glyph-review {
-  border-color: var(--water);
-  background: conic-gradient(var(--water) 0 75%, transparent 75% 100%);
-}
-
-.col-glyph-done {
-  border-color: var(--green);
-  background: var(--green);
-}
-
-.column-badge {
-  padding: 1px var(--space-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-s);
-  font-size: var(--text-xs);
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.column-empty {
-  padding: var(--space-4) var(--space-2);
-  text-align: center;
-  font-size: var(--text-sm);
-  color: var(--faint);
-}
-
-.column.flash {
-  animation: column-flash 1.8s var(--ease);
-}
-
-@keyframes column-flash {
-  0%,
-  70% {
-    box-shadow: 0 0 0 2px var(--water);
-  }
-
-  100% {
-    box-shadow: 0 0 0 2px transparent;
-  }
-}
-
-/* ── card additions ──────────────────────────────────────────────────── */
-
-.claim-line {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-s);
-  background: var(--sunken);
-  color: var(--fg);
-  font-size: var(--text-xs);
-  text-decoration: none;
-}
-
-.claim-line:hover {
-  border-color: var(--water-line);
-  text-decoration: none;
-}
-
-.claim-line .state {
-  margin: 0;
-}
-
-.claim-who {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.claim-what {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-}
-
-.claim-urgent {
-  flex: 1;
-  color: var(--amber);
-}
-
-.claim-line.stopped .claim-what {
-  color: var(--faint);
-}
-
-.claim-line > svg {
-  flex: none;
-  color: var(--faint);
-}
-
-.card-age {
-  margin-left: auto;
-  font-size: var(--text-xs);
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.card-age.stuck {
-  color: var(--red);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .column.flash {
-    animation: none;
-    box-shadow: 0 0 0 2px var(--water);
-  }
-}
-
-/* Dark lanes read as outlined lanes, with the cards lifted off them. */
-:root:not([data-theme='light']) .column {
-  background: transparent;
-  border-color: var(--line);
-}
-
-:root:not([data-theme='light']) .card {
-  background: var(--raised);
-}
-
-:root:not([data-theme='light']) .card:hover {
-  background: var(--hover);
-}
-
-/* ── saved views ─────────────────────────────────────────────────────── */
+/* ── saved views: the toolbar's control and its panel (a popover) ───────── */
 
 .views-bar {
   display: flex;
@@ -515,9 +570,10 @@
 }
 
 .views-trigger {
-  max-width: 240px;
+  max-width: calc(var(--column-w) + var(--space-6));
 }
 
+/* A saved view is what the board shows: the selection. */
 .views-trigger.on {
   border-color: var(--water-line);
   background: var(--water-soft);
@@ -536,28 +592,18 @@
 
 .views-changed {
   flex: none;
-  font-size: var(--text-xs);
   color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 .views-changed::before {
   content: '· ';
 }
 
-.views-panel {
-  position: fixed;
-  z-index: 70;
-  display: flex;
-  flex-direction: column;
-  width: 380px;
-  max-width: calc(100vw - 2 * var(--space-2));
-  padding: var(--space-2);
+.views-body {
+  min-height: 0;
   overflow-y: auto;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-l);
-  background: var(--raised);
-  box-shadow: var(--elev-float);
-  animation: fade var(--dur-fast) var(--ease);
+  padding: var(--space-2);
 }
 
 .views-head {
@@ -570,22 +616,18 @@
 
 .views-head h2 {
   margin: 0;
-  font: 600 var(--text-sm) / var(--lh-sm) var(--font-ui);
+  font: 600 var(--text-title) / var(--leading-tight) var(--font-ui);
 }
 
 .views-keys {
-  font-size: var(--text-xs);
   color: var(--faint);
+  font-size: var(--text-xs);
   white-space: nowrap;
-}
-
-.views-keys kbd {
-  min-width: 16px;
 }
 
 .views-list {
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -594,10 +636,11 @@
 .views-row {
   display: flex;
   align-items: center;
-  gap: 2px;
-  min-height: 48px;
+  gap: var(--gap-hair);
+  min-height: var(--space-12);
   padding-right: var(--space-1);
   border-radius: var(--radius-m);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .views-row:hover,
@@ -626,13 +669,12 @@
 }
 
 .views-apply:focus-visible {
-  outline-offset: -2px;
-  border-radius: var(--radius-m);
+  outline-offset: calc(-1 * var(--focus-ring));
 }
 
 .views-check {
   flex: none;
-  width: 14px;
+  width: var(--space-4);
   color: var(--water-text);
 }
 
@@ -655,20 +697,18 @@
   line-height: var(--lh-md);
 }
 
-.views-detail {
-  font-size: var(--text-sm);
-  line-height: var(--lh-sm);
-  color: var(--muted);
+.views-row.on .views-name {
+  color: var(--water-text);
 }
 
-.views-apply kbd {
-  flex: none;
+.views-detail {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
 }
 
 .views-row .btn-icon {
   flex: none;
-  width: 28px;
-  height: 28px;
   color: var(--faint);
 }
 
@@ -689,8 +729,9 @@
 .views-save input {
   flex: 1;
   min-width: 0;
-  height: 30px;
-  padding: 0 var(--space-2);
+  min-height: var(--control-s);
+  height: var(--control-s);
+  border-radius: var(--radius-s);
   font-size: var(--text-sm);
 }
 
@@ -705,9 +746,9 @@
 .views-problem p {
   margin: 0;
   padding: var(--space-1) var(--space-2) var(--space-2);
+  color: var(--muted);
   font-size: var(--text-sm);
   line-height: var(--lh-sm);
-  color: var(--muted);
 }
 
 .views-problem {
@@ -730,13 +771,12 @@
   gap: var(--space-2);
   margin-top: var(--space-2);
   padding: var(--space-3) var(--space-2) var(--space-1);
-  border-top: 1px solid var(--line);
+  border-top: var(--hairline) solid var(--line);
 }
 
 .views-save label {
-  font-size: var(--text-sm);
-  font-weight: 600;
   color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
 }
 
 .views-save-row {
@@ -744,13 +784,204 @@
   gap: var(--space-2);
 }
 
-.views-save-row .btn {
-  height: 30px;
-}
-
 .views-hint {
   margin: 0;
+  color: var(--faint);
   font-size: var(--text-xs);
   line-height: var(--lh-sm);
+}
+
+/* ── the List: every card in one dense table, its head held at the top ──── */
+
+.list-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.list-scroll > .empty {
+  margin: auto;
+  padding-top: var(--space-12);
+}
+
+.list-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-base);
+}
+
+.list-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  border-bottom: var(--hairline) solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font: 600 var(--text-xs) / var(--lh-sm) var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.list-table th:first-child,
+.list-table td:first-child {
+  padding-left: var(--space-4);
+}
+
+.list-table th:last-child,
+.list-table td:last-child {
+  padding-right: var(--space-4);
+}
+
+.list-table th > button,
+.list-table th > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-m);
+  padding: 0 var(--space-3);
+}
+
+.list-table th:first-child > button,
+.list-table th:first-child > span {
+  padding-left: 0;
+}
+
+.list-table th > button {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.list-table th > button:hover,
+.list-table th[aria-sort='ascending'] > button,
+.list-table th[aria-sort='descending'] > button {
+  color: var(--fg);
+}
+
+.list-table th > button:focus-visible {
+  outline-offset: calc(-1 * var(--focus-ring));
+}
+
+.list-table td {
+  height: calc(var(--control-m) + var(--space-1));
+  padding: 0 var(--space-3);
+  border-bottom: var(--hairline) solid var(--line);
+  white-space: nowrap;
+}
+
+.list-table tbody tr {
+  cursor: pointer;
+  scroll-margin-top: calc(var(--control-m) + var(--hairline));
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.list-table tbody tr:hover {
+  background: var(--hover);
+}
+
+/* The card the drawer shows: the selection. */
+.list-table tbody tr[aria-current='true'] {
+  background: var(--water-soft);
+}
+
+.list-table tbody tr[aria-current='true'] .list-key {
+  color: var(--water-text);
+}
+
+.list-table tbody tr:focus-visible {
+  outline: var(--focus-ring) solid var(--water);
+  outline-offset: calc(-1 * var(--focus-ring));
+}
+
+.list-key {
+  width: var(--space-12);
   color: var(--faint);
+  font: var(--text-sm) / 1 var(--font-mono);
+}
+
+.list-title {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-title-text {
+  font-weight: 500;
+}
+
+.list-flags {
+  margin-left: var(--space-2);
+}
+
+.list-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.list-status-review {
+  color: var(--water-text);
+}
+
+.list-status-done {
+  color: var(--green);
+}
+
+.list-num {
+  color: var(--faint);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.list-num-done {
+  color: var(--green);
+}
+
+.list-archived td {
+  color: var(--faint);
+}
+
+.list-archived .list-title-text {
+  font-weight: 400;
+}
+
+.list-skeleton td span {
+  display: block;
+  height: var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+}
+
+/* ── New card (dialogs/NewCardDialog.tsx) ────────────────────────────────── */
+
+/* What kind of card, how urgent, and where it lands: one row of choices under the words. */
+.new-card-kinds {
+  gap: var(--space-2) var(--space-5);
+}
+
+.new-card-kinds > .field {
+  flex: none;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.new-card .draft-row {
+  margin-top: calc(-1 * var(--space-1));
 }

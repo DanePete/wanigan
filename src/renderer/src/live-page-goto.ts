@@ -3,8 +3,9 @@
 // the page, when nothing there is being typed into, is answered to the window
 // the way a pick is (the main process waits on `awaitGoto()`), and so are the
 // live view's own keys the window passes in (P picks, 1 2 3 widths…) and a
-// double-click on the chosen part's words, which types on them ('retype'); and
-// what the page says it is, and the pages it links to, for finding where to go
+// double-click on the chosen part's words, which types on them ('retype'), and a
+// press in the chosen part's action bar (live-page.ts draws it: 'style', 'move',
+// 'take-out', 'ask'); and what the page says it is, and the pages it links to, for finding where to go
 // next.
 // It imports nothing.
 
@@ -68,6 +69,18 @@ export function livePageGoto(): void {
     waiting = null;
     answer('retype');
   }, true);
+
+  /**
+   * A button of the chosen part's action bar was pressed (live-page.ts): answered to the window as a key is. False when
+   * the window is not waiting (it waits again after each answer, so a press is never lost for long).
+   */
+  wl.answerWindow = (id: unknown): boolean => {
+    if (!waiting || (id !== 'style' && id !== 'move' && id !== 'take-out' && id !== 'ask')) return false;
+    const answer = waiting;
+    waiting = null;
+    answer(id);
+    return true;
+  };
 
   /**
    * Wait for Shift+Space, which answers 'goto', for one of `take` (the live

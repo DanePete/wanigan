@@ -126,7 +126,7 @@ describe('kept environments', () => {
     await no('https://www.acme.example/?key=1', /query/);
     await no('https://acme.ddev.site', /the Local tab’s own address/);
     await no('https://ACME.ddev.site/', /the Local tab’s own address/);
-    await assert.rejects(t.owner.call('live.setEnv', { projectId, name: 'Local', url: 'https://www.acme.example' }), /Local is the site on this Mac/);
+    await assert.rejects(t.owner.call('live.setEnv', { projectId, name: 'Local', url: 'https://www.acme.example' }), /Local is the site on this computer/);
     assert.equal((await t.owner.call('live.envs', { projectId })).envs.length, 3, 'nothing refused was kept');
   });
 
