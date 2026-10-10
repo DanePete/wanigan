@@ -1345,7 +1345,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if (refused) return { done: none(`${inSiteUnmarked(saved.revision, refused)} ${said}`) };
       return { done: { ok: true, id, state: 'implemented', revision: saved.revision, said, undo: saved.undo !== null, shows, ...(saved.adapter ? { adapter: saved.adapter } : {}) } };
     };
-    if (typeof at.field === 'string') {
+    // A field mark around configuration (a webform shown by a content field) belongs to the content that holds it, not
+    // to the words: those are the configuration's, found among the trace's targets below.
+    if (typeof at.field === 'string' && edit.target.part?.kind !== 'config') {
       // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
       // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);

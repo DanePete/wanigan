@@ -54,16 +54,29 @@ export async function saveSchemaEdit(at: SchemaSaveAt, rawValue: unknown, extra:
   if (body.length > MAX_VALUE_BYTES) return { ok: false, error: 'That value is too large to save here.', revision: null };
   const wrong = checkValue(at.target.schema, rawValue);
   if (wrong.length) return { ok: false, error: wrong.join(' '), revision: null };
-  type Answer = { ok?: unknown; error?: unknown; revision?: unknown; ai?: unknown };
-  let answer: Answer | null = null;
-  let status = 0;
-  try {
-    const res = await at.post(`/_wanigan/edit/${encodeURIComponent(at.target.id)}`, body);
-    status = res.status;
-    answer = JSON.parse(await readBounded(res, MAX_ANSWER_BYTES)) as Answer | null;
-  } catch (error) {
-    if (!status) return { ok: false, error: `The site did not answer: ${(error as Error).message || 'no answer'}.`, revision: null };
+  type Answer = { ok?: unknown; error?: unknown; revision?: unknown; ai?: unknown; confirm?: unknown };
+  /** One request: its status and answer, or why the site gave none. */
+  const send = async (sent: string): Promise<{ status: number; answer: Answer | null } | { error: string }> => {
+    let status = 0;
+    try {
+      const res = await at.post(`/_wanigan/edit/${encodeURIComponent(at.target.id)}`, sent);
+      status = res.status;
+      return { status, answer: JSON.parse(await readBounded(res, MAX_ANSWER_BYTES)) as Answer | null };
+    } catch (error) {
+      return status ? { status, answer: null } : { error: `The site did not answer: ${(error as Error).message || 'no answer'}.` };
+    }
+  };
+  let sent = await send(body);
+  if ('error' in sent) return { ok: false, error: sent.error, revision: null };
+  // A target the trace says shows beyond this page is saved only after the window, or the layer, said where and was
+  // asked again (editNotice(), askBeyond()). A helper that also asks first (a save reaching every form, the Drupal
+  // Webform adapter's) answers 409 with a token: it is sent back once, with the same value, as that answer asks.
+  const token = sent.answer?.confirm;
+  if (sent.status === 409 && at.target.shows && typeof token === 'string' && /^[a-f0-9]{32}$/.test(token)) {
+    sent = await send(JSON.stringify({ trace: at.trace, value: rawValue ?? null, ...extra, confirm: token }));
+    if ('error' in sent) return { ok: false, error: sent.error, revision: null };
   }
+  const { status, answer } = sent;
   const said: Answer | null = answer && typeof answer === 'object' ? answer : null;
   if (said?.ok === true) {
     at.reload();

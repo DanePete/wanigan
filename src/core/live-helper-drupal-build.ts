@@ -476,6 +476,10 @@ use Drupal\Core\Field\FieldItemInterface;
  *   and an entity's own layout starts as a copy of the default, UUIDs and
  *   all (PrepareLayout::onPrepareLayout()).
  * - A menu (menu): its machine name.
+ * - A webform (webform: its id), one of its elements (webform_element:
+ *   <webform id>/<element key>, with its element type), or a setting it
+ *   shows (webform_setting: <webform id>/<setting>), as the Webform adapter
+ *   marked them.
  *
  * Named only from what the render already holds: nothing is loaded to name
  * it. Every value must be a plain name as parseIdentity() accepts it; a part
@@ -645,8 +649,34 @@ final class Identity {
         $view = self::name($p['meta']['view']['id'] ?? NULL);
         $display = self::name($p['meta']['view']['display'] ?? NULL);
         return ($view !== NULL && $display !== NULL) ? self::config('view', $view . ':' . $display) : NULL;
+
+      case 'form':
+        return self::webform($p['meta']['webform'] ?? NULL);
     }
     return NULL;
+  }
+
+  /**
+   * What the Webform adapter marked (Adapter\Webform::part()): the webform
+   * (webform, its id), one of its elements (webform_element,
+   * <webform id>/<element key>, with its element type; the form's own
+   * buttons as the element Webform names 'actions' when it makes one), or a
+   * setting it shows (webform_setting, <webform id>/<setting>).
+   */
+  private static function webform(mixed $mark): ?array {
+    if (!is_array($mark) || ($id = self::name($mark['webform'] ?? NULL)) === NULL) {
+      return NULL;
+    }
+    if (!empty($mark['form'])) {
+      return self::config('webform', $id);
+    }
+    if (isset($mark['setting'])) {
+      $setting = self::name($mark['setting']);
+      return $setting !== NULL ? self::config('webform_setting', $id . '/' . $setting) : NULL;
+    }
+    $key = self::name($mark['key'] ?? NULL);
+    $type = (string) ($mark['type'] ?? '');
+    return $key !== NULL ? self::config('webform_element', $id . '/' . $key, $type !== '' ? $type : NULL) : NULL;
   }
 
   /**

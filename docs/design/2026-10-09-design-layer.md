@@ -360,7 +360,12 @@ helper can name carries `identity`:
   default layout is shared by every entity without its own, and an entity's
   own layout starts as a copy of the default, UUIDs and all. A placement and
   a component of one plugin are two kinds, and the library's "where it is
-  used" counts both. A menu has no kind beyond itself, as a menu link has
+  used" counts both. Where Webform is installed, its adapter names a webform
+  `config` `webform` (its id), one of its elements `config`
+  `webform_element` (`<webform id>/<element key>`, its element type as
+  plugin; a form's own buttons are `actions`, the key Webform gives the
+  element that replaces them) and a setting a page shows of it
+  `config` `webform_setting`. A menu has no kind beyond itself, as a menu link has
   none, and the same menu shown twice is one identity reached twice, as an
   entity in two view modes is. Content not saved yet, a key that is not a
   UUID or a value that is not plain names nothing.
@@ -450,9 +455,25 @@ or the project.
      (its address sent back as it was), a WordPress block's words; on Drupal a
      block's title, the site's name or slogan, one run of a view's header,
      footer or empty text (offered run by run, so its markup is never in the
-     value), or a content menu link's text. Configuration is validated against
-     its typed schema with the rules only Drupal's forms keep, needs the form
-     route's permission, is written to its translation's override when the
+     value), a content menu link's text, or a webform's words through the
+     Webform adapter (docs/design/2026-10-10-site-adapters.md): an element's
+     title, description, help, placeholder, prefix, suffix, markup or own
+     option label through `getElementDecoded()` and `setElementProperties()`
+     with every property the element stores kept, read in the form's own
+     language; a translation to the language override of `elements`, the
+     language named in the answer; a form's setting through `setSetting()`.
+     Words only the site's Webform settings keep (the default submit label)
+     are saved on this form, which then has its own; the default for every
+     form, and shared `webform_options`, are targets that show beyond the
+     page, and the helper answers their first save with how many forms they
+     reach and a token, which the schema save sends back once the window or
+     the layer has asked. Words a token or a computed element makes, and
+     untranslated words, are refused with why; the form's own permissions are
+     checked, and Webform's entity saves it, as Webform's own forms do. A
+     field mark around a part named as configuration (a webform a reference
+     field shows) is the content's, so its words are looked for here. Other
+     configuration is validated against its typed schema with the rules only
+     Drupal's forms keep, needs the form route's permission, is written to its translation's override when the
      page showed one, and says that the next configuration import puts back
      what is exported.
      Never a slug, a status, a choice, an address or a read-only value. It is

@@ -1801,3 +1801,23 @@ test('Drupal: words a template writes are refused as code, and words it prints t
     assert.deepEqual([w.posts, w.saves, w.marks], [[], [], []], 'nothing is sent for any of them');
   } finally { w.done(); }
 });
+
+test('Drupal: a webform a content field shows saves its words to the webform, not to the field around it', async () => {
+  // The Webform adapter names the element (config webform_element); the field that shows the form marks its wrapper.
+  const element: PartIdentity = { kind: 'config', type: 'webform_element', id: 'contact/email', plugin: 'email' };
+  const label: EditTarget = {
+    id: 'words.webform.contact.email.title', kind: 'config', label: 'Contact Acme · Email address: title', via: 'schema', revisions: false,
+    schema: { type: 'string', title: 'Title', minLength: 1 }, value: 'Email address',
+  };
+  const traced: LiveTrace = { ...trace(), edits: [label], parts: [...trace().parts, { id: 'p9', kind: 'form', label: 'Webform element: Email address', identity: element, edits: [label.id] }] };
+  const retyped = edit({ label: 'Label', change: { type: 'text', value: 'Your email' }, target: { part: element, inner: 'label:nth-of-type(1)', selector: null, textHash: layerTextHash('Email address') } });
+  const w = wire({ edits: [retyped], trace: traced });
+  try {
+    w.page.parts = { p9: { 'label:nth-of-type(1)': [words('Email address', 'node:12:field_form:webform:en:42::webform_entity_reference_entity_view')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(retyped.id), { ok: true, id: retyped.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.saves, [], 'not through the field save the mark around it would take');
+    assert.deepEqual(w.posts.map((p) => [p.path, p.body]), [['/_wanigan/edit/words.webform.contact.email.title', { trace: '0123456789abcdef', value: 'Your email' }]]);
+    assert.deepEqual(w.marks.map((m) => [m.id, m.state]), [[retyped.id, 'implemented']]);
+  } finally { w.done(); }
+});
