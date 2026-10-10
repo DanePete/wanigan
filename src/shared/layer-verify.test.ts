@@ -3,8 +3,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  against, applyMask, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, maskedOf, masksAmong, noiseFloor, parseVerdict, traceMasks,
-  unionDiff, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf, type Bitmap, type ElementSnap, type PixelArea, type RenderMask, type WidthFindings,
+  against, applyMask, compareElements, compareOutside, comparePixels, diffBitmaps, diffPicture, editsAt, judge, maskedOf, masksAmong, noiseFloor, onlyWhere, parseVerdict,
+  reachOf, sameWordsMoved, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, withinNoise, zonesOf,
+  type Bitmap, type ElementSnap, type PageSnap, type PixelArea, type RenderMask, type WidthFindings,
 } from './layer-verify.ts';
 import type { TracePart } from './live-trace.ts';
 
@@ -295,4 +296,99 @@ test('the difference picture shows what was left out in pale green, the same in 
   const d = applyMask(diffBitmaps(result, result), [{ x: 2, y: 0, width: 1, height: 1 }]);
   const pic = diffPicture(result, d, { maxDiff: 0, pixels: 0 });
   assert.deepEqual([...pic.data.slice(8, 12)], [200, 232, 200, 255]);
+});
+
+/* ── step 3 against the page as it was, element by element ── */
+
+/** A made-up page read whole: [path, name, box, own words, colour, edited]. */
+function pageOf(els: [string, string, [number, number, number, number], string | null, string?, boolean?][]): PageSnap {
+  const table: string[] = [];
+  const at = (v: string): number => { let i = table.indexOf(v); if (i < 0) { i = table.length; table.push(v); } return i; };
+  return {
+    keys: ['color', 'width'], table, cut: false,
+    elements: els.map(([path, name, b, text, color, touched]) => ({ path, name, box: { x: b[0], y: b[1], width: b[2], height: b[3] }, text, values: [at(color ?? 'rgb(0, 0, 0)'), at(`${b[2]}px`)], touched: !!touched })),
+  };
+}
+
+test('words that changed only from the edit’s old words to its new ones are the same stored value shown elsewhere, as the site prints it', () => {
+  const words = { was: 'Paddling 101', now: 'Paddling 101 -- revised' };
+  assert.ok(sameWordsMoved('Paddling 101', 'Paddling 101 — revised', words), 'whole, with the dash WordPress prints for --');
+  assert.ok(sameWordsMoved('Read Paddling 101 next', 'Read Paddling 101 -- revised next', words), 'within other words (a teaser, a link)');
+  assert.ok(!sameWordsMoved('Paddling 101', 'Paddling 102', words), 'other new words');
+  assert.ok(!sameWordsMoved('Read Paddling 101', 'See Paddling 101 -- revised', words), 'other words changed with them');
+  assert.ok(!sameWordsMoved('Canoeing 201', 'Canoeing 201', words));
+  assert.ok(!sameWordsMoved(null, 'Paddling 101 -- revised', words));
+});
+
+test('element by element: a layout that moved is no difference, the save’s reach is said apart, and anything else is named by its element', () => {
+  const against = { edit: 'e1', at: 5 };
+  const words = { was: 'Paddling 101', now: 'Paddling 101, revised from the dock' };
+  const before = pageOf([
+    ['body > nav:nth-of-type(1)', 'nav.breadcrumb', [0, 0, 64, 12], null],
+    ['body > nav:nth-of-type(1) > a:nth-of-type(1)', 'a.crumb', [0, 0, 20, 12], 'Home'],
+    ['body > nav:nth-of-type(1) > span:nth-of-type(1)', 'span.crumb', [24, 0, 40, 12], 'Paddling 101'],
+    ['body > h1:nth-of-type(1)', 'h1.title', [0, 16, 64, 24], words.now, undefined, true],
+    ['body > h1:nth-of-type(1) > em:nth-of-type(1)', 'em', [0, 16, 10, 24], 'x', undefined, true],
+    ['body > p:nth-of-type(1)', 'p.lead', [0, 44, 64, 40], 'Learn the strokes.'],
+    ['body > aside:nth-of-type(1)', 'aside.who', [0, 90, 64, 20], 'Ann is online'],
+    ['body > ul:nth-of-type(1)', 'ul.tags', [0, 120, 64, 20], null],
+    ['body > ul:nth-of-type(1) > li:nth-of-type(1)', 'li', [0, 120, 30, 20], 'Lakes'],
+    ['body > footer:nth-of-type(1)', 'footer.site', [0, 170, 64, 20], '© Acme'],
+  ]);
+  const result = pageOf([
+    ['body > nav:nth-of-type(1)', 'nav.breadcrumb', [0, 0, 64, 24], null],
+    ['body > nav:nth-of-type(1) > a:nth-of-type(1)', 'a.crumb', [0, 0, 20, 12], 'Home'],
+    ['body > nav:nth-of-type(1) > span:nth-of-type(1)', 'span.crumb', [0, 12, 64, 12], words.now],
+    ['body > h1:nth-of-type(1)', 'h1.title', [0, 28, 64, 24], words.now, 'rgb(9, 9, 9)', true],
+    ['body > p:nth-of-type(1)', 'p.lead', [0, 56, 64, 40], 'Learn the strokes.', 'rgb(0, 0, 255)'],
+    ['body > aside:nth-of-type(1)', 'aside.who', [0, 102, 64, 20], 'Bo is online'],
+    ['body > footer:nth-of-type(1)', 'footer.site', [0, 182, 64, 20], '© Northwind'],
+    ['body > div:nth-of-type(1)', 'div.promo', [0, 210, 64, 20], 'New!'],
+  ]);
+  const found = compareOutside({ before, result, width: 390, against, words, masked: { before: [{ x: 0, y: 90, width: 64, height: 20 }], result: [{ x: 0, y: 102, width: 64, height: 20 }] } });
+  assert.deepEqual(found.reach, [{ path: 'body > nav:nth-of-type(1) > span:nth-of-type(1)', name: 'span.crumb' }]);
+  assert.deepEqual(found.differences, [
+    { kind: 'outside', width: 390, element: 'p.lead', property: 'color', before: 'rgb(0, 0, 0)', result: 'rgb(0, 0, 255)', against },
+    { kind: 'outside', width: 390, element: 'ul.tags', property: 'element', before: 'on the page', result: 'not on the page', against },
+    { kind: 'outside', width: 390, element: 'footer.site', property: 'text', before: '© Acme', result: '© Northwind', against },
+    { kind: 'outside', width: 390, element: 'div.promo', property: 'element', before: 'not on the page', result: 'on the page', against },
+  ], 'moved and taller is nothing; an edited element (and inside it) and a masked one are not compared; width is the layout’s; a list gone is said once, not for each item');
+  assert.deepEqual(found.include, [{ x: 0, y: 0, width: 20, height: 12 }], 'pixels only where an element kept its place and size, and changed nothing');
+  assert.ok(found.exclude.some((r) => r.y === 0 && r.x === 24) && found.exclude.some((r) => r.y === 12 && r.x === 0), 'the reach in both places');
+  assert.ok(found.exclude.some((r) => r.y === 56) && found.exclude.some((r) => r.y === 44), 'a moved element in both places');
+  assert.ok(!found.exclude.some((r) => r.height === 24 && r.y === 0), 'not the breadcrumb that grew around what kept still');
+  // Without the edit's words, the breadcrumb's change is other words.
+  const plain = compareOutside({ before, result, width: 390, against, words: null, masked: { before: [], result: [] } });
+  assert.ok(plain.differences.some((d) => d.kind === 'outside' && d.element === 'span.crumb' && d.property === 'text') && !plain.reach.length);
+  assert.deepEqual(reachOf([{ edit: 'e1', reach: found.reach }, { edit: 'e1', reach: [...found.reach, { path: 'body > a:nth-of-type(9)', name: 'a.teaser' }] }, { edit: 'e2', reach: [] }]),
+    [{ edit: 'e1', count: 2, places: ['span.crumb', 'a.teaser'] }], 'each place once over every width; an edit with none says nothing');
+});
+
+test('pixels compared only where the layout kept still: inside what is included, outside what is excluded', () => {
+  const a = page(10, 10), b = paint(page(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [0, 0, 0]);
+  const d = onlyWhere(diffBitmaps(a, b), [{ x: 0, y: 0, width: 4, height: 10 }], [{ x: 0, y: 0, width: 2, height: 10 }]);
+  assert.deepEqual([d.pixels, d.maxDiff], [20, 255]);
+  assert.equal(d.masked?.[0], 1);
+  assert.equal(d.masked?.[2], 0);
+  assert.equal(d.masked?.[5], 1);
+  assert.equal(onlyWhere(diffBitmaps(a, b), [], []).pixels, 0, 'nothing kept still: no pixel compared');
+});
+
+test('a difference outside the edited elements and the save’s reach are read strictly, and go back to that edit', () => {
+  const v = {
+    at: 5, ok: false, failed: 'rest', widths: [390], noise: { maxDiff: 0, pixels: 0 }, pictures: [],
+    differences: [{ kind: 'outside', width: 390, element: 'p.lead', property: 'color', before: 'rgb(0, 0, 0)', result: 'rgb(0, 0, 255)', against: { edit: 'e2', at: 5 } }],
+    reach: [{ edit: 'e2', count: 2, places: ['span.crumb', 'a.teaser'] }],
+  };
+  assert.deepEqual(parseVerdict(v), v);
+  assert.deepEqual(editsAt({ ok: false, differences: v.differences as never }, ['e1', 'e2']), ['e2']);
+  for (const [what, over] of [
+    ['an outside difference against no edit', { differences: [{ ...v.differences[0], against: undefined }] }],
+    ['an outside difference with no element', { differences: [{ ...v.differences[0], element: 7 }] }],
+    ['a reach of nowhere', { reach: [{ edit: 'e2', count: 0, places: [] }] }],
+    ['a reach naming more places than it counts', { reach: [{ edit: 'e2', count: 1, places: ['a', 'b'] }] }],
+    ['a reach of an edit that is not one', { reach: [{ edit: 'E 2', count: 1, places: ['a'] }] }],
+  ] as const) assert.equal(parseVerdict({ ...v, ...over }), null, what);
+  const failed = judge([{ width: 390, noise: { maxDiff: 0, pixels: 0 }, elements: [], pixels: { near: { maxDiff: 0, pixels: 0, differences: [] }, rest: { maxDiff: 0, pixels: 0, differences: [] } }, outside: v.differences as never }]);
+  assert.deepEqual([failed.failed, failed.differences.length], ['rest', 1], 'a difference outside fails the rest of the page');
 });

@@ -183,59 +183,71 @@ WordPress and other sites can each be on or off.
   shows them at once, through the layer. A style is for one element or every
   instance of its kind (how many, said before you choose it); a custom
   property can change for the whole site. Edits lists every edit by page, with
-  before → after, what it reaches, its state, and why when it no longer finds
-  its element. Make it real saves words through the site itself to the one
-  thing that holds exactly those words. On Drupal: a text field (a plain one,
-  or one run of words inside formatted text, spliced in with its markup kept
-  and saved only when the field's own text format shows nothing else changed),
-  a field's label, a block's title, the site's name and slogan, the words of a
+  before → after, what it reaches (including "this item, shown twice on this
+  page"), its state and what that means, and why when it no longer finds its
+  element. Make it real saves words through the site itself to the one thing
+  that holds exactly those words. On Drupal: a text field (a plain one, or one
+  run of words inside formatted text, spliced in with its markup kept and
+  saved only when the field's own text format shows nothing else changed), a
+  field's label, a block's title, the site's name and slogan, the words of a
   view's header, footer or empty text, a menu link's text, or the words of a
   Layout Builder inline block, through its layout (a default layout that every
   page of a kind shares is saved only when you make it real again, after it
   says how many pages that reaches); configuration says the next config import
   puts back what is exported. On WordPress a title, an excerpt, a string meta,
-  the site's title or tagline, or a menu link's text, each through core's REST
-  API with a revision where WordPress keeps one. Or to your own template when
-  they are written there exactly once (with a revert). When nothing the page
-  offers holds the words (a page builder's, a shortcode's, a contributed
-  field's), Wanigan looks where the content keeps them and saves them there
-  through core: on WordPress the post's stored content (its markup, a
-  shortcode's settings and the words it wraps, a block's settings, changed
-  together with the block's markup when it keeps them twice), its excerpt and
-  its custom fields (JSON written back token by token with the escapes it was
-  written with, a saved list as a list, a field with a row per value by its
-  row); on Drupal every field of the content the page showed that its other
-  saves do not cover (a contributed field's value, JSON in it, a map, a link's
-  title), in that translation, as a new revision. The words must be found
-  exactly once, as words; otherwise it says where they are (twice, only in an
-  address or a class, made from a template like `%%title%%`, in the site's
-  settings) and saves nothing. Elementor's pages are read from the tree
-  Elementor renders and saved through Elementor's own save (its caches cleared,
-  a revision kept); ACF's fields, repeater rows, blocks and options are saved
-  through ACF with its validation (an option every page shows is saved only when
-  you make it real again); copies that never render (a builder's
-  stored-content copy, an SEO plugin's mirror) are never saved into, and
-  Beaver Builder's and SiteOrigin's own layouts are refused, saying so. After the save the
-  page reloads and is read back: if it still shows the old words, it says the
-  site has them but whatever renders them may keep its own copy, and Undo puts
-  the old value back (custom fields keep no revision, so this is their only way
-  back, for ten minutes). Words a plugin computes and never stores, and a
-  builder's own cache, are beyond it. What it cannot save
-  says why, and which kind of why: Drupal keeps no such thing (words written
-  in a Twig template, a menu link written in code, a base field's label), or
-  Wanigan does not do it yet (an interface translation, a caption, words
-  across formatting). Formatted text on WordPress (a block's, a post's
-  content) and words a Drupal template writes go to an agent, as does a style:
-  never written into the stylesheets by hand. Then Verify renders the page
-  with and without the layer and says what differs, with pictures. Undo, redo,
-  discard, and the page shown without the layer to compare. The window has
-  been checked against the UI sweep's stand-in; on the Northstar demo, a
-  script driving the real app made words in a plain field real and verified
-  them. Drupal's formatted text, configuration and Layout Builder saves, and
-  WordPress, have been tested with stand-ins only, as have the stored-words
-  search and save (Elementor and ACF with stand-ins made in the shape of their
-  public code; ACF PRO's repeaters, blocks and options follow ACF's documented
-  storage and are not yet checked against ACF PRO itself).
+  the site's title or tagline, a menu link's text, or a block's words (a
+  paragraph, a heading, a navigation label), each through core's REST API with
+  a revision where WordPress keeps one. A block's words are sent as the HTML
+  they are kept as: typed words escaped, so a typed `<` stays a character, and
+  words between a link's or bold's tags changed only where the change falls
+  inside one run of them, every tag kept. Words kept in something shown beyond
+  the page (a template or part, a synced pattern, a menu, a widget, a setting)
+  say where they show first, and are saved when you make them real again.
+  When nothing the page offers holds the words (a page builder's, a
+  shortcode's, a contributed field's), Wanigan looks where the content keeps
+  them and saves them there through core: on WordPress the post's stored
+  content (its markup, a shortcode's settings and the words it wraps, a
+  block's settings, changed together with the block's markup when it keeps
+  them twice), its excerpt and its custom fields (JSON written back token by
+  token with the escapes it was written with, a saved list as a list, a field
+  with a row per value by its row); on Drupal every field of the content the
+  page showed that its other saves do not cover (a contributed field's value,
+  JSON in it, a map, a link's title), in that translation, as a new revision.
+  The words must be found exactly once, as words; otherwise it says where they
+  are (twice, only in an address or a class, made from a template like
+  `%%title%%`, in the site's settings) and saves nothing. Elementor's pages are
+  read from the tree Elementor renders and saved through Elementor's own save
+  (its caches cleared, a revision kept); ACF's fields, repeater rows, blocks and
+  options are saved through ACF with its validation (an option every page shows
+  is saved only when you make it real again); copies that never render (a
+  builder's stored-content copy, an SEO plugin's mirror) are never saved into,
+  and Beaver Builder's and SiteOrigin's own layouts are refused, saying so.
+  After the save the page reloads and is read back: if it still shows the old
+  words, it says the site has them but whatever renders them may keep its own
+  copy, and Undo puts the old value back (custom fields keep no revision, so
+  this is their only way back, for ten minutes). Words a plugin computes and
+  never stores, and a builder's own cache, are beyond it.
+  What it cannot save says why, and which kind of why: Drupal keeps no such
+  thing (words written in a Twig template, a menu link written in code, a base
+  field's label), or Wanigan does not do it yet (an interface translation, a
+  caption, words across formatting). A WordPress change across formatting,
+  words in a classic post's content, and words a Drupal template writes go to
+  an agent, as does a style: never written into the stylesheets by hand.
+  Where the site cannot say what writes words nothing stores (a WordPress
+  classic theme's template files), you can look in the template that rendered
+  the element itself, picked on the page: Wanigan says first that every page
+  using that template changes, and writes it only when the words are there
+  exactly once (Put back waits while the layer holds the edit as in the site).
+  Then Verify renders the page with and without the layer and says what
+  differs, with pictures. Undo, redo, discard, and the page shown without the
+  layer to compare; nothing runs twice, and undo waits while words are being
+  saved. The window has been checked against the UI sweep's stand-in; on the
+  Northstar demo, a script driving the real app made words in a plain field
+  real and verified them. Drupal's formatted text, configuration and Layout
+  Builder saves, and WordPress, have been tested with stand-ins only, as have
+  the stored-words search and save (Elementor and ACF with stand-ins made in the
+  shape of their public code; ACF PRO's repeaters, blocks and options follow
+  ACF's documented storage and are not yet checked against ACF PRO itself).
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -264,7 +276,12 @@ WordPress and other sites can each be on or off.
   a template's or template part's words (the first save copies the theme's
   file into the database, as the Site Editor does); a navigation menu's labels;
   a classic widget's settings; an image's alt in the media library, beside an image
-  block's own. Each says where it shows. What WordPress keeps nowhere it can
+  block's own. Each says where it shows, and the edit sheet says it again and
+  asks before saving anything shown beyond this page (a template or part, a
+  synced pattern's own words, a menu, a widget, a setting, a library alt).
+  Formatted text is edited as its words when it holds no tag (sent escaped, so
+  a typed `<b>` is words, never markup) and as its HTML when it holds inline
+  tags, saying which tags WordPress keeps. What WordPress keeps nowhere it can
   write (a static block's settings, words from a theme's pattern file, a
   fallback menu's links) says so, and so does what Wanigan does not do yet.
   How it hooks core:

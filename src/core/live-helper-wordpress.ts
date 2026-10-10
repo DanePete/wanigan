@@ -18,6 +18,7 @@
 // docs/research/2026-10-09-wordpress-core-live-trace.md.
 // Design: docs/design/2026-10-08-live-view.md.
 
+import { WORDPRESS_ADAPTERS_SOURCE } from './live-helper-wordpress-adapters.ts';
 import { WORDPRESS_USAGE_SOURCE } from './live-helper-wordpress-usage.ts';
 import { WORDPRESS_VERIFY_SOURCE } from './live-helper-wordpress-verify.ts';
 import { WORDPRESS_WORDS_SOURCE } from './live-helper-wordpress-words.ts';
@@ -39,10 +40,11 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  // The stored-words search, then the plugins' adapters for it (each registers itself, and is used only when its plugin is
-  // active): page builders first, as they are asked in the order they registered.
+  // The site-adapter base right after the core, then the stored-words search and the plugins' adapters for it (each
+  // registers itself, and is used only when its plugin is active): page builders first, as they are asked in the order
+  // they registered.
   const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE;
-  return (SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
+  return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);
@@ -2112,6 +2114,10 @@ final class Wanigan_Live {
 				if (!$why && in_array($attr, array('metadata', 'lock'), true)) $why = 'Wanigan does not change this: it is the editor’s own bookkeeping (the block’s name, bindings and lock).';
 				if (!$why && !$dynamic) $why = self::NO_SUCH . 'this block’s markup is written from this setting by the block’s editor script, and WordPress has no PHP version of that script. Change it in the editor.';
 				if (!$why && !$empty) $why = self::NO_SUCH . 'this block saved markup its editor script wrote from its settings, and WordPress has no PHP version of that script to write it again. Change it in the editor.';
+				if (!$why && self::html_attribute($name, (string) $attr, $def)) {
+					$schema['contentMediaType'] = 'text/html';
+					$schema['description'] = 'Its words as HTML, with inline formatting (bold, italic, links and the editor’s other formats), which WordPress prints through wp_kses_post(). Saved cleaned by wp_kses_post(), inline formatting only.';
+				}
 			} elseif (in_array($source, array('rich-text', 'html', 'text'), true) || $source === 'attribute') {
 				$found = self::sourced($node, $def, $name, $attr);
 				$current = $found['value'];
@@ -2136,6 +2142,8 @@ final class Wanigan_Live {
 		$post = isset($info['post']) ? get_post($info['post']) : null;
 		$noun = $info['noun'];
 		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'] . (!empty($info['reach']) ? ' (' . $info['reach'] . ')' : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
+		// Stored in a template, a template part, a synced pattern or a menu: the window says where it shows and asks.
+		if (!empty($info['shows'])) $target['shows'] = $info['shows'];
 		$why = $info['why'];
 		if (!$why && !$writable) $why = 'Nothing in this block can change here: each setting says why. Change it in the editor.';
 		if (!$why) $why = self::writable_alone($store, $map['path'], $noun);
@@ -2192,6 +2200,8 @@ final class Wanigan_Live {
 			if ($v !== null) $value[$attr] = $v;
 		}
 		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words in this placement of the synced pattern “' . $title . '” only' . ($info ? ', in ' . $info['label'] : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info ? $info['revisions'] : false);
+		// One placement's words are the page's own, unless the placement is in a template or part every page shares.
+		if ($info && !empty($info['shows'])) $target['shows'] = $info['shows'];
 		$why = null;
 		if (!$hmap || !$info || !$hnode) $why = self::NOT_YET . 'this placement of the pattern is not stored in a post, template or template part here (it is inside another pattern), so Wanigan does not write its overrides.';
 		elseif (isset($hnode['attrs']['overrides']) || array_filter($content, function ($c) { return is_array($c) && isset($c['values']); })) $why = self::NOT_YET . 'this placement keeps its overrides in an older shape the block editor updates when it opens the page. Open it in the editor once.';
@@ -2251,7 +2261,7 @@ final class Wanigan_Live {
 		$id = 'media-alt-' . $aid;
 		if (isset(self::$edits[$id])) return $id;
 		$file = basename((string) get_attached_file($aid));
-		$target = array('id' => $id, 'kind' => 'field', 'label' => 'Alt text of the image “' . ($file !== '' ? $file : $aid) . '” in the media library (shows wherever WordPress prints the image from the library: a featured image, the site logo; an image block keeps its own)', 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => 'Alt text', 'description' => 'What the image says to someone who cannot see it. Saved on the image in the media library, with no revision.'), 'value' => (string) get_post_meta($aid, '_wp_attachment_image_alt', true), 'revisions' => false);
+		$target = array('id' => $id, 'kind' => 'field', 'label' => 'Alt text of the image “' . ($file !== '' ? $file : $aid) . '” in the media library (shows wherever WordPress prints the image from the library: a featured image, the site logo; an image block keeps its own)', 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => 'Alt text', 'description' => 'What the image says to someone who cannot see it. Saved on the image in the media library, with no revision.'), 'value' => (string) get_post_meta($aid, '_wp_attachment_image_alt', true), 'revisions' => false, 'shows' => 'everywhere WordPress prints the image “' . ($file !== '' ? $file : $aid) . '” from the media library');
 		$route = rest_get_route_for_post($att);
 		$why = $route === '' ? self::NOT_YET . 'attachments are not in the REST API on this site, which is how Wanigan saves.' : self::cannot('edit_post', 'change this image', $aid);
 		if ($why) $target['why'] = $why;
@@ -2362,6 +2372,16 @@ final class Wanigan_Live {
 		if (function_exists('get_block_bindings_supported_attributes')) return (array) get_block_bindings_supported_attributes($name);
 		$list = array('core/paragraph' => array('content'), 'core/heading' => array('content'), 'core/list-item' => array('content'), 'core/image' => array('id', 'url', 'title', 'alt', 'caption'), 'core/button' => array('url', 'text', 'linkTarget', 'rel'));
 		return isset($list[$name]) ? $list[$name] : array();
+	}
+
+	/**
+	 * Whether an attribute kept in a block's comment delimiter is HTML: core's own "rich-text" attribute type (6.5+),
+	 * or a navigation link's or submenu's label, which the editor writes as rich text and core prints through
+	 * wp_kses_post() (blocks/navigation-link.php, blocks/navigation-submenu.php).
+	 */
+	private static function html_attribute(string $name, string $attr, array $def): bool {
+		if (isset($def['type']) && $def['type'] === 'rich-text') return true;
+		return $attr === 'label' && in_array($name, array('core/navigation-link', 'core/navigation-submenu'), true);
 	}
 
 	/**
@@ -2700,7 +2720,7 @@ final class Wanigan_Live {
 		$wid = $m['widget'];
 		$id = 'widget-' . self::short($wid);
 		$area = isset($m['sidebar']) && isset($wp_registered_sidebars[$m['sidebar']]['name']) ? (string) $wp_registered_sidebars[$m['sidebar']]['name'] : '';
-		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'] . ($area !== '' ? ' (shows on every page that shows the widget area “' . $area . '”)' : ''), 'via' => 'schema', 'revisions' => false);
+		$target = array('id' => $id, 'kind' => 'config', 'label' => 'Settings of the ' . $p['label'] . ($area !== '' ? ' (shows on every page that shows the widget area “' . $area . '”)' : ''), 'via' => 'schema', 'revisions' => false, 'shows' => $area !== '' ? 'every page that shows the widget area “' . $area . '”' : 'every page that shows this widget');
 		$widget = isset($wp_registered_widgets[$wid]['callback'][0]) ? $wp_registered_widgets[$wid]['callback'][0] : null;
 		$parsed = function_exists('wp_parse_widget_id') ? wp_parse_widget_id($wid) : array();
 		if ($widget instanceof WP_Widget && isset($parsed['number'])) {
@@ -2750,6 +2770,8 @@ final class Wanigan_Live {
 			'url' => array('type' => 'string', 'title' => 'Address', 'format' => 'uri') + ($custom ? array() : array('readOnly' => true, 'description' => 'It links to ' . $menu_item->type_label . ' “' . wp_strip_all_tags((string) $menu_item->title) . '”, whose address WordPress works out.')),
 		));
 		$target = array('id' => $id, 'kind' => 'menu-link', 'label' => 'Menu link “' . wp_strip_all_tags((string) $menu_item->title) . '”', 'via' => 'schema', 'schema' => $schema, 'value' => array('title' => $item->post_title, 'url' => (string) $menu_item->url), 'revisions' => false);
+		$menu = isset($m['menu_part']) && isset(self::$parts[$m['menu_part']]['label']) ? (string) self::$parts[$m['menu_part']]['label'] : '';
+		$target['shows'] = $menu !== '' ? 'everywhere ' . $menu . ' shows' : 'everywhere this menu shows';
 		if ($w = self::cannot('edit_theme_options', 'change menus')) $target['why'] = $w;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'menu-item', 'item' => $item->ID, 'custom' => $custom);
@@ -2767,7 +2789,7 @@ final class Wanigan_Live {
 		$id = 'option-' . $option;
 		if (isset(self::$edits[$id])) return $id;
 		$labels = array('blogname' => 'Site title', 'blogdescription' => 'Tagline');
-		$target = array('id' => $id, 'kind' => 'option', 'label' => $labels[$option], 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => $labels[$option]), 'value' => get_option($option), 'revisions' => false);
+		$target = array('id' => $id, 'kind' => 'option', 'label' => $labels[$option], 'via' => 'schema', 'schema' => array('type' => 'string', 'title' => $labels[$option]), 'value' => get_option($option), 'revisions' => false, 'shows' => 'every page that shows the site’s ' . ($option === 'blogname' ? 'title' : 'tagline'));
 		if ($w = self::cannot('manage_options', 'change site settings')) $target['why'] = $w;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'option', 'field' => $option === 'blogname' ? 'title' : 'description');
@@ -3084,9 +3106,13 @@ final class Wanigan_Live {
 				if ($post->post_type === 'wp_block') {
 					$info['shared'] = true;
 					$info['reach'] = 'changes every page that uses this synced pattern';
+					$info['shows'] = 'every page that uses the synced pattern “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”';
 				}
 				// A navigation menu (wp_navigation) shows wherever a Navigation block names it.
-				if ($post->post_type === 'wp_navigation') $info['reach'] = 'shows wherever this menu shows';
+				if ($post->post_type === 'wp_navigation') {
+					$info['reach'] = 'shows wherever this menu shows';
+					$info['shows'] = 'everywhere the menu “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '” shows';
+				}
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
@@ -3099,6 +3125,7 @@ final class Wanigan_Live {
 				// as a new wp_template(_part) post that shadows the file, which is never written; Reset in the Site Editor
 				// deletes the copy.
 				$info['reach'] = 'shows on every page that uses this ' . $info['noun'] . (!$tpl->wp_id ? '; the first save makes a database copy of the theme’s file, as the Site Editor does' : '');
+				$info['shows'] = 'every page that uses ' . $info['label'];
 			}
 		}
 		if ($info && !isset(self::$trees[$store])) self::$trees[$store] = array('content' => $info['content'], 'blocks' => parse_blocks($info['content']));
@@ -4799,6 +4826,11 @@ final class Wanigan_Live {
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (array_key_exists('default', $def) ? $def['default'] : null);
 				if ($current === $v) continue;
+				// HTML kept in the delimiter is cleaned as spliced rich text is: kses, inline formatting only.
+				if (is_string($v) && self::html_attribute($p['name'], (string) $attr, $def)) {
+					$v = self::rich_text($v, is_string($current) ? $current : '');
+					if (is_wp_error($v)) return $v;
+				}
 				if (array_key_exists('default', $def) && $def['default'] === $v) unset($node['attrs'][$attr]);
 				else $node['attrs'][$attr] = $v;
 				$changed = true;

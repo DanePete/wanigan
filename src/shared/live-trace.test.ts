@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TRACE_LIMITS, parseTrace } from './live-trace.ts';
+import { TRACE_LIMITS, editNotice, parseTrace } from './live-trace.ts';
 
 const base = {
   version: 1, platform: 'drupal', id: '0123456789abcdef', url: '/node/12', at: 1760000000000,
@@ -123,4 +123,22 @@ test('helper 4 says what can be taken out of a collection, why not, and where co
   assert.deepEqual([c2?.removes, c2?.removeWhy], [false, 'The user may not.'], 'a reason why not wins over a yes');
   assert.equal(c3?.removes, undefined, 'only a boolean is a yes or no');
   assert.equal(c3?.shows?.length, 300, 'where it shows is bounded');
+});
+
+test('helper 4 says where an edit target’s save shows when that is more than this page, bounded, and the window asks first', () => {
+  const t = parseTrace({
+    ...base,
+    edits: [
+      { id: 'e1', kind: 'block-attributes', label: 'Paragraph block in the template “Single”', via: 'schema', schema: { type: 'object' }, value: {}, shows: 'every page that uses the template “Single”' },
+      { id: 'e2', kind: 'option', label: 'Site title', via: 'schema', schema: { type: 'string' }, value: 'Acme', shows: 'x'.repeat(400) },
+      { id: 'e3', kind: 'field', label: 'Title', via: 'schema', schema: { type: 'string' }, value: 'Hi', shows: 42 },
+      { id: 'e4', kind: 'field', label: 'Excerpt', via: 'schema', schema: { type: 'string' }, value: '', shows: '' },
+    ],
+  });
+  const [e1, e2, e3, e4] = t?.edits ?? [];
+  assert.equal(e1?.shows, 'every page that uses the template “Single”');
+  assert.equal(e2?.shows?.length, 300, 'where it shows is bounded');
+  assert.deepEqual([e3?.shows, e4?.shows], [undefined, undefined], 'only words say where');
+  assert.equal(editNotice(e1!), 'This changes it wherever it shows (every page that uses the template “Single”), not only on this page.');
+  assert.equal(editNotice(e3!), null, 'a change to this page alone is saved without asking');
 });

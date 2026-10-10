@@ -63,6 +63,10 @@
 //   is deleted (its page is not), and undo makes it again. A collection that
 //   is configuration says where it shows (`reach` in pages when it can count
 //   them, otherwise `shows`), so the window asks first. Undo puts it back.
+//   An edit target that changes more than this page (a template or template
+//   part, a synced pattern's own words, a navigation menu, a widget, a site
+//   setting, a media library alt) says where in its own `shows`, so the window
+//   says it and asks before saving it (editNotice()).
 // - `GET /_wanigan/components` answers the ComponentLibrary of
 //   src/shared/live-library.ts: what can be placed, from core's registries
 //   only, bounded, keyed by a hash of the definitions and their files' mtimes.
@@ -156,6 +160,11 @@ export interface EditTarget {
   why?: string;
   /** The TraceSave its save runs: what else runs when it is saved. */
   saves?: string;
+  /**
+   * Helper 4: where a save shows when that is more than this page, in the helper's words: "every page that uses the
+   * template “Single”", "everywhere the menu “Main” shows". The window says it and asks first (editNotice()).
+   */
+  shows?: string;
 }
 
 /** Where code that runs on a save lives, as the site reports it about itself. */
@@ -528,6 +537,7 @@ export function parseTrace(raw: unknown): LiveTrace | null {
     if (typeof v.revisions === 'boolean') out.revisions = v.revisions;
     const why = str(v.why, 500); if (why) out.why = why;
     const save = savesOf(v.saves); if (save) out.saves = save;
+    const shows = str(v.shows, 300); if (shows) out.shows = shows;
     return out;
   }, 'edits', truncated);
   const editIds = new Set(edits.map((e) => e.id));
@@ -668,6 +678,14 @@ export function parseTrace(raw: unknown): LiveTrace | null {
   if (ai) trace.ai = ai;
   if (truncated.size) trace.truncated = [...truncated];
   return trace;
+}
+
+/**
+ * What to say before an edit target is saved, when it changes more than this page (its `shows`): asked first, as
+ * taking a shared item out is (live-arrange.ts removeNotice()). Null when it changes only what this page shows.
+ */
+export function editNotice(t: Pick<EditTarget, 'shows'>): string | null {
+  return t.shows ? `This changes it wherever it shows (${t.shows}), not only on this page.` : null;
 }
 
 /** The save an edit target or a collection runs, from the trace that names it. */

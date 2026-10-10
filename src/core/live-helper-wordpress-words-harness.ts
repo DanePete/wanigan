@@ -1,5 +1,5 @@
 // A made-up WordPress for the stored-words tests (live-helper-wordpress-words.test.ts and
-// live-helper-wordpress-adapters.test.ts): what the stored-words search and save call, in core's shape, with the real
+// live-helper-wordpress-words-adapters.test.ts): what the stored-words search and save call, in core's shape, with the real
 // plugin file required into it. Not a test itself, so importing it runs none. Made-up content (acme, northwind,
 // example.test); nothing here touches a site; it needs PHP.
 import { execFileSync } from 'node:child_process';

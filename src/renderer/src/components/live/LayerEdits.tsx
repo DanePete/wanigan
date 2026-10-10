@@ -10,18 +10,30 @@
 //   every instance of its kind (a component, a block type, a field), whose
 //   reach is said before it is chosen; a custom property is changed for the
 //   whole site, as a token.
-// - Markup no part of the site names is keyed by where it sits in the page:
-//   said plainly, as fragile, before the edit is made.
+// - Markup no part of the site names is keyed by where it sits in the page, and
+//   a WordPress block by its place in the stored markup: when no words guard it,
+//   that is said plainly, as fragile, before the edit is made, with what
+//   happens if the page changes (fragileWhy).
 import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
+import { fragileWhy } from '@shared/layer-words';
 import type { LivePick } from '@shared/live';
-import { changeLines, type ChangeLine } from '../../lib/live-layer';
+import type { LiveTrace } from '@shared/live-trace';
+import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
-import { Button, Disclosure, useToast } from '../ui';
+import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
 
 /** What was just added to the layer, said in the Inspector until the next edit. */
 export interface LayerAdded { label: string; lines: ChangeLine[]; reach: string }
+
+/** Whether a key in a box sends what was typed (sendsTyped): the event's own fields, and whether an input method is composing. */
+const sends = (e: KeyboardEvent<HTMLElement>): boolean => sendsTyped({
+  key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, repeat: e.repeat, isComposing: e.nativeEvent.isComposing,
+});
+
+/** Where an edit shows once added: on the page at once, or, while the page is shown without the layer, once it is shown again. */
+const shownWords = (on: boolean): string => (on ? 'Shown on the page at once, in Wanigan’s layer' : 'Kept in Wanigan’s layer, and shown on the page once you show the layer again (the page is shown without it now)');
 
 const many = (n: number, one: string): string => `${n.toLocaleString('en')} ${n === 1 ? one : `${one}s`}`;
 
@@ -38,52 +50,54 @@ function useTarget(again: unknown): { target: LayerPickTarget | null; asked: boo
   return state;
 }
 
-/** The fragile warning, said before an edit is made to markup no part names. */
-function Fragile({ target }: { target: LayerPickTarget | null }) {
-  if (!target?.fragile) return null;
-  return (
-    <p className="small live-layer-fragile">
-      Fragile: no part of the site names this element, so the edit is kept by where it sits in the page. If the page around it changes, the edit is set
-      aside as orphaned rather than put on something else.
-    </p>
-  );
+/** The fragile warning, said before the edit is made (fragileWhy: the main process decides it the same way). */
+function Fragile({ target, scope }: { target: LayerPickTarget | null; scope: LayerScope }) {
+  const why = target ? fragileWhy(target.target, scope) : null;
+  return why ? <p className="small live-layer-fragile">Fragile: {why}</p> : null;
 }
 
 /** Retype the picked element's words: one element, shown on the page through the layer. */
-export function RetypeWords({ pick, layer, page, onAdded, onCancel }: {
+export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
   pick: LivePick; layer: LayerApi; page: string;
+  /** The page's trace: how many places it shows the picked element's stored thing. */
+  trace: LiveTrace | null;
   onAdded: (added: LayerAdded) => void; onCancel: () => void;
 }) {
   const toast = useToast();
   const id = useId();
   const live = liveBridge();
+  // One add at a time: Enter twice, or held, makes one draft.
+  const once = useSingleFlight();
   const [value, setValue] = useState(pick.own ?? '');
   const { target } = useTarget(pick.selector);
   const words = value.replace(/\s+/g, ' ').trim();
   const changed = !!words && words !== pick.own;
-  const submit = async (e?: FormEvent): Promise<void> => {
-    e?.preventDefault();
+  // The same stored thing shown in more than one place: the words change in each, as saving them will.
+  const reach = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
+  const submit = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(add); };
+  const add = async (): Promise<void> => {
     if (!changed || !live) return;
     const t = target ?? await live.layerTarget().catch(() => null);
     if (!t) { toast('Nothing is picked on the page any more: pick it again, then retype it.', 'error'); return; }
     const change = { type: 'text' as const, value: words };
     const done = await layer.add({ target: t.target, label: t.label, page, scope: 'this', breakpoint: 'all', change, before: t.before });
-    if (done) onAdded({ label: t.label, lines: changeLines({ change, before: t.before }), reach: 'this element' });
+    if (done) onAdded({ label: t.label, lines: changeLines({ change, before: t.before }), reach: thisReach(placesOf(t.target.part, trace), !!t.target.part) });
   };
   return (
     <form className="live-change live-layer-edit" onSubmit={(e) => void submit(e)} aria-label="Retype the words">
       <label className="small" htmlFor={id}>New words</label>
       <textarea id={id} rows={2} value={value} onChange={(e) => setValue(e.target.value)} autoFocus spellCheck
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); void submit(); }
+          // A held Enter repeats, and an input method's Enter confirms a word: neither makes another draft.
+          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); if (sends(e)) void submit(); }
           if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
         }} />
-      <Fragile target={target} />
+      <Fragile target={target} scope="this" />
       <div className="live-actions">
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!changed}>Show it on the page</Button>
         <Button size="s" tone="quiet" onClick={onCancel}>Cancel</Button>
       </div>
-      <p className="faint small">For this element. Shown on the page at once, in Wanigan’s layer; the site has it only once you make it real from Edits (⇧E).</p>
+      <p className="faint small">For {reach}. {shownWords(layer.on)}; the site has it only once you make it real from Edits (⇧E).</p>
     </form>
   );
 }
@@ -130,12 +144,15 @@ const TOKEN = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
  * Try a style on the picked element: the values the owner sets, for this element or every instance of its kind,
  * shown on the page through the layer when added. A custom property is changed for the whole site.
  */
-export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
+export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   pick: LivePick; layer: LayerApi; page: string;
+  /** The page's trace: how many places it shows the picked element's stored thing. */
+  trace: LiveTrace | null;
   onAdded: (added: LayerAdded) => void; onDone: () => void;
 }) {
   const toast = useToast();
   const scopeName = useId();
+  const once = useSingleFlight();
   const [round, setRound] = useState(0);
   const { target, asked } = useTarget(`${pick.selector}:${round}`);
   const [values, setValues] = useState<Partial<Record<LayerProperty, string>>>({});
@@ -145,10 +162,12 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
   const base = useCallback((prop: LayerProperty): string => target?.before[prop] ?? pick.style[prop] ?? '', [target, pick.style]);
   const set = (prop: LayerProperty, value: string): void => setValues((was) => ({ ...was, [prop]: value }));
   const chosen = Object.entries(values).filter(([k, v]) => v !== '' && v !== base(k as LayerProperty)) as [LayerProperty, string][];
-  const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : 'this element';
+  // One element, or the one stored thing the page shows in more than one place.
+  const one = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
+  const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : one;
 
-  const add = async (e?: FormEvent): Promise<void> => {
-    e?.preventDefault();
+  const add = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(addStyle); };
+  const addStyle = async (): Promise<void> => {
     if (!chosen.length) return;
     if (!target) { toast('Nothing is picked on the page any more: pick it again, then try the style.', 'error'); return; }
     const bad = chosen.find(([, v]) => layerValue(v) === null);
@@ -162,7 +181,8 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
     setRound((n) => n + 1);
   };
   const tokenOk = TOKEN.test(token.name.trim()) && layerValue(token.value) !== null;
-  const addToken = async (): Promise<void> => {
+  const addToken = (): Promise<unknown> => once(addTokenNow);
+  const addTokenNow = async (): Promise<void> => {
     if (!tokenOk || !target) return;
     const name = token.name.trim();
     const change = { type: 'token' as const, name, value: (layerValue(token.value) as string) };
@@ -173,7 +193,11 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
   };
 
   // Enter in the token's fields changes the token, not the style above it.
-  const tokenKey = (e: KeyboardEvent<HTMLInputElement>): void => { if (e.key === 'Enter') { e.preventDefault(); void addToken(); } };
+  const tokenKey = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (sends(e)) void addToken();
+  };
 
   return (
     <form className="live-style live-layer-edit" onSubmit={(e) => void add(e)} aria-label="Try a style">
@@ -210,7 +234,7 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
         <label className="live-layer-scope-option">
           <input type="radio" name={scopeName} value="this" checked={scope === 'this'} onChange={() => setScope('this')} />
           <span>
-            <span className="small">This element</span>
+            <span className="small">{one.charAt(0).toUpperCase()}{one.slice(1)}</span>
             <span className="faint small">{target?.label ?? (asked ? 'The element picked' : 'Asking the page…')}</span>
           </span>
         </label>
@@ -224,14 +248,14 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
           </label>
         ) : null}
       </fieldset>
-      <Fragile target={target} />
+      <Fragile target={target} scope={scope} />
       <div className="live-actions">
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!chosen.length || !target}>Show it on the page</Button>
         <Button size="s" tone="quiet" icon="undo" onClick={() => setValues({})} disabled={!Object.keys(values).length}>Reset</Button>
         <Button size="s" tone="quiet" onClick={onDone}>Done</Button>
       </div>
       <p className="faint small">
-        Shown on the page at once, in Wanigan’s layer, for {reach}. Making it real goes to an agent as intent, to make in the theme’s own styles.
+        {shownWords(layer.on)}, for {reach}. Making it real goes to an agent as intent, to make in the theme’s own styles.
       </p>
       <Disclosure title="A token, for the whole site" summary="a custom property">
         <div className="live-style-grid">
@@ -249,7 +273,10 @@ export function StyleEdit({ pick, layer, page, onAdded, onDone }: {
         <div className="live-actions">
           <Button size="s" icon="check" disabled={!tokenOk || !target} onClick={addToken}>Change it for the whole site</Button>
         </div>
-        <p className="faint small">Every use of the property repaints together. Only a custom property (--name) is changed for the whole site.</p>
+        <p className="faint small">
+          Set on the page’s root: everything that reads the property from there repaints together, and a part that sets it itself keeps its own value.
+          Only a custom property (--name) is changed for the whole site.
+        </p>
       </Disclosure>
     </form>
   );
