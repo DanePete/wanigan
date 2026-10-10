@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { ATTACH_MAX_BYTES, attachKey, formatBytes, type Attachment, type AttachmentKind, type AttachTo } from '@shared/attachments';
 import { attempt, bridge, call, useQuery } from '../lib/api';
 import { Icon } from './icons';
-import { IconButton, useToast } from './ui';
+import { IconButton, tipProps, useToast } from './ui';
 
 type Incoming = File | { name: string; data: string };
 
@@ -144,14 +144,14 @@ function Chip({ file, onRemove }: { file: { id: string; name: string; kind: Atta
   const preview = useQuery('attachments.preview', file.kind === 'image' ? { id: file.id } : null, []);
   const thumb = preview.data?.dataUrl ?? null;
   return (
-    <li className="attach-chip" title={`${file.name} · ${formatBytes(file.size)}`}>
+    <li className="attach-chip" {...tipProps(`${file.name} · ${formatBytes(file.size)}`)}>
       {thumb ? <img className="attach-thumb" src={thumb} alt="" /> : (
         <span className="attach-icon"><Icon name={file.kind === 'image' ? 'image' : 'file'} size={14} /></span>
       )}
       <span className="attach-name">{file.name}</span>
       <span className="attach-size">{file.kind === 'pdf' ? 'PDF · ' : ''}{formatBytes(file.size)}</span>
       {onRemove ? (
-        <button type="button" className="attach-x" aria-label={`Remove ${file.name}`} title="Remove" onClick={() => onRemove(file.id)}>
+        <button type="button" className="attach-x" aria-label={`Remove ${file.name}`} {...tipProps(`Remove ${file.name}`)} onClick={() => onRemove(file.id)}>
           <Icon name="close" size={12} />
         </button>
       ) : null}

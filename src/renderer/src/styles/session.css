@@ -28,7 +28,6 @@
 
 .title-button {
   max-width: 100%;
-  margin: 0 calc(-1 * var(--space-1));
   padding: 0 var(--space-1);
   border: var(--hairline) solid transparent;
   border-radius: var(--radius-s);
@@ -61,6 +60,22 @@
 
 .remote-mark .badge {
   gap: var(--space-1);
+}
+
+/*
+  A neutral Badge says what something is, on the sunk tint. pages.css still has
+  the pre-Studio .badge (water) and wins the cascade, so these views put the
+  neutral one back until that rule goes.
+*/
+.session-bar .badge-neutral,
+.session-facts .badge-neutral,
+.hrow .badge-neutral,
+.reader .badge-neutral {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  background: var(--sunken);
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .session-stop-confirm {
@@ -873,8 +888,10 @@
 .running-actions {
   display: flex;
   flex: none;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-1);
+  width: calc(var(--space-12) * 4);
 }
 
 /* ── New session (dialogs/NewSessionDialog.tsx) ──────────────────────────── */
@@ -885,7 +902,7 @@
   white-space: nowrap;
 }
 
-.new-session-check {
+.new-session .new-session-check {
   margin: 0 0 var(--space-3);
   padding: var(--space-1) 0;
   background: none;
@@ -908,4 +925,10 @@
   margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
+}
+
+/* Files waiting in the composer: chips on the sunk tint, not boxes inside its box. */
+.composer-box .attach-chip {
+  border-color: transparent;
+  background: var(--sunken);
 }

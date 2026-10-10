@@ -17,6 +17,8 @@ const LAYOUTS = [
   { value: 'list', label: 'List' },
   { value: 'watch', label: 'Watch', hint: `Up to ${WATCH_MAX} live terminals at once` },
 ] as const;
+/** A tile's height for its width: about the shape of a session's terminal, as its own view draws it. */
+const TILE_SHAPE = 0.62;
 /** The needs the rest of the app marks amber (needs.css): the owner has to act. */
 const AMBER: ReadonlySet<NeedKind> = new Set(['permission', 'overlap', 'limit', 'question']);
 
@@ -175,7 +177,7 @@ function Watch({ shown, projects, needs, pins, onTogglePin, typing, setTyping }:
   }, []);
   const grid = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
-  const [layout, setLayout] = useState<{ columns: number; least: number }>({ columns: 1, least: 0 });
+  const [layout, setLayout] = useState<{ columns: number; row: number }>({ columns: 1, row: 0 });
   useEffect(() => {
     const el = grid.current;
     if (!el) return undefined;
@@ -187,16 +189,19 @@ function Watch({ shown, projects, needs, pins, onTogglePin, typing, setTyping }:
       const width = probe.current?.offsetWidth ?? 0;
       const height = probe.current?.offsetHeight ?? 0;
       const columns = watchColumns(shown.length, room + gap, width + gap);
-      setLayout((was) => (was.columns === columns && was.least === height ? was : { columns, least: height }));
+      // A tile keeps about a terminal's shape, so a session's screen scales by its width, not squashed by a short row.
+      const column = (room - gap * (columns - 1)) / columns;
+      const row = Math.round(Math.max(height, column * TILE_SHAPE));
+      setLayout((was) => (was.columns === columns && was.row === row ? was : { columns, row }));
     };
     measure();
     const watch = new ResizeObserver(measure);
     watch.observe(el);
     return () => watch.disconnect();
   }, [shown.length]);
-  const { columns, least } = layout;
-  // Stacked in one column, each tile keeps about a terminal's shape; otherwise the rows share the room, never under the least.
-  const rows = columns === 1 && shown.length > 1 ? `max(${least}px, 62cqi)` : `minmax(${least}px, 1fr)`;
+  const { columns, row } = layout;
+  // The rows share the room when it is there, and never go under a terminal's shape: then Watch scrolls.
+  const rows = `minmax(${row}px, 1fr)`;
 
   return (
     <div className="watch-area">

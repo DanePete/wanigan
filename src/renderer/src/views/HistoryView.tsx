@@ -1,7 +1,7 @@
 // A project's History: every earlier Claude Code and Codex conversation in its
 // folder, wherever it ran (a terminal, VS Code or here), to read or
 // to pick up again as a live session.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Account, HistoryItem, HistoryTurn, ProjectSummary } from '@shared/model';
 import type { Shortcut } from '@shared/shortcuts';
 import { attempt, call, useQuery } from '../lib/api';
@@ -199,16 +199,20 @@ function Reader({ item, focus, projectKey, pausedAt, onClose, onResume }: {
   const close = useRef(onClose);
   close.current = onClose;
 
-  // Opened by choosing it, focus comes here; Escape closes it, and focus goes back where it was.
-  useEffect(() => {
+  // Opened by choosing it, focus comes here, and goes back to its row when it closes (in the commit, before anything else can move it).
+  useLayoutEffect(() => {
     const before = document.activeElement as HTMLElement | null;
     if (focus) top.current?.focus();
+    return () => { if (focus && before?.isConnected) before.focus(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Escape closes it, unless a dialog over it has the keys.
+  useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent): void => {
       if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[aria-modal="true"]')) close.current();
     };
     window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('keydown', onKey); if (focus && before?.isConnected) before.focus(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // The newest turn is at the bottom, and that is where reading starts.
   useEffect(() => {

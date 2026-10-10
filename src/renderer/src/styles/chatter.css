@@ -5,9 +5,10 @@
    waiting dots while a reply is owed. Every duration is a token, and reduced
    motion takes it all to nothing (base.css); the words stay.
 
-   It sits bottom-left of the view, clear of the rail. The alert stack owns the
-   top-right and is an interruption you must deal with; this is something you
-   are being let in on, and it must never cover where an alert lands.
+   Nothing floats over the work (Studio): while they talk, a chip in the status
+   line says so, and opens the scene above it in a popover. Only where a view
+   still draws its own status line does the scene sit bottom-left as a card,
+   clear of the rail and of where an alert lands.
 
    Colour: the left character is water, the right one is the neutral ink. Green
    means done here, so it is not a character's colour; the letter and the name
@@ -37,6 +38,90 @@
 .chatter.is-leaving {
   animation: chatter-out var(--dur-slow) var(--ease) both;
   pointer-events: none;
+}
+
+/* Docked: the scene inside the status line's popover, which brings the surface and the elevation. */
+.chatter.chatter-docked {
+  position: static;
+  width: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  animation: none;
+}
+
+.chatter-popover {
+  overflow-y: auto;
+}
+
+/* The chip in the status line: two initials, the latest label, the count. */
+.chatter-chip {
+  order: 90;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(var(--space-12) * 7);
+  height: calc(var(--control-s) - var(--space-1));
+  padding: 0 var(--space-1) 0 var(--gap-hair);
+  border: 0;
+  border-radius: var(--radius-round);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  animation: rise var(--dur) var(--ease);
+  transition: background var(--dur-fast) var(--ease), opacity var(--dur) var(--ease);
+}
+
+.chatter-chip:hover,
+.chatter-chip[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatter-chip.is-leaving {
+  opacity: 0;
+}
+
+.chatter-chip-faces {
+  display: inline-flex;
+  flex: none;
+}
+
+.chatter-chip-face {
+  display: grid;
+  place-items: center;
+  width: var(--count-h);
+  height: var(--count-h);
+  border-radius: var(--radius-round);
+  background: var(--raised);
+  box-shadow: 0 0 0 var(--ring) var(--sunken);
+  color: var(--fg);
+  font: 600 var(--text-2xs) / 1 var(--font-ui);
+}
+
+.chatter-chip-face.side-left {
+  background: var(--water-soft);
+  color: var(--water-text);
+}
+
+.chatter-chip-face + .chatter-chip-face {
+  margin-left: calc(-1 * var(--space-1));
+}
+
+.chatter-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: fade var(--dur) var(--ease);
+}
+
+.chatter-chip-who {
+  color: var(--fg);
+  font-weight: 500;
 }
 
 /* ── head ─────────────────────────────────────────────────────────────── */

@@ -57,10 +57,11 @@ const ptySizes = (page) => page.evaluate(async () => {
   }
   return sizes;
 });
-/** Tiles, each one in sight showing the session's real output (one scrolled out of sight is not drawn). */
+/** Tiles, each one in sight in the view showing the session's real output (one scrolled out of sight is not drawn). */
 const tilesShowing = (page, count, timeout = 8000) => page.waitForFunction((n) => {
   const tiles = [...document.querySelectorAll('.watch-tile')];
-  const seen = tiles.filter((t) => { const r = t.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; });
+  const view = document.querySelector('.view-body')?.getBoundingClientRect() ?? { top: 0, bottom: innerHeight };
+  const seen = tiles.filter((t) => { const r = t.getBoundingClientRect(); return r.bottom > view.top + 1 && r.top < view.bottom - 1; });
   return tiles.length === n && seen.length > 0 && seen.every((t) => (t.querySelector('.xterm-rows')?.textContent ?? '').trim().length > 0);
 }, count, { timeout });
 /** The grid: how many tiles and columns, any under the readable least (the stylesheet's probe), any drawn over another. */
@@ -1912,6 +1913,13 @@ try {
       await send({ to: 'main', summary: 'Yes: both call freeShippingThreshold()' }, { agent_id: 'a91c', agent_type: 'researcher' });
       await page.waitForTimeout(700);
       await send({ to: 'researcher', summary: 'Thanks. Adding a drawer test now' });
+      // Nothing floats over the board: a chip in the status line says it, with the latest label, and opens the scene.
+      await page.waitForFunction(() => document.querySelector('.status-line .chatter-chip .chatter-n')?.textContent === '3', null, { timeout: 8000 })
+        .catch(() => failures.push(`${theme}/chatter: the status line does not say three messages went`));
+      if (await page.$('.chatter')) failures.push(`${theme}/chatter: the scene floats over the view before it is asked for`);
+      if (!/Adding a drawer test now/.test((await page.textContent('.status-line .chatter-chip').catch(() => '')) ?? '')) failures.push(`${theme}/chatter: the chip does not say the latest label`);
+      await page.screenshot({ path: join(out, `${theme}-chatter-chip.png`) });
+      await page.click('.status-line .chatter-chip');
       await page.waitForSelector('.chatter .chatter-line:nth-child(3)', { timeout: 8000 }).catch(() => failures.push(`${theme}/chatter: three messages never showed`));
       await page.waitForTimeout(900);
       const seen = await page.evaluate(() => {

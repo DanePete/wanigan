@@ -3,10 +3,14 @@
 // Claude Code agents can message each other (SendMessage), and every word of it
 // happens in a terminal nobody is looking at. The owner's model of the work is
 // "these agents are working separately"; the moment two of them coordinate, that
-// model is wrong and nothing says so. This card does, as a small scene rather
-// than a log: the two stand facing each other, the message visibly crosses the
-// wire, the speaker squashes to talk and the listener bobs to hear, and the
-// exchange gathers beneath them as bubbles.
+// model is wrong and nothing says so. This does, as a small scene rather than a
+// log: the two stand facing each other, the message visibly crosses the wire,
+// the speaker squashes to talk and the listener bobs to hear, and the exchange
+// gathers beneath them as bubbles.
+//
+// Nothing floats over the work (Studio): while they talk, a chip in the status
+// line says who and the latest label, and opens the scene above it. Only a view
+// that still draws its own status line gets the scene as a card at the corner.
 //
 // What it shows is what the core recorded: who sent, who it went to, and the
 // sender's own short label for it. Never the message (see shared/chatter.ts).
@@ -18,7 +22,11 @@ import type { ProjectSummary } from '@shared/model';
 import type { Events } from '@shared/protocol';
 import { bridge } from '../lib/api';
 import { href } from '../lib/router';
+import { useNotices } from '../lib/notices';
 import { Icon } from './icons';
+import { Popover } from './Popover';
+import { StatusSlot } from './StatusLine';
+import { tipProps } from './ui';
 
 /** Quiet for this long and the exchange is over, so the card leaves by itself. */
 const SETTLE_MS = 16_000;
@@ -166,14 +174,20 @@ export function Chatter({ projects }: { projects: ProjectSummary[] | undefined }
 
   const shown = useMemo(() => lines.slice(-MAX_LINES), [lines]);
   const earlier = lines.length - shown.length;
+  const { slot } = useNotices();
+  const chip = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (phase !== 'open') setOpen(false); }, [phase]);
 
   if (phase === 'hidden' || !stage || !shown.length) return null;
   const listener: Side = stage.speaker === 'left' ? 'right' : 'left';
   const waitingOn = awaiting ? (awaiting === 'left' ? stage.left : stage.right) : null;
+  const latest = shown[shown.length - 1]!;
+  const docked = !!slot;
 
-  return (
+  const scene = (
     <aside
-      className={`chatter${phase === 'leaving' ? ' is-leaving' : ''}`}
+      className={`chatter${docked ? ' chatter-docked' : ''}${phase === 'leaving' ? ' is-leaving' : ''}`}
       role="log"
       aria-live="polite"
       aria-label="Messages between your agents"
@@ -186,7 +200,7 @@ export function Chatter({ projects }: { projects: ProjectSummary[] | undefined }
         <span className="chatter-title">Your agents are talking</span>
         {/* Keyed on the count so the badge bumps once per arrival. */}
         <span className="chatter-n" key={lines.length}>{lines.length}</span>
-        <button type="button" className="chatter-x" onClick={close} aria-label="Dismiss this exchange" title="Dismiss">
+        <button type="button" className="chatter-x" onClick={close} aria-label="Dismiss this exchange" {...tipProps('Dismiss')}>
           <Icon name="close" size={14} />
         </button>
       </header>
@@ -204,7 +218,7 @@ export function Chatter({ projects }: { projects: ProjectSummary[] | undefined }
           <li className={`chatter-line side-${line.side}`} key={line.id}>
             <span className="chatter-bubble">
               {line.link
-                ? <a className="chatter-who" href={line.link} title={`Open ${line.from}`}>{line.from}</a>
+                ? <a className="chatter-who" href={line.link} onClick={() => setOpen(false)} {...tipProps(`Open ${line.from}`)}>{line.from}</a>
                 : <span className="chatter-who">{line.from}</span>}
               {line.label
                 ? <span className="chatter-said">{line.label}</span>
@@ -221,6 +235,33 @@ export function Chatter({ projects }: { projects: ProjectSummary[] | undefined }
         Wanigan sees the label a sender gives a message, never the message.
       </p>
     </aside>
+  );
+
+  if (!docked) return scene;
+  const said = `${latest.from} to ${latest.to}: ${latest.label ?? 'a message with no label'}`;
+  return (
+    <>
+      <StatusSlot>
+        <button ref={chip} type="button" className={`chatter-chip${phase === 'leaving' ? ' is-leaving' : ''}`} aria-haspopup="dialog" aria-expanded={open}
+          aria-label={`Your agents are talking, ${lines.length} ${lines.length === 1 ? 'message' : 'messages'}. Latest: ${said}`}
+          {...tipProps('Your agents are talking: see the exchange')} onClick={() => setOpen((o) => !o)}
+          onMouseEnter={() => { held.current = true; }} onMouseLeave={() => { held.current = false; }}>
+          <span className="chatter-chip-faces" aria-hidden="true">
+            <span className="chatter-chip-face side-left">{stage.left.initial}</span>
+            <span className="chatter-chip-face side-right">{stage.right.initial}</span>
+          </span>
+          <span className="chatter-chip-text" key={latest.id}>
+            <span className="chatter-chip-who">{latest.from}</span> {latest.label ?? 'sent a message'}
+          </span>
+          <span className="chatter-n" key={lines.length}>{lines.length}</span>
+        </button>
+        {/* Said to a screen reader as each arrives, while the scene is closed. */}
+        {open ? null : <span className="visually-hidden" role="log" aria-live="polite">{said}</span>}
+      </StatusSlot>
+      <Popover anchor={chip} open={open} onClose={() => setOpen(false)} label="Messages between your agents" side="top" align="end" width={380} className="chatter-popover">
+        {scene}
+      </Popover>
+    </>
   );
 }
 
@@ -242,7 +283,7 @@ function Character({ side, who, speaking, listening, waiting }: {
     <span className={`chatter-actor actor-${side}${state}`}>
       {/* The scene is hidden from assistive tech, so its link is for the pointer
           only; the same session is a real link in the thread below. */}
-      {who.link ? <a className="chatter-face-link" href={who.link} tabIndex={-1} title={`Open ${who.name}`}>{face}</a> : face}
+      {who.link ? <a className="chatter-face-link" href={who.link} tabIndex={-1}>{face}</a> : face}
       {/* Only while a message sent to them has not been answered. Dots are the
           idiom everyone reads as "their turn", which is the true thing here. */}
       {waiting ? (
