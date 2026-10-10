@@ -125,6 +125,8 @@ namespace {
     public function isReusable() { return $this->content->reusable; }
     public function getChangedTime() { return $this->content->changed; }
     public function hasField($n) { return isset($this->fields[$n]); }
+    // A field the content type defines in code (a base field): its label is the field's name, made a word.
+    public function getFieldDefinition($n) { return new class($n) { public function __construct(private string $n) {} public function getLabel() { return ucfirst(str_replace('_', ' ', $this->n)); } }; }
     public function get($n) { return $this->fields[$n]; }
     public function getTranslationLanguages() { return $this->content->translations; }
     public function hasTranslation($l) { return isset($this->content->translations[$l]); }
@@ -170,6 +172,7 @@ namespace {
   }
 
   require getenv('WL_HELPER') . '/src/Save/Words.php';
+  require getenv('WL_HELPER') . '/src/Save/ConfigWords.php';
   require getenv('WL_HELPER') . '/src/Controller/LiveController.php';
   use Drupal\wanigan_live\Controller\LiveController;
   $save = function (array $body): array {
@@ -206,6 +209,10 @@ const SAVES = String.raw`
   $out['unmarkedOne'] = [$save(['field' => 'node:12:title:string', 'before' => 'Paddling 101', 'after' => 'Paddling 102'])[0], World::words('en', 'title')];
   // The marked field is in other content than the edit's target names: refused.
   $out['otherContent'] = [$save(['field' => 'node:12:title:string:en', 'before' => 'Paddling 102', 'after' => 'Paddling 103', 'uuid' => 'another-uuid', 'langcode' => 'en', 'item' => 'delta:0'])[0], World::words('en', 'title')];
+  // Words that are the field's label, which no item holds, go to the label's save, never to an item: here a base
+  // field's label, which is code.
+  World::make(['en' => ['title' => ['Paddling 101']]]);
+  $out['label'] = [$save(['field' => 'node:12:title:string:en:7:1760000000', 'before' => 'Title', 'after' => 'Name', 'uuid' => '${UUID}', 'langcode' => 'en']), World::words('en', 'title'), World::$content->saved];
   // What is not a language or an item is refused before anything is loaded.
   $out['badItem'] = $save(['field' => 'node:12:title:string:en', 'before' => 'Paddling 102', 'after' => 'x', 'item' => 'all'])[0];
 
@@ -307,7 +314,7 @@ function runSaves(t: { skip(why: string): void }, scenarios: string): Record<str
   if (!bin) { t.skip('PHP is not installed here'); return null; }
   const folder = mkdtempSync(join(tmpdir(), 'wanigan-drupal-save-'));
   try {
-    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php']) {
+    for (const file of ['src/Controller/LiveController.php', 'src/Save/Words.php', 'src/Save/ConfigWords.php']) {
       mkdirSync(join(folder, file, '..'), { recursive: true });
       writeFileSync(join(folder, file), DRUPAL_HELPER_FILES[file] ?? '');
     }
@@ -339,6 +346,8 @@ test('words are saved to the translation and the item named, and to nothing else
   assert.deepEqual(out.unmarkedOne, [200, ['Paddling 102']]);
   assert.deepEqual(out.otherContent, [409, ['Paddling 102']]);
   assert.equal(out.badItem, 400);
+  assert.deepEqual(out.label, [[409, { ok: false, error: 'This is the label of a field its kind of content defines in code (a base field), so Drupal keeps no such thing to change here.' }], ['Paddling 101'], []],
+    'the label’s words go to the label, never to an item');
 });
 
 test('words are saved only over what the page showed: any violation, a newer draft, a later save or an inline block refuses them', (t) => {

@@ -243,7 +243,13 @@ final class Words {
    * ProcessedText::preRenderText() falls back) and the format, or NULL.
    */
   private static function formatOf($value): array {
-    $id = $value->format ?? NULL;
+    return self::format($value->format ?? NULL);
+  }
+
+  /**
+   * A format by its id, as formatOf() finds it: [id, format or NULL].
+   */
+  public static function format(?string $id): array {
     if ($id === NULL || $id === '') {
       $id = (string) \Drupal::config('filter.settings')->get('fallback_format');
     }
@@ -255,7 +261,7 @@ final class Words {
    * Whether a format shows its text as literal text: filter_html_escape
    * escapes all of it, so the stored value is words, not markup.
    */
-  private static function literal($format): bool {
+  public static function literal($format): bool {
     return self::enabled($format, 'filter_html_escape');
   }
 
@@ -352,6 +358,34 @@ final class Words {
     }
     $found->data = preg_replace_callback($flexible, static fn () => $after, $found->data, 1);
     return Html::serialize($document);
+  }
+
+  /**
+   * The runs of words a stored text shows, each with where its bytes are:
+   * [offset, length, words]. A run is the text between two tags (in literal
+   * text, a paragraph). A run holding a replacement pattern ({{ name }},
+   * [type:token]) is left out: what shows there is not what is kept.
+   */
+  public static function runs(string $stored, bool $literal): array {
+    $out = [];
+    $pieces = $literal ? array_map(static fn ($p) => [$p[1], $p[0]], preg_split('/\n\s*\n/', $stored, -1, PREG_SPLIT_OFFSET_CAPTURE)) : self::segments($stored);
+    foreach ($pieces as [$offset, $raw]) {
+      $words = self::fold($literal ? $raw : html_entity_decode($raw, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+      if ($words === '' || preg_match('/\{\{|\{%|\[[\w-]+:[^\]\s]+\]/u', $words)) {
+        continue;
+      }
+      $lead = strlen($raw) - strlen(ltrim($raw));
+      $out[] = [$offset + $lead, strlen(trim($raw)), $words];
+    }
+    return $out;
+  }
+
+  /**
+   * A stored text with one run (runs()) made other words, every other byte
+   * kept: escaped in markup, as typed in literal text.
+   */
+  public static function spliceRun(string $stored, array $run, string $words, bool $literal): string {
+    return substr_replace($stored, $literal ? $words : htmlspecialchars($words, ENT_NOQUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8'), $run[0], $run[1]);
   }
 
   /**
@@ -581,7 +615,494 @@ final class Words {
 }
 `;
 
+const CONFIG_WORDS = String.raw`<?php
+
+namespace Drupal\wanigan_live\Save;
+
+use Drupal\Component\Utility\NestedArray;
+use Drupal\Component\Utility\Xss;
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Field\FieldConfigInterface;
+use Drupal\Core\Menu\MenuLinkDefault;
+use Drupal\wanigan_live\Controller\LiveController;
+use Drupal\wanigan_live\Edit\Targets;
+use Drupal\wanigan_live\Trace\TraceBuilder;
+
+/**
+ * Words kept in configuration and in menu links, offered where the page
+ * shows them and saved where Drupal keeps them.
+ *
+ * Each is an EditTarget of the page's trace (via 'schema', its value the
+ * words the page showed), saved through POST /_wanigan/edit/<id>: a block
+ * placement's title (Block::getPlugin()'s settings, saved through the
+ * block), the site's name and slogan (system.site), the words of a view's
+ * header, footer or empty text (a text or text_custom area, written to the
+ * display that owns it, its words offered run by run so the markup around
+ * them is never typed over), and a content menu link's text (saved as the
+ * field it is, through LiveController::saveWords(), with every gate a field
+ * save runs). A field's label is saved the same way from the field's own
+ * save (LiveController::saveWords()), when those are the words.
+ *
+ * Config::save() runs no validation, so every change is validated against
+ * its typed configuration first (a violation the change brings refuses it),
+ * with the rules only Drupal's own forms keep (a site name and a block or
+ * field label are required; a slogan or a label is at most 255 characters),
+ * and the admin permission the form's route needs is checked, since
+ * configuration has no access of its own. Words the page showed in a
+ * language other than the configuration's own are kept in its
+ * LanguageConfigOverride, which is what is written (and needs "translate
+ * configuration"); words shown untranslated are not saved to another
+ * language. What is saved is configuration: the next configuration import
+ * puts back what is exported, which each target and each answer says.
+ *
+ * Words written in code are offered with why they cannot be saved: a menu
+ * link a module defines in YAML, a base field's label.
+ */
+final class ConfigWords {
+
+  /**
+   * What every configuration target and answer says.
+   */
+  public const NOTE = 'This is configuration: the next configuration import puts back what is exported, so export the site’s configuration to keep this change.';
+
+  /**
+   * A block placement's title.
+   */
+  public static function blockLabel(TraceBuilder $builder, string $id): ?string {
+    try {
+      $block = \Drupal::entityTypeManager()->getStorage('block')->load($id);
+      if (!$block) {
+        return NULL;
+      }
+      $label = (string) (((array) $block->get('settings'))['label'] ?? '');
+      $info = ['kind' => 'words', 'what' => 'block', 'id' => $id, 'name' => $block->getConfigDependencyName(), 'key' => ['settings', 'label'], 'langcode' => self::language(), 'shown' => $label, 'entity' => ['block', $id], 'saves' => 'block'];
+      $target = self::target('words.block.' . Targets::idPart($id), 'config', 'Block title: ' . $label, 'Block title', $label, ['minLength' => 1, 'maxLength' => 255]);
+      return self::add($builder, $target, $info);
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
+  }
+
+  /**
+   * The site's name and slogan, where a branding block shows them (its
+   * use_site_name and use_site_slogan; both when its settings are not to
+   * hand).
+   */
+  public static function site(TraceBuilder $builder, ?string $block): array {
+    try {
+      $settings = $block !== NULL && ($entity = \Drupal::entityTypeManager()->getStorage('block')->load($block)) ? (array) $entity->get('settings') : [];
+      $out = [];
+      foreach (['name' => 'Site name', 'slogan' => 'Slogan'] as $key => $title) {
+        if (array_key_exists('use_site_' . $key, $settings) && empty($settings['use_site_' . $key])) {
+          continue;
+        }
+        $value = (string) \Drupal::config('system.site')->get($key);
+        $info = ['kind' => 'words', 'what' => 'site', 'id' => $key, 'name' => 'system.site', 'key' => [$key], 'langcode' => self::language(), 'shown' => $value, 'saves' => NULL];
+        $target = self::target('words.site.' . $key, 'config', $title . ': ' . $value, $title, $value, $key === 'name' ? ['minLength' => 1] : ['maxLength' => 255]);
+        $out[] = self::add($builder, $target, $info);
+      }
+      return array_values(array_filter($out));
+    }
+    catch (\Throwable) {
+      return [];
+    }
+  }
+
+  /**
+   * The words of a view display's header, footer and empty text: each text
+   * or text_custom area of the display that owns the option (this one, or
+   * the default display whose option it uses: DisplayPluginBase::
+   * isDefaulted()), run by run.
+   */
+  public static function view(TraceBuilder $builder, string $id, string $display): array {
+    try {
+      $view = \Drupal::entityTypeManager()->getStorage('view')->load($id);
+      if (!$view) {
+        return [];
+      }
+      $displays = (array) $view->get('display');
+      $out = [];
+      foreach (['header' => 'header', 'footer' => 'footer', 'empty' => 'text when empty'] as $area => $called) {
+        $owner = ($display !== 'default' && (($displays[$display]['display_options']['defaults'][$area] ?? TRUE) === FALSE)) ? $display : 'default';
+        foreach ((array) ($displays[$owner]['display_options'][$area] ?? []) as $handler => $options) {
+          $plugin = (string) ($options['plugin_id'] ?? '');
+          if ($plugin === 'text') {
+            $stored = (string) ($options['content']['value'] ?? '');
+            $key = ['display', $owner, 'display_options', $area, $handler, 'content', 'value'];
+            [, $format] = Words::format($options['content']['format'] ?? NULL);
+            $literal = $format !== NULL && Words::literal($format);
+          }
+          elseif ($plugin === 'text_custom') {
+            $stored = (string) ($options['content'] ?? '');
+            $key = ['display', $owner, 'display_options', $area, $handler, 'content'];
+            $literal = FALSE;
+          }
+          else {
+            continue;
+          }
+          $runs = Words::runs($stored, $literal);
+          if (!$runs) {
+            continue;
+          }
+          $properties = [];
+          $value = [];
+          foreach ($runs as $i => $run) {
+            $properties['w' . ($i + 1)] = ['type' => 'string', 'title' => 'Words ' . ($i + 1), 'minLength' => 1];
+            $value['w' . ($i + 1)] = $run[2];
+          }
+          $shared = $owner !== $display ? ' Its ' . $called . ' is the default display’s, so every display that uses that one shows this too.' : '';
+          $tid = 'words.view.' . Targets::idPart($id) . '.' . Targets::idPart($owner) . '.' . $area . '.' . Targets::idPart((string) $handler);
+          $target = [
+            'id' => $tid, 'kind' => 'config', 'label' => 'View ' . $called . ': ' . $view->label(), 'via' => 'schema', 'revisions' => FALSE,
+            'schema' => ['type' => 'object', 'title' => 'Words of its ' . $called, 'description' => self::NOTE . $shared, 'properties' => $properties, 'required' => array_keys($properties)],
+            'value' => $value,
+          ];
+          $info = ['kind' => 'words', 'what' => 'view', 'id' => $id, 'name' => $view->getConfigDependencyName(), 'key' => $key, 'langcode' => self::language(), 'shown' => $stored, 'runs' => array_column($runs, 2), 'plugin' => $plugin, 'entity' => ['view', $id], 'saves' => 'view'];
+          $out[] = self::add($builder, $target, $info);
+        }
+      }
+      return array_values(array_filter($out));
+    }
+    catch (\Throwable) {
+      return [];
+    }
+  }
+
+  /**
+   * A menu link's text: a content menu link's title field, saved as that
+   * field; a link written in code, offered with why not.
+   */
+  public static function link(TraceBuilder $builder, string $plugin): ?string {
+    try {
+      $manager = \Drupal::service('plugin.manager.menu.link');
+      if (!$manager->hasDefinition($plugin)) {
+        return NULL;
+      }
+      $link = $manager->createInstance($plugin);
+      $title = (string) $link->getTitle();
+      $target = self::target('words.link.' . Targets::idPart($plugin), 'menu-link', 'Link text: ' . $title, 'Link text', $title, ['minLength' => 1, 'maxLength' => 255]);
+      unset($target['schema']['description']);
+      $entity_id = $link->getMetaData()['entity_id'] ?? NULL;
+      $entity = ($link->getProvider() === 'menu_link_content' && $entity_id !== NULL) ? \Drupal::entityTypeManager()->getStorage('menu_link_content')->load($entity_id) : NULL;
+      if ($entity instanceof ContentEntityInterface) {
+        $shown = \Drupal::service('entity.repository')->getTranslationFromContext($entity);
+        $revisions = $shown->getEntityType()->isRevisionable();
+        $target['revisions'] = $revisions;
+        if (!$shown->access('update')) {
+          $target['why'] = 'The user you are logged in as in the live view may not change this link.';
+        }
+        return self::add($builder, $target, [
+          'kind' => 'words', 'what' => 'link', 'id' => (string) $shown->id(), 'uuid' => $shown->uuid(), 'langcode' => $shown->language()->getId(),
+          'revision' => $revisions ? (string) $shown->getRevisionId() : '', 'changed' => method_exists($shown, 'getChangedTime') ? (string) $shown->getChangedTime() : '',
+          'shown' => (string) $shown->get('title')->value, 'saves' => 'menu_link_content',
+        ]);
+      }
+      $target['why'] = $link instanceof MenuLinkDefault
+        ? 'Its text is written in code (the links.menu.yml file of the module that defines it), so Drupal keeps no such thing to change here.'
+        : 'Wanigan does not change the text of this kind of menu link yet (one ' . $link->getProvider() . ' makes): change it where it is defined.';
+      return self::add($builder, $target, ['kind' => 'words', 'what' => 'none', 'why' => $target['why']]);
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
+  }
+
+  /**
+   * A field's label, when those are the words the field's mark was saved
+   * with (LiveController::saveWords(), for words no item holds): NULL when
+   * they are not, else [HTTP status, answer]. A base field's label is code.
+   */
+  public static function fieldLabel(ContentEntityInterface $entity, string $name, string $before, string $after): ?array {
+    $definition = $entity->getFieldDefinition($name);
+    if (!$definition instanceof FieldConfigInterface) {
+      return Words::fold((string) $definition->getLabel()) === $before
+        ? [409, self::refusal('This is the label of a field its kind of content defines in code (a base field), so Drupal keeps no such thing to change here.')]
+        : NULL;
+    }
+    $langcode = $entity->language()->getId();
+    $config = $definition->getConfigDependencyName();
+    $place = self::place($config, ['label'], $langcode);
+    $shown = ($place['override'] && $place['value'] === NULL) ? \Drupal::configFactory()->getEditable($config)->get('label') : $place['value'];
+    if (Words::fold((string) $shown) !== $before) {
+      return NULL;
+    }
+    [$status, $answer] = self::saveConfig([
+      'what' => 'label', 'id' => $name, 'name' => $config, 'key' => ['label'], 'langcode' => $langcode, 'shown' => $place['value'],
+      'entity' => [$definition->getEntityTypeId(), (string) $definition->id()], 'type' => $entity->getEntityTypeId(),
+    ], $after);
+    return [$status, $status === 200 ? $answer + ['value' => trim($after), 'label' => trim($after), 'revision' => NULL] : $answer];
+  }
+
+  /**
+   * Saves a target's new value (EditController's schema save): [HTTP status,
+   * answer].
+   */
+  public static function save(array $info, mixed $value): array {
+    try {
+      return match ($info['what'] ?? NULL) {
+        'link' => self::saveLink($info, $value),
+        'block', 'site', 'view' => self::saveConfig($info, $value),
+        default => [409, self::refusal((string) ($info['why'] ?? 'This is not changed here: it says why in the live view.'))],
+      };
+    }
+    catch (\Throwable $e) {
+      return [500, self::refusal('Drupal refused: ' . $e->getMessage())];
+    }
+  }
+
+  /**
+   * A content menu link's new text, through the field save and its gates:
+   * the translation the page showed, its revision or changed time, drafts,
+   * access and every violation.
+   */
+  private static function saveLink(array $info, mixed $value): array {
+    if (!is_string($value) || trim($value) === '') {
+      return [422, self::refusal('A link needs words.')];
+    }
+    $response = (new LiveController())->saveWords([
+      'field' => implode(':', ['menu_link_content', $info['id'], 'title', 'string', $info['langcode'], $info['revision'], $info['changed'], '']),
+      'before' => $info['shown'], 'after' => $value, 'uuid' => $info['uuid'], 'langcode' => $info['langcode'],
+    ]);
+    $answer = json_decode((string) $response->getContent(), TRUE);
+    return [$response->getStatusCode(), is_array($answer) ? $answer : self::refusal('The site’s answer could not be read.')];
+  }
+
+  /**
+   * A configuration value's new words, where the page's language keeps
+   * them, after every check.
+   */
+  private static function saveConfig(array $info, mixed $value): array {
+    $place = self::place($info['name'], $info['key'], $info['langcode']);
+    $user = \Drupal::currentUser();
+    if (!self::may($info)) {
+      return [403, self::refusal('The user you are logged in as in the live view may not change this (it needs “' . self::permission($info) . '”). Log in there as someone who may.')];
+    }
+    if ($place['override'] && !$user->hasPermission('translate configuration')) {
+      return [403, self::refusal('These words are a translation, and the user you are logged in as in the live view may not translate configuration. Log in there as someone who may.')];
+    }
+    if ($place['override'] && $place['value'] === NULL) {
+      return [409, self::refusal('The page shows these words in the site’s own language, because they have no translation in the page’s: they are not saved to another language. Translate them in Drupal first.')];
+    }
+    if ($place['value'] !== $info['shown']) {
+      return [409, self::refusal('This changed since the page loaded. Reload, and try again.')];
+    }
+    if ($info['what'] === 'view') {
+      [$new, $refused] = self::viewWords($info, (string) $place['value'], $value);
+      if ($refused !== NULL) {
+        return $refused;
+      }
+    }
+    else {
+      if (!is_string($value)) {
+        return [400, self::refusal('What words?')];
+      }
+      $new = trim($value);
+      $title = match ($info['what']) {
+        'block' => 'A block’s title', 'label' => 'A field’s label', default => $info['id'] === 'name' ? 'The site’s name' : 'The slogan',
+      };
+      if ($new === '' && ($info['what'] !== 'site' || $info['id'] === 'name')) {
+        return [422, self::refusal($title . ' cannot be empty: Drupal’s own form requires it.')];
+      }
+      if (mb_strlen($new) > 255 && ($info['what'] !== 'site' || $info['id'] === 'slogan')) {
+        return [422, self::refusal($title . ' is at most 255 characters in Drupal’s own form.')];
+      }
+      if ($new === $place['value']) {
+        return [409, self::refusal('These are the words it holds already: there is nothing to save.')];
+      }
+    }
+    if ($problems = self::violations($info['name'], $info['key'], $new)) {
+      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)))];
+    }
+    if ($info['what'] === 'view' && \Drupal::hasService('tempstore.shared') && \Drupal::service('tempstore.shared')->get('views')->getMetadata($info['id'])) {
+      return [409, self::refusal('This view has changes not yet saved in the Views UI: save or cancel them there first.')];
+    }
+    self::commit($info, $place, $new);
+    return [200, ['ok' => TRUE, 'note' => self::NOTE]];
+  }
+
+  /**
+   * A view area's new words, run by run: each changed run spliced where it
+   * is kept and checked through how the area shows it (its format, or
+   * Xss::filterAdmin() for text_custom): [new value, NULL] or [NULL, refusal].
+   */
+  private static function viewWords(array $info, string $stored, mixed $value): array {
+    if (!is_array($value)) {
+      return [NULL, [400, self::refusal('What words?')]];
+    }
+    $format_id = NULL;
+    $literal = FALSE;
+    if ($info['plugin'] === 'text') {
+      $format_key = $info['key'];
+      $format_key[count($format_key) - 1] = 'format';
+      $format_id = \Drupal::configFactory()->getEditable($info['name'])->get(implode('.', $format_key));
+      [$format_id, $format] = Words::format($format_id);
+      if ($format === NULL || !$format->access('use')) {
+        return [NULL, [403, self::refusal('The user you are logged in as in the live view may not use this text’s format (' . $format_id . '), so Drupal would not save it.')]];
+      }
+      $literal = Words::literal($format);
+    }
+    $runs = Words::runs($stored, $literal);
+    if (array_column($runs, 2) !== $info['runs']) {
+      return [NULL, [409, self::refusal('This changed since the page loaded. Reload, and try again.')]];
+    }
+    $show = static fn (string $html): string => $info['plugin'] === 'text' ? Words::render($html, $format_id, $info['langcode']) : (string) Xss::filterAdmin($html);
+    $html = $stored;
+    $changed = 0;
+    // The last run first, so the places of those before it hold.
+    for ($i = count($runs) - 1; $i >= 0; $i--) {
+      $words = $value['w' . ($i + 1)] ?? NULL;
+      if (!is_string($words) || trim($words) === '') {
+        return [NULL, [422, self::refusal('Every run of words needs words: Wanigan changes words here, never the markup around them.')]];
+      }
+      $words = trim($words);
+      if ($words === $runs[$i][2]) {
+        continue;
+      }
+      $next = Words::spliceRun($html, $runs[$i], $words, $literal);
+      if ($why = Words::compare($show($html), $show($next), $runs[$i][2], Words::fold($words))) {
+        return [NULL, [409, self::refusal($why)]];
+      }
+      $html = $next;
+      $changed++;
+    }
+    if (!$changed) {
+      return [NULL, [409, self::refusal('These are the words it holds already: there is nothing to save.')]];
+    }
+    return [$html, NULL];
+  }
+
+  /**
+   * Whether the user may change it: the permission its form's route needs.
+   */
+  private static function may(array $info): bool {
+    if (!empty($info['entity']) && $info['entity'][0] !== 'base_field_override') {
+      $entity = \Drupal::entityTypeManager()->getStorage($info['entity'][0])->loadOverrideFree($info['entity'][1]);
+      return $entity !== NULL && $entity->access('update');
+    }
+    return \Drupal::currentUser()->hasPermission(self::permission($info));
+  }
+
+  private static function permission(array $info): string {
+    return match ($info['what']) {
+      'block' => 'administer blocks',
+      'view' => 'administer views',
+      'label' => 'administer ' . ($info['type'] ?? '') . ' fields',
+      default => 'administer site configuration',
+    };
+  }
+
+  /**
+   * Violations of its typed configuration the change brings (Config::save()
+   * runs none): what validating the changed data finds that the stored data
+   * did not.
+   */
+  private static function violations(string $name, array $key, mixed $new): array {
+    $typed = \Drupal::service('config.typed');
+    $data = \Drupal::configFactory()->getEditable($name)->getRawData();
+    $was = self::said($typed->createFromNameAndData($name, $data)->validate());
+    NestedArray::setValue($data, $key, $new);
+    return array_values(array_diff(self::said($typed->createFromNameAndData($name, $data)->validate()), $was));
+  }
+
+  private static function said(iterable $violations): array {
+    $out = [];
+    foreach ($violations as $violation) {
+      $path = (string) $violation->getPropertyPath();
+      $out[] = ($path !== '' ? $path . ': ' : '') . trim(strip_tags((string) $violation->getMessage()));
+    }
+    return $out;
+  }
+
+  /**
+   * Writes the new value where the page's language keeps it: the override,
+   * or the configuration itself (through its entity, loaded without
+   * overrides, so no translation is written into it).
+   */
+  private static function commit(array $info, array $place, mixed $new): void {
+    $path = implode('.', $info['key']);
+    if ($place['override']) {
+      $place['store']->set($path, $new)->save();
+      return;
+    }
+    if (!empty($info['entity'])) {
+      $entity = \Drupal::entityTypeManager()->getStorage($info['entity'][0])->loadOverrideFree($info['entity'][1]);
+      $top = $info['key'][0];
+      $data = count($info['key']) > 1 ? $entity->get($top) : $new;
+      if (count($info['key']) > 1) {
+        NestedArray::setValue($data, array_slice($info['key'], 1), $new);
+      }
+      $entity->set($top, $data);
+      $entity->save();
+      return;
+    }
+    \Drupal::configFactory()->getEditable($info['name'])->set($path, $new)->save();
+  }
+
+  /**
+   * Where a page in a language keeps a configuration value: the
+   * configuration itself when that is its own language (or the site has no
+   * translations), else its LanguageConfigOverride; with the value there
+   * (NULL in an override not translated).
+   */
+  private static function place(string $name, array $key, string $langcode): array {
+    $base = \Drupal::configFactory()->getEditable($name);
+    $source = (string) ($base->get('langcode') ?: \Drupal::languageManager()->getDefaultLanguage()->getId());
+    $path = implode('.', $key);
+    if ($langcode === $source || !\Drupal::hasService('language.config_factory_override')) {
+      return ['override' => FALSE, 'store' => $base, 'value' => $base->get($path)];
+    }
+    $override = \Drupal::service('language.config_factory_override')->getOverride($langcode, $name);
+    return ['override' => TRUE, 'store' => $override, 'value' => $override->get($path)];
+  }
+
+  /**
+   * The language configuration is shown in on this page (the one its
+   * overrides are read in).
+   */
+  private static function language(): string {
+    return \Drupal::languageManager()->getConfigOverrideLanguage()->getId();
+  }
+
+  /**
+   * A string target of the page's trace, saying it is configuration.
+   */
+  private static function target(string $id, string $kind, string $label, string $title, string $value, array $schema): array {
+    return [
+      'id' => $id, 'kind' => $kind, 'label' => mb_substr($label, 0, 300), 'via' => 'schema', 'revisions' => FALSE,
+      'schema' => ['type' => 'string', 'title' => $title, 'description' => self::NOTE] + $schema,
+      'value' => $value,
+    ];
+  }
+
+  /**
+   * Adds a target, with why it cannot be saved by this user where that is
+   * already known.
+   */
+  private static function add(TraceBuilder $builder, array $target, array $info): ?string {
+    if (!isset($target['why']) && in_array($info['what'], ['block', 'site', 'view'], TRUE)) {
+      if (!self::may($info)) {
+        $target['why'] = 'The user you are logged in as in the live view may not change this (it needs “' . self::permission($info) . '”).';
+      }
+      else {
+        $place = self::place($info['name'], $info['key'], $info['langcode']);
+        if ($place['override'] && $place['value'] === NULL) {
+          $target['why'] = 'The page shows these words in the site’s own language, because they have no translation in the page’s: they are not saved to another language. Translate them in Drupal first.';
+        }
+      }
+    }
+    return $builder->addEdit($target, $info) ? $target['id'] : NULL;
+  }
+
+  private static function refusal(string $message): array {
+    return ['ok' => FALSE, 'error' => $message];
+  }
+
+}
+`;
+
 /** The word saves' files, by their path inside the module's folder. */
 export const DRUPAL_WORDS_FILES: Readonly<Record<string, string>> = {
   'src/Save/Words.php': WORDS,
+  'src/Save/ConfigWords.php': CONFIG_WORDS,
 };

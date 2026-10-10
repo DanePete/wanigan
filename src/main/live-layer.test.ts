@@ -1004,3 +1004,48 @@ test('only an implemented edit is verified, an edit the design cannot find fails
     } finally { x.done(); }
   }
 });
+
+test('Drupal: words a block’s title, a view’s header or a menu link keeps are saved through that configuration’s target, one run of a view’s words at a time', async () => {
+  // As the Drupal helper offers them (ConfigWords): a block placement's title, a view's header run by run (its markup
+  // is never in the value), and a menu link a module writes in code, offered with why.
+  const blockPart: PartIdentity = { kind: 'config', type: 'block', id: 'acme_tagline', plugin: 'block_content:x' };
+  const viewPart: PartIdentity = { kind: 'config', type: 'view', id: 'trips:page_1' };
+  const codeLink: PartIdentity = { kind: 'config', type: 'menu_link', id: 'acme_tours.about' };
+  const note = 'This is configuration: the next configuration import puts back what is exported, so export the site’s configuration to keep this change.';
+  const blockTitle: EditTarget = { id: 'words.block.acme_tagline', kind: 'config', label: 'Block title: Plan your trip', via: 'schema', revisions: false, schema: { type: 'string', title: 'Block title', description: note, minLength: 1, maxLength: 255 }, value: 'Plan your trip' };
+  const header: EditTarget = {
+    id: 'words.view.trips.default.header.area', kind: 'config', label: 'View header: Trips', via: 'schema', revisions: false,
+    schema: { type: 'object', title: 'Words of its header', description: note, properties: { w1: { type: 'string', title: 'Words 1', minLength: 1 }, w2: { type: 'string', title: 'Words 2', minLength: 1 } }, required: ['w1', 'w2'] },
+    value: { w1: 'Our trips this season', w2: 'Book early' },
+  };
+  const about: EditTarget = {
+    id: 'words.link.acme_tours.about', kind: 'menu-link', label: 'Link text: About us', via: 'schema', revisions: false, schema: { type: 'string', title: 'Link text', minLength: 1, maxLength: 255 }, value: 'About us',
+    why: 'Its text is written in code (the links.menu.yml file of the module that defines it), so Drupal keeps no such thing to change here.',
+  };
+  const drupal: LiveTrace = {
+    ...trace(),
+    parts: [
+      { id: 'b1', kind: 'block', label: 'Plan your trip', identity: blockPart, edits: ['config.block.acme_tagline', blockTitle.id] },
+      { id: 'v1', kind: 'view', label: 'Trips · Page', identity: viewPart, edits: ['config.view.trips', header.id] },
+      { id: 'm1', kind: 'menu', label: 'About us', identity: codeLink, edits: ['link.acme_tours.about', about.id] },
+    ],
+    edits: [{ id: 'config.block.acme_tagline', kind: 'config', label: 'Block placement: Plan your trip', via: 'native-form' }, blockTitle, { id: 'config.view.trips', kind: 'config', label: 'View: Trips', via: 'native-form' }, header, about],
+  };
+  const titled = retype(blockPart, 'Plan your paddle', 'Plan your trip', 'h2:nth-of-type(1)');
+  const booked = retype(viewPart, 'Book by May', 'Book early', 'p:nth-of-type(2)');
+  const renamed = retype(codeLink, 'About Acme', 'About us', 'a:nth-of-type(1)');
+  const w = wire({ edits: [titled, booked, renamed], trace: drupal });
+  try {
+    w.page.parts = { b1: { 'h2:nth-of-type(1)': [words('Plan your trip')] }, v1: { 'p:nth-of-type(2)': [words('Book early')] }, m1: { 'a:nth-of-type(1)': [words('About us')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(titled.id), { ok: true, id: titled.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(await w.implement(booked.id), { ok: true, id: booked.id, state: 'implemented', revision: '43' });
+    assert.deepEqual(w.posts, [
+      { path: '/_wanigan/edit/words.block.acme_tagline', body: { trace: '0123456789abcdef', value: 'Plan your paddle' } },
+      { path: '/_wanigan/edit/words.view.trips.default.header.area', body: { trace: '0123456789abcdef', value: { w1: 'Our trips this season', w2: 'Book by May' } } },
+    ], 'the title as typed; the view’s other run as the trace gave it');
+    assert.deepEqual(await w.implement(renamed.id), { ok: false, id: renamed.id, route: 'none', why: about.why });
+    assert.equal(w.posts.length, 2, 'nothing is sent for words kept in code');
+    assert.deepEqual(w.saves, [], 'none of them is a field’s save');
+  } finally { w.done(); }
+});

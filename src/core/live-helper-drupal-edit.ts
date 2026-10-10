@@ -18,6 +18,7 @@ use Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem;
 use Drupal\Core\Plugin\Context\Context;
 use Drupal\Core\Plugin\Context\ContextDefinition;
 use Drupal\Core\Plugin\Context\EntityContext;
+use Drupal\wanigan_live\Save\ConfigWords;
 use Drupal\wanigan_live\Trace\Describe;
 use Drupal\wanigan_live\Trace\Frame;
 use Drupal\wanigan_live\Trace\Preview;
@@ -87,6 +88,7 @@ final class Targets {
     }
     elseif (isset($p['link'])) {
       $out[] = $this->menuLink($p['link']['plugin']);
+      $out[] = ConfigWords::link($this->builder, $p['link']['plugin']);
     }
     elseif ($p['kind'] === 'field' && isset($meta['field'], $meta['entity'])) {
       $out[] = $this->field($meta['entity'], $meta['field']['name'], $p['frame'] ?? NULL);
@@ -114,9 +116,11 @@ final class Targets {
     }
     elseif ($p['kind'] === 'block' && !empty($meta['block']['id']) && empty($meta['block']['layout'])) {
       $out[] = $this->config('block', $meta['block']['id'], 'Block placement');
+      $out[] = ConfigWords::blockLabel($this->builder, $meta['block']['id']);
     }
     elseif ($p['kind'] === 'view' && isset($meta['view']['id'])) {
       $out[] = $this->config('view', $meta['view']['id'], 'View');
+      array_push($out, ...ConfigWords::view($this->builder, $meta['view']['id'], (string) ($meta['view']['display'] ?? 'default')));
     }
     elseif ($p['kind'] === 'menu' && !empty($meta['menu']['name'])) {
       $out[] = $this->config('menu', $meta['menu']['name'], 'Menu');
@@ -127,6 +131,10 @@ final class Targets {
         $out[] = $this->field($host['meta']['entity'], $host['meta']['field']['name'], $host['frame'] ?? NULL);
       }
       $out[] = $this->props($p, $host);
+    }
+    // The site's name and slogan, where core's branding block shows them.
+    if ($p['kind'] === 'block' && ($meta['block']['plugin'] ?? '') === 'system_branding_block') {
+      array_push($out, ...ConfigWords::site($this->builder, empty($meta['block']['layout']) && !empty($meta['block']['id']) ? (string) $meta['block']['id'] : NULL));
     }
     if (!empty($p['file']) && !empty($p['alternatives'])) {
       $out[] = $this->override($p);
@@ -587,6 +595,7 @@ use Drupal\Core\Form\FormState;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
+use Drupal\wanigan_live\Save\ConfigWords;
 use Drupal\wanigan_live\Trace\Source;
 use Drupal\wanigan_live\Trace\TraceStore;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -799,7 +808,8 @@ final class EditController extends ControllerBase {
   }
 
   /**
-   * A schema target's save: copying a template into the theme.
+   * A schema target's save: copying a template into the theme, or words
+   * kept in configuration or a menu link (ConfigWords).
    */
   private function saveSchema(Request $request, string $target): JsonResponse {
     $body = json_decode((string) $request->getContent(), TRUE);
@@ -816,6 +826,10 @@ final class EditController extends ControllerBase {
     }
     if ($info['kind'] === 'template-override') {
       return $this->copyTemplate($info, $body['value'] ?? NULL);
+    }
+    if ($info['kind'] === 'words') {
+      [$status, $answer] = ConfigWords::save($info, $body['value'] ?? NULL);
+      return self::json($answer, $status);
     }
     return self::json(['ok' => FALSE, 'error' => 'This is not changed here: it says why in the live view.'], 409);
   }

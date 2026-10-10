@@ -379,6 +379,7 @@ use Drupal\\Core\\Entity\\RevisionLogInterface;
 use Drupal\\Core\\Render\\Markup;
 use Drupal\\wanigan_live\\Find\\Finder;
 use Drupal\\wanigan_live\\Library\\Library;
+use Drupal\\wanigan_live\\Save\\ConfigWords;
 use Drupal\\wanigan_live\\Save\\Words;
 use Drupal\\wanigan_live\\Trace\\SaveCode;
 use Symfony\\Component\\HttpFoundation\\JsonResponse;
@@ -527,6 +528,11 @@ final class LiveController extends ControllerBase {
     }
     else {
       $entity = $entity->getTranslation($langcode);
+    }
+    // The field's label, when those are its words and no item holds them: its
+    // configuration, saved as such (ConfigWords::fieldLabel()).
+    if ($item === NULL && !Words::held($entity, $name, $before, $formatter) && ($label = ConfigWords::fieldLabel($entity, $name, $before, $after))) {
+      return $this->json($label[1], $label[0]);
     }
     if ($entity->getEntityTypeId() === 'block_content' && method_exists($entity, 'isReusable') && !$entity->isReusable()) {
       return $this->refuse('These words are in a block placed only in a layout: the layout shows the revision of it that it keeps, so saving the block here would change nothing on the page. Change it in Layout Builder.', 409);
