@@ -635,7 +635,12 @@ export function liveStub(f) {
     const typing = window.__wgLive.typing;
     const at = typing !== null ? regions[window.__wgLive.picked] : null;
     if (at) {
-      box(at.rect, 'outline:2px solid #2f86c9;outline-offset:3px;', 'Typing · Enter keeps · Esc puts back');
+      box(at.rect, 'outline:2px solid #2f86c9;outline-offset:3px;', null);
+      // Its label above the words, as the page script draws it, never over them.
+      const said = document.createElement('span');
+      said.textContent = 'Typing · Enter keeps · Esc puts back';
+      said.style.cssText = `position:absolute;left:${at.rect.x - 3}px;top:${at.rect.y - 24}px;font:500 11px/19px -apple-system,system-ui,sans-serif;padding:0 6px;border-radius:3px 3px 0 0;color:#fff;background:#2f86c9;white-space:nowrap;`;
+      sheet.appendChild(said);
       const t = document.createElement('span');
       t.textContent = typing;
       t.style.cssText = `position:absolute;left:${at.rect.x + 6}px;top:${at.rect.y + 8}px;padding:2px 6px;font:600 13px/18px -apple-system,system-ui,sans-serif;color:#162029;background:#ffffff;border-right:2px solid #162029;`;
