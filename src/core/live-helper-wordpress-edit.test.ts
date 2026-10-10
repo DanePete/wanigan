@@ -992,10 +992,16 @@ describe('what a WordPress page offers to change, and what saving it writes, und
   });
 
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {
-    const r = run(page('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->'));
+    const content = '<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Hours</h3>\n<!-- /wp:heading -->';
+    const r = run(page(content, { saves: [{ find: 'Heading block', value: { content: 'Hours', level: 4 } }, { find: 'Heading block', value: { content: 'Opening hours', level: 3 } }] }));
     const e = target(r, 'Heading block');
     assert.equal(prop(e, 'content').readOnly, undefined);
     assert.equal(prop(e, 'level').readOnly, true);
     assert.match(String(prop(e, 'level').description), /^WordPress keeps no such thing: /);
+    // Core's schema validation does not enforce readOnly: the helper refuses the property sent changed, and takes it back as it was.
+    assert.equal(r.answers[0]?.status, 400);
+    assert.match(r.answers[0]?.data.error ?? '', /^level cannot change here/);
+    assert.ok(r.answers[1]?.data.ok, r.answers[1]?.data.error);
+    assert.equal(r.posts[7], content.replace('>Hours<', '>Opening hours<'), 'the h3 and its level stay as the editor wrote them');
   });
 });
