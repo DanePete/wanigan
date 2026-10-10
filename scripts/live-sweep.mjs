@@ -1724,6 +1724,16 @@ try {
     const row = await pw.$$eval('.shortcut', (els) => els.map((e) => [e.querySelector('dt')?.textContent, e.querySelector('.shortcut-keys')?.getAttribute('aria-label')])
       .find(([l]) => l === 'The page’s DevTools, in the dock beneath it: open or close')?.[1] ?? null);
     if (row !== 'Ctrl+Shift+I') fail(w(`devtools: the shortcut sheet lists it as ${row}`));
+    await pw.keyboard.press('Escape');
+    // Windows' longer key caps still fit: the bar at 1280 px with DevTools open beside the page.
+    await pw.setViewportSize({ width: 1280, height: 900 });
+    await pw.keyboard.press('Control+Shift+KeyI');
+    if (!(await tabOpen())) fail(w('devtools: Ctrl+Shift+I did not open the tab again'));
+    await pw.click('.editor-actions button[aria-label="Put the dock beside the view"]');
+    await pw.waitForSelector('.editor-drawer[data-dock="right"]:not([hidden]) .live-devtools-host', { timeout: 3000 }).catch(() => fail(w('devtools: the dock did not go beside the page')));
+    await pw.waitForTimeout(200);
+    for (const problem of await pw.evaluate(fitProblems)) fail(w(`fit 1280 px, DevTools beside: ${problem}`));
+    await pw.screenshot({ path: join(out, 'windows-devtools-fit-1280-right.png'), animations: 'disabled' });
     await ctx.close();
   }
 
