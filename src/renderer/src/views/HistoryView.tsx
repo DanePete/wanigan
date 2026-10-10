@@ -11,6 +11,8 @@ import { Icon } from '../components/icons';
 import { Badge, Button, Dialog, EmptyState, NotAnswering, tipProps, useToast } from '../components/ui';
 import { Panel, Section } from '../components/Panel';
 import { Toolbar } from '../components/Toolbar';
+import { useHow } from '../lib/how';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
 
 const GROUPS = ['Today', 'Yesterday', 'This week', 'Earlier'] as const;
 type Group = (typeof GROUPS)[number];
@@ -29,6 +31,7 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
   const [reading, setReading] = useState<{ id: string; focus: boolean } | null>(null);
   const [choosing, setChoosing] = useState<HistoryItem | null>(null);
   const list = useRef<HTMLDivElement>(null);
+  const how = useHow('history');
 
   const items = history.data ?? [];
   const read = items.find((i) => i.id === reading?.id) ?? null;
@@ -84,7 +87,7 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
     <div className="history">
       <div className="history-main">
         <Toolbar label="History" className="history-bar">
-          <label className="search-field">
+          <label className="search-field" data-tour="history-search">
             <Icon name="search" size={14} />
             <span className="visually-hidden">Search conversations</span>
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search titles, prompts and branches"
@@ -93,8 +96,10 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
           <span className="toolbar-count" aria-live="polite">
             {waiting ? 'Searching…' : history.error ? 'Could not read history' : `${items.length === 500 ? 'Newest ' : ''}${count}`}
           </span>
+          <span className="toolbar-gap" />
+          <HowButton onClick={how.show} />
         </Toolbar>
-        <div className="history-list" ref={list}>
+        <div className="history-list" ref={list} data-tour="history-list">
           {history.error ? <NotAnswering error={history.error} onRetry={history.reload} title="History could not be loaded" />
             : waiting && !items.length ? <div className="history-loading" role="status" aria-label="Reading this folder’s conversations" />
               : groups.map(({ group, items: rows }) => (
@@ -118,6 +123,10 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
         <Reader key={read.id} item={read} focus={reading?.focus ?? false} projectKey={project.key} pausedAt={project.pausedAt}
           onClose={() => setReading(null)} onResume={() => resume(read)} />
       ) : null}
+      {how.open ? (
+        <HistoryHow count={history.data && !search ? items.length : null} live={history.data ? items.filter((i) => i.live).length : null}
+          elsewhere={history.data ? items.filter((i) => !!i.via).length : null} paused={!!project.pausedAt} onClose={how.hide} />
+      ) : null}
       {choosing ? (
         <ChooseAccount item={choosing} accounts={accounts.data ?? []} accountsError={accounts.error} preferred={project.accounts.claude ?? null} onClose={() => setChoosing(null)}
           onStart={(accountId) => { setChoosing(null); void start(choosing, accountId); }} />
@@ -134,7 +143,7 @@ function HistoryRow({ item, group, showAccount, active, pausedAt, onRead, onResu
   return (
     <li className={`hrow${active ? ' active' : ''}`}>
       {/* The whole row reads the conversation; Resume beside it is the one action. */}
-      <button type="button" className="hrow-main" data-id={item.id} aria-current={active ? 'true' : undefined} onClick={onRead} onKeyDown={onWalk}>
+      <button type="button" className="hrow-main" data-id={item.id} data-tour="history-row" aria-current={active ? 'true' : undefined} onClick={onRead} onKeyDown={onWalk}>
         <ProviderMark provider={item.provider} />
         <span className="hrow-text">
           <span className="hrow-title">{title}</span>
@@ -162,7 +171,7 @@ function ResumeButton({ item, pausedAt, onResume, label, tone = 'plain' }: {
     return <Button size="s" tone={tone} icon="terminal" onClick={onResume} aria-label={`Open the live session for ${label}`} {...tipProps('Open the live session')}>Open</Button>;
   }
   return (
-    <Button size="s" tone={tone} icon="resume" onClick={onResume} disabled={!!pausedAt} aria-label={`Resume ${label}`}
+    <Button size="s" tone={tone} icon="resume" onClick={onResume} disabled={!!pausedAt} aria-label={`Resume ${label}`} data-tour="history-resume"
       {...tipProps(pausedAt ? 'Paused: resume the project to start sessions' : 'Continue this conversation in a new session. It re-sends the conversation, which uses part of the account’s limits.')}>
       Resume
     </Button>
@@ -184,6 +193,63 @@ function ProviderMark({ provider }: { provider: HistoryItem['provider'] }) {
       <Icon name={provider} size={15} />
       <span className="visually-hidden">{PROVIDER_LABEL[provider]}</span>
     </span>
+  );
+}
+
+/** How History works, as a picture: where the conversations come from and what resuming does. Every sentence is a rule the core enforces. */
+function HistoryHow({ count, live, elsewhere, paused, onClose }: {
+  count: number | null; live: number | null; elsewhere: number | null; paused: boolean; onClose: () => void;
+}) {
+  return (
+    <HowDialog place="history" title="How History works" onClose={onClose}
+      intro={<><strong>Every Claude Code and Codex conversation in this folder, wherever it ran.</strong> Read them here, and carry any of them on as a live session.</>}
+      side={(
+        <>
+          <HowNote title="What resuming costs" tone="needs">
+            <ul>
+              <li>The whole conversation is sent to the model again, which uses part of that account’s limits.</li>
+              <li>Nothing is sent until you choose Resume.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Reading the picture" tone="quiet">
+            <ul>
+              <li>Numbers are this folder’s. A missing number means its source has not answered.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="Where they come from" actor="agents">
+        <HowBox actor="agents" title="The agents’ own records" num={howNum(count, 'conversation', 'conversations')}>
+          Claude Code and Codex keep each conversation on disk. Wanigan reads them from there, never copies them, and lists those that ran in this project’s folder or one of its cards’ worktrees.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="agents" title="Wherever they ran" num={elsewhere ? howNum(elsewhere, 'not from a terminal', 'not from a terminal') : null}>
+          Here, in another terminal, in VS Code or the desktop app: one that did not run in a terminal says how it ran.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Search">
+          Titles, first prompts and branches. The list shows the newest 500; a search looks past them.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="Reading" actor="you">
+        <HowBox actor="you" title="The reader">
+          Your prompts, the agent’s replies and a line for each tool it used (never what the tool returned), newest at the bottom. A long one shows its most recent part, and says so.
+        </HowBox>
+      </HowLane>
+      <HowLane n={3} title="Resuming" actor="you">
+        <HowBox actor="you" title="Resume" num={paused ? 'paused: resume the project first' : null}>
+          Carries the conversation on in a new live session here, as the account it lives in.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="As another account">
+          A Claude conversation can continue as another of your accounts instead: a copy with a new id, kept there; the original stays as it was.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="agents" title="Still running" num={howNum(live, 'live now', 'live now')}>
+          A conversation whose session is running here now just opens that session.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
   );
 }
 

@@ -7,6 +7,8 @@ import { PROVIDER_LABEL, duration, plural } from '../lib/format';
 import { Icon } from '../components/icons';
 import { Button, Count, EmptyState, IconButton, NotAnswering, ProjectMark, Segmented, StateMark, tipProps } from '../components/ui';
 import { Section } from '../components/Panel';
+import { useHow } from '../lib/how';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
 import { Terminal } from '../components/Terminal';
 import { SessionRow } from './SessionsView';
 
@@ -75,6 +77,7 @@ export function RunningView({ projects, needs, onNewSession }: {
   const pick = useMemo(() => pickWatched(groups.flatMap((g) => g.sessions), needs ?? [], pins, typing), [groups, needs, pins, typing]);
   const top = useMemo(() => topNeeds(needs ?? []), [needs]);
   const watching = layout === 'watch' && total > 0;
+  const how = useHow('running');
 
   return (
     <section className="view running-view" aria-labelledby="running-title">
@@ -89,8 +92,9 @@ export function RunningView({ projects, needs, onNewSession }: {
               {plural(pick.more, 'more session')} running, not shown.
             </span>
           ) : null}
-          <Segmented label="Layout" size="s" value={layout} options={LAYOUTS} onChange={setLayout} />
-          <Button size="s" tone="primary" icon="terminal" keys="new-session" onClick={onNewSession}>New session</Button>
+          <HowButton onClick={how.show} />
+          <span className="running-layout" data-tour="running-layout"><Segmented label="Layout" size="s" value={layout} options={LAYOUTS} onChange={setLayout} /></span>
+          <Button size="s" tone="primary" icon="terminal" keys="new-session" onClick={onNewSession} data-tour="running-new">New session</Button>
         </div>
       </header>
       <div className="view-body">
@@ -102,14 +106,14 @@ export function RunningView({ projects, needs, onNewSession }: {
           <Watch shown={pick.shown} projects={projects} needs={needs} pins={pins} onTogglePin={togglePin}
             typing={typing} setTyping={setTyping} />
         ) : (
-          <div className="running-list">
+          <div className="running-list" data-tour="running-list">
             {groups.map(({ project, sessions: list }) => (
               <Section key={project.id} className="running-group" title={<><ProjectMark projectKey={project.key} size="s" />{project.name} <Count n={list.length} /></>}>
                 <div className="srows">
                   {list.map((s) => (
                     <div key={s.id} className="running-row">
                       <SessionRow session={s} projectKey={project.key} />
-                      <span className="running-actions">
+                      <span className="running-actions" data-tour="running-actions">
                         <RowAction session={s} projectKey={project.key} need={top.get(s.id) ?? null} />
                         <PinButton session={s} pinned={pins.includes(s.id)} full={pinsFull} onToggle={() => togglePin(s.id)} />
                       </span>
@@ -121,7 +125,72 @@ export function RunningView({ projects, needs, onNewSession }: {
           </div>
         )}
       </div>
+      {how.open ? (
+        <RunningHow total={sessions.data ? total : null} asking={sessions.data ? groups.flatMap((g) => g.sessions).filter((s) => { const n = top.get(s.id); return !!n && AMBER.has(n); }).length : null}
+          pinned={pins.length} shown={watching ? pick.shown.length : null} onClose={how.hide} onWatch={() => setLayout('watch')} onList={() => setLayout('list')} />
+      ) : null}
     </section>
+  );
+}
+
+/** How Running works, as a picture: every sentence is a rule Watch or the core enforces, with this window's numbers. */
+function RunningHow({ total, asking, pinned, shown, onClose, onWatch, onList }: {
+  total: number | null; asking: number | null; pinned: number; shown: number | null; onClose: () => void; onWatch: () => void; onList: () => void;
+}) {
+  const then = (to: () => void) => () => { onClose(); to(); };
+  return (
+    <HowDialog place="running" title="How Running works" onClose={onClose}
+      intro={<><strong>Every live session in every project, in one place.</strong> They run in Wanigan’s core; this view finds them, says which need you, and lets you watch several at once.</>}
+      side={(
+        <>
+          <HowNote title="Needs you, in amber" tone="needs">
+            <ul>
+              <li><strong>Asking permission:</strong> answer it in the session’s terminal.</li>
+              <li><strong>A question on its card:</strong> answer it on the card.</li>
+              <li><strong>Out of its limit:</strong> carry it on under another account, or wait.</li>
+              <li><strong>Two sessions, one file:</strong> they may be undoing each other.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Reading the picture" tone="quiet">
+            <ul>
+              <li>Click a box to show that layout.</li>
+              <li>Numbers are live. A missing number means its source has not answered.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="Running" actor="agents">
+        <HowBox actor="agents" title="Every live session" num={howNum(total, 'running', 'running')} onClick={then(onList)} hint="Show the list">
+          In every open project, grouped by project, each with its agent, card and how long it has run.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="board" tag="Wanigan" title="In the core, not the window">
+          Close the window and they keep going; open it again and they are here, output and all.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="What needs you" actor="needs">
+        <HowBox actor="needs" title="Ranked as Needs you ranks them" num={howNum(asking, 'needs you now', 'need you now')}>
+          The same needs, in the same order: a permission first, then two sessions on one file, then a limit, then a question on a card.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Its action, in place">
+          The row offers the answer Needs you would: the terminal, the card, or carrying it on. A session that needs nothing has only its pin.
+        </HowBox>
+      </HowLane>
+      <HowLane n={3} title="Watch" actor="you">
+        <HowBox actor="you" title={`Up to ${WATCH_MAX} at once`} num={shown !== null ? howNum(shown, 'shown now', 'shown now') : null} onClick={then(onWatch)} hint="Show Watch">
+          Each live terminal at its own size, scaled to fit. Watching never resizes a session, so its screen stays as the agent left it.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Which ones" num={pinned ? howNum(pinned, 'pinned', 'pinned') : null}>
+          Pins choose them, in the order pinned. With none, the ones that need you most, then the most recently active.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Typing into one">
+          A tile is read-only until you click it or press Enter on it; Esc gives the keys back. One out of sight is not drawn.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
   );
 }
 
@@ -147,7 +216,7 @@ function PinButton({ session, pinned, full, onToggle }: { session: Session; pinn
   return (
     <IconButton icon="pin" size="s"
       label={pinned ? `Unpin ${session.title} from Watch` : full ? `Pin ${session.title} to Watch. ${WATCH_FULL}` : `Pin ${session.title} to Watch`}
-      pressed={pinned} disabled={!pinned && full} onClick={onToggle} />
+      pressed={pinned} disabled={!pinned && full} onClick={onToggle} data-tour="running-pin" />
   );
 }
 

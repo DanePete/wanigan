@@ -120,8 +120,8 @@ export function useFileDrop(zone: RefObject<HTMLElement | null>, onFiles: (files
 }
 
 /** The paperclip: opens the Attach dialog. */
-export function AttachButton({ onPick, disabled }: { onPick: () => Promise<void>; disabled?: boolean }) {
-  return <IconButton icon="attach" label="Attach images or files" onClick={() => onPick()} disabled={disabled} />;
+export function AttachButton({ onPick, disabled, tour }: { onPick: () => Promise<void>; disabled?: boolean; tour?: string }) {
+  return <IconButton icon="attach" label="Attach images or files" onClick={() => onPick()} disabled={disabled} data-tour={tour} />;
 }
 
 /** Each file as a chip: a thumbnail for an image, otherwise its name and size, with a remove button while it waits. */

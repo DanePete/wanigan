@@ -1159,6 +1159,16 @@ try {
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-history-resume.png`) });
     await page.keyboard.press('Escape');
+    // A session, Running and History each explain themselves: How this works opens their picture, and Esc closes it.
+    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`]]) {
+      await page.goto(`${base}${hash}`);
+      await page.click('button:has-text("How this works")', { timeout: 8000 }).catch(() => failures.push(`${theme}/${name}-how: no How this works`));
+      await page.waitForSelector('.dialog .how-lane', { timeout: 4000 }).catch(() => failures.push(`${theme}/${name}-how: the picture never showed`));
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: join(out, `${theme}-${name}-how.png`) });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/${name}-how: Esc did not close it`));
+    }
     // Talk to Wanigan: the round button on the board opens the conversation,
     // the composer sends on Enter, and the stand-in answers with real card keys.
     await page.goto(`${base}#/p/${ns}/board`);

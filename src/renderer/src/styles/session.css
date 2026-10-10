@@ -93,7 +93,7 @@
 }
 
 /* Narrow: the badges and the words on the bar's buttons give way to their icons (names stay, read out and in tooltips). */
-@container topbar (max-width: 960px) {
+@container topbar (max-width: 1100px) {
   .session-bar .remote-mark-label,
   .session-bar .topbar-tools .btn:not(.btn-icon) > span {
     position: absolute;

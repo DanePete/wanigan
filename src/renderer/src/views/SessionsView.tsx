@@ -60,7 +60,7 @@ export function SessionsView({ project, setDialog }: { project: ProjectSummary; 
   return (
     <div className="sessions-view">
       <Toolbar label="Sessions">
-        <label className="search-field">
+        <label className="search-field" data-tour="sessions-filter">
           <Icon name="search" size={14} />
           <span className="visually-hidden">Filter sessions</span>
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by title, card or agent"
@@ -71,10 +71,10 @@ export function SessionsView({ project, setDialog }: { project: ProjectSummary; 
         </span>
         <span className="toolbar-gap" />
         <Button size="s" tone="quiet" icon="history" onClick={() => navigate({ name: 'project', projectKey: project.key, view: 'history' })}
-          {...tipProps('Every conversation in this folder, from here, VS Code and other terminals', 'history')}>History</Button>
-        <Button size="s" tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession}>New session</Button>
+          {...tipProps('Every conversation in this folder, from here, VS Code and other terminals', 'history')} data-tour="sessions-history">History</Button>
+        <Button size="s" tone="primary" icon="terminal" keys="new-session" disabled={paused} onClick={newSession} data-tour="sessions-new">New session</Button>
       </Toolbar>
-      <div className="sessions-list">
+      <div className="sessions-list" data-tour="sessions-list">
         {!sessions.data ? null : (
           <>
             <Section title={<>Live <Count n={live.length} /></>}>

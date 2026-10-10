@@ -34,6 +34,10 @@ import { useAppState } from '../lib/settings';
 import { liveFor } from '@shared/settings';
 import { limitDetail } from '@shared/limits';
 import { RUNTIME_LABEL, localModelLabel, parseLocalModel } from '@shared/local-models';
+import { CODEX_STAYS } from '@shared/limits';
+import { shortTokens, tokensUsed } from '@shared/tokens';
+import { useHow } from '../lib/how';
+import { HowArrow, HowBox, HowButton, HowDialog, HowLane, HowNote, howNum } from '../components/How';
 
 /*
  * The session's own keys, handled here (in the capture phase, so a focused
@@ -97,6 +101,7 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
   const [outlineFirst, setOutlineFirst] = useState<string[] | null>(null);
   const seeIt = (): void => { setOutlineFirst(edits.paths); edits.clear(); setSplit(true); };
   const shownTab: PanelTab = hasTurns ? tab : 'details';
+  const how = useHow('session');
 
   // Opening a session is seeing it: it settles "finished a turn" and "failed".
   useEffect(() => {
@@ -163,14 +168,15 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
               {edits.paths[0]?.split('/').pop()} changed · See it
             </Button>
           ) : null}
-          {!card ? <Button size="s" icon="promote" onClick={() => setPromoting(true)}>Make this a card</Button> : null}
+          <HowButton onClick={how.show} />
+          {!card ? <Button size="s" icon="promote" onClick={() => setPromoting(true)} {...tipProps('Make this a card')}>Make this a card</Button> : null}
           {live ? (
             confirmStop ? (
               <span className="session-stop-confirm" role="group" aria-label="Stop this session?">
                 <Button size="s" tone="danger" icon="stop" onClick={() => attempt(() => call('sessions.stop', { id: session.id }), (m) => toast(m, 'error')).then(() => setConfirmStop(false))}>Stop it</Button>
                 <Button size="s" tone="quiet" onClick={() => setConfirmStop(false)}>Keep running</Button>
               </span>
-            ) : <Button size="s" tone="quiet" icon="stop" onClick={() => setConfirmStop(true)}>Stop</Button>
+            ) : <Button size="s" tone="quiet" icon="stop" data-tour="session-stop" onClick={() => setConfirmStop(true)}>Stop</Button>
           ) : null}
           <ToolGroup label="Show beside the terminal">
             {siteUrl ? (
@@ -178,7 +184,7 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
                 onClick={() => { if (showLive) setSplit(false); else seeIt(); }} />
             ) : null}
             <IconButton icon="sidebar" label={panelOpen ? 'Hide the turns and details' : 'Show the turns and details'} pressed={panelOpen}
-              keys={PANEL_KEYS} tipSide="bottom" onClick={() => setPanelOpen(!panelOpen)} />
+              keys={PANEL_KEYS} tipSide="bottom" data-tour="session-panel" onClick={() => setPanelOpen(!panelOpen)} />
           </ToolGroup>
         </div>
       </header>
@@ -194,7 +200,7 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
         </div>
       ) : null}
       {session.state === 'limited' ? (
-        <div className="banner banner-amber session-banner banner-limit" role="status">
+        <div className="banner banner-amber session-banner banner-limit" role="status" data-tour="session-limit">
           <Icon name="alert" size={15} />
           <span className="banner-text">
             {limitDetail(session.limit?.resetsAt ?? null, Date.now(), account?.label, session.provider)}
@@ -209,7 +215,7 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
       <div className="session-body">
         <div className="session-stage">
           <div className="session-main" ref={main} inert={turnOpen ? true : undefined}>
-            <Terminal sessionId={session.id} live={live} focusRef={focusTerminal} />
+            <Terminal sessionId={session.id} live={live} focusRef={focusTerminal} tour="session-terminal" />
             {live ? <Composer sessionId={session.id} provider={session.provider} state={session.state} zone={main} />
               : <Ended session={session} pausedAt={project.pausedAt} projectKey={project.key} />}
           </div>
@@ -250,8 +256,106 @@ export function SessionView({ project, sessionId }: { project: ProjectSummary; s
       </div>
 
       {promoting ? <PromoteDialog sessionId={session.id} title={session.title} onClose={() => setPromoting(false)} /> : null}
+      {how.open ? (
+        <SessionHow session={session} turns={turnCount(data.data?.events ?? [])} checkpoints={hasTurns && !checkpoints.error ? checkpoints.data : undefined}
+          onClose={how.hide} openPanel={(next) => { setPanelOpen(true); if (next) setTab(next); }} />
+      ) : null}
       {undoing && last ? <UndoDialog session={session} last={last} onClose={() => setUndoing(false)} /> : null}
     </section>
+  );
+}
+
+/**
+ * How a session works, as a picture: every sentence is a rule the core or this
+ * view enforces, and its numbers are this session's own.
+ */
+function SessionHow({ session, turns, checkpoints, onClose, openPanel }: {
+  session: Session; turns: number | null; checkpoints: SessionCheckpoints | undefined; onClose: () => void; openPanel: (tab?: PanelTab) => void;
+}) {
+  const tokens = useQuery('sessions.tokens', session.provider === 'shell' ? null : { id: session.id }, ['sessions']);
+  const used = tokens.data?.usage ? `${shortTokens(tokensUsed(tokens.data.usage))} tokens so far` : null;
+  const lastFiles = checkpoints?.last ? checkpoints.checkpoints.find((c) => c.id === checkpoints.last?.turnCheckpointId)?.files ?? null : null;
+  const agent = session.provider === 'shell' ? 'the shell' : PROVIDER_LABEL[session.provider];
+  const go = (tab?: PanelTab) => () => { onClose(); openPanel(tab); };
+  return (
+    <HowDialog place="session" title="How a session works" onClose={onClose}
+      intro={<><strong>A session is a real terminal, run by Wanigan’s core.</strong> You start it and talk to it; the agent’s own hooks and git say what it did; Wanigan asks you only when it needs you.</>}
+      side={(
+        <>
+          <HowNote title="When it needs you" tone="needs">
+            <ul>
+              <li><strong>Asking permission:</strong> it waits on a prompt in its terminal; you answer there.</li>
+              <li><strong>Finished a turn:</strong> it waits for your next message.</li>
+              <li><strong>Out of its limit:</strong> carry it on under another account, or wait for the reset.</li>
+              <li><strong>Failed or interrupted:</strong> it ended badly; its output stays.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Who does what">
+            <ul className="how-legend">
+              <li><span className="how-swatch how-you" aria-hidden="true" /><strong>You:</strong> start it, message it, answer it, stop it.</li>
+              <li><span className="how-swatch how-agents" aria-hidden="true" /><strong>The agent:</strong> {agent}, working in the terminal; it claims, notes and asks through <code>wanigan</code>.</li>
+              <li><span className="how-swatch how-board" aria-hidden="true" /><strong>Wanigan:</strong> runs the terminal, reads the hooks, checkpoints each turn, and keeps the card’s rules.</li>
+            </ul>
+          </HowNote>
+          <HowNote title="Reading the picture" tone="quiet">
+            <ul>
+              <li>Arrows are the usual path. Lane 3 is when it stops for you.</li>
+              <li>Numbers are this session’s. A missing number means its source has not answered.</li>
+            </ul>
+          </HowNote>
+        </>
+      )}>
+      <HowLane n={1} title="Running" actor="you">
+        <HowBox actor="you" title="You start it" num={null}>
+          Claude Code, Codex, Gemini CLI or a shell, with the account, model and effort you pick, in the project’s folder or a card’s own branch.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="board" tag="Wanigan" title="The core runs it" num={session.endedAt === null ? `running ${duration(session.startedAt)}` : `ended ${ago(session.endedAt)}`}>
+          A real terminal in Wanigan’s core, not this window: close the window and it keeps going. Its hooks and settings are handed to it at the start, never left in your folder.
+        </HowBox>
+        <HowArrow label="you message it" />
+        <HowBox actor="you" title="The composer" num={null}>
+          Enter sends. A message to a busy agent waits until it is idle; images and files you paste or drop go with it.
+        </HowBox>
+      </HowLane>
+      <HowLane n={2} title="What it did" actor="agents">
+        <HowBox actor="agents" title="Its hooks report" num={howNum(turns, 'turn', 'turns')} onClick={go('turns')} hint="Show the turns">
+          The agent’s own hooks say each prompt, tool, question and the end of each turn. That is the state beside the title and the turns in the panel.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="board" tag="Wanigan" title="Git checkpoints each turn" num={lastFiles !== null ? howNum(lastFiles, 'file in the last turn', 'files in the last turn') : null} onClick={go('turns')} hint="Show the turns">
+          What changed in the folder during each turn, to read as a diff; the last turn can be undone and redone. Nothing is committed, and nothing is typed into the session.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="agents" title="Tokens from its own record" num={used} onClick={go('details')} hint="Show the details">
+          Read from the agent’s transcript, never estimated. No dollars: a plan is not billed per token.
+        </HowBox>
+      </HowLane>
+      <HowLane n={3} title="When it stops for you" actor="needs">
+        <HowBox actor="needs" title="Asking permission" num={session.state === 'permission' ? 'asking now' : null}>
+          Wanigan shows exactly what it asks, with hidden characters spelled out. You answer in its terminal, which takes the keys.
+        </HowBox>
+        <HowBox actor="needs" title="Out of its limit" num={session.state === 'limited' && session.limit?.resetsAt ? `resets ${new Date(session.limit.resetsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : null}>
+          Carry the conversation on under another account with room (all of it is sent again there), or wait for the reset. {CODEX_STAYS}
+        </HowBox>
+        <HowBox actor="you" title="Stop, then resume" num={null}>
+          Stop asks once, then ends it. Its output stays; an agent’s conversation can be resumed in a new session with the same account.
+        </HowBox>
+      </HowLane>
+      <HowLane n={4} title="On a card" actor="board">
+        <HowBox actor="board" title="It claims the card" num={session.cardKey}>
+          Started on a card, the session claims it, the card moves to Working and the agent is told what done means.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="you" title="Or make it one" num={session.cardId ? null : 'one-off'}>
+          A one-off can become a card later: the session and everything it has done move onto it.
+        </HowBox>
+        <HowArrow />
+        <HowBox actor="board" title="When it stops" num={null}>
+          The claim is released and the card goes back to Ready, keeping its notes, evidence and history.
+        </HowBox>
+      </HowLane>
+    </HowDialog>
   );
 }
 
@@ -301,7 +405,7 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
   const agent = PROVIDER_LABEL[provider];
   return (
     <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-      <div className="composer-box">
+      <div className="composer-box" data-tour="session-composer">
         {attach.files.length || attach.adding ? (
           <div className="composer-files">
             <AttachmentChips files={attach.files} adding={attach.adding} onRemove={attach.remove} />
@@ -322,7 +426,7 @@ function Composer({ sessionId, provider, state, zone }: { sessionId: string; pro
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
         />
         <div className="composer-tools">
-          {takesFiles ? <AttachButton onPick={attach.pick} /> : null}
+          {takesFiles ? <AttachButton onPick={attach.pick} tour="session-attach" /> : null}
           {/* Voice input (its own branch) is merged here, beside the paperclip: an empty slot until then. */}
           <span className="composer-slot composer-voice" data-slot="voice" />
           <span className="composer-hint" aria-hidden="true">

@@ -78,9 +78,11 @@ function onPty(sessionId: string, handler: PtyHandler): () => void {
   };
 }
 
-export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRef }: {
+export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRef, tour }: {
   sessionId: string;
   live: boolean;
+  /** Its name for a guided tour's step (`data-tour`). */
+  tour?: string;
   /**
    * Draw the PTY at the size it already has, scaled to fit, and never resize
    * it. Such a terminal is a picture until it is asked to take keys: it is out
@@ -236,5 +238,5 @@ export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRe
     // `fixedSize` and `focusRef` are fixed for a terminal's life; a change of session starts a new one.
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div className={`terminal${fixedSize ? ' terminal-fixed' : ''}`} ref={host} aria-label="Terminal" />;
+  return <div className={`terminal${fixedSize ? ' terminal-fixed' : ''}`} ref={host} aria-label="Terminal" data-tour={tour} />;
 }
