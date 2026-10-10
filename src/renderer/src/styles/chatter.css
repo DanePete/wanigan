@@ -6,9 +6,9 @@
    motion takes it all to nothing (base.css); the words stay.
 
    Nothing floats over the work (Studio): while they talk, a chip in the status
-   line says so, and opens the scene above it in a popover. Only where a view
-   still draws its own status line does the scene sit bottom-left as a card,
-   clear of the rail and of where an alert lands.
+   line says so, and opens the scene above it in a popover. Only if the status
+   line could not be drawn does the scene sit bottom-left as a card, clear of
+   the rail and of where an alert lands.
 
    Colour: the left character is water, the right one is the neutral ink. Green
    means done here, so it is not a character's colour; the letter and the name

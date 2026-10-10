@@ -9,8 +9,8 @@
 // gathers beneath them as bubbles.
 //
 // Nothing floats over the work (Studio): while they talk, a chip in the status
-// line says who and the latest label, and opens the scene above it. Only a view
-// that still draws its own status line gets the scene as a card at the corner.
+// line says who and the latest label, and opens the scene above it. Only if the
+// status line itself could not be drawn does the scene sit at the corner.
 //
 // What it shows is what the core recorded: who sent, who it went to, and the
 // sender's own short label for it. Never the message (see shared/chatter.ts).

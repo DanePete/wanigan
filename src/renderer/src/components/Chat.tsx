@@ -43,14 +43,14 @@ function useChatOrb(thinking: boolean, landed: string | null): { signal: OrbSign
   return { signal: 'quiet', mood: thinking ? 'thinking' : celebrating ? 'celebrate' : 'idle' };
 }
 
-export function TalkToWanigan({ project, hidden }: {
+export function TalkToWanigan({ project }: {
   /** The project being looked at, if any: the chat opens about it. */
   project: ProjectSummary | undefined;
   /**
-   * No floating button here (the session view, whose composer sits at the bottom right). In the status line it
-   * covers nothing, so it is offered there everywhere.
+   * Once there was no floating button on a session, whose composer sat under it. The launcher is in the status
+   * line now and covers nothing, so it is offered on every view, and this is not read.
    */
-  hidden: boolean;
+  hidden?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [everywhere, setEverywhere] = useState(false);
@@ -79,8 +79,7 @@ export function TalkToWanigan({ project, hidden }: {
     wasOpen.current = open;
   }, [open]);
   const close = useCallback(() => setOpen(false), []);
-  // Its home is the status line; a view that still draws its own line (the live view, until its pass) has no
-  // place for it there, and there it floats at the corner as before Studio.
+  // Its home is the status line, under every view: nothing floats over the work.
   const { slot } = useNotices();
   const name = `Talk to Wanigan${thinking ? ' (answering)' : unread ? ' (new answer)' : ''}`;
 
@@ -94,13 +93,7 @@ export function TalkToWanigan({ project, hidden }: {
             {unread ? <span className="chat-launch-dot" aria-hidden="true" /> : null}
           </button>
         </StatusSlot>
-      ) : open || hidden ? null : (
-        <button ref={button} type="button" className={`chat-fab${thinking ? ' thinking' : ''}`} aria-haspopup="dialog"
-          aria-label={name} {...tipProps(name, undefined, 'top')} onClick={() => setOpen(true)}>
-          <Orb size={44} {...orb} material={material} />
-          {unread ? <span className="chat-fab-dot" aria-hidden="true" /> : null}
-        </button>
-      )}
+      ) : null}
       {open ? (
         <ChatSheet
           project={project}

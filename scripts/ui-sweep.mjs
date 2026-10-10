@@ -1352,7 +1352,7 @@ try {
     await page.waitForSelector('.xterm-rows');
     const covers = await page.evaluate(() => {
       const box = document.querySelector('.composer')?.getBoundingClientRect();
-      return [...document.querySelectorAll('.chat-launch, .chat-fab')].some((b) => {
+      return [...document.querySelectorAll('.chat-launch')].some((b) => {
         const r = b.getBoundingClientRect();
         return !!box && Math.min(r.right, box.right) - Math.max(r.left, box.left) > 0.5 && Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top) > 0.5;
       });

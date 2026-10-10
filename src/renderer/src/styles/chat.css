@@ -41,48 +41,7 @@
   box-shadow: 0 0 0 var(--ring) var(--surface);
 }
 
-/*
-  The card drawer is fixed over the window's right side, status line and all,
-  so with a card open the line's end (the launcher, the tour's compass, the
-  keys) moves clear of it. When the drawer becomes the view's right panel this
-  can go.
-*/
-.app.with-drawer .status-line {
-  padding-right: calc(var(--drawer-w) + var(--space-2));
-}
-
-/* ── the floating button, only where a view draws its own status line ────── */
-
-.chat-fab {
-  position: fixed;
-  right: var(--space-5);
-  bottom: var(--space-5);
-  z-index: 45; /* over the drawer, under every dialog */
-  display: grid;
-  place-items: center;
-  width: var(--fab);
-  height: var(--fab);
-  padding: 0;
-  border: var(--hairline) solid var(--line-strong);
-  border-radius: var(--radius-round);
-  background: var(--raised);
-  box-shadow: var(--elev-float);
-  cursor: pointer;
-  transition: transform var(--dur) var(--ease), border-color var(--dur-fast) var(--ease);
-}
-
-.chat-fab:hover {
-  border-color: var(--water-line);
-  transform: translateY(calc(-1 * var(--gap-hair)));
-}
-
-.chat-fab:focus-visible {
-  border-radius: var(--radius-round);
-  box-shadow: var(--focus), var(--elev-float);
-}
-
 /* While Wanigan answers, a slow ring of water light around him. */
-.chat-fab.thinking::after,
 .chat-launch.thinking::after,
 .chat-orb.thinking::after {
   content: '';
@@ -105,30 +64,7 @@
   }
 }
 
-/* An answer arrived while the conversation was closed. */
-.chat-fab-dot {
-  position: absolute;
-  top: var(--gap-hair);
-  right: var(--gap-hair);
-  width: var(--space-3);
-  height: var(--space-3);
-  border: var(--focus-ring) solid var(--raised);
-  border-radius: var(--radius-round);
-  background: var(--water);
-}
-
-/* Beside the card drawer, not over it. */
-.app.with-drawer > .chat-fab {
-  right: calc(var(--drawer-w) + var(--space-5));
-}
-
-/* Toasts rise above the floating button. */
-.app:has(> .chat-fab) ~ .toasts {
-  bottom: calc(var(--space-5) + var(--fab) + var(--space-3));
-}
-
-/* With the conversation open, toasts sit beside it, never over its composer:
-   an error toast stays until dismissed, and it covered Send. */
+/* With the conversation open, any floating toast sits beside it, never over its composer. */
 body:has(> .chat-scrim) .toasts {
   right: calc(var(--space-5) + var(--chat-w) + var(--space-3));
   bottom: var(--space-5);
