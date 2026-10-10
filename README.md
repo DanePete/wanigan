@@ -124,7 +124,10 @@ WordPress and other sites can each be on or off.
   menu for drag handles, the default browser and a card's before and after). One
   status line under the page says what just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
-  being placed), what the view follows, and the keys that work now.
+  being placed), what the view follows, and the keys that work now. In a
+  narrow window, or with the dock beside it, the bar narrows without drawing
+  anything over anything: the address field shrinks, then the tools show
+  their icons only, then they take a row of their own.
 - **Around the page.** The side panel holds the Layers tree (with a chosen
   part's details under it, the tree folded to that part's branch, or beside it
   in a window 1680 px wide or more), Add, the component library and the
