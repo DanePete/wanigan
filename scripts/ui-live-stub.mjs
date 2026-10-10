@@ -672,7 +672,8 @@ export function liveStub(f) {
       if (chosen && shown.outline.length === 1 && !picking) {
         const bar = document.createElement('div');
         bar.className = 'live-stub-bar';
-        const top = r.rect.y > 46 ? r.rect.y - 40 : r.rect.y + r.rect.height + 8;
+        // As the page script places it: above the part, or under it when there is no room or its name would meet it.
+        const top = r.rect.y > 46 && r.rect.width > 420 ? r.rect.y - 40 : r.rect.y + r.rect.height + 8;
         bar.style.cssText = `position:absolute;top:${top}px;right:${Math.max(4, (bounds?.width ?? 0) - (r.rect.x + r.rect.width) - 2)}px;display:flex;gap:2px;padding:3px;height:32px;box-sizing:border-box;border-radius:10px;background:${c.raised};box-shadow:${c.float};font:500 12px/1 ${font};`;
         for (const [id, label] of [['style', 'Style'], ['move', 'Move'], ['take-out', 'Take out'], ['ask', 'Ask an agent']]) {
           const btn = document.createElement('button');

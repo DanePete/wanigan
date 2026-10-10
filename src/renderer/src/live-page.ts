@@ -496,14 +496,19 @@ export function livePage(): void {
   }
 
   /** Put the bar over the chosen part (above it, or below it when there is no room), made again only when the colour scheme changed; null takes it away. */
-  function placeBar(root: ShadowRoot, rect: DOMRect | null): void {
+  function placeBar(root: ShadowRoot, rect: DOMRect | null, name: HTMLElement | null = null): void {
     if (!rect) { bar?.el.remove(); return; }
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     if (!bar || bar.dark !== dark) { bar?.el.remove(); bar = { el: actionBar(), dark }; }
-    const top = rect.top > BAR_H + 14 ? rect.top - BAR_H - 8 : rect.bottom + BAR_H + 16 < innerHeight ? rect.bottom + 8 : Math.max(4, rect.top + 4);
+    const below = rect.bottom + BAR_H + 16 < innerHeight ? rect.bottom + 8 : null;
+    const top = rect.top > BAR_H + 14 ? rect.top - BAR_H - 8 : below ?? Math.max(4, rect.top + 4);
     bar.el.style.top = `${top}px`;
     bar.el.style.right = `${Math.max(4, innerWidth - rect.right - 2)}px`;
     if (bar.el.parentNode !== root) root.appendChild(bar.el);
+    // A narrow part: its name and its bar would meet above it, so the bar goes under it instead.
+    const a = name?.getBoundingClientRect();
+    const b = bar.el.getBoundingClientRect();
+    if (a && below !== null && a.right > b.left - 4 && a.left < b.right && a.bottom > b.top && a.top < b.bottom) bar.el.style.top = `${below}px`;
   }
 
   function box(root: ShadowRoot, rect: DOMRect, label: string, tone: Tone, withBar = false): boolean {
@@ -515,8 +520,9 @@ export function livePage(): void {
       + `outline:${outline};outline-offset:${tone === 'pick' || tone === 'type' ? 3 : -1}px;border-radius:2px;`
       + `background:${tone === 'aim' ? c['water-soft'] : 'transparent'};`;
     root.appendChild(b);
-    if (label) root.appendChild(chip(rect, label, tone === 'pick' || tone === 'type' || tone === 'aim'));
-    if (withBar) placeBar(root, rect);
+    const name = label ? chip(rect, label, tone === 'pick' || tone === 'type' || tone === 'aim') : null;
+    if (name) root.appendChild(name);
+    if (withBar) placeBar(root, rect, name);
     return withBar;
   }
 

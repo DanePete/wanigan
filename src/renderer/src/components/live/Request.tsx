@@ -67,7 +67,7 @@ function Totals({ trace: t }: { trace: LiveTrace }) {
       </dl>
       <p className="faint small">
         <span className="mono">{t.url}</span>, rendered by {t.platform === 'drupal' ? 'Drupal' : 'WordPress'}{t.at ? ` ${ago(t.at)}` : ''}
-        {t.user ? ` for ${t.user.name}${t.user.roles.length ? ` (${t.user.roles.join(', ')})` : ''}` : ''}, in {t.parts.length} parts. Measured in that render, on this Mac.
+        {t.user ? ` for ${t.user.name}${t.user.roles.length ? ` (${t.user.roles.join(', ')})` : ''}` : ''}, in {t.parts.length} parts. Measured in that render, on this computer.
       </p>
     </div>
   );
