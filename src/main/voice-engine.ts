@@ -181,7 +181,8 @@ export class VoiceStream {
   /** While a stretch goes on, what it holds so far, when the engine is free and enough more has come. */
   private maybePartial(): void {
     const start = this.vad.openStart;
-    if (start === null || this.ended || this.queue.busy) return;
+    // Noise never reaches the model, not even for volatile words: only a stretch that sounds like speech so far.
+    if (start === null || this.ended || this.queue.busy || !this.vad.openSpeechLike) return;
     const now = this.heard;
     if (msOf(now - start) < PARTIAL_MIN_MS || msOf(now - this.lastPartialAt) < PARTIAL_EVERY_MS) return;
     this.lastPartialAt = now;

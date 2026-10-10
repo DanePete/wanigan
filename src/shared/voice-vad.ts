@@ -6,7 +6,10 @@
 // rises well above that floor, while steady noise (a fan, the hum of a room)
 // sits on it, and digital silence is under an absolute floor. A stretch must
 // hold for a fifth of a second of voiced frames to count, so a click or a tap
-// does not.
+// does not, and its loud and quiet moments must differ as speech's do (noise
+// that starts after silence rises over the old floor, but is steady once it
+// has: Phase 1's speech held 12 to 27 dB between its loud and quiet frames,
+// room noise under 4).
 //
 // Pure: it is given samples and answers events with sample positions; the
 // engine (src/main/voice-engine.ts) keeps the audio and transcribes. Each frame
@@ -34,6 +37,8 @@ export interface VadOptions {
   hangMs: number;
   /** A stretch with fewer voiced milliseconds than this is dropped: a click, a tap, a breath. */
   minVoicedMs: number;
+  /** A stretch whose loud frames (the 90th percentile) are fewer dB than this over its quiet ones (the 10th) is steady: noise, dropped. */
+  minRangeDb: number;
   /** Audio kept before a stretch's first voiced frame (ms): a word's soft start. */
   prerollMs: number;
   /** Audio kept after a stretch's last loud frame (ms): a word's soft end. */
@@ -44,7 +49,7 @@ export interface VadOptions {
 
 export const VAD_DEFAULTS: VadOptions = {
   frame: 480, onDb: 10, offDb: 6, floorMinDb: -62, floorFrames: 50, aheadFrames: 10, onFrames: 3,
-  hangMs: 650, minVoicedMs: 200, prerollMs: 200, padMs: 150, maxSamples: VOICE_SEGMENT_MAX,
+  hangMs: 650, minVoicedMs: 200, minRangeDb: 8, prerollMs: 200, padMs: 150, maxSamples: VOICE_SEGMENT_MAX,
 };
 
 /** A stretch began (at a sample), ended (its samples, start inclusive, end exclusive), or was too short to keep. */
@@ -69,7 +74,8 @@ export class Segmenter {
   /** The next frame to decide. */
   private next = 0;
   private recentLoud: boolean[] = [];
-  private open: { start: number; voiced: number; quiet: number; lastActive: number } | null = null;
+  /** The open stretch: its first sample, voiced and quiet frames, its last active sample, and its first loud frame. */
+  private open: { start: number; voiced: number; quiet: number; lastActive: number; core: number } | null = null;
   /** Where the last stretch ended: the next one never starts before it. */
   private lastEnd = 0;
 
@@ -83,6 +89,11 @@ export class Segmenter {
   get openStart(): number | null { return this.open?.start ?? null; }
   /** Samples decided so far. */
   get decided(): number { return this.next * this.o.frame; }
+  /** The open stretch sounds like speech so far: voiced long enough, and its loud and quiet moments differ as speech's do. */
+  get openSpeechLike(): boolean {
+    const a = this.open;
+    return !!a && this.ms(a.voiced) >= this.o.minVoicedMs && this.range(a.core, Math.ceil(a.lastActive / this.o.frame)) >= this.o.minRangeDb;
+  }
 
   private ms(frames: number): number { return (frames * this.o.frame * 1000) / VOICE_RATE; }
   private samplesOf(ms: number): number { return Math.round((ms * VOICE_RATE) / 1000); }
@@ -140,7 +151,7 @@ export class Segmenter {
         if ((this.energies[j] as number) >= this.floorAt(j) + 3) { first = j; still = 0; } else if (++still >= gap) break;
       }
       const s = Math.max(this.lastEnd, first * o.frame - this.samplesOf(o.prerollMs), 0);
-      this.open = { start: s, voiced: this.recentLoud.filter(Boolean).length, quiet: 0, lastActive: end };
+      this.open = { start: s, voiced: this.recentLoud.filter(Boolean).length, quiet: 0, lastActive: end, core: firstLoud };
       events.push({ type: 'start', start: s });
       return;
     }
@@ -156,7 +167,7 @@ export class Segmenter {
     if (end - a.start >= o.maxSamples) {
       // Too long for one hearing: this part ends here, and the voice goes on in a new stretch.
       this.close(end, events, true);
-      this.open = { start: end, voiced: 0, quiet: 0, lastActive: end };
+      this.open = { start: end, voiced: 0, quiet: 0, lastActive: end, core: k + 1 };
       events.push({ type: 'start', start: end });
     }
   }
@@ -169,8 +180,18 @@ export class Segmenter {
     const end = Math.max(a.start + 1, at);
     this.lastEnd = end;
     const voicedMs = this.ms(a.voiced);
-    events.push(voicedMs >= this.o.minVoicedMs || cut
-      ? { type: 'end', start: a.start, end, voicedMs, cut }
-      : { type: 'drop', start: a.start, end, voicedMs });
+    const keep = cut || (voicedMs >= this.o.minVoicedMs && this.range(a.core, Math.ceil(a.lastActive / this.o.frame)) >= this.o.minRangeDb);
+    events.push(keep ? { type: 'end', start: a.start, end, voicedMs, cut } : { type: 'drop', start: a.start, end, voicedMs });
+  }
+
+  /**
+   * How many dB a run of frames' loud ones (90th percentile) are over its quiet ones (10th): the stretch's voiced core,
+   * never the quiet after it (noise that stops would otherwise look like speech against the silence that follows).
+   */
+  private range(from: number, to: number): number {
+    const db = this.energies.slice(Math.max(0, from), Math.max(from + 1, to)).sort((x, y) => x - y);
+    if (db.length < 2) return 0;
+    const at = (q: number): number => db[Math.min(db.length - 1, Math.floor(q * db.length))] as number;
+    return at(0.9) - at(0.1);
   }
 }
