@@ -6,7 +6,10 @@
 // sections, moving a part by the keyboard, both edit sheets, the request, the
 // palette, the component library (listed, searched, pictured, an entry's
 // details, placing one, a WordPress library's patterns and styles, an outdated
-// helper), taking a part out (at once, or asked first with its reach), and the
+// helper), taking a part out (at once, or asked first with its reach), the
+// design layer (a style and words made edits of it, the tray with their reach
+// and state, made real, verified, failing, discarded, undone, redone, orphaned
+// and retired, the page without it), and the
 // states without a trace; and the layout itself: the bar's
 // three groups and its site menu, the five verbs on a chosen part with the
 // note under them, a part chosen in the tree offering what a pick offers, the
@@ -237,7 +240,8 @@ try {
       for (const want of [/^Back$/, /^Forward$/, /^Reload/, /^Go to a page of acme\.example\.test/, /^Phone/, /^Tablet/, /^Full width/, /^Lens$/]) {
         if (!pageGroup?.controls.some((c) => want.test(c))) fail(t(`layout: the page group has nothing like ${want} (${pageGroup?.controls.join(' | ')})`));
       }
-      if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^Library/.test(toolGroup?.controls[1] ?? '') || !/^More/.test(toolGroup?.controls[2] ?? '') || toolGroup?.controls.length !== 3) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
+      if (!/^Pick/.test(toolGroup?.controls[0] ?? '') || !/^Library/.test(toolGroup?.controls[1] ?? '') || !/^Edits: the design layer \(⇧E\)$/.test(toolGroup?.controls[2] ?? '')
+        || !/^More/.test(toolGroup?.controls[3] ?? '') || toolGroup?.controls.length !== 4) fail(t(`layout: the tools are ${JSON.stringify(toolGroup?.controls)}`));
       for (const gone of ['Site settings', 'Open in the default browser', 'Go to a page of the site (Shift+Space)']) {
         if (await page.$(`.live-bar button[aria-label="${gone}"]`)) fail(t(`layout: "${gone}" is still a button of its own in the bar`));
       }
@@ -391,6 +395,209 @@ try {
       if (await page.$('.live-side-foot, .live-side > .live-note')) fail(t('layout: the side panel still says the state itself'));
       await page.getByRole('radio', { name: 'Layers' }).click();
       await shot('layout');
+    }
+
+    // ── The design layer: a style tried and words retyped on a chosen part are edits of the layer, shown on the page
+    // through it; the tray (Edits, ⇧E) lists them with before → after, reach and state, and makes them real, verifies
+    // them (passing and failing), discards, undoes and redoes, says why one is orphaned, and shows the page without it.
+    {
+      const calls = () => page.evaluate(() => window.__wgLive.calls.slice());
+      const mark = async () => (await calls()).length;
+      const since = async (n) => (await calls()).slice(n);
+      const nobody = () => page.evaluate(() => document.activeElement?.blur());
+      const edits = page.locator('.live-bar-tools button[aria-keyshortcuts="Shift+E"]');
+      // An edit's row, by a line of its before → after (a verdict's words may name the same property).
+      const rowOf = (text) => page.locator('.live-tray-edit').filter({ has: page.locator('.live-layer-lines li', { hasText: text }) });
+      const stateIs = (text, state, what) => page.waitForFunction(([x, st]) => [...document.querySelectorAll('.live-tray-edit')]
+        .find((e) => e.querySelector('.live-layer-lines')?.textContent.includes(x))?.getAttribute('data-state') === st, [text, state], { timeout: 3000 })
+        .catch(() => fail(t(`layer: ${what}`)));
+      const stateOf = (text) => rowOf(text).getAttribute('data-state').catch(() => null);
+      const rowsAre = (n, what) => page.waitForFunction((k) => document.querySelectorAll('.live-tray-edit').length === k, n, { timeout: 3000 })
+        .catch(async () => fail(t(`layer: ${what}: the tray lists ${(await page.$$('.live-tray-edit')).length} edits, not ${n}`)));
+      const backToLayers = async () => { if (await page.$('.live-inspector')) await page.getByRole('button', { name: 'Back to the layers' }).click(); };
+      // A picture of what was just checked: scrolled to it, without the toasts that would cover it (they were checked).
+      const layerShot = async (name, at = null) => {
+        if (at) await page.locator(at).first().evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => fail(t(`layer: ${at} is not there to picture`)));
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done())));
+        await page.screenshot({ path: join(out, `${theme}-${name}.png`), animations: 'disabled', style: '.toasts { visibility: hidden !important; }' });
+      };
+      await page.locator('.toast .toast-x').click().catch(() => {});
+      await page.getByRole('radio', { name: 'Layers' }).click();
+      await backToLayers();
+      if (!(await edits.count())) fail(t('layer: no Edits in the bar’s tools'));
+      if ((await edits.getAttribute('aria-label')) !== 'Edits: the design layer (⇧E)') fail(t(`layer: with nothing in the layer the bar says ${await edits.getAttribute('aria-label')}`));
+
+      // A style tried on a chosen part: every instance says what it reaches, and how many, before it is chosen.
+      await page.locator('.live-layer', { hasText: /^Event/ }).first().click();
+      await page.waitForFunction(() => document.querySelector('.live-inspector .live-side-title')?.textContent === 'Spring open house', null, { timeout: 3000 })
+        .catch(() => fail(t('layer: choosing an event did not choose Spring open house')));
+      await page.getByRole('button', { name: /^Edit Spring open house/ }).click();
+      await page.getByRole('menuitemcheckbox', { name: /^Try a style/ }).click();
+      const kind = page.locator('.live-layer-scope-option', { hasText: 'Every one of its kind' });
+      await kind.waitFor({ timeout: 3000 }).catch(() => fail(t('layer: Try a style offers no way to change every instance')));
+      if (!(await kind.innerText()).includes('every event node: 3 elements on this page')) fail(t(`layer: every instance does not say its reach first (${await kind.innerText().catch(() => '')})`));
+      if (await page.locator('.live-layer-scope input[value="kind"]').isChecked()) fail(t('layer: every instance was chosen before the owner chose it'));
+      if (!(await page.locator('.live-layer-scope input[value="this"]').isChecked())) fail(t('layer: a style is not for this element by default'));
+      let n = await mark();
+      await page.locator('#live-style-color').fill('#c0392b');
+      await layerShot('layer-style', '.live-layer-scope');
+      await page.getByRole('button', { name: 'Show it on the page' }).click();
+      await page.waitForSelector('.live-layer-added:has-text("for this element")', { timeout: 3000 }).catch(() => fail(t('layer: a style tried was not said to be in the layer')));
+      if (!(await since(n)).includes('layerAdd style this')) fail(t('layer: the style was not added to the layer for this element'));
+      if (!(await since(n)).includes('layerApply')) fail(t('layer: the page was not shown the layer again after the edit'));
+      await page.waitForFunction(() => document.querySelector('.live-bar-tools button[aria-keyshortcuts="Shift+E"]')?.getAttribute('aria-label') === 'Edits, 1 draft: the design layer (⇧E)', null, { timeout: 3000 })
+        .catch(() => fail(t('layer: the bar does not count the draft')));
+      n = await mark();
+      await page.fill('#live-style-font-size', '22');
+      await kind.click();
+      await page.getByRole('button', { name: 'Show it on the page' }).click();
+      await page.waitForSelector('.live-layer-added:has-text("for every event node (3 elements on this page)")', { timeout: 3000 })
+        .catch(() => fail(t('layer: a style for every instance was not said with its reach')));
+      if (!(await since(n)).includes('layerAdd style kind')) fail(t('layer: the style was not added for every instance'));
+      await page.getByRole('button', { name: 'Done' }).click();
+
+      // Retyped words are a text draft; markup no part names is said to be fragile before the edit is made.
+      await backToLayers();
+      await page.locator('.live-layer', { hasText: 'Opening hours' }).first().click();
+      await page.getByRole('button', { name: /^Edit Opening hours/ }).click();
+      await page.getByRole('menuitem', { name: /^Retype the words/ }).click();
+      await page.waitForSelector('.live-layer-edit textarea', { timeout: 3000 }).catch(() => fail(t('layer: Retype the words opened nothing to type in')));
+      if (!(await page.locator('.live-layer-edit .live-layer-fragile').count())) fail(t('layer: words no part names were not said to be fragile before the edit'));
+      await page.locator('.live-layer-edit textarea').fill('Open every day, 7 to 6');
+      await layerShot('layer-words');
+      n = await mark();
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.live-layer-added:has-text("Open every day, 7 to 6")', { timeout: 3000 }).catch(() => fail(t('layer: retyped words were not said to be in the layer')));
+      if (!(await since(n)).includes('layerAdd text this')) fail(t('layer: the words were not added as a text edit'));
+
+      // The tray, from the bar's key: the three drafts on this page, each with before → after, its reach and its state.
+      await page.locator('.live-inspector .live-side-title').focus();
+      await page.keyboard.press('Shift+E');
+      await page.waitForSelector('.live-tray-edit', { timeout: 3000 }).catch(() => fail(t('layer: ⇧E did not open the tray')));
+      if ((await edits.getAttribute('aria-pressed')) !== 'true') fail(t('layer: the bar’s Edits is not shown as on'));
+      if (await page.$('.live-tree, .live-inspector')) fail(t('layer: the tray shares the panel with the layers'));
+      if (!/Edits/.test(await page.locator('.live-tray .live-side-title').innerText())) fail(t('layer: the tray has no title'));
+      await rowsAre(3, 'three drafts');
+      if ((await page.locator('.live-tray-page .live-section-title').first().innerText()).toLowerCase() !== 'the front page, / · this page') fail(t('layer: the tray’s page is not named'));
+      const want = [
+        ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft']],
+        ['font-size', ['16px', '22px', 'For every event node (3 elements on this page).', 'Draft']],
+        ['Open every day', ['Opening hours', 'Open every day, 7 to 6', 'For this element.', 'Fragile: no part of the site names its element', 'Draft']],
+      ];
+      for (const [row, says] of want) {
+        const text = await rowOf(row).innerText().catch(() => '');
+        for (const w of says) if (!text.includes(w)) fail(t(`layer: the ${row} edit does not say "${w}" (${text.replace(/\s+/g, ' ')})`));
+      }
+      if (!/^Edits, 3 drafts/.test(await edits.getAttribute('aria-label'))) fail(t(`layer: the bar says ${await edits.getAttribute('aria-label')}`));
+      await layerShot('layer-tray');
+
+      // Undo and redo say what they would do, and do it.
+      const undo = page.locator('.live-tray-tools button', { hasText: /^Undo/ });
+      const redo = page.locator('.live-tray-tools button', { hasText: /^(Redo|Nothing to redo)/ });
+      if ((await undo.innerText()) !== 'Undo: take “Opening hours (no part names it)” out of the layer') fail(t(`layer: Undo says "${await undo.innerText()}"`));
+      if ((await redo.innerText()) !== 'Nothing to redo' || !(await redo.isDisabled())) fail(t('layer: Redo offers something before anything was undone'));
+      await undo.click();
+      await rowsAre(2, 'undo');
+      if (await rowOf('Open every day').count()) fail(t('layer: undo did not take the words out of the tray'));
+      if ((await redo.innerText()) !== 'Redo: put “Opening hours (no part names it)” back in the layer') fail(t(`layer: Redo says "${await redo.innerText()}"`));
+      await redo.click();
+      await rowsAre(3, 'redo');
+      // Discard takes a draft out; undo brings it back.
+      await rowOf('font-size').getByRole('button', { name: /^Discard/ }).click();
+      await rowsAre(2, 'discard');
+      if ((await undo.innerText()) !== 'Undo: bring back “Spring open house (content)”') fail(t(`layer: after a discard Undo says "${await undo.innerText()}"`));
+      await undo.click();
+      await rowsAre(3, 'undoing the discard');
+      if (!(await rowOf('font-size').count())) fail(t('layer: undo did not bring back the discarded edit'));
+
+      // Making words real saves them (implemented), then Verify: failing at the styles, failing at the pixels, then passing.
+      n = await mark();
+      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
+      await stateIs('Open every day', 'implemented', 'Make it real on words did not mark them implemented');
+      if (!(await since(n)).some((c) => /^layerImplement l-\d+$/.test(c))) fail(t('layer: the words were not made real through the main process'));
+      await page.waitForSelector('.toast:has-text("in the site, as revision 217")', { timeout: 3000 }).catch(() => fail(t('layer: making the words real did not say so')));
+      if ((await rowOf('Open every day').innerText()).includes('In the site, not verified') === false) fail(t('layer: an implemented edit does not say it is not verified'));
+      await page.evaluate(() => { window.__wgLive.verdict = 'styles'; });
+      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
+      await page.waitForSelector('.live-tray-edit:has-text("Open every day") .live-tray-verdict.failed', { timeout: 4000 }).catch(() => fail(t('layer: a failing verification was not shown')));
+      const failing = (await rowOf('Open every day').innerText()).replace(/\s+/g, ' ');
+      for (const w of ['Not verified at 390 and 1440 px', 'Step 1 of 3, the styles and boxes of the edited elements failed; the steps after it did not run.',
+        'At 1440 px, h3.teaser__title: color is rgb(20, 20, 20) in the site, rgb(192, 57, 43) in the design.', 'Noise floor: up to 3 of 255 in 12 pixels']) {
+        if (!failing.includes(w)) fail(t(`layer: a failing verdict does not say "${w}"`));
+      }
+      if ((await stateOf('Open every day')) !== 'draft') fail(t('layer: a failing verification did not send the edit back to draft'));
+      await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="Difference at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a failing verdict shows no difference picture')));
+      await page.waitForSelector('.live-tray-edit:has-text("Open every day") img[alt="The design at 1440 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a verdict shows no design picture')));
+      await layerShot('layer-verify-failed', '.live-tray-edit[data-state="draft"] .live-tray-verdict.failed');
+      await rowOf('Open every day').getByRole('button', { name: 'Difference at 390 px, larger' }).click();
+      await page.waitForSelector('.dialog .live-tray-large img[alt="Difference at 390 px"]', { timeout: 3000 }).catch(() => fail(t('layer: a verification picture did not open larger')));
+      await page.keyboard.press('Escape');
+      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
+      await page.evaluate(() => { window.__wgLive.verdict = 'pixels'; });
+      await stateIs('Open every day', 'implemented', 'made real again, the words are not implemented');
+      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
+      await page.waitForSelector('.live-tray-edit:has-text("At 390 px, 1,840 pixels differ around it, by up to 172 of 255, in a 320 × 60 box at 24, 910.")', { timeout: 4000 })
+        .catch(() => fail(t('layer: a verdict failing at the pixels does not say where, and by how much')));
+      if (!(await rowOf('Open every day').innerText()).includes('Step 2 of 3, the pixels around the edited elements failed')) fail(t('layer: a verdict failing at the pixels does not say its step'));
+      await rowOf('Open every day').getByRole('button', { name: /^Make .* real$/ }).click();
+      await page.evaluate(() => { window.__wgLive.verdict = 'pass'; });
+      await stateIs('Open every day', 'implemented', 'made real again, the words are not implemented');
+      n = await mark();
+      await rowOf('Open every day').getByRole('button', { name: /^Verify/ }).click();
+      await page.waitForSelector('.live-tray-edit[data-state="verified"] .live-tray-verdict.ok', { timeout: 4000 }).catch(() => fail(t('layer: a passing verification was not shown')));
+      if (!(await rowOf('Open every day').innerText()).includes('Verified at 390 and 1440 px: the site renders it as designed.')) fail(t('layer: a passing verdict does not say so'));
+      if (!(await since(n)).some((c) => /^layerVerify l-\d+$/.test(c))) fail(t('layer: Verify did not ask the main process'));
+      await page.waitForSelector('.live-tray-edit[data-state="verified"] img[alt="The site at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a passing verdict shows no pictures')));
+      if (await rowOf('Open every day').getByRole('button', { name: /^Discard/ }).count()) fail(t('layer: an edit in the site can be discarded'));
+      await layerShot('layer-verified', '.live-tray-edit[data-state="verified"] .live-tray-verdict');
+
+      // A style made real goes to an agent as intent: why, and the note to an agent with the edit attached; no session.
+      await rowOf('color').getByRole('button', { name: /^Make .* real$/ }).click();
+      await page.waitForSelector('.live-tray-edit:has-text("color") .live-tray-answer:has-text("A style goes into the theme’s CSS")', { timeout: 3000 })
+        .catch(() => fail(t('layer: a style made real did not say it goes to an agent')));
+      const note = rowOf('color').locator('textarea[aria-label="What should change here?"]');
+      if ((await note.getAttribute('placeholder').catch(() => null)) !== 'Anything to add? (optional)') fail(t('layer: the note to an agent does not carry the style'));
+      if ((await stateOf('color')) !== 'draft') fail(t('layer: a style sent to an agent changed state'));
+      await layerShot('layer-agent', '.live-tray-answer');
+
+      // An orphaned edit says why, and can only be discarded; it is never shown on what is there now.
+      await page.evaluate(() => { const l = window.__wgLive.layer; const e = l.edits.find((x) => x.scope === 'kind'); e.state = 'orphaned'; l.why[e.id] = 'Its element shows other words now.'; });
+      await page.getByRole('button', { name: /^Reload/ }).first().click();
+      await page.waitForSelector('.live-tray-edit[data-state="orphaned"] .live-tray-why:has-text("Orphaned: Its element shows other words now.")', { timeout: 4000 })
+        .catch(() => fail(t('layer: an orphaned edit does not say why')));
+      if (await rowOf('font-size').getByRole('button', { name: /^Make .* real$/ }).count()) fail(t('layer: an orphaned edit can be made real'));
+      if (!(await rowOf('font-size').getByRole('button', { name: /^Discard/ }).count())) fail(t('layer: an orphaned edit cannot be discarded'));
+      await layerShot('layer-orphaned', '.live-tray-edit[data-state="orphaned"]');
+
+      // The page without the layer, said in the status line, and back.
+      n = await mark();
+      const off = page.getByRole('button', { name: 'Show the page without the layer' });
+      await off.click();
+      await page.waitForSelector('.live-status:has-text("Showing the page without the design layer")', { timeout: 3000 }).catch(() => fail(t('layer: the page without the layer is not said')));
+      if (!(await since(n)).includes('layerShow false')) fail(t('layer: the page was not asked to show itself without the layer'));
+      if ((await off.getAttribute('aria-pressed')) !== 'true') fail(t('layer: the switch is not shown as on'));
+      await page.locator('.live-side').evaluate((el) => { el.scrollTop = 0; });
+      await layerShot('layer-off');
+      n = await mark();
+      await page.locator('.live-status button', { hasText: 'Show the layer' }).click();
+      await page.waitForSelector('.live-status:has-text("Showing the page without the design layer")', { state: 'detached', timeout: 3000 }).catch(() => fail(t('layer: Show the layer did not bring it back')));
+      if (!(await since(n)).includes('layerShow true')) fail(t('layer: the page was not asked to show the layer again'));
+
+      // Retiring a verified edit archives it: out of the tray. Escape closes the tray, and the panel shows the part
+      // chosen before it opened: the tray never hides the layers or the Inspector for good.
+      await rowOf('Open every day').getByRole('button', { name: /^Retire/ }).click();
+      await page.waitForSelector('.toast:has-text("Retired “Opening hours (no part names it)”")', { timeout: 3000 }).catch(() => fail(t('layer: retiring did not say so')));
+      await rowsAre(2, 'retire');
+      await page.locator('.live-tray .live-side-title').focus();
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.live-tray', { state: 'detached', timeout: 3000 }).catch(() => fail(t('layer: Escape did not close the tray')));
+      if ((await page.locator('.live-inspector .live-side-title').innerText().catch(() => '')) !== 'Opening hours') fail(t('layer: closing the tray did not bring back the part chosen'));
+      // Opened from the page's key too, as the Library is.
+      await nobody();
+      await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 3000 }).catch(() => fail(t('layer: the view is not waiting for its keys from the page')));
+      await page.evaluate(() => window.__wgLive.press('edits'));
+      await page.waitForSelector('.live-tray', { timeout: 3000 }).catch(() => fail(t('layer: ⇧E in the page did not open the tray')));
+      await page.getByRole('button', { name: 'Close the edits (⇧E)' }).click();
     }
 
     // ── The component library: from the bar's key, listed by kind and searched, pictured a few at a time, an entry's

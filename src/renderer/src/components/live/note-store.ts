@@ -1,6 +1,6 @@
 // Notes on a live page, kept per project while Wanigan runs: what the owner
-// pointed at, what they want changed, and what they tried by hand (new words,
-// a style), each with a picture of the part. They go to an agent together, as
+// pointed at, what they want changed, and an edit of the design layer they
+// want made real (new words, a style), each with a picture of the part. They go to an agent together, as
 // one message, when the owner sends them. Nothing is sent or spent before that.
 import { useSyncExternalStore } from 'react';
 import type { LivePick, LiveRegion } from '@shared/live';
@@ -19,6 +19,8 @@ export interface LiveNote {
   text: string;
   words: { before: string; after: string; file: string | null } | null;
   style: StyleChange[];
+  /** An edit of the design layer the note takes to an agent (the tray's Make it real): what it is, and what it reaches. */
+  layer?: { label: string; reach: string } | null;
   /** A PNG (base64) of the part as it looked. */
   shot: string | null;
   /** For a part dragged where its order is in a template: a PNG of the order wanted, beside `shot` (the order now). */
@@ -83,9 +85,10 @@ export function notesText(notes: readonly LiveNote[], dirOf: (componentId: strin
     if (n.pick) lines.push(`   Pointed at: \`${n.pick.selector}\`${n.pick.text ? ` (“${n.pick.text.slice(0, 120)}”)` : ''}`);
     const made = n.regions.slice(0, 4).map((r) => regionLine(r, r.component ? dirOf(r.component) : null));
     if (made.length) lines.push(`   Made by (innermost first): ${made.join('; ')}`);
+    if (n.layer) lines.push(`   An edit in Wanigan’s design layer, shown on the page but not in the site yet: ${n.layer.label}, for ${n.layer.reach}.`);
     if (n.words) lines.push(`   Words: “${n.words.before}” → “${n.words.after}”${n.words.file ? ` (written in ${n.words.file})` : ''}`);
     if (n.style.length) {
-      lines.push(`   Style tried in the page (not saved): ${n.style.map((s) => `${s.property} ${s.from} → ${s.to}`).join(', ')}`);
+      lines.push(`   Style ${n.layer ? 'in the layer' : 'tried in the page'} (not saved): ${n.style.map((s) => `${s.property} ${s.from} → ${s.to}`).join(', ')}`);
       lines.push('   Make it in the site’s own styles, the way this theme already styles things (its classes or CSS), not as an inline style.');
     }
   });

@@ -31,10 +31,6 @@ const live: LiveBridge = {
     ?? { ok: false, error: 'The live view has no helper for this site.', label: null },
   mutations: () => ipcRenderer.invoke('live:mutations') as Promise<number>,
   picked: () => ipcRenderer.invoke('live:picked') as ReturnType<LiveBridge['picked']>,
-  style: (values) => ipcRenderer.invoke('live:style', values) as ReturnType<LiveBridge['style']>,
-  unstyle: () => ipcRenderer.invoke('live:unstyle') as ReturnType<LiveBridge['unstyle']>,
-  editText: () => ipcRenderer.invoke('live:editText') as ReturnType<LiveBridge['editText']>,
-  cancelEdit: () => ipcRenderer.invoke('live:cancelEdit') as Promise<void>,
   compareShot: (request) => ipcRenderer.invoke('live:compareShot', request) as ReturnType<LiveBridge['compareShot']>,
   onState(listener) {
     const handler = (_e: IpcRendererEvent, state: LiveViewState): void => listener(state);

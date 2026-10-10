@@ -7,10 +7,11 @@
 // in the page. None of them is a key the sheet gives to anything else: the
 // widths' 1, 2 and 3 mean the same as in Compare, and the rest are keys no
 // other part of Wanigan uses (C is a new card everywhere, so Compare is ⇧C; X
-// archives on the board, so taking a part out is ⇧X).
+// archives on the board, so taking a part out is ⇧X). ⇧E opens the design
+// layer's edits: E alone edits the chosen part.
 
 export type LiveKeyId =
-  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'compare' | 'library'
+  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'compare' | 'library' | 'edits'
   | 'edit' | 'move' | 'code' | 'alone' | 'take-out';
 
 export interface LiveKeySpec {
@@ -34,6 +35,7 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'tab-next', key: ']', shift: false, page: true, focusWindow: false },
   { id: 'compare', key: 'c', shift: true, page: true, focusWindow: true },
   { id: 'library', key: 'b', shift: true, page: true, focusWindow: true },
+  { id: 'edits', key: 'e', shift: true, page: true, focusWindow: true },
   { id: 'edit', key: 'e', shift: false, page: false, focusWindow: false },
   { id: 'move', key: 'm', shift: false, page: false, focusWindow: false },
   { id: 'code', key: '.', shift: false, page: false, focusWindow: false },

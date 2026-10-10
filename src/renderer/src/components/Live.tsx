@@ -11,7 +11,8 @@
 // the rarely used). One status line under the page says what just happened
 // and which keys work now; the keys themselves are shared/live-keys.ts. The
 // tools' Library opens the site's component library in the side panel
-// (components/live/Library.tsx).
+// (components/live/Library.tsx), and Edits the design layer's tray
+// (components/live/Tray.tsx): the page's edits, made real and verified there.
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { LiveViewState } from '@shared/bridge';
@@ -48,6 +49,9 @@ import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { PaletteTab, useArrange } from './live/Arrange';
 import { LibraryPanel } from './live/Library';
+import { LayerTray } from './live/Tray';
+import { useLayer } from './live/use-layer';
+import { pagePath } from '../lib/live-layer';
 import { EditSheet, type EditRequest } from './live/EditSheet';
 import { LensPicker, LensStrip, usePaintLens } from './live/Lenses';
 import { RequestTab } from './live/Request';
@@ -284,8 +288,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   /** The page the stage opens: the site's address, or the same page on the environment switched to. */
   const [stageUrl, setStageUrl] = useState(url);
   const [comparing, setComparing] = useState(false);
-  /** The component library takes the side panel while it is open. */
+  /** The component library takes the side panel while it is open; so does the design layer's tray. */
   const [library, setLibrary] = useState(false);
+  const [tray, setTray] = useState(false);
+  const layer = useLayer(project.id, !env && !compact);
+  const layerLoaded = useRef(layer.loaded);
+  layerLoaded.current = layer.loaded;
   /** What the chosen part's verbs do, and what opens the lens list: for the keys. */
   const verbs = useRef<InspectorVerbs | null>(null);
   const lensOpen = useRef<(() => void) | null>(null);
@@ -444,7 +452,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (!s.error) {
       const wanted = outlineAfterLoad.current;
       outlineAfterLoad.current = null;
-      void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); void fetchTrace(); return refreshProblems(); });
+      void scanAndOutline(wanted ?? [], true).then(() => { watchLate(); void fetchTrace(); layerLoaded.current(); return refreshProblems(); });
     }
   }), [live, project.id, scanAndOutline, watchLate, refreshProblems, fetchTrace, checks]);
 
@@ -555,6 +563,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (!p) return;
     setTab('layers');
     setLibrary(false);
+    setTray(false);
     setSelection({ region: p.regions[0] ?? null, pick: p, how: 'pick' });
     const inner = p.regions[0];
     if (inner) await live.outline([inner.index], labelOf(inner), 'edit'); else await live.clear();
@@ -564,7 +573,6 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   };
 
   const openEdit = (target: EditTarget, region: LiveRegion | null): void => {
-    void live.cancelEdit();
     setEditing({ target, region });
     // What the parts it changes show now: the page does not change while the sheet is open over it.
     const shown = [...parts.parts.values()].filter((p) => p.edits?.includes(target.id)).flatMap((p) => parts.regionsOf.get(p.id) ?? []);
@@ -604,6 +612,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
    */
   const select = (region: LiveRegion): void => {
     setLibrary(false);
+    setTray(false);
     setTab('layers');
     setSelection({ region, pick: null, how: 'tree' });
     void live.outline([region.index], labelOf(region), 'edit');
@@ -616,15 +625,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const kept = selection?.region;
     if (kept) void live.outline([kept.index], labelOf(kept), 'edit'); else void live.clear();
   };
-  const unselect = (): void => { setSelection(null); void live.cancelEdit(); void live.clear(); };
+  const unselect = (): void => { setSelection(null); void live.clear(); };
   const showNote = (n: LiveNote | null): void => {
     const r = n?.regions[0];
     const same = r ? regions.filter((x) => sameRegion(r, [r], [x])) : [];
     if (same.length === 1) void live.outline([same[0]!.index], null, 'hover'); else hover(null);
   };
-  const wordsSaved = (): void => {
-    outlineAfterLoad.current = [];
-    void live.reload();
+  /** The tray of the design layer's edits, in the side panel in place of the library. */
+  const openTray = (open: boolean): void => {
+    setTray(open);
+    if (open) setLibrary(false);
   };
 
   /** Show the same page on another environment (null: the local site). */
@@ -682,20 +692,22 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       case 'tab-next': {
         if (compact) return;
         setLibrary(false);
+        setTray(false);
         const at = tabs.findIndex((t) => t.value === shownTab);
         const next = tabs[(at + (id === 'tab-next' ? 1 : -1) + tabs.length) % tabs.length];
         if (next) setTab(next.value);
         return;
       }
       case 'compare': if (!compact) openCompare(); return;
-      case 'library': if (!compact) setLibrary(!library); return;
+      case 'library': if (!compact) { setTray(false); setLibrary(!library); } return;
+      case 'edits': if (!compact) openTray(!tray); return;
       case 'edit':
       case 'move':
       case 'code':
       case 'alone':
       case 'take-out':
         if (compact) return;
-        if (!selected.current || shownTab !== 'layers' || library) { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
+        if (!selected.current || shownTab !== 'layers' || library || tray) { toast('Choose a part first: P picks one on the page, or choose it in Layers.'); return; }
         verbs.current?.[id]();
     }
   };
@@ -741,9 +753,14 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   } : env ? {
     className: 'live-hosted',
     text: <><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits. <span className="faint">{HOSTED_NOTE}</span></>,
+  } : !layer.on ? {
+    className: 'live-layer-off',
+    text: 'Showing the page without the design layer: as the site renders it, without your edits.',
+    action: <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
   } : banner ? { text: bannerText(banner), warn: banner.kind === 'write' && banner.warn } : null;
   const keysNow: [string[], string][] = picking ? []
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
+    : tray && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'E'], 'close the edits']]
     : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['P'], 'pick'], [['Esc'], 'back']]
       : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['?'], 'all keys']];
 
@@ -776,6 +793,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             <Button size="s" tone={library ? 'primary' : 'quiet'} icon="pieces" onClick={() => setLibrary(!library)} aria-keyshortcuts="Shift+B" aria-pressed={library}
               title="The site’s component library: what it can place, pictured, and added to the page from there (⇧B)">
               Library<kbd className="live-key" aria-hidden="true">⇧B</kbd>
+            </Button>
+          ) : null}
+          {!compact ? (
+            <Button size="s" tone={tray ? 'primary' : 'quiet'} icon="brush" onClick={() => openTray(!tray)} aria-keyshortcuts="Shift+E" aria-pressed={tray}
+              aria-label={`Edits${layer.drafts ? `, ${layer.drafts} ${layer.drafts === 1 ? 'draft' : 'drafts'}` : ''}: the design layer (⇧E)`}
+              title="Your edits to the page, kept in Wanigan’s design layer: made real in the site and verified from here (⇧E)">
+              Edits{layer.drafts ? <span className="live-layer-count" aria-hidden="true">{layer.drafts}</span> : null}<kbd className="live-key" aria-hidden="true">⇧E</kbd>
             </Button>
           ) : null}
           <MoreMenu compact={compact} arrangeOn={arrangeOn} canArrange={hasScript} onArrange={flipArrange} onBrowser={() => void live.open()} shot={shot} />
@@ -812,8 +836,12 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </div>
           ) : null
         ) : (
-          <aside className={`live-side${shownTab === 'request' || library ? ' wide' : ''}`} aria-label={library ? 'The site’s component library' : 'What is on this page'}>
-            {library ? (
+          <aside className={`live-side${shownTab === 'request' || library || tray ? ' wide' : ''}`}
+            aria-label={tray ? 'The design layer’s edits' : library ? 'The site’s component library' : 'What is on this page'}>
+            {tray ? (
+              <LayerTray project={project} layer={layer} page={env ? '' : pagePath(view?.url ?? url)} siteUrl={url} trace={env ? null : traceData} parts={parts} regions={regions}
+                components={components} prefer={follow} readOnly={!!env} onClose={() => setTray(false)} onReload={() => { outlineAfterLoad.current = []; void live.reload(); }} />
+            ) : library ? (
               <LibraryPanel project={project} site={site} trace={env ? null : traceData} parts={parts} regions={regions} arrange={arrange} readOnly={!!env}
                 onClose={() => setLibrary(false)} onSelect={select} onHover={hover} />
             ) : (<>
@@ -821,9 +849,9 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             {shownTab === 'layers' ? (
               selection ? (
                 <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
-                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect} onSaved={wordsSaved}
+                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect}
                   site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
-                  siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} />
+                  siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} />
               ) : (
                 <>
                   {/* A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out. */}

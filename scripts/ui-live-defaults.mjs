@@ -35,6 +35,13 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     libraryPicture: async () => null,
     // A part chosen in the tree, as the picked element (live-page.ts).
     choose: async () => null,
+    // The design layer (live-layer.ts): nothing shown, nothing keyed, nothing made real or verified here.
+    layerApply: async () => ({ page: '', shown: [], orphaned: [], elsewhere: [], off: false }),
+    layerShow: async (on) => ({ page: '', shown: [], orphaned: [], elsewhere: [], off: !on }),
+    layerTarget: async () => null,
+    layerImplement: async (id) => ({ ok: false, id, route: 'none', why: nothing }),
+    layerVerify: async () => { throw new Error(nothing); },
+    layerPicture: async () => null,
     // Local and Live (live-compare.ts).
     compareShot: async () => { throw new Error(nothing); },
     // Go to (live-find.ts): the key from the page never comes.

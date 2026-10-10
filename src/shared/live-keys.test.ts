@@ -27,6 +27,7 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Previous or next tab of the side panel: tab-previous', 'Previous or next tab of the side panel: tab-next',
     'Compare Local with a hosted environment: compare',
     'The site’s component library: library',
+    'Your edits to the page, in the design layer: edits',
     'Every way to edit the chosen part: edit',
     'Move the chosen part: move',
     'The chosen part’s code, in the code editor: code',
@@ -77,6 +78,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
   assert.equal(liveKey({ key: 'x', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null, 'plain X archives on the board');
   assert.equal(liveKey({ key: 'X', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'take-out');
   assert.equal(liveKey({ key: 'B', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'library');
+  assert.equal(liveKey({ key: 'E', shiftKey: true, metaKey: false, ctrlKey: false, altKey: false }), 'edits', 'plain E edits the chosen part');
   assert.equal(liveKey({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), null);
   assert.equal(liveKey({ key: 'P', shiftKey: false, metaKey: false, ctrlKey: false, altKey: false }), 'pick', 'Caps Lock still picks');
   assert.ok(isSendKey({ key: 'Enter', shiftKey: true, metaKey: false, ctrlKey: true, altKey: false }, false));
@@ -85,7 +87,7 @@ test('modifiers other than Shift are never a live view key, and Shift is part of
 });
 
 test('the page gives up only the keys that need no chosen part, and the window handles every key', () => {
-  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'compare', 'library']);
+  assert.deepEqual(LIVE_PAGE_KEYS.map((k) => k.id), ['pick', 'lens', 'width-phone', 'width-tablet', 'width-full', 'tab-previous', 'tab-next', 'compare', 'library', 'edits']);
   assert.ok(isLiveKeyId('compare') && !isLiveKeyId('goto') && !isLiveKeyId(null));
   const live = readFileSync(resolve(import.meta.dirname, '../renderer/src/components/Live.tsx'), 'utf8');
   for (const k of LIVE_KEYS) assert.ok(live.includes(`case '${k.id}'`), `the live view does not handle ${k.id}`);

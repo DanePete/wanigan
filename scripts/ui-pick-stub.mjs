@@ -21,8 +21,8 @@ export const PICK_STUB = `(() => {
     scan: async () => [region], outline: async () => 1, clear: async () => {}, cancelPick: async () => {},
     choose: async () => ({ url: state.url, selector: 'button.pay-button', tag: 'button', text: 'Pay', own: 'Pay', classes: ['pay-button'], rect: region.rect, style: {}, regions: [region] }),
     pick: async () => ({ url: state.url, selector: 'button.pay-button', tag: 'button', text: 'Pay', own: null, classes: ['pay-button'], rect: region.rect, style: {}, regions: [region] }),
-    capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null, style: async () => null, unstyle: async () => null,
-    editText: async () => null, cancelEdit: async () => {}, helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'no helper', label: null }),
+    capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null,
+    helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'no helper', label: null }),
     hasScript: async () => true,
     onState: (l) => { listeners.add(l); return () => listeners.delete(l); },
   };

@@ -141,7 +141,6 @@ export const LIVE_STUB = String.raw`(() => {
     back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
     scan: async () => [], outline: async () => 0, clear: async () => {}, pick: async () => null, choose: async () => null, cancelPick: async () => {},
     capture: async () => null, problems: async () => [], mutations: async () => 0, picked: async () => null,
-    style: async () => null, unstyle: async () => null, editText: async () => null, cancelEdit: async () => {},
     helperChanged: async () => null, helperSave: async () => ({ ok: false, error: 'stand-in', label: null }), hasScript: async () => true,
     onState(l) { listeners.add(l); setTimeout(() => l(viewState()), 0); return () => listeners.delete(l); },
     async find(projectId, query, options) {

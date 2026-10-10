@@ -111,6 +111,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Previous or next tab of the side panel', group: 'In the live view', keys: ['['], alt: [[']']] },
   { id: null, label: 'Compare Local with a hosted environment', group: 'In the live view', keys: ['Shift', 'C'] },
   { id: null, label: 'The site’s component library', group: 'In the live view', keys: ['Shift', 'B'] },
+  { id: null, label: 'Your edits to the page, in the design layer', group: 'In the live view', keys: ['Shift', 'E'] },
   { id: null, label: 'Every way to edit the chosen part', group: 'In the live view', keys: ['E'] },
   { id: null, label: 'Move the chosen part', group: 'In the live view', keys: ['M'] },
   { id: null, label: 'The chosen part’s code, in the code editor', group: 'In the live view', keys: ['.'] },

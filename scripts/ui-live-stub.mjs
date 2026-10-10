@@ -7,8 +7,15 @@
 // window.wanigan.live, answers the core's live.* methods for the site, and
 // switches the live view on in the app's settings. window.__wgLive lets the
 // sweep change what the stub answers (the trace's state, the helper's age,
-// the component library). The library's pictures are wireframes drawn here
-// on a canvas: grey boxes and an entry's made-up name, never a website.
+// the component library, the design layer). The library's pictures are
+// wireframes drawn here on a canvas: grey boxes and an entry's made-up name,
+// never a website; so are a verification's pictures.
+//
+// The design layer is played on both sides: the core's log (live.layer*, an
+// in-memory list with undo and redo replayed as the core does) and the main
+// process's (layer*: a picked part keyed by what the made-up trace says it is,
+// the layer applied, words made real, a verdict that passes or fails as
+// __wgLive.verdict says).
 
 /** The made-up trace the helper would send for the wireframe: every section of the Inspector and the request has something in it. */
 export function trace() {
@@ -267,6 +274,9 @@ export function liveStub(f) {
   const wireAt = wireframe;
   window.__wgLive = {
     answer: { state: 'ok', trace: f.trace }, outdated: false, calls: [], drops: [], printGen: 0, unchanged: false,
+    // The design layer: the core's log, whether the page shows it, why an edit is orphaned, which region each edit is
+    // on, the verdict a verification gives ('pass', 'styles' or 'pixels'), and whether words have a field to save to.
+    layer: { edits: [], done: [], undone: [], seq: 0, on: true, why: {}, region: {} }, verdict: 'pass', wordsField: true, picked: null,
     // The component library: what library() answers (null: the Drupal one), the WordPress one to switch to, the
     // entries each libraryPictures() call asked for, and the pictures that fail.
     libraryAnswer: null, drupalLibrary: f.library, wpLibrary: f.wpLibrary, pictureAsks: [], failing: ['block:northwind_hours_block'],
@@ -287,7 +297,84 @@ export function liveStub(f) {
     if (method === 'live.site') return Promise.resolve(site(params.projectId));
     if (method === 'live.parts') return Promise.resolve({ docroot: '/tmp/acme/web', components: [{ id: 'acme:hero', name: 'Hero', description: 'A wide banner with a heading, words and buttons.', dir: '/tmp/acme/web/themes/custom/acme/components/hero', files: ['hero.component.yml', 'hero.twig', 'hero.css'], props: [{ name: 'heading', type: 'string', title: 'Heading', required: true }, { name: 'ctas', type: 'array', title: 'Buttons', required: false }] }] });
     if (method === 'live.edits') return Promise.resolve([]);
+    if (method.startsWith('live.layer')) {
+      try { return Promise.resolve(layerCore(method, params)); } catch (e) { return Promise.reject(e); }
+    }
     return real(method, params);
+  };
+
+  /* ── the design layer's log, as the core keeps it (src/core/live-layer.ts), in memory ── */
+  const L = () => window.__wgLive.layer;
+  const refuse = (message) => Object.assign(new Error(message), { code: 'refused' });
+  const inSite = (e) => e && e.state !== 'draft' && e.state !== 'orphaned';
+  const editOf = (id) => {
+    const e = L().edits.find((x) => x.id === id);
+    if (!e) throw Object.assign(new Error('No such edit in this project’s layer.'), { code: 'not_found' });
+    if (!e.listed) throw refuse('That edit is not in the layer now: it was undone or discarded.');
+    return e;
+  };
+  const strip = ({ listed, ...e }) => e;
+  const snapshot = (projectId) => {
+    const l = L();
+    const top = l.done.at(-1), next = l.undone.at(-1);
+    const entry = (u) => (u ? { id: u.id, label: l.edits.find((e) => e.id === u.id)?.label ?? 'An edit', action: u.action } : null);
+    const blocked = top && top.action === 'add' && inSite(l.edits.find((e) => e.id === top.id));
+    const blockedRedo = next && next.action === 'discard' && inSite(l.edits.find((e) => e.id === next.id));
+    return {
+      projectId, edits: l.edits.filter((e) => e.listed && e.state !== 'retired').map(strip),
+      undo: blocked ? null : entry(top), redo: blockedRedo ? null : entry(next),
+    };
+  };
+  const layerCore = (method, p) => {
+    const l = L();
+    switch (method) {
+      case 'live.layer': return snapshot(p.projectId);
+      case 'live.layerAdd': {
+        const e = p.edit;
+        if (!e || !e.target || !e.change || !e.page?.startsWith('/')) throw Object.assign(new Error('An edit is its target, its change and the page it was made on.'), { code: 'invalid' });
+        const id = `l-${++l.seq}`;
+        // Which wireframe region it is on, by the text hash the stand-in keyed it with.
+        if (e.target.textHash) l.region[id] = parseInt(e.target.textHash.slice(12), 16);
+        l.edits.push({ ...e, id, state: 'draft', by: 'owner', at: Date.now(), verdict: null, listed: true });
+        l.done.push({ action: 'add', id });
+        l.undone = [];
+        window.__wgLive.calls.push(`layerAdd ${e.change.type} ${e.scope}`);
+        return snapshot(p.projectId);
+      }
+      case 'live.layerDiscard': {
+        const e = editOf(p.id);
+        if (e.state !== 'draft' && e.state !== 'orphaned') throw refuse('Only a draft or an orphaned edit is discarded.');
+        e.listed = false;
+        l.done.push({ action: 'discard', id: e.id });
+        l.undone = [];
+        return snapshot(p.projectId);
+      }
+      case 'live.layerUndo': {
+        const top = l.done.at(-1);
+        if (!top) throw refuse('There is nothing to undo.');
+        const e = l.edits.find((x) => x.id === top.id);
+        if (top.action === 'add' && inSite(e)) throw refuse(`“${e.label}” is in the site: taking it out of the layer would not take it out of the site.`);
+        l.done.pop();
+        l.undone.push(top);
+        e.listed = top.action !== 'add';
+        return snapshot(p.projectId);
+      }
+      case 'live.layerRedo': {
+        const next = l.undone.pop();
+        if (!next) throw refuse('There is nothing to redo.');
+        const e = l.edits.find((x) => x.id === next.id);
+        e.listed = next.action === 'add';
+        l.done.push(next);
+        return snapshot(p.projectId);
+      }
+      case 'live.layerMark': {
+        const e = editOf(p.id);
+        e.state = p.state;
+        if (p.verdict) e.verdict = p.verdict;
+        return snapshot(p.projectId);
+      }
+      default: throw new Error(`The stand-in has no ${method}.`);
+    }
   };
 
   const listeners = { state: new Set(), edited: new Set(), key: new Set() };
@@ -335,6 +422,24 @@ export function liveStub(f) {
     };
     for (const p of shown.paint) { const r = regions[p.index]; if (r) box(r.rect, `outline:1.5px ${p.dashed ? 'dashed' : 'solid'} ${p.color};outline-offset:-1px;background:${rgba(p.color, p.fill)};box-shadow:inset 0 0 0 2px rgba(0,0,0,0.18);`, p.label); }
     for (const o of shown.outline) { const r = regions[o.index]; if (r) box(r.rect, `outline:2px ${o.tone === 'hover' ? 'dashed' : 'solid'} #63b3e4;outline-offset:-1px;`, o.label); }
+    // The layer, as the page would show it: a style's colour around its part, new words over the part's name.
+    const l = window.__wgLive.layer;
+    if (!l.on) return;
+    for (const e of l.edits) {
+      if (!e.listed || (e.state !== 'draft' && e.state !== 'implemented')) continue;
+      const r = regions[l.region[e.id]];
+      if (!r) continue;
+      if (e.change.type === 'style') {
+        const v = e.change.values;
+        box(r.rect, `outline:3px solid ${v.color ?? v['background-color'] ?? '#7a5cc4'};outline-offset:-3px;${v['background-color'] ? `background:${v['background-color']};opacity:0.5;` : ''}`, null);
+      }
+      if (e.change.type === 'text') {
+        const t = document.createElement('span');
+        t.textContent = e.change.value;
+        t.style.cssText = `position:absolute;left:${r.rect.x + 6}px;top:${r.rect.y + 8}px;padding:2px 6px;font:600 13px/18px -apple-system,system-ui,sans-serif;color:#162029;background:#ffffff;`;
+        host.appendChild(t);
+      }
+    }
   };
   /** A library entry rendered alone, as a wireframe drawn on a canvas at the width asked for: base64 PNG. */
   const pieceHeight = (entry, width) => {
@@ -413,10 +518,13 @@ export function liveStub(f) {
     // Picking: the sweep answers with __wgLive.enter(index) as Enter (or a click) on the page would; null is Escape.
     async pick(start) {
       window.__wgLive.calls.push(`pick ${start ?? 'page'}`);
-      return new Promise((resolve) => { picking = resolve; window.__wgLive.enter = (index) => { picking = null; resolve(index === null ? null : pickOf(index ?? start)); }; });
+      return new Promise((resolve) => {
+        picking = resolve;
+        window.__wgLive.enter = (index) => { picking = null; if (index !== null) window.__wgLive.picked = index ?? start; resolve(index === null ? null : pickOf(index ?? start)); };
+      });
     },
     async cancelPick() { const p = picking; picking = null; p?.(null); },
-    async choose(index) { window.__wgLive.calls.push(`choose ${index}`); return pickOf(index); },
+    async choose(index) { window.__wgLive.calls.push(`choose ${index}`); window.__wgLive.picked = index; return pickOf(index); },
     // Shift+Space, or one of the live view's keys, pressed on the page: the sweep calls __wgLive.press(key).
     awaitGoto() { return new Promise((resolve) => { window.__wgLive.press = (key = 'goto') => { window.__wgLive.press = null; resolve(key); }; }); },
     async findHere() { return null; },
@@ -425,8 +533,6 @@ export function liveStub(f) {
     async problems() { return []; },
     async mutations() { return 0; },
     async picked() { return null; },
-    async style() { return null; }, async unstyle() { return null; },
-    async editText() { window.__wgLive.calls.push('editText'); return window.__wgLive.words ?? null; }, async cancelEdit() {},
     async helperChanged() { return 1; },
     async helperSave() { return { ok: true, error: null, label: 'Article 12' }; },
     async hasScript() { return true; },
@@ -480,6 +586,89 @@ export function liveStub(f) {
     async libraryPicture(id, entry, width) {
       const e = libraryNow()?.entries.find((x) => x.id === entry);
       return e && e.picture.from !== 'none' && !window.__wgLive.failing.includes(entry) ? piecePng(e, width) : null;
+    },
+    // The design layer, the main process's side (live-layer.ts), played on the wireframe.
+    async layerTarget() {
+      window.__wgLive.calls.push('layerTarget');
+      const index = window.__wgLive.picked;
+      const r = regions[index];
+      if (!r) return null;
+      const name = layoutAt(bounds.width)[index]?.label ?? 'Part';
+      const textHash = `a1b2c3d4e5f6${index.toString(16).padStart(4, '0')}`;
+      const before = {
+        color: 'rgb(20, 20, 20)', 'background-color': 'rgba(0, 0, 0, 0)', 'font-size': '16px', 'font-weight': '400', 'line-height': '24px', 'letter-spacing': 'normal',
+        'text-align': 'start', 'padding-top': '0px', 'padding-right': '0px', 'padding-bottom': '0px', 'padding-left': '0px', 'margin-top': '0px', 'margin-bottom': '0px',
+        'border-radius': '0px', gap: 'normal', text: name,
+      };
+      const teaser = /^p-teaser-(\d)$/.exec(r.part ?? '');
+      if (teaser) {
+        return {
+          target: { part: { kind: 'entity', type: 'node', id: `5${teaser[1]}`, bundle: 'event' }, inner: null, selector: null, textHash },
+          label: `${name} (content)`, kindLabel: 'every event node', kindCount: 3, before, fragile: false,
+        };
+      }
+      if (r.part === 'p-hero') {
+        return { target: { part: { kind: 'component', name: 'acme:hero', within: null, nth: 0 }, inner: null, selector: null, textHash }, label: 'Hero (component)', kindLabel: 'every Hero component', kindCount: 1, before, fragile: false };
+      }
+      return { target: { part: null, inner: null, selector: `#${r.part}`, textHash }, label: `${name} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: true };
+    },
+    async layerApply() {
+      window.__wgLive.calls.push('layerApply');
+      const l = window.__wgLive.layer;
+      const out = { page: '/', shown: [], orphaned: [], elsewhere: [], off: !l.on };
+      for (const e of l.edits) {
+        if (!e.listed || e.state === 'retired' || e.state === 'verified') continue;
+        if (e.scope === 'this' && e.page !== '/') { out.elsewhere.push(e.id); continue; }
+        if (e.state === 'orphaned') { out.orphaned.push({ id: e.id, why: l.why[e.id] ?? 'Its element is not on this page any more.' }); continue; }
+        if (l.on) out.shown.push({ id: e.id, elements: e.scope === 'kind' ? (e.target.part?.kind === 'entity' ? 3 : 1) : e.scope === 'site' ? 0 : 1 });
+      }
+      draw();
+      return out;
+    },
+    async layerShow(on) { window.__wgLive.calls.push(`layerShow ${on}`); window.__wgLive.layer.on = on; return window.wanigan.live.layerApply(); },
+    async layerImplement(id) {
+      window.__wgLive.calls.push(`layerImplement ${id}`);
+      const e = window.__wgLive.layer.edits.find((x) => x.id === id && x.listed);
+      if (!e) return { ok: false, id, route: 'none', why: 'That edit is not in the layer.' };
+      if (e.change.type === 'style') return { ok: false, id, route: 'agent', why: 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' };
+      if (e.change.type === 'token') return { ok: false, id, route: 'agent', why: 'A token is the theme’s: changing it natively is a code change, which an agent makes from a brief, on your click.' };
+      if (!window.__wgLive.wordsField) return { ok: false, id, route: 'none', why: 'These words are not in a plain text field the site helper marks: they come from a template, a setting or formatted text. An agent can make the change from a brief.' };
+      e.state = 'implemented';
+      // The site now has the words: the page reloads, and the layer applies again after it.
+      setTimeout(() => { for (const l of listeners.state) l({ ...state(), loading: true }); setTimeout(tell, 40); }, 10);
+      return { ok: true, id, state: 'implemented', revision: '217' };
+    },
+    async layerVerify(id) {
+      window.__wgLive.calls.push(`layerVerify ${id}`);
+      await new Promise((done) => setTimeout(done, 80));
+      const e = window.__wgLive.layer.edits.find((x) => x.id === id && x.listed);
+      if (!e) throw new Error('That edit is not in the layer.');
+      if (e.state !== 'implemented') throw new Error(`Only an implemented edit is verified; this one is ${e.state}. Make it real first.`);
+      const how = window.__wgLive.verdict;
+      const pictures = [390, 1440].map((width) => ({
+        width, design: `/stand-in/live-layer/${id}/${width}-design.png`, result: `/stand-in/live-layer/${id}/${width}-result.png`, diff: how === 'pass' ? null : `/stand-in/live-layer/${id}/${width}-diff.png`,
+      }));
+      const differences = how === 'styles'
+        ? [{ kind: 'style', edit: id, width: 1440, element: 'h3.teaser__title', property: 'color', design: 'rgb(192, 57, 43)', result: 'rgb(20, 20, 20)' }]
+        : how === 'pixels' ? [{ kind: 'pixels', edit: id, width: 390, rect: { x: 24, y: 910, width: 320, height: 60 }, pixels: 1840, maxDiff: 172 }] : [];
+      const verdict = { at: Date.now(), ok: how === 'pass', failed: how === 'pass' ? null : how, widths: [390, 1440], noise: { maxDiff: 3, pixels: 12 }, differences, pictures };
+      e.state = verdict.ok ? 'verified' : 'draft';
+      e.verdict = verdict;
+      return verdict;
+    },
+    async layerPicture(path) {
+      const m = /\/(\d+)-(design|result|diff)\.png$/.exec(path);
+      if (!m) return null;
+      const width = Number(m[1]) / 2, height = 420, kind = m[2];
+      const c = document.createElement('canvas');
+      c.width = width; c.height = height;
+      const g = c.getContext('2d');
+      g.fillStyle = kind === 'diff' ? '#9a9a9a' : '#ffffff'; g.fillRect(0, 0, width, height);
+      g.fillStyle = kind === 'diff' ? '#b5b5b5' : '#eef1f3';
+      g.fillRect(0, 0, width, 40); g.fillRect(12, 60, width - 24, 120); g.fillRect(12, 200, width - 24, 180);
+      g.fillStyle = kind === 'design' ? '#c0392b' : kind === 'diff' ? '#ff00ff' : '#5b6770';
+      g.fillRect(24, 220, Math.min(160, width - 48), 18);
+      return c.toDataURL('image/png').split(',')[1];
     },
   };
 }

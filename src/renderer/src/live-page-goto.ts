@@ -42,7 +42,7 @@ export function livePageGoto(): void {
     if (!waiting || e.metaKey || e.ctrlKey || e.altKey || e.repeat || e.isComposing) return;
     const goto = e.code === 'Space' && e.shiftKey;
     const lower = e.key.length === 1 ? e.key.toLowerCase() : '';
-    // Picking or retyping words has the keyboard: those keys are theirs (Shift+Space still opens Go to).
+    // Picking has the keyboard: those keys are its (Shift+Space still opens Go to).
     const other = goto || !lower || (wl.busy as (() => boolean) | undefined)?.() ? null : keys.find((k) => k.key === lower && k.shift === e.shiftKey) ?? null;
     if (!goto && !other) return;
     if (editable(e.composedPath()[0] ?? e.target) || editable(focused())) return;

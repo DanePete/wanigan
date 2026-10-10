@@ -1,10 +1,10 @@
 // The script the live view puts into the owner's site, in an isolated world:
 // the page's own scripts cannot see or call it. It reads which template,
 // component, entity, block, view or Elementor element produced each region,
-// outlines regions on request, lets the owner pick an element, previews a hand
-// edit to its words or its style, finds and tags the design layer's edits and
-// patches their words, and swaps stylesheets in place. A preview lives only in
-// this copy of the page: a reload puts the site's own back.
+// outlines regions on request, lets the owner pick an element, finds and tags
+// the design layer's edits and patches their words, and swaps stylesheets in
+// place. What the layer shows lives only in this copy of the page: a reload
+// puts the site's own back, and the layer is applied again.
 //
 // What it reads, all of it the site's own markup:
 // - Drupal's Twig debug comments, as core/themes/engines/twig/twig.engine
@@ -170,9 +170,6 @@ export function livePage(): void {
   let scannedAt = -1;
   /** Elements whose words the design layer has patched, ever: their changes are the layer's, not the page's. */
   const layerTouched = new WeakSet<Node>();
-  /** Inline styles the owner is trying out, and what each property was before. */
-  const tried = new Map<string, string>();
-  let editing: { el: HTMLElement; before: string; html: string; finish: (v: unknown) => void } | null = null;
 
   const unescape = (s: string): string => s.replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   const words = (s: string | null | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim();
@@ -1004,75 +1001,6 @@ export function livePage(): void {
     return picked?.isConnected && picked instanceof HTMLElement ? picked : null;
   }
 
-  /* ── trying a hand edit ──────────────────────────────────────────────── */
-
-  /** Try style values on the picked element. Returns its computed style afterwards. */
-  function style(values: Record<string, string>): Record<string, string> | null {
-    const el = target();
-    if (!el) return null;
-    for (const [k, v] of Object.entries(values)) {
-      if (!(STYLE_KEYS as readonly string[]).includes(k)) continue;
-      if (!tried.has(k)) tried.set(k, el.style.getPropertyValue(k));
-      if (v) el.style.setProperty(k, v); else el.style.removeProperty(k);
-    }
-    redraw();
-    return computed(el);
-  }
-
-  /** Put the picked element's own style back. */
-  function unstyle(): Record<string, string> | null {
-    const el = target();
-    if (el) for (const [k, v] of tried) { if (v) el.style.setProperty(k, v); else el.style.removeProperty(k); }
-    tried.clear();
-    redraw();
-    return el ? computed(el) : null;
-  }
-
-  /**
-   * Let the owner change the picked element's words in place. Enter (or
-   * leaving the box) keeps the new words, in this copy of the page only;
-   * Escape puts the old ones back.
-   */
-  function editText(): Promise<unknown> {
-    endEdit(false);
-    const el = target();
-    if (!el || ownText(el) === null) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      editing = { el, before: words(el.textContent), html: el.innerHTML, finish: resolve };
-      el.setAttribute('contenteditable', 'plaintext-only');
-      el.style.setProperty('outline', `2px solid ${COLORS.pick}`);
-      el.style.setProperty('outline-offset', '2px');
-      el.focus();
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      getSelection()?.removeAllRanges();
-      getSelection()?.addRange(range);
-      el.addEventListener('keydown', keys, true);
-      el.addEventListener('blur', blur, true);
-    });
-  }
-
-  function keys(e: KeyboardEvent): void {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); endEdit(true); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endEdit(false); }
-  }
-
-  function blur(): void { endEdit(true); }
-
-  function endEdit(keep: boolean): void {
-    const e = editing;
-    if (!e) return;
-    editing = null;
-    e.el.removeEventListener('keydown', keys, true);
-    e.el.removeEventListener('blur', blur, true);
-    e.el.removeAttribute('contenteditable');
-    e.el.style.removeProperty('outline');
-    e.el.style.removeProperty('outline-offset');
-    const after = words(e.el.textContent);
-    if (!keep || after === e.before) e.el.innerHTML = e.html;
-    e.finish(keep && after && after !== e.before ? { before: e.before, after } : null);
-  }
-
   /* ── what an agent reads (the app's hidden window, never the owner's view) ─ */
 
   /** The words a region shows, as far as `max` characters: its text, not its scripts or styles. */
@@ -1460,14 +1388,13 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, choose, css, problems, style, unstyle, editText, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, arrange, disarm, preview, unpreview,
     layerFind, layerSet, layerPick, layerSnap, layerOf,
-    cancelEdit: () => endEdit(false),
-    /** Picking or retyping: the page's keys are those, not the live view's (live-page-goto.ts asks). */
-    busy: () => !!picking || !!editing,
+    /** Picking: the page's keys are its, not the live view's (live-page-goto.ts asks). */
+    busy: () => !!picking,
     /** How many times the page has changed itself since the script arrived (late content, its own scripts). */
     mutations: () => mutations,
-    /** The picked element described again, after a style or new words were tried on it. */
+    /** The picked element described again. */
     picked: () => { const el = target(); return el ? describe(el) : null; },
   };
 }
