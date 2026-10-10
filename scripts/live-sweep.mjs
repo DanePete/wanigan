@@ -1228,6 +1228,23 @@ try {
         }));
         if (Math.abs(box.middle - slider.middle) > 4 || slider.left > box.left || slider.width < 150) fail(t(`layer: in a wide Inspector the text size is not one line of label, slider and box (${JSON.stringify({ box, slider })})`));
         await layerShot('layer-style-wide', '#live-style-font-size');
+        // At its narrowest nothing is cut off: every control inside the form, every label whole, the five alignments in their track.
+        await edge.focus();
+        await page.keyboard.press('Home');
+        await frames(2);
+        const cut = await page.evaluate(() => {
+          const form = document.querySelector('.live-style').getBoundingClientRect();
+          const out = [];
+          for (const el of document.querySelectorAll('.live-style input:not([type="radio"]), .live-style button, .live-style-label label, .live-style-named')) {
+            const r = el.getBoundingClientRect();
+            if (!r.width || el.closest('[hidden], .disclosure-body')) continue;
+            if (r.right > form.right + 1 || r.left < form.left - 1) out.push(`${el.id || el.getAttribute('aria-label') || el.textContent.trim()} runs past the form`);
+            if (el.matches('label, .live-style-named') && el.scrollWidth > el.clientWidth + 1) out.push(`${el.textContent.trim()} is cut short`);
+          }
+          return out;
+        });
+        if (cut.length) fail(t(`layer: at the Inspector’s narrowest, ${cut.join('; ')}`));
+        await layerShot('layer-style-narrow', '.live-style-segments');
         await edge.dblclick();
       }
       await page.getByRole('button', { name: 'Done' }).click();

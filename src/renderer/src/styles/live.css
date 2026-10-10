@@ -1690,6 +1690,17 @@
   margin-left: auto;
 }
 
+/* At the Inspector's narrowest, the five alignments and a colour's box take a little less room, so every label stays whole. */
+@container live-style (max-width: 255px) {
+  .live-style-segments .segmented button {
+    padding-inline: var(--space-1);
+  }
+
+  .live-style .live-style-hex {
+    width: calc(2 * var(--space-10));
+  }
+}
+
 /* Given room, a field is one line: its label, its slider, its box. */
 @container live-style (min-width: 360px) {
   .live-style-field {
