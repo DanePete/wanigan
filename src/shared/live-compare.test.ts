@@ -244,3 +244,43 @@ test('the shortcut sheet lists exactly the viewer’s keys, and each does what i
     'Ignore the change on this page: {"ignore":"page"}', 'Ignore the change on every page: {"ignore":"site"}',
   ]);
 });
+
+test('a part redrawn a fraction of a pixel lower is alike; a colour changed in place is not', () => {
+  // A dark bar on white with soft edges, and the same bar drawn 0.6 px lower: its edge rows are blends of the two.
+  const bar = (shift: number): Pixels => {
+    const h = 20, data = new Uint8ClampedArray(W * h * 4).fill(255);
+    for (let y = 0; y < h; y++) {
+      const cover = Math.max(0, Math.min(1, Math.min(y + 1 - (6 + shift), (14 + shift) - y)));
+      const v = Math.round(255 - cover * 235);
+      for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; data[i] = v; data[i + 1] = v; data[i + 2] = v; }
+    }
+    return { data, width: W, height: h };
+  };
+  const a = bar(0), b = bar(0.6);
+  const al = alignRows(rowHashes(a), rowHashes(b));
+  assert.equal(difference(a, b, al).pixels, 0, 'blends of the rows around it are the same picture, moved');
+  // The same bar, 40 levels lighter all through: a change, though each pixel is near its old value.
+  const lighter: Pixels = { ...a, data: a.data.map((v, i) => (i % 4 === 3 || v === 255 ? v : v + 40)) };
+  assert.ok(difference(a, lighter, alignRows(rowHashes(a), rowHashes(lighter))).pixels > 0, 'a flat colour change is still seen');
+});
+
+test('a row on one side then a row on the other is drift, not two changes; a few stray pixels are not a change', () => {
+  const top = range(1, 30), mid = range(100, 30), end = range(300, 30);
+  // B has one extra row before the middle and one row fewer after it: what a fraction-of-a-pixel move leaves.
+  const a = page([...top, 900, ...mid, ...end]);
+  const b = page([...top, ...mid, 901, ...end]);
+  const al = alignRows(rowHashes(a), rowHashes(b));
+  assert.deepEqual(changesOf(difference(a, b, al), al).filter((c) => c.kind !== 'changed'), [], 'the two single rows cancel');
+  // One row only one side has, alone, is a change (a line added).
+  const c = page([...top, 902, ...mid, ...end]);
+  const d = page([...top, ...mid, ...end]);
+  const al2 = alignRows(rowHashes(c), rowHashes(d));
+  assert.deepEqual(changesOf(difference(c, d, al2), al2).map((x) => [x.kind, x.rect.height]), [['only-a', 1]]);
+  // Three pixels that differ, together, are not an area of change.
+  const e = page([...top, ...blank(10), ...mid]), f = page([...top, ...blank(10), ...mid]);
+  for (const x of [10, 11, 12]) { const i = (35 * W + x) * 4; f.data[i] = 0; f.data[i + 1] = 0; f.data[i + 2] = 0; }
+  const al3 = alignRows(rowHashes(e), rowHashes(f));
+  const diff = difference(e, f, al3);
+  assert.equal(diff.pixels, 3);
+  assert.deepEqual(changesOf(diff, al3), []);
+});

@@ -263,6 +263,32 @@ export function colourDelta(r1: number, g1: number, b1: number, r2: number, g2: 
   return 0.5053 * y * y + 0.299 * i * i + 0.1957 * q * q;
 }
 
+/**
+ * Whether a pixel of one side lies, channel by channel, within what the other side shows at the same place and the
+ * rows just above and below it: what a part moved by a fraction of a pixel looks like. A title that grew by 70.6 px
+ * moved everything under it by that fraction, and every line of text below was drawn a little differently: 41 changes
+ * for one. Only up and down, where a page reflows; a change in place (other words, another colour) is still outside.
+ */
+function between(p: Pixels, x: number, y: number, q: Pixels, qx: number, qy: number): boolean {
+  const at = (y * p.width + x) * 4;
+  for (let ch = 0; ch < 3; ch++) {
+    let lo = 255, hi = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = qy + dy;
+      if (yy < 0 || yy >= q.height) continue;
+      const v = q.data[(yy * q.width + qx) * 4 + ch]!;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    // A little past the range, more where it is wide: a scaled picture's filter overshoots at an edge or a speckle,
+    // and a flat area (no range) keeps its own colour to within 2 levels.
+    const v = p.data[at + ch]!;
+    const room = 2 + (hi - lo) / 3;
+    if (v < lo - room || v > hi + room) return false;
+  }
+  return true;
+}
+
 /** The largest YIQ distance (pixelmatch's scale) at a threshold from 0 to 1. */
 export const maxDelta = (threshold: number): number => 35215 * threshold * threshold;
 
@@ -289,7 +315,8 @@ export function difference(a: Pixels, b: Pixels, al: Alignment, ignored: readonl
         if (x >= a.width || x >= b.width) { marks[row + x] = DIFFERS; continue; }
         const i = (ya * a.width + x) * 4;
         const j = (yb * b.width + x) * 4;
-        if (colourDelta(a.data[i]!, a.data[i + 1]!, a.data[i + 2]!, b.data[j]!, b.data[j + 1]!, b.data[j + 2]!) > limit) marks[row + x] = DIFFERS;
+        if (colourDelta(a.data[i]!, a.data[i + 1]!, a.data[i + 2]!, b.data[j]!, b.data[j + 1]!, b.data[j + 2]!) > limit
+          && !(between(b, x, yb, a, x, ya) && between(a, x, ya, b, x, yb))) marks[row + x] = DIFFERS;
       }
     }
   }
@@ -381,20 +408,34 @@ export interface Change {
 }
 
 /** Every area of change and every one-sided band, top to bottom. */
+/** Fewer differing pixels than this in an area is the page redrawn a fraction of a pixel lower, not a change. */
+const MIN_CHANGE = 16;
+/** The most rows a run on one side can be and still be drift (see changesOf()). */
+const DRIFT_ROWS = 2;
+
 export function changesOf(diff: Difference, al: Alignment): Change[] {
   const out: Change[] = changeBoxes(diff.marks, diff.width, diff.height).map((rect) => {
     let size = 0;
     for (let y = rect.y; y < rect.y + rect.height; y++) for (let x = rect.x; x < rect.x + rect.width; x++) if (diff.marks[y * diff.width + x] === DIFFERS) size++;
     return { kind: 'changed' as const, rect, size };
   });
+  const sides: Change[] = [];
   let y = 0;
   for (const band of al.bands) {
     if (band.kind === 'only-a' || band.kind === 'only-b') {
-      out.push({ kind: band.kind, rect: { x: 0, y, width: diff.width, height: band.rows }, size: band.rows, ...(band.slack ? { slack: band.slack } : {}) });
+      sides.push({ kind: band.kind, rect: { x: 0, y, width: diff.width, height: band.rows }, size: band.rows, ...(band.slack ? { slack: band.slack } : {}) });
     }
     y += band.rows;
   }
-  return out.sort((p, q) => p.rect.y - q.rect.y || p.rect.x - q.rect.x);
+  // A row on one side and, next, a row on the other: the page below a change moved by a fraction of a pixel, and the
+  // rows lined up a row early, then caught up. Drift, not two changes (it is still striped in the picture).
+  const drift = new Set<Change>();
+  for (let i = 0; i + 1 < sides.length; i++) {
+    const [p, q] = [sides[i]!, sides[i + 1]!];
+    if (drift.has(p) || p.kind === q.kind || p.rect.height > DRIFT_ROWS || q.rect.height > DRIFT_ROWS) continue;
+    drift.add(p).add(q);
+  }
+  return [...out.filter((c) => c.size >= MIN_CHANGE), ...sides.filter((c) => !drift.has(c))].sort((p, q) => p.rect.y - q.rect.y || p.rect.x - q.rect.x);
 }
 
 /* ── naming a change by the local page's parts ─────────────────────────── */
