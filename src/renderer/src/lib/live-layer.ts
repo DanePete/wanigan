@@ -6,9 +6,9 @@
 //
 // - Which page an edit belongs to, and the tray's groups: the page shown first.
 // - What an edit reaches, in words: "this element", "every Card component (4 on
-//   this page)", "the whole site". A kind is named the way the main process
-//   names it when it keys a pick (src/main/live-layer.ts kindWords: the test
-//   keeps them equal), from the part's identity and the trace's label for it.
+//   this page)", "the whole site". A kind is named by the main process's own
+//   words (src/shared/layer-words.ts kindWords), from the part's identity and the
+//   trace's label for it.
 // - Before → after, one line per value; whether a target is fragile; why an
 //   orphaned edit is one.
 // - What undo and redo would do, and what a verification said: the step that
@@ -16,6 +16,7 @@
 import type {
   LayerApplied, LayerDifference, LayerEdit, LayerImplemented, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict, VerifyStep,
 } from '../../../shared/design-layer.ts';
+import { kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
 import { identityKey, kindKey, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
 
@@ -66,19 +67,6 @@ export const STATE_DETAIL: Record<LayerState, string> = {
 /** A target no part of the site names: found by where it sits in the page, so a change around it can orphan it. */
 export const isFragile = (e: Pick<LayerEdit, 'target' | 'change'>): boolean => !e.target.part && e.change.type !== 'token';
 
-/**
- * What `kind` reaches, as the main process words it when it keys a pick (src/main/live-layer.ts kindWords), from a
- * part of that kind and the kind's key: "every Card component", "the Body field of every article".
- */
-export function kindName(part: Pick<TracePart, 'label' | 'identity'>, key: string, inner: string | null): string {
-  const [kind, a, b] = key.split('|');
-  const base = kind === 'field' ? `the ${part.label} field of every ${b}`
-    : kind === 'entity' ? `every ${b} ${a}`
-      : kind === 'plugin' ? `every ${b} ${a}`
-        : `every ${part.label} ${part.identity?.kind === 'block' ? 'block' : 'component'}`;
-  return inner ? `the ${inner.toLowerCase()} in ${base}` : base;
-}
-
 /** A part of a kind, for its words: the trace's when the page shown has one, else the identity's own names. */
 function kindPart(identity: PartIdentity, trace: LiveTrace | null): Pick<TracePart, 'label' | 'identity'> {
   const key = kindKey(identity);
@@ -118,7 +106,7 @@ export function reachWords(edit: LayerEdit, trace: LiveTrace | null, applied: La
   const shown = applied && !applied.off ? applied.shown.find((s) => s.id === edit.id) : undefined;
   const key = edit.scope === 'kind' && edit.target.part ? kindKey(edit.target.part) : null;
   if (!key || !edit.target.part) return thisReach(shown?.elements ?? 1, !!edit.target.part);
-  const words = kindName(kindPart(edit.target.part, trace), key, null);
+  const words = kindWords(kindPart(edit.target.part, trace), key, null);
   return shown ? `${words} (${many(shown.elements, 'element')} on this page)` : words;
 }
 

@@ -2,12 +2,12 @@
 // redo would do, and a verification in words. Made-up site (acme); nothing real.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { kindWords, saveTarget, wordsTarget } from '../../../main/live-layer.ts';
+import { saveTarget, wordsTarget } from '../../../main/live-layer.ts';
 import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVerdict } from '../../../shared/design-layer.ts';
 import type { LiveEdit } from '../../../shared/live.ts';
-import { kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../../../shared/live-trace.ts';
+import type { EditTarget, LiveTrace, PartIdentity } from '../../../shared/live-trace.ts';
 import {
-  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, kindName, madeOn, noiseWords, orphanWhy, ownTemplate,
+  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, failedWords, heldInLayer, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
   pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
@@ -39,12 +39,7 @@ test('an edit belongs to the page it was made on, and the tray lists the page sh
   assert.equal(draftsOf({ projectId: 'p', edits: [a, edit({ state: 'implemented' }), c], undo: null, redo: null }), 2);
 });
 
-test('what an edit reaches is said in words, a kind as the main process names it when it keys a pick', () => {
-  for (const part of trace.parts as (TracePart & { identity: PartIdentity })[]) {
-    const key = kindKey(part.identity) as string;
-    assert.equal(kindName(part, key, null), kindWords(part, key, null));
-    assert.equal(kindName(part, key, 'Heading'), kindWords(part, key, 'Heading'));
-  }
+test('what an edit reaches is said in words, a kind in the main process’s own words', () => {
   assert.equal(reachWords(edit(), trace, null), 'this element');
   const kind = edit({ id: 'k', scope: 'kind' });
   assert.equal(reachWords(kind, trace, null), 'every Card component');
@@ -53,6 +48,16 @@ test('what an edit reaches is said in words, a kind as the main process names it
   // Without the trace, the identity's own names.
   assert.equal(reachWords(kind, null, null), 'every acme:card component');
   assert.equal(reachWords(edit({ scope: 'site', change: { type: 'token', name: '--accent', value: '#c0392b' } }), trace, null), 'the whole site');
+  // A Drupal block's kind, in the tray as the Inspector said it when the edit was made (the review found three that differed).
+  const block = (type: string, plugin: string): PartIdentity => ({ kind: 'config', type, id: 'acme_x', plugin });
+  const blocks: [PartIdentity, string][] = [
+    [block('block', 'system_menu_block:main'), 'every main menu block placed in a region'],
+    [block('layout_builder_component', 'inline_block:card'), 'every card inline block placed in a layout'],
+    [block('block', 'block_content:0a1b2c3d-0000-4000-8000-0000000000e5'), 'this reusable block wherever it is placed in a region'],
+  ];
+  for (const [part, words] of blocks) {
+    assert.equal(reachWords(edit({ id: 'b', scope: 'kind', target: { part, inner: null, selector: null, textHash: null } }), null, null), words);
+  }
 });
 
 test('before → after is a line per value, and what was not read says so', () => {
