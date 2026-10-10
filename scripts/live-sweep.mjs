@@ -50,6 +50,7 @@ import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
 import { fitProblems } from './ui-fit.mjs';
+import { pageScriptSource } from '../src/main/live-page-source.ts';
 
 const out = join(root, '.artifacts', 'live');
 
@@ -1882,7 +1883,27 @@ try {
 </aside>
 <!-- END OUTPUT from 'themes/custom/acme/templates/region--sidebar.html.twig' -->
 </body></html>`);
-  await page.addScriptTag({ content: script });
+  // Sent as the main process sends it, and sent again, as it can be: the second send is harmless. Before the wrapper,
+  // the bare script's top-level consts made a second send a SyntaxError, which the live view logged, which sent its
+  // state, which scanned, which sent the script again: a page held at 100% (src/main/live-page-source.ts).
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await page.addScriptTag({ content: pageScriptSource(script) });
+  await page.evaluate(() => { window.__first = window.__wl; });
+  await page.addScriptTag({ content: pageScriptSource(script) });
+  if (pageErrors.length) fail(`page script: sent twice, the page logged ${JSON.stringify(pageErrors)}`);
+  if (!(await page.evaluate(() => window.__wl === window.__first))) fail('page script: sent twice, the page script installed itself again');
+  {
+    // The check bites: the bare script sent twice still throws, so the wrapper is what makes the difference.
+    const bare = await browser.newPage();
+    const errors = [];
+    bare.on('pageerror', (e) => errors.push(e.message));
+    await bare.setContent('<!doctype html><html><body></body></html>');
+    await bare.addScriptTag({ content: script });
+    await bare.addScriptTag({ content: script }).catch(() => {});
+    if (!errors.some((m) => /already been declared/.test(m))) fail('page script: the bare script sent twice no longer throws (did its build change?), so "sent twice" above proves nothing: update this check');
+    await bare.close();
+  }
   const regions = await page.evaluate(() => window.__wl.scan());
   const at = Object.fromEntries(regions.filter((r) => r.part).map((r) => [r.part, r.index]));
   if (Object.keys(at).sort().join() !== 'p-hours,p-news,p-search') fail(`page script: parts read as ${JSON.stringify(regions.map((r) => [r.index, r.part, r.file, r.block]))}`);

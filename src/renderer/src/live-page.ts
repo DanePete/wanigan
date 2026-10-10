@@ -173,7 +173,11 @@ export function livePage(): void {
   /** Past this many, a region's parent is not worked out: the page is a runaway, not a site. */
   const MAX_NESTED = 900;
   /** Studio's values for the colour scheme the page is shown in (PAGE_COLORS): the window's own unless Wanigan's theme is set apart from the system's. */
-  const studio = (): (typeof PAGE_COLORS)['light'] | (typeof PAGE_COLORS)['dark'] => (matchMedia('(prefers-color-scheme: dark)').matches ? PAGE_COLORS.dark : PAGE_COLORS.light);
+  // Read once and kept current: a redraw draws many boxes, and a page that changes itself redraws often.
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  let darkNow = darkQuery.matches;
+  darkQuery.addEventListener('change', (e) => { darkNow = e.matches; redraw(); });
+  const studio = (): (typeof PAGE_COLORS)['light'] | (typeof PAGE_COLORS)['dark'] => (darkNow ? PAGE_COLORS.dark : PAGE_COLORS.light);
   const FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
 
   let regions: Region[] = [];
@@ -498,7 +502,7 @@ export function livePage(): void {
   /** Put the bar over the chosen part (above it, or below it when there is no room), made again only when the colour scheme changed; null takes it away. */
   function placeBar(root: ShadowRoot, rect: DOMRect | null, name: HTMLElement | null = null): void {
     if (!rect) { bar?.el.remove(); return; }
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const dark = darkNow;
     if (!bar || bar.dark !== dark) { bar?.el.remove(); bar = { el: actionBar(), dark }; }
     const below = rect.bottom + BAR_H + 16 < innerHeight ? rect.bottom + 8 : null;
     const top = rect.top > BAR_H + 14 ? rect.top - BAR_H - 8 : below ?? Math.max(4, rect.top + 4);

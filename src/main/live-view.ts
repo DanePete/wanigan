@@ -19,6 +19,7 @@ import { certificateOf, failureKind, principal, type LiveFailure, type LivePrese
 import { loopbackAddress } from '../shared/live-envs.ts';
 import type { LiveBounds, LiveViewState } from '../shared/bridge.ts';
 import { envId, hostedPage } from './live-compare-request.ts';
+import { PAGE_HAS_SCRIPT, pageScriptSource } from './live-page-source.ts';
 
 /** The isolated world the page script runs in: the page's own scripts cannot reach it. */
 const WORLD = 4242;
@@ -178,7 +179,7 @@ let pageScript: string | null | undefined;
 /** The page script, built beside the window's page; null when this build has none (dev without a build). */
 function script(): string | null {
   if (pageScript !== undefined) return pageScript;
-  try { pageScript = readFileSync(join(__dirname, '../renderer/live-page.js'), 'utf8'); } catch { pageScript = null; }
+  try { pageScript = pageScriptSource(readFileSync(join(__dirname, '../renderer/live-page.js'), 'utf8')); } catch { pageScript = null; }
   return pageScript;
 }
 
@@ -395,7 +396,11 @@ export function wireLiveView(options: {
     const code = script();
     const wc = view?.webContents;
     if (!code || !wc || wc.isDestroyed()) return;
-    try { await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]); } catch { /* a page that went away mid-load */ }
+    try {
+      // Sent only when the page has none: a run of calls never recompiles it (live-page-source.ts).
+      if (await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: PAGE_HAS_SCRIPT }])) return;
+      await wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]);
+    } catch { /* a page that went away mid-load */ }
   };
 
   const run = async <T>(code: string, fallback: T): Promise<T> => {
