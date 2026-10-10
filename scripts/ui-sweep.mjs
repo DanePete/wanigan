@@ -165,7 +165,7 @@ try {
       ['board', `#/p/${ns}/board`, '.card'],
       ['board-drawer-review', `#/p/${ns}/board?card=${ns}-7`, '.drawer .ai-result'],
       ['board-drawer-working', `#/p/${ns}/board?card=${ns}-6`, '.drawer .stages'],
-      ['list', `#/p/${ns}/list`, '.table tbody tr'],
+      ['list', `#/p/${ns}/list`, '.list-table tbody tr[data-key]'],
       ['sessions', `#/p/${ns}/sessions`, '.srow'],
       ['history', `#/p/${ns}/history`, '.hrow'],
       ['changes', `#/p/${ns}/changes`, '.dl-add'],
@@ -1413,7 +1413,7 @@ try {
         await views.waitForSelector('.views-trigger.on:has-text("Bugs by priority")', { timeout: 3000 }).catch(() => fail('1 did not apply the first saved view'));
         const types = await views.$$eval('.board .card .type', (ts) => [...new Set(ts.map((t) => [...t.classList].find((c) => c.startsWith('type-'))))]);
         if (types.join() !== 'type-bug') fail(`after 1 the board shows ${types.join(', ')}`);
-        if (!/Priority/.test(await views.textContent('.toolbar-end .select:not(.views-trigger)'))) fail('after 1 the order is not Priority');
+        if (!/Priority/.test(await views.textContent('.board-toolbar .board-order'))) fail('after 1 the order is not Priority');
 
         // The panel: the views in order, their keys, the applied one marked and focused.
         await views.click('.views-trigger');

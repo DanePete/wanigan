@@ -56,7 +56,7 @@ export function SinceStrip({ projectId, cards }: { projectId: string; cards: Car
             {summary.groups.map((g) => <span key={g.verb} className="since-count">{g.short}</span>)}
           </span>
         </button>
-        <IconButton icon="close" label="Dismiss until something new happens" onClick={dismiss} />
+        <IconButton icon="close" size="s" label="Dismiss until something new happens" onClick={dismiss} />
       </div>
       {open ? (
         <ul className="since-detail" id={detailId}>
