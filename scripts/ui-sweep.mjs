@@ -904,6 +904,103 @@ try {
     await page.click('.how-box[aria-label^="Review"]');
     await page.waitForSelector('.column-review.flash', { timeout: 3000 }).catch(() => failures.push(`${theme}: the explainer's Review box did not show its column`));
     if (await page.$('.how-flow')) failures.push(`${theme}: the explainer did not close on a box click`);
+
+    // Drag and drop's keyboard equivalent: ⌘ and an arrow moves the focused card by the board's rules, read back from
+    // the core. Down and back up in Ready (your order), then left into the Inbox and back, so the board ends as it began.
+    {
+      const fail = (what) => failures.push(`${theme}/board-move: ${what}`);
+      const ready = () => page.evaluate(async (key) => {
+        const id = (await window.wanigan.call('projects.list', {})).find((p) => p.key === key).id;
+        const cards = await window.wanigan.call('cards.list', { projectId: id });
+        return { ready: cards.filter((c) => c.status === 'ready').sort((a, b) => a.rank - b.rank).map((c) => c.key), status: Object.fromEntries(cards.map((c) => [c.key, c.status])) };
+      }, ns);
+      /** Read the core until what it says passes, or four seconds pass. */
+      const until = async (check) => { for (let i = 0; i < 40; i++) { if (check(await ready())) return true; await page.waitForTimeout(100); } return false; };
+      try {
+        const start = await ready();
+        const [first, second] = start.ready;
+        await page.waitForSelector(`.column-ready .card[data-key="${first}"]`);
+        await page.focus(`.column-ready .card[data-key="${first}"]`);
+        await page.keyboard.press('Meta+ArrowDown');
+        if (!(await until((b) => b.ready[0] === second && b.ready[1] === first))) fail(`⌘↓ did not move ${first} below ${second}`);
+        await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, first, { timeout: 2000 }).catch(() => fail('the moved card lost the keys'));
+        await page.keyboard.press('Meta+ArrowUp');
+        if (!(await until((b) => b.ready[0] === first))) fail(`⌘↑ did not put ${first} back on top`);
+        await page.waitForFunction((k) => document.activeElement?.closest('.column-ready') && document.activeElement.getAttribute('data-key') === k, first, { timeout: 2000 }).catch(() => {});
+        await page.keyboard.press('Meta+ArrowLeft');
+        if (!(await until((b) => b.status[first] === 'inbox'))) fail(`⌘← did not move ${first} into the Inbox`);
+        await page.waitForFunction((k) => document.activeElement?.closest('.column-inbox') && document.activeElement.getAttribute('data-key') === k, first, { timeout: 3000 }).catch(() => fail('the card moved to the Inbox lost the keys'));
+        await page.keyboard.press('Meta+ArrowRight');
+        if (!(await until((b) => b.status[first] === 'ready' && b.ready[0] === first))) fail(`⌘→ did not bring ${first} back to the top of Ready`);
+        if ((await ready()).ready.join() !== start.ready.join()) fail(`Ready ended as ${(await ready()).ready.join(', ')}, began as ${start.ready.join(', ')}`);
+      } catch (error) { fail(error.message.split('\n')[0]); }
+    }
+
+    // The card drawer: Enter on a card opens it with the keys inside, its tabs are named, and Escape closes it with the
+    // keys back on the card.
+    {
+      const fail = (what) => failures.push(`${theme}/drawer-keys: ${what}`);
+      const key = await page.$eval('.column-ready .card', (c) => c.dataset.key);
+      await page.focus(`.column-ready .card[data-key="${key}"]`);
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.drawer [role="tablist"]', { timeout: 5000 }).catch(() => fail('Enter did not open the drawer'));
+      const opened = await page.evaluate(() => ({
+        inside: !!document.activeElement?.closest('.drawer'),
+        tabs: [...document.querySelectorAll('.drawer [role="tab"]')].map((t) => t.textContent.replace(/\d+$/, '')),
+        selected: document.querySelector('.drawer [role="tab"][aria-selected="true"]')?.textContent,
+        beside: (() => { const d = document.querySelector('.drawer')?.getBoundingClientRect(); const m = document.querySelector('.main')?.getBoundingClientRect(); return !!d && !!m && m.right <= d.left + 1; })(),
+      }));
+      if (!opened.inside) fail('the keys did not move into the drawer');
+      if (opened.tabs.join() !== 'Overview,Review,Branch,Looks') fail(`the tabs are ${opened.tabs.join(', ')}`);
+      if (opened.selected !== 'Overview') fail(`it opened on ${opened.selected}`);
+      if (!opened.beside) fail('the drawer is drawn over the view, not beside it');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.drawer', { state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the drawer'));
+      await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, key, { timeout: 2000 }).catch(() => fail('closing the drawer did not give the keys back to its card'));
+    }
+
+    // The List, the board's other mode: chosen from the board's own toolbar, with the board's filters; one row takes
+    // Tab, and J/K, Home and End walk the rows; Enter opens the card, the row marked open; its head holds to the top.
+    {
+      const fail = (what) => failures.push(`${theme}/list: ${what}`);
+      await page.click('.board-types button:has-text("Bug")');
+      await page.click('.board-modes a:has-text("List")');
+      await page.waitForSelector('.list-table tbody tr[data-key]', { timeout: 5000 }).catch(() => fail('choosing List showed no rows'));
+      const shown = await page.evaluate(() => ({
+        hash: location.hash,
+        focus: document.activeElement?.getAttribute('aria-current') === 'page' ? document.activeElement.textContent : null,
+        types: [...new Set([...document.querySelectorAll('.list-table tbody tr .type')].map((t) => [...t.classList].find((c) => c.startsWith('type-'))))],
+        keys: [...document.querySelectorAll('.list-table tbody tr[data-key]')].map((r) => r.dataset.key),
+        stops: document.querySelectorAll('.list-table tbody tr[tabindex="0"]').length,
+        sticky: getComputedStyle(document.querySelector('.list-table th')).position,
+        bugOn: document.querySelector('.board-types button[aria-pressed="true"]')?.textContent,
+      }));
+      if (!/\/list$/.test(shown.hash)) fail(`List went to ${shown.hash}`);
+      if (shown.focus !== 'List') fail(`the keys are not on List after choosing it (${shown.focus})`);
+      if (shown.types.join() !== 'type-bug' || shown.bugOn !== 'Bug') fail(`the board's Bug filter did not carry to the List (${shown.types.join(', ')})`);
+      if (shown.stops !== 1) fail(`${shown.stops} rows take Tab`);
+      if (shown.sticky !== 'sticky') fail(`the List's head is ${shown.sticky}, not held to the top`);
+      const at = () => page.evaluate(() => document.activeElement?.getAttribute('data-key'));
+      await page.focus('.list-table tbody tr[tabindex="0"]');
+      await page.keyboard.press('j');
+      if (await at() !== shown.keys[1]) fail(`J went to ${await at()}, not ${shown.keys[1]}`);
+      await page.keyboard.press('End');
+      if (await at() !== shown.keys.at(-1)) fail(`End went to ${await at()}`);
+      await page.keyboard.press('Home');
+      if (await at() !== shown.keys[0]) fail(`Home went to ${await at()}`);
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('.drawer [role="tablist"]', { timeout: 5000 }).catch(() => fail('Enter did not open the card'));
+      if ((await page.getAttribute(`.list-table tr[data-key="${shown.keys[0]}"]`, 'aria-current')) !== 'true') fail('the open card\'s row is not marked');
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(out, `${theme}-list-open.png`) });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.drawer', { state: 'detached', timeout: 3000 }).catch(() => fail('Escape did not close the card'));
+      await page.waitForFunction((k) => document.activeElement?.getAttribute('data-key') === k, shown.keys[0], { timeout: 2000 }).catch(() => fail('closing the card did not give the keys back to its row'));
+      // Back to the board as it was: no filter.
+      await page.click('.board-toolbar button:has-text("Clear")');
+      await page.click('.board-modes a:has-text("Board")');
+      await page.waitForSelector('.board .card');
+    }
     // ⌘K: results in groups, key caps read from the shortcut table, the G-chords listed, and what agents said.
     await page.keyboard.press('Meta+k');
     await page.waitForSelector('.palette .palette-group-head');
