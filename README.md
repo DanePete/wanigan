@@ -165,10 +165,20 @@ WordPress and other sites can each be on or off.
   is folded below.
 - **Notes for an agent.** Point at parts across pages, say what should change,
   and send them to a session as one message with a picture of each part.
-- **By hand** (Edit ▾ › On the page). Retype words on the page: they save to your own template when
-  they are written there exactly once (with a revert), or to a plain text field
-  through Drupal itself. Try a style on the page; it goes to the agent as
-  intent, never written into the stylesheets by hand.
+- **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). Retyped words
+  and tried styles are kept by Wanigan, not written into the site: the page
+  shows them at once, through the layer. A style is for one element or every
+  instance of its kind (how many, said before you choose it); a custom
+  property can change for the whole site. Edits lists every edit by page, with
+  before → after, what it reaches, its state, and why when it no longer finds
+  its element. Make it real saves words to a plain text field through the site
+  helper, or to your own template when they are written there exactly once
+  (with a revert); then Verify renders the page with and without the layer and
+  says what differs, with pictures. A style goes to an agent as intent, never
+  written into the stylesheets by hand. Undo, redo, discard, and the page
+  shown without the layer to compare. The window has been checked against the
+  UI sweep's stand-in; making words real and verifying them from it on a real
+  site has not been seen yet.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
