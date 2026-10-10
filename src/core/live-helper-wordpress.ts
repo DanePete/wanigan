@@ -246,6 +246,7 @@ final class Wanigan_Live {
 			// blocks.php register_block_type_from_metadata(): the only place a block's block.json path is known, which
 			// the component library names.
 			if ($m[1] === 'components') add_filter('block_type_metadata', array(self::class, 'block_json'), PHP_INT_MAX);
+			self::quiet();
 			add_action('wp_loaded', array(self::class, 'route'), PHP_INT_MAX);
 			return;
 		}
@@ -328,6 +329,23 @@ final class Wanigan_Live {
 			if ($name !== '' ? $k === $name : strpos($k, 'wordpress_logged_in_') === 0) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * For the helper's own answers: a site that shows PHP errors on screen (WP_DEBUG_DISPLAY, which a WP_DEBUG site
+	 * has unless it says otherwise) would print the next plugin's deprecation notice into the JSON and break it. Errors
+	 * still reach the site's log; the screen gets none, and what was printed before an answer is dropped by clean().
+	 */
+	public static function quiet(): void {
+		@ini_set('display_errors', '0');
+		ob_start();
+	}
+
+	/** Drops whatever PHP printed before an answer (a notice, a stray echo), so the answer is only its JSON. */
+	public static function clean(): void {
+		while (ob_get_level() > 0) {
+			if (!@ob_end_clean()) break;
+		}
 	}
 
 	private static function request_path(): string {
@@ -4638,6 +4656,7 @@ final class Wanigan_Live {
 
 	private static function answer(array $data, int $status = 200): void {
 		if (self::$ai !== null && !isset($data['ai'])) $data['ai'] = self::ai_report();
+		self::clean();
 		wp_send_json($data, $status);
 	}
 
@@ -5588,12 +5607,17 @@ if (wanigan_live_on()) {
 		$path = (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 		if (!preg_match('#/_wanigan/(changed|save)$#', $path, $m)) return;
 		nocache_headers();
+		Wanigan_Live::clean();
 		if ($m[1] === 'changed') wp_send_json(array('changed' => (int) get_option('wanigan_live_changes', 0)));
 		wp_send_json(array('ok' => false, 'error' => 'This WordPress helper saves through /_wanigan/edit: reload the live view.'), 409);
 	}, 0);
 	// A piece is shown alone: no admin bar over it, decided before core sets the bar up (_wp_admin_bar_init, also on
 	// template_redirect at 0).
-	if (preg_match('#/_wanigan/piece/#', (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH))) add_filter('show_admin_bar', '__return_false', PHP_INT_MAX);
+	// Nor a PHP notice printed across it, when the site shows errors on screen.
+	if (preg_match('#/_wanigan/piece/#', (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH))) {
+		add_filter('show_admin_bar', '__return_false', PHP_INT_MAX);
+		@ini_set('display_errors', '0');
+	}
 	add_action('template_redirect', function () {
 		$path = (string) wp_parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 		// One entry of the component library alone (helper version 4).
