@@ -107,9 +107,20 @@ files) and `git`, so Changes refetches.
 
 - **The drawer** sits beneath the view, or beside it (a button), opens and
   closes with ⌘J, and is resized by its edge (dragged, or with the arrow keys,
-  Home and End on it). Its height and width, the dock, wrap and Vim are kept
-  on this Mac. In the live view the page above it shrinks with it; in a
-  session it sits under the terminal (and the live view beside it).
+  Home and End on it). Its height and width, the dock, whether it is open,
+  the tab it shows, wrap and Vim are kept on this Mac. In the live view the
+  page above it shrinks with it; in a session it sits under the terminal (and
+  the live view beside it).
+- **In the live view it is a dock** (since the live view's second layout
+  step, 9 October 2026): tabs Code, Notes, Problems and Request, the last
+  three drawn by the live view into the drawer through a portal
+  (`components/live/Dock.tsx`; `setDockTabs` and `useDockHost` in
+  `editor/store.ts`). Closed, the tabs wait in a strip under the page; ⇧[ and
+  ⇧] step through them. ⌘J is still the editor's: from another tab it shows
+  Code (the cursor in it), from Code it hides the drawer. The editor's own
+  keys (⌘S, Back and Forward) are only the editor's while Code shows. A tab
+  only the live view has is not shown elsewhere: the drawer steps aside
+  there (the editor's closed bar offers Code) and comes back with the view.
 - **One CodeMirror view** for every open file; each file keeps its own state
   (text, undo, cursor, scroll) while another shows. The editor stays loaded
   while the window is open, across views and projects.
