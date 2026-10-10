@@ -206,7 +206,9 @@ WordPress and other sites can each be on or off.
   puts back what is exported. On WordPress a title, an excerpt, a string meta,
   the site's title or tagline, a menu link's text, or a block's words (a
   paragraph, a heading, a navigation label), each through core's REST API with
-  a revision where WordPress keeps one. A block's words are sent as the HTML
+  a revision where WordPress keeps one, and a category's or tag's name where a
+  menu or an archive heading shows it, through core's own term save (it says
+  first that the name changes everywhere the term shows). A block's words are sent as the HTML
   they are kept as: typed words escaped, so a typed `<` stays a character, and
   words between a link's or bold's tags changed only where the change falls
   inside one run of them, every tag kept. Words kept in something shown beyond
@@ -236,14 +238,24 @@ WordPress and other sites can each be on or off.
   copy, and Undo puts the old value back (custom fields keep no revision, so
   this is their only way back, for ten minutes). Words a plugin computes and
   never stores, and a builder's own cache, are beyond it.
-  What it cannot save says why, and which kind of why: Drupal keeps no such
-  thing (words written in a Twig template, a menu link written in code, a base
-  field's label), or Wanigan does not do it yet (an interface translation, a
-  caption, words across formatting). A WordPress change across formatting,
-  words in a classic post's content, and words a Drupal template writes go to
-  an agent, as does a style: never written into the stylesheets by hand.
-  Where the site cannot say what writes words nothing stores (a WordPress
-  classic theme's template files), you can look in the template that rendered
+  What it cannot save says why, and which kind of why: the site keeps no such
+  thing (words written in a template, a menu link written in code, a base
+  field's label), or Wanigan does not do it yet (a Drupal interface
+  translation, a caption, words across formatting). Both helpers read each
+  template the page loaded (Drupal's Twig, a WordPress theme's PHP files,
+  never run) and list the words typed into it and the strings it prints
+  through a translation function, with their file and line: words a template
+  writes go to an agent, saying the file and line; on WordPress a translated
+  string goes too, with its text domain (a translation file changes it without
+  code), and a parent theme's template, when a child theme is active, is to be
+  copied into the child theme and changed there, since a theme update would
+  overwrite it. What a template's PHP works out is never guessed at: words in
+  no template are said to be made by its code, by a plugin (named), or in a
+  template the helper did not read. Only an element outside everything the
+  page's trace knows is called unknown. A WordPress change across formatting
+  and words in a classic post's content go to an agent too, as does a style:
+  never written into the stylesheets by hand. Where neither helper can say
+  what writes words nothing stores, you can look in the template that rendered
   the element itself, picked on the page: Wanigan says first that every page
   using that template changes, and writes it only when the words are there
   exactly once (Put back waits while the layer holds the edit as in the site).
@@ -776,8 +788,9 @@ verification results and the behavior that remains unverified.
   helper answers), and Canvas pieces by their own ids. The WordPress helper's
   newer edits (formatted and nested words, one block written alone, bound
   words, synced patterns and their overrides, template words, navigation
-  labels, widgets without REST instances, media alt) are tested under a
-  stand-in WordPress only: none has been saved on a real site yet, nor an
+  labels, widgets without REST instances, media alt, a term's name) and the
+  words a classic theme's template files write are tested under a stand-in
+  WordPress only: none has been saved on a real site yet, nor an
   edited block opened in the block editor to see it called valid. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
   site. Retyped words saved on WordPress (a title, a menu link's text) are

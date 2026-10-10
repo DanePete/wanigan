@@ -368,7 +368,13 @@ helper can name carries `identity`:
   `entity` `term`; `post_title`, `post_content`, `post_excerpt` or a
   registered meta key as `field`. A block in stored markup is `block` (its
   store, path and name). A widget, menu item, template and template part are
-  `config`. WordPress keeps no id for a block, so a block's path is a place:
+  `config`. A theme's PHP template file (header.php, a template part, the page
+  template a classic theme's hierarchy chose) is `template`: the theme's
+  folder, the file's path in it, and whether that theme is the active one, its
+  child or the parent of the active child (the role is not in the key). A
+  plugin's or core's file has none. Such a file runs once for each place it is
+  loaded, so an edit for one element in it reaches only the places that show
+  the words it was made on. WordPress keeps no id for a block, so a block's path is a place:
   after a reorder its identity stays with the place (seen on the Fieldnotes
   demo). What keeps an edit from landing on the block that moved there is
   the target's text hash, which is therefore taken over all of the element's
@@ -447,7 +453,10 @@ or the project.
      property of it, equals the words as the site rendered them (whitespace
      folded, wptexturize's quotes, dashes and ellipsis read as typed): a title,
      an excerpt, a string meta, the site title or tagline, a menu link's text
-     (its address sent back as it was), a WordPress block's words; on Drupal a
+     (its address sent back as it was), a WordPress block's words, a term's
+     name a menu built from the term or an archive's heading shows (saved
+     through `wp_update_term()`, and asked first: it shows wherever the term
+     does); on Drupal a
      block's title, the site's name or slogan, one run of a view's header,
      footer or empty text (offered run by run, so its markup is never in the
      value), or a content menu link's text. Configuration is validated against
@@ -493,7 +502,21 @@ or the project.
      strings, which are interface translation; a caption; words across
      formatting; a draft; words code makes from what is not saved here). The
      Drupal helper lists each template part's own words, read by Drupal's
-     Twig lexer, for this. Nothing holding the words, more than one thing
+     Twig lexer, for this, and the WordPress helper each PHP template file's,
+     read with PHP's tokenizer (never run; bounded, a file not read saying
+     why): the runs of words typed into its HTML, cut wherever its PHP runs,
+     and the literal first argument of the gettext functions, by text domain,
+     each with its line. On WordPress a theme template's words and strings
+     answer `route: 'agent'` with the file, the line and a string's text
+     domain (a translation file is the way without code; a parent theme's file
+     under an active child is changed as a copy at the same path in the child
+     theme); a plugin's or core's template says whose it is; words in no
+     template are said by what made their part (a plugin, named from its
+     code's file; the template's PHP, never guessed at; a template not read).
+     An element no part with an identity names is looked up the same way from
+     the trace's parts around it (the page script's `layerOf` lists them), on
+     both platforms, and only an element outside every traced part is said to
+     be unknown. A brief to an agent carries the answer's why. Nothing holding the words, more than one thing
      holding them (named), a changed page, a target the trace says this user
      may not change, or a refusal from the site (passed on as the site said
      it) answers `route: 'none'`, with why.
