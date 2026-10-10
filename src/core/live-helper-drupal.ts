@@ -633,9 +633,7 @@ final class LiveController extends ControllerBase {
       $notes[] = 'Saved to the field’s own words, “' . $wrapped['words'] . '”: the site’s templates or code add ' . Words::added($wrapped['lead'], $wrapped['tail']) . ' them on the page.';
     }
     if ($already) {
-      $notes[] = ($wrapped ? 'Note' : 'Saved. Note') . ' that this content already had ' . (count($already) === 1 ? 'a problem' : 'problems') . ' Drupal reports, in '
-        . (count($already) === 1 ? 'a field' : 'fields') . ' this change does not touch: ' . implode(' ', array_slice($already, 0, 3))
-        . (count($already) > 3 ? ' (and ' . (count($already) - 3) . ' more)' : '');
+      $notes[] = Words::already($already, ($wrapped ? 'Note' : 'Saved. Note') . ' that this content');
     }
     return $this->json([
       'ok' => TRUE, 'value' => $wrapped['words'] ?? $after, 'label' => (string) $entity->label(),

@@ -84,14 +84,18 @@ final class Words {
    * when the entity has that field, else on the entity as a whole. Each is
    * [field or NULL, "path: message", message, the fields a composite
    * constraint covers, whether it is the workflow's (moderation_state)].
+   * A violation of the constraint class $skip names is left out.
    */
-  public static function problems(ContentEntityInterface $entity): array {
+  public static function problems(ContentEntityInterface $entity, ?string $skip = NULL): array {
     $out = [];
     foreach ($entity->validate() as $violation) {
       $path = (string) $violation->getPropertyPath();
       $message = trim(strip_tags((string) $violation->getMessage()));
       $field = $path !== '' ? explode('.', $path, 2)[0] : '';
       $constraint = method_exists($violation, 'getConstraint') ? $violation->getConstraint() : NULL;
+      if ($skip !== NULL && $constraint instanceof $skip) {
+        continue;
+      }
       $out[] = [
         $field !== '' && $entity->hasField($field) ? $field : NULL,
         ($path !== '' ? $path . ': ' : '') . $message,
@@ -136,6 +140,17 @@ final class Words {
       }
     }
     return [$workflow, $refuse, $already];
+  }
+
+  /**
+   * What an answer says of problems a save went ahead with (judge()'s
+   * third): "<what> already had a problem Drupal reports, in a field this
+   * change does not touch: path: message".
+   */
+  public static function already(array $already, string $what): string {
+    $one = count($already) === 1;
+    return $what . ' already had ' . ($one ? 'a problem' : 'problems') . ' Drupal reports, in ' . ($one ? 'a field' : 'fields')
+      . ' this change does not touch: ' . implode(' ', array_slice($already, 0, 3)) . (count($already) > 3 ? ' (and ' . (count($already) - 3) . ' more)' : '');
   }
 
   /**
@@ -1343,8 +1358,10 @@ use Drupal\wanigan_live\Edit\Targets;
  *
  * The layout is found by the block's usage (inline_block_usage): an entity's
  * own layout (overrides), saved through that entity as a new revision with
- * every gate a content save runs (no newer draft, every violation, the
- * workflow's included); or a display's default layout, which every entity of
+ * every gate a content save runs (no newer draft; a violation of its layout
+ * field or of it as a whole, of its workflow, or one the change brings,
+ * as for the block's own field: Words::judge()); or a display's default
+ * layout, which every entity of
  * that bundle without a layout of its own shows, so that save is answered
  * first with how far it reaches, and made only when it is asked again with
  * the token that answer gave. Only the version of the block the page showed
@@ -1417,21 +1434,21 @@ final class InlineWords {
     if (!$pinned->get($name)->access('edit')) {
       return [403, self::refusal('The user you are logged in as in the live view may not change this field. Log in there as someone who may.')];
     }
+    // What Drupal reports of the block before the change, to tell a problem
+    // the change brings from one it already had (Words::judge()).
+    $was = Words::problems($pinned, EntityChangedConstraint::class);
     if ($words = Words::apply($pinned, $name, $item, $before, $after, $formatter)) {
       return [$words[0], self::refusal($words[1])];
     }
-    // The block's own violations; that it is older than the block's default
-    // revision is not one, since the layout keeps that version, not the
-    // newest.
-    $problems = [];
-    foreach ($pinned->validate() as $violation) {
-      if (!(method_exists($violation, 'getConstraint') && $violation->getConstraint() instanceof EntityChangedConstraint)) {
-        $problems[] = self::said($violation);
-      }
+    // The block's own violations, as Drupal's form for that field would
+    // refuse them, and any the change brings; that it is older than the
+    // block's default revision is not one, since the layout keeps that
+    // version, not the newest.
+    [$workflow, $problems, $notes] = Words::judge($was, Words::problems($pinned, EntityChangedConstraint::class), $name);
+    if ($workflow || $problems) {
+      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice(array_merge($workflow, $problems), 0, 3)))];
     }
-    if ($problems) {
-      return [422, self::refusal('Drupal would not save it. ' . implode(' ', array_slice($problems, 0, 3)))];
-    }
+    $notes = $notes ? [Words::already($notes, 'Saved. Note that this block')] : [];
     $overrides = $storage->getStorageType() === 'overrides';
     if (!$overrides) {
       // A display's default layout: every entity of that bundle without one of
@@ -1442,6 +1459,9 @@ final class InlineWords {
         return [409, self::refusal('These words are in the default layout for ' . self::bundle($owner) . ', which every one without a layout of its own shows' . ($reach !== NULL ? ' (' . $reach . ' now)' : '') . ', so saving them changes them on all of those pages.') + ['confirm' => $token]];
       }
     }
+    // What Drupal reports of the content whose layout it is, before the
+    // layout changes.
+    $was = $overrides ? Words::problems($owner) : [];
     $configuration = $component->get('configuration');
     $configuration['block_serialized'] = serialize($pinned);
     $component->setConfiguration($configuration);
@@ -1454,23 +1474,25 @@ final class InlineWords {
           $owner->setRevisionCreationTime(\Drupal::time()->getRequestTime());
         }
       }
-      $problems = [];
-      foreach ($owner->validate() as $violation) {
-        $path = (string) $violation->getPropertyPath();
-        if ($path === 'moderation_state' || str_starts_with($path, 'moderation_state.')) {
-          return [403, self::refusal('Its workflow does not let the user you are logged in as in the live view save the content this layout belongs to as it is (' . trim(strip_tags((string) $violation->getMessage())) . '): a save here keeps its state, and nothing is made a draft instead. Change it in Layout Builder.')];
-        }
-        $problems[] = self::said($violation);
+      // Refused as a save of its layout field alone would be
+      // (OverridesSectionStorage::FIELD_NAME), its workflow's and any the
+      // change brings besides (Words::judge()).
+      [$workflow, $problems, $already] = Words::judge($was, Words::problems($owner), 'layout_builder__layout');
+      if ($workflow) {
+        return [403, self::refusal('Its workflow does not let the user you are logged in as in the live view save the content this layout belongs to as it is (' . $workflow[0] . '): a save here keeps its state, and nothing is made a draft instead. Change it in Layout Builder.')];
       }
       if ($problems) {
         return [422, self::refusal('Drupal would not save the content this layout belongs to. ' . implode(' ', array_slice($problems, 0, 3)))];
+      }
+      if ($already) {
+        $notes[] = Words::already($already, ($notes ? 'Note' : 'Saved. Note') . ' that the content this layout belongs to');
       }
     }
     $storage->save();
     $revision = $overrides && $owner->getEntityType()->isRevisionable() ? (string) $owner->getRevisionId() : NULL;
     $state = $overrides && $owner->hasField('moderation_state') ? $owner->get('moderation_state')->value : NULL;
     $label = $overrides ? (string) $owner->label() : 'The default layout for ' . self::bundle($owner);
-    return [200, ['ok' => TRUE, 'value' => trim($after), 'label' => $label, 'revision' => $revision, 'state' => is_string($state) ? $state : NULL]];
+    return [200, ['ok' => TRUE, 'value' => trim($after), 'label' => $label, 'revision' => $revision, 'state' => is_string($state) ? $state : NULL] + ($notes ? ['note' => implode(' ', $notes)] : [])];
   }
 
   /**
@@ -1534,11 +1556,6 @@ final class InlineWords {
     catch (\Throwable) {
       return NULL;
     }
-  }
-
-  private static function said(object $violation): string {
-    $path = (string) $violation->getPropertyPath();
-    return ($path !== '' ? $path . ': ' : '') . trim(strip_tags((string) $violation->getMessage()));
   }
 
   private static function refusal(string $message): array {
