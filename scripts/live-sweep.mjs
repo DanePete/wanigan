@@ -1479,7 +1479,7 @@ try {
         if (!failing.includes(w)) fail(t(`layer: a failing verdict does not say "${w}"`));
       }
       if ((await rowOf('Fresh loaves').locator('.live-tray-differences[aria-label="What differs"] li').count()) !== 1) fail(t('layer: a statement of the verdict was listed among its differences'));
-      await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") .live-tray-picture:has-text("The page before · 390 px") .live-tray-picture-none:has-text("None kept")', { timeout: 4000 })
+      await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") .live-tray-picture-row[aria-label="At 390 px"] .live-tray-picture:has(figcaption[aria-label="The page before at 390 px"]) .live-tray-picture-none:has-text("None kept")', { timeout: 4000 })
         .catch(() => fail(t('layer: a verdict with no page from before does not say none was kept')));
       if ((await stateOf('Fresh loaves')) !== 'implemented') fail(t('layer: a failing verification took the edit out of the site'));
       await page.waitForSelector('.live-tray-edit:has-text("Fresh loaves") img[alt="Difference at 390 px"]', { timeout: 4000 }).catch(() => fail(t('layer: a failing verdict shows no difference picture')));

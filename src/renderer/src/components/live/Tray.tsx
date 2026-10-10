@@ -348,7 +348,8 @@ const picture = (path: string, at: number): Promise<string | null> => {
   return p;
 };
 
-const KINDS = [['before', 'The page before'], ['design', 'The design'], ['result', 'The site'], ['diff', 'Difference']] as const;
+/** Each picture's kind, its name (its larger view's title) and its caption under the width's heading. */
+const KINDS = [['before', 'The page before', 'Before'], ['design', 'The design', 'Design'], ['result', 'The site', 'Site'], ['diff', 'Difference', 'Difference']] as const;
 
 /** The page as it was before it was made real (where one was kept), the design, the site and their difference, at each width; each opens larger. */
 function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: number }) {
@@ -369,7 +370,10 @@ function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: nu
     <div className="live-tray-pictures">
       {pictures.map((p) => (
         <div key={p.width} className="live-tray-picture-row" role="group" aria-label={`At ${p.width} px`}>
-          {KINDS.filter(([kind]) => kind !== 'before' || p.before !== undefined).map(([kind, label]) => {
+          {/* The width once, over its row: under each of four narrow pictures, "The page before · 390 px" broke a word a line. */}
+          <span className="faint small" aria-hidden="true">{p.width} px</span>
+          <div className="live-tray-picture-set">
+          {KINDS.filter(([kind]) => kind !== 'before' || p.before !== undefined).map(([kind, label, short]) => {
             const path = p[kind] ?? null;
             const alt = `${label} at ${p.width} px`;
             const src = path ? srcs[path] : null;
@@ -380,10 +384,11 @@ function Pictures({ pictures, at }: { pictures: LayerVerdict['pictures']; at: nu
                     <img src={src} alt={alt} />
                   </button>
                 ) : <span className="live-tray-picture-none faint small">{!path ? (kind === 'before' ? 'None kept' : 'No difference') : path in srcs ? 'Not readable' : '…'}</span>}
-                <figcaption className="faint small">{label} · {p.width} px</figcaption>
+                <figcaption className="faint small" aria-label={alt}>{short}</figcaption>
               </figure>
             );
           })}
+          </div>
         </div>
       ))}
       {large ? (

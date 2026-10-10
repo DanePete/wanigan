@@ -216,7 +216,13 @@
   gap: var(--space-2);
 }
 
+/* One width: its size over its pictures, side by side. */
 .live-tray-picture-row {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.live-tray-picture-set {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
