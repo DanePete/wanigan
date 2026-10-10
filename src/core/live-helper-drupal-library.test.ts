@@ -57,6 +57,8 @@ namespace {
               'system_branding_block' => ['class' => 'Drupal\system\Plugin\Block\SystemBrandingBlock', 'admin_label' => 'Site branding', 'category' => 'System', 'provider' => 'system'],
               'field_block:node:article:body' => ['class' => 'Drupal\system\Plugin\Block\SystemBrandingBlock', 'admin_label' => 'Body', 'category' => 'Content fields', 'provider' => 'layout_builder', 'context_definitions' => ['entity' => new Need('entity:node'), 'view_mode' => new Need('string', FALSE)]],
               'acme_tools_user' => ['class' => 'Drupal\acme_tools\Plugin\Block\UserBlock', 'admin_label' => 'Your account', 'provider' => 'acme_tools', 'context_definitions' => ['user' => new Need('entity:user')]],
+              // Core's fallback for a missing plugin: in the filtered list, and never listed (core leaves it out too).
+              'broken' => ['class' => 'Drupal\Core\Block\Plugin\Block\Broken', 'admin_label' => 'Broken/Missing', 'category' => 'Block', 'provider' => 'core'],
             ];
           }
         },

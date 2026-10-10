@@ -113,6 +113,9 @@ final class Library {
 
     try {
       $blocks = \Drupal::service('plugin.manager.block')->getFilteredDefinitions('block_ui', \Drupal::service('context.repository')->getAvailableContexts(), ['theme' => $theme->getName()]);
+      // As core's own block lists leave it out (BlockManager::getSortedDefinitions()): the fallback for a missing
+      // plugin is no block to place, and pictured, its configuration without a provider made core warn.
+      unset($blocks['broken']);
     }
     catch (\Throwable $e) {
       \Drupal::logger('wanigan_live')->warning('The live view could not list blocks: @message', ['@message' => $e->getMessage()]);

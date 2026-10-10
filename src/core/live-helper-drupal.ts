@@ -792,7 +792,8 @@ final class LiveController extends ControllerBase {
         // builds one (BlockComponentRenderArray::onBuildRender()) with its
         // own default configuration: no placement is made or saved.
         $manager = \\Drupal::service('plugin.manager.block');
-        if (!$manager->hasDefinition($a)) {
+        // Never the fallback for a missing plugin, as core never lists it (BlockManager::getSortedDefinitions()).
+        if (!$manager->hasDefinition($a) || $a === 'broken') {
           throw new NotFoundHttpException();
         }
         $block = $manager->createInstance($a, []);

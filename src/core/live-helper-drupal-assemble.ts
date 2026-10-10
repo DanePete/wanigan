@@ -749,6 +749,9 @@ final class TraceBuilder {
       return [];
     }
     $definitions = \Drupal::service('plugin.manager.block')->getFilteredDefinitions('block_ui', \Drupal::service('context.repository')->getAvailableContexts(), ['theme' => $this->theme]);
+    // As core's own block lists leave it out (BlockManager::getSortedDefinitions()): the fallback for a missing
+    // plugin is no block to place, and pictured, its configuration without a provider made core warn.
+    unset($definitions['broken']);
     uasort($definitions, static fn ($a, $b) => strnatcasecmp((string) ($a['category'] ?? '') . (string) ($a['admin_label'] ?? ''), (string) ($b['category'] ?? '') . (string) ($b['admin_label'] ?? '')));
     foreach ($definitions as $plugin_id => $definition) {
       foreach ($definition['context_definitions'] ?? [] as $context) {
