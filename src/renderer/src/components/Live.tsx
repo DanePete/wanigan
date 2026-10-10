@@ -787,11 +787,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   } : env ? {
     className: 'live-hosted',
     text: <><strong>{env.name}</strong> is read-only here: point at parts and tell an agent, but nothing in this view can change it, and it does not follow the agents’ edits. <span className="faint">{HOSTED_NOTE}</span></>,
+  } : banner ? {
+    // A later notice (a file changed, a write) is said even while the layer is off, and the layer's switch stays at hand.
+    text: layer.on ? bannerText(banner) : <>{bannerText(banner)} <span className="faint">Showing the page without the design layer.</span></>,
+    warn: banner.kind === 'write' && banner.warn,
+    action: layer.on ? undefined : <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
   } : !layer.on ? {
     className: 'live-layer-off',
     text: 'Showing the page without the design layer: as the site renders it, without your edits.',
     action: <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
-  } : banner ? { text: bannerText(banner), warn: banner.kind === 'write' && banner.warn } : null;
+  } : null;
   const keysNow: [string[], string][] = picking ? []
     : comparing && envs.length && !compact ? [[['J', 'K'], 'changes'], [['S', 'O', 'D', 'T'], 'how'], [['1', '2', '3'], 'width'], [['Esc'], 'back to the page']]
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
@@ -919,7 +924,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           {(t) => (t === 'notes' ? (
             <>
               <NotesTab project={project} components={components} sender={sender} onShow={showNote} />
-              <EditsList project={project} />
+              <EditsList project={project} layer={layer.snapshot} />
             </>
           ) : t === 'problems' ? (
             <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
