@@ -2137,6 +2137,40 @@ try {
       if (r.operation || r.conflicted.length || r.staged.length) failures.push(`resolve/live: after completing, git has operation ${r.operation}, ${r.conflicted.length} conflicted, ${r.staged.length} staged`);
       if (merged.commits[0]?.parents.length !== 2 || merged.commits[0]?.subject !== message) failures.push(`resolve/live: the newest commit is "${merged.commits[0]?.subject}" with ${merged.commits[0]?.parents.length} parents`);
       if (await page.$('.git-operation')) failures.push('resolve/live: the merge banner stayed after the merge was completed');
+
+      // Decisions and Activity for real (once): a decision recorded from the toolbar's dialog is the one the reader
+      // reads, withdrawing it asks first, and both acts are in Activity, which narrows to what you did.
+      await page.goto(`${base}#/p/${nsKey}/decisions`);
+      await page.waitForSelector('.decision');
+      const decided = 'Prices are whole dollars in cart math';
+      await page.click('.records-toolbar button:has-text("New decision")');
+      await page.fill('#decision-title', decided);
+      await page.click('.dialog button:has-text("Record decision")');
+      await page.waitForSelector(`.records-reader .reader-title:text-is("${decided}")`, { timeout: 5000 }).catch(() => failures.push('decisions/live: the decision recorded is not the one the reader shows'));
+      if (!(await page.evaluate(async (id) => (await window.wanigan.call('decisions.list', { projectId: id })).map((x) => x.title), nsId)).includes(decided)) failures.push('decisions/live: the core has no such decision');
+      await page.screenshot({ path: join(out, 'dark-decisions-recorded.png') });
+      await page.click('.records-reader button:has-text("Withdraw")');
+      await page.waitForSelector('.dialog:has-text("Sessions that start from now on are not told it")', { timeout: 3000 }).catch(() => failures.push('decisions/live: Withdraw did not ask first'));
+      await page.click('.dialog-foot button:has-text("Withdraw")');
+      await page.waitForSelector(`.decision:has-text("${decided}")`, { state: 'detached', timeout: 5000 }).catch(() => failures.push('decisions/live: the withdrawn decision is still listed'));
+      await page.goto(`${base}#/p/${nsKey}/activity`);
+      await page.waitForSelector('.activity-item');
+      await page.click('.records-toolbar [role="radio"]:has-text("You")');
+      await page.waitForTimeout(200);
+      const whoDid = await page.$$eval('.activity-item .activity-text strong', (s) => [...new Set(s.map((x) => x.textContent))]);
+      if (!whoDid.length || whoDid.some((w) => !/^You\b/.test(w))) failures.push(`activity/live: “You” shows entries by ${whoDid.join(', ')}`);
+      for (const verb of ['recorded a decision', 'withdrew a decision']) {
+        if (!(await page.$(`.activity-item:has-text("${verb}")`))) failures.push(`activity/live: “You” does not list “${verb}”`);
+      }
+      await page.click(`.activity-item:has-text("withdrew a decision") .record-hit`);
+      if (!/withdrew a decision/.test((await page.textContent('.records-reader').catch(() => '')) ?? '')) failures.push('activity/live: the reader does not read the entry chosen');
+      // An entry's card key still opens its card in one click.
+      await page.click('.records-toolbar [role="radio"]:has-text("Everyone")');
+      const keyed = page.locator('.activity-item .card-key-badge').first();
+      const cardKey = (await keyed.textContent())?.trim();
+      await keyed.click();
+      await page.waitForSelector('.drawer', { timeout: 5000 }).catch(() => failures.push(`activity/live: ${cardKey}’s key did not open its card`));
+      await page.keyboard.press('Escape');
     }
     for (const e of errors) failures.push(`${theme}: ${e}`);
 
