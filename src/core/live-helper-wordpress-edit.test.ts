@@ -665,8 +665,9 @@ $answers = array();
 $save = new ReflectionMethod('Wanigan_Live', 'edit_save');
 foreach ($S['saves'] ?? array() as $s) {
   $target = null;
+  $nth = $s['nth'] ?? 0;
   foreach ($stored ? $stored['trace']['edits'] : array() as $e) {
-    if (strpos($e['label'], $s['find']) !== false && (!isset($s['kind']) || $e['kind'] === $s['kind'])) { $target = $e['id']; break; }
+    if (strpos($e['label'], $s['find']) !== false && (!isset($s['kind']) || $e['kind'] === $s['kind']) && $nth-- === 0) { $target = $e['id']; break; }
   }
   if ($target === null) { $answers[] = array('status' => 0, 'data' => array('ok' => false, 'error' => 'no target labelled ' . $s['find'])); continue; }
   try {
@@ -696,7 +697,8 @@ interface Scenario {
   unsupported?: string[];
   /** Post content changed after the page was shown, before the saves. */
   change?: Record<number, string>;
-  saves?: { find: string; kind?: string; value: unknown }[];
+  /** Each save's target: the first edit whose label holds `find` (or the nth, from 0). */
+  saves?: { find: string; nth?: number; kind?: string; value: unknown }[];
 }
 interface Result {
   trace: unknown;
@@ -849,6 +851,37 @@ describe('what a WordPress page offers to change, and what saving it writes, und
     assert.match(target(cannot, 'kept in the field “subtitle”').why ?? '', /edit_post_meta/);
     const noFields = run(page(bound('subtitle'), { registered, meta: { 7: { subtitle: 'a' } }, unsupported: ['page:custom-fields'] }));
     assert.match(target(noFields, 'kept in the field “subtitle”').why ?? '', /^Wanigan does not do this yet: .*custom fields/);
+  });
+
+  test('a synced pattern’s own words save to the pattern for every page; a block the pattern lets be overridden also saves for one placement alone', () => {
+    const pattern = '<!-- wp:heading {"metadata":{"name":"Hero","bindings":{"__default":{"source":"core/pattern-overrides"}}}} -->\n<h2 class="wp-block-heading">Fresh bread</h2>\n<!-- /wp:heading -->\n\n<!-- wp:paragraph -->\n<p>Every morning</p>\n<!-- /wp:paragraph -->';
+    const second = '<!-- wp:block {"ref":12,"content":{"Hero":{"content":"Rye today"}}} /-->';
+    const content = `<!-- wp:block {"ref":12} /-->\n\n${second}`;
+    const scenario = (saves: Scenario['saves']): Scenario => page(content, { posts: { 7: { post_type: 'page', post_title: 'Welcome', post_content: content }, 12: { post_type: 'wp_block', post_title: 'Hero', post_content: pattern } }, saves });
+    const r = run(scenario([
+      { find: 'Paragraph block in pattern “Hero”', value: { content: 'Every <em>single</em> morning' } },
+      { find: 'Heading words in this placement of the synced pattern “Hero” only', value: { content: 'Sourdough <strong>today</strong>' } },
+    ]));
+    const own = target(r, 'Heading block in pattern “Hero”');
+    assert.match(own.label, /changes every page that uses this synced pattern/);
+    assert.equal(own.why, undefined, 'the pattern’s own words, which every placement shows unless it overrides them');
+    assert.equal((own.value as Record<string, unknown>).content, 'Fresh bread');
+    const placements = edits(r).filter((x) => x.label.startsWith('Heading words in this placement'));
+    assert.equal(placements.length, 2, 'one per placement');
+    assert.deepEqual(placements.map((x) => x.value), [{ content: 'Fresh bread' }, { content: 'Rye today' }], 'the pattern’s words where nothing overrides them, the placement’s own where it does');
+    assert.equal(placements[0]?.why, undefined);
+    assert.equal(edits(r).filter((x) => x.label.startsWith('Paragraph words in this placement')).length, 0, 'a block the pattern does not let be overridden has no per-placement words');
+
+    assert.ok(r.answers[0]?.data.ok, r.answers[0]?.data.error);
+    assert.ok(r.answers[1]?.data.ok, r.answers[1]?.data.error);
+    assert.deepEqual(r.rest.map(([m, route]) => `${m} ${route}`), ['POST /wp/v2/blocks/12', 'POST /wp/v2/pages/7'], 'the pattern through its own REST route, the placement through the page’s');
+    assert.equal(r.posts[12], pattern.replace('<p>Every morning</p>', '<p>Every <em>single</em> morning</p>'));
+    assert.equal(r.posts[7], `<!-- wp:block {"ref":12,"content":{"Hero":{"content":"Sourdough \\u003cstrong\\u003etoday\\u003c/strong\\u003e"}}} /-->\n\n${second}`, 'only the first placement’s delimiter changed, its override in core’s own shape');
+
+    // Putting the pattern's own words back takes the override away.
+    const back = run(scenario([{ find: 'Heading words in this placement', nth: 1, value: { content: 'Fresh bread' } }]));
+    assert.ok(back.answers[0]?.data.ok, back.answers[0]?.data.error);
+    assert.equal(back.posts[7], '<!-- wp:block {"ref":12} /-->\n\n<!-- wp:block {"ref":12} /-->');
   });
 
   test('a static block’s own settings stay read-only, saying WordPress keeps no PHP save() to write them', () => {

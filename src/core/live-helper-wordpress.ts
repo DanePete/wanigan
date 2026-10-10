@@ -869,13 +869,17 @@ final class Wanigan_Live {
 	private static function pending_block(array $args) {
 		$parsed = isset($args[2]) && is_array($args[2]) ? $args[2] : array();
 		$parent = isset($args[3]) ? $args[3] : null;
-		$p = (object) array('name' => isset($parsed['blockName']) ? $parsed['blockName'] : null, 'block' => $parsed, 'steps' => array(), 'start' => hrtime(true), 'q0' => self::$qcount, 'qms0' => self::$qms, 'map' => null, 'parent' => null);
+		$p = (object) array('name' => isset($parsed['blockName']) ? $parsed['blockName'] : null, 'block' => $parsed, 'steps' => array(), 'start' => hrtime(true), 'q0' => self::$qcount, 'qms0' => self::$qms, 'map' => null, 'smap' => null, 'parent' => null, 'frame' => null);
 		$i = $parent instanceof WP_Block ? self::frame_index(spl_object_id($parent)) : (self::$stack ? count(self::$stack) - 1 : null);
 		if ($i !== null) {
 			$index = self::$stack[$i]['children']++;
 			$map = self::$stack[$i]['map'];
 			if ($map && $p->name !== null) $p->map = self::map_child($map, $index, $parsed);
+			// Where its words are stored when that is not this page's own markup: a synced pattern's post.
+			$smap = isset(self::$stack[$i]['smap']) ? self::$stack[$i]['smap'] : null;
+			if (!$p->map && $smap && $p->name !== null) $p->smap = self::map_child($smap, $index, $parsed);
 			$p->parent = self::$stack[$i]['part'];
+			$p->frame = $i;
 		}
 		self::$pending_block = $p;
 		return $p;
@@ -916,7 +920,10 @@ final class Wanigan_Live {
 		$oid = spl_object_id($block);
 		$top = end(self::$stack);
 		if ($top && isset($top['block']) && $top['block'] === $oid) {
-			self::$stack[] = array('type' => 're', 'part' => $top['part'], 'block' => $oid, 'children' => 0, 'map' => null);
+			// blocks/block.php (7.1) renders a synced pattern's blocks as this same core/block's inner blocks: they are
+			// stored in the pattern's own wp_block post, and this placement is the host its overrides are kept in.
+			$ref = $block->name === 'core/block' && isset($block->attributes['ref']) ? (int) $block->attributes['ref'] : 0;
+			self::$stack[] = array('type' => 're', 'part' => $top['part'], 'block' => $oid, 'children' => 0, 'map' => null, 'smap' => $ref ? array('store' => 'post:' . $ref, 'path' => array()) : null, 'host' => $ref ? $top['part'] : null);
 			return;
 		}
 		$p = self::$pending_block;
@@ -927,10 +934,25 @@ final class Wanigan_Live {
 			self::$stack[] = array('type' => 'skip', 'part' => self::top_part(), 'block' => $oid, 'children' => 0, 'map' => null);
 			return;
 		}
+		// The frame it renders in: the one pre_render_block named, or, for a block another block's render callback
+		// renders directly (navigation renders its menu's blocks this way), the one on top.
+		$at = $p ? $p->frame : (self::$stack ? count(self::$stack) - 1 : null);
+		$parent = $at !== null && isset(self::$stack[$at]) ? self::$stack[$at] : array();
+		$smap = $p ? $p->smap : null;
+		if (!$p && !empty($parent['smap']) && $at !== null) {
+			$index = isset(self::$stack[$at]['direct']) ? self::$stack[$at]['direct'] : 0;
+			self::$stack[$at]['direct'] = $index + 1;
+			$smap = self::map_direct($parent['smap'], $index, $block->parsed_block);
+		}
 		$id = self::open('block', self::block_label($block->name), array(), array('block' => $oid), $p);
 		self::$meta[$id] = array('block' => $block->name, 'parsed' => $block->parsed_block, 'map' => $p ? $p->map : null, 'context' => is_array($block->context) ? $block->context : array());
+		if (!self::$meta[$id]['map'] && $smap) self::$meta[$id]['smap'] = $smap;
+		if (!empty($parent['host'])) self::$meta[$id]['host'] = $parent['host'];
+		$f = count(self::$stack) - 1;
 		// Its inner blocks are found in the same stored tree.
-		if ($p && $p->map) self::$stack[count(self::$stack) - 1]['map'] = $p->map;
+		if ($p && $p->map) self::$stack[$f]['map'] = $p->map;
+		elseif ($smap) self::$stack[$f]['smap'] = $smap;
+		if (!empty($parent['host'])) self::$stack[$f]['host'] = $parent['host'];
 	}
 
 	/** "render_block_{$name}"'s last callback: the block's output, final. */
@@ -1878,6 +1900,14 @@ final class Wanigan_Live {
 		if (!empty($m['map'])) {
 			$e = self::block_edit($name, $type, $m['map']);
 			if ($e) $edits[] = $e;
+		} elseif (!empty($m['smap'])) {
+			// Stored in a synced pattern's own post: its words change every page that uses the pattern.
+			$e = self::block_edit($name, $type, $m['smap']);
+			if ($e) $edits[] = $e;
+		}
+		if (!empty($m['host'])) {
+			$e = self::placement_edit($name, $type, $m, $attrs);
+			if ($e) $edits[] = $e;
 		}
 		if ($edits) $p['edits'] = $edits;
 		return $p;
@@ -2012,7 +2042,11 @@ final class Wanigan_Live {
 			$current = null;
 			// class-wp-block.php process_block_bindings() binds only the attributes bindings support for this block type.
 			if ((isset($bindings[$attr]) || isset($bindings['__default'])) && in_array($attr, $supported, true)) {
-				$why = self::bound_why(isset($bindings[$attr]) ? $bindings[$attr] : $bindings['__default']);
+				$b = isset($bindings[$attr]) ? $bindings[$attr] : $bindings['__default'];
+				// In the synced pattern's own post, an overridable block's words are the pattern's own: what every
+				// placement shows unless it overrides them.
+				$patterns_own = !empty($info['shared']) && is_array($b) && isset($b['source']) && $b['source'] === 'core/pattern-overrides';
+				if (!$patterns_own) $why = self::bound_why($b);
 			}
 			if ($source === null) {
 				$current = array_key_exists($attr, $node['attrs']) ? $node['attrs'][$attr] : (isset($def['default']) ? $def['default'] : null);
@@ -2041,19 +2075,71 @@ final class Wanigan_Live {
 		}
 		$post = isset($info['post']) ? get_post($info['post']) : null;
 		$noun = $info['noun'];
-		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'], 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
+		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' block in ' . $info['label'] . (!empty($info['reach']) ? ' (' . $info['reach'] . ')' : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info['revisions']);
 		$why = $info['why'];
 		if (!$why && !$writable) $why = 'Nothing in this block can change here: each setting says why. Change it in the editor.';
-		if (!$why) {
-			// Saving writes this one block back alone; where WordPress has no block processor, the whole store, only when it
-			// reads back byte for byte.
-			$spans = self::store_spans($store);
-			if ($spans === null && !self::round_trips($store)) $why = self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $noun . '’s blocks back whole would change other parts of it. Change it in the editor.';
-			elseif ($spans !== null && ($spans === false || !isset($spans[implode('.', $map['path'])]))) $why = self::NOT_YET . 'WordPress’s block processor does not find this block where the block parser puts it, so Wanigan does not write it. Change it in the editor.';
-		}
+		if (!$why) $why = self::writable_alone($store, $map['path'], $noun);
 		if ($why) $target['why'] = $why;
 		self::$edits[$id] = $target;
 		self::$private[$id] = array('type' => 'block', 'store' => $store, 'path' => $map['path'], 'fp' => md5(serialize_block($node)), 'hash' => md5(self::$trees[$store]['content']), 'name' => $name);
+		return $id;
+	}
+
+	/**
+	 * One placement's own words for a block inside a synced pattern: blocks/block.php render_block_core_block() reads
+	 * them from the host core/block's "content" attribute, keyed by the inner block's metadata.name, and
+	 * block-bindings/pattern-overrides.php gives them to the block, so they change that placement only. Offered for the
+	 * attributes the pattern lets be overridden (a core/pattern-overrides binding, or "__default" for all of them), and
+	 * saved in the host's own comment delimiter, which is plain JSON: no markup to keep in step.
+	 */
+	private static function placement_edit(string $name, $type, array $m, array $attrs): ?string {
+		$mname = isset($attrs['metadata']['name']) && is_string($attrs['metadata']['name']) ? $attrs['metadata']['name'] : '';
+		$bindings = isset($attrs['metadata']['bindings']) && is_array($attrs['metadata']['bindings']) ? $attrs['metadata']['bindings'] : array();
+		if ($mname === '' || !$bindings || !$type) return null;
+		$open = array();
+		foreach (self::spliced_attributes($name) as $attr) {
+			$b = isset($bindings[$attr]) ? $bindings[$attr] : (isset($bindings['__default']) ? $bindings['__default'] : null);
+			if (is_array($b) && isset($b['source']) && $b['source'] === 'core/pattern-overrides' && isset($type->attributes[$attr]) && is_array($type->attributes[$attr])) $open[] = $attr;
+		}
+		if (!$open) return null;
+		$host = isset(self::$meta[$m['host']]) ? self::$meta[$m['host']] : array();
+		$hparsed = isset($host['parsed']) && is_array($host['parsed']) ? $host['parsed'] : array();
+		$ref = isset($hparsed['attrs']['ref']) ? get_post((int) $hparsed['attrs']['ref']) : null;
+		$title = $ref ? self::cut(wp_strip_all_tags($ref->post_title), 60) : '';
+		$hmap = isset($host['map']) ? $host['map'] : null;
+		$id = 'po-' . self::short(($hmap ? $hmap['store'] . '|' . implode('.', $hmap['path']) : $m['host']) . '|' . $mname);
+		if (isset(self::$edits[$id])) return $id;
+		$info = $hmap ? self::store_info($hmap['store']) : null;
+		$hnode = $hmap ? self::node($hmap['store'], $hmap['path']) : null;
+		$content = $hnode && isset($hnode['attrs']['content']) && is_array($hnode['attrs']['content']) ? $hnode['attrs']['content'] : array();
+		$mine = isset($content[$mname]) && is_array($content[$mname]) ? $content[$mname] : array();
+		$pattern = !empty($m['smap']) ? self::node($m['smap']['store'], $m['smap']['path']) : null;
+		$props = array();
+		$value = array();
+		$own = array();
+		foreach ($open as $attr) {
+			$def = $type->attributes[$attr];
+			$schema = self::attribute_schema($def);
+			unset($schema['source']);
+			if (isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true)) $schema['contentMediaType'] = 'text/html';
+			$schema['description'] = 'This placement’s own ' . $attr . '. The pattern’s own value takes the override away.';
+			$props[$attr] = $schema;
+			$own[$attr] = null;
+			if ($pattern) {
+				$own[$attr] = isset($def['source']) ? self::sourced($pattern, $def, $name, $attr)['value'] : (isset($pattern['attrs'][$attr]) ? $pattern['attrs'][$attr] : null);
+			}
+			$v = array_key_exists($attr, $mine) ? $mine[$attr] : $own[$attr];
+			if ($v !== null) $value[$attr] = $v;
+		}
+		$target = array('id' => $id, 'kind' => 'block-attributes', 'label' => self::block_label($name) . ' words in this placement of the synced pattern “' . $title . '” only' . ($info ? ', in ' . $info['label'] : ''), 'via' => 'schema', 'schema' => array('type' => 'object', 'properties' => $props, 'additionalProperties' => false), 'value' => (object) $value, 'revisions' => $info ? $info['revisions'] : false);
+		$why = null;
+		if (!$hmap || !$info || !$hnode) $why = self::NOT_YET . 'this placement of the pattern is not stored in a post, template or template part here (it is inside another pattern), so Wanigan does not write its overrides.';
+		elseif (isset($hnode['attrs']['overrides']) || array_filter($content, function ($c) { return is_array($c) && isset($c['values']); })) $why = self::NOT_YET . 'this placement keeps its overrides in an older shape the block editor updates when it opens the page. Open it in the editor once.';
+		elseif ($info['why']) $why = $info['why'];
+		if (!$why) $why = self::writable_alone($hmap['store'], $hmap['path'], $info['noun']);
+		if ($why) $target['why'] = $why;
+		self::$edits[$id] = $target;
+		if ($hnode) self::$private[$id] = array('type' => 'override', 'store' => $hmap['store'], 'path' => $hmap['path'], 'fp' => md5(serialize_block($hnode)), 'hash' => md5(self::$trees[$hmap['store']]['content']), 'name' => $mname, 'block' => $name, 'attrs' => $open, 'own' => $own);
 		return $id;
 	}
 
@@ -2064,6 +2150,8 @@ final class Wanigan_Live {
 		switch ($source) {
 			case 'core/post-meta':
 				return 'Bound to the post field “' . $key . '”: the page shows that field, so its words are saved there (its own edit, “kept in the field”), not in this block.';
+			case 'core/pattern-overrides':
+				return 'Each placement of the synced pattern can give this its own words (“in this placement only”); the pattern’s own words are in the pattern.';
 			case 'core/post-data':
 				return self::NOT_YET . 'it shows the post’s ' . ($key !== '' ? $key : 'data') . ', which WordPress works out from the post itself. Change the post.';
 			case 'core/term-data':
@@ -2873,7 +2961,10 @@ final class Wanigan_Live {
 				if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves blocks here.';
 				$info = array('content' => $post->post_content, 'route' => $route, 'post' => $post->ID, 'label' => $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”', 'noun' => $noun, 'changes' => 'content', 'revisions' => post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post), 'why' => $why);
 				// A synced pattern (core's wp_block) is one post shown in every post, template and part that uses it.
-				if ($post->post_type === 'wp_block') $info['shared'] = true;
+				if ($post->post_type === 'wp_block') {
+					$info['shared'] = true;
+					$info['reach'] = 'changes every page that uses this synced pattern';
+				}
 			}
 		} elseif (preg_match('/^(tp|tpl):(.+)$/', $store, $m)) {
 			$kind = $m[1] === 'tp' ? 'wp_template_part' : 'wp_template';
@@ -2925,6 +3016,29 @@ final class Wanigan_Live {
 		return $match === null ? null : array('store' => $store, 'path' => array_merge($map['path'], array($match)));
 	}
 
+	/**
+	 * Where a block another block's render callback rendered directly sits in its stored tree: the index-th block (empty
+	 * freeform runs are dropped first, as blocks/navigation.php drops them), checked as map_child() checks.
+	 */
+	private static function map_direct(array $map, int $index, array $parsed): ?array {
+		$store = $map['store'];
+		if (!self::store_info($store)) return null;
+		$siblings = $map['path'] ? (self::node($store, $map['path'])['innerBlocks'] ?? array()) : self::$trees[$store]['blocks'];
+		$named = array();
+		foreach ($siblings as $i => $s) {
+			if (!empty($s['blockName'])) $named[] = $i;
+		}
+		if (isset($named[$index]) && self::same_block($siblings[$named[$index]], $parsed)) return array('store' => $store, 'path' => array_merge($map['path'], array($named[$index])));
+		$match = null;
+		foreach ($named as $i) {
+			if (self::same_block($siblings[$i], $parsed)) {
+				if ($match !== null) return null;
+				$match = $i;
+			}
+		}
+		return $match === null ? null : array('store' => $store, 'path' => array_merge($map['path'], array($match)));
+	}
+
 	private static function same_block(array $a, array $b): bool {
 		$strip = function ($attrs) {
 			$attrs = is_array($attrs) ? $attrs : array();
@@ -2935,6 +3049,17 @@ final class Wanigan_Live {
 		return (isset($a['blockName']) ? $a['blockName'] : null) === (isset($b['blockName']) ? $b['blockName'] : null)
 			&& $strip(isset($a['attrs']) ? $a['attrs'] : array()) == $strip(isset($b['attrs']) ? $b['attrs'] : array())
 			&& (isset($a['innerHTML']) ? $a['innerHTML'] : '') === (isset($b['innerHTML']) ? $b['innerHTML'] : '');
+	}
+
+	/**
+	 * Why one block of a store cannot be written back alone, or null: saving writes that block alone (splice_block()),
+	 * or, where WordPress has no block processor, the whole store, only when it reads back byte for byte.
+	 */
+	private static function writable_alone(string $store, array $path, string $noun): ?string {
+		$spans = self::store_spans($store);
+		if ($spans === null) return self::round_trips($store) ? null : self::NOT_YET . 'this WordPress has no block processor (6.9 or later) to write one block alone, and writing this ' . $noun . '’s blocks back whole would change other parts of it. Change it in the editor.';
+		if ($spans === false || !isset($spans[implode('.', $path)])) return self::NOT_YET . 'WordPress’s block processor does not find this block where the block parser puts it, so Wanigan does not write it. Change it in the editor.';
+		return null;
 	}
 
 	/** The spans of a store's blocks as the trace saw it (spans()), worked out once. */
@@ -4461,6 +4586,9 @@ final class Wanigan_Live {
 			case 'block':
 				$result = self::save_block($p, (array) $value);
 				break;
+			case 'override':
+				$result = self::save_override($p, (array) $value);
+				break;
 			case 'copy':
 				$result = self::copy_template($p, (array) $value);
 				break;
@@ -4546,6 +4674,43 @@ final class Wanigan_Live {
 		}
 		if (!$changed) return array();
 		return self::write_block($p['store'], $info, $blocks, $p['path'], $old, $node);
+	}
+
+	/**
+	 * One placement's own words for a block in a synced pattern, written into the host core/block's "content" attribute
+	 * as the editor writes them (content[metadata.name][attribute]) and saved through the host's own store. A value equal
+	 * to the pattern's own takes the override away, as the editor's reset does.
+	 */
+	private static function save_override(array $p, array $value) {
+		$info = self::fresh_store($p['store']);
+		if (is_wp_error($info)) return $info;
+		if (md5($info['content']) !== $p['hash']) return new WP_Error('wanigan', 'This ' . $info['noun'] . ' changed since the page was shown: reload it and try again.');
+		$blocks = parse_blocks($info['content']);
+		$host = self::node_in($blocks, $p['path']);
+		if (!$host || md5(serialize_block($host)) !== $p['fp']) return new WP_Error('wanigan', 'That placement of the pattern is not where it was: reload the page and try again.');
+		$type = WP_Block_Type_Registry::get_instance()->get_registered($p['block']);
+		$old = $host;
+		$content = isset($host['attrs']['content']) && is_array($host['attrs']['content']) ? $host['attrs']['content'] : array();
+		$mine = isset($content[$p['name']]) && is_array($content[$p['name']]) ? $content[$p['name']] : array();
+		foreach ($value as $attr => $v) {
+			if (!in_array($attr, $p['attrs'], true)) return new WP_Error('wanigan', 'The pattern does not let ' . $attr . ' be overridden.');
+			$own = isset($p['own'][$attr]) ? $p['own'][$attr] : null;
+			$now = array_key_exists($attr, $mine) ? $mine[$attr] : $own;
+			if ($now === $v) continue;
+			$def = $type && isset($type->attributes[$attr]) && is_array($type->attributes[$attr]) ? $type->attributes[$attr] : array();
+			if (is_string($v) && isset($def['source']) && in_array($def['source'], array('rich-text', 'html'), true) && $v !== $own) {
+				$v = self::rich_text($v, (string) $now);
+				if (is_wp_error($v)) return $v;
+			}
+			if ($v === $own) unset($mine[$attr]);
+			else $mine[$attr] = $v;
+		}
+		if ($mine) $content[$p['name']] = $mine;
+		else unset($content[$p['name']]);
+		if ($content) $host['attrs']['content'] = $content;
+		else unset($host['attrs']['content']);
+		if ($host === $old) return array();
+		return self::write_block($p['store'], $info, $blocks, $p['path'], $old, $host);
 	}
 
 	/**
