@@ -17,6 +17,8 @@ import { askStoredWords, undoStoredWords } from './live-stored-words.ts';
 import { wireLiveFind } from './live-find.ts';
 import { wireLiveLibrary } from './live-library.ts';
 import { wireLiveShots } from './live-shots.ts';
+import { wireLiveRecord } from './live-record.ts';
+import { wireLiveSnap } from './live-snap.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewHooks, type LiveViewWiring } from './live-view.ts';
 import { CoreConnection } from './core-process.ts';
@@ -139,11 +141,14 @@ function wireBridge(): void {
   });
   // The design layer hears of each view as the inspector does: it applies the layer after every load.
   let layerHooks: LiveViewHooks | null = null;
+  // A recording hears of the view going away, and of the requests its page made (live-record.ts).
+  let recordHooks: LiveViewHooks | null = null;
   liveView = wireLiveView({
     window: () => win, trusted, enabled: liveEnabled,
     hooks: {
       session: (ses, id) => inspect.hooks.session?.(ses, id),
-      view: (wc, id) => { inspect.hooks.view?.(wc, id); layerHooks?.view?.(wc, id); },
+      view: (wc, id) => { inspect.hooks.view?.(wc, id); layerHooks?.view?.(wc, id); recordHooks?.view?.(wc, id); },
+      request: (seen) => recordHooks?.request?.(seen),
     },
   });
   // Switching the live view off takes it away at once, not at the next navigation.
@@ -171,6 +176,16 @@ function wireBridge(): void {
     storedWords: (ask) => askStoredWords(view.current(), ask), storedUndo: (token) => undoStoredWords(view.current(), token),
     partition: (id, url, token) => view.partition(id, null, url, token), sessionFor: (id, url) => view.sessionFor(id, url),
     askTrace, pageScript: () => view.pageScript(),
+  }).hooks;
+  // Snap and Record: a picture of the view to mark up, and a recording of it with a step log, kept in the data folder.
+  const viewWidth = (id: string): number | null => view.now(id)?.width ?? null;
+  wireLiveSnap({
+    ipc: ipcMain, trusted, enabled: liveEnabled, current: () => view.current(), run: <T>(code: string, fallback: T) => view.run(code, fallback),
+    width: viewWidth, partition: (id, env, url, token) => view.partition(id, env, url, token), pageScript: () => view.pageScript(),
+  });
+  recordHooks = wireLiveRecord({
+    ipc: ipcMain, trusted, enabled: liveEnabled, dataDir, window: () => win, current: () => view.current(),
+    run: <T>(code: string, fallback: T) => view.run(code, fallback), width: viewWidth, reveal: (path) => shell.showItemInFolder(path),
   }).hooks;
   // The live view's Go to launcher: the site helper's index and search, and Shift+Space from the page.
   wireLiveFind({
