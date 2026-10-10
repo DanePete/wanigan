@@ -63,15 +63,25 @@ function tails(r: LiveRegion, hook: string): string[][] {
   return r.suggestions.filter((s) => s.startsWith(prefix)).map((s) => s.slice(prefix.length).split('--'));
 }
 
+/**
+ * A paragraph the Drupal helper marked (data-wl-paragraph, `id:uuid:revision`): which one it is, and the revision of it
+ * the page showed (the one its host pins).
+ */
+export function paragraphOf(r: LiveRegion): { id: string; uuid: string; revision: string | null } | null {
+  const [id, uuid, revision] = (r.paragraph ?? '').split(':');
+  return id && uuid ? { id, uuid, revision: revision || null } : null;
+}
+
 /** The entity a region renders: the helper's mark, else what Drupal's suggestions spell out. */
 export function entityOf(r: LiveRegion): LiveEntity | null {
   if (r.entity) {
     const [type, bundle, id, viewMode] = r.entity.split(':');
     if (type) return { type, bundle: bundle || null, id: id || null, viewMode: viewMode || null };
   }
-  const hook = r.hook?.split('__')[0] ?? null;
+  const marked = paragraphOf(r);
+  const hook = r.hook?.split('__')[0] ?? (marked ? 'paragraph' : null);
   if (!hook || !ENTITY_HOOKS.has(hook)) return null;
-  const found: LiveEntity = { type: hook, id: null, bundle: null, viewMode: null };
+  const found: LiveEntity = { type: hook, id: hook === 'paragraph' ? marked?.id ?? null : null, bundle: null, viewMode: null };
   for (const parts of tails(r, hook)) {
     const [first, second] = parts;
     if (!first) continue;
@@ -110,7 +120,7 @@ const PART_ICON: Record<string, LiveKind> = {
  * kind for it, from the page's trace, used when the markup says nothing else.
  */
 export function nameOf(r: LiveRegion, componentName?: string | null, part?: { label: string; kind: string } | null): PartName {
-  const only = !r.component && !r.element && !r.view && !r.block && !r.entity && !r.field && !r.file && !r.hook;
+  const only = !r.component && !r.element && !r.view && !r.block && !r.entity && !r.field && !r.paragraph && !r.file && !r.hook;
   if (only && part) {
     return { title: part.label, kind: `${human(part.kind)} · from the trace`, icon: PART_ICON[part.kind] ?? 'template', origin: null, wrapper: false, small: false };
   }
@@ -147,7 +157,9 @@ function markupName(r: LiveRegion, componentName?: string | null): PartName {
   if (entity) {
     const what = entity.bundle ? human(entity.bundle) : human(entity.type);
     const title = entity.id ? `${what} ${entity.id}` : what;
-    const kind = [human(entity.type), entity.viewMode ? `${entity.viewMode.replace(/_/g, ' ')} view` : null].filter(Boolean).join(' · ');
+    // A paragraph says which version of it the page shows: the one its host pins, and the one a save goes through.
+    const revision = entity.type === 'paragraph' ? paragraphOf(r)?.revision : null;
+    const kind = [human(entity.type), entity.viewMode ? `${entity.viewMode.replace(/_/g, ' ')} view` : null, revision ? `revision ${revision}` : null].filter(Boolean).join(' · ');
     return { title, kind, icon: 'content', origin, wrapper: false, small: false };
   }
   const field = fieldOf(r);

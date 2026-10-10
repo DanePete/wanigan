@@ -240,11 +240,17 @@ export interface LiveRegion {
   hook: string | null;
   /**
    * A field the site's helper marked (data-wl-field), what a hand edit to its words saves to:
-   * `entity_type:id:field_name:field_type:langcode:revision:changed:formatter` (the translation the page rendered, the
-   * revision it showed, and when that translation last changed, so a save over anything newer is refused; and the
-   * formatter that showed it, which says what of a formatted text the page showed, whole or trimmed).
+   * `entity_type:id:field_name:field_type:langcode:revision:changed:formatter:page` (the translation the page rendered,
+   * the revision it showed, and when that translation last changed, so a save over anything newer is refused; the
+   * formatter that showed it, which says what of a formatted text the page showed, whole or trimmed; and the language
+   * of the page's content, which a paragraph with no translation in it does not show).
    */
   field: string | null;
+  /**
+   * A Drupal paragraph the site's helper marked (data-wl-paragraph): `id:uuid:revision`, the revision being the one its
+   * host pins and the page showed. Absent from older helpers and from everything that is not a paragraph.
+   */
+  paragraph?: string | null;
   /** Drupal's template file name suggestions for it, most specific first, without `.html.twig`. */
   suggestions: string[];
   /**
