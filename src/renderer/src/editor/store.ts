@@ -5,8 +5,16 @@
 // tabs and any surface that opens a file (the live view, Changes, a turn's
 // diff, quick open, the Code tab's files) share one editor. The editor itself
 // (CodeMirror) loads only when a file is first shown: see code/.
+//
+// The drawer is also a dock: a view may add tabs to it beside Code (the live
+// view adds its notes, problems and request) and draw them into the drawer
+// through a portal (`useDockHost`). Whether it is open and which tab it shows
+// are kept on this Mac with its size (prefs.ts). A tab only its view has is not
+// shown where that view is not: the drawer steps aside there, and comes back
+// on that tab with the view.
 import { useSyncExternalStore } from 'react';
 import { EMPTY_NAV, canBack, canForward, navBack, navForget, navForward, navGo, navJump, type NavHistory, type NavSpot } from '@shared/nav-history';
+import { editorPrefs, setPrefs } from './prefs';
 
 /** A file to open: where it is, and optionally where in it. */
 export interface EditorTarget {
@@ -50,12 +58,27 @@ export interface SurfaceHandle {
   spot(projectId: string): NavSpot | null;
 }
 
+/** A tab a view adds to the dock beside Code. */
+export interface DockTab {
+  id: string;
+  label: string;
+  hint?: string;
+}
+
+/** The dock's own tab: the code editor. */
+export const CODE_TAB: DockTab = { id: 'code', label: 'Code' };
+
 interface State {
   tabs: EditorTab[];
   /** The file showing in each project, by key. */
   active: Record<string, string>;
-  /** The drawer is open (beneath or beside a view). */
+  /** The drawer is open (beneath or beside a view), on the tab it shows. */
   open: boolean;
+  /** The dock's tab: `code`, or one of `extra`. Kept when the view that adds it is not on screen. */
+  shows: string;
+  /** Tabs the view on screen adds to the dock (the live view's), and which view added them. */
+  extra: readonly DockTab[];
+  extraOwner: string | null;
   /**
    * A project's Code tab is showing: the editor is the view itself. The drawer
    * gives way while it shows, and `open` is left as it was, so the drawer comes
@@ -72,13 +95,20 @@ interface State {
   quick: { cardKey: string | null } | null;
 }
 
-let state: State = { tabs: [], active: {}, open: false, page: false, unsaved: new Set(), nav: {}, reveal: null, focusEditor: 0, focusCrumbs: 0, quick: null };
+const kept = editorPrefs();
+let state: State = {
+  tabs: [], active: {}, open: kept.open, shows: kept.shows, extra: [], extraOwner: null, page: false, unsaved: new Set(), nav: {}, reveal: null,
+  focusEditor: 0, focusCrumbs: 0, quick: null,
+};
 const listeners = new Set<() => void>();
 let seq = 0;
 let surface: SurfaceHandle | null = null;
 
 function set(patch: Partial<State>): void {
+  const was = state;
   state = { ...state, ...patch };
+  // Open or closed, and on which tab, are kept on this Mac.
+  if (state.open !== was.open || state.shows !== was.shows) setPrefs({ open: state.open, shows: state.shows });
   for (const l of listeners) l();
 }
 
@@ -104,8 +134,15 @@ export function attachSurface(handle: SurfaceHandle | null): void {
 
 export const currentSurface = (): SurfaceHandle | null => surface;
 
-/** Show the editor: open the drawer, unless the Code tab is showing it already. */
-const shown = (): boolean => (state.page ? state.open : true);
+/** Show the editor: open the drawer on Code, unless the Code tab is showing it already. */
+const shown = (): Pick<State, 'open' | 'shows'> => (state.page ? { open: state.open, shows: state.shows } : { open: true, shows: CODE_TAB.id });
+
+/** The dock's tabs here: Code, and what the view on screen adds. */
+export const dockTabs = (s: Pick<State, 'extra'> = state): DockTab[] => [CODE_TAB, ...s.extra];
+
+/** The tab the dock shows here, or null when it shows one only another view has (it steps aside then). */
+export const dockShows = (s: Pick<State, 'shows' | 'extra'> = state): string | null =>
+  (dockTabs(s).some((t) => t.id === s.shows) ? s.shows : null);
 
 /**
  * Open a file in the code editor, at a line or at some words when given, and
@@ -121,7 +158,7 @@ export function openInEditor(target: EditorTarget, { record = true, focus = true
   set({
     tabs,
     active: { ...state.active, [target.projectId]: key },
-    open: shown(),
+    ...shown(),
     reveal: {
       key, line: target.line ?? null, col: target.col ?? null, find: target.find?.trim() || null,
       from: record ? surface?.spot(target.projectId) ?? null : null, record, seq: ++seq,
@@ -159,12 +196,12 @@ export function forgetPlaces(projectId: string, key: string): void {
 }
 
 export function showTab(projectId: string, key: string): void {
-  if (state.active[projectId] === key && (state.open || state.page)) return;
+  if (state.active[projectId] === key && ((state.open && state.shows === CODE_TAB.id) || state.page)) return;
   const tab = state.tabs.find((t) => t.key === key);
   if (!tab) return;
   // Switching files is a jump too: Back returns to the file before.
   const from = surface?.spot(projectId) ?? null;
-  set({ active: { ...state.active, [projectId]: key }, open: shown(), reveal: { key, line: null, col: null, find: null, from, record: true, seq: ++seq } });
+  set({ active: { ...state.active, [projectId]: key }, ...shown(), reveal: { key, line: null, col: null, find: null, from, record: true, seq: ++seq } });
 }
 
 /** Close a file's tab (after the drawer has asked about unsaved changes). The next one along shows. */
@@ -199,10 +236,53 @@ export function setEditorPage(page: boolean): void {
   if (state.page !== page) set({ page });
 }
 
-/** ⌘J: show the editor (and put the cursor in it), or hide it. */
+/**
+ * ⌘J: show the editor (and put the cursor in it), or hide it. With the dock on
+ * another tab (the live view's notes), it shows the editor: ⌘J is the code
+ * editor's key, and hides the dock only from the editor.
+ */
 export function toggleEditor(): void {
-  if (state.open) { set({ open: false }); return; }
-  set({ open: true, focusEditor: state.focusEditor + 1 });
+  if (state.open && dockShows() === CODE_TAB.id) { set({ open: false }); return; }
+  set({ open: true, shows: CODE_TAB.id, focusEditor: state.focusEditor + 1 });
+}
+
+/** Open the dock on a tab (Code, or one the view on screen added). */
+export function showDock(id: string): void {
+  if (!dockTabs().some((t) => t.id === id)) return;
+  set({ open: true, shows: id, ...(id === CODE_TAB.id && !(state.open && state.shows === id) ? { focusEditor: state.focusEditor + 1 } : {}) });
+}
+
+/** ⇧[ and ⇧] in the live view: the dock's previous or next tab, opening it there when it is closed. */
+export function stepDock(by: 1 | -1): void {
+  const tabs = dockTabs();
+  const at = Math.max(0, tabs.findIndex((t) => t.id === state.shows));
+  const next = tabs[(at + by + tabs.length) % tabs.length] as DockTab;
+  set({ open: true, shows: next.id });
+}
+
+/** The view on screen adds these tabs to the dock (null: it is gone). Only the view that added them takes them away. */
+export function setDockTabs(owner: string, tabs: readonly DockTab[] | null): void {
+  if (!tabs) {
+    if (state.extraOwner === owner) set({ extra: [], extraOwner: null });
+    return;
+  }
+  const same = state.extraOwner === owner && state.extra.length === tabs.length
+    && state.extra.every((t, i) => t.id === tabs[i]?.id && t.label === tabs[i]?.label && t.hint === tabs[i]?.hint);
+  if (!same) set({ extra: tabs, extraOwner: owner });
+}
+
+/* Where a view draws its dock tab: an element of the drawer's, set by the drawer. */
+let dockHost: HTMLElement | null = null;
+const hostListeners = new Set<() => void>();
+
+export function setDockHost(el: HTMLElement | null): void {
+  if (dockHost === el) return;
+  dockHost = el;
+  for (const l of hostListeners) l();
+}
+
+export function useDockHost(): HTMLElement | null {
+  return useSyncExternalStore((l) => { hostListeners.add(l); return () => hostListeners.delete(l); }, () => dockHost);
 }
 
 /** ⌘P: quick open, over a card's worktree when the Changes view shows one. */
@@ -215,7 +295,7 @@ export function closeQuickOpen(): void {
 }
 
 export function focusBreadcrumbs(): void {
-  set({ open: shown(), focusCrumbs: state.focusCrumbs + 1 });
+  set({ ...shown(), focusCrumbs: state.focusCrumbs + 1 });
 }
 
 export function revealDone(at: number): void {

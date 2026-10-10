@@ -599,6 +599,86 @@
   overflow-x: hidden;
 }
 
+/*
+  A chosen part's details with the tree still there (LayersPane.tsx): the tree
+  above them, folded to the part's branch, each scrolling on its own so
+  neither hides the other; beside them once the window is wide enough
+  (LayersPane.tsx's WIDE is the same width). Alone, the tree is as it was.
+*/
+.live-split,
+.live-split-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.live-split-tree > * {
+  flex-shrink: 0;
+}
+
+.live-side.with-part {
+  overflow: hidden;
+}
+
+.live-side > .live-split.with-part {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.live-split.with-part > .live-split-tree {
+  flex: none;
+  max-height: var(--live-tree-above);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.live-split-part {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* The Talk to Wanigan button sits over the bottom corner: what scrolls can come out from under it. */
+  scroll-padding-bottom: calc(var(--fab) + var(--space-4));
+  padding-bottom: calc(var(--fab) + var(--space-2));
+}
+
+@media (min-width: 1680px) {
+  .live-side.with-part {
+    width: var(--live-side-split);
+  }
+
+  .live-split.with-part {
+    flex-direction: row;
+    gap: var(--space-4);
+  }
+
+  .live-split.with-part > .live-split-tree {
+    width: var(--live-split-tree);
+    max-height: none;
+    padding: 0 var(--space-4) 0 0;
+    border-bottom: 0;
+    border-right: 1px solid var(--line);
+  }
+}
+
+/* ── the live view's tabs in the dock beneath the page (Dock.tsx) ────────── */
+
+.live-docked {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  /* Clear of the Talk to Wanigan button over the bottom corner. */
+  padding-bottom: calc(var(--fab) + var(--space-4));
+}
+
+.live-docked > * {
+  min-width: 0;
+}
+
 .live-inspector > *,
 .live-trace-sections > *,
 .disclosure-body > *,

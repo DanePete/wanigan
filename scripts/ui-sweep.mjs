@@ -1523,9 +1523,26 @@ try {
         await siteMenu('Local');
         if ((await cmp.evaluate(() => window.__wgLive.shows.at(-1)))?.env !== null) failures.push(`${theme}/live: Local was not shown again as the local site`);
 
-        // Compare: both sides taken at the view's width, the hosted one never with a token.
+        // Compare: both sides taken at the view's width, the hosted one never with a token. It is drawn in the stage,
+        // where the page is (no dialog over the window): the bar, the side panel and the status line stay, and the
+        // site's own view steps aside under it without loading anything.
+        const page0 = await cmp.evaluate(() => ({ shows: window.__wgLive.shows.length, reloads: window.__wgLive.reloads, hides: window.__wgLive.hides }));
         await siteMenu('Compare Local with Live');
         await cmp.waitForSelector('.cmp-frame canvas', { timeout: 10000 }).catch(() => failures.push(`${theme}/compare: the pictures never showed`));
+        const drawn = await cmp.evaluate(() => {
+          const panel = document.querySelector('.live-compare')?.getBoundingClientRect();
+          const stage = document.querySelector('.live-stage')?.getBoundingClientRect();
+          const side = document.querySelector('.live-side')?.getBoundingClientRect();
+          return {
+            inStage: !!document.querySelector('.live-stage > .live-compare'), dialog: !!document.querySelector('.dialog, .scrim'),
+            fills: !!panel && !!stage && Math.abs(panel.left - stage.left) < 1 && Math.abs(panel.right - stage.right) < 1 && Math.abs(panel.top - stage.top) < 1 && Math.abs(panel.bottom - stage.bottom) < 1,
+            side: !!side && side.width > 0 && !!document.querySelector('.live-bar') && !!document.querySelector('.live-status:has(.live-comparing)'),
+            covered: window.__wgLive.covers.at(-1),
+          };
+        });
+        if (!drawn.inStage || drawn.dialog || !drawn.fills) failures.push(`${theme}/compare: it is not drawn in the stage where the page is (${JSON.stringify(drawn)})`);
+        if (!drawn.side) failures.push(`${theme}/compare: the bar, the side panel or the status line did not stay beside Compare`);
+        if (drawn.covered !== true) failures.push(`${theme}/compare: the site's view did not step aside under Compare`);
         await cmp.waitForSelector('.cmp-summary', { timeout: 5000 }).catch(() => {});
         const asked = await cmp.evaluate(() => window.__wgLive.shots.slice(-2));
         const local = asked.find((r) => r.env === null);
@@ -1537,7 +1554,7 @@ try {
         if (!/areas differ/.test(summary) || !/Live is 96 px taller/.test(summary) || !/96 px only on Live/.test(summary)) failures.push(`${theme}/compare: the summary says "${summary}"`);
         const changes = await cmp.$$eval('.cmp-change', (els) => els.map((e) => e.textContent));
         if (changes.length !== 3 || !/Hero/.test(changes[0]) || !/News list.*only on Live/.test(changes[1]) || !/Footer/.test(changes[2])) failures.push(`${theme}/compare: the changes are ${JSON.stringify(changes)}`);
-        if (!/local database is older than Live’s/.test(await cmp.textContent('.dialog .cmp-note'))) failures.push(`${theme}/compare: no note that content differences are usually an older database`);
+        if (!/local database is older than Live’s/.test(await cmp.textContent('.live-compare .cmp-note'))) failures.push(`${theme}/compare: no note that content differences are usually an older database`);
         if (!(await cmp.evaluate(() => document.activeElement?.classList.contains('cmp-frame')))) failures.push(`${theme}/compare: the keys are not on the pictures when they arrive`);
         const boxes = await cmp.$$eval('.cmp-box', (els) => els.map((e) => e.textContent));
         if (boxes.length !== 3 || boxes[0] !== '1 · Hero') failures.push(`${theme}/compare: the boxes are ${JSON.stringify(boxes)}`);
@@ -1572,22 +1589,29 @@ try {
         if (left.length !== 2 || left.some((t) => /Footer/.test(t))) failures.push(`${theme}/compare: after ignoring the clock the changes are ${JSON.stringify(left)}`);
         await cmp.waitForTimeout(200);
         await cmp.screenshot({ path: join(out, `${theme}-live-compare-ignored.png`) });
-        // 2: both taken again at a tablet's width.
+        // 2: both taken again at a tablet's width. Compare's 2, not the page's: the live view keeps its own width.
         await cmp.keyboard.press('2');
         await cmp.waitForFunction(() => window.__wgLive.shots.filter((r) => r.width === 768).length === 2, null, { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: 2 did not take both at 768 px`));
+        if ((await cmp.getAttribute('.live-widths button[aria-label^="Full width"]', 'aria-pressed')) !== 'true') failures.push(`${theme}/compare: 2 in Compare narrowed the live page too`);
         await cmp.waitForSelector('.cmp-change', { timeout: 8000 }).catch(() => {});
         await cmp.waitForTimeout(250);
         await cmp.screenshot({ path: join(out, `${theme}-live-compare-tablet.png`) });
+        // Escape: the live page back exactly as it was, not loaded again.
         await cmp.keyboard.press('Escape');
-        await cmp.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/compare: Escape did not close it`));
+        await cmp.waitForSelector('.live-compare', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/compare: Escape did not leave it`));
+        await cmp.waitForFunction(() => window.__wgLive.covers.at(-1) === false, null, { timeout: 3000 }).catch(() => failures.push(`${theme}/compare: leaving it did not bring the site's view back`));
+        const after = await cmp.evaluate(() => ({ shows: window.__wgLive.shows.length, reloads: window.__wgLive.reloads, hides: window.__wgLive.hides }));
+        if (after.shows !== page0.shows || after.reloads !== page0.reloads || after.hides !== page0.hides) failures.push(`${theme}/compare: leaving it loaded the page again (${JSON.stringify({ before: page0, after })})`);
+        if (!(await cmp.$('.live-stage .live-device')) || await cmp.$('.live-status .live-comparing')) failures.push(`${theme}/compare: the stage did not go back to the page`);
 
         // The site settings: environments kept, and the one the project's files name besides.
         // ⇧C opens Compare too, from the live view.
         await cmp.evaluate(() => document.activeElement?.blur());
         await cmp.keyboard.press('Shift+C');
-        await cmp.waitForSelector('.dialog .cmp-head', { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: ⇧C did not open Compare`));
-        await cmp.keyboard.press('Escape');
-        await cmp.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => {});
+        await cmp.waitForSelector('.live-stage .live-compare .cmp-head', { timeout: 5000 }).catch(() => failures.push(`${theme}/compare: ⇧C did not open Compare`));
+        // ⇧C again goes back to the page, as Escape does.
+        await cmp.keyboard.press('Shift+C');
+        await cmp.waitForSelector('.live-compare', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/compare: ⇧C in Compare did not go back to the page`));
         await siteMenu('Site settings');
         await cmp.waitForSelector('.live-env-settings', { timeout: 5000 }).catch(() => failures.push(`${theme}/live: no environments in the site settings`));
         const found = await cmp.textContent('.live-env-found').catch(() => '');

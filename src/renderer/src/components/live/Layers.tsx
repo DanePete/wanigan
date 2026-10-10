@@ -1,7 +1,10 @@
 // The page's parts as layers: what holds what, named the way the site names
 // them. Pointing at a row outlines the part on the page; choosing it opens its
-// details. Arrow keys walk the tree as in any tree (WAI-ARIA tree pattern).
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+// details beside the tree, which marks it (however it was chosen) and brings
+// it into view. Folded, the tree shows only the way down to the chosen part;
+// unfolded again it is as it was. Arrow keys walk the tree as in any tree
+// (WAI-ARIA tree pattern).
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import type { LiveComponent, LiveRegion } from '@shared/live';
 import { nameOf, type LiveKind } from '@shared/live-names';
 import { layersOf, pathTo, type Layer } from '@shared/live-tree';
@@ -28,10 +31,13 @@ function visibleRows(layers: readonly Layer[], open: ReadonlySet<string>, depth 
   return out;
 }
 
-export function Layers({ regions, components, selected, changed, onHover, onSelect, partName }: {
+export function Layers({ regions, components, selected, fold = false, changed, onHover, onSelect, partName }: {
   regions: LiveRegion[];
   components: Map<string, LiveComponent>;
+  /** The chosen part, by index: marked, opened to and scrolled to. */
   selected: number | null;
+  /** Show only the chosen part's branch (the tree above its details), keeping what was open for when it is not. */
+  fold?: boolean;
   /** Parts the last edit made, by index: marked, and opened to. */
   changed: ReadonlySet<number>;
   /** Point at parts on the page, with what to call them; null to stop. */
@@ -60,7 +66,36 @@ export function Layers({ regions, components, selected, changed, onHover, onSele
     });
   }, [layers, regions, changed, selected]);
 
+  // Folded to the chosen part's branch: the top level, and the way down to it. What was open comes back unfolded.
+  const unfolded = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const path = fold && selected !== null ? pathTo(layers, selected) : [];
+    if (!path.length) {
+      const was = unfolded.current;
+      unfolded.current = null;
+      if (was) setOpen(was);
+      return;
+    }
+    setOpen((was) => {
+      unfolded.current ??= was;
+      return new Set(path.slice(0, -1).map((l) => l.key));
+    });
+  }, [fold, selected, layers]);
+
   const rows = useMemo(() => visibleRows(layers, open), [layers, open]);
+  // The chosen row is where the keys start, and is brought into view, however it was chosen (the page, the library).
+  const chosenKey = useMemo(() => (selected === null ? null : pathTo(layers, selected).at(-1)?.key ?? null), [layers, selected]);
+  useEffect(() => { if (chosenKey) setFocus(chosenKey); }, [chosenKey]);
+  const scrolledTo = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!chosenKey) { scrolledTo.current = null; return; }
+    if (scrolledTo.current === chosenKey) return;
+    // Once its row is drawn (folding to it may draw it a moment later), and once: the owner may scroll away.
+    const row = tree.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(chosenKey)}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest' });
+    scrolledTo.current = chosenKey;
+  }, [chosenKey, rows]);
   const changedKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const index of changed) for (const l of pathTo(layers, index)) keys.add(l.key);
