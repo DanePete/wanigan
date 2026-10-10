@@ -118,7 +118,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Previous commit', group: 'In Commits', keys: ['K'], alt: [['↑']] },
   // And the live view itself (components/Live.tsx, keys from shared/live-keys.ts liveKey), in the window or in the
   // site's page while nothing is typed into; the five verbs act on the part chosen.
-  { id: null, label: 'Pick a part on the page, or stop picking', group: 'In the live view', keys: ['P'] },
+  { id: null, label: 'Select a part on the page, or stop selecting', group: 'In the live view', keys: ['P'] },
   { id: null, label: 'Colour the page by a lens', group: 'In the live view', keys: ['Shift', 'L'] },
   { id: null, label: 'Phone, tablet or full width', group: 'In the live view', keys: ['1'], alt: [['2'], ['3']] },
   { id: null, label: 'Previous or next tab of the side panel', group: 'In the live view', keys: ['['], alt: [[']']] },

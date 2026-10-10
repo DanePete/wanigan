@@ -87,7 +87,7 @@ export function hostedUrl(raw: unknown, options: { onThisMac?: boolean } = {}): 
   if (url.protocol !== 'https:') return no('A hosted environment must be https, so its certificate is checked.');
   if (url.username || url.password) return no('Leave the user name and password out of the address: Wanigan never keeps credentials in one.');
   if (url.search) return no('Leave the query (?…) out: an environment is an address, and a query can carry a key.');
-  if (!url.hostname || (!options.onThisMac && isLocalHost(url.hostname))) return no('That is an address on this Mac: the Local tab is for the site you run here.');
+  if (!url.hostname || (!options.onThisMac && isLocalHost(url.hostname))) return no('That is an address on this computer: the Local tab is for the site you run here.');
   const path = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
   return { url: `${url.origin}${path}`, refused: null };
 }
@@ -97,7 +97,7 @@ export function envName(raw: unknown): { name: string; refused: null } | { name:
   const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
   if (!name) return { name: null, refused: 'Give the environment a name, as its host does (Dev, Test, Live).' };
   if (name.length > 24 || !/^[\p{L}\p{N}][\p{L}\p{N} ._-]*$/u.test(name)) return { name: null, refused: 'A name is up to 24 letters, digits, spaces, dots, dashes or underscores.' };
-  if (name.toLowerCase() === 'local') return { name: null, refused: 'Local is the site on this Mac. Name this one as its host does.' };
+  if (name.toLowerCase() === 'local') return { name: null, refused: 'Local is the site on this computer. Name this one as its host does.' };
   return { name, refused: null };
 }
 

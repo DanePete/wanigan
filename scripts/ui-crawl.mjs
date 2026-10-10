@@ -743,7 +743,7 @@ function keyChecks(w) {
     'A page of the site, from the live view (not while typing)': [{ standIn: 'goto', at: live, ready: '.live-bar', setup: async (page) => { await page.focus('.live-bar button[aria-label^="Reload"]'); },
       keys: ['Shift+Space'], expect: shows('.goto [role="option"]') }],
     // The live view's own keys (shared/live-keys.ts), with the made-up Acme parts; nothing focused but the view.
-    'Pick a part on the page, or stop picking': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['p'], expect: shows('.live-status:has-text("Picking")') }],
+    'Select a part on the page, or stop selecting': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['p'], expect: shows('.live-status:has-text("Picking")') }],
     'Colour the page by a lens': [{ standIn: 'live', at: live, ready: '.live-tree', keys: ['Shift+L'], expect: shows('.sel-list [role="option"]:has-text("Owner")') }],
     'Phone, tablet or full width': [
       { standIn: 'live', at: live, ready: '.live-tree', keys: ['1'], expect: widthIs('Phone') },

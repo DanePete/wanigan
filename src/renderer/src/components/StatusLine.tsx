@@ -18,10 +18,8 @@ import type { Tour } from '../tours';
 const ICON: Record<Notice['tone'], IconName> = { info: 'note', done: 'check', error: 'alert' };
 
 export function StatusLine({ onKeys, tour = null }: { onKeys: () => void; tour?: Tour | null }) {
-  const { latest, urgent, ownLines, showLine, setSlot, act, settle, quiet } = useNotices();
-  const hidden = ownLines > 0;
-  useEffect(() => (hidden ? undefined : showLine()), [hidden, showLine]);
-  if (hidden) return null;
+  const { latest, urgent, showLine, setSlot, act, settle, quiet } = useNotices();
+  useEffect(() => showLine(), [showLine]);
   const said = latest && !latest.urgent ? latest : null;
   return (
     <div className="status-host">
