@@ -1040,7 +1040,9 @@ export function liveStub(f) {
       await new Promise((done) => setTimeout(done, window.__wgLive.verifyMs));
       const e = window.__wgLive.layer.edits.find((x) => x.id === id && x.listed);
       if (!e) throw new Error('That edit is not in the layer.');
-      if (e.state !== 'implemented') throw new Error(`Only an implemented edit is verified; this one is ${e.state}. Make it real first.`);
+      // As main: a style or token draft is made in the theme outside Wanigan, and verifying it is how it is found there.
+      const outside = e.state === 'draft' && (e.change.type === 'style' || e.change.type === 'token');
+      if (e.state !== 'implemented' && !outside) throw new Error(`Only an implemented edit is verified; this one is ${e.state}. Make it real first.`);
       const how = window.__wgLive.verdict;
       // A failure at the styles had no page from before (made real elsewhere); the others did, kept under before/.
       const kept = how !== 'styles';
@@ -1063,6 +1065,16 @@ export function liveStub(f) {
         // The save's own reach: the same stored words shown in the breadcrumb too, said and not failed.
         ...(how === 'pass' ? { reach: [{ edit: id, count: 1, places: ['span.breadcrumb__current'] }] } : {}),
       };
+      // A draft found in the site: implemented, then verified; one not found stays a draft, said and not kept.
+      if (outside) {
+        if (!verdict.ok) {
+          const step = { styles: 'step 1 of 3, its styles and boxes', pixels: 'step 2 of 3, the pixels around it', rest: 'step 3 of 3, the rest of the page' }[verdict.failed];
+          throw new Error(`Not in the site yet: the site does not render it as designed yet (${step} failed at 390 and 1440 px). Once an agent, or you, has put it in the theme, verify again.`);
+        }
+        layerCore('live.layerMark', { projectId, id, state: 'implemented' });
+        layerCore('live.layerMark', { projectId, id, state: 'verified', verdict });
+        return verdict;
+      }
       // Recorded as main records it: verified, or still implemented with the failed verdict (its words are in the site).
       try {
         layerCore('live.layerMark', { projectId, id, state: verdict.ok ? 'verified' : 'implemented', verdict });

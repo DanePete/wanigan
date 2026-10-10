@@ -176,7 +176,10 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
   const verifying = busy === 'verify';
   const verify = (): Promise<unknown> => layer.verify(e.id);
   // What stopped the last verification, said only while the edit is still waiting for one.
-  const failure = e.state === 'implemented' ? layer.failures[e.id] ?? null : null;
+  // A style or token draft is made in the theme outside Wanigan (an agent from its brief, or by hand): Verify is how
+  // the layer finds it in the site, and a pass makes it verified.
+  const outside = e.state === 'draft' && (e.change.type === 'style' || e.change.type === 'token');
+  const failure = e.state === 'implemented' || outside ? layer.failures[e.id] ?? null : null;
   const discard = (): Promise<unknown> => once(() => layer.discard(e.id));
   const retire = (): Promise<unknown> => once(async () => {
     const done = await layer.change(() => call('live.layerMark', { projectId: project.id, id: e.id, state: 'retired' }));
@@ -239,9 +242,10 @@ function TrayEdit({ edit: e, here, ctx }: { edit: LayerEdit; here: boolean; ctx:
           <Button size="s" icon="check" disabled={readOnly || !live || !!busy} onClick={real} aria-label={`Make it real: ${name}`}
             data-tip={e.change.type === 'text' ? 'Save the words in the site, through the site helper' : 'Goes to an agent as intent, on your click'}>Make it real</Button>
         ) : null}
-        {e.state === 'implemented' ? (
+        {e.state === 'implemented' || outside ? (
           <Button size="s" icon="compare" disabled={readOnly || !live || verifying} onClick={verify} aria-label={`${verifying ? 'Verifying…' : 'Verify'}: ${name}`}
-            data-tip="Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width">
+            data-tip={outside ? 'Once an agent, or you, has put it in the theme: render the site without the layer and compare it with the design'
+              : 'Render the site without the layer and compare it with the design, at a phone’s and a desktop’s width'}>
             {verifying ? 'Verifying…' : 'Verify'}
           </Button>
         ) : null}

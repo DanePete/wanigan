@@ -53,7 +53,7 @@ export interface LayerApi {
   writing: boolean;
   /** Run one task for an edit, one at a time per edit: a second start while one runs does nothing (and answers undefined). */
   task: <T>(id: string, kind: LayerTask, run: () => Promise<T>) => Promise<T | undefined>;
-  /** Verify one implemented edit, once at a time; what stopped it is kept in `failures`. */
+  /** Verify one implemented edit, or a style or token draft made in the theme, once at a time; what stopped it is kept in `failures`. */
   verify: (id: string) => Promise<unknown>;
   /** Why the last verification of an edit did not run, or was not recorded, by the edit's id; cleared when it is verified again. */
   failures: Readonly<Record<string, string>>;

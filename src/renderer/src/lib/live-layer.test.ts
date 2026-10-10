@@ -242,11 +242,11 @@ test('an edit for one element shown in more than one place says so, as the layer
     'this element (2 matches on this page)');
 });
 
-test('a state says what it means, and a style draft says the layer cannot tell yet when an agent made it', () => {
+test('a state says what it means, and a style draft says an agent puts it in the theme and Verify finds it there', () => {
   assert.match(stateDetail(edit({ change: { type: 'text', value: 'New' }, before: { text: 'Old' } })), /the site does not have it/);
-  assert.match(stateDetail(edit()), /cannot tell yet when one has/, 'a style: an agent may have made it');
+  assert.match(stateDetail(edit()), /hands it to an agent to put in the theme; once it is there, Verify finds it in the site/, 'a style: an agent may have made it');
   assert.doesNotMatch(stateDetail(edit()), /the site does not have it/);
-  assert.match(stateDetail(edit({ scope: 'site', change: { type: 'token', name: '--accent', value: 'red' } })), /cannot tell yet/);
+  assert.match(stateDetail(edit({ scope: 'site', change: { type: 'token', name: '--accent', value: 'red' } })), /Verify finds it in the site/);
   assert.match(stateDetail(edit({ state: 'implemented' })), /Verify compares/);
 });
 

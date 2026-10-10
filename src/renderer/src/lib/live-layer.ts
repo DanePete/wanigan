@@ -68,12 +68,12 @@ export const STATE_DETAIL: Record<LayerState, string> = {
 };
 
 /**
- * What an edit's state means, said with it. A style or a token is made in the theme by an agent, and phase 1 does not
- * yet see when one has: a draft of one is said honestly, not as "the site does not have it".
+ * What an edit's state means, said with it. A style or a token is made in the theme outside Wanigan, by an agent or by
+ * hand: a draft of one says how it gets into the site, and how the layer finds out that it has.
  */
 export function stateDetail(e: Pick<LayerEdit, 'state' | 'change'>): string {
   if (e.state === 'draft' && (e.change.type === 'style' || e.change.type === 'token')) {
-    return 'In Wanigan’s layer: the page shows it. An agent makes it in the theme, and the layer cannot tell yet when one has, so it stays a draft until then.';
+    return 'In Wanigan’s layer: the page shows it. Make it real hands it to an agent to put in the theme; once it is there, Verify finds it in the site.';
   }
   return STATE_DETAIL[e.state];
 }

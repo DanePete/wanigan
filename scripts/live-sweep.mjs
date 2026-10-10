@@ -1364,7 +1364,7 @@ try {
       await rowsAre(5, 'five drafts');
       if ((await page.locator('.live-tray-page .live-section-title').first().innerText()).toLowerCase() !== 'the front page, / · this page') fail(t('layer: the tray’s page is not named'));
       const want = [
-        ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft', 'An agent makes it in the theme, and the layer cannot tell yet when one has']],
+        ['color', ['rgb(20, 20, 20)', '#c0392b', 'For this element.', 'Draft', 'Make it real hands it to an agent to put in the theme; once it is there, Verify finds it in the site.']],
         ['font-size', ['16px', '22px', 'For every event node (3 elements on this page).', 'Draft']],
         ['Open every day', ['Opening hours', 'Open every day, 7 to 6', 'For this element.', 'Fragile: No part of the site names this element', 'Its words guard it', 'Draft', 'the site does not have it']],
         ['Fresh loaves', ['Body', 'Fresh loaves daily', 'For this element.', 'Draft']],
@@ -1586,6 +1586,19 @@ try {
       await page.getByRole('button', { name: 'Remove note 1' }).click();
       await tabTo(page, 'Layers');
       await openTray();
+
+      // Once an agent, or the owner, has put the style in the theme, Verify on the draft finds it there: a failure says
+      // it is not in the site yet and leaves it a draft; a pass makes it verified. (Before, nothing could: it stayed a draft.)
+      await set({ verdict: 'styles' });
+      await rowOf('color').getByRole('button', { name: /^Verify/ }).click();
+      await rowOf('color').locator('[role="alert"]', { hasText: 'Not verified: Not in the site yet: the site does not render it as designed yet (step 1 of 3, its styles and boxes failed' })
+        .waitFor({ timeout: 4000 }).catch(() => fail(t('layer: a style draft not in the site yet was not said so')));
+      if ((await stateOf('color')) !== 'draft') fail(t('layer: verifying a style draft not in the site yet changed its state'));
+      await set({ verdict: 'pass' });
+      await rowOf('color').getByRole('button', { name: /^Verify/ }).click();
+      await page.waitForSelector('.live-tray-edit[data-state="verified"] .live-tray-verdict.ok', { timeout: 4000 }).catch(() => {});
+      if ((await stateOf('color')) !== 'verified') fail(t('layer: a style draft put in the theme was not verified'));
+      if (await rowOf('color').getByRole('button', { name: /^Make it real/ }).count()) fail(t('layer: a verified style can still be made real'));
 
       // An orphaned edit says why, and can only be discarded; it is never shown on what is there now.
       await page.evaluate(() => { const l = window.__wgLive.layer; const e = l.edits.find((x) => x.scope === 'kind'); e.state = 'orphaned'; l.why[e.id] = 'Its element shows other words now.'; });

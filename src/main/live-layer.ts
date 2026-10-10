@@ -989,6 +989,12 @@ export function beforeKept(raw: unknown): BeforeKept | null {
 const reaches = (e: LayerEdit, path: string): boolean => e.scope !== 'this' || madeOn(e, path);
 /** In the site: what a page from before shows, or does not, of an edit. */
 const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state === 'verified';
+/** A style or a token: made in the theme by an agent from its brief, or by hand, never saved by Wanigan itself. */
+const madeOutside = (e: LayerEdit): boolean => e.change.type === 'style' || e.change.type === 'token';
+/** A verification's steps, as said when a draft was not found in the site. */
+const STEPS: Record<NonNullable<LayerVerdict['failed']>, string> = {
+  styles: 'step 1 of 3, its styles and boxes', pixels: 'step 2 of 3, the pixels around it', rest: 'step 3 of 3, the rest of the page',
+};
 
 /**
  * Whether step 3 can compare an edit's result with its page from before, at which widths, or why not. `later`: edits
@@ -1595,7 +1601,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     } else {
       const edit = typeof raw === 'string' && EDIT_ID.test(raw) ? snap.edits.find((e) => e.id === raw) : undefined;
       if (!edit) throw new Error('That edit is not in the layer.');
-      if (edit.state !== 'implemented') throw new Error(`Only an implemented edit is verified; this one is ${edit.state}. Make it real first.`);
+      // A style or a token is made in the theme outside Wanigan, by an agent from its brief or by hand: while it is a
+      // draft, verifying it is how the layer finds it in the site. Words are saved through the site, so are made real first.
+      if (edit.state !== 'implemented' && !(edit.state === 'draft' && madeOutside(edit))) {
+        throw new Error(`Only an implemented edit is verified; this one is ${edit.state}. Make it real first.`);
+      }
       edits = [edit];
       page = edit.page;
     }
@@ -1761,14 +1771,27 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     }
     // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
     // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).
+    // A draft made outside Wanigan that passed is in the site: implemented, then verified. One that failed is not in
+    // the site yet, and stays a draft: the core keeps a verdict only on an edit in the site, so it is said, not kept.
     const refusals: string[] = [];
+    let notYet: string | null = null;
     for (const e of edits) {
       const v = verdicts.get(e.id) as LayerVerdict;
+      if (e.state === 'draft') {
+        if (!base.ok) {
+          notYet = `the site does not render it as designed yet (${STEPS[base.failed ?? 'styles']} failed at ${base.widths.join(' and ')} px). Once an agent, or you, has put it in the theme, verify again.`;
+          continue;
+        }
+        const why = (await mark(projectId, e.id, 'implemented')) ?? (await mark(projectId, e.id, 'verified', v));
+        if (why) refusals.push(`“${e.label}”: ${why}`);
+        continue;
+      }
       const why = await mark(projectId, e.id, base.ok ? 'verified' : 'implemented', v);
       if (why) refusals.push(`“${e.label}”: ${why}`);
     }
     // A verdict the layer did not keep is said, never passed off as recorded.
     if (refusals.length) throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: ${refusals.join(' ')}`);
+    if (notYet) throw new Error(`Not in the site yet: ${notYet}`);
     return verdicts.get(edits[0]!.id) as LayerVerdict;
   };
   const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => inTurn(() => verifyNow(raw, rawOptions));

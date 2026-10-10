@@ -1966,14 +1966,33 @@ test('a render that never answers fails its verification, saying so, and the nex
 });
 
 test('only an implemented edit is verified, an edit the design cannot find fails, and nothing is asked without the live view or trust', async () => {
-  const draft = edit();
+  const draft = edit({ change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
   const w = wire({ edits: [draft] });
   try {
-    await assert.rejects(w.verify(draft.id), /Only an implemented edit is verified; this one is draft/);
+    await assert.rejects(w.verify(draft.id), /Only an implemented edit is verified; this one is draft/, 'words are saved through the site, so made real first');
     await assert.rejects(w.verify(null), /nothing to verify here yet/);
     await assert.rejects(w.verify(draft.id, { widths: [100] }), /320 to 2560/);
     assert.equal(w.renders.length, 0);
   } finally { w.done(); }
+
+  // A style is put in the theme outside Wanigan (an agent from its brief, or by hand): verifying its draft finds it there.
+  // Before, nothing could: the card stayed a draft for good. Found in the site, it is implemented, then verified.
+  const box = { x: 20, y: 40, width: 40, height: 24 };
+  const made = edit();
+  const found = wire({ edits: [made], render: renders(made, { design: (b) => painted(b, box, 18), result: (b) => painted(b, box, 18) }) });
+  try {
+    const v = await found.verify(made.id);
+    assert.equal(v.ok, true);
+    assert.deepEqual(found.marks.map((m) => [m.id, m.state, m.verdict?.ok ?? null]), [[made.id, 'implemented', null], [made.id, 'verified', true]]);
+  } finally { found.done(); }
+  // Not there yet: said, and left a draft (the core keeps a verdict only on an edit in the site).
+  const waiting = edit();
+  const notYet = wire({ edits: [waiting], render: renders(waiting, { design: (b) => b, result: (b) => b, designColor: 'rgb(200, 0, 0)' }) });
+  try {
+    await assert.rejects(notYet.verify(waiting.id, { widths: [390] }),
+      /^Error: Not in the site yet: the site does not render it as designed yet \(step 1 of 3, its styles and boxes failed at 390 px\)\. Once an agent, or you, has put it in the theme, verify again\.$/);
+    assert.deepEqual(notYet.marks, [], 'nothing marked');
+  } finally { notYet.done(); }
 
   const lost = edit({ state: 'implemented' });
   const nowhere = wire({ edits: [lost], render: async (r) => ({ png: Buffer.from('x'), bitmap: blank(64, 100), elements: [], found: [] , ...(r.design ? {} : {}) }) });
