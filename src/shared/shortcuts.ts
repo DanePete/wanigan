@@ -109,6 +109,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: null, label: 'Colour the page by a lens', group: 'In the live view', keys: ['Shift', 'L'] },
   { id: null, label: 'Phone, tablet or full width', group: 'In the live view', keys: ['1'], alt: [['2'], ['3']] },
   { id: null, label: 'Previous or next tab of the side panel', group: 'In the live view', keys: ['['], alt: [[']']] },
+  { id: null, label: 'Previous or next tab of the dock beneath the page (code, notes, problems, request)', group: 'In the live view', keys: ['Shift', '['], alt: [['Shift', ']']] },
   { id: null, label: 'Compare Local with a hosted environment', group: 'In the live view', keys: ['Shift', 'C'] },
   { id: null, label: 'The site’s component library', group: 'In the live view', keys: ['Shift', 'B'] },
   { id: null, label: 'Your edits to the page, in the design layer', group: 'In the live view', keys: ['Shift', 'E'] },

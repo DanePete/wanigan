@@ -125,12 +125,20 @@ WordPress and other sites can each be on or off.
   status line under the page says what just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
   being placed), what the view follows, and the keys that work now.
+- **Around the page.** The side panel holds the Layers tree (with a chosen
+  part's details under it, the tree folded to that part's branch, or beside it
+  in a window 1680 px wide or more), Add, the component library and the
+  design layer's edits. Beneath the page, a dock shared with the code editor:
+  Code, Notes, Problems and Request, opened from its tabs (they wait in a strip
+  when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
+  whether it is open are kept on this Mac. Compare is drawn where the page is,
+  and leaving it puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
-  [ and ] the side panel's tabs, ⇧C Compare, ⇧B the component library; on a
-  chosen part E edits, M moves, . opens its code, ⇧A shows it alone, ⇧X takes
-  it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes waiting). All are on the
-  shortcut sheet (?).
+  [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
+  component library; on a chosen part E edits, M moves, . opens its code, ⇧A
+  shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes
+  waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -157,14 +165,16 @@ WordPress and other sites can each be on or off.
   Drupal's templates, components, content, fields, blocks and regions (from Twig
   debug's own comments), WordPress's template files and blocks. A part chosen
   there or picked on the page (from the keyboard too: P starts on the chosen
-  part, the arrows walk, Enter picks) offers the same four verbs: **Edit ▾**
+  part, the arrows walk, Enter picks) keeps the tree in view, marked where the
+  part is, and offers the same verbs: **Edit ▾**
   (every way to change it, by where the change is saved: in the site, on the
   page, in code), **Move**, **Code** and **Alone**; the note to an agent is
   right under them, and why it looks as it does (whose code it is, how to
   override someone else's template in your theme, its data, cache and cost)
   is folded below.
 - **Notes for an agent.** Point at parts across pages, say what should change,
-  and send them to a session as one message with a picture of each part.
+  and send them to a session as one message with a picture of each part. They
+  wait in the dock's Notes tab.
 - **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). Retyped words
   and tried styles are kept by Wanigan, not written into the site: the page
   shows them at once, through the layer. A style is for one element or every
@@ -244,7 +254,7 @@ WordPress and other sites can each be on or off.
   session began and after each turn that changed files, with what changed
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
-  as wrong (its own error messages, its console).
+  as wrong (its own error messages, its console), in the dock's Problems tab.
 - **Local and Live.** In the site menu beside Local, the site's hosted
   environments (Dev, Test, Live, as the host names them), each showing the same page. Found
   in the project's own files (Drush and WP-CLI aliases, ddev's and Lando's
@@ -260,7 +270,9 @@ WordPress and other sites can each be on or off.
 - **Compare.** The page you are on, taken whole on Local and on a hosted
   environment at the same width (phone, tablet or desktop), lined up row by row
   so a section only one side has is a striped band rather than everything below
-  it marked as changed. Slider, onion skin, difference, flip and side by side;
+  it marked as changed. Drawn where the page is, with the side panel and the
+  dock beside it; Escape (or ⇧C) puts the page back exactly as it was, not
+  loaded again. Slider, onion skin, difference, flip and side by side;
   each changed area boxed, counted and named by the local part it overlaps.
   Keys: ← → or Space flip, S O D T for the modes, J and K for the next and
   previous change, 1 2 3 for the widths, I to ignore a change (a slideshow, a
@@ -274,7 +286,8 @@ WordPress and other sites can each be on or off.
 - **With the helper's trace** (being finished; seen so far only against a
   stand-in): lenses that colour the page by owner, cache, cost, what can be
   edited and what just changed; a part's hooks, data, cache, cost, revisions
-  and access; the request behind the page (hooks, queries, assets, logs);
+  and access; the request behind the page (hooks, queries, assets, logs), in
+  the dock's Request tab;
   editing a part where it shows, in the site's own form or a small one;
   dragging parts the site can reorder, with Undo (a part whose order is in a
   template becomes a note for an agent); adding blocks from a palette. All of
@@ -347,7 +360,9 @@ view, beside the project's files.
   letters of its name or path (`name:42` for a line). **Edit** on a file in
   Changes or in a turn's diff; **Code** (.) on a part chosen in the live view
   opens its template where it writes the words you picked. ⌘J shows or hides
-  the drawer.
+  the drawer, which stays as you left it (open or closed, beneath or beside,
+  its height), kept on this Mac. In the live view it is the dock, with Notes,
+  Problems and Request beside Code.
 - **The Code tab.** The project's folders as a tree beside the editor, read a
   folder at a time, with the open file marked; arrows walk it, Enter opens a
   file, Space opens it and keeps your place in the tree, typing a name jumps to

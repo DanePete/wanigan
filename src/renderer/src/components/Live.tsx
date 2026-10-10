@@ -13,12 +13,17 @@
 // tools' Library opens the site's component library in the side panel
 // (components/live/Library.tsx), and Edits the design layer's tray
 // (components/live/Tray.tsx): the page's edits, made real and verified there.
+//
+// The side panel's Layers tab keeps the tree beside a chosen part's details
+// (components/live/LayersPane.tsx). Notes, Problems and Request are tabs of
+// the dock beneath the page, beside the code editor (components/live/Dock.tsx).
+// Compare is drawn in the stage, where the page is (components/live/Compare.tsx).
 // Design: docs/design/2026-10-08-live-view.md.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import type { LiveViewState } from '@shared/bridge';
 import {
   inFolder, isStylesheet, regionMadeBy, sameRegion, sameSite,
-  type LiveCandidate, type LiveEdit, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
+  type LiveCandidate, type LiveEvent, type LivePlatform, type LiveProblem, type LiveRegion, type LiveSite,
 } from '@shared/live';
 import type { CompareWidth } from '@shared/live-compare';
 import { samePage } from '@shared/live-envs';
@@ -40,11 +45,13 @@ import { liveFor, type AppSettings } from '@shared/settings';
 import { Icon } from './icons';
 import { MenuButton, type MenuItem } from './Menu';
 import { Inspector, type InspectorVerbs, type Selection } from './live/Inspector';
-import { CompareDialog } from './live/Compare';
+import { ComparePanel } from './live/Compare';
 import { EnvironmentSettings, HOSTED_NOTE, SiteMenu, useEnvs } from './live/Environments';
 import { HelperOffer, HelperSettings } from './live/Helper';
 import { Layers } from './live/Layers';
-import { NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
+import { LayersPane, focusTree, useTreeBeside } from './live/LayersPane';
+import { LiveDock, type LiveDockTab } from './live/Dock';
+import { EditsList, NoteComposer, NotesTab, draftFor, useNotesSender } from './live/Notes';
 import { useNotes, type LiveNote } from './live/note-store';
 import { ProblemsTab } from './live/Problems';
 import { PaletteTab, useArrange } from './live/Arrange';
@@ -60,6 +67,7 @@ import { SiteTrouble, useSiteStatus } from './live/SiteTrouble';
 import { useWriteChecks } from './live/write-checks';
 import { Button, Empty, IconButton, Segmented, useToast } from './ui';
 import { openInEditor, relativeTo } from '../editor/EditButton';
+import { stepDock } from '../editor/store';
 import '../styles/live.css';
 
 const PLATFORMS: readonly { value: LivePlatform; label: string; hint: string }[] = [
@@ -218,7 +226,8 @@ const LATE_TRIES = 6;
 const CONTENT_EVERY_MS = 2_000;
 const CONTENT_RELOADS_A_MINUTE = 4;
 
-type Tab = 'layers' | 'notes' | 'problems' | 'request' | 'add';
+/** The side panel's tabs. Notes, Problems and Request are the dock's (components/live/Dock.tsx). */
+type Tab = 'layers' | 'add';
 const ARRANGE_KEY = 'wanigan.live.arrange';
 const readArrange = (): boolean => { try { return localStorage.getItem(ARRANGE_KEY) !== '0'; } catch { return true; } };
 type Width = 'full' | 'tablet' | 'phone';
@@ -370,15 +379,18 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
 
   useEffect(() => { void live.hasScript().then(setHasScript); }, [live]);
   useEffect(() => { setOnly(null); }, [lens]);
+  // What needs the page itself (picking, placing, an edit sheet beside a part) brings it back from Compare.
+  useEffect(() => { if (picking || editing || arrange.placing) setComparing(false); }, [picking, editing, arrange.placing]);
 
   // Escape, in the window or in the page, takes a lens away (and stops placing a palette entry).
   useEffect(() => {
     if (lens === 'structure' && !arrange.placing) return undefined;
     const back = (): void => { setLens('structure'); arrange.setPlacing(null); };
     const key = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet')) return;
+      // Compare's Escape is its own: it goes back to the page, the lens with it.
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('.scrim, .live-sheet, .live-stage-compare')) return;
       const t = e.target as Element | null;
-      if (t?.closest?.('input, textarea, select, .sel-list') || (t && t !== document.body && !t.closest?.('.live'))) return;
+      if (t?.closest?.('input, textarea, select, .sel-list') || (t && t !== document.body && !t.closest?.('.live, .live-docked'))) return;
       e.preventDefault();
       back();
     };
@@ -626,6 +638,13 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     if (kept) void live.outline([kept.index], labelOf(kept), 'edit'); else void live.clear();
   };
   const unselect = (): void => { setSelection(null); void live.clear(); };
+  /** Back to the tree alone: the keyboard goes to the tree's row for the part when it was on the part's details. */
+  const backToTree = (): void => {
+    const fromPart = !!document.activeElement?.closest('.live-split-part');
+    unselect();
+    if (fromPart) focusTree();
+  };
+  const treeBeside = useTreeBeside();
   const showNote = (n: LiveNote | null): void => {
     const r = n?.regions[0];
     const same = r ? regions.filter((x) => sameRegion(r, [r], [x])) : [];
@@ -661,12 +680,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   })();
   const tabs: { value: Tab; label: string; hint?: string }[] = [
     { value: 'layers', label: 'Layers' },
-    { value: 'notes', label: notes.length ? `Notes ${notes.length}` : 'Notes' },
-    { value: 'problems', label: errors ? `Problems ${errors}` : 'Problems' },
-    ...(helperSite ? [{ value: 'request' as const, label: 'Request', hint: 'The hooks, queries, assets and logs behind this page' }] : []),
     ...(traceData?.palette?.length ? [{ value: 'add' as const, label: 'Add', hint: 'What the site can add to this page' }] : []),
   ];
   const shownTab: Tab = tabs.some((t) => t.value === tab) ? tab : 'layers';
+  /** The live view's tabs in the dock beneath the page, beside Code. */
+  const docked: { id: LiveDockTab; label: string; hint?: string }[] = [
+    { id: 'notes', label: notes.length ? `Notes ${notes.length}` : 'Notes' },
+    { id: 'problems', label: errors ? `Problems ${errors}` : 'Problems' },
+    ...(helperSite ? [{ id: 'request' as const, label: 'Request', hint: 'The hooks, queries, assets and logs behind this page' }] : []),
+  ];
   const cms = site.platform === 'wordpress' ? 'WordPress' : 'Drupal';
   const compare = envs.length
     ? { can: !view?.loading, why: 'Wait for the page to load', with: env?.name ?? envs[envs.length - 1]?.name ?? null }
@@ -680,14 +702,15 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   };
   const shot = useShotPage(card && shots && !env ? card : null, view?.url ?? null);
 
-  // The live view's own keys (shared/live-keys.ts), here and from the page: each does what its control does.
+  // The live view's own keys (shared/live-keys.ts), here and from the page: each does what its control does. While
+  // Compare is drawn, 1 2 3 are its widths.
   runKey.current = (id: LiveKeyId): void => {
     switch (id) {
       case 'pick': if (hasScript) void pick(); return;
       case 'lens': if (!compact && hasScript) lensOpen.current?.(); return;
-      case 'width-phone': if (!compact) setWidth('phone'); return;
-      case 'width-tablet': if (!compact) setWidth('tablet'); return;
-      case 'width-full': if (!compact) setWidth('full'); return;
+      case 'width-phone': if (!compact && !comparing) setWidth('phone'); return;
+      case 'width-tablet': if (!compact && !comparing) setWidth('tablet'); return;
+      case 'width-full': if (!compact && !comparing) setWidth('full'); return;
       case 'tab-previous':
       case 'tab-next': {
         if (compact) return;
@@ -698,7 +721,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
         if (next) setTab(next.value);
         return;
       }
-      case 'compare': if (!compact) openCompare(); return;
+      case 'dock-previous':
+      case 'dock-next':
+        if (!compact) stepDock(id === 'dock-next' ? 1 : -1);
+        return;
+      case 'compare': if (!compact) { if (comparing) setComparing(false); else openCompare(); } return;
       case 'library': if (!compact) { setTray(false); setLibrary(!library); } return;
       case 'edits': if (!compact) openTray(!tray); return;
       case 'edit':
@@ -718,7 +745,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.repeat || e.isComposing) return;
       const t = e.target instanceof Element ? e.target : null;
-      if (!t || !(t === document.body || t.closest('.live'))) return;
+      // The live view, and its tabs in the dock beneath the page.
+      if (!t || !(t === document.body || t.closest('.live, .live-docked, .dock-tabs'))) return;
       if (t.closest('.live-sheet') || document.querySelector('[aria-modal="true"], .sel-list')) return;
       const typing = isTyping(t) && !(t instanceof HTMLInputElement && /^(checkbox|radio|button|submit|reset)$/.test(t.type));
       if (isSendKey(e, mac)) {
@@ -732,6 +760,8 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       if (Date.now() - afterG < 1200) { afterG = 0; return; }
       const id = liveKey(e);
       if (!id) return;
+      // In Compare its own keys work, and ⇧C goes back to the page; the page's keys wait for the page.
+      if (t.closest('.live-stage-compare') && id !== 'compare') return;
       e.preventDefault();
       runKey.current(id);
     };
@@ -746,6 +776,10 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     action: <IconButton icon="close" label="Stop placing (Escape)" onClick={() => arrange.setPlacing(null)} />,
   } : picking ? {
     text: 'Picking: point at a part, or walk with ↑ ↓ ← → and press Enter. P or Escape stops.',
+  } : comparing && envs.length ? {
+    className: 'live-comparing',
+    text: 'Comparing. The page waits under it as it was.',
+    action: <Button size="s" tone="quiet" icon="back" onClick={() => setComparing(false)}>Back to the page</Button>,
   } : alone ? {
     className: 'live-alone',
     text: `Showing one piece alone${alone === 'sample' || alone === 'component' ? ', with sample content' : ''}.`,
@@ -759,10 +793,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     action: <Button size="s" tone="quiet" icon="eye" onClick={() => layer.show(true)}>Show the layer</Button>,
   } : banner ? { text: bannerText(banner), warn: banner.kind === 'write' && banner.warn } : null;
   const keysNow: [string[], string][] = picking ? []
+    : comparing && envs.length && !compact ? [[['J', 'K'], 'changes'], [['S', 'O', 'D', 'T'], 'how'], [['1', '2', '3'], 'width'], [['Esc'], 'back to the page']]
     : library && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'B'], 'close the library']]
     : tray && !compact ? [[['P'], 'pick'], [['Esc'], 'back'], [['⇧', 'E'], 'close the edits']]
     : selection && shownTab === 'layers' && !compact ? [[['E'], 'edit'], [['M'], 'move'], [['.'], 'code'], [['⇧', 'A'], 'alone'], [['⇧', 'X'], 'take out'], [['P'], 'pick'], [['Esc'], 'back']]
-      : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['?'], 'all keys']];
+      : [[['P'], 'pick'], [['⇧', 'Space'], 'go to'], [['⇧', 'L'], 'lens'], [['1', '2', '3'], 'width'], [['[', ']'], 'tabs'], [['⇧', '[', ']'], 'dock'], [['?'], 'all keys']];
 
   return (
     <div className={`live${compact ? ' live-compact' : ''}`}>
@@ -818,6 +853,11 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
           {editing && !env ? (
             <EditSheet request={editing} stage={stageRef} device={deviceRef} cms={cms} onClose={() => setEditing(null)} trace={traceData} onSaved={editSaved} />
           ) : null}
+          {/* Compare, where the page is: the page waits under it, as it was. */}
+          {comparing && envs.length && !compact ? (
+            <ComparePanel project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
+              width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
+          ) : null}
         </LiveStage>
         {compact ? (
           selection?.pick ? (
@@ -836,7 +876,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </div>
           ) : null
         ) : (
-          <aside className={`live-side${shownTab === 'request' || library || tray ? ' wide' : ''}`}
+          <aside className={`live-side${library || tray ? ' wide' : ''}${!library && !tray && shownTab === 'layers' && selection ? ' with-part' : ''}`}
             aria-label={tray ? 'The design layer’s edits' : library ? 'The site’s component library' : 'What is on this page'}>
             {tray ? (
               <LayerTray project={project} layer={layer} page={env ? '' : pagePath(view?.url ?? url)} siteUrl={url} trace={env ? null : traceData} parts={parts} regions={regions}
@@ -845,41 +885,47 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
               <LibraryPanel project={project} site={site} trace={env ? null : traceData} parts={parts} regions={regions} arrange={arrange} readOnly={!!env}
                 onClose={() => setLibrary(false)} onSelect={select} onHover={hover} />
             ) : (<>
-            <Segmented<Tab> size="s" label="Show" value={shownTab} options={tabs} onChange={setTab} />
+            {tabs.length > 1 ? <Segmented<Tab> size="s" label="Show" value={shownTab} options={tabs} onChange={setTab} /> : null}
             {shownTab === 'layers' ? (
-              selection ? (
-                <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
-                  theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={unselect}
-                  site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
-                  siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} />
-              ) : (
-                <>
-                  {/* A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out. */}
-                  {!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
-                  {regions.length ? (
-                    <Layers regions={regions} components={components} selected={null} changed={changed} onHover={hover} onSelect={select} partName={partName} />
-                  ) : (
-                    <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
-                  )}
-                  {env || trace?.state === 'other' ? null : <HelperOffer site={site} project={project} />}
-                </>
-              )
-            ) : shownTab === 'request' ? (
-              <RequestTab answer={trace} site={site} project={project} parts={parts} onPoint={point} />
-            ) : shownTab === 'add' ? (
-              <PaletteTab arrange={arrange} trace={traceData} />
-            ) : shownTab === 'notes' ? (
-              <>
-                <NotesTab project={project} components={components} sender={sender} onShow={showNote} />
-                <EditsList project={project} />
-              </>
+              // The tree stays with a chosen part: above its details, folded to its branch, or beside them when there is room.
+              <LayersPane onBack={backToTree}
+                part={selection ? (
+                  <Inspector project={project} platform={site.platform} selection={selection} regions={regions} components={components} docroot={siteParts.data?.docroot ?? null}
+                    theme={theme} page={view?.url ?? url} prefer={follow} helper={!!site.helper && !env} readOnly={!!env} onSelect={select} onClose={backToTree}
+                    site={site} answer={env ? null : trace} trace={env ? null : traceData} parts={parts} arrange={arrange} onEdit={openEdit} verbs={verbs}
+                    siteAi={env ? null : siteAi} onSiteAiRefresh={readSiteAi} layer={layer} onTray={() => openTray(true)} />
+                ) : null}
+                // A helper another Wanigan set up ignores this one: said first, where the owner looks, with the way out.
+                before={!env && trace?.state === 'other' ? <TraceNote answer={trace} site={site} project={project} /> : null}
+                tree={regions.length ? (
+                  <Layers regions={regions} components={components} selected={selection?.region?.index ?? null} fold={!!selection && !treeBeside}
+                    changed={changed} onHover={hover} onSelect={select} partName={partName} />
+                ) : (
+                  <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
+                )}
+                after={env || trace?.state === 'other' ? null : <HelperOffer site={site} project={project} />} />
             ) : (
-              <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
+              <PaletteTab arrange={arrange} trace={traceData} />
             )}
             </>)}
           </aside>
         )}
       </div>
+      {/* Notes, Problems and Request, in the dock beneath the page beside the code editor. */}
+      {!compact ? (
+        <LiveDock tabs={docked}>
+          {(t) => (t === 'notes' ? (
+            <>
+              <NotesTab project={project} components={components} sender={sender} onShow={showNote} />
+              <EditsList project={project} />
+            </>
+          ) : t === 'problems' ? (
+            <ProblemsTab problems={problems} project={project} url={view?.url ?? url} onRefresh={() => void refreshProblems()} />
+          ) : (
+            <RequestTab answer={trace} site={site} project={project} parts={parts} onPoint={point} />
+          ))}
+        </LiveDock>
+      ) : null}
       {!compact ? (
         <div className="live-status">
           {status ? (
@@ -898,10 +944,6 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
             </span>
           ) : null}
         </div>
-      ) : null}
-      {comparing && envs.length ? (
-        <CompareDialog project={project} site={site} envs={envs} masks={envData?.masks ?? []} page={view?.url ?? stageUrl} shownEnv={env?.id ?? null}
-          width={WIDTHS[width].compare} components={componentNames} onClose={() => setComparing(false)} />
       ) : null}
     </div>
   );
@@ -1006,34 +1048,6 @@ function NothingMarked({ platform, loading, hosted = false }: { platform: LivePl
       ) : platform === 'wordpress' ? (
         <p className="faint small">Blocks and Elementor elements mark themselves; classic theme templates do not say which file made them.</p>
       ) : null}
-    </div>
-  );
-}
-
-/** Words saved by hand to templates, newest first, each put back with one click while the file is as it left it. */
-function EditsList({ project }: { project: ProjectSummary }) {
-  const toast = useToast();
-  const edits = useQuery('live.edits', { projectId: project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === project.id);
-  const list = (edits.data ?? []).slice(0, 8);
-  if (!list.length) return null;
-  const revert = async (e: LiveEdit): Promise<void> => {
-    const done = await attempt(() => call('live.revert', { id: e.id }), (m) => toast(m, 'error'));
-    if (done) { toast(`Put back “${e.before}”.`); void liveBridge()?.reload(); }
-  };
-  return (
-    <div className="live-side-block live-edits">
-      <h3 className="live-section-title">Saved by hand</h3>
-      <ul className="live-made">
-        {list.map((e) => (
-          <li key={e.id}>
-            <span className="small">“{e.before}” → “{e.after}”</span>
-            <span className="mono small faint" title={e.path}>{fileName(e.path)}:{e.line}</span>
-            {e.revertedAt ? <span className="faint small">Put back</span>
-              : e.revertable ? <Button size="s" tone="quiet" icon="undo" onClick={() => revert(e)}>Put back</Button>
-                : <span className="faint small">Changed since: put back by hand</span>}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

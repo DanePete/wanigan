@@ -8,10 +8,14 @@
 // widths' 1, 2 and 3 mean the same as in Compare, and the rest are keys no
 // other part of Wanigan uses (C is a new card everywhere, so Compare is ⇧C; X
 // archives on the board, so taking a part out is ⇧X). ⇧E opens the design
-// layer's edits: E alone edits the chosen part.
+// layer's edits: E alone edits the chosen part. [ and ] step through the side
+// panel's tabs; ⇧[ and ⇧] (a key event names them { and }) step through the
+// tabs of the dock beneath the page: the code editor, the notes, the problems
+// and the request.
 
 export type LiveKeyId =
-  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'compare' | 'library' | 'edits'
+  | 'pick' | 'lens' | 'width-phone' | 'width-tablet' | 'width-full' | 'tab-previous' | 'tab-next' | 'dock-previous' | 'dock-next'
+  | 'compare' | 'library' | 'edits'
   | 'edit' | 'move' | 'code' | 'alone' | 'take-out';
 
 export interface LiveKeySpec {
@@ -33,6 +37,8 @@ export const LIVE_KEYS: readonly LiveKeySpec[] = [
   { id: 'width-full', key: '3', shift: false, page: true, focusWindow: false },
   { id: 'tab-previous', key: '[', shift: false, page: true, focusWindow: false },
   { id: 'tab-next', key: ']', shift: false, page: true, focusWindow: false },
+  { id: 'dock-previous', key: '{', shift: true, page: true, focusWindow: false },
+  { id: 'dock-next', key: '}', shift: true, page: true, focusWindow: false },
   { id: 'compare', key: 'c', shift: true, page: true, focusWindow: true },
   { id: 'library', key: 'b', shift: true, page: true, focusWindow: true },
   { id: 'edits', key: 'e', shift: true, page: true, focusWindow: true },
