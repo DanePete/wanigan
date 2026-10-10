@@ -11,8 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LiveSite } from '../shared/live.ts';
-import type { LibraryPicturesAnswer, LiveLibraryAnswer } from '../shared/live-library.ts';
-import { askLibrary, libraryWhy, pictureFile, RENDERS_AT_ONCE, wireLiveLibrary, type PieceCapture } from './live-library.ts';
+import type { LibraryPicturesAnswer, LiveLibraryAnswer, LiveUsageAnswer } from '../shared/live-library.ts';
+import { askLibrary, askUsage, libraryWhy, pictureFile, RENDERS_AT_ONCE, wireLiveLibrary, type PieceCapture } from './live-library.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -84,6 +84,7 @@ function wire(site: { url: string }, over: { version?: number; enabled?: boolean
     library: (refresh = false) => (handlers.get('live:library') as (...a: unknown[]) => Promise<LiveLibraryAnswer>)(event, 'p1', refresh ? { refresh: true } : null),
     pictures: (entries: unknown, options: unknown = null) => (handlers.get('live:libraryPictures') as (...a: unknown[]) => Promise<LibraryPicturesAnswer>)(event, 'p1', entries, options),
     picture: (entry: string, width: number) => (handlers.get('live:libraryPicture') as (...a: unknown[]) => Promise<string | null>)(event, 'p1', entry, width),
+    usage: (entry: unknown, refresh = false) => (handlers.get('live:libraryUsage') as (...a: unknown[]) => Promise<LiveUsageAnswer>)(event, 'p1', entry, refresh ? { refresh: true } : null),
     done: () => rmSync(dataDir, { recursive: true, force: true }),
   };
 }
@@ -186,4 +187,71 @@ test('without the live view, the window’s trust, a current helper or a sound r
     assert.deepEqual(site.seen.length, 0, 'nothing reached the site');
     assert.equal(fine.captured.length + old.captured.length, 0);
   } finally { for (const w of [off, untrusted, old, fine]) w.done(); await site.close(); }
+});
+
+/* ── where an entry is used ─────────────────────────────────────────────── */
+
+const used = (entry: string, places: unknown[] = [{ kind: 'placement', label: 'Main navigation', where: 'Header region, Acme theme', url: '/', edit: '/admin/structure/block/manage/acme_main_menu' }]) => ({
+  version: 1, platform: 'drupal', entry, places, found: places.length, complete: true, gaps: [], searched: ['Block placements in every theme, by the block’s plugin.'],
+  unseen: ['Pages a placement shows on.'], ms: 40,
+});
+
+test('where an entry is used is asked of the helper’s own route with its token and the entry, checked, and each failure named', async () => {
+  let reply: (res: ServerResponse) => void = (res) => json(res, used('block:system_menu_block:main'));
+  const site = await helperSite((req, res) => { if (req.url?.startsWith('/_wanigan/usage?')) reply(res); else json(res, {}, 404); });
+  const ask = (entry = 'block:system_menu_block:main') => askUsage((url, init) => fetch(url, init), new URL(site.url).origin, TOKEN, entry);
+  try {
+    const ok = await ask();
+    assert.equal(ok.state, 'ok');
+    assert.deepEqual(site.seen, [{ path: '/_wanigan/usage?entry=block%3Asystem_menu_block%3Amain', token: TOKEN }], 'the entry goes as one encoded query value');
+    assert.deepEqual(ok.state === 'ok' && ok.usage.places, [{ kind: 'placement', label: 'Main navigation', where: 'Header region, Acme theme', url: '/', edit: '/admin/structure/block/manage/acme_main_menu' }]);
+    reply = (res) => json(res, used('block:system_branding_block'));
+    assert.deepEqual(await ask(), { state: 'unreadable' }, 'an answer about another entry is not this one’s');
+    reply = (res) => json(res, used('block:system_menu_block:main', [{ kind: 'placement', label: 'Elsewhere', url: 'https://elsewhere.example/' }]));
+    const away = await ask();
+    assert.deepEqual(away.state === 'ok' && away.usage.places, [{ kind: 'placement', label: 'Elsewhere' }], 'a page on another origin is never kept to be opened');
+    reply = (res) => json(res, {}, 404);
+    assert.deepEqual(await ask(), { state: 'outdated' }, 'a helper without the route');
+    reply = (res) => json(res, { ok: false, error: 'This site’s library has no entry block:system_menu_block:main now: ask the library again.' }, 422);
+    assert.deepEqual(await ask(), { state: 'unknown', error: 'This site’s library has no entry block:system_menu_block:main now: ask the library again.' }, 'the helper’s own words');
+    reply = (res) => json(res, {}, 403);
+    assert.deepEqual(await ask(), { state: 'refused', status: 403 });
+    reply = (res) => { res.writeHead(302, { Location: 'https://elsewhere.example/' }); res.end(); };
+    assert.equal((await ask()).state, 'down', 'a redirect is not followed: the token would go with it');
+    reply = (res) => json(res, used('block:system_menu_block:main', Array.from({ length: 30_000 }, (_, i) => ({ kind: 'content', label: `Post ${i} ${'x'.repeat(60)}` }))));
+    assert.deepEqual(await ask(), { state: 'too-large' });
+    const before = site.seen.length;
+    assert.deepEqual(await ask('block:has space'), { state: 'unknown', error: 'That is not an entry of the library.' });
+    assert.equal(site.seen.length, before, 'an id that is not one is not sent');
+  } finally { await site.close(); }
+});
+
+test('the window asks where an entry is used through the view’s session; the answer is kept half a minute unless asked afresh', async () => {
+  let asked = 0;
+  const site = await helperSite((req, res) => {
+    if (!req.url?.startsWith('/_wanigan/usage?')) { json(res, {}, 404); return; }
+    asked++;
+    json(res, used(new URL(req.url, 'http://x').searchParams.get('entry') ?? ''));
+  });
+  const w = wire(site);
+  const off = wire(site, { enabled: false });
+  const untrusted = wire(site, { trusted: false });
+  const old = wire(site, { version: 3 });
+  try {
+    const first = await w.usage('block:system_menu_block:main');
+    assert.equal(first.state, 'ok');
+    assert.equal((await w.usage('block:system_menu_block:main')).state, 'ok');
+    assert.equal(asked, 1, 'asked again within half a minute, the answer is the one kept');
+    assert.equal((await w.usage('block:system_menu_block:main', true)).state, 'ok');
+    assert.equal(asked, 2, 'refresh asks the site again');
+    assert.equal((await w.usage('sdc:acme:card')).state, 'ok');
+    assert.equal(asked, 3, 'another entry is asked about on its own');
+    assert.deepEqual(await w.usage('acme:card'), { state: 'unknown', error: 'That is not an entry of the library.' });
+    assert.deepEqual(await w.usage(42), { state: 'unknown', error: 'That is not an entry of the library.' });
+    assert.deepEqual(await off.usage('block:system_menu_block:main'), { state: 'off' });
+    assert.deepEqual(await untrusted.usage('block:system_menu_block:main'), { state: 'off' });
+    assert.deepEqual(await old.usage('block:system_menu_block:main'), { state: 'outdated' }, 'a helper older than version 4 is not asked');
+    assert.equal(asked, 3, 'none of those reached the site');
+    assert.ok(site.seen.every((s) => s.token === TOKEN));
+  } finally { for (const x of [w, off, untrusted, old]) x.done(); await site.close(); }
 });

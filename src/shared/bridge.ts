@@ -4,7 +4,7 @@ import type { LivePick, LiveProblem, LiveRegion } from './live.ts';
 import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
 import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveRemove, LiveWriteOptions } from './live-arrange.ts';
-import type { LibraryPicturesAnswer, LiveLibraryAnswer } from './live-library.ts';
+import type { LibraryPicturesAnswer, LiveLibraryAnswer, LiveUsageAnswer } from './live-library.ts';
 import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerVerdict } from './design-layer.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
@@ -202,6 +202,12 @@ export interface LiveBridge {
   libraryPictures(projectId: string, entries: string[], options?: { widths?: number[]; refresh?: boolean }): Promise<LibraryPicturesAnswer>;
   /** A kept picture of an entry at a width, as base64 PNG; null when there is none for the library as it is now. */
   libraryPicture(projectId: string, entry: string, width: number): Promise<string | null>;
+  /**
+   * Where a library entry is used across the site, as its stored data says, from the helper's search (read-only,
+   * bounded at ten seconds): each place, the page that shows it, what the search covered and what it cannot see.
+   * Kept half a minute unless refreshed.
+   */
+  libraryUsage(projectId: string, entry: string, options?: { refresh?: boolean }): Promise<LiveUsageAnswer>;
   /*
    * The design layer, the main process's side (src/main/live-layer.ts; the contract is src/shared/design-layer.ts).
    * The edits themselves are the core's (`live.layer*`); these show them on the page, key a new one, make one real
