@@ -170,11 +170,12 @@ final class Recorder {
   }
 
   /**
-   * An open frame of the Fiber running now, by its object id.
+   * An element frame PartsByHooks opened in the Fiber running now, by its
+   * number, while it is open.
    */
-  public function openFrame(int $id): ?Frame {
+  public function openFrame(int $number): ?Frame {
     foreach ($this->state()->frames as $frame) {
-      if (spl_object_id($frame) === $id) {
+      if (($frame->info['hooked'] ?? NULL) === $number) {
         return $frame;
       }
     }

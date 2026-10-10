@@ -1624,6 +1624,12 @@ use Drupal\wanigan_live\WaniganLiveServiceProvider;
 final class PartsByHooks implements TrustedCallbackInterface {
 
   /**
+   * Element frames opened, numbered: how an element's #post_render finds
+   * its frame.
+   */
+  private static int $elements = 0;
+
+  /**
    * {@inheritdoc}
    */
   public static function trustedCallbacks() {
@@ -1722,7 +1728,7 @@ final class PartsByHooks implements TrustedCallbackInterface {
       'type' => $element['#type'] ?? NULL,
       'component' => $element['#component'] ?? NULL,
     ]));
-    $element['#wanigan_live_frame'] = spl_object_id($frame);
+    $element['#wanigan_live_frame'] = $frame->info['hooked'] = ++self::$elements;
     $element['#post_render'][] = [self::class, 'postRender'];
     // Never stored in the render cache with this request's marks in it.
     unset($element['#cache']['keys']);
