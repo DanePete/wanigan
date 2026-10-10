@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { LiveSite } from '../shared/live.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer } from '../shared/live-library.ts';
-import { askLibrary, libraryWhy, pictureFile, wireLiveLibrary, type PieceCapture } from './live-library.ts';
+import { askLibrary, libraryWhy, pictureFile, RENDERS_AT_ONCE, wireLiveLibrary, type PieceCapture } from './live-library.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
 const TOKEN = ['stand', 'in', 'token'].join('-');
@@ -125,6 +125,36 @@ test('pictures are rendered on the helper’s piece route at a phone’s and a d
     const folders = readdirSync(join(w.dataDir, 'live-library', readdirSync(join(w.dataDir, 'live-library'))[0]!));
     assert.deepEqual(folders, [hash]);
     assert.equal(existsSync(phone!.path!), false);
+  } finally { w.done(); await site.close(); }
+});
+
+test('pictures render a few at a time, never more, come back in the order asked, and a failed render frees its window', async () => {
+  const site = await helperSite((req, res) => (req.url === '/_wanigan/components' ? json(res, library('dddddddddddddddd')) : json(res, {}, 404)));
+  let now = 0, most = 0, fail = false;
+  const w = wire(site, { capture: async (o) => {
+    now++; most = Math.max(most, now);
+    // The first asked finishes last: an answer in finishing order would show it.
+    await new Promise((done) => setTimeout(done, o.url.includes('card') && o.width === 390 ? 60 : 10));
+    now--;
+    if (fail) throw new Error('The piece could not be pictured: the stand-in said no.');
+    return { png: PNG, height: o.width, cut: false };
+  } });
+  try {
+    assert.ok(RENDERS_AT_ONCE > 1 && RENDERS_AT_ONCE < 4, 'the test asks for four renders: more than one window and fewer than four');
+    const out = await w.pictures(['sdc:acme:card', 'sdc:acme:hero']);
+    assert.ok(out.ok);
+    assert.equal(most, RENDERS_AT_ONCE, 'as many at once as allowed, and no more');
+    assert.deepEqual(out.shots.map((s) => [s.entry, s.width, s.height, s.error]), [
+      ['sdc:acme:card', 390, 390, null], ['sdc:acme:card', 1440, 1440, null], ['sdc:acme:hero', 390, 390, null], ['sdc:acme:hero', 1440, 1440, null],
+    ]);
+    fail = true; most = 0;
+    const failed = await w.pictures(['sdc:acme:card', 'sdc:acme:hero'], { refresh: true });
+    assert.ok(failed.ok);
+    assert.deepEqual(failed.shots.map((s) => s.error), Array(4).fill('The piece could not be pictured: the stand-in said no.'));
+    assert.equal(most, RENDERS_AT_ONCE, 'a render that throws still hands its window on');
+    fail = false;
+    const again = await w.pictures(['sdc:acme:hero'], { refresh: true, widths: [390] });
+    assert.ok(again.ok && again.shots[0]?.error === null, 'nothing is left waiting after failures');
   } finally { w.done(); await site.close(); }
 });
 
