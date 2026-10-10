@@ -21,15 +21,19 @@
 //   a WordPress block by its place in the stored markup: when no words guard it,
 //   that is said plainly, as fragile, before the edit is made, with what
 //   happens if the page changes (fragileWhy).
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactElement } from 'react';
 import { layerValue, type LayerPickTarget, type LayerProperty, type LayerScope } from '@shared/design-layer';
 import { fragileWhy } from '@shared/layer-words';
 import type { LivePick } from '@shared/live';
 import type { LiveTrace } from '@shared/live-trace';
+import type { SiteColours } from '@shared/site-colours';
 import { changeLines, placesOf, sendsTyped, thisReach, type ChangeLine } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
-import { Button, Disclosure, useSingleFlight, useToast } from '../ui';
+import { LENGTHS, anchorOf, numberOf, previewPump, type LengthSpec, type PreviewPump } from '../../lib/style-fields';
+import { Section } from '../Panel';
+import { Button, Disclosure, IconButton, useSingleFlight, useToast } from '../ui';
 import type { LayerApi } from './use-layer';
+import { AlignField, ColorField, LengthField, SidesField, type Sides } from './StyleFields';
 import { LIVE_TIP } from './keys';
 
 /** What was just added to the layer, said in the Inspector until the next edit. */
@@ -59,30 +63,23 @@ function useTarget(again: unknown): { target: LayerPickTarget | null; asked: boo
 }
 
 /**
- * Show what is being tried on the page as it changes: one call at a time, the newest values winning (a colour dragged
- * sends many), and taken away when the panel goes. Values the layer would not set are left out; none takes it away.
+ * Show what is being tried on the page as it changes: at most one call a frame and one at a time, the newest values
+ * winning and the last always sent (a slider dragged fires dozens of changes a second, and each is a call into the
+ * live page: lib/style-fields.ts previewPump), and taken away at once when the form goes. Values the layer would not
+ * set are left out; none takes it away.
  */
 function useTry(values: Partial<Record<LayerProperty, string>>, scope: Exclude<LayerScope, 'site'>): void {
   const live = liveBridge();
-  const queue = useRef<{ busy: boolean; next: { values: Partial<Record<LayerProperty, string>> | null; scope: Exclude<LayerScope, 'site'> } | null }>({ busy: false, next: null });
-  const send = useCallback((next: { values: Partial<Record<LayerProperty, string>> | null; scope: Exclude<LayerScope, 'site'> }): void => {
-    const q = queue.current;
-    q.next = next;
-    if (q.busy || !live?.layerTry) return;
-    q.busy = true;
-    void (async () => {
-      while (q.next) {
-        const n = q.next;
-        q.next = null;
-        await live.layerTry(n.values, n.scope).catch(() => 0);
-      }
-      q.busy = false;
-    })();
+  const pump = useRef<PreviewPump<Partial<Record<LayerProperty, string>>> | null>(null);
+  useEffect(() => {
+    if (!live?.layerTry) return undefined;
+    const p = previewPump<Partial<Record<LayerProperty, string>>>((s) => live.layerTry(s.values, s.scope === 'kind' ? 'kind' : 'this'), (run) => { requestAnimationFrame(run); });
+    pump.current = p;
+    return () => { p.close({ values: null, scope: 'this' }); if (pump.current === p) pump.current = null; };
   }, [live]);
   const shown = Object.fromEntries(Object.entries(values).filter(([, v]) => typeof v === 'string' && layerValue(v) !== null)) as Partial<Record<LayerProperty, string>>;
   const key = JSON.stringify([shown, scope]);
-  useEffect(() => { send({ values: Object.keys(shown).length ? shown : null, scope }); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => send({ values: null, scope: 'this' }), [send]);
+  useEffect(() => { pump.current?.set({ values: Object.keys(shown).length ? shown : null, scope }); }, [key, live]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** The fragile warning, said before the edit is made (fragileWhy: the main process decides it the same way). */
@@ -139,46 +136,20 @@ export function RetypeWords({ pick, layer, page, trace, onAdded, onCancel }: {
 
 /* ── trying a style ────────────────────────────────────────────────────── */
 
-type Control =
-  | { prop: LayerProperty; label: string; kind: 'color' }
-  | { prop: LayerProperty; label: string; kind: 'length'; step?: number }
-  | { prop: LayerProperty; label: string; kind: 'choice'; options: string[] };
-
-const CONTROLS: Control[] = [
-  { prop: 'color', label: 'Text colour', kind: 'color' },
-  { prop: 'background-color', label: 'Background', kind: 'color' },
-  { prop: 'font-size', label: 'Text size', kind: 'length' },
-  { prop: 'font-weight', label: 'Weight', kind: 'choice', options: ['300', '400', '500', '600', '700', '800'] },
-  { prop: 'line-height', label: 'Line height', kind: 'length' },
-  { prop: 'letter-spacing', label: 'Letter spacing', kind: 'length', step: 0.5 },
-  { prop: 'text-align', label: 'Align', kind: 'choice', options: ['left', 'center', 'right', 'justify', 'start'] },
-  { prop: 'padding-top', label: 'Padding above', kind: 'length' },
-  { prop: 'padding-bottom', label: 'Padding below', kind: 'length' },
-  { prop: 'padding-left', label: 'Padding left', kind: 'length' },
-  { prop: 'padding-right', label: 'Padding right', kind: 'length' },
-  { prop: 'margin-top', label: 'Space above', kind: 'length' },
-  { prop: 'margin-bottom', label: 'Space below', kind: 'length' },
-  { prop: 'border-radius', label: 'Corners', kind: 'length' },
-  { prop: 'gap', label: 'Gap', kind: 'length' },
-];
-
-/** `rgb(1, 2, 3)` or `rgba(…, 0)` as `#010203`, what a colour input takes; null for a transparent colour. */
-function hexOf(css: string): string | null {
-  const m = /rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:[\s,/]+([\d.]+%?))?\s*\)/.exec(css);
-  if (!m) return /^#[0-9a-f]{6}$/i.test(css) ? css.toLowerCase() : null;
-  if (m[4] !== undefined && Number.parseFloat(m[4]) === 0) return null;
-  return `#${[m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}`;
-}
-
-const pxOf = (css: string): string => (/^-?[\d.]+px$/.test(css) ? String(Math.round(Number.parseFloat(css) * 10) / 10) : '');
+/** The fields of the Text group and the Box group, each a property of the layer's (StyleFields.tsx draws them). */
+const PADDING: Sides = ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+const MARGIN: Sides = ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'];
 
 /** A custom property's name, as the layer takes one. */
 const TOKEN = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
 
+/** Every side the same, as the site has them: the link starts on. */
+const same = (sides: Sides, base: (p: LayerProperty) => string): boolean => sides.every((p) => base(p) === base(sides[0]));
+
 /**
- * Try a style on the picked element: the values the owner sets, for this element or every instance of its kind,
- * shown on the page as they change (a preview), and through the layer once added. A custom property is changed for
- * the whole site.
+ * Try a style on the picked element: the values the owner slides, types and chooses, for this element or every
+ * instance of its kind, shown on the page as they change (a preview), and through the layer once added. A custom
+ * property is changed for the whole site.
  */
 export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   pick: LivePick; layer: LayerApi; page: string;
@@ -194,18 +165,53 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
   const [values, setValues] = useState<Partial<Record<LayerProperty, string>>>({});
   const [scope, setScope] = useState<Exclude<LayerScope, 'site'>>('this');
   const [token, setToken] = useState({ name: '', value: '' });
+  // Whether each group of sides is linked: null until the owner says, and then the site's four being the same decides.
+  const [links, setLinks] = useState<{ padding: boolean | null; margin: boolean | null }>({ padding: null, margin: null });
+  // What is typed in a colour box that is not a colour, by its field's label: Show it on the page refuses it by name.
+  const wrong = useRef(new Map<string, string>());
+  // The site's own colours, read once the form opens: its declared palette, its tokens, the colours its page uses.
+  const live = liveBridge();
+  const [siteColours, setSiteColours] = useState<SiteColours | null>(null);
+  useEffect(() => {
+    let current = true;
+    const none: SiteColours = { palette: { state: 'no-helper' }, tokens: [], used: [] };
+    void (live?.siteColours?.() ?? Promise.resolve(none)).catch(() => none).then((c) => { if (current) setSiteColours(c); });
+    return () => { current = false; };
+  }, [live, pick.url]);
+  // What each custom property a palette entry or a token names holds: a var() value's swatch paints it.
+  const refs = useMemo(() => new Map<string, string>([
+    ...(siteColours?.palette.state === 'ok' ? siteColours.palette.colours.map((c) => [c.ref, c.value] as [string, string]) : []),
+    ...(siteColours?.tokens ?? []).map((t) => [t.name, t.value] as [string, string]),
+  ]), [siteColours]);
   useEffect(() => { if (!target?.kindLabel) setScope('this'); }, [target?.kindLabel]);
   const base = useCallback((prop: LayerProperty): string => target?.before[prop] ?? pick.style[prop] ?? '', [target, pick.style]);
-  const set = (prop: LayerProperty, value: string): void => setValues((was) => ({ ...was, [prop]: value }));
+  const valueOf = (prop: LayerProperty): string => values[prop] || base(prop);
+  const changedOf = (prop: LayerProperty): boolean => !!values[prop] && values[prop] !== base(prop);
+  const setMany = (props: readonly LayerProperty[], value: string): void => setValues((was) => {
+    const next = { ...was };
+    for (const p of props) { if (value) next[p] = value; else delete next[p]; }
+    return next;
+  });
+  const reset = (props: readonly LayerProperty[]): void => setMany(props, '');
   const chosen = Object.entries(values).filter(([k, v]) => v !== '' && v !== base(k as LayerProperty)) as [LayerProperty, string][];
   // What is chosen shows on the page at once, as it changes: a preview, until it is added.
   useTry(Object.fromEntries(chosen), scope);
   // One element, or the one stored thing the page shows in more than one place.
   const one = thisReach(placesOf(target?.target.part ?? null, trace), !!target?.target.part);
   const reach = scope === 'kind' && target?.kindLabel ? `${target.kindLabel} (${many(target.kindCount, 'element')} on this page)` : one;
+  const fontPx = numberOf(valueOf('font-size'), LENGTHS['font-size'] as LengthSpec);
+  const linked = (group: 'padding' | 'margin'): boolean => links[group] ?? same(group === 'padding' ? PADDING : MARGIN, base);
+  const link = (group: 'padding' | 'margin', on: boolean): void => {
+    setLinks((l) => ({ ...l, [group]: on }));
+    const sides = group === 'padding' ? PADDING : MARGIN;
+    // Linked, the sides are one value: the top's.
+    if (on && !sides.every((p) => valueOf(p) === valueOf(sides[0]))) setMany(sides, valueOf(sides[0]));
+  };
 
   const add = (e?: FormEvent): Promise<unknown> => { e?.preventDefault(); return once(addStyle); };
   const addStyle = async (): Promise<void> => {
+    const [field, typed] = [...wrong.current][0] ?? [];
+    if (field) { toast(`${field}: “${typed}” is not a colour. Type a hex value (#c0392b) or rgb(192, 57, 43), or choose one of the site’s.`, 'error'); return; }
     if (!chosen.length) return;
     if (!target) { toast('Nothing is picked on the page any more: pick it again, then try the style.', 'error'); return; }
     const bad = chosen.find(([, v]) => layerValue(v) === null);
@@ -236,37 +242,29 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
     e.preventDefault();
     if (sends(e)) void addToken();
   };
+  // Enter in any field of the style (a box, a slider, a choice of reach) shows it on the page: once, never while held.
+  const formKey = (e: KeyboardEvent<HTMLFormElement>): void => {
+    if (e.key !== 'Enter' || e.defaultPrevented || !(e.target instanceof HTMLInputElement) || e.target.type === 'color') return;
+    e.preventDefault();
+    if (sends(e)) void add();
+  };
+
+  const length = (prop: LayerProperty, label: string): ReactElement => (
+    <LengthField id={`live-style-${prop}`} label={label} spec={LENGTHS[prop] as LengthSpec} value={valueOf(prop)} base={base(prop)}
+      anchor={anchorOf(prop, valueOf(prop), fontPx)} changed={changedOf(prop)} onSet={(css) => setMany([prop], css)} onReset={() => reset([prop])} />
+  );
+  const colour = (prop: LayerProperty, label: string): ReactElement => (
+    <ColorField id={`live-style-${prop}`} label={label} value={valueOf(prop)} base={base(prop)} colours={siteColours} refs={refs} changed={changedOf(prop)}
+      onSet={(css) => setMany([prop], css)} onReset={() => reset([prop])}
+      report={(typed) => { if (typed) wrong.current.set(label, typed); else wrong.current.delete(label); }} />
+  );
+  const sides = (group: 'padding' | 'margin', label: string, names: readonly [string, string, string, string]): ReactElement => (
+    <SidesField group={group} label={label} names={names} sides={group === 'padding' ? PADDING : MARGIN} spec={LENGTHS[group === 'padding' ? 'padding-top' : 'margin-top'] as LengthSpec}
+      valueOf={valueOf} baseOf={base} changedOf={changedOf} linked={linked(group)} onLink={(on) => link(group, on)} onSet={setMany} onReset={reset} />
+  );
 
   return (
-    <form className="live-style live-layer-edit" onSubmit={(e) => void add(e)} aria-label="Try a style">
-      <div className="live-style-grid">
-        {CONTROLS.map((c) => {
-          const id = `live-style-${c.prop}`;
-          const value = values[c.prop] ?? base(c.prop);
-          return (
-            <div key={c.prop} className="live-style-row">
-              <label htmlFor={id} className="small">{c.label}</label>
-              {c.kind === 'color' ? (
-                <span className="live-style-color">
-                  <input id={id} type="color" value={hexOf(value) ?? '#ffffff'} onChange={(e) => set(c.prop, e.target.value)} />
-                  <span className="mono small faint">{hexOf(value) ?? 'none'}</span>
-                </span>
-              ) : c.kind === 'length' ? (
-                <span className="live-style-length">
-                  <input id={id} type="number" step={c.step ?? 1} value={pxOf(value)} placeholder={pxOf(value) ? undefined : value || 'auto'}
-                    onChange={(e) => set(c.prop, e.target.value === '' ? '' : `${e.target.value}px`)} />
-                  <span className="faint small">px</span>
-                </span>
-              ) : (
-                <select id={id} value={c.options.includes(value) ? value : ''} onChange={(e) => set(c.prop, e.target.value)}>
-                  {c.options.includes(value) ? null : <option value="">{value || '—'}</option>}
-                  {c.options.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-              )}
-            </div>
-          );
-        })}
-      </div>
+    <form className="live-style live-layer-edit" onSubmit={(e) => void add(e)} onKeyDown={formKey} aria-label="Try a style">
       <fieldset className="live-layer-scope">
         <legend className="live-section-title">For</legend>
         <label className="live-layer-scope-option">
@@ -287,16 +285,34 @@ export function StyleEdit({ pick, layer, page, trace, onAdded, onDone }: {
         ) : null}
       </fieldset>
       <Fragile target={target} scope={scope} />
-      <div className="live-actions">
+      <Section title="Text" className="live-style-group">
+        {colour('color', 'Text colour')}
+        {length('font-size', 'Text size')}
+        <LengthField id="live-style-font-weight" label="Weight" spec={LENGTHS['font-weight'] as LengthSpec} value={valueOf('font-weight')} base={base('font-weight')}
+          anchor={null} changed={changedOf('font-weight')} onSet={(css) => setMany(['font-weight'], css)} onReset={() => reset(['font-weight'])} />
+        {length('line-height', 'Line height')}
+        {length('letter-spacing', 'Letter spacing')}
+        <AlignField value={valueOf('text-align')} base={base('text-align')} changed={changedOf('text-align')} onSet={(css) => setMany(['text-align'], css)}
+          onReset={() => reset(['text-align'])} />
+      </Section>
+      <Section title="Box" className="live-style-group">
+        {colour('background-color', 'Background')}
+        {sides('padding', 'Padding', ['Padding above', 'Padding right', 'Padding below', 'Padding left'])}
+        {sides('margin', 'Space around', ['Space above', 'Space right', 'Space below', 'Space left'])}
+        {length('border-radius', 'Corners')}
+        {length('gap', 'Gap')}
+      </Section>
+      <div className="live-actions live-style-actions">
         <Button size="s" tone="primary" icon="check" type="submit" disabled={!chosen.length || !target}>Show it on the page</Button>
-        <Button size="s" tone="quiet" icon="undo" onClick={() => setValues({})} disabled={!Object.keys(values).length}>Reset</Button>
         <Button size="s" tone="quiet" onClick={onDone}>Done</Button>
+        {/* Every field back to the site's at once; each field's own undo puts back one. */}
+        <IconButton size="s" icon="undo" label="Reset" className="live-style-reset-all" onClick={() => setValues({})} disabled={!Object.keys(values).length} />
       </div>
       <p className="faint small">
-        Shown on the page as you change it, for {reach}; Show it on the page keeps it in Wanigan’s layer{layer.on ? '' : ' (the page is shown without the layer now, so it shows once you show the layer again)'}.
-        Making it real goes to an agent as intent, to make in the theme’s own styles.
+        Each value shows on the page as you change it; Enter keeps the style in Wanigan’s layer{layer.on ? '' : ' (the page is shown without the layer now, so it shows once you show the layer again)'}.
+        Making it real goes to an agent, to make in the theme’s own styles.
       </p>
-      <Disclosure title="A token, for the whole site" summary="a custom property">
+      <Disclosure title="A token, for the whole site" summary="a custom property" className="live-style-token">
         <div className="live-style-grid">
           <div className="live-style-row">
             <label htmlFor="live-token-name" className="small">Custom property</label>

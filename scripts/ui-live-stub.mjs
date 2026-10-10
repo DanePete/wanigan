@@ -942,8 +942,8 @@ export function liveStub(f) {
       const textHash = `a1b2c3d4e5f6${index.toString(16).padStart(4, '0')}`;
       const before = {
         color: 'rgb(20, 20, 20)', 'background-color': 'rgba(0, 0, 0, 0)', 'font-size': '16px', 'font-weight': '400', 'line-height': '24px', 'letter-spacing': 'normal',
-        'text-align': 'start', 'padding-top': '0px', 'padding-right': '0px', 'padding-bottom': '0px', 'padding-left': '0px', 'margin-top': '0px', 'margin-bottom': '0px',
-        'border-radius': '0px', gap: 'normal', text: name,
+        'text-align': 'start', 'padding-top': '0px', 'padding-right': '0px', 'padding-bottom': '0px', 'padding-left': '0px', 'margin-top': '0px', 'margin-right': '0px',
+        'margin-bottom': '0px', 'margin-left': '0px', 'border-radius': '0px', gap: 'normal', text: name,
       };
       const teaser = /^p-teaser-(\d)$/.exec(r.part ?? '');
       if (teaser) {
@@ -1104,6 +1104,39 @@ export function liveStub(f) {
       window.__wgLive.calls.push(`layerTypeEnd ${keep}`);
       const w = window.__wgLive;
       w.typed?.(keep ? w.typing : null);
+    },
+    // The site's own colours (live-site-colours.ts), as main would answer them for a made-up WordPress site: its
+    // theme.json palette by origin, its tokens, and the colours its page uses, ranked. window.__wgLive.siteColours
+    // replaces the answer (a site whose helper is older, say).
+    async siteColours() {
+      window.__wgLive.calls.push('siteColours');
+      return window.__wgLive.siteColours ?? {
+        palette: {
+          state: 'ok', platform: 'wordpress',
+          colours: [
+            { slug: 'pine', name: 'Pine', value: '#2f5d50', origin: 'theme', ref: '--wp--preset--color--pine' },
+            { slug: 'lake', name: 'Lake', value: '#3b82c4', origin: 'theme', ref: '--wp--preset--color--lake' },
+            { slug: 'ember', name: 'Ember', value: '#c4572d', origin: 'theme', ref: '--wp--preset--color--ember' },
+            { slug: 'paper', name: 'Paper', value: '#f7f4ee', origin: 'theme', ref: '--wp--preset--color--paper' },
+            { slug: 'ink', name: 'Ink', value: '#1d2a3a', origin: 'custom', ref: '--wp--preset--color--ink' },
+            { slug: 'black', name: 'Black', value: '#000000', origin: 'default', ref: '--wp--preset--color--black' },
+          ],
+          notYet: [],
+        },
+        tokens: [
+          { name: '--acme-accent', value: '#e0a526', on: 'root' },
+          { name: '--acme-rule', value: 'rgb(214, 207, 194)', on: 'root' },
+          { name: '--acme-card', value: '#ffffff', on: 'body' },
+        ],
+        used: [
+          { value: 'rgb(247, 244, 238)', as: ['background'], elements: 4, share: 0.61 },
+          { value: 'rgb(29, 42, 58)', as: ['text', 'border'], elements: 48, share: 0.14 },
+          { value: 'rgb(47, 93, 80)', as: ['background', 'text'], elements: 9, share: 0.11 },
+          { value: 'rgb(255, 255, 255)', as: ['background'], elements: 12, share: 0.08 },
+          { value: 'rgb(96, 106, 117)', as: ['text'], elements: 31, share: 0.04 },
+          { value: 'rgb(214, 207, 194)', as: ['border'], elements: 22, share: 0.02 },
+        ],
+      };
     },
     async layerTry(values, scope) {
       window.__wgLive.calls.push(values ? `layerTry ${scope ?? 'this'} ${JSON.stringify(values)}` : 'layerTry off');

@@ -49,6 +49,7 @@ import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
 import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
+import { siteColoursOf } from '../src/shared/site-colours.ts';
 import { fitProblems } from './ui-fit.mjs';
 import { pageScriptSource } from '../src/main/live-page-source.ts';
 
@@ -1027,17 +1028,224 @@ try {
       await kind.click();
       await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTry kind {"font-size":"22px"}'), n, { timeout: 2000 })
         .catch(async () => fail(t(`layer: every one of its kind was not shown the size as it was chosen (${(await since(n)).join(', ')})`)));
-      await page.getByRole('button', { name: 'Show it on the page' }).click();
+      // Enter in a box keeps the style, as Show it on the page does: once.
+      await page.locator('#live-style-font-size').press('Enter');
       await page.waitForSelector('.live-layer-added:has-text("for every event node (3 elements on this page)")', { timeout: 3000 })
-        .catch(() => fail(t('layer: a style for every instance was not said with its reach')));
-      if (!(await since(n)).includes('layerAdd style kind')) fail(t('layer: the style was not added for every instance'));
+        .catch(() => fail(t('layer: Enter in a box did not keep the style for every instance, said with its reach')));
+      if ((await counted(n, /^layerAdd style kind/)) !== 1) fail(t(`layer: Enter in a box added ${await counted(n, /^layerAdd style kind/)} styles for every instance, not one`));
+
+      // ── The fields themselves: each length a slider and a box bound together, the site's value where the slider
+      // starts, a drag sent to the page at most once a frame, colours typed or chosen from the site's, a field put back
+      // on its own, padding's four sides linked. Nothing below is kept: the tray's counts later stay as they were.
+      const field = (id) => page.evaluate((i) => {
+        const box = document.getElementById(i);
+        const slider = document.getElementById(`${i}-slider`);
+        return { box: box?.value ?? null, slider: slider ? Number(slider.value) : null, min: slider ? Number(slider.min) : null, max: slider ? Number(slider.max) : null,
+          text: slider?.getAttribute('aria-valuetext') ?? null, name: slider?.getAttribute('aria-label') ?? null, changed: box?.closest('.live-style-field')?.hasAttribute('data-changed') ?? null };
+      }, id);
+      const tries = async (k) => (await since(k)).filter((c) => /^layerTry (this|kind) /.test(c));
+      const lastTry = async (k) => { const all = await tries(k); return all.length ? JSON.parse(all.at(-1).replace(/^layerTry (this|kind) /, '')) : null; };
+      const frames = (k = 2) => page.evaluate((m) => new Promise((done) => { let i = 0; const f = () => (++i >= m ? done() : requestAnimationFrame(f)); requestAnimationFrame(f); }), k);
+      {
+        const size = await field('live-style-font-size');
+        if (size.box !== '16' || size.slider !== 16) fail(t(`layer: the text size does not start at the site’s 16px on both the box and the slider (${JSON.stringify(size)})`));
+        if (size.min !== 8 || size.max !== 96) fail(t(`layer: the text size’s range is not 8–96 (${size.min}–${size.max})`));
+        if (size.name !== 'Text size' || size.text !== '16 px') fail(t(`layer: the text size slider is not named by its field, with its value and unit (${size.name}: ${size.text})`));
+        if (size.changed) fail(t('layer: the site’s own text size is marked as changed'));
+        if ((await page.getAttribute('#live-style-font-size', 'aria-label')) !== 'Text size in px') fail(t('layer: the text size box is not named by its field and unit'));
+        await layerShot('layer-style-fields', '#live-style-font-size');
+
+        // Typed in the box, the slider follows; a value past the range widens it, never clamps it.
+        n = await mark();
+        await page.fill('#live-style-font-size', '120');
+        const wide = await field('live-style-font-size');
+        if (wide.slider !== 120 || wide.max < 120) fail(t(`layer: 120px typed in the box did not move the slider there, widening its range (${JSON.stringify(wide)})`));
+        if (!wide.changed) fail(t('layer: a text size changed from the site’s is not marked as changed'));
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"font-size":"120px"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a size typed in the box was not shown on the page')));
+        // Slid by the keyboard, the box follows: an arrow steps one, Shift and an arrow ten.
+        await page.focus('#live-style-font-size-slider');
+        await page.keyboard.press('ArrowLeft');
+        if ((await field('live-style-font-size')).box !== '119') fail(t(`layer: an arrow on the slider did not step the box to 119 (${(await field('live-style-font-size')).box})`));
+        await page.keyboard.press('Shift+ArrowLeft');
+        if ((await field('live-style-font-size')).box !== '109') fail(t(`layer: Shift and an arrow on the slider did not step ten (${(await field('live-style-font-size')).box})`));
+        await page.focus('#live-style-font-size');
+        await page.keyboard.press('Shift+ArrowUp');
+        await page.keyboard.press('ArrowDown');
+        const stepped = await field('live-style-font-size');
+        if (stepped.box !== '118' || stepped.slider !== 118) fail(t(`layer: arrows in the box did not step it and the slider together (${JSON.stringify(stepped)})`));
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"font-size":"118px"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a size stepped by the keyboard was not shown on the page')));
+
+        // Its own undo puts the field back to the site's, and the page with it.
+        n = await mark();
+        await page.getByRole('button', { name: 'Put Text size back to the site’s 16px' }).click();
+        const back = await field('live-style-font-size');
+        if (back.box !== '16' || back.slider !== 16 || back.changed) fail(t(`layer: the text size’s own undo did not put it back to the site’s 16px (${JSON.stringify(back)})`));
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).at(-1) === 'layerTry off', n, { timeout: 2000 })
+          .catch(async () => fail(t(`layer: put back, the size was still shown on the page (${(await since(n)).join(', ')})`)));
+
+        // Sixty changes in one go reach the page as one preview, the last; a drag sends at most one a frame, and its last value lands.
+        n = await mark();
+        await page.evaluate(() => {
+          const el = document.getElementById('live-style-font-size-slider');
+          const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          for (let px = 20; px < 80; px++) { setValue.call(el, String(px)); el.dispatchEvent(new Event('input', { bubbles: true })); }
+        });
+        await frames(3);
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"font-size":"79px"}')), n, { timeout: 2000 }).catch(() => {});
+        const burst = await tries(n);
+        if (burst.length > 2) fail(t(`layer: sixty changes in one go sent ${burst.length} previews into the page, not one (${burst.join(', ')})`));
+        if ((await lastTry(n))?.['font-size'] !== '79px') fail(t(`layer: the last of sixty changes was not the one shown (${burst.join(', ')})`));
+        const slider = page.locator('#live-style-font-size-slider');
+        // Centred in the Inspector, clear of the actions that stay at its foot.
+        await slider.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+        await frames(1);
+        const box = await slider.boundingBox();
+        n = await mark();
+        await page.evaluate(() => { window.__frames = 0; const tick = () => { window.__frames++; window.__frameLoop = requestAnimationFrame(tick); }; window.__frameLoop = requestAnimationFrame(tick); });
+        await page.mouse.move(box.x + box.width * 0.1, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width * 0.9, box.y + box.height / 2, { steps: 40 });
+        await page.mouse.up();
+        await frames(3);
+        const drawn = await page.evaluate(() => { cancelAnimationFrame(window.__frameLoop); return window.__frames; });
+        const dragged = await field('live-style-font-size');
+        await page.waitForFunction(([k, v]) => window.__wgLive.calls.slice(k).some((c) => c.endsWith(`{"font-size":"${v}px"}`)), [n, dragged.box], { timeout: 2000 }).catch(() => {});
+        const sent = await tries(n);
+        if (sent.length > drawn + 1) fail(t(`layer: a drag sent ${sent.length} previews in ${drawn} frames: more than one a frame`));
+        if (sent.length < 1) fail(t('layer: a drag sent no preview'));
+        if ((await lastTry(n))?.['font-size'] !== `${dragged.box}px` || dragged.slider !== Number(dragged.box)) fail(t(`layer: the drag’s last value (${dragged.box}px, slider ${dragged.slider}) was not the one shown (${sent.at(-1)})`));
+        if (Number(dragged.box) <= 70) fail(t(`layer: dragged right across the slider, the size is ${dragged.box}`));
+        console.log(`  ${theme}: a 40-step drag sent ${sent.length} previews in ${drawn} frames; sixty changes at once sent ${burst.length}`);
+        await page.getByRole('button', { name: 'Put Text size back to the site’s 16px' }).click();
+
+        // A weight steps by a hundred, each said by its name.
+        await page.focus('#live-style-font-weight-slider');
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('Shift+ArrowRight');
+        const heavy = await field('live-style-font-weight');
+        if (heavy.box !== '600' || heavy.text !== 'Semibold, 600' || !(await page.locator('#live-style-font-weight-unit').innerText()).includes('Semibold'))
+          fail(t(`layer: the weight did not step by a hundred to Semibold, said by name (${JSON.stringify(heavy)})`));
+        await page.getByRole('button', { name: 'Put Weight back to the site’s 400' }).click();
+
+        // Letter spacing: the site's normal is where the slider starts, at no extra space, and it goes below zero in half steps.
+        const spacing = await field('live-style-letter-spacing');
+        if (spacing.box !== '' || spacing.slider !== 0 || spacing.min >= 0 || spacing.text !== 'normal, the site’s') fail(t(`layer: letter spacing does not start at the site’s normal (${JSON.stringify(spacing)})`));
+        if ((await page.getAttribute('#live-style-letter-spacing', 'placeholder')) !== 'normal') fail(t('layer: letter spacing does not say the site’s normal'));
+        await page.focus('#live-style-letter-spacing-slider');
+        await page.keyboard.press('ArrowLeft');
+        if ((await field('live-style-letter-spacing')).box !== '-0.5') fail(t(`layer: letter spacing did not step below zero by a half (${(await field('live-style-letter-spacing')).box})`));
+        await page.getByRole('button', { name: 'Put Letter spacing back to the site’s normal' }).click();
+
+        // Align: the foundation's segmented control, the site's own start chosen to begin with.
+        const align = page.getByRole('radiogroup', { name: 'Align' });
+        if ((await align.getByRole('radio', { checked: true }).innerText().catch(() => '')) !== 'Start') fail(t('layer: Align does not show the site’s start as chosen'));
+        n = await mark();
+        await align.getByRole('radio', { name: 'Centre' }).click();
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"text-align":"center"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: Centre was not shown on the page')));
+        await page.keyboard.press('ArrowRight');
+        if ((await align.getByRole('radio', { checked: true }).innerText().catch(() => '')) !== 'Right') fail(t('layer: an arrow in Align did not choose the next'));
+        await page.getByRole('button', { name: 'Put Align back to the site’s start' }).click();
+
+        // Colours: typed as hex or rgb(), or chosen from the colours the page's root names; never only the system's panel.
+        n = await mark();
+        await page.fill('#live-style-color', 'rgb(192, 57, 43)');
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"color":"rgb(192, 57, 43)"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a colour typed as rgb() was not shown on the page')));
+        await page.fill('#live-style-color', '#1E8449');
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"color":"#1e8449"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a colour typed as hex was not shown on the page')));
+        const swatch = page.getByRole('button', { name: 'Text colour: the site’s colours' });
+        await swatch.click();
+        if ((await swatch.getAttribute('aria-expanded')) !== 'true') fail(t('layer: the swatch did not open the site’s colours'));
+        // In their order of authority, each group saying where its colours came from: the declared palette, the theme's tokens, the page's own.
+        const groups = await page.locator('.live-style-palette:not([hidden]) .live-style-source').allInnerTexts();
+        if (groups.join(' | ').replace(/\s+/g, ' ') !== 'Site palette theme.json and global styles | Theme tokens custom properties on the page | Used on this page by the area each covers')
+          fail(t(`layer: the site’s colours are not grouped by where they came from, in order (${groups.join(' | ')})`));
+        const swatches = async (group) => page.getByRole('toolbar', { name: `${group}, for Text colour` }).getByRole('button').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
+        const palette = await swatches('Site palette');
+        if (palette.length !== 6 || palette[1] !== 'Lake, #3b82c4, from the theme’s theme.json' || palette[4] !== 'Ink, #1d2a3a, from global styles (Site Editor)')
+          fail(t(`layer: the declared palette is not offered by name and origin (${palette.join(' | ')})`));
+        const tokens = await swatches('Theme tokens');
+        if (tokens.join(' | ') !== '--acme-accent, #e0a526, set on the page’s root | --acme-rule, rgb(214, 207, 194), set on the page’s root | --acme-card, #ffffff, set on the page’s body')
+          fail(t(`layer: the theme’s tokens are not offered by name (${tokens.join(' | ')})`));
+        const usedHere = await swatches('Used on this page');
+        if (usedHere.length !== 6 || usedHere[1] !== 'rgb(29, 42, 58), text and border, on 48 elements') fail(t(`layer: the colours the page uses are not said by value and how they are used (${usedHere.join(' | ')})`));
+        if (!(await page.getByLabel('Any colour, from the system’s panel').count())) fail(t('layer: the system’s colour panel is not offered beside the site’s colours'));
+        await layerShot('layer-style-colours', '.live-style-palette:not([hidden])');
+        // A palette entry and a token are written as their references, so the edit follows the site's design system; a used colour as itself.
+        const lake = page.getByRole('button', { name: 'Lake, #3b82c4, from the theme’s theme.json' });
+        await lake.click();
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"color":"var(--wp--preset--color--lake)"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a palette colour chosen was not shown on the page as the preset’s reference')));
+        if ((await page.inputValue('#live-style-color')) !== 'var(--wp--preset--color--lake)') fail(t('layer: the colour box does not say the palette colour chosen'));
+        if ((await lake.getAttribute('aria-pressed')) !== 'true') fail(t('layer: the palette colour chosen is not shown as chosen'));
+        await page.getByRole('button', { name: '--acme-accent, #e0a526, set on the page’s root' }).click();
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"color":"var(--acme-accent)"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a token chosen was not shown on the page as its reference')));
+        await page.getByRole('button', { name: 'rgb(47, 93, 80), background and text, on 9 elements' }).click();
+        await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"color":"rgb(47, 93, 80)"}')), n, { timeout: 2000 })
+          .catch(() => fail(t('layer: a colour the page uses was not shown on the page as itself')));
+        await page.getByRole('button', { name: 'rgb(47, 93, 80), background and text, on 9 elements' }).press('Escape');
+        if ((await swatch.getAttribute('aria-expanded')) !== 'false' || !(await page.$('.live-inspector'))) fail(t('layer: Escape in the site’s colours did not close them alone'));
+        // A colour that is not one is said, and Enter refuses it by name rather than keep the style without it.
+        n = await mark();
+        const heardFrom = await saidCount(page);
+        await page.fill('#live-style-color', 'banana');
+        await page.locator('#live-style-color').press('Enter');
+        if ((await page.getAttribute('#live-style-color', 'aria-invalid')) !== 'true' || !(await page.locator('.live-style-wrong').count())) fail(t('layer: a colour that is not one was not said to be wrong'));
+        if (!(await heard(page, 'Text colour: “banana” is not a colour', heardFrom))) fail(t(`layer: Enter with a wrong colour was not refused by name (${await lastSaid(page)})`));
+        if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layer: a style with a wrong colour in it was kept'));
+        await page.getByRole('button', { name: 'Put Text colour back to the site’s #141414' }).click();
+        if ((await page.inputValue('#live-style-color')) !== '#141414' || (await page.locator('.live-style-wrong').count())) fail(t('layer: the colour’s own undo did not put back the site’s #141414'));
+        // A clear background says none.
+        if ((await page.getAttribute('#live-style-background-color', 'placeholder')) !== 'none' || (await page.inputValue('#live-style-background-color')) !== '') fail(t('layer: a clear background does not say none'));
+      }
       n = await mark();
+      // Padding's four sides start linked (the site's are the same): one slider sets all four; unlinked, each its own.
+      if ((await page.getByRole('button', { name: 'Padding: the same on every side' }).getAttribute('aria-pressed')) !== 'true') fail(t('layer: four equal sides of padding do not start linked'));
+      await page.fill('#live-style-padding', '24');
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.endsWith('{"padding-top":"24px","padding-right":"24px","padding-bottom":"24px","padding-left":"24px"}')), n, { timeout: 2000 })
+        .catch(async () => fail(t(`layer: linked padding did not set every side (${(await since(n)).join(', ')})`)));
+      await page.getByRole('button', { name: 'Padding: the same on every side' }).click();
+      if ((await page.$$('#live-style-padding-top, #live-style-padding-right, #live-style-padding-bottom, #live-style-padding-left')).length !== 4) fail(t('layer: unlinked padding does not show its four sides'));
       await page.fill('#live-style-padding-top', '30');
-      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.startsWith('layerTry ') && c.includes('{"padding-top":"30px"}')), n, { timeout: 2000 })
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.startsWith('layerTry ') && c.includes('"padding-top":"30px","padding-right":"24px"')), n, { timeout: 2000 })
         .catch(() => fail(t('layer: a third style was not shown on the page as it changed')));
+      if ((await page.getAttribute('#live-style-padding-top-slider', 'aria-label')) !== 'Padding above') fail(t('layer: a side’s slider is not named for its side'));
+      await layerShot('layer-style-sides', '.live-style-sides');
+      // Given room (the Inspector widened from its edge, by the keyboard), a field is one line: its label, its slider, its box.
+      {
+        const edge = page.locator('.live-inspector-panel .panel-edge');
+        await edge.focus();
+        await page.keyboard.press('End');
+        await frames(2);
+        const [box, slider] = await page.evaluate(() => ['live-style-font-size', 'live-style-font-size-slider'].map((id) => {
+          const r = document.getElementById(id).getBoundingClientRect();
+          return { middle: Math.round(r.top + r.height / 2), left: Math.round(r.left), width: Math.round(r.width) };
+        }));
+        if (Math.abs(box.middle - slider.middle) > 4 || slider.left > box.left || slider.width < 150) fail(t(`layer: in a wide Inspector the text size is not one line of label, slider and box (${JSON.stringify({ box, slider })})`));
+        await layerShot('layer-style-wide', '#live-style-font-size');
+        await edge.dblclick();
+      }
       await page.getByRole('button', { name: 'Done' }).click();
       await page.waitForFunction((k) => window.__wgLive.calls.slice(k).at(-1) === 'layerTry off', n, { timeout: 2000 }).catch(() => fail(t('layer: Done left the style being tried on the page')));
       if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layer: a style tried and left with Done was added to the layer'));
+      // A group with no colours is left out, never filled; a palette the helper cannot give is said, with what to do.
+      await set({ siteColours: { palette: { state: 'outdated' }, tokens: [{ name: '--acme-accent', value: '#e0a526', on: 'root' }], used: [] } });
+      await page.getByRole('button', { name: /^Edit Spring open house/ }).click();
+      await page.getByRole('menuitemcheckbox', { name: /^Try a style/ }).click();
+      await page.getByRole('button', { name: 'Text colour: the site’s colours' }).click();
+      {
+        const shown = (await page.locator('.live-style-palette:not([hidden]) .live-style-source-name').allInnerTexts()).join(', ');
+        if (shown !== 'Theme tokens') fail(t(`layer: with no palette and no colours read from the page, the groups shown are ${shown}`));
+        if (!(await page.locator('.live-style-palette:not([hidden])').innerText()).includes('The site’s declared palette is read by a newer site helper: update it from the project’s Live tab.'))
+          fail(t('layer: a helper too old for the palette is not said'));
+      }
+      await set({ siteColours: null });
+      await page.getByRole('button', { name: 'Done' }).click();
 
       // Retyped words are a text draft; markup no part names is said to be fragile before the edit is made, and how:
       // its words guard it. Enter adds it once: not when an input method confirms a word, not again while it is held.
@@ -2204,6 +2412,39 @@ try {
   const cardsGone = await trying.$$eval('.card > h3', (els) => els.map((e) => [e.getAttribute('style'), e.getAttribute('data-wl-try')]));
   if (JSON.stringify(gone) !== JSON.stringify(plain) || cardsGone.some(([style, mark]) => style !== null || mark !== null)) fail(`page script: the style tried left a trace: ${JSON.stringify({ gone, cardsGone })}`);
   await trying.close();
+
+  // The site's own colours as the page shows them: tokens on the root, on <body> and on a top container, read where
+  // each is set; the colours used, by area, the near-identical merged, the transparent, the hidden and the layer's own
+  // left out (src/shared/site-colours.ts ranks what the page script measured).
+  const colours = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await colours.setContent(`<!doctype html><html><head><style>
+:root { --acme-ink: #1d2a3a; --acme-sky: rgb(59, 130, 196); --acme-gap: 16px; --acme-clear: transparent; }
+body { --acme-paper: #f7f4ee; margin: 0; background: #f7f4ee; color: #1d2a3a; font: 16px sans-serif; }
+.wrap { --acme-card: #ffffff; }
+.card { background: #ffffff; border: 2px solid rgb(214, 207, 194); padding: 12px; margin: 12px; }
+.near { color: rgb(30, 43, 59); }
+.ghost { background: rgba(0, 0, 0, 0); }
+.gone { display: none; background: #ff00ff; }
+</style></head><body><div class="wrap"><h1>Fieldnotes</h1><div class="card"><p>Trail one</p><p class="near">Trail two</p></div>
+<div class="ghost">Clear</div><div class="gone">Never</div><div class="card" data-wl-edit="e1" style="background: #c0392b">The layer’s own</div></div></body></html>`);
+  await colours.addScriptTag({ content: script });
+  {
+    const raw = await colours.evaluate(() => window.__wl.layerColors());
+    const site = siteColoursOf(raw, { state: 'none', platform: 'drupal' });
+    const tokens = Object.fromEntries(site.tokens.map((x) => [x.name, `${x.value} ${x.on}`]));
+    for (const [name, want] of [['--acme-ink', '#1d2a3a root'], ['--acme-sky', 'rgb(59, 130, 196) root'], ['--acme-paper', '#f7f4ee body'], ['--acme-card', '#ffffff container']]) {
+      if (tokens[name] !== want) fail(`page script: the token ${name} was read as ${tokens[name]}, not ${want} (${JSON.stringify(site.tokens)})`);
+    }
+    if (tokens['--acme-gap'] || tokens['--acme-clear']) fail(`page script: a length or a transparent custom property was read as a colour (${JSON.stringify(site.tokens)})`);
+    const used = site.used.map((u) => `${u.value} ${u.as.join('+')} ${u.elements}`);
+    if (!/^rgb\(247, 244, 238\) background/.test(used[0] ?? '')) fail(`page script: the page’s own background is not the colour that covers most (${used.join(' | ')})`);
+    const ink = site.used.find((u) => u.value === 'rgb(29, 42, 58)');
+    if (!ink || !ink.as.includes('text') || ink.elements < 3) fail(`page script: the ink and the near-identical ink were not merged as one text colour (${used.join(' | ')})`);
+    if (site.used.some((u) => u.value === 'rgb(30, 43, 59)')) fail(`page script: a near-identical colour was kept apart (${used.join(' | ')})`);
+    if (!site.used.some((u) => u.value === 'rgb(214, 207, 194)' && u.as.includes('border'))) fail(`page script: the cards’ border colour was not read (${used.join(' | ')})`);
+    if (site.used.some((u) => /255, 0, 255|192, 57, 43|, 0\)$/.test(u.value))) fail(`page script: a hidden, a transparent or the layer’s own colour was read as the page’s (${used.join(' | ')})`);
+  }
+  await colours.close();
 
   // The verification's masks: where the trace's parts are on the page, and the blocks a helper marked as changing
   // between renders (data-wanigan-vary, held still or not), in document pixels.

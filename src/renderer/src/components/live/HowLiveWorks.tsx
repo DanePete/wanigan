@@ -69,7 +69,8 @@ export function HowLiveWorks({ project, layer, drafts, helper, cms, notes, agent
         <HowArrow />
         <HowBox actor="you" title="Type or style it" num={layer ? howNum(drafts, 'draft on the page now', 'drafts on the page now') : null}>
           E types on its words where they are, each key shown as you type; Enter keeps them, Esc puts them back. Style tries a style on it, or on every one of
-          its kind, its reach said before you choose.
+          its kind, its reach said before you choose: each value shows on the page as you slide or type it, and Enter keeps it. Its colours come from the
+          site itself, each said by where it came from: the palette the site declares (WordPress’s theme.json), its theme’s tokens, and the colours its page uses.
         </HowBox>
       </HowLane>
 
