@@ -1,13 +1,16 @@
 // Writing notes on the live page and sending them to an agent: the box under a
-// chosen part, the list of notes waiting, and the one message they become.
+// chosen part, the list of notes waiting (the dock's Notes tab, with the words
+// saved by hand), and the one message they become.
 import { useState } from 'react';
-import type { LiveComponent } from '@shared/live';
+import type { LayerSnapshot } from '@shared/design-layer';
+import type { LiveComponent, LiveEdit } from '@shared/live';
 import type { ProjectSummary, Session } from '@shared/model';
 import { nameOf } from '@shared/live-names';
 import { isAddKey, isSendKey } from '@shared/live-keys';
 import { keyLabel } from '@shared/shortcuts';
 import { attempt, bridge, call, forProject, useQuery } from '../../lib/api';
 import { liveBridge } from '../../lib/live';
+import { heldInLayer } from '../../lib/live-layer';
 import { Select } from '../Select';
 import { Button, IconButton, useToast } from '../ui';
 import { Icon } from '../icons';
@@ -207,4 +210,37 @@ export function NotesTab({ project, components, sender, onShow }: {
 /** A note for a part with nothing tried by hand yet. */
 export function draftFor(url: string, selection: { regions: Draft['regions']; pick: Draft['pick'] }): Draft {
   return { url, regions: selection.regions, pick: selection.pick, words: null, style: [] };
+}
+
+/**
+ * Words saved by hand to templates, newest first, each put back with one click while the file is as it left it, and
+ * while the design layer does not hold them as in the site (`layer`: the project's layer).
+ */
+export function EditsList({ project, layer }: { project: ProjectSummary; layer: LayerSnapshot | null }) {
+  const toast = useToast();
+  const edits = useQuery('live.edits', { projectId: project.id }, ['liveEdits'], (_e, d) => (d as { projectId?: string }).projectId === project.id);
+  const list = (edits.data ?? []).slice(0, 8);
+  if (!list.length) return null;
+  const revert = async (e: LiveEdit): Promise<void> => {
+    const done = await attempt(() => call('live.revert', { id: e.id }), (m) => toast(m, 'error'));
+    if (done) { toast(`Put back “${e.before}”.`); void liveBridge()?.reload(); }
+  };
+  return (
+    <div className="live-side-block live-edits">
+      <h3 className="live-section-title">Saved by hand</h3>
+      <ul className="live-made">
+        {list.map((e) => (
+          <li key={e.id}>
+            <span className="small">“{e.before}” → “{e.after}”</span>
+            <span className="mono small faint" title={e.path}>{e.path.split('/').pop() ?? e.path}:{e.line}</span>
+            {e.revertedAt ? <span className="faint small">Put back</span>
+              // The core never takes an edit in the site back out of the layer: put back, the layer would say the site has these words.
+              : heldInLayer(e, layer) ? <span className="faint small">In the design layer as in the site, which it never takes back: put back by hand</span>
+              : e.revertable ? <Button size="s" tone="quiet" icon="undo" onClick={() => revert(e)}>Put back</Button>
+                : <span className="faint small">Changed since: put back by hand</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

@@ -18,6 +18,8 @@ use Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem;
 use Drupal\Core\Plugin\Context\Context;
 use Drupal\Core\Plugin\Context\ContextDefinition;
 use Drupal\Core\Plugin\Context\EntityContext;
+use Drupal\wanigan_live\Save\ConfigWords;
+use Drupal\wanigan_live\Save\TemplateWords;
 use Drupal\wanigan_live\Trace\Describe;
 use Drupal\wanigan_live\Trace\Frame;
 use Drupal\wanigan_live\Trace\Preview;
@@ -87,6 +89,7 @@ final class Targets {
     }
     elseif (isset($p['link'])) {
       $out[] = $this->menuLink($p['link']['plugin']);
+      $out[] = ConfigWords::link($this->builder, $p['link']['plugin']);
     }
     elseif ($p['kind'] === 'field' && isset($meta['field'], $meta['entity'])) {
       $out[] = $this->field($meta['entity'], $meta['field']['name'], $p['frame'] ?? NULL);
@@ -114,9 +117,11 @@ final class Targets {
     }
     elseif ($p['kind'] === 'block' && !empty($meta['block']['id']) && empty($meta['block']['layout'])) {
       $out[] = $this->config('block', $meta['block']['id'], 'Block placement');
+      $out[] = ConfigWords::blockLabel($this->builder, $meta['block']['id']);
     }
     elseif ($p['kind'] === 'view' && isset($meta['view']['id'])) {
       $out[] = $this->config('view', $meta['view']['id'], 'View');
+      array_push($out, ...ConfigWords::view($this->builder, $meta['view']['id'], (string) ($meta['view']['display'] ?? 'default')));
     }
     elseif ($p['kind'] === 'menu' && !empty($meta['menu']['name'])) {
       $out[] = $this->config('menu', $meta['menu']['name'], 'Menu');
@@ -128,8 +133,17 @@ final class Targets {
       }
       $out[] = $this->props($p, $host);
     }
+    // The site's name and slogan, where core's branding block shows them.
+    if ($p['kind'] === 'block' && ($meta['block']['plugin'] ?? '') === 'system_branding_block') {
+      array_push($out, ...ConfigWords::site($this->builder, empty($meta['block']['layout']) && !empty($meta['block']['id']) ? (string) $meta['block']['id'] : NULL));
+    }
     if (!empty($p['file']) && !empty($p['alternatives'])) {
       $out[] = $this->override($p);
+    }
+    // The words its template writes, offered with why they are not saved
+    // here (code, or an interface translation).
+    if (!empty($p['file'])) {
+      array_push($out, ...TemplateWords::targets($this->builder, $p));
     }
     return array_values(array_unique(array_filter($out)));
   }
@@ -166,7 +180,7 @@ final class Targets {
     }
     $type = \Drupal::service('plugin.manager.field.field_type')->getDefinition($definition->getType(), FALSE);
     if (empty($type['default_widget']) && !EntityFormDisplay::collectRenderDisplay($entity, 'default')->getComponent($name)) {
-      return 'No form widget edits this kind of field.';
+      return 'No form widget edits this kind of field, and Wanigan does not edit one without its widget yet.';
     }
     if ($entity instanceof RefinableDependentAccessInterface && $entity->getAccessDependency() !== NULL) {
       return 'This belongs to other content (its layout or the item it is part of): change it there.';
@@ -361,7 +375,7 @@ final class Targets {
     $target = ['id' => $tid, 'kind' => 'menu-link', 'label' => 'Menu link: ' . $link->getTitle(), 'via' => 'native-form', 'revisions' => FALSE];
     $url = $link->getEditRoute();
     if ($url === NULL) {
-      $target['why'] = 'It is written in code, with no form to change it.';
+      $target['why'] = 'It is written in code, with no form to change it: Drupal keeps no such thing to change here.';
     }
     elseif (!$url->access()) {
       $target['why'] = 'The user you are logged in as may not change this link.';
@@ -404,11 +418,11 @@ final class Targets {
       $why = 'Its props come from the ' . $host['label'] . ' field: change them there.';
     }
     elseif ($meta['fromElement']) {
-      $why = 'Code builds its props from data held elsewhere; they are not stored as props.';
+      $why = 'Code builds its props from data held elsewhere: Drupal keeps no props of it to change here.';
     }
     else {
       $template = $this->hostTemplate($p['frame'] ?? NULL);
-      $why = 'Its props are written in Twig' . ($template && !empty($template['file']) ? ' in ' . basename($template['file']) : '') . ': copy that template into your theme to change them.';
+      $why = 'Its props are written in Twig' . ($template && !empty($template['file']) ? ' in ' . basename($template['file']) : '') . ', which is code: Drupal keeps no such thing to change in the site. Copy that template into your theme to change them.';
     }
     $target = [
       'id' => $tid,
@@ -587,6 +601,7 @@ use Drupal\Core\Form\FormState;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
+use Drupal\wanigan_live\Save\ConfigWords;
 use Drupal\wanigan_live\Trace\Source;
 use Drupal\wanigan_live\Trace\TraceStore;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -799,7 +814,8 @@ final class EditController extends ControllerBase {
   }
 
   /**
-   * A schema target's save: copying a template into the theme.
+   * A schema target's save: copying a template into the theme, or words
+   * kept in configuration or a menu link (ConfigWords).
    */
   private function saveSchema(Request $request, string $target): JsonResponse {
     $body = json_decode((string) $request->getContent(), TRUE);
@@ -816,6 +832,10 @@ final class EditController extends ControllerBase {
     }
     if ($info['kind'] === 'template-override') {
       return $this->copyTemplate($info, $body['value'] ?? NULL);
+    }
+    if ($info['kind'] === 'words') {
+      [$status, $answer] = ConfigWords::save($info, $body['value'] ?? NULL);
+      return self::json($answer, $status);
     }
     return self::json(['ok' => FALSE, 'error' => 'This is not changed here: it says why in the live view.'], 409);
   }

@@ -356,8 +356,43 @@ export type LayerDifference =
   | { kind: 'box'; edit: string; width: number; element: string; design: LayerRect; result: LayerRect }
   /** Pixels inside or around a touched element past the noise floor (step 2). */
   | { kind: 'pixels'; edit: string | null; width: number; rect: LayerRect; pixels: number; maxDiff: number }
-  /** Pixels away from every touched element: the change reached further than it should (step 3). */
-  | { kind: 'leak'; width: number; rect: LayerRect; pixels: number; maxDiff: number };
+  /**
+   * Pixels away from every touched element: the change reached further than it should (step 3). Against the design
+   * rendered now, or, with `against`, against the page as it was kept just before that edit was made real (with the
+   * edit as designed on it), at `at` (milliseconds).
+   */
+  | { kind: 'leak'; width: number; rect: LayerRect; pixels: number; maxDiff: number; against?: { edit: string; at: number } };
+
+/**
+ * A part of the page left out of the pixel steps because the site says it changes between renders: a Drupal part whose
+ * trace says it is built late, never cached, kept for a while, or made for each user or session; a WordPress block the
+ * helper marked by its type (a random order, today's date, a feed). Named in the verdict, never silent; the noise floor
+ * is measured over what is left. An edited element is never left out: where a part overlaps one, the edited element is
+ * compared in full all the same (`nearEdit`).
+ */
+export interface LayerMask {
+  /** What it is: the part as the trace names it ("Who’s online (block)"), or the block the helper marked ("core/calendar block"). */
+  label: string;
+  /** Why it changes between renders, in words. */
+  why: string;
+  /** The widths it was left out at. */
+  widths: number[];
+  /** It overlapped an edited element, which was compared in full all the same. */
+  nearEdit: boolean;
+}
+
+/**
+ * Step 3 against the page as it was just before the edit was made real (rendered then without the layer, and with this
+ * edit as designed on it, at the verification widths): it ran, at `at` (milliseconds) for these widths; or why it could
+ * not (no page from before was kept, another edit was made real on the page since). A verdict whose step 3 could not
+ * run against it does not claim it passed: it says so.
+ */
+export type LayerBeforeCheck =
+  | { ran: true; at: number; widths: number[] }
+  | { ran: false; why: string };
+
+/** A page that went on below where it was compared: at `width`, compared down to `to` CSS pixels of the page's `full` height. */
+export interface LayerCut { width: number; to: number; full: number }
 
 /** The verification steps, in the order they run; the first that fails stops it. Phase 1 runs the first three. */
 export const VERIFY_STEPS = ['styles', 'pixels', 'rest'] as const;
@@ -368,7 +403,10 @@ export type VerifyStep = (typeof VERIFY_STEPS)[number];
  * result is the page without it, each rendered in a hidden window at the same width, scale and session. The noise
  * floor is measured first, by rendering each version twice, and stated as two numbers (the largest channel difference
  * and how many pixels differ, each the largest over both versions and every width), never as a percentage; every
- * width is judged against it.
+ * width is judged against it. The parts the site says change between renders are left out of the pixel steps
+ * (`masked`), and the floor is measured over what is left.
+ *
+ * The fields after `pictures` came later: a verdict kept before them has none of them, and reads as it did.
  */
 export interface LayerVerdict {
   at: number;
@@ -378,6 +416,21 @@ export interface LayerVerdict {
   widths: number[];
   noise: { maxDiff: number; pixels: number };
   differences: LayerDifference[];
-  /** Pictures kept in Wanigan's data folder for the tray: the design, the result and their difference, per width. */
-  pictures: { width: number; design: string; result: string; diff: string | null }[];
+  /**
+   * Pictures kept in Wanigan's data folder for the tray: the design, the result and their difference (against the page
+   * from before too, where step 3 compared it), per width; and the page as it was before the edit was made real, where
+   * one was kept at that width.
+   */
+  pictures: { width: number; design: string; result: string; diff: string | null; before?: string | null }[];
+  /** Parts left out of the pixel steps, each with why and where (LayerMask). */
+  masked?: LayerMask[];
+  /** Step 3 against the page as it was before this edit was made real: whether it ran, or why not. */
+  before?: LayerBeforeCheck;
+  /**
+   * The site's helper held the request time still (as at `at`, seconds) and seeded random orders for every render this
+   * verdict compares, so what those would change was compared rather than left out; null when it did not.
+   */
+  held?: { at: number } | null;
+  /** Widths at which the page went on below where it was compared: a statement, passing or not, never a difference. */
+  cut?: LayerCut[];
 }

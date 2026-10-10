@@ -265,8 +265,12 @@
   gap: var(--space-1) var(--space-3);
 }
 
-/* A part of the page that is this entry: pointing at it outlines it on the page, choosing it opens it in Layers. */
-.live-library-use {
+/*
+  A part of the page that is this entry: pointing at it outlines it on the page, choosing it opens it in Layers. A
+  place elsewhere on the site opens its page in the view.
+*/
+.live-library-use,
+.live-library-place-open {
   padding: 0;
   border: 0;
   background: none;
@@ -275,7 +279,8 @@
   cursor: pointer;
 }
 
-.live-library-use:hover {
+.live-library-use:hover,
+.live-library-place-open:hover {
   text-decoration: underline;
 }
 
@@ -318,5 +323,111 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* ── where the rest of the site uses it ──────────────────────────────── */
+
+.live-library-site-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.live-library-site-head .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.live-library-site-list,
+.live-library-site-why,
+.live-library-usegroup,
+.live-library-unseen {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.live-library-site-list > *,
+.live-library-usegroup > * {
+  min-width: 0;
+}
+
+.live-library-usegroup {
+  gap: var(--space-1);
+}
+
+.live-library-usehead {
+  margin: 0;
+  font: 500 var(--text-sm) / var(--leading-tight) var(--font-ui);
+}
+
+.live-library-places,
+.live-library-gaps,
+.live-library-searched ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-library-gaps {
+  color: var(--muted);
+}
+
+.live-library-unseen {
+  gap: var(--space-1);
+}
+
+.live-library-unseen ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+/* One place: its name (a link when a page shows it) and how often, what it is in and through, and Change it beside. */
+.live-library-place {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--line);
+}
+
+.live-library-place:first-child {
+  border-top: 0;
+}
+
+.live-library-place > * {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.live-library-place > .live-library-place-edit {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+}
+
+.live-library-place-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.live-library-place-name .live-library-place-open {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.live-library-place-file {
+  justify-self: start;
+  max-width: 100%;
   text-align: left;
 }

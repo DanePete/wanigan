@@ -173,6 +173,11 @@ final class SaveCode {
     if (($private['kind'] ?? NULL) === 'field' && !empty($private['type'])) {
       return (string) $private['type'];
     }
+    // Words in a block's settings, a view or a menu link save that entity;
+    // the site's name and slogan, simple configuration.
+    if (($private['kind'] ?? NULL) === 'words') {
+      return $private['saves'] ?? NULL;
+    }
     $decoded = \Drupal\wanigan_live\Edit\Targets::decode($id);
     return match ($decoded['kind'] ?? NULL) {
       // Layout Builder's own page saves the entity's override (or the display's default).

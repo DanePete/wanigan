@@ -7,8 +7,9 @@ import type { LayerApplied, LayerEdit, LayerImplemented, LayerSnapshot, LayerVer
 import type { LiveEdit } from '../../../shared/live.ts';
 import type { EditTarget, LiveTrace, PartIdentity } from '../../../shared/live-trace.ts';
 import {
-  NOTHING_HOLDS, byPage, changeLines, differenceWords, draftsOf, elementWords, failedWords, fragileOf, heldInLayer, layerNoteLines, isFragile, madeOn, noiseWords, orphanWhy, ownTemplate,
-  pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, stateDetail, thisReach, templateOf, templateOffered, templateSaveRefused, undoLabel, verdictHeadline,
+  NOTHING_HOLDS, beforeWords, byPage, changeLines, cutWords, differenceWords, draftsOf, elementWords, failedWords, fragileOf, heldInLayer, heldWords, isFragile,
+  layerNoteLines, madeOn, maskWords, noiseWords, orphanWhy, ownTemplate, pagePath, placesOf, reachWords, redoLabel, sameTarget, sendsTyped, stateDetail,
+  templateOf, templateOffered, templateSaveRefused, thisReach, undoLabel, verdictHeadline,
 } from './live-layer.ts';
 
 const card = (nth: number): PartIdentity => ({ kind: 'component', name: 'acme:card', within: null, nth });
@@ -154,6 +155,15 @@ test('the template that rendered an element is offered only when nothing the sit
     assert.ok(why && !templateOffered(words, none(why)), `not after: ${why}`);
   }
   assert.ok(!templateOffered(words, { ok: false, id: words.id, route: 'agent', why: NOTHING_HOLDS }), 'formatted text goes to an agent');
+  // On Drupal main says what writes words nothing holds (writtenIn), and none of its answers offers a template: words a
+  // template writes go to an agent (a template is code), words printed through t() and words code makes are refused.
+  for (const answer of [
+    { ok: false, id: words.id, route: 'agent', why: 'These words are written in themes/custom/acme/templates/node.html.twig, a template: a template is code, so Drupal keeps no such thing to change in the site. An agent can change the template from a brief (a copy of it in your theme, when the template is not yours).' },
+    none('These words are printed by themes/custom/acme/templates/node.html.twig through Drupal’s interface translation (t()): Wanigan does not change an interface translation yet, and a change there reaches every page that prints the same words. Change them under Interface translation, or in the template.'),
+    none('Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.'),
+  ] as LayerImplemented[]) {
+    assert.ok(!templateOffered(words, answer), `not on Drupal: ${answer.ok ? '' : answer.why}`);
+  }
   assert.ok(!templateOffered(words, { ok: true, id: words.id, state: 'implemented', revision: null }));
   assert.ok(!templateOffered(words, null));
   assert.ok(!templateOffered({ ...words, state: 'orphaned' }, none(NOTHING_HOLDS)), 'only a draft');
@@ -253,4 +263,31 @@ test('a brief to an agent names the edit’s element as the site stores it, and 
     '   No picture of it is attached: it was made on /events, and the live view shows /about.',
   ]);
   assert.equal(layerNoteLines({ ...note, noPicture: null }, true).length, 2, 'pictured: nothing to say');
+});
+
+test('what a verification says whatever it decided: the page before compared or why not, how far down, what was held, and what was left out', () => {
+  const v: LayerVerdict = {
+    at: 1, ok: true, failed: null, widths: [390, 1440], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [],
+    before: { ran: true, at: 1, widths: [390, 1440] }, held: { at: 1_700_000_000 }, cut: [{ width: 1440, to: 6_000, full: 9_412 }],
+    masked: [{ label: 'Who’s online (block)', why: 'made for each user', widths: [390], nearEdit: false }, { label: 'The core/gallery block', why: 'shows its items in a random order', widths: [390, 1440], nearEdit: true }],
+  };
+  assert.equal(verdictHeadline(v), 'Verified at 390 and 1440 px: the site renders it as designed.');
+  assert.equal(beforeWords(v), 'The rest of the page was also compared with the page as it was just before this was made real, at 390 and 1440 px.');
+  assert.equal(cutWords(v.cut![0]!), 'At 1440 px the page is 9,412 px tall: compared down to 6,000 px, and nothing below that.');
+  assert.equal(heldWords(v), 'The site’s helper held relative dates and random orders still for every render, so they were compared rather than left out.');
+  assert.deepEqual(v.masked!.map(maskWords), [
+    'Who’s online (block): made for each user, at 390 px.',
+    'The core/gallery block: shows its items in a random order, at 390 and 1440 px. It is around an edited element, which was compared in full all the same.',
+  ]);
+  assert.equal(noiseWords(v), 'Noise floor: up to 0 of 255 in 0 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width, over what was not left out.');
+  // A pass whose step 3 could not compare with the page before does not claim it.
+  const unchecked: LayerVerdict = { ...v, before: { ran: false, why: 'No page from before was kept for it.' }, held: null };
+  assert.equal(verdictHeadline(unchecked), 'Verified at 390 and 1440 px against the design: the site renders it as designed. It was not compared with the page as it was before.');
+  assert.equal(beforeWords(unchecked), 'Not compared with the page as it was before it was made real: No page from before was kept for it.');
+  assert.equal(heldWords(unchecked), null);
+  // A verdict kept before any of these says none of them.
+  const old: LayerVerdict = { at: 1, ok: true, failed: null, widths: [390], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [] };
+  assert.deepEqual([beforeWords(old), heldWords(old), noiseWords(old), verdictHeadline(old)], [null, null, 'Noise floor: up to 0 of 255 in 0 pixels, the most the page with the layer or without it differed from itself when rendered twice, at any width.', 'Verified at 390 px: the site renders it as designed.']);
+  assert.equal(differenceWords({ kind: 'leak', width: 390, rect: { x: 0, y: 150, width: 64, height: 20 }, pixels: 1280, maxDiff: 90, against: { edit: 'a', at: 1 } }),
+    'At 390 px, 1,280 pixels away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to 90 of 255, in a 64 × 20 box at 0, 150: the change reached further than it should.');
 });

@@ -132,11 +132,11 @@ its tokens, its breakpoints, whether it is a custom theme).
 
 | Edit | Native home | How |
 |---|---|---|
-| Text, image, alt (one instance) | The field or block that holds it, through core (Drupal Entity API with `validate()`, a new revision; WordPress posts and media REST) | Deterministic, through the helper, with a base hash and a 409 if the site changed |
+| Text, image, alt (one instance) | The field, block or configuration that holds it, through core. Drupal: the Entity API with `validate()` and a new revision, one run of words inside formatted text spliced and checked through its own format, configuration through the Config API with typed validation or its translation's override, an inline block through its layout's section storage. WordPress: the block's own element in the post, template, template part, synced pattern or navigation menu that stores it (one block written alone with `WP_Block_Processor`, formatted words spliced as core splices bound rich text), words bound to post meta in that field, one placement's override in its `core/block`, an image's media-library alt through media REST | Deterministic, through the helper, with a base hash and a 409 if the site changed; each target says where it shows, and a Drupal default layout every entity of a bundle shares says its reach and asks first |
 | Token (site-wide colour, font, size, space) | The theme's token: `theme.json` presets (WordPress), the theme's `:root` custom properties or its SCSS variables (Drupal) | Deterministic for `theme.json` and plain CSS custom properties; agent for SCSS maps and Tailwind config |
 | Style, every instance of a component | That component's own source: its SDC `.css`, its SCSS partial, or its block stylesheet, found from the matched rule and source maps | Deterministic when the rule and file are plain CSS; agent otherwise |
 | Style, one instance | Where core stores one instance's style: WordPress block-support attributes (preset references first); Drupal, a field or component prop that already varies it | Deterministic for block supports; otherwise an agent adds a native hook (a modifier class from a field or a variant prop) and a rule in the component's CSS |
-| Template text | The theme's Twig or PHP template | A diff the owner approves, or an agent |
+| Template text | On a WordPress block theme, the template or template part, saved as the Site Editor saves it (its first save copies the theme's file into the database); otherwise the theme's Twig or PHP template, and on WordPress a theme pattern's file (Drupal keeps no such thing in the site; a Drupal template's `t()` strings are interface translation, not changed yet) | Deterministic through `/wp/v2/templates` and `/wp/v2/template-parts` for block templates; a diff the owner approves, or an agent, for template and pattern files |
 | Add a component, block or pattern | Where core places it on this page: a Layout Builder section, a block region, an entity's component or reference field, WordPress block markup in the post, template or part | Deterministic through the helpers' existing insert paths, with a base hash, a 409 and undo |
 | Remove one | The same place: take the placement or reference out | Deterministic; never deletes the content entity, block content or media it showed. Shared placements (a block on every page) say their reach and ask first |
 | A component placed by a template | The template itself | A diff the owner approves, or an agent |
@@ -189,13 +189,34 @@ the viewport.
 between a version and itself is the noise floor, and the tolerance is stated
 as two numbers in the manner of the web-platform-tests "fuzzy" annotation (the
 largest colour difference and the number of pixels allowed), never as a
-percentage, with anti-aliasing forgiveness off for the verdict. As built, the
-floor is page-wide: one pair of numbers for the whole page (the largest over
-both versions and every width), applied to each area. A block whose content
-changes between renders anywhere on the page (a random order, a clock)
-therefore forgives as many differing pixels next to an edit as it differs
-by; nothing masks it. Measuring the floor per area would need the verdict to
-state more than one, which it does not yet.
+percentage, with anti-aliasing forgiveness off for the verdict. The verdict
+states one pair of numbers (the largest over both versions and every width),
+measured over what is left once the parts the site says change between
+renders are masked:
+
+- **Drupal**, from each render's own trace: a part built late (a
+  placeholder), never cached, kept for a while (a max-age that is not
+  permanent), or made per user, session, query, cookie, header or address.
+  Core bubbles max-age and contexts up to every part around, so a reason is a
+  part's own only when no part inside it has it, and the innermost part is
+  masked, never the article around a "time ago" field.
+- **WordPress**, which keeps no cache metadata: the helper marks the root tag
+  of the core blocks that differ by type (a gallery in random order, the
+  calendar, a relative date, latest comments, RSS, login/out, a Query Loop
+  ordered by rand) with `data-wanigan-vary`, through `render_block` and
+  `WP_HTML_Tag_Processor`, which changes no layout.
+
+A mask never covers an edited element: its zone is compared in full, and a
+masked part around one says so. Each mask is named in the verdict with why.
+Where core lets the helper remove the change instead, it does, for
+Wanigan's own token requests that carry a verification's hold
+(`X-Wanigan-Steady`: a time no later than now and a seed) and no others:
+Drupal renders the request at that `REQUEST_TIME` (put back before anything
+is kept) and seeds a view's random sort; WordPress measures relative dates to
+that time and orders random queries by `RAND(seed)`. Both say what they held,
+and Wanigan compares a held change between renders held alike rather than
+masking it. Variation nothing declares (a theme calling `rand()`) still
+shows only in the floor.
 
 **In this order, stopping at the first failure:**
 
@@ -205,12 +226,17 @@ state more than one, which it does not yet.
 2. **Pixels.** The two full-page captures, within the calibrated tolerance; a
    difference is boxed and tied to its edit.
 3. **The rest of the page.** Outside the edited elements, the result must equal
-   the design. As built (phase 1), the design is the native page with the
-   layer, so this catches a layer that reaches further than its edits, but a
-   change the native implementation itself made beyond the touched elements
-   is in both renders and is not caught yet. Catching that needs the page as
-   it was before the edits, kept when an edit is made real and compared row by
-   row (text reflows); that is still to build.
+   the design. The design rendered now is the native page with the layer, so
+   a change the native implementation made beyond the touched elements is in
+   both renders. So the page as it was is kept just before an edit is made
+   real (and when a style or token is handed to an agent), rendered without
+   the layer and, in the same load, with that one edit as designed on it; the
+   result must also equal that page outside the touched elements. It carries
+   the edit's own reflow and reach, so text that reflows or a token used
+   everywhere is not a difference, and only what the native change did beyond
+   them is. With no page from before (an edit made real elsewhere), or another
+   edit made real on the page since, the verdict says this could not run, and
+   why.
 4. **States and edges.** Hover, focus and active forced on the touched
    elements; each breakpoint and one pixel either side; dark mode and reduced
    motion where the theme answers them; long, short and empty text for text
@@ -218,9 +244,10 @@ state more than one, which it does not yet.
 
 In this design, an edit is `verified` when all four pass everywhere it reaches
 (pages sampled from Go to's index when it reaches many). Phase 1 builds less,
-and its `verified` means less: steps 1 to 3 as built (step 3 against the
-design, not the page before) passed on the edit's own page at the widths
-asked. Step 4 and reach across pages are not built. The owner then retires it; retired
+and its `verified` means less: steps 1 to 3 passed on the edit's own page at
+the widths asked, step 3 against the page from before too where one was kept
+(the verdict says when it was not). Step 4 and reach across pages are not
+built. The owner then retires it; retired
 edits are archived, not deleted. An agent's implementation gets at most three
 automatic rounds of "verify, give it the failures, try again"; after that the
 evidence goes to the owner.
@@ -245,8 +272,12 @@ before adding it:
   example props (a component's schema examples, a block's `example`, a
   pattern as written), at phone and desktop widths, in a hidden window, cached
   until the component's files change.
-- **Where it is used:** the pages that show it, from Go to's index and the
-  traces the view has kept.
+- **Where it is used:** the places the site's stored data says use it, from
+  the helper's read-only search (`GET /_wanigan/usage`; how each platform's
+  search works and what it cannot see is in
+  docs/research/2026-10-09-core-limits.md, build item 10), each opening in
+  the view where a page shows it; and where the page shown uses it, from its
+  trace.
 - **From there:** add it to the page (drag it onto the live view, or choose it
   and click where it goes), open its source in the Code tab, or ask an agent
   about it.
@@ -255,11 +286,16 @@ before adding it:
 
 ## What this does not promise
 
-- Content that differs between renders (dates, random order, personalisation)
-  is not verified, and is not masked either: it raises the page-wide noise
-  floor, which then forgives as much next to every edit.
+- Content the site says differs between renders (a placeholder, a per-user
+  block, a feed, a random order the helper cannot seed) is masked, not
+  verified, and named in the verdict. What nothing declares (a theme's own
+  `rand()` or `time()`, remote embeds, script-driven content) is not masked:
+  it raises the noise floor.
+- Step 3 against the page from before runs only where one was kept just
+  before the edit was made real, and no other edit has been made real on
+  that page since; otherwise the verdict says it did not run.
 - A page is compared down to 6,000 px; below that nothing is, and the verdict
-  says so (a statement among its differences, even on one that passed).
+  says so (a statement of its own, even on one that passed).
 - A text format may change saved markup (Drupal filters, WordPress kses). The
   verify step shows the difference; it does not hide it.
 - Interaction states (hover, focus) and other content lengths are verified only
@@ -289,8 +325,11 @@ The types are in `src/shared/design-layer.ts` and `src/shared/live-trace.ts`
 and removals as layer edits come later (inserting and removing already work
 directly through the helpers).
 
-**The helpers (version 4, the same bump as removal and the library).** Every
-part a helper can name carries `identity`:
+**The helpers (version 4, the same bump as removal and the library).** For a
+verification's renders only (the view's token and `X-Wanigan-Steady`), they
+hold the request still and say what they held, and the WordPress helper marks
+the blocks that differ by type ("Calibrated noise", above). Every part a
+helper can name carries `identity`:
 
 - Drupal: an entity part is `entity` (type, UUID, bundle, langcode); a field
   part adds `field`; a field item adds `item`, `ref:<type>:<uuid>` for a
@@ -357,20 +396,39 @@ or the project.
    words and one thing the site saves holds exactly those words, as the
    logged-in user with a revision where the site keeps them, and marks it
    `implemented` only when the site says it saved (with that revision).
-   - Drupal: a plain text field the helper marks around the words
-     (`data-wl-field`), saved through `helperSave` (`POST /_wanigan/save`) to
-     exactly the content, translation and item the target's identity names
-     (its UUID, langcode and item, never the default language or the first
-     item holding the same words; a target that names no field is refused),
-     only over the version the page showed (content saved since, a newer
-     draft, an inline Layout Builder block and any validation violation, the
-     workflow's included, are refused, saying why).
+   - Drupal: a text field the helper marks around the words
+     (`data-wl-field`, which names the formatter that showed it), saved
+     through `helperSave` (`POST /_wanigan/save`) to exactly the content,
+     translation and item the target's identity names (its UUID, langcode and
+     item, never the default language or the first item holding the same
+     words; a target that names no field is refused), only over the version
+     the page showed (content saved since, a newer draft and any validation
+     violation, the workflow's included, are refused, saying why). A plain
+     value is the words; in formatted text one run of words inside one stored
+     text node is spliced byte for byte and kept only when rendering the old
+     and new text through the item's format differs in those words alone
+     (words a filter makes, words across tags or found twice, and a trimmed
+     summary's cut are refused). Words that are the field's label, which no
+     item holds, go to its configuration. Words in an inline Layout Builder
+     block go through its layout: the component that pins the version the
+     page showed gets the changed block in `block_serialized` and the section
+     storage is saved (an entity's own layout as a new revision); a default
+     layout every entity of a bundle shares answers first with how far it
+     reaches and a token, and is saved when made real again, the layer
+     sending that token back.
    - Otherwise (WordPress's helper marks no field; it saves fields through
-     schema targets): the one `via: 'schema'` edit target of the page's trace
-     whose value, or a string property of it, equals the words as the site
-     rendered them (whitespace folded, wptexturize's quotes, dashes and
-     ellipsis read as typed): a title, an excerpt, a string meta, the site
-     title or tagline, a menu link's text (its address sent back as it was).
+     schema targets, as both helpers save configuration): the one
+     `via: 'schema'` edit target of the page's trace whose value, or a string
+     property of it, equals the words as the site rendered them (whitespace
+     folded, wptexturize's quotes, dashes and ellipsis read as typed): a title,
+     an excerpt, a string meta, the site title or tagline, a menu link's text
+     (its address sent back as it was); on Drupal a block's title, the site's
+     name or slogan, one run of a view's header, footer or empty text (offered
+     run by run, so its markup is never in the value), or a content menu
+     link's text. Configuration is validated against its typed schema with
+     the rules only Drupal's forms keep, needs the form route's permission, is
+     written to its translation's override when the page showed one, and says
+     that the next configuration import puts back what is exported.
      Never a slug, a status, a choice, an address or a read-only value. It is
      looked for in the parts the edit's identity names, then outward a level
      at a time, the nearest level deciding: each part's parent, and the post
@@ -380,33 +438,54 @@ or the project.
      schema save (`POST /_wanigan/edit/<id>` with the trace's id, checked
      with `checkValue` in main and again by the helper), refused if the view
      holds another trace by then.
-   - Formatted text (a block's rich text, words inside a post's content, a
-     value holding markup) answers `route: 'agent'`, as styles and tokens do
-     until phase 3. Nothing holding the words, more than one thing holding
+   - Formatted text on WordPress (a block's rich text, words inside a
+     post's content, a value holding markup) answers `route: 'agent'`, as
+     styles and tokens do until phase 3. Every refusal names its cause:
+     Drupal keeps no such thing (words written in a template, which answer
+     `route: 'agent'`; a menu link written in code; a base field's label), or
+     Wanigan does not do it yet (a template's `t()` strings, which are
+     interface translation; a caption; words across formatting; a draft;
+     words code makes from what is not saved here). The Drupal helper lists
+     each template part's own words, read by Drupal's Twig lexer, for this. Nothing holding the words, more than one thing holding
      them (named), a changed page, a target the trace says this user may not
      change, or a refusal from the site (passed on as the site said it)
      answers `route: 'none'`, with why.
+   - Just before words are saved, and when a style, a token or formatted
+     words are handed to an agent (once: asking again never keeps a page
+     that may already have the agent's change), the page the edit is on is
+     rendered at the verification widths through the same hidden render as a
+     verification, without the layer and then, in the same load on the same
+     stopped clock, with that one edit as designed on it, held at one time
+     and seed. Both pictures, the touched elements, the masks, the hold and
+     the edits already in the site are kept under the edit's folder
+     (`live-layer/<project>/<edit>/before/`). A render that fails is kept as
+     why, and the edit is made real all the same.
 4. `layerVerify(id)` renders the page with the layer (the design) and without
    it (the result) in hidden windows in the view's session at each width,
+   every render sent one hold (the newest page from before's, or now's),
    measures the noise floor by rendering each version twice (every width is
    judged against the one floor the verdict states, the largest over both
-   versions and every width), then runs the
+   versions and every width, over what the masks leave), then runs the
    steps in order: computed styles and boxes of the touched elements (a token:
    its custom property as the root computes it, in both renders), pixels
-   around them, then the rest of the page. Nothing passes for want of a
-   comparison: an edit found but gone when the page was measured, a token
-   whose value was not read, or an edit for a named breakpoint (phase 1 reads
-   no breakpoints, so the design cannot show it) fails, saying so. Every step
-   that waits on a hidden page has a deadline, and so does each render: a page
-   that never answers fails the verification, its window is closed, and the
-   next one runs. A page taller than 6,000 px is compared down to there, and
-   the verdict says how far, passing or not. It keeps the pictures in the data
-   folder and tells the core (`verified`, or still `implemented` with the
-   verdict, which says what differs: the words are in the site either way).
-   `verified` here is phase 1's: steps 1 to 3 passed on this page at these
-   widths, step 3 against the design rather than the page before the edits,
-   so a change the native implementation made beyond the touched elements is
-   in both renders and is not caught; step 4 and other pages are not checked.
+   around them, then the rest of the page, against the design and against
+   each edit's page from before with that edit designed on it. Nothing passes
+   for want of a comparison: an edit found but gone when the page was
+   measured, a token whose value was not read, or an edit for a named
+   breakpoint (phase 1 reads no breakpoints, so the design cannot show it)
+   fails, saying so. Every step that waits on a hidden page has a deadline,
+   and so does each render: a page that never answers fails the
+   verification, its window is closed, and the next one runs. It keeps the
+   pictures in the data folder and tells the core (`verified`, or still
+   `implemented` with the verdict, which says what differs: the words are in
+   the site either way). Besides its differences, the verdict says (each
+   optional, so a verdict kept before them still reads): what was masked and
+   why (`masked`), whether step 3 compared the page from before or why not
+   (`before`), whether every render was held still (`held`), and how far
+   down a page taller than 6,000 px was compared (`cut`, a statement, never
+   a difference). `verified` here is phase 1's: steps 1 to 3 passed on this
+   page at these widths, step 3 against the page before where one was kept;
+   step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
 page each is on, its state and verdict, fragile ones said so), per-edit

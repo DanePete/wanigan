@@ -70,14 +70,74 @@
   gap: var(--space-2) var(--space-3);
 }
 
-/* ── the dialog's head ─────────────────────────────────────────────────── */
+/* ── Compare, drawn in the stage where the page is (Compare.tsx) ────────── */
+
+.live-stage-compare {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg);
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.live-stage-compare > * {
+  flex-shrink: 0;
+}
+
+.live-stage-compare-title {
+  margin: 0;
+  font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
+  white-space: nowrap;
+}
+
+/* The pictures take the height the stage has; the list of changes scrolls beside them. */
+.live-stage-compare > .cmp {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.live-stage-compare .cmp > * {
+  flex-shrink: 0;
+}
+
+.live-stage-compare .cmp-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.live-stage-compare .cmp-frame {
+  height: auto;
+  min-height: 0;
+}
+
+.live-stage-compare .cmp-side {
+  max-height: none;
+}
+
+.live-stage-compare .cmp-note {
+  margin: 0;
+}
+
+@container (max-width: 720px) {
+  .live-stage-compare .cmp-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 2fr) minmax(0, 1fr);
+  }
+}
 
 .cmp-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-2);
 }
 
 .cmp-path {

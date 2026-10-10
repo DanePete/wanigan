@@ -21,44 +21,62 @@
 //   (not tagged, their words not patched): phase 1 does not read the theme's breakpoints, and a verification fails
 //   them as not verifiable yet.
 // - Implementing: only words, saved where they are kept, as the user logged in in the view. Where the helper marks a
-//   plain text field around them (Drupal's `data-wl-field`), through `POST /_wanigan/save`, the window's own
+//   text field around them (Drupal's `data-wl-field`: a plain value, or one run of words inside formatted text, which
+//   the helper splices and checks through the text's own format), through `POST /_wanigan/save`, the window's own
 //   helperSave path, to exactly the content, translation and item the edit's target names (saveTarget): never the
-//   default language, never the first item that holds the same words. Otherwise through the one edit target of the
-//   page's trace that holds exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu
-//   link's text), saved by the window's own schema save (`POST /_wanigan/edit/<id>`, live-edit-save.ts): how
-//   WordPress's helper saves a field. Formatted text (a block's, a post's content, a value with markup) goes to an
-//   agent as a brief, as do styles and tokens; anything else says why.
+//   default language, never the first item that holds the same words; a save the helper answers with a confirm token
+//   (words in a Drupal default layout every entity of a bundle shares, said with how far it reaches) is made when the
+//   edit is made real again, with that token. Otherwise through the one edit target of the page's trace that holds
+//   exactly those words (wordsTarget(): a title, an excerpt, a string meta, a setting, a menu link's text, a Drupal
+//   block's title or a run of a view's words), saved by the window's own schema save (`POST /_wanigan/edit/<id>`,
+//   live-edit-save.ts): how WordPress's helper saves a field, and both helpers save configuration. Formatted text on
+//   WordPress (a block's, a post's content, a value with markup) goes to an agent as a brief, as do styles and tokens;
+//   on Drupal, words nothing holds are said as what they are (writtenIn(): written in a template, which an agent
+//   changes, or printed through t()); anything else says why.
+// - Keeping the page as it was: just before words are saved, and when a style, a token or formatted words are handed
+//   to an agent, the page the edit is on is rendered at the verification widths through the same hidden render,
+//   without the layer and then, in the same load, with that one edit as designed on it, and kept under the edit's
+//   folder (live-layer/<project>/<edit>/before/: both pictures, the touched elements, the masks, the hold).
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
-//   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's.
+//   floor, and every width judged against the one floor the verdict states (the largest over both and every width);
+//   the comparisons are src/shared/layer-verify.ts's. Every render is sent one hold (X-Wanigan-Steady: a time and a
+//   seed, the edit's page from before's when it has one), and the site's helper, for that token request only, renders
+//   "3 days ago" against that time and random orders by that seed, and says so. What the site says changes between
+//   renders anyway is left out of every pixel comparison (masks: the parts a Drupal trace says are built late, never
+//   cached, kept for a while or made per user or session, innermost first; the blocks the WordPress helper marked by
+//   type), never an edited element, and named in the verdict; the floor is measured over what is left.
 //   Nothing passes for want of a comparison: an edit found but not there when measured, a token whose custom
-//   property was not read on the root, or an edit for a named breakpoint fails, saying why. The noise floor is
-//   page-wide, as the verdict states it; a page is compared down to VERIFY_MAX_HEIGHT, and where it went on the
-//   verdict says how far, passing or not. Pictures are kept in the data folder under
-//   live-layer/<project>/<edit>/, and the core is told: verified, or still implemented with the failed verdict (its
-//   words are in the site; the verdict says what differs).
-//   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
-//   implementation made beyond the touched elements is in both renders and does not show. Seen in Electron on a
-//   made-up page: a rule that also turned every paragraph blue passed. Catching that needs the page as it was before
-//   the implementation, kept when it is made real and compared row by row (text reflows); that is still to build.
+//   property was not read on the root, or an edit for a named breakpoint fails, saying why. A page is compared down
+//   to VERIFY_MAX_HEIGHT, and where it went on the verdict says how far (its `cut`), passing or not.
+//   Step 3 compares the result with the design rendered now, and with each edit's page from before, with that edit
+//   as designed on it: a change the native implementation made beyond the touched elements is in both of today's
+//   renders, and only that page shows it was not there (seen in Electron on a made-up page: a rule that also turned
+//   every paragraph blue passed against the design alone). Where there is no page from before (made real elsewhere),
+//   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
+//   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
+//   implemented with the failed verdict (its words are in the site; the verdict says what differs).
 // - Nothing here writes to the site except the helper save, and nothing reaches any origin but the site's own.
-import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
+import { randomInt } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
   LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash,
-  type LayerApplied, type LayerDifference, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
+  type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
+  type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
-  type Bitmap, type ElementSnap, type WidthFindings, type Zone,
+  MAX_DIFFERENCES, VERIFY_WIDTHS, against, applyMask, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, heldAlike, judge, maskedOf,
+  masksAmong, noiseFloor, traceMasks, unionDiff, varyWhy, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  type Bitmap, type ElementSnap, type PixelArea, type PixelDiff, type RenderMask, type Steady, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveEditSaved, LiveTraceAnswer } from '../shared/live-lens.ts';
 import { fragileWhy, kindWords } from '../shared/layer-words.ts';
 import { TRACE_ID, identityKey, kindKey, type EditTarget, type LiveTrace, type PartIdentity, type TracePart } from '../shared/live-trace.ts';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import type { Method } from '../shared/protocol.ts';
-import { RENDER_MS, deadline, folderOf, inHiddenWindow } from './live-capture.ts';
+import { RENDER_MS, deadline, folderOf, inHiddenWindow, type HiddenPage } from './live-capture.ts';
 import type { HelperSaved, LiveCurrent, LiveViewHooks, SaveAt } from './live-view.ts';
 
 interface Client { callRaw(method: Method, params: unknown): Promise<unknown> }
@@ -196,7 +214,7 @@ export function effective(edits: readonly LayerEdit[], res: Pick<Resolution, 'or
 /**
  * Where a text edit's words are saved: the content, translation and item its target names (a Drupal field part's
  * identity: the content's UUID, its langcode, and the item when the part is one), once the field the helper marked
- * around its element (`type:id:field:fieldtype[:langcode]`) is checked to be that field. Anything else is why not:
+ * around its element (`type:id:field:fieldtype[:langcode:revision:changed:formatter]`) is checked to be that field. Anything else is why not:
  * the words are never saved to a field, a translation or an item the target does not name.
  */
 export function saveTarget(part: PartIdentity | null, field: string): SaveAt | string {
@@ -356,11 +374,44 @@ export function wordsTarget(trace: LiveTrace, identity: PartIdentity, words: str
     level = next;
     shows = nextShows;
   }
-  return {
-    ok: false, route: 'none',
-    why: 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.',
-  };
+  return { ok: false, route: 'none', why: NOTHING_HOLDS };
 }
+
+/** wordsTarget()'s answer when no target of the trace holds the words. */
+const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
+
+/**
+ * Drupal: the target that says a template around an element writes exactly its words (the helper's TemplateWords:
+ * `words.tpl.<hash>` for words typed into it, `words.t.<hash>` for strings it prints through t()), looked for in the
+ * parts the edit's identity names, then each one's parent; null when none does. Such a target is never saved: it says
+ * why not.
+ */
+export function writtenIn(trace: LiveTrace, identity: PartIdentity, words: string): EditTarget | null {
+  const want = asWords(words);
+  const targets = new Map(trace.edits.map((e) => [e.id, e]));
+  const byId = new Map(trace.parts.map((p) => [p.id, p]));
+  const key = identityKey(identity);
+  let level = trace.parts.filter((p) => p.identity && identityKey(p.identity) === key);
+  const seen = new Set(level.map((p) => p.id));
+  for (let depth = 0; level.length && depth < 64; depth++) {
+    for (const p of level) {
+      for (const id of p.edits ?? []) {
+        const t = targets.get(id);
+        if (t && /^words\.(?:tpl|t)\./.test(t.id) && isObj(t.value) && Object.values(t.value).some((v) => typeof v === 'string' && asWords(v) === want)) return t;
+      }
+    }
+    level = level.flatMap((p) => {
+      const up = p.parent ? byId.get(p.parent) : undefined;
+      if (!up || seen.has(up.id)) return [];
+      seen.add(up.id);
+      return [up];
+    });
+  }
+  return null;
+}
+
+/** On Drupal, words no target holds and no template around them writes: made by code from what Wanigan does not save yet. */
+const DRUPAL_NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, and Wanigan finds them written in no template around them: code makes them (a formatter, a module or the theme) from something Wanigan does not save from here yet.';
 
 /** Why there is no trace to find what holds an element's words in. */
 function untraced(answer: Exclude<LiveTraceAnswer, { state: 'ok' }>): string {
@@ -388,7 +439,16 @@ export interface LayerRenderRequest {
   /** The edits verified: tagged in both renders, shown (their stylesheet and words) only in the design. */
   edits: LayerEdit[];
   design: boolean;
+  /**
+   * The hold sent with the page's request (X-Wanigan-Steady): the time the site's helper renders it as at, and the seed
+   * of its random orders, so every render a verdict compares shows the same "3 days ago" and the same order. Only the
+   * helper acts on it, and only for a request with the view's token.
+   */
+  hold: Hold | null;
 }
+
+/** A hold: a time in whole seconds, never later than now (the helpers refuse a later one), and a seed. */
+export interface Hold { t: number; s: number }
 
 export interface LayerRendered {
   png: Buffer;
@@ -401,9 +461,75 @@ export interface LayerRendered {
   tokens?: Record<string, string>;
   /** The page went on below the capture limit (VERIFY_MAX_HEIGHT): how tall it is. Nothing below the limit is compared. */
   cut?: { full: number } | null;
+  /** What this render leaves out of the pixel steps: the parts its trace says change between renders, and the blocks its helper marked. */
+  masks?: RenderMask[];
+  /** The hold, as the site's helper confirmed it held this render; null or absent when it did not. */
+  steady?: Steady | null;
 }
 
 export type LayerRender = (r: LayerRenderRequest) => Promise<LayerRendered | { error: string }>;
+
+/**
+ * The page as it was, kept just before an edit is made real: one load of the page at a width, pictured without the
+ * layer (`page`), then with the one edit as designed on it (`design`), in that same load.
+ */
+export interface LayerBeforeRendered { page: LayerRendered; design: LayerRendered }
+export type LayerBeforeRender = (r: LayerRenderRequest) => Promise<LayerBeforeRendered | { error: string }>;
+
+/** The header a verification's renders carry, and the helpers answer with what they held. */
+const STEADY_HEADER = 'X-Wanigan-Steady';
+
+/** The helper's answer to a hold, checked: only the hold that was sent, with the Drupal views it seeded. */
+export function steadyOf(header: string | null | undefined, hold: Hold | null): Steady | null {
+  if (!hold || typeof header !== 'string') return null;
+  const m = /^t=(\d{1,12});s=(\d{1,9})(?:;views=([a-z0-9_:,]{0,2000}))?$/.exec(header.trim());
+  if (!m || Number(m[1]) !== hold.t || Number(m[2]) !== hold.s) return null;
+  const views = (m[3] ?? '').split(',').filter((v) => /^[a-z0-9_]{1,128}:[a-z0-9_]{1,128}$/.test(v)).slice(0, 100);
+  return { t: hold.t, s: hold.s, views };
+}
+
+/** What the page script's layerAreas answered, checked: each part's boxes, and the blocks a helper marked as changing between renders. */
+export function areasOf(raw: unknown): { parts: Record<string, LayerRect[]>; vary: { reason: string; held: boolean; name: string | null; box: LayerRect }[] } {
+  const out: ReturnType<typeof areasOf> = { parts: {}, vary: [] };
+  if (!raw || typeof raw !== 'object') return out;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1_000_000 ? Math.round(v * 100) / 100 : null);
+  const box = (v: unknown): LayerRect | null => {
+    if (!v || typeof v !== 'object') return null;
+    const b = v as Record<string, unknown>;
+    const [x, y, width, height] = [num(b.x), num(b.y), num(b.width), num(b.height)];
+    return x !== null && y !== null && width !== null && height !== null && width > 0 && height > 0 ? { x, y, width, height } : null;
+  };
+  if (r.parts && typeof r.parts === 'object') {
+    for (const [id, rects] of Object.entries(r.parts as Record<string, unknown>).slice(0, 5_000)) {
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || !Array.isArray(rects)) continue;
+      const boxes = rects.slice(0, 50).map(box).filter((b): b is LayerRect => b !== null);
+      if (boxes.length) out.parts[id] = boxes;
+    }
+  }
+  if (Array.isArray(r.vary)) {
+    for (const v of r.vary.slice(0, 500)) {
+      if (!v || typeof v !== 'object') continue;
+      const m = v as Record<string, unknown>;
+      const b = box(m.box);
+      if (!b || typeof m.reason !== 'string' || !/^[a-z][a-z-]{0,39}$/.test(m.reason)) continue;
+      const name = typeof m.name === 'string' && /^[a-z0-9-]{1,50}\/[a-z0-9-]{1,50}(?::[A-Za-z0-9_-]{1,80})?$/.test(m.name) ? m.name : null;
+      out.vary.push({ reason: m.reason, held: typeof m.held === 'string' && m.held !== '', name, box: b });
+    }
+  }
+  return out;
+}
+
+/** A render's masks: the parts its trace says change between renders and the blocks its helper marked, by their boxes in this render. */
+export function masksOf(trace: LiveTrace | null, steady: Steady | null, areas: ReturnType<typeof areasOf>): RenderMask[] {
+  const masks: RenderMask[] = [];
+  for (const m of trace ? traceMasks(trace, steady) : []) {
+    const rects = areas.parts[m.part];
+    if (rects?.length) masks.push({ label: m.label, why: m.why, rects, held: m.held });
+  }
+  for (const v of areas.vary) masks.push({ label: v.name ? `The ${v.name} block` : 'A block', why: varyWhy(v.reason), rects: [v.box], held: !!steady && v.held });
+  return masks;
+}
 
 /** A token's name, as compileLayer prints it. */
 const TOKEN_NAME = /^--[a-z0-9][a-z0-9-]{0,99}$/i;
@@ -451,15 +577,21 @@ export function traceProblem(edits: readonly LayerEdit[], header: string | null,
   return `This render could not read the page’s trace: ${why}. Its edits are found by what the trace names, so nothing was compared. Try again.`;
 }
 
-/** A render in a hidden window (live-capture.ts): the page with its own trace, the edits found and tagged, the design's layer shown. */
-function renderInWindow(deps: {
+interface RenderDeps {
   pageScript: () => string | null;
   sessionFor: (projectId: string, url: string) => { fetch: SiteFetch } | null;
   askTrace: AskTrace;
   decode: (png: Buffer) => Promise<Bitmap>;
-}): LayerRender {
-  return (r) => inHiddenWindow<LayerRendered>(
-    { partition: r.partition, url: r.url, base: r.base, width: r.width, network: true, freeze: true, what: 'The page', failed: 'The page could not be rendered' },
+}
+
+/**
+ * A page in a hidden window (live-capture.ts), loaded with its own trace and the hold, the edits found and tagged, its
+ * clock run and stopped, then handed to `take` to picture. Each picture is taken by `shot`.
+ */
+function onPage<T>(deps: RenderDeps, r: LayerRenderRequest, take: (page: HiddenPage, shot: Shot) => Promise<T | { error: string }>): Promise<T | { error: string }> {
+  const headers: Record<string, string> = r.hold ? { [STEADY_HEADER]: `t=${r.hold.t};s=${r.hold.s}` } : {};
+  return inHiddenWindow<T>(
+    { partition: r.partition, url: r.url, base: r.base, width: r.width, network: true, freeze: true, headers, what: 'The page', failed: 'The page could not be rendered' },
     async (page) => {
       const script = deps.pageScript();
       if (!script) return { error: 'This build of Wanigan has no page script, so it cannot find the edits on a page.' };
@@ -472,27 +604,63 @@ function renderInWindow(deps: {
       const unread = traceProblem(r.edits, id && TRACE_ID.test(id) ? id : null, answer);
       if (unread) return { error: unread };
       const trace = answer?.state === 'ok' ? answer.trace : null;
+      const steady = steadyOf(page.headers()?.['x-wanigan-steady'], r.hold);
       await page.read(script, null, PAGE_WORLD);
       const run: Run = (code, fallback) => page.read(code, fallback, PAGE_WORLD);
       const res = await resolveLayer(run, trace, r.edits, r.path);
-      if (r.design) {
-        const css = compileLayer(r.edits, [], 'g1');
-        if (css) await page.wc.insertCSS(css, { cssOrigin: 'user' });
-      }
-      await run(call('layerSet', { tags: res.tags, texts: r.design ? res.texts : [], on: r.design, gate: r.design ? 'g1' : null }), 0);
-      await page.freeze();
-      const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
-      const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
-      // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
-      const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
-      const tokens = names.length
-        ? tokensOf(await run<unknown>(`(() => { const s = getComputedStyle(document.documentElement); const out = {}; for (const n of ${JSON.stringify(names)}) out[n] = s.getPropertyValue(n); return out; })()`, null), names)
-        : {};
-      const png = await page.shoot(height, true);
-      if (!png) return { error: 'The page could not be pictured.' };
-      return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null };
+      const picture = async (): Promise<LayerRendered | { error: string }> => {
+        const { height, cut, full } = await page.grow(VERIFY_MAX_HEIGHT);
+        const elements = snapsOf(await run<unknown>(call('layerSnap', r.edits.map((e) => e.id), LAYER_PROPERTIES), []));
+        // Each token's custom property as the root computes it, in this render: what step 1 compares for a token.
+        const names = [...new Set(r.edits.flatMap((e) => (e.change.type === 'token' && TOKEN_NAME.test(e.change.name) ? [e.change.name] : [])))];
+        const tokens = names.length
+          ? tokensOf(await run<unknown>(`(() => { const s = getComputedStyle(document.documentElement); const out = {}; for (const n of ${JSON.stringify(names)}) out[n] = s.getPropertyValue(n); return out; })()`, null), names)
+          : {};
+        // What the site says changes between renders, where it is in this render: left out of the pixel steps.
+        const ids = trace ? traceMasks(trace, steady).map((m) => m.part) : [];
+        const masks = masksOf(trace, steady, areasOf(await run<unknown>(call('layerAreas', ids), null)));
+        const png = await page.shoot(height, true);
+        if (!png) return { error: 'The page could not be pictured.' };
+        return { png, bitmap: await deps.decode(png), elements, found: res.resolved, tokens, cut: cut ? { full } : null, masks, steady };
+      };
+      const show = async (on: boolean): Promise<void> => {
+        if (on) {
+          const css = compileLayer(r.edits, [], 'g1');
+          if (css) await page.wc.insertCSS(css, { cssOrigin: 'user' });
+        }
+        await run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate: on ? 'g1' : null }), 0);
+      };
+      return take(page, async (on, after) => {
+        await show(on);
+        if (after) await page.still(); else await page.freeze();
+        return picture();
+      });
     },
   );
+}
+
+/** Put the layer on (or not), let the page settle (`after`: a frozen page changed once more), and picture it. */
+type Shot = (on: boolean, after?: boolean) => Promise<LayerRendered | { error: string }>;
+
+/** A render for a verification: the page with the design's layer on it, or without it. */
+function renderInWindow(deps: RenderDeps): LayerRender {
+  return (r) => onPage<LayerRendered>(deps, r, async (_page, shot) => shot(r.design));
+}
+
+/**
+ * The page as it was, for an edit about to be made real: pictured without the layer, then, in the same load and on
+ * the same stopped clock, with the edit as designed on it. The second is what step 3 compares the result with later,
+ * outside the touched elements: it has the edit's own reflow and reach, so only what the native change did beyond
+ * them differs.
+ */
+function renderBeforeInWindow(deps: RenderDeps): LayerBeforeRender {
+  return (r) => onPage<LayerBeforeRendered>(deps, r, async (_page, shot) => {
+    const page = await shot(false);
+    if ('error' in page) return page;
+    const design = await shot(true, true);
+    if ('error' in design) return design;
+    return { page, design };
+  });
 }
 
 /** PNGs to pixels and back, through Electron's nativeImage (loaded only when used). */
@@ -538,18 +706,114 @@ export interface LiveLayerOptions {
   pageScript: () => string | null;
   /** Wanigan's data folder: verification pictures go under live-layer/ in it. */
   dataDir: string;
-  /** Test seams: what renders a page for a verification (and how long one may take), and how a difference picture becomes a PNG. */
+  /**
+   * Test seams: what renders a page for a verification (and how long one may take), what keeps the page as it was
+   * before an edit is made real, how a PNG becomes pixels and a difference picture a PNG, the clock, and the seed of a
+   * hold.
+   */
   render?: LayerRender;
+  renderBefore?: LayerBeforeRender;
   renderMs?: number;
+  decode?: (png: Buffer) => Promise<Bitmap>;
   encode?: (b: Bitmap) => Promise<Buffer>;
   now?: () => number;
+  seed?: () => number;
+}
+
+/* ── the page as it was, kept with an edit ──────────────────────────────── */
+
+/** What is kept beside an edit's pictures of the page as it was (before/meta.json under its folder). */
+export interface BeforeKept {
+  /** When it was rendered (milliseconds). */
+  at: number;
+  page: string;
+  /** The hold its renders were sent with; a verification of the edit renders with the same one. */
+  hold: Hold;
+  /** The edits already in the site then that reach its page: an edit made real since is not in that page. */
+  inSite: string[];
+  /** Per width rendered: the touched elements and masks of the page with the edit designed on it, the helper's hold as confirmed, how tall a page that went on was. */
+  widths: Record<string, { found: boolean; elements: ElementSnap[]; masks: RenderMask[]; steady: Steady | null; cut: number | null }>;
+  /** Per width that could not be rendered: why. */
+  failed: Record<string, string>;
+}
+
+const rectOf = (v: unknown): LayerRect | null => {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 1_000_000;
+  return ok(r.x) && ok(r.y) && ok(r.width) && ok(r.height) ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+};
+
+/** before/meta.json as written, checked: it lives in the data folder, and anything that is not what was written is no page from before. */
+export function beforeKept(raw: unknown): BeforeKept | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  const hold = m.hold && typeof m.hold === 'object' ? m.hold as Record<string, unknown> : null;
+  if (typeof m.at !== 'number' || !Number.isFinite(m.at) || typeof m.page !== 'string' || !m.page.startsWith('/') || m.page.length > 2_000) return null;
+  if (!hold || !Number.isInteger(hold.t) || !Number.isInteger(hold.s)) return null;
+  if (!Array.isArray(m.inSite) || !m.inSite.every((id) => typeof id === 'string' && EDIT_ID.test(id))) return null;
+  const widths: BeforeKept['widths'] = {};
+  for (const [w, v] of Object.entries(m.widths && typeof m.widths === 'object' ? m.widths as Record<string, unknown> : {}).slice(0, 8)) {
+    if (!/^\d{3,4}$/.test(w) || !v || typeof v !== 'object') return null;
+    const x = v as Record<string, unknown>;
+    const masks: RenderMask[] = (Array.isArray(x.masks) ? x.masks as unknown[] : []).slice(0, 5_000).flatMap((raw2) => {
+      const k = raw2 && typeof raw2 === 'object' ? raw2 as Record<string, unknown> : null;
+      if (!k || typeof k.label !== 'string' || typeof k.why !== 'string' || !Array.isArray(k.rects)) return [];
+      const rects = (k.rects as unknown[]).slice(0, 50).map(rectOf).filter((r): r is LayerRect => r !== null);
+      return [{ label: k.label.slice(0, 200), why: k.why.slice(0, 300), rects, held: k.held === true }];
+    });
+    const st = x.steady && typeof x.steady === 'object' ? x.steady as Record<string, unknown> : null;
+    const steady = st && st.t === hold.t && st.s === hold.s && Array.isArray(st.views)
+      ? { t: hold.t as number, s: hold.s as number, views: (st.views as unknown[]).filter((y): y is string => typeof y === 'string').slice(0, 100) } : null;
+    widths[w] = { found: x.found === true, elements: snapsOf(x.elements), masks, steady, cut: Number.isInteger(x.cut) ? x.cut as number : null };
+  }
+  const failed: Record<string, string> = {};
+  for (const [w, why] of Object.entries(m.failed && typeof m.failed === 'object' ? m.failed as Record<string, unknown> : {}).slice(0, 8)) if (/^\d{3,4}$/.test(w) && typeof why === 'string') failed[w] = why.slice(0, 500);
+  return { at: m.at, page: m.page, hold: { t: hold.t as number, s: hold.s as number }, inSite: m.inSite as string[], widths, failed };
+}
+
+/** Whether an edit reaches the page at `path`: one made on it, or one for every instance or the whole site. */
+const reaches = (e: LayerEdit, path: string): boolean => e.scope !== 'this' || madeOn(e, path);
+/** In the site: what a page from before shows, or does not, of an edit. */
+const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state === 'verified';
+
+/**
+ * Whether step 3 can compare an edit's result with its page from before, at which widths, or why not. `later`: edits
+ * made real on that page since it was kept, which it does not show; the change one of them made (and the reflow below
+ * it) would be called a leak of this edit, so none may have been.
+ */
+export function beforeCheck(edit: LayerEdit, kept: BeforeKept | null, widths: readonly number[], all: readonly LayerEdit[]): LayerBeforeCheck {
+  const check = whyBefore(edit, kept, widths, all);
+  // Within what a verdict may say (parseVerdict), however long the labels it names.
+  return check.ran ? check : { ran: false, why: check.why.length > 600 ? `${check.why.slice(0, 599)}…` : check.why };
+}
+
+function whyBefore(edit: LayerEdit, kept: BeforeKept | null, widths: readonly number[], all: readonly LayerEdit[]): LayerBeforeCheck {
+  if (!kept) {
+    return { ran: false, why: 'No page from before was kept for it: it was made real some other way than Make it real here (in a template, or marked by an agent), or before Wanigan kept one. The rest of the page was compared with the design only.' };
+  }
+  const since = all.filter((x) => x.id !== edit.id && inSite(x) && reaches(x, kept.page) && !kept.inSite.includes(x.id));
+  if (since.length) {
+    const names = since.slice(0, 3).map((x) => `“${x.label}”`).join(', ');
+    return { ran: false, why: `${names} ${since.length === 1 ? 'was' : 'were'} made real on its page after its page from before was kept, so that page does not show only this edit’s change. Verify each edit before making the next one on a page real, and step 3 compares it with the page before.` };
+  }
+  const usable = widths.filter((w) => kept.widths[String(w)]?.found);
+  if (usable.length) return { ran: true, at: kept.at, widths: usable };
+  const failed = Object.values(kept.failed)[0];
+  if (failed) return { ran: false, why: `Its page from before could not be rendered when it was made real: ${failed}` };
+  if (Object.values(kept.widths).some((x) => !x.found)) return { ran: false, why: 'Its element was not on its page from before, so that page could not show it as designed.' };
+  return { ran: false, why: `Its page from before was kept at ${Object.keys(kept.widths).join(' and ')} px, not at the widths verified.` };
 }
 
 export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks; apply(): Promise<LayerApplied> } {
   const { ipc } = options;
   const clock = options.now ?? Date.now;
-  const render = options.render ?? renderInWindow({ pageScript: options.pageScript, sessionFor: options.sessionFor, askTrace: options.askTrace, decode: decodePng });
+  const deps: RenderDeps = { pageScript: options.pageScript, sessionFor: options.sessionFor, askTrace: options.askTrace, decode: options.decode ?? decodePng };
+  const render = options.render ?? renderInWindow(deps);
+  const renderBefore = options.renderBefore ?? renderBeforeInWindow(deps);
+  const decode = options.decode ?? decodePng;
   const encode = options.encode ?? encodePng;
+  const seed = options.seed ?? ((): number => randomInt(1, 1_000_000_000));
   const root = join(options.dataDir, 'live-layer');
   /** The layer is shown (layerShow); a load keeps the choice. */
   let on = true;
@@ -557,9 +821,19 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   let sheet: { wc: number; key: string } | null = null;
   /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
   let generation = 0;
-  /** Applying, one at a time; and verifying, one at a time (each loads whole pages in hidden windows). */
+  /**
+   * The helper's confirm tokens, by edit: a save it refused saying how far it reaches (words in a Drupal default layout
+   * every entity of a bundle shares) is made when the edit is made real again, with the token that answer gave.
+   */
+  const confirms = new Map<string, string>();
+  /** Applying, one at a time; and rendering for the layer, one at a time (verifying, and keeping a page from before: each loads whole pages in hidden windows). */
   let applying: Promise<unknown> = Promise.resolve();
   let verifying: Promise<unknown> = Promise.resolve();
+  const inTurn = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = verifying.then(work, work);
+    verifying = next.catch(() => {});
+    return next;
+  };
 
   const ok = (event: IpcMainInvokeEvent): boolean => options.trusted(event) && options.enabled();
   const core = async <T>(method: Method, params: unknown): Promise<T> => (await options.client()).callRaw(method, params) as Promise<T>;
@@ -704,6 +978,54 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
 
   /* ── making an edit real ── */
 
+  /* ── the page as it was, kept just before an edit is made real ── */
+
+  const editDir = (projectId: string, id: string): string => join(root, folderOf(projectId), id);
+  const readKept = (projectId: string, id: string): BeforeKept | null => {
+    try { return beforeKept(JSON.parse(readFileSync(join(editDir(projectId, id), 'before', 'meta.json'), 'utf8'))); } catch { return null; }
+  };
+
+  /**
+   * Render the page an edit is on without the layer, then with the edit as designed on it, at the verification widths,
+   * through the same hidden render a verification uses, held at one time and seed, and keep both pictures with the
+   * edit's touched elements and masks under its folder (before/). Step 3 compares the result with it later. Kept
+   * fresh each time for words (the save follows at once); once only for an edit handed to an agent, whose change
+   * comes later, so asking again never takes a page that already has it. A render that fails is kept as why, and the
+   * edit is made real all the same: its step 3 will say it could not run.
+   */
+  const keepBefore = (projectId: string, edit: LayerEdit, all: readonly LayerEdit[], fresh: boolean): Promise<void> => inTurn(async () => {
+    const dir = join(editDir(projectId, edit.id), 'before');
+    if (!fresh && readKept(projectId, edit.id)) return;
+    let site: LiveSite;
+    try { site = await core<LiveSite>('live.site', { projectId }); } catch { return; }
+    if (!site.url || !site.token) return;
+    const url = new URL(edit.page, new URL(site.url).origin).toString();
+    if (!sameSite(site.url, url)) return;
+    const partition = options.partition(projectId, site.url, site.token);
+    const hold: Hold = { t: Math.floor(clock() / 1_000), s: seed() };
+    const limit = options.renderMs ?? RENDER_MS + 60_000;
+    const kept: BeforeKept = {
+      at: clock(), page: edit.page, hold, widths: {}, failed: {},
+      inSite: all.filter((x) => x.id !== edit.id && inSite(x) && reaches(x, edit.page)).map((x) => x.id),
+    };
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    for (const width of VERIFY_WIDTHS) {
+      const got = await deadline<LayerBeforeRendered | { error: string }>(
+        renderBefore({ projectId, partition, url, base: site.url, token: site.token, width, path: edit.page, edits: [{ ...edit, state: 'draft' }], design: true, hold }), limit,
+        () => ({ error: `The page did not render at ${width} px in time.` }),
+      ).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }));
+      if ('error' in got) { kept.failed[String(width)] = got.error.slice(0, 500); continue; }
+      writeFileSync(join(dir, `${width}-page.png`), got.page.png, { mode: 0o600 });
+      writeFileSync(join(dir, `${width}-design.png`), got.design.png, { mode: 0o600 });
+      kept.widths[String(width)] = {
+        found: got.design.found.includes(edit.id) || edit.change.type === 'token', elements: got.design.elements,
+        masks: [...(got.page.masks ?? []), ...(got.design.masks ?? [])], steady: got.design.steady ?? null, cut: got.design.cut?.full ?? null,
+      };
+    }
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify(kept), { mode: 0o600 });
+  });
+
   /** Words the site has, on an edit the core would not mark: said, so they are not saved twice. */
   const inSiteUnmarked = (revision: string | null, refused: string): string =>
     `The words are saved in the site${revision ? ` (revision ${revision})` : ''}, but the layer could not mark this edit implemented: ${refused} Do not save it again; it is in the site.`;
@@ -714,12 +1036,18 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (!id) return none('Which edit?');
     const cur = options.current();
     if (!cur) return none('The live view shows no site.');
-    const edit = (await snapshotOf(cur.projectId)).edits.find((e) => e.id === id);
+    const all = (await snapshotOf(cur.projectId)).edits;
+    const edit = all.find((e) => e.id === id);
     if (!edit) return none('That edit is not in the layer.');
+    // Handed to an agent: the page as it is now is kept first (once), for step 3 to compare the agent's change with.
+    const toAgent = async (why: string): Promise<LayerImplemented> => {
+      if (edit.state === 'draft') await keepBefore(cur.projectId, edit, all, false);
+      return { ok: false, id, route: 'agent', why };
+    };
     if (edit.change.type === 'style' || edit.change.type === 'token') {
-      return { ok: false, id, route: 'agent', why: edit.change.type === 'token'
+      return toAgent(edit.change.type === 'token'
         ? 'A token is the theme’s: changing it natively is a code change, which an agent makes from a brief, on your click.'
-        : 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.' };
+        : 'A style goes into the theme’s CSS: in phase 1 an agent makes it from a brief, on your click.');
     }
     if (edit.change.type !== 'text') return none('Only words and styles are made real from the layer so far.');
     if (edit.state === 'implemented' || edit.state === 'verified') return none('It is in the site already.');
@@ -737,12 +1065,21 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
     if (typeof at.field === 'string') {
-      // A plain text field the helper marked around the words (Drupal): exactly the field, translation and item the
-      // edit's target names, never the first item that happens to hold the same words, never the default language.
+      // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
+      // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
       if (typeof where === 'string') return none(where);
-      const saved = await options.helperSave(at.field, at.words, value, where);
+      // The page as it is, kept just before the words are saved.
+      await keepBefore(cur.projectId, edit, all, true);
+      // Asked again after the site said how far it reaches: with the token it gave, so that save is made.
+      const confirm = confirms.get(id);
+      const saved = await options.helperSave(at.field, at.words, value, confirm ? { ...where, confirm } : where);
       if (!saved) return none('The live view has no helper for this site.');
+      if (!saved.ok && saved.confirm) {
+        confirms.set(id, saved.confirm);
+        return none(`${saved.error ?? 'The site asks first.'} Make it real again to save it there.`);
+      }
+      confirms.delete(id);
       if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
       const refused = await mark(cur.projectId, id, 'implemented');
       // The site now has the words, whatever the layer recorded: the page shows them as it renders them, and the layer
@@ -757,9 +1094,18 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const answer = await options.trace();
     if (answer.state !== 'ok') return none(untraced(answer));
     const found = wordsTarget(answer.trace, edit.target.part, at.words);
-    if (!found.ok) return { ok: false, id, route: found.route, why: found.why };
+    if (!found.ok && found.why === NOTHING_HOLDS && answer.trace.platform === 'drupal') {
+      // Drupal: say which it is. Words a template writes are code (an agent changes the template), or an interface
+      // translation Wanigan does not change yet; anything else is made by code from what is not saved here yet.
+      const written = writtenIn(answer.trace, edit.target.part, at.words);
+      if (written?.id.startsWith('words.tpl.')) return toAgent(written.why ?? DRUPAL_NOTHING_HOLDS);
+      return { ok: false, id, route: 'none', why: written?.why ?? DRUPAL_NOTHING_HOLDS };
+    }
+    if (!found.ok) return found.route === 'agent' ? toAgent(found.why) : { ok: false, id, route: found.route, why: found.why };
     // An object's other properties go back as the trace gave them (a menu link's address with its new text).
     const next = found.key === null ? value : { ...(found.target.value as Record<string, unknown>), [found.key]: value };
+    // The page as it is, kept just before the words are saved.
+    await keepBefore(cur.projectId, edit, all, true);
     // The save reloads the page once the site has the words; the layer applies again after the load.
     const saved = await options.schemaSave(found.target.id, next, answer.trace.id);
     if (!saved.ok) return none(saved.error ?? 'The site did not save it.');
@@ -799,18 +1145,28 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const url = new URL(page, origin).toString();
     if (!sameSite(site.url, url)) throw new Error('That page is not on this site.');
     const partition = options.partition(projectId, site.url, site.token);
+    // Each edit's page from before, and whether step 3 can compare with it. Every render is held at one time and
+    // seed: the newest page from before's, so that page and today's show the same "3 days ago" and the same order.
+    const kept = new Map(edits.map((e) => [e.id, readKept(projectId, e.id)]));
+    const checks = new Map(edits.map((e) => [e.id, beforeCheck(e, kept.get(e.id) ?? null, widths, snap.edits)]));
+    const newest = edits.filter((e) => checks.get(e.id)?.ran).map((e) => kept.get(e.id) as BeforeKept).sort((a, b) => b.at - a.at)[0];
+    const hold: Hold = newest?.hold ?? { t: Math.floor(clock() / 1_000), s: seed() };
     // Each render has an end: one that never answers fails this verification, saying so, and the queue moves on (the
     // hidden window has deadlines of its own, and closes itself).
     const limit = options.renderMs ?? RENDER_MS + 60_000;
     const ask = (width: number, design: boolean) => deadline<LayerRendered | { error: string }>(
-      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design }), limit,
+      render({ projectId, partition, url, base: site.url as string, token: site.token as string, width, path: page, edits, design, hold }), limit,
       () => ({ error: `The page did not render at ${width} px within ${limit >= 1_000 ? `${Math.round(limit / 1_000)} seconds` : `${limit} ms`}, so the verification stopped there.` }),
     );
 
     const found: WidthFindings[] = [];
-    const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: ReturnType<typeof diffBitmaps> }[] = [];
-    /** What was not compared, said in the verdict whatever it decides: how far down a page that went on was compared. */
-    const unseen: LayerDifference[] = [];
+    const shots: { width: number; design: Buffer; result: Buffer; resultBitmap: Bitmap; d: PixelDiff }[] = [];
+    /** How far down a page that went on was compared: said in the verdict whatever it decides. */
+    const cut: LayerCut[] = [];
+    /** What was left out at each width, for the verdict. */
+    const left: { width: number; masks: RenderMask[]; keep: LayerRect[] }[] = [];
+    /** Whether every render compared was held as asked. */
+    let allHeld = true;
     for (const width of widths) {
       const first = await ask(width, false);
       if ('error' in first) throw new Error(first.error);
@@ -820,8 +1176,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       if ('error' in design) throw new Error(design.error);
       const again = await ask(width, true);
       if ('error' in again) throw new Error(again.error);
-      // Each version against itself: what this page does not repeat exactly, whichever of the two it is.
-      const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap), noiseFloor(design.bitmap, again.bitmap)]);
+      allHeld &&= [first, second, design, again].every((x) => heldAlike(x.steady, { ...hold, views: [] }));
       const elements = compareElements(design.elements, first.elements, width);
       // Nothing is verified by finding nothing different: every edit is compared, or fails saying why not.
       const measured = (x: LayerRendered, id: string): boolean => x.elements.some((s) => s.edit === id);
@@ -844,40 +1199,68 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // difference anywhere near an edit, and step 3 would never run for the edits verified with it.
       elements.push(...compareTokens(tokens, design.tokens, first.tokens, width));
       const zones: Zone[] = zonesOf(design.elements, first.elements);
-      const d = diffBitmaps(design.bitmap, first.bitmap);
-      found.push({ width, noise, elements, pixels: comparePixels(d, zones, width) });
-      const full = Math.max(design.cut?.full ?? 0, first.cut?.full ?? 0);
-      if (full) {
-        const px = (n: number): string => `${Math.round(n).toLocaleString('en')} px`;
-        unseen.push({ kind: 'style', edit: edits[0]!.id, width, element: 'The page', property: 'compared', design: `down to ${px(VERIFY_MAX_HEIGHT)}`, result: `not below that: the page is ${px(full)} tall, and nothing under ${px(VERIFY_MAX_HEIGHT)} was compared` });
+      const keep = zones.map((z) => z.rect);
+      // What the site says changes between renders is left out of every pixel comparison, never a touched element; the
+      // noise floor is measured over what is left. A change the helper held still is compared: all four were held alike.
+      const masks = masksAmong([first, second, design, again]);
+      const out = masks.flatMap((m) => m.rects);
+      const noise = widestNoise([noiseFloor(first.bitmap, second.bitmap, out, keep), noiseFloor(design.bitmap, again.bitmap, out, keep)]);
+      const d = applyMask(diffBitmaps(design.bitmap, first.bitmap), out, keep);
+      // Step 3 against each edit's page from before, with that edit as designed on it: outside every touched element
+      // (in it and in today's renders), what the result shows that it did not is a change that reached further.
+      const before: PixelArea[] = [];
+      let picture = d;
+      for (const e of edits) {
+        const k = kept.get(e.id);
+        const check = checks.get(e.id);
+        const at = k?.widths[String(width)];
+        if (!k || !check?.ran || !check.widths.includes(width) || !at) continue;
+        let then: Bitmap;
+        try { then = await decode(readFileSync(join(editDir(projectId, e.id), 'before', `${width}-design.png`))); } catch {
+          checks.set(e.id, { ran: false, why: 'Its page from before could not be read back from Wanigan’s data folder.' });
+          continue;
+        }
+        const was = { masks: at.masks, steady: at.steady };
+        const zonesThen = zonesOf([...design.elements, ...at.elements], first.elements);
+        const keepThen = zonesThen.map((z) => z.rect);
+        const masksThen = masksAmong([first, second, design, again, was]);
+        const dThen = applyMask(diffBitmaps(then, first.bitmap), masksThen.flatMap((m) => m.rects), keepThen);
+        before.push(against(comparePixels(dThen, zonesThen, width).rest, e.id, k.at));
+        picture = unionDiff(picture, dThen);
+        left.push({ width, masks: masksThen, keep: keepThen });
       }
-      shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d });
+      found.push({ width, noise, elements, pixels: comparePixels(d, zones, width), before });
+      left.push({ width, masks, keep });
+      const full = Math.max(design.cut?.full ?? 0, first.cut?.full ?? 0);
+      if (full) cut.push({ width, to: VERIFY_MAX_HEIGHT, full: Math.round(full) });
+      shots.push({ width, design: design.png, result: first.png, resultBitmap: first.bitmap, d: picture });
     }
     // One floor for the whole verdict, the one it states: the largest over both versions and every width. Two renders
     // of a width that happened to match exactly do not make that width stricter than the page is.
     const floor = verdictNoise(found);
     const outcome = judge(found.map((w) => ({ ...w, noise: floor })));
     const images: { width: number; design: Buffer; result: Buffer; diff: Buffer }[] = [];
-    for (const i of shots) images.push({ width: i.width, design: i.design, result: i.result, diff: i.d.pixels ? await encode(diffPicture(i.resultBitmap, i.d, floor)) : Buffer.alloc(0) });
+    for (const i of shots) images.push({ width: i.width, design: i.design, result: i.result, diff: i.d.pixels || i.d.masked ? await encode(diffPicture(i.resultBitmap, i.d, floor)) : Buffer.alloc(0) });
     const base: Omit<LayerVerdict, 'pictures'> = {
       at: clock(), ok: outcome.ok, failed: outcome.failed, widths, noise: floor,
-      // What differs first, then what was not compared: said on a verdict that passed too, which passed only as far down as that.
-      differences: [...outcome.differences.slice(0, MAX_DIFFERENCES - unseen.length), ...unseen],
+      differences: outcome.differences.slice(0, MAX_DIFFERENCES),
+      masked: maskedOf(left), held: allHeld ? { at: hold.t } : null, cut,
     };
-    // The pictures, for each edit's tray row: its own folder, written afresh.
+    // The pictures, for each edit's tray row: its own folder, written afresh (its page from before is kept).
     const verdicts = new Map<string, LayerVerdict>();
     for (const e of edits) {
-      const dir = join(root, folderOf(projectId), e.id);
-      rmSync(dir, { recursive: true, force: true });
+      const dir = editDir(projectId, e.id);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
+      for (const f of readdirSync(dir)) if (/^\d{3,4}-(?:design|result|diff)\.png$/.test(f)) rmSync(join(dir, f), { force: true });
       const pictures = images.map((i) => {
         const file = (kind: string): string => join(dir, `${i.width}-${kind}.png`);
         writeFileSync(file('design'), i.design, { mode: 0o600 });
         writeFileSync(file('result'), i.result, { mode: 0o600 });
         if (i.diff.length) writeFileSync(file('diff'), i.diff, { mode: 0o600 });
-        return { width: i.width, design: file('design'), result: file('result'), diff: i.diff.length ? file('diff') : null };
+        const then = join(dir, 'before', `${i.width}-page.png`);
+        return { width: i.width, design: file('design'), result: file('result'), diff: i.diff.length ? file('diff') : null, before: existsSync(then) ? then : null };
       });
-      verdicts.set(e.id, { ...base, pictures });
+      verdicts.set(e.id, { ...base, before: checks.get(e.id) as LayerBeforeCheck, pictures });
     }
     // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
     // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).
@@ -891,11 +1274,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (refusals.length) throw new Error(`The verification ran (its pictures are kept), but the layer did not record it: ${refusals.join(' ')}`);
     return verdicts.get(edits[0]!.id) as LayerVerdict;
   };
-  const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => {
-    const next = verifying.then(() => verifyNow(raw, rawOptions), () => verifyNow(raw, rawOptions));
-    verifying = next.catch(() => {});
-    return next;
-  };
+  const verify = (raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => inTurn(() => verifyNow(raw, rawOptions));
 
   /** A kept picture as base64, only from under live-layer/ in the data folder, and only a PNG. */
   const picture = (raw: unknown): string | null => {

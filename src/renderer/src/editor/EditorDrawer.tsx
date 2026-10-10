@@ -8,20 +8,25 @@
 // project's view area beside the project's files, and the drawer's own open
 // or closed, height and dock are left as they were, to come back when the tab
 // is left. One editor, never a second: nothing here remounts between the two.
-// Design: docs/design/2026-10-09-code-editor.md.
+//
+// In the live view the drawer is its dock: tabs for Code and for what the view
+// adds (its notes, problems and request, drawn here by components/live/Dock.tsx
+// through `useDockHost`). Closed there, a strip of those tabs stays under the
+// page; ⇧[ and ⇧] open it, then step through them. ⌘J stays the code editor's.
+// Design: docs/design/2026-10-09-code-editor.md, docs/design/2026-10-08-live-view.md.
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import type { ProjectSummary } from '@shared/model';
 import { shortcutFor } from '@shared/shortcuts';
 import { bridge, useQuery } from '../lib/api';
 import { Icon } from '../components/icons';
-import { Button, Dialog, Empty, IconButton, KeyCaps } from '../components/ui';
+import { Button, Dialog, Empty, IconButton, KeyCaps, Segmented } from '../components/ui';
 import { ViewBoundary } from '../components/ViewBoundary';
 import { FileTree, focusFileTree } from './FileTree';
 import { MIN_SIZE, setPrefs, useEditorPrefs } from './prefs';
 import { QuickOpen } from './QuickOpen';
 import {
-  closeQuickOpen, closeTab, currentSurface, focusBreadcrumbs, goBack, goForward, openQuickOpen, setEditorOpen, setEditorPage, showTab, toggleEditor, useEditor,
-  type EditorTab,
+  CODE_TAB, closeQuickOpen, closeTab, currentSurface, dockShows, dockTabs, focusBreadcrumbs, goBack, goForward, openQuickOpen, setDockHost, setEditorOpen, setEditorPage,
+  showDock, showTab, toggleEditor, useEditor, type EditorTab,
 } from './store';
 import '../styles/editor.css';
 
@@ -40,24 +45,31 @@ export function EditorDrawer({ project, page = false }: {
   const activeKey = project ? editor.active[project.id] ?? null : null;
   const active = tabs.find((t) => t.key === activeKey) ?? null;
   const onPage = !!project && page;
-  const visible = !!project && (editor.open || onPage);
+  // The dock's tab here (null: one only another view has, so the drawer steps aside until that view is back).
+  const shows = dockShows(editor);
+  const docked = dockTabs(editor);
+  const visible = !!project && (onPage || (editor.open && shows !== null));
+  // The code editor itself shows: on the Code tab, or in the drawer on its Code tab.
+  const code = onPage || shows === CODE_TAB.id;
+  const codeShown = visible && code;
+  const what = docked.length > 1 ? 'dock' : 'editor';
   // Before paint, so a file opened from the tab's tree never opens the drawer behind it.
   useLayoutEffect(() => { setEditorPage(onPage); }, [onPage]);
   const cards = useQuery('cards.list', project && tabs.some((t) => t.cardId) ? { projectId: project.id } : null, ['board']);
   const [closing, setClosing] = useState<EditorTab | null>(null);
   const [loaded, setLoaded] = useState(false);
-  useEffect(() => { if (visible && active) setLoaded(true); }, [visible, active]);
+  useEffect(() => { if (codeShown && active) setLoaded(true); }, [codeShown, active]);
 
   // ⌘⇧. moves to the breadcrumbs from anywhere while a file is open.
   useEffect(() => {
-    if (!visible || !active) return undefined;
+    if (!codeShown || !active) return undefined;
     const onKey = (e: globalThis.KeyboardEvent): void => {
       const mod = mac ? e.metaKey : e.ctrlKey;
       if (mod && e.shiftKey && (e.code === 'Period' || e.key === '>' || e.key === '.')) { e.preventDefault(); focusBreadcrumbs(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible, active, mac]);
+  }, [codeShown, active, mac]);
 
   const rootLabel = (tab: EditorTab | null): string => {
     if (!project) return '';
@@ -76,7 +88,8 @@ export function EditorDrawer({ project, page = false }: {
   };
   // Back and Forward: ⌃- and ⌃⇧- on a Mac (Alt+← and Alt+→ elsewhere), and the mouse's own back and forward buttons.
   const onKey = (e: KeyboardEvent): void => {
-    if (!project) return;
+    // On another of the dock's tabs these keys are that tab's.
+    if (!project || !code) return;
     const minus = e.code === 'Minus' || e.key === '-' || e.key === '_';
     const back = mac ? e.ctrlKey && !e.metaKey && !e.altKey && minus && !e.shiftKey : e.altKey && e.key === 'ArrowLeft';
     const forward = mac ? e.ctrlKey && !e.metaKey && !e.altKey && minus && e.shiftKey : e.altKey && e.key === 'ArrowRight';
@@ -92,26 +105,41 @@ export function EditorDrawer({ project, page = false }: {
     }
   };
   const onMouse = (e: MouseEvent): void => {
-    if (!project || (e.button !== 3 && e.button !== 4)) return;
+    if (!project || !code || (e.button !== 3 && e.button !== 4)) return;
     e.preventDefault();
     if (e.type === 'mouseup') { if (e.button === 3) goBack(project.id); else goForward(project.id); }
   };
 
+  const files = tabs.length === 1 ? (tabs[0]?.path.split('/').pop() ?? '') : `${tabs.length} files`;
   return (
     <>
-      {project && !editor.open && !onPage && tabs.length ? (
-        <button type="button" className="editor-collapsed" onClick={() => setEditorOpen(true)} title={`Show the code editor (${mac ? '⌘J' : 'Ctrl+J'})`}>
+      {project && !visible && !onPage && docked.length > 1 ? (
+        // The live view's dock, closed: its tabs stay under the page, each opening it there.
+        <div className="dock-collapsed dock-tabs" role="group" aria-label="The dock beneath the page, closed: open it on">
+          {docked.map((t) => (
+            <button key={t.id} type="button" className="dock-collapsed-tab" onClick={() => showDock(t.id)}
+              title={t.id === CODE_TAB.id ? `The code editor (${mac ? '⌘J' : 'Ctrl+J'})` : t.hint ?? `Open the dock on ${t.label}`}>
+              {t.id === CODE_TAB.id ? <Icon name="code" size={14} /> : null}
+              <span>{t.id === CODE_TAB.id && tabs.length ? `Code · ${files}` : t.label}</span>
+              {t.id === CODE_TAB.id && unsavedHere ? <span className="editor-collapsed-unsaved">{unsavedHere} unsaved</span> : null}
+            </button>
+          ))}
+          <span className="dock-collapsed-keys faint" aria-hidden="true"><kbd>⇧[</kbd> <kbd>⇧]</kbd></span>
+        </div>
+      ) : project && !visible && !onPage && tabs.length ? (
+        <button type="button" className="editor-collapsed" onClick={() => showDock(CODE_TAB.id)} title={`Show the code editor (${mac ? '⌘J' : 'Ctrl+J'})`}>
           <Icon name="code" size={14} />
-          <span>Code · {tabs.length === 1 ? (tabs[0]?.path.split('/').pop() ?? '') : `${tabs.length} files`}</span>
+          <span>Code · {files}</span>
           {unsavedHere ? <span className="editor-collapsed-unsaved">{unsavedHere} unsaved</span> : null}
           <kbd>{mac ? '⌘J' : 'Ctrl+J'}</kbd>
         </button>
       ) : null}
-      <section className="editor-drawer" data-mode={onPage ? 'page' : 'drawer'} data-dock={onPage ? undefined : prefs.dock} hidden={!visible} aria-label="Code editor"
+      <section className="editor-drawer" data-mode={onPage ? 'page' : 'drawer'} data-dock={onPage ? undefined : prefs.dock} data-shows={onPage ? undefined : shows ?? undefined}
+        hidden={!visible} aria-label={what === 'dock' ? 'The dock beneath the page' : 'Code editor'}
         style={onPage ? undefined : prefs.dock === 'bottom' ? { height: prefs.height } : { width: prefs.width }}
         onKeyDown={onKey} onMouseDown={onMouse} onMouseUp={onMouse}>
         {/* Each child keeps its place in both modes, so the editor below is never mounted again. */}
-        {project && !onPage ? <Resizer dock={prefs.dock} size={prefs.dock === 'bottom' ? prefs.height : prefs.width} /> : null}
+        {project && !onPage ? <Resizer dock={prefs.dock} size={prefs.dock === 'bottom' ? prefs.height : prefs.width} what={what} /> : null}
         {project && onPage ? (
           // Its own boundary: if the files break, the editor beside them (and anything unsaved in it) stays.
           <ViewBoundary name="The project’s files" compact resetKey={`${project.id}|${active?.cardId ?? ''}`} frame={(panel) => <div className="code-tree">{panel}</div>}>
@@ -121,6 +149,12 @@ export function EditorDrawer({ project, page = false }: {
         ) : null}
         {project ? (
           <header className="editor-head">
+            {!onPage && docked.length > 1 ? (
+              <div className="dock-tabs">
+                <Segmented<string> size="s" label="Show in the dock" value={shows ?? CODE_TAB.id} options={docked.map((t) => ({ value: t.id, label: t.label, hint: t.hint }))} onChange={showDock} />
+              </div>
+            ) : null}
+            {code ? (
             <nav className="editor-tabs" aria-label="Open files">
               <ul>
                 {tabs.map((t) => {
@@ -145,27 +179,34 @@ export function EditorDrawer({ project, page = false }: {
                 })}
               </ul>
             </nav>
+            ) : <span className="dock-head-fill" />}
             <div className="editor-actions">
-              <IconButton icon="search" label={`Open a file (${mac ? '⌘P' : 'Ctrl+P'})`} onClick={() => openQuickOpen(null)} />
-              <IconButton icon="save" label={`Save (${mac ? '⌘S' : 'Ctrl+S'})`} disabled={!active || !editor.unsaved.has(active.key)}
-                onClick={() => { if (active) void currentSurface()?.save(active.key); }} />
-              <IconButton icon="undo" label="Revert to the saved file" disabled={!active || !editor.unsaved.has(active.key)}
-                onClick={() => { if (active) currentSurface()?.revert(active.key); }} />
+              {code ? (
+                <>
+                  <IconButton icon="search" label={`Open a file (${mac ? '⌘P' : 'Ctrl+P'})`} onClick={() => openQuickOpen(null)} />
+                  <IconButton icon="save" label={`Save (${mac ? '⌘S' : 'Ctrl+S'})`} disabled={!active || !editor.unsaved.has(active.key)}
+                    onClick={() => { if (active) void currentSurface()?.save(active.key); }} />
+                  <IconButton icon="undo" label="Revert to the saved file" disabled={!active || !editor.unsaved.has(active.key)}
+                    onClick={() => { if (active) currentSurface()?.revert(active.key); }} />
+                </>
+              ) : null}
               {onPage ? null : (
                 <>
-                  <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} label={prefs.dock === 'bottom' ? 'Put the editor beside the view' : 'Put the editor beneath the view'}
+                  <IconButton icon={prefs.dock === 'bottom' ? 'dockRight' : 'dockBottom'} label={prefs.dock === 'bottom' ? `Put the ${what} beside the view` : `Put the ${what} beneath the view`}
                     onClick={() => setPrefs({ dock: prefs.dock === 'bottom' ? 'right' : 'bottom' })} />
-                  <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} label={`Hide the editor (${mac ? '⌘J' : 'Ctrl+J'})`} onClick={toggleEditor} />
+                  {/* ⌘J is the code editor's: from another tab it shows the editor, so the dock's own Hide says no key there. */}
+                  <IconButton icon={prefs.dock === 'bottom' ? 'down' : 'forward'} label={code ? `Hide the ${what} (${mac ? '⌘J' : 'Ctrl+J'})` : 'Hide the dock'}
+                    onClick={() => (code ? toggleEditor() : setEditorOpen(false))} />
                 </>
               )}
             </div>
           </header>
         ) : null}
         {/* Always here, so the editor and its open files survive moving between views and projects. */}
-        <div className="editor-body">
+        <div className="editor-body" hidden={!code}>
           {loaded ? (
             <Suspense fallback={<p className="editor-placeholder faint">Loading the editor…</p>}>
-              <div className="editor-slot" hidden={!active}><CodeSurface tab={visible ? active : null} rootLabel={rootLabel(active)} layout={onPage ? 'page' : 'drawer'} /></div>
+              <div className="editor-slot" hidden={!active}><CodeSurface tab={codeShown ? active : null} rootLabel={rootLabel(active)} layout={onPage ? 'page' : 'drawer'} /></div>
             </Suspense>
           ) : null}
           {project && !active && onPage ? (
@@ -181,6 +222,8 @@ export function EditorDrawer({ project, page = false }: {
             </Empty>
           ) : null}
         </div>
+        {/* What the view on screen shows in its own dock tab (the live view's notes, problems, request): drawn here through a portal. */}
+        <div className="dock-panel" ref={setDockHost} hidden={code} role="region" aria-label={docked.find((t) => t.id === shows)?.label.replace(/\s\d+$/, '') ?? 'The dock'} />
       </section>
       {project && editor.quick ? <QuickOpen project={project} cardKey={editor.quick.cardKey} onClose={closeQuickOpen} /> : null}
       {closing ? (
@@ -211,7 +254,7 @@ function UnsavedDialog({ tab, onClose, onDiscard, onSave }: { tab: EditorTab; on
 }
 
 /** The drawer's edge: drag it, or focus it and use the arrow keys, Home and End. */
-function Resizer({ dock, size }: { dock: 'bottom' | 'right'; size: number }) {
+function Resizer({ dock, size, what }: { dock: 'bottom' | 'right'; size: number; what: 'dock' | 'editor' }) {
   const drag = useRef<{ start: number; size: number } | null>(null);
   const [live, setLive] = useState<number | null>(null);
   const shown = live ?? size;
@@ -253,7 +296,7 @@ function Resizer({ dock, size }: { dock: 'bottom' | 'right'; size: number }) {
   };
   return (
     <div className="editor-resizer" role="separator" tabIndex={0} aria-orientation={dock === 'bottom' ? 'horizontal' : 'vertical'}
-      aria-label="Resize the code editor" aria-valuenow={shown} aria-valuemin={MIN_SIZE} aria-valuemax={limit()}
+      aria-label={what === 'dock' ? 'Resize the dock' : 'Resize the code editor'} aria-valuenow={shown} aria-valuemin={MIN_SIZE} aria-valuemax={limit()}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={onKey}
       onDoubleClick={() => commit(size > 480 ? 340 : limit())} />
   );

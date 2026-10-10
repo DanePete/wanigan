@@ -12,9 +12,12 @@
 // - Before → after, one line per value; whether a target is fragile; why an
 //   orphaned edit is one.
 // - What undo and redo would do, and what a verification said: the step that
-//   failed, each difference, the noise floor, all in words.
+//   failed, each difference, the noise floor, what was left out of the pixel
+//   steps and why, whether step 3 compared the page as it was before, what was
+//   held still, and how far down a long page was compared, all in words.
 import type {
-  LayerApplied, LayerDifference, LayerEdit, LayerImplemented, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict, VerifyStep,
+  LayerApplied, LayerCut, LayerDifference, LayerEdit, LayerImplemented, LayerMask, LayerRect, LayerSnapshot, LayerState, LayerTarget, LayerVerdict,
+  VerifyStep,
 } from '../../../shared/design-layer.ts';
 import { fragileWhy, kindWords } from '../../../shared/layer-words.ts';
 import type { LiveEdit, LiveRegion } from '../../../shared/live.ts';
@@ -172,11 +175,31 @@ export const STEP_WORDS: Record<VerifyStep, string> = {
 const widthsWords = (widths: readonly number[]): string =>
   widths.length === 1 ? `${widths[0]} px` : `${widths.slice(0, -1).join(', ')} and ${widths[widths.length - 1]} px`;
 
-/** What a verification said, in one line. */
+/** What a verification said, in one line. A pass whose step 3 could not compare the page as it was before says so. */
 export function verdictHeadline(v: LayerVerdict): string {
+  if (v.ok && v.before && !v.before.ran) return `Verified at ${widthsWords(v.widths)} against the design: the site renders it as designed. It was not compared with the page as it was before.`;
   if (v.ok) return `Verified at ${widthsWords(v.widths)}: the site renders it as designed.`;
   return `Not verified at ${widthsWords(v.widths)}: the site does not render it as designed yet.`;
 }
+
+/** Whether step 3 compared the result with the page as it was before the edit was made real, or why not; null on a verdict kept before it could. */
+export function beforeWords(v: LayerVerdict): string | null {
+  if (!v.before) return null;
+  if (v.before.ran) return `The rest of the page was also compared with the page as it was just before this was made real, at ${widthsWords(v.before.widths)}.`;
+  return `Not compared with the page as it was before it was made real: ${v.before.why}`;
+}
+
+/** How far down a page that went on was compared: a statement, passing or not. */
+export const cutWords = (c: LayerCut): string =>
+  `At ${c.width} px the page is ${c.full.toLocaleString('en')} px tall: compared down to ${c.to.toLocaleString('en')} px, and nothing below that.`;
+
+/** What the site's helper held still for every render compared; null when it did not, or on a verdict kept before it could. */
+export const heldWords = (v: LayerVerdict): string | null => (v.held
+  ? 'The site’s helper held relative dates and random orders still for every render, so they were compared rather than left out.' : null);
+
+/** One part left out of the pixel steps, and why. */
+export const maskWords = (m: LayerMask): string =>
+  `${m.label}: ${m.why}, at ${widthsWords(m.widths)}.${m.nearEdit ? ' It is around an edited element, which was compared in full all the same.' : ''}`;
 
 /** Which step failed, and that the ones after it were not judged (they were measured: the first failing step decides). */
 export function failedWords(v: LayerVerdict): string | null {
@@ -184,9 +207,9 @@ export function failedWords(v: LayerVerdict): string | null {
   return v.failed === 'rest' ? `${STEP_WORDS.rest} failed.` : `${STEP_WORDS[v.failed]} failed; the steps after it were not judged.`;
 }
 
-/** The noise floor, as the verdict states it: two numbers, never a percentage, the most either version differed from itself. */
+/** The noise floor, as the verdict states it: two numbers, never a percentage, the most either version differed from itself, over what was not left out. */
 export const noiseWords = (v: LayerVerdict): string =>
-  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, the most the page with the layer or without it differed from itself when rendered twice, at any width.`;
+  `Noise floor: up to ${v.noise.maxDiff} of 255 in ${many(v.noise.pixels, 'pixel')}, the most the page with the layer or without it differed from itself when rendered twice, at any width${v.masked?.length ? ', over what was not left out' : ''}.`;
 
 const rectWords = (r: LayerRect): string => `${Math.round(r.width)} × ${Math.round(r.height)} at ${Math.round(r.x)}, ${Math.round(r.y)}`;
 const boxWords = (r: LayerRect): string => `a ${Math.round(r.width)} × ${Math.round(r.height)} box at ${Math.round(r.x)}, ${Math.round(r.y)}`;
@@ -205,7 +228,9 @@ export function differenceWords(d: LayerDifference): string {
       return `At ${d.width} px, ${d.element}: ${d.property} is ${d.result} in the site, ${d.design} in the design.`;
     case 'box': return `At ${d.width} px, ${d.element}’s box is ${rectWords(d.result)} in the site, ${rectWords(d.design)} in the design.`;
     case 'pixels': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ around it, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}.`;
-    case 'leak': return `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
+    case 'leak': return d.against
+      ? `At ${d.width} px, ${many(d.pixels, 'pixel')} away from every edited element differ from the page as it was before it was made real (with it as designed on it), by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`
+      : `At ${d.width} px, ${many(d.pixels, 'pixel')} differ away from every edited element, by up to ${d.maxDiff} of 255, in ${boxWords(d.rect)}: the change reached further than it should.`;
   }
 }
 
@@ -217,6 +242,12 @@ export function differenceWords(d: LayerDifference): string {
  * may be offered: every other refusal (a field that no longer holds the words, several things holding them, an
  * element shown more than once, an edit in the site already, no trace) means the words are stored, or that Wanigan
  * cannot tell, and a template is never written for them.
+ *
+ * On Drupal main no longer answers this: its helper says what writes words nothing holds (writtenIn), and main answers
+ * that. Words a template writes go to an agent, by main's rule that a template is code; words printed through t()
+ * are refused, since changing a template's source string would cut it off from its translations; anything else is made
+ * by code and in no template. None of those offers a template here. So the offer is for a site whose helper cannot
+ * say (a WordPress classic theme, whose template files the helper marks around what they print).
  */
 export const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
 

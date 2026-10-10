@@ -125,12 +125,20 @@ WordPress and other sites can each be on or off.
   status line under the page says what just happened (what an edit outlined,
   a hosted environment shown read-only, a piece shown alone, a palette entry
   being placed), what the view follows, and the keys that work now.
+- **Around the page.** The side panel holds the Layers tree (with a chosen
+  part's details under it, the tree folded to that part's branch, or beside it
+  in a window 1680 px wide or more), Add, the component library and the
+  design layer's edits. Beneath the page, a dock shared with the code editor:
+  Code, Notes, Problems and Request, opened from its tabs (they wait in a strip
+  when it is closed) or ⇧[ and ⇧]. What it shows, its height, its side and
+  whether it is open are kept on this Mac. Compare is drawn where the page is,
+  and leaving it puts the page back as it was.
 - **Keys for everything**, in the view and in its page while nothing is typed
   into: P picks (and stops picking), ⇧L chooses a lens, 1 2 3 the widths,
-  [ and ] the side panel's tabs, ⇧C Compare, ⇧B the component library; on a
-  chosen part E edits, M moves, . opens its code, ⇧A shows it alone, ⇧X takes
-  it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes waiting). All are on the
-  shortcut sheet (?).
+  [ and ] the side panel's tabs, ⇧[ and ⇧] the dock's, ⇧C Compare, ⇧B the
+  component library; on a chosen part E edits, M moves, . opens its code, ⇧A
+  shows it alone, ⇧X takes it out; ⌘↩ adds a note, ⇧⌘↩ sends it (or the notes
+  waiting). All are on the shortcut sheet (?).
 - **Finds the site** from the project's own files (`.ddev`, `wp-config.php`,
   a dev script, `.lando.yml`) and opens the site you already run. It starts
   nothing on its own. A ddev site's certificate is trusted when this Mac's own
@@ -157,14 +165,16 @@ WordPress and other sites can each be on or off.
   Drupal's templates, components, content, fields, blocks and regions (from Twig
   debug's own comments), WordPress's template files and blocks. A part chosen
   there or picked on the page (from the keyboard too: P starts on the chosen
-  part, the arrows walk, Enter picks) offers the same four verbs: **Edit ▾**
+  part, the arrows walk, Enter picks) keeps the tree in view, marked where the
+  part is, and offers the same verbs: **Edit ▾**
   (every way to change it, by where the change is saved: in the site, on the
   page, in code), **Move**, **Code** and **Alone**; the note to an agent is
   right under them, and why it looks as it does (whose code it is, how to
   override someone else's template in your theme, its data, cache and cost)
   is folded below.
 - **Notes for an agent.** Point at parts across pages, say what should change,
-  and send them to a session as one message with a picture of each part.
+  and send them to a session as one message with a picture of each part. They
+  wait in the dock's Notes tab.
 - **The design layer** (Edit ▾ › On the page, and Edits, ⇧E). Retyped words
   and tried styles are kept by Wanigan, not written into the site: the page
   shows them at once, through the layer. A style is for one element or every
@@ -173,20 +183,35 @@ WordPress and other sites can each be on or off.
   before → after, what it reaches (including "this item, shown twice on this
   page"), its state and what that means, and why when it no longer finds its
   element. Make it real saves words through the site itself to the one thing
-  that holds exactly those words: a plain text field on Drupal; on WordPress a
-  title, an excerpt, a string meta, the site's title or tagline, or a menu
-  link's text, each through core's REST API with a revision where WordPress
-  keeps one. Only when nothing the site stores holds them can you look in the
-  template that rendered the element itself, picked on the page: Wanigan says
-  first that every page using that template changes, and writes it only when
-  the words are there exactly once (Put back waits while the layer holds the
-  edit as in the site). Formatted text (a block's, a post's content) goes to an
-  agent, as does a style: never written into the stylesheets by hand. Then
-  Verify renders the page with and without the layer and says what differs,
-  with pictures. Undo, redo, discard, and the page shown without the layer to
-  compare; nothing runs twice, and undo waits while words are being saved. The window has been checked against the UI sweep's
-  stand-in; on the Northstar demo, a script driving the real app made words
-  real and verified them. On WordPress that has been tested with stand-ins only.
+  that holds exactly those words. On Drupal: a text field (a plain one, or one
+  run of words inside formatted text, spliced in with its markup kept and
+  saved only when the field's own text format shows nothing else changed), a
+  field's label, a block's title, the site's name and slogan, the words of a
+  view's header, footer or empty text, a menu link's text, or the words of a
+  Layout Builder inline block, through its layout (a default layout that every
+  page of a kind shares is saved only when you make it real again, after it
+  says how many pages that reaches); configuration says the next config import
+  puts back what is exported. On WordPress a title, an excerpt, a string meta,
+  the site's title or tagline, or a menu link's text, each through core's REST
+  API with a revision where WordPress keeps one. What it cannot save says why,
+  and which kind of why: Drupal keeps no such thing (words written in a Twig
+  template, a menu link written in code, a base field's label), or Wanigan
+  does not do it yet (an interface translation, a caption, words across
+  formatting). Formatted text on WordPress (a block's, a post's content) and
+  words a Drupal template writes go to an agent, as does a style: never
+  written into the stylesheets by hand. Where the site cannot say what writes
+  words nothing stores (a WordPress classic theme's template files), you can
+  look in the template that rendered the element itself, picked on the page:
+  Wanigan says first that every page using that template changes, and writes
+  it only when the words are there exactly once (Put back waits while the
+  layer holds the edit as in the site). Then Verify renders the page with and
+  without the layer and says what differs, with pictures. Undo, redo, discard,
+  and the page shown without the layer to compare; nothing runs twice, and
+  undo waits while words are being saved. The window has been checked against
+  the UI sweep's stand-in; on the Northstar demo, a script driving the real
+  app made words in a plain field real and verified them. Drupal's formatted
+  text, configuration and Layout Builder saves, and WordPress, have been
+  tested with stand-ins only.
 - **Go to**, in the address field (click it, or Shift+Space in the live view,
   ⌘⇧Space anywhere in a project): an address, or any page of the site by
   typing a few letters of its title, an admin or structure page, a path or an id, ranked as you type and by what you choose
@@ -206,12 +231,31 @@ WordPress and other sites can each be on or off.
   Builder), with undo; and the Go to launcher's list of pages. It names no module: anything
   built on Drupal core shows up through it. How it hooks core:
   [docs/research/2026-10-09-drupal-core-live-trace.md](docs/research/2026-10-09-drupal-core-live-trace.md).
+  The WordPress helper traces each render through WordPress core's hooks the
+  same way, and saves a part's change through core's REST API as you, where
+  core keeps it: a post's fields and meta; a block's words with their
+  formatting, or beside its nested blocks, written as that one block (cleaned
+  as core cleans bound rich text); words bound to a post field, in that field;
+  a synced pattern's words for every page that uses it, or one placement's own;
+  a template's or template part's words (the first save copies the theme's
+  file into the database, as the Site Editor does); a navigation menu's labels;
+  a classic widget's settings; an image's alt in the media library, beside an image
+  block's own. Each says where it shows. What WordPress keeps nowhere it can
+  write (a static block's settings, words from a theme's pattern file, a
+  fallback menu's links) says so, and so does what Wanigan does not do yet.
+  How it hooks core:
+  [docs/research/2026-10-09-wordpress-core-live-trace.md](docs/research/2026-10-09-wordpress-core-live-trace.md).
 - **The component library** (⇧B): everything the site can place, as its core
   lists it through the helper: Drupal's single-directory components and the
   block library's blocks, WordPress's block types, patterns and block styles.
   Each is pictured alone in the site's own theme at a phone's and a desktop's
   width (in a hidden window; kept until its files change), with its props,
-  slots, files (opening in the Code tab) and where this page uses it. Add one
+  slots, files (opening in the Code tab), where the rest of the site uses it
+  (the helper's read-only search of what the site has stored, which says what
+  it cannot see: on Drupal placements, Layout Builder layouts and, for a
+  component, a parse of the theme's Twig; on WordPress stored block markup,
+  theme files, patterns and widgets, followed through synced patterns, parts
+  and patterns) and where this page uses it. Add one
   by dragging it onto the page or with Place and a click, through the same
   insert as the palette; what core cannot place alone (a Drupal component
   outside a template or field) says so.
@@ -229,7 +273,7 @@ WordPress and other sites can each be on or off.
   session began and after each turn that changed files, with what changed
   boxed. Taken and kept on this Mac.
 - **Widths and problems.** Phone, tablet and full width; what the page reports
-  as wrong (its own error messages, its console).
+  as wrong (its own error messages, its console), in the dock's Problems tab.
 - **Local and Live.** In the site menu beside Local, the site's hosted
   environments (Dev, Test, Live, as the host names them), each showing the same page. Found
   in the project's own files (Drush and WP-CLI aliases, ddev's and Lando's
@@ -245,7 +289,9 @@ WordPress and other sites can each be on or off.
 - **Compare.** The page you are on, taken whole on Local and on a hosted
   environment at the same width (phone, tablet or desktop), lined up row by row
   so a section only one side has is a striped band rather than everything below
-  it marked as changed. Slider, onion skin, difference, flip and side by side;
+  it marked as changed. Drawn where the page is, with the side panel and the
+  dock beside it; Escape (or ⇧C) puts the page back exactly as it was, not
+  loaded again. Slider, onion skin, difference, flip and side by side;
   each changed area boxed, counted and named by the local part it overlaps.
   Keys: ← → or Space flip, S O D T for the modes, J and K for the next and
   previous change, 1 2 3 for the widths, I to ignore a change (a slideshow, a
@@ -259,7 +305,8 @@ WordPress and other sites can each be on or off.
 - **With the helper's trace** (being finished; seen so far only against a
   stand-in): lenses that colour the page by owner, cache, cost, what can be
   edited and what just changed; a part's hooks, data, cache, cost, revisions
-  and access; the request behind the page (hooks, queries, assets, logs);
+  and access; the request behind the page (hooks, queries, assets, logs), in
+  the dock's Request tab;
   editing a part where it shows, in the site's own form or a small one;
   dragging parts the site can reorder, with Undo (a part whose order is in a
   template becomes a note for an agent); adding blocks from a palette. All of
@@ -332,7 +379,9 @@ view, beside the project's files.
   letters of its name or path (`name:42` for a line). **Edit** on a file in
   Changes or in a turn's diff; **Code** (.) on a part chosen in the live view
   opens its template where it writes the words you picked. ⌘J shows or hides
-  the drawer.
+  the drawer, which stays as you left it (open or closed, beneath or beside,
+  its height), kept on this Mac. In the live view it is the dock, with Notes,
+  Problems and Request beside Code.
 - **The Code tab.** The project's folders as a tree beside the editor, read a
   folder at a time, with the open file marked; arrows walk it, Enter opens a
   file, Space opens it and keeps your place in the tree, typing a name jumps to
@@ -669,12 +718,22 @@ verification results and the behavior that remains unverified.
   tested against ddev 1.25's JSON and a stand-in ddev; a real `ddev start` from
   the app has not been run, and ddev's wording when Docker is not running was
   read from its binary, not seen. Not built yet: Serve this card (switching which checkout ddev
-  serves), a component's props form, saving WordPress content by hand, and
-  Canvas pieces by their own ids. The Drupal helper's Layout Builder moves, and
+  serves), a component's props form, the design layer making words typed on a
+  WordPress page real (the window still sends them to a save only the Drupal
+  helper answers), and Canvas pieces by their own ids. The WordPress helper's
+  newer edits (formatted and nested words, one block written alone, bound
+  words, synced patterns and their overrides, template words, navigation
+  labels, widgets without REST instances, media alt) are tested under a
+  stand-in WordPress only: none has been saved on a real site yet, nor an
+  edited block opened in the block editor to see it called valid. The Drupal helper's Layout Builder moves, and
   reordering a field with several items, have not been run against a real
   site. Retyped words saved on WordPress (a title, a menu link's text) are
   tested with stand-in pages, traces and a stand-in site, not yet seen against
-  a running WordPress. Agents' looks at it
+  a running WordPress. On Drupal, words saved inside formatted text, to
+  configuration (block titles, the site's name and slogan, a view's words, a
+  field's label), to a menu link and through a Layout Builder layout are
+  tested with a stand-in Drupal, not yet seen against a running one (nor what
+  CKEditor 5 does to a stored text the next time it opens it). Agents' looks at it
   (`wanigan mcp`): tested with a real core and a stand-in app; each CLI seen
   connecting and listing the tools, as above, not yet seen calling one in a
   real turn.

@@ -47,7 +47,7 @@ interface Prepared {
   ignored: { mask: LiveMask; rect: Rect }[];
 }
 
-export function CompareViewer({ a, b, width, regions, components, masks, onIgnore, onUnmask, onWidth, initialMode = 'slider' }: {
+export function CompareViewer({ a, b, width, regions, components, masks, onIgnore, onUnmask, onWidth, initialMode = 'slider', keysWithin }: {
   a: CompareSide;
   b: CompareSide;
   /** The CSS width both pages were taken at. */
@@ -62,6 +62,11 @@ export function CompareViewer({ a, b, width, regions, components, masks, onIgnor
   onUnmask?: (mask: LiveMask) => void;
   onWidth?: (width: CompareWidth) => void;
   initialMode?: CompareMode;
+  /**
+   * Where the keys are the viewer's (a selector), with nothing focused besides: beside the rest of a view (the
+   * live view's tree, its dock), an arrow there is that control's own.
+   */
+  keysWithin?: string;
 }) {
   const [ready, setReady] = useState<Prepared | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -127,6 +132,7 @@ export function CompareViewer({ a, b, width, regions, components, masks, onIgnor
     const t = e.target as HTMLElement | null;
     const input = t instanceof HTMLInputElement ? t.type : null;
     if (t?.isContentEditable || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || (input && input !== 'range' && input !== 'checkbox')) return;
+    if (keysWithin && t && t !== document.body && !t.closest(keysWithin)) return;
     const action = compareKey(e);
     if (!action) return;
     if ('flip' in action) {
