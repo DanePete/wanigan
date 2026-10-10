@@ -101,7 +101,7 @@ export default function CodeSurface({ tab, rootLabel, layout = 'drawer' }: { tab
 
   const ready = session?.status === 'ready';
   return (
-    <div className="editor-surface">
+    <div className="editor-surface" data-tour="code-editor">
       <p id={`${hintId}-hint`} className="visually-hidden">Escape, then Tab, moves out of the editor. {mac ? '⌘S' : 'Ctrl+S'} saves.</p>
       {session && controller ? <Breadcrumbs controller={controller} session={session} rootLabel={rootLabel} focusSignal={editor.focusCrumbs} mac={mac} /> : null}
       {session && controller ? <Notices controller={controller} session={session} /> : null}

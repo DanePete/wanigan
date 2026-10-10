@@ -2032,6 +2032,21 @@ span.git-file-box {
   gap: var(--gap-hair);
 }
 
+/* The pull request and its Ask GitHub again: one sunk group, so its refresh is never read as Fetch beside it. */
+.pr-wrap:has(.pr-chip) {
+  padding-right: var(--gap-hair);
+  border-radius: var(--radius-m);
+  background: var(--sunken);
+}
+
+.pr-wrap .pr-chip {
+  background: none;
+}
+
+.pr-wrap .btn-icon:hover {
+  background: var(--hover);
+}
+
 .pr-chip {
   display: inline-flex;
   align-items: center;
