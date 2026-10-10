@@ -88,7 +88,8 @@ export function RunningView({ projects, needs, onNewSession }: {
         </div>
         <div className="topbar-tools">
           {watching && pick.more ? (
-            <span className="toolbar-count watch-more" {...(pick.pinned ? {} : tipProps('Pin the ones to watch from the list'))}>
+            <span className="toolbar-count watch-more"
+              {...tipProps(pick.pinned ? `Your pins choose what Watch shows, up to ${WATCH_MAX}` : `Watch shows ${WATCH_MAX} at a time: pin the ones to watch from the list`)}>
               {plural(pick.more, 'more session')} running, not shown.
             </span>
           ) : null}

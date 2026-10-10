@@ -41,6 +41,16 @@
   box-shadow: 0 0 0 var(--ring) var(--surface);
 }
 
+/*
+  The card drawer is fixed over the window's right side, status line and all,
+  so with a card open the line's end (the launcher, the tour's compass, the
+  keys) moves clear of it. When the drawer becomes the view's right panel this
+  can go.
+*/
+.app.with-drawer .status-line {
+  padding-right: calc(var(--drawer-w) + var(--space-2));
+}
+
 /* ── the floating button, only where a view draws its own status line ────── */
 
 .chat-fab {
@@ -53,7 +63,7 @@
   width: var(--fab);
   height: var(--fab);
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-round);
   background: var(--raised);
   box-shadow: var(--elev-float);
@@ -63,7 +73,7 @@
 
 .chat-fab:hover {
   border-color: var(--water-line);
-  transform: translateY(-2px);
+  transform: translateY(calc(-1 * var(--gap-hair)));
 }
 
 .chat-fab:focus-visible {
@@ -77,11 +87,11 @@
 .chat-orb.thinking::after {
   content: '';
   position: absolute;
-  inset: -4px;
-  border: 2px solid var(--water-line);
+  inset: calc(-1 * var(--space-1));
+  border: var(--focus-ring) solid var(--water-line);
   border-radius: var(--radius-round);
   pointer-events: none;
-  animation: chat-ring 1.6s var(--ease) infinite;
+  animation: chat-ring var(--dur-typing) var(--ease) infinite;
 }
 
 @keyframes chat-ring {
@@ -98,11 +108,11 @@
 /* An answer arrived while the conversation was closed. */
 .chat-fab-dot {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--raised);
+  top: var(--gap-hair);
+  right: var(--gap-hair);
+  width: var(--space-3);
+  height: var(--space-3);
+  border: var(--focus-ring) solid var(--raised);
   border-radius: var(--radius-round);
   background: var(--water);
 }
@@ -126,7 +136,7 @@ body:has(> .chat-scrim) .toasts {
 }
 
 body:has(> .chat-scrim) .toasts .toast {
-  max-width: min(420px, 100%);
+  max-width: min(var(--tray-w), 100%);
 }
 
 /* ── the conversation ────────────────────────────────────────────────────── */
@@ -141,7 +151,7 @@ body:has(> .chat-scrim) .toasts .toast {
   display: flex;
   flex-direction: column;
   width: var(--chat-w);
-  height: min(720px, 100%);
+  height: min(calc(var(--space-12) * 15), 100%);
   overflow: hidden;
   border-radius: var(--radius-xl);
   background: var(--raised);
@@ -296,23 +306,23 @@ body:has(> .chat-scrim) .toasts .toast {
 
 .chat-dots {
   display: inline-flex;
-  gap: 3px;
+  gap: var(--track-pad);
 }
 
 .chat-dots i {
-  width: 6px;
-  height: 6px;
+  width: calc(var(--space-1) + var(--gap-hair));
+  height: calc(var(--space-1) + var(--gap-hair));
   border-radius: var(--radius-round);
   background: var(--water);
-  animation: chat-dot 1s var(--ease) infinite;
+  animation: chat-dot var(--dur-typing) var(--ease) infinite;
 }
 
 .chat-dots i:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: calc(var(--dur-typing) * 0.15);
 }
 
 .chat-dots i:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: calc(var(--dur-typing) * 0.3);
 }
 
 @keyframes chat-dot {
@@ -323,7 +333,7 @@ body:has(> .chat-scrim) .toasts .toast {
   }
   50% {
     opacity: 1;
-    transform: translateY(-3px);
+    transform: translateY(calc(-1 * var(--track-pad)));
   }
 }
 

@@ -250,8 +250,8 @@ export function Chatter({ projects }: { projects: ProjectSummary[] | undefined }
             <span className="chatter-chip-face side-left">{stage.left.initial}</span>
             <span className="chatter-chip-face side-right">{stage.right.initial}</span>
           </span>
-          <span className="chatter-chip-text" key={latest.id}>
-            <span className="chatter-chip-who">{latest.from}</span> {latest.label ?? 'sent a message'}
+          <span className="chatter-chip-text">
+            <span className="chatter-chip-who">{latest.from}</span>{` ${latest.label ?? 'sent a message'}`}
           </span>
           <span className="chatter-n" key={lines.length}>{lines.length}</span>
         </button>

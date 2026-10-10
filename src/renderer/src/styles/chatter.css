@@ -15,6 +15,7 @@
    say who is who, never colour alone. */
 
 .chatter {
+  /* The scene's own geometry: the characters, their wire and their moves keep these sizes, and the keyframes below theirs. */
   --chatter-face: 42px;
   --chatter-wire: 124px;
   --chatter-actor: 92px;
@@ -22,11 +23,11 @@
   left: calc(var(--rail-w) + var(--space-4));
   bottom: var(--space-4);
   z-index: 30;
-  width: min(380px, calc(100vw - var(--rail-w) - 2 * var(--space-4)));
+  width: min(var(--tray-w), calc(100vw - var(--rail-w) - 2 * var(--space-4)));
   display: grid;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-l);
   background: color-mix(in oklab, var(--raised) 97%, transparent);
   backdrop-filter: blur(16px) saturate(1.2);
@@ -116,7 +117,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  animation: fade var(--dur) var(--ease);
 }
 
 .chatter-chip-who {
@@ -139,12 +139,12 @@
 }
 
 .chatter-n {
-  min-width: 20px;
+  min-width: var(--space-5);
   padding: 0 var(--space-1);
   border-radius: var(--radius-round);
   background: var(--water-soft);
   color: var(--water-text);
-  font: 600 var(--text-xs) / 18px var(--font-mono);
+  font: 600 var(--text-xs) / var(--count-h) var(--font-mono);
   text-align: center;
   font-variant-numeric: tabular-nums;
   animation: chatter-bump var(--dur) var(--ease-spring) 1;
@@ -154,8 +154,8 @@
   margin-left: auto;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: var(--control-s);
+  height: var(--control-s);
   padding: 0;
   border: 0;
   border-radius: var(--radius-round);
@@ -212,7 +212,7 @@
   place-items: center;
   width: var(--chatter-face);
   height: var(--chatter-face);
-  border: 1px solid var(--line-strong);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-round);
   box-shadow: inset 0 -6px 12px color-mix(in oklab, var(--bg) 40%, transparent);
   transform-origin: center bottom;
@@ -234,8 +234,8 @@
 .chatter-face::after {
   content: '';
   position: absolute;
-  inset: -2px;
-  border: 2px solid var(--water);
+  inset: calc(-1 * var(--gap-hair));
+  border: var(--focus-ring) solid var(--water);
   border-radius: inherit;
   opacity: 0;
   pointer-events: none;
@@ -273,13 +273,13 @@
   bottom: -3px;
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--line-strong);
+  width: var(--space-4);
+  height: var(--space-4);
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-round);
   background: var(--surface);
   color: var(--muted);
-  font: 600 10px / 1 var(--font-ui);
+  font: 600 var(--text-2xs) / 1 var(--font-ui);
 }
 
 .chatter-actor-name {
@@ -328,7 +328,7 @@
   left: 0;
   right: 0;
   top: 50%;
-  border-top: 2px dotted var(--line-strong);
+  border-top: var(--focus-ring) dotted var(--line-strong);
   transform: translateY(-1px);
 }
 
@@ -340,7 +340,7 @@
   margin-top: -5px;
   border-radius: var(--radius-round);
   background: var(--water);
-  box-shadow: 0 0 0 4px var(--water-soft);
+  box-shadow: 0 0 0 var(--space-1) var(--water-soft);
   opacity: 0;
   will-change: transform, opacity;
   animation: chatter-fly var(--dur-travel) var(--ease) 1;
@@ -355,7 +355,7 @@
   right: 0;
   --dx: calc(10px - var(--chatter-wire));
   background: var(--muted);
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--fg) 12%, transparent);
+  box-shadow: 0 0 0 var(--space-1) color-mix(in oklab, var(--fg) 12%, transparent);
 }
 
 /* Waiting for a reply: dots at eye level on the wire side of the face. */
@@ -363,9 +363,9 @@
   position: absolute;
   top: calc(var(--chatter-face) * 0.3);
   display: flex;
-  gap: 3px;
-  padding: 4px 6px;
-  border: 1px solid var(--line-strong);
+  gap: var(--track-pad);
+  padding: var(--space-1) calc(var(--space-1) + var(--gap-hair));
+  border: var(--hairline) solid var(--line-strong);
   border-radius: var(--radius-round);
   background: var(--surface);
 }
@@ -415,10 +415,10 @@
 .chatter-bubble {
   position: relative;
   display: grid;
-  gap: 2px;
+  gap: var(--gap-hair);
   max-width: 84%;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
+  border: var(--hairline) solid var(--line);
   border-radius: var(--radius-l);
   animation: chatter-pop var(--dur-pop) var(--ease-spring) both;
 }

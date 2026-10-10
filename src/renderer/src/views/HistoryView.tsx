@@ -65,6 +65,16 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
     return start(item);
   };
 
+  /**
+   * Closing the reader while it has the keys gives them back to its row, found by its id (the list may have been
+   * drawn again since it opened); closed from the list, the keys stay where they are.
+   */
+  const closeReader = (id: string): void => {
+    const inside = !!document.activeElement?.closest('.reader') || document.activeElement === document.body;
+    if (inside) list.current?.querySelector<HTMLButtonElement>(`.hrow-main[data-id="${CSS.escape(id)}"]`)?.focus();
+    setReading(null);
+  };
+
   /** Up and Down walk the rows; with a conversation open, it follows without taking the keys. */
   const walk = (e: KeyboardEvent<HTMLButtonElement>, id: string): void => {
     const rows = [...(list.current?.querySelectorAll<HTMLButtonElement>('.hrow-main') ?? [])];
@@ -121,7 +131,7 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
       </div>
       {read ? (
         <Reader key={read.id} item={read} focus={reading?.focus ?? false} projectKey={project.key} pausedAt={project.pausedAt}
-          onClose={() => setReading(null)} onResume={() => resume(read)} />
+          onClose={() => closeReader(read.id)} onResume={() => resume(read)} />
       ) : null}
       {how.open ? (
         <HistoryHow count={history.data && !search ? items.length : null} live={history.data ? items.filter((i) => i.live).length : null}
@@ -265,11 +275,9 @@ function Reader({ item, focus, projectKey, pausedAt, onClose, onResume }: {
   const close = useRef(onClose);
   close.current = onClose;
 
-  // Opened by choosing it, focus comes here, and goes back to its row when it closes (in the commit, before anything else can move it).
+  // Opened by choosing it, focus comes here; HistoryView gives it back to the row when it closes.
   useLayoutEffect(() => {
-    const before = document.activeElement as HTMLElement | null;
     if (focus) top.current?.focus();
-    return () => { if (focus && before?.isConnected) before.focus(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Escape closes it, unless a dialog over it has the keys.
   useEffect(() => {
