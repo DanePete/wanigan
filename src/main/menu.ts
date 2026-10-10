@@ -6,6 +6,12 @@ import type { MenuItemConstructorOptions } from 'electron';
 import { GIT_COMMANDS, menuAccelerator, menuSequence, type CommandId } from '../shared/shortcuts.ts';
 import { PROJECT_VIEWS } from '../shared/views.ts';
 
+/**
+ * Wanigan's own window's DevTools: ⌥⇧⌘I on a Mac, Ctrl+Alt+Shift+I elsewhere. Electron gives the role Chrome's chord
+ * (⌥⌘I, Ctrl+Shift+I), which is the live view page's DevTools here.
+ */
+export const WANIGAN_DEVTOOLS = 'CmdOrCtrl+Alt+Shift+I';
+
 export interface MenuActions {
   /** Run a command in the window, bringing it forward (or opening it). */
   command(id: CommandId): void;
@@ -19,7 +25,7 @@ export interface MenuProject { key: string; name: string }
 
 export function menuTemplate(projects: readonly MenuProject[], actions: MenuActions, mac = process.platform === 'darwin'): MenuItemConstructorOptions[] {
   const item = (label: string, id: CommandId): MenuItemConstructorOptions => {
-    const accelerator = menuAccelerator(id);
+    const accelerator = menuAccelerator(id, mac);
     const sequence = menuSequence(id, mac);
     return {
       label,
@@ -76,7 +82,7 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
         ...(projects.length
           ? projects.map((p, i): MenuItemConstructorOptions => ({
             label: `${p.name} (${p.key})`,
-            ...(i < 9 ? { accelerator: menuAccelerator(`project-${i + 1}` as CommandId) } : {}),
+            ...(i < 9 ? { accelerator: menuAccelerator(`project-${i + 1}` as CommandId, mac) } : {}),
             click: () => actions.go(`#/p/${encodeURIComponent(p.key)}/board`),
           }))
           : [{ label: 'No projects open yet', enabled: false }]),
@@ -95,7 +101,10 @@ export function menuTemplate(projects: readonly MenuProject[], actions: MenuActi
       label: 'View',
       submenu: [
         item('Toggle Sidebar', 'toggle-rail'), item('Code Editor', 'toggle-editor'), { type: 'separator' },
-        { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
+        // The live view's page: Chrome's own chord for its DevTools (⌥⌘I on a Mac, Ctrl+Shift+I elsewhere).
+        item('Page DevTools', 'live-devtools'), { type: 'separator' },
+        // Wanigan's own window: that chord is the page's now, so this one takes Shift as well.
+        { role: 'reload' }, { role: 'toggleDevTools', label: 'Wanigan’s Developer Tools', accelerator: WANIGAN_DEVTOOLS }, { type: 'separator' },
         { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },

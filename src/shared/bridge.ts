@@ -10,6 +10,7 @@ import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
 import type { LiveGesture, LiveKeyId } from './live-keys.ts';
+import type { LiveDevtoolsMode } from './live-devtools.ts';
 import type { Need } from './model.ts';
 import type { EventName, Events, Method, Params, Result } from './protocol.ts';
 import type { AppSettings, AppState } from './settings.ts';
@@ -120,7 +121,39 @@ export interface LiveBridge {
   forward(): Promise<void>;
   /** Open the page in the default browser. */
   open(): Promise<void>;
-  devtools(): Promise<void>;
+  /*
+   * The page's own Chromium DevTools (src/main/live-devtools.ts; the model is src/shared/live-devtools.ts): in a plain
+   * view of its own laid over the dock's DevTools tab, or in a window of its own. It is the page's DevTools: the page's
+   * WebContents has no Node and no Wanigan preload, and the view DevTools is drawn in is given neither.
+   */
+
+  /**
+   * The dock shows the DevTools tab over these bounds (window CSS pixels): DevTools opens there, or shows again as it
+   * was. Answers where DevTools is now: `detached` when it is in its own window (it stays there), `closed` with no page.
+   * `focus`: the owner opened it just now (its key, its control), so the keyboard goes to it, as Chrome's does.
+   */
+  devtoolsShow(bounds: LiveBounds, focus?: boolean): Promise<LiveDevtoolsMode>;
+  /** The tab's area moved or changed size. */
+  devtoolsBounds(bounds: LiveBounds): void;
+  /** The tab is not shown, or something covers it: DevTools steps aside, still open. With `frame`, its last picture comes back. */
+  devtoolsHide(frame?: boolean): Promise<string | null>;
+  /** Close DevTools, in the dock or in its own window: the owner left the project, or closed it. */
+  devtoolsClose(): Promise<void>;
+  /** DevTools in a window of its own, for a second screen; the dock's view closes. False with no page. */
+  devtoolsDetach(): Promise<boolean>;
+  /**
+   * Select the element at a point of the page (CSS pixels of the view) in DevTools' Elements panel: in its own window
+   * when it is there, else in the dock, opening it there when it is closed. False with no page or a point outside it.
+   */
+  devtoolsInspect(x: number, y: number): Promise<boolean>;
+  /** Where DevTools is, each time that changes (its own window closed by the owner, too). */
+  onDevtools(listener: (mode: LiveDevtoolsMode) => void): () => void;
+  /**
+   * A part's box in the view now (CSS pixels of the viewport; it may run off an edge), after scrolling the page to it
+   * when none of it was on screen: a region from the last scan, or the picked element (null). Null when it is not on
+   * the page.
+   */
+  reveal(index: number | null): Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** The regions of the page and what produced each. */
   scan(): Promise<LiveRegion[]>;
   /** Outline regions by their index from the last scan: an edit's, a pointed-at row's (dashed), a pick's. Returns how many were drawn. */

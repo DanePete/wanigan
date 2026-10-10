@@ -21,6 +21,9 @@
 // With the site helper's trace, "Why it looks like this" also says what the
 // trace knows of the part (PartTrace.tsx): the hooks that shaped it, its data,
 // its cache, cost, revisions and access.
+//
+// Show in DevTools (⇧D), beside the part's name, opens the dock's DevTools tab
+// and selects the element in its Elements panel (components/live/DevTools.tsx).
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import type { LiveComponent, LivePick, LivePlatform, LiveRegion, LiveSite } from '@shared/live';
 import { partFor, type LiveTraceAnswer, type PartIndex } from '@shared/live-lens';
@@ -66,7 +69,7 @@ const ORIGIN: Record<LiveOrigin, string> = { yours: 'Your code', contrib: 'Contr
 const near = (root: string, abs: string): string => (abs.startsWith(`${root}/`) ? abs.slice(root.length + 1) : abs);
 
 export function Inspector({ project, platform, selection, regions, components, docroot, theme, page, prefer, helper, readOnly = false, onSelect, onClose,
-  site, answer, trace, parts, arrange, onEdit, siteAi, onSiteAiRefresh, verbs, layer, onTray }: {
+  site, answer, trace, parts, arrange, onEdit, siteAi, onSiteAiRefresh, verbs, layer, onTray, onDevtools }: {
   project: ProjectSummary;
   platform: LivePlatform | null;
   selection: Selection;
@@ -101,6 +104,8 @@ export function Inspector({ project, platform, selection, regions, components, d
   layer: LayerApi;
   /** Open the tray of the layer's edits. */
   onTray: () => void;
+  /** Show it in the page's DevTools: the dock's tab opened, its Elements panel on this element. */
+  onDevtools?: () => void;
 }) {
   const live = liveBridge();
   const toast = useToast();
@@ -261,7 +266,10 @@ export function Inspector({ project, platform, selection, regions, components, d
             {name?.kind ? <p className="faint small">{name.kind}</p> : null}
           </div>
         </div>
-        <IconButton icon="close" label="Back to the layers" onClick={onClose} />
+        <div className="live-side-head-actions">
+          {onDevtools ? <IconButton icon="devtools" label={`Show ${title} in DevTools (⇧D)`} aria-keyshortcuts="Shift+D" onClick={onDevtools} /> : null}
+          <IconButton icon="close" label="Back to the layers" onClick={onClose} />
+        </div>
       </div>
 
       {crumbs.length ? (

@@ -16,7 +16,19 @@ const live: LiveBridge = {
   back: () => ipcRenderer.invoke('live:back') as Promise<void>,
   forward: () => ipcRenderer.invoke('live:forward') as Promise<void>,
   open: () => ipcRenderer.invoke('live:open') as Promise<void>,
-  devtools: () => ipcRenderer.invoke('live:devtools') as Promise<void>,
+  // The page's own DevTools, in the dock or its own window (src/main/live-devtools.ts).
+  devtoolsShow: (bounds, focus) => ipcRenderer.invoke('live:devtoolsShow', bounds, focus === true) as ReturnType<LiveBridge['devtoolsShow']>,
+  devtoolsBounds: (bounds) => ipcRenderer.send('live:devtoolsBounds', bounds),
+  devtoolsHide: (frame) => ipcRenderer.invoke('live:devtoolsHide', frame === true) as Promise<string | null>,
+  devtoolsClose: () => ipcRenderer.invoke('live:devtoolsClose') as Promise<void>,
+  devtoolsDetach: () => ipcRenderer.invoke('live:devtoolsDetach') as Promise<boolean>,
+  devtoolsInspect: (x, y) => ipcRenderer.invoke('live:devtoolsInspect', x, y) as Promise<boolean>,
+  onDevtools(listener) {
+    const handler = (_e: IpcRendererEvent, mode: unknown): void => { if (mode === 'closed' || mode === 'docked' || mode === 'detached') listener(mode); };
+    ipcRenderer.on('live:devtoolsMode', handler);
+    return () => { ipcRenderer.off('live:devtoolsMode', handler); };
+  },
+  reveal: (index) => ipcRenderer.invoke('live:reveal', index) as ReturnType<LiveBridge['reveal']>,
   scan: () => ipcRenderer.invoke('live:scan') as ReturnType<LiveBridge['scan']>,
   outline: (indexes, label, tone) => ipcRenderer.invoke('live:outline', indexes, label, tone ?? 'edit') as Promise<number>,
   clear: () => ipcRenderer.invoke('live:clear') as Promise<void>,

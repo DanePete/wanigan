@@ -373,6 +373,13 @@
   justify-content: space-between;
 }
 
+.live-side-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .live-side-title {
   margin: 0;
   font: 600 var(--text-md) / var(--leading-tight) var(--font-ui);
@@ -716,6 +723,80 @@
 
 /* ── the live view's tabs in the dock beneath the page (Dock.tsx) ────────── */
 
+/*
+  The page's own DevTools (DevTools.tsx): the main process lays a native view
+  over .live-devtools-host. The Talk to Wanigan button sits over the dock's
+  bottom right corner, above any native view, so the view stops above it and
+  the line under it (what is Wanigan's in the page, and Open in its own
+  window) runs under the button.
+*/
+.live-docked[data-tab='devtools'] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+
+.live-devtools {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.live-devtools-host {
+  position: relative;
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sunken);
+}
+
+.live-devtools-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+
+.live-devtools-away {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.live-devtools-away p,
+.live-devtools-wait {
+  margin: 0;
+}
+
+.live-devtools-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(var(--fab) + var(--space-5) + var(--space-2));
+  padding: var(--space-2) calc(var(--fab) + var(--space-5) + var(--space-2)) var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.live-devtools-said {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.live-devtools-keys {
+  white-space: nowrap;
+}
+
 .live-docked {
   display: grid;
   align-content: start;
@@ -825,6 +906,40 @@
   color: var(--muted);
 }
 
+/*
+  Show in DevTools, beside the row pointed at or walked to (Layers.tsx): one
+  button after the tree, laid over the row's end, shown while the tree is in
+  use. The rows keep their end clear for it.
+*/
+.live-layers.with-act {
+  position: relative;
+}
+
+.live-layers.with-act .live-layer {
+  padding-right: calc(var(--space-2) + var(--space-6));
+}
+
+.live-layer-act {
+  position: absolute;
+  /* The rows reach into the panel's padding (.live-tree's margin): so does the button at their end. */
+  right: calc(-1 * var(--space-2));
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.live-layer-act .btn-icon {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.live-layers:hover .live-layer-act,
+.live-layers:focus-within .live-layer-act {
+  opacity: 1;
+}
+
 .live-layers-all {
   display: flex;
   align-items: center;
@@ -833,7 +948,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .live-layer-twist {
+  .live-layer-twist,
+  .live-layer-act {
     transition: none;
   }
 }

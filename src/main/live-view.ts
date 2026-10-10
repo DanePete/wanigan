@@ -532,7 +532,7 @@ export function wireLiveView(options: {
     const url = view?.webContents.getURL();
     if (ok(event) && url && /^https?:\/\//i.test(url)) void shell.openExternal(url);
   });
-  ipcMain.handle('live:devtools', (event) => { if (ok(event) && view) view.webContents.openDevTools({ mode: 'detach' }); });
+  // The page's DevTools, in the dock or its own window, is live-devtools.ts's: it hears of each view through the hooks.
 
   ipcMain.handle('live:css', async (event) => {
     if (!ok(event)) return 0;

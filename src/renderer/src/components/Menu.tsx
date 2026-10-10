@@ -7,7 +7,7 @@
 // is open. Select is for choosing a value; this is for doing something.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { keyLabel } from '@shared/shortcuts';
+import { ariaKeys, keyLabel } from '@shared/shortcuts';
 import { bridge } from '../lib/api';
 import { useCoversLive } from '../lib/live';
 import { Icon, type IconName } from './icons';
@@ -180,7 +180,7 @@ export function MenuButton({ label, items, notes, children, className, title, al
                   role={item.kind === 'radio' ? 'menuitemradio' : item.kind === 'check' ? 'menuitemcheckbox' : 'menuitem'}
                   aria-checked={item.kind ? !!item.checked : undefined}
                   aria-disabled={item.disabled || undefined}
-                  aria-keyshortcuts={item.keys ? item.keys.map((k) => (k === 'Mod' ? (mac ? 'Meta' : 'Control') : k)).join('+') : undefined}
+                  aria-keyshortcuts={item.keys ? ariaKeys(item.keys, mac) : undefined}
                   aria-describedby={g.group && notes?.[g.group] ? noteId(g.group) : undefined}
                   className={`sel-opt menu-item${i === active ? ' active' : ''}`}
                   onMouseMove={() => { if (!item.disabled && active !== i) setActive(i); }}

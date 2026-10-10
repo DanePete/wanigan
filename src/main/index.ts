@@ -19,6 +19,7 @@ import { wireLiveLibrary } from './live-library.ts';
 import { wireLiveShots } from './live-shots.ts';
 import { wireLiveAgent } from './live-agent.ts';
 import { wireLiveView, type LiveViewHooks, type LiveViewWiring } from './live-view.ts';
+import { wireLiveDevtools } from './live-devtools.ts';
 import { CoreConnection } from './core-process.ts';
 import { menuTemplate, type MenuProject } from './menu.ts';
 import { createUpdateMenu } from './update-menu.ts';
@@ -137,13 +138,20 @@ function wireBridge(): void {
     current: () => liveView?.current() ?? null,
     run: <T>(code: string, fallback: T) => (liveView ? liveView.run(code, fallback) : Promise.resolve(fallback)),
   });
+  // The page's own DevTools, in the dock or its own window: it hears of each view, and the chord pressed in the page or
+  // in DevTools runs the window's command, as the menu does.
+  const devtools = wireLiveDevtools({
+    window: () => win, trusted, enabled: liveEnabled,
+    run: <T>(code: string, fallback: T) => (liveView ? liveView.run(code, fallback) : Promise.resolve(fallback)),
+    command: (id) => { if (win && !win.isDestroyed()) win.webContents.send('app:command', id); },
+  });
   // The design layer hears of each view as the inspector does: it applies the layer after every load.
   let layerHooks: LiveViewHooks | null = null;
   liveView = wireLiveView({
     window: () => win, trusted, enabled: liveEnabled,
     hooks: {
       session: (ses, id) => inspect.hooks.session?.(ses, id),
-      view: (wc, id) => { inspect.hooks.view?.(wc, id); layerHooks?.view?.(wc, id); },
+      view: (wc, id) => { inspect.hooks.view?.(wc, id); layerHooks?.view?.(wc, id); devtools.hooks.view?.(wc, id); },
     },
   });
   // Switching the live view off takes it away at once, not at the next navigation.

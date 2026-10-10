@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { COMMAND_IDS, SHORTCUTS, matchKey, menuAccelerator, menuSequence, shortcutFor, shortcutText, type KeyInput, type KeyState } from './shortcuts.ts';
+import { COMMAND_IDS, SHORTCUTS, ariaKeys, isDevtoolsKey, keySets, keysOn, matchKey, menuAccelerator, menuSequence, shortcutFor, shortcutText, type KeyInput, type KeyState } from './shortcuts.ts';
 import { windowTitle } from './views.ts';
 
 const key = (k: string, over: Partial<KeyInput> = {}): KeyInput => ({ key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...over });
@@ -166,6 +166,39 @@ test('⌘⇧Space is Go to, from anywhere in the window and while typing; Shift+
   // No other chord in the table is ⌘⇧Space.
   const owners = SHORTCUTS.filter((s) => [s.keys, ...(s.alt ?? [])].some((k) => k.join('+') === 'Mod+Shift+Space'));
   assert.deepEqual(owners.map((s) => s.id), ['live-goto']);
+});
+
+test('the page’s DevTools is Chrome’s own chord on each platform: ⌥⌘I on a Mac, Ctrl+Shift+I on Windows and Linux, even while typing', () => {
+  for (const typing of [false, true]) {
+    // ⌥ makes I a dead key on a Mac keyboard: the key's code still names it.
+    assert.deepEqual(matchKey(key('Dead', { metaKey: true, altKey: true, code: 'KeyI' }), at({ typing })), { id: 'live-devtools' }, '⌥⌘I');
+    assert.deepEqual(matchKey(key('I', { ctrlKey: true, shiftKey: true, code: 'KeyI' }), at({ mac: false, typing })), { id: 'live-devtools' }, 'Ctrl+Shift+I');
+  }
+  // Each platform's chord only: never the other's, and never a near miss.
+  assert.equal(matchKey(key('I', { ctrlKey: true, shiftKey: true, code: 'KeyI' }), at()), null, 'Control+Shift+I belongs to the terminal on a Mac');
+  assert.equal(matchKey(key('I', { metaKey: true, shiftKey: true, code: 'KeyI' }), at()), null, '⇧⌘I');
+  assert.equal(matchKey(key('i', { ctrlKey: true, altKey: true, code: 'KeyI' }), at({ mac: false })), null, 'Ctrl+Alt+I is AltGr+I on many keyboards');
+  assert.equal(matchKey(key('I', { ctrlKey: true, altKey: true, shiftKey: true, code: 'KeyI' }), at({ mac: false })), null);
+  assert.ok(!isDevtoolsKey(key('Dead', { metaKey: true, altKey: true, shiftKey: true, code: 'KeyI' }), true), '⌥⇧⌘I is Wanigan’s own DevTools');
+  // Written for each platform, from the one table: the sheet, the key caps, the menu and the control's aria-keyshortcuts.
+  const s = shortcutFor('live-devtools')!;
+  assert.equal(shortcutText(s, true), '⌥⌘I');
+  assert.equal(shortcutText(s, false), 'Ctrl+Shift+I');
+  assert.deepEqual(keysOn(s, true), ['Alt', 'Mod', 'I']);
+  assert.deepEqual(keysOn(s, false), ['Mod', 'Shift', 'I']);
+  assert.equal(menuAccelerator('live-devtools', true), 'Alt+CmdOrCtrl+I');
+  assert.equal(menuAccelerator('live-devtools', false), 'CmdOrCtrl+Shift+I');
+  assert.equal(menuSequence('live-devtools', true), undefined, 'a chord, not a sequence');
+  assert.equal(ariaKeys(keysOn(s, true), true), 'Alt+Meta+I');
+  assert.equal(ariaKeys(keysOn(s, false), false), 'Control+Shift+I');
+  // No other shortcut on the sheet is that chord, on either platform.
+  for (const mac of [true, false]) {
+    const chord = keysOn(s, mac).join('+');
+    const owners = SHORTCUTS.filter((x) => keySets(x, mac).some((k) => k.join('+') === chord));
+    assert.deepEqual(owners.map((x) => x.id), ['live-devtools'], mac ? 'macOS' : 'Windows and Linux');
+  }
+  // Every other shortcut reads the same on both platforms, Mod aside: only Chrome's chord differs.
+  assert.deepEqual(SHORTCUTS.filter((x) => x.elsewhere).map((x) => x.id), ['live-devtools']);
 });
 
 test('menus carry the same chords, written for each platform', () => {

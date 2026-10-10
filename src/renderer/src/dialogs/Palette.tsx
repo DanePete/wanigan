@@ -124,6 +124,8 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
     out.push(
       { id: 'open-project', group: 'Commands', label: 'Open a project…', icon: 'folder', run: () => setDialog({ kind: 'project' }) },
       ...(currentProject ? [keyed('history', 'Commands', 'history'), keyed('quick-open', 'Commands', 'file', 'Open a file…'), keyed('toggle-editor', 'Commands', 'code', 'Show or hide the code editor')] : []),
+      // The live view page's DevTools, found by typing ("devtools", "inspect", "console").
+      ...(currentProject ? [{ ...keyed('live-devtools', 'Commands', 'devtools', 'Page DevTools: elements, console, network', 'In the live view'), whenTyped: true }] : []),
       keyed('toggle-rail', 'Commands', 'sidebar'),
       keyed('shortcuts', 'Commands', 'question'),
       { id: 'theme-dark', group: 'Commands', label: 'Theme: dark', icon: 'moon', run: () => setTheme('dark') },
