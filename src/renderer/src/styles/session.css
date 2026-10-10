@@ -825,6 +825,10 @@
   font-size: var(--text-sm);
 }
 
+.sessions-view > .toolbar-row {
+  flex-wrap: nowrap;
+}
+
 .sessions-view .search-field {
   flex: 0 1 calc(var(--space-12) * 6);
   min-width: calc(var(--space-12) * 4);

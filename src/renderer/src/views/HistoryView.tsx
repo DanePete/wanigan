@@ -94,7 +94,7 @@ export function HistoryView({ project }: { project: ProjectSummary }) {
   };
 
   return (
-    <div className="history">
+    <div className="history-view">
       <div className="history-main">
         <Toolbar label="History" className="history-bar">
           <label className="search-field" data-tour="history-search">

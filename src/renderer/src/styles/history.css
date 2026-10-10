@@ -1,6 +1,7 @@
 /* History (views/HistoryView.tsx): a project's earlier conversations as a list, and the reader panel beside it. */
 
-.history {
+/* .history is the card drawer's list of what happened (drawer.css): this view's root is its own. */
+.history-view {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -11,6 +12,11 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* One line: the search field gives way before anything wraps (a wrapping row moves items down rather than shrinking them). */
+.toolbar-row.history-bar {
+  flex-wrap: nowrap;
 }
 
 .history-bar .search-field {
