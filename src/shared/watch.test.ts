@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Need, Session, SessionState } from './model.ts';
-import { pickWatched, topNeeds } from './watch.ts';
+import { WATCH_FULL, WATCH_MAX, pickWatched, togglePin, topNeeds, watchColumns } from './watch.ts';
 
 const session = (id: string, startedAt: number, extra: Partial<Session> = {}): Session => ({
   id, projectId: 'p', cardId: null, cardKey: null, provider: 'claude', accountId: null, title: id, state: 'working' as SessionState,
@@ -19,7 +19,7 @@ test('with nothing pinned, the sessions that need you most are watched, then the
     session('e', 5, { lastEventAt: 800 }), session('f', 6, { lastEventAt: 10 }),
   ];
   const needs = [need('waiting', 'b'), need('permission', 'd'), need('review', null), need('limit', 'f')];
-  const pick = pickWatched(sessions, needs, []);
+  const pick = pickWatched(sessions, needs, [], null, 4);
   // d (permission), f (limit), b (finished a turn), then a, the most recently active of the rest.
   assert.deepEqual(ids(pick.shown), ['a', 'b', 'd', 'f'], 'shown in the order they started');
   assert.equal(pick.more, 2);
@@ -45,20 +45,41 @@ test('pins choose what is watched, in pin order, and only while they are live', 
   assert.equal(allGone.more, 0);
 });
 
-test('never more than four, pinned or not', () => {
-  const sessions = ['a', 'b', 'c', 'd', 'e'].map((id, i) => session(id, i));
-  assert.equal(pickWatched(sessions, [], ['a', 'b', 'c', 'd', 'e']).shown.length, 4);
-  assert.equal(pickWatched(sessions, [], []).shown.length, 4);
+test('never more than twelve, pinned or not; the thirteenth counts as running and not shown', () => {
+  assert.equal(WATCH_MAX, 12);
+  const sessions = Array.from({ length: 13 }, (_, i) => session(`s${i}`, i));
+  const everyone = sessions.map((s) => s.id);
+  assert.equal(pickWatched(sessions, [], everyone).shown.length, 12);
+  assert.equal(pickWatched(sessions, [], everyone).more, 1);
+  assert.equal(pickWatched(sessions, [], []).shown.length, 12);
   assert.equal(pickWatched(sessions, [], []).more, 1);
+  assert.equal(pickWatched(sessions.slice(0, 12), [], []).more, 0, 'twelve running are all shown');
+});
+
+test('a thirteenth pin is refused, saying why; unpinning makes room', () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => `s${i}`);
+  assert.deepEqual(togglePin(twelve, 's12'), { refused: WATCH_FULL });
+  assert.match(WATCH_FULL, /12 terminals at a time/);
+  const fewer = togglePin(twelve, 's3');
+  assert.ok('pins' in fewer && fewer.pins.length === 11 && !fewer.pins.includes('s3'));
+  assert.deepEqual(togglePin(twelve.slice(0, 11), 's12'), { pins: [...twelve.slice(0, 11), 's12'] });
+});
+
+test('the grid takes columns by count, and never more than fit at a readable width', () => {
+  const wide = 10_000;
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => watchColumns(n, wide, 600)), [1, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]);
+  // A 1280 px window leaves room for two readable terminals, not four tiny ones.
+  assert.equal(watchColumns(12, 1160, 560), 2);
+  assert.equal(watchColumns(12, 500, 560), 1, 'narrower than one readable tile: one column, and it scrolls');
 });
 
 test('the session being typed into stays on screen when others outrank it', () => {
   const sessions = ['a', 'b', 'c', 'd', 'e'].map((id, i) => session(id, i, { lastEventAt: 100 - i }));
-  assert.deepEqual(ids(pickWatched(sessions, [], []).shown), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(ids(pickWatched(sessions, [], [], null, 4).shown), ['a', 'b', 'c', 'd']);
   const needs = [need('permission', 'e')];
-  assert.deepEqual(ids(pickWatched(sessions, needs, []).shown), ['a', 'b', 'c', 'e'], 'e needs you, so d makes way');
-  assert.deepEqual(ids(pickWatched(sessions, needs, [], 'd').shown), ['a', 'b', 'd', 'e'], 'unless d is being typed into');
-  assert.deepEqual(ids(pickWatched(sessions, needs, [], 'zz').shown), ['a', 'b', 'c', 'e'], 'a session that is not running is not kept');
+  assert.deepEqual(ids(pickWatched(sessions, needs, [], null, 4).shown), ['a', 'b', 'c', 'e'], 'e needs you, so d makes way');
+  assert.deepEqual(ids(pickWatched(sessions, needs, [], 'd', 4).shown), ['a', 'b', 'd', 'e'], 'unless d is being typed into');
+  assert.deepEqual(ids(pickWatched(sessions, needs, [], 'zz', 4).shown), ['a', 'b', 'c', 'e'], 'a session that is not running is not kept');
 });
 
 test('each session is marked with its most urgent need', () => {

@@ -3,6 +3,7 @@
 // interpreted, and a link is shown, never followed (the window would navigate).
 import { Fragment, type ReactNode } from 'react';
 import { parseMarkdown, type Block, type Inline } from '@shared/markdown';
+import { tipProps } from './ui';
 
 export function Markdown({ source }: { source: string }) {
   return <div className="prose">{parseMarkdown(source).map((b, i) => <BlockView key={i} block={b} />)}</div>;
@@ -51,7 +52,7 @@ function spans(list: Inline[]): ReactNode {
       case 'code': return <code key={i}>{s.v}</code>;
       case 'strong': return <strong key={i}>{spans(s.v)}</strong>;
       case 'em': return <em key={i}>{spans(s.v)}</em>;
-      case 'link': return <span key={i} className="prose-link" title={s.href}>{spans(s.v)}</span>;
+      case 'link': return <span key={i} className="prose-link" {...tipProps(s.href)}>{spans(s.v)}</span>;
     }
   });
 }

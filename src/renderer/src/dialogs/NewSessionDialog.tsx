@@ -4,7 +4,7 @@ import { PROVIDERS, type Provider, type ProjectSummary } from '@shared/model';
 import { attempt, call, useQuery } from '../lib/api';
 import { navigate } from '../lib/router';
 import { PROVIDER_LABEL } from '../lib/format';
-import { Button, Dialog, Field, Segmented, useToast } from '../components/ui';
+import { Button, Dialog, Field, Segmented, tipProps, useToast } from '../components/ui';
 import { accountOption } from '../lib/accounts';
 import { InstallHint } from '../components/Install';
 import { LimitsLeft } from '../components/LimitsLeft';
@@ -45,7 +45,7 @@ function startingChoice(provider: Provider, project: ProjectSummary | undefined)
 /** What a local model in the picker means, said under it. */
 function localHint(m: ModelChoice | undefined, agent: string): string | undefined {
   if (!m?.local) return undefined;
-  const where = `Runs on this Mac through ${RUNTIME_LABEL[m.local.runtime]}; nothing is sent to a model provider. The first start loads it, which can take a minute.`;
+  const where = `Runs on this computer through ${RUNTIME_LABEL[m.local.runtime]}; nothing is sent to a model provider. The first start loads it, which can take a minute.`;
   return m.local.proven ? where : `${where} Not yet proven with ${agent}: it may not use tools reliably.`;
 }
 
@@ -130,21 +130,33 @@ export function NewSessionDialog({ projects, initial, onClose }: {
   if (!projects.length) {
     return (
       <Dialog title="New session" onClose={onClose}>
-        <p>Open a project first; a session runs inside a project folder.</p>
+        <p>Open a project first: a session runs inside a project’s folder.</p>
       </Dialog>
     );
   }
 
+  const blocked = !project?.pathOk || !!project?.pausedAt;
   return (
     <Dialog
       title="New session"
+      width={560}
       onClose={onClose}
-      footer={<><Button tone="quiet" onClick={onClose}>Cancel</Button><Button tone="primary" icon="terminal" data-autofocus onClick={() => start()} disabled={busy || !project?.pathOk || !!project?.pausedAt}>Start {PROVIDER_LABEL[provider]}</Button></>}
+      footer={(
+        <>
+          {project?.pausedAt ? <p className="dialog-foot-why" role="status">{project.name} is paused. Resume it to start sessions here.</p>
+            : project && !project.pathOk ? <p className="dialog-foot-why" role="status">{project.name}’s folder is missing.</p> : null}
+          <Button tone="quiet" onClick={onClose}>Cancel</Button>
+          <Button tone="primary" icon="terminal" data-autofocus onClick={() => start()} disabled={busy || blocked}>Start {PROVIDER_LABEL[provider]}</Button>
+        </>
+      )}
     >
-      <form onSubmit={(e) => { e.preventDefault(); void start(); }}>
+      <form className="new-session" onSubmit={(e) => { e.preventDefault(); void start(); }}>
         <Field label="Project">{(id) => (
-          <Select id={id} value={projectId} onChange={setProjectId}
-            options={projects.map((p) => ({ value: p.id, label: `${p.name} (${p.key})`, disabled: !p.pathOk, ...(p.pathOk ? {} : { detail: 'Folder missing' }) }))} />
+          <>
+            <Select id={id} value={projectId} onChange={setProjectId}
+              options={projects.map((p) => ({ value: p.id, label: `${p.name} (${p.key})`, disabled: !p.pathOk, ...(p.pathOk ? {} : { detail: 'Folder missing' }) }))} />
+            {project ? <p className="field-hint mono new-session-path" {...tipProps(project.path)}>{project.path}</p> : null}
+          </>
         )}</Field>
         <div className="field"><span className="field-label">Agent</span>
           <Segmented<Provider> label="Agent" value={provider} onChange={setProvider} options={PROVIDERS.map((p) => ({ value: p, label: PROVIDER_LABEL[p] }))} />
@@ -174,7 +186,7 @@ export function NewSessionDialog({ projects, initial, onClose }: {
                     ...models.filter((m) => !m.local).map((m) => ({ value: m.value, label: m.label, ...(m.detail ? { detail: m.detail } : m.isDefault ? { detail: 'Codex’s default' } : {}) })),
                     { value: OTHER, label: 'Another model…', detail: 'Type an alias or a full model name' },
                     ...models.filter((m) => m.local).map((m) => ({
-                      value: m.value, label: m.label, group: 'On this Mac', disabled: !m.local?.ready,
+                      value: m.value, label: m.label, group: 'On this computer', disabled: !m.local?.ready,
                       ...(m.detail ? { detail: m.detail } : {}),
                     })),
                   ]} />
@@ -198,28 +210,26 @@ export function NewSessionDialog({ projects, initial, onClose }: {
         )}</Field>
         {card && project?.git ? (
           card.worktree ? (
-            <p className="faint small">{card.key} works on its own branch, <span className="mono">{card.worktree.branch}</span>.</p>
+            <p className="field-hint">{card.key} works on its own branch, <span className="mono">{card.worktree.branch}</span>.</p>
           ) : (
-            <label className="check-row">
+            <label className="check-row new-session-check">
               <input type="checkbox" checked={ownBranch} onChange={(e) => setIsolate(e.target.checked)} />
-              <span>
-                On its own branch
-                <span className="faint small"> — a separate checkout (git worktree), so other sessions cannot touch its files. You merge it after review.</span>
+              <span className="check-text">
+                <span>On its own branch</span>
+                <span className="check-hint">A separate checkout (git worktree), so other sessions cannot touch its files. You merge it after review.</span>
               </span>
             </label>
           )
         ) : null}
         {provider === 'claude' ? (
-          <label className="check-row">
+          <label className="check-row new-session-check">
             <input type="checkbox" checked={remote} onChange={(e) => setRemote(e.target.checked)} />
-            <span>
-              Reach this session from the Claude app (Remote Control)
-              <span className="faint small"> — Anthropic relays the session, under its title. Claude may refuse if the account is not eligible.</span>
+            <span className="check-text">
+              <span>Reach this session from the Claude app (Remote Control)</span>
+              <span className="check-hint">Anthropic relays the session, under its title. Claude may refuse if the account is not eligible.</span>
             </span>
           </label>
         ) : null}
-        {project?.pausedAt ? <p className="small">{project.name} is paused. Resume it to start sessions here.</p> : null}
-        {project ? <p className="faint small mono">{project.path}</p> : null}
         <button type="submit" hidden />
       </form>
     </Dialog>

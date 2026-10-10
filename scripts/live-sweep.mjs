@@ -768,7 +768,7 @@ try {
       if (!(await laid()).drawn) fail(t('devtools: nothing was drawn where DevTools goes'));
       const clear = await page.evaluate(() => {
         const h = document.querySelector('.live-devtools-host')?.getBoundingClientRect();
-        const f = document.querySelector('.chat-fab')?.getBoundingClientRect();
+        const f = document.querySelector('.chat-launch')?.getBoundingClientRect();
         return !h || !f || f.top >= h.bottom || f.left >= h.right || f.bottom <= h.top || f.right <= h.left;
       });
       if (!clear) fail(t('devtools: DevTools’ view would cover the Talk to Wanigan button'));

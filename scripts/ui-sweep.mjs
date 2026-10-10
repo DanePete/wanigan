@@ -22,7 +22,9 @@ const { base, gateway } = await startGateway();
  * fit; watching must never resize a PTY, and keys reach a session only once
  * the owner hands them over. The spy records what the tiles ask of the core
  * and answers resize and input itself, so nothing here changes a session.
+ * Watch shows up to twelve (WATCH_MAX in src/shared/watch.ts).
  */
+const WATCH_MAX = 12;
 async function spyOnCalls(page) {
   await page.evaluate(() => {
     if (window.__wgSpy) { window.__wgSpy.length = 0; return; }
@@ -55,11 +57,28 @@ const ptySizes = (page) => page.evaluate(async () => {
   }
   return sizes;
 });
-/** Tiles, each showing the session's real output. */
+/** Tiles, each one in sight in the view showing the session's real output (one scrolled out of sight is not drawn). */
 const tilesShowing = (page, count, timeout = 8000) => page.waitForFunction((n) => {
   const tiles = [...document.querySelectorAll('.watch-tile')];
-  return tiles.length === n && tiles.every((t) => (t.querySelector('.xterm-rows')?.textContent ?? '').trim().length > 0);
+  const view = document.querySelector('.view-body')?.getBoundingClientRect() ?? { top: 0, bottom: innerHeight };
+  const seen = tiles.filter((t) => { const r = t.getBoundingClientRect(); return r.bottom > view.top + 1 && r.top < view.bottom - 1; });
+  return tiles.length === n && seen.length > 0 && seen.every((t) => (t.querySelector('.xterm-rows')?.textContent ?? '').trim().length > 0);
 }, count, { timeout });
+/** The grid: how many tiles and columns, any under the readable least (the stylesheet's probe), any drawn over another. */
+const watchGrid = (page) => page.evaluate(() => {
+  const least = document.querySelector('.watch-probe')?.getBoundingClientRect();
+  const tiles = [...document.querySelectorAll('.watch-tile')].map((t) => t.getBoundingClientRect());
+  const small = least ? tiles.filter((r) => r.width < least.width - 1 || r.height < least.height - 1).length : -1;
+  let overlaps = 0;
+  for (let i = 0; i < tiles.length; i++) {
+    for (let j = i + 1; j < tiles.length; j++) {
+      const a = tiles[i];
+      const b = tiles[j];
+      if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5) overlaps++;
+    }
+  }
+  return { count: tiles.length, small, overlaps, columns: Number(document.querySelector('.watch')?.dataset.columns ?? 0), least: least ? `${Math.round(least.width)}×${Math.round(least.height)}` : 'none' };
+});
 /** Each rendered tile's drawing: inside its box, touching an edge (scaled to fit), and how big its text is. */
 const tileFits = (page) => page.evaluate(() => [...document.querySelectorAll('.watch-tile')].flatMap((t) => {
   const host = t.querySelector('.terminal-fixed');
@@ -656,7 +675,7 @@ try {
     // The Remote Control session: its mark, and files pasted or dropped on its terminal join the composer.
     await page.goto(`${base}${attachedHref.replace(/^.*#/, '#')}`);
     await page.waitForSelector('.composer .attach-chip img');
-    if (!(await page.$('.session-facts .remote-mark'))) failures.push(`${theme}: the Remote Control session does not say so`);
+    if (!(await page.$('.session-bar .remote-mark:has-text("Remote Control")'))) failures.push(`${theme}: the Remote Control session does not say so`);
     if (!/Claude Code gets each image as its own attachment/.test(await page.textContent('.composer'))) failures.push(`${theme}: the composer does not say what Claude receives`);
     const chips = await page.$$eval('.composer .attach-chip', (c) => c.length);
     await page.evaluate(async () => {
@@ -676,8 +695,9 @@ try {
     await spyOnCalls(page);
     const sizesBefore = await ptySizes(page);
     const runningCount = await page.$$eval('.srow', (rows) => rows.length);
+    const allShown = Math.min(runningCount, WATCH_MAX);
     await page.click('.topbar [role="radio"]:has-text("Watch")');
-    await tilesShowing(page, 4).catch(() => failures.push(`${theme}/running-watch: four tiles never showed their output`));
+    await tilesShowing(page, allShown).catch(() => failures.push(`${theme}/running-watch: ${allShown} tiles never showed their output`));
     await page.waitForTimeout(400);
     for (const f of await tileFits(page)) {
       if (!f.inside) failures.push(`${theme}/running-watch: "${f.title}" is drawn bigger than its tile`);
@@ -686,7 +706,6 @@ try {
     }
     const asking = await page.$$eval('.watch-tile.asking', (tiles) => tiles.map((t) => t.getAttribute('aria-label')));
     // Amber where the owner has to act: asking permission, its usage limit (Claude's and Codex's), a question on its card.
-    // Five sessions need the owner and four fit: the question ranks after both limits, so it is pinned to be seen.
     const mustAsk = ['Checkout button has no accessible name', 'Rate limiter drops bursts at the minute boundary', 'Rate limit headers in the API docs'];
     if (mustAsk.some((t) => !asking.some((a) => a?.includes(t)))) failures.push(`${theme}/running-watch: expected the permission and both limit tiles amber, got ${JSON.stringify(asking)}`);
     await page.click('.topbar [role="radio"]:has-text("List")');
@@ -695,8 +714,8 @@ try {
     await tilesShowing(page, 1).catch(() => failures.push(`${theme}/running-watch: the pinned question did not show as a tile`));
     if (!(await page.$('.watch-tile.asking[aria-label*="Free shipping banner"]'))) failures.push(`${theme}/running-watch: the question tile is not amber`);
     await page.locator('.watch-tile button[aria-pressed="true"]').first().click();
-    await tilesShowing(page, 4).catch(() => failures.push(`${theme}/running-watch: unpinning the question did not go back to the four that need you most`));
-    const more = runningCount - 4;
+    await tilesShowing(page, allShown).catch(() => failures.push(`${theme}/running-watch: unpinning the question did not go back to every running session`));
+    const more = runningCount - allShown;
     const moreText = (await page.textContent('.watch-more').catch(() => '')) ?? '';
     if (more > 0 && !new RegExp(`^${more} more sessions? running, not shown`).test(moreText)) failures.push(`${theme}/running-watch: says "${moreText}" with ${runningCount} running`);
     await page.screenshot({ path: join(out, `${theme}-running-watch.png`) });
@@ -732,7 +751,7 @@ try {
       delete document.hidden;
       document.dispatchEvent(new Event('visibilitychange'));
     });
-    await tilesShowing(page, 4).catch(() => failures.push(`${theme}/running-watch: tiles did not draw again when the window came back`));
+    await tilesShowing(page, allShown).catch(() => failures.push(`${theme}/running-watch: tiles did not draw again when the window came back`));
 
     if (theme === 'dark') {
       // Pinned from the list, two sit side by side; unpinned from the tiles, Watch chooses again.
@@ -741,13 +760,57 @@ try {
       for (const n of [0, 1]) await page.locator('.running-row').nth(n).locator('button[aria-pressed]').click();
       await page.click('.topbar [role="radio"]:has-text("Watch")');
       await tilesShowing(page, 2).catch(() => failures.push(`${theme}/running-watch: two pinned sessions did not show as two tiles`));
-      if (!(await page.$('.watch.watch-n2'))) failures.push(`${theme}/running-watch: two tiles are not side by side`);
+      if ((await watchGrid(page)).columns !== 2) failures.push(`${theme}/running-watch: two tiles are not side by side`);
       const pinnedMore = (await page.textContent('.watch-more').catch(() => '')) ?? '';
       if (!new RegExp(`^${runningCount - 2} more sessions? running, not shown\\.$`).test(pinnedMore)) failures.push(`${theme}/running-watch: pinned Watch says "${pinnedMore}" with ${runningCount} running`);
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(out, `${theme}-running-watch-pinned.png`) });
       for (let i = 0; i < 2; i++) await page.locator('.watch-tile button[aria-pressed="true"]').first().click();
-      await tilesShowing(page, 4).catch(() => failures.push(`${theme}/running-watch: unpinning both did not go back to the four that need you most`));
+      await tilesShowing(page, allShown).catch(() => failures.push(`${theme}/running-watch: unpinning both did not go back to every running session`));
+    }
+
+    // Twelve at once, then six pinned: the columns follow the count and the room, no tile is under the readable least,
+    // none is drawn over another, and a window too small for them all scrolls. Shell stand-ins make up the twelve.
+    const extras = await page.evaluate(async (max) => {
+      const call = window.__wgRealCall ?? window.wanigan.call.bind(window.wanigan);
+      const project = (await call('projects.list', {})).find((p) => p.name.startsWith('Northstar'));
+      const live = await call('sessions.list', { live: true });
+      const ids = [];
+      for (let i = live.length; i < max; i++) ids.push((await call('sessions.start', { projectId: project.id, provider: 'shell', cardId: null, accountId: null, cols: 100, rows: 30 })).id);
+      return ids;
+    }, WATCH_MAX).catch((e) => { failures.push(`${theme}/running-watch-12: the extra sessions did not start (${e.message})`); return []; });
+    const gridIs = async (label, count, columns) => {
+      await page.waitForFunction((n) => document.querySelectorAll('.watch-tile').length === n, count, { timeout: 8000 })
+        .catch(() => failures.push(`${theme}/running-watch-${label}: ${count} tiles never showed`));
+      await page.waitForTimeout(300);
+      const grid = await watchGrid(page);
+      if (grid.count !== count) failures.push(`${theme}/running-watch-${label}: ${grid.count} tiles, expected ${count}`);
+      if (grid.small) failures.push(`${theme}/running-watch-${label}: ${grid.small} tiles under the readable least (${grid.least})`);
+      if (grid.overlaps) failures.push(`${theme}/running-watch-${label}: tiles drawn over each other`);
+      if (columns && grid.columns !== columns) failures.push(`${theme}/running-watch-${label}: ${grid.columns} columns, expected ${columns}`);
+      if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) failures.push(`${theme}/running-watch-${label}: horizontal overflow`);
+    };
+    if (extras.length) {
+      await gridIs('12', WATCH_MAX, 2);
+      await page.$eval('.view-body', (el) => { el.scrollTop = 0; });
+      await page.screenshot({ path: join(out, `${theme}-running-watch-12.png`) });
+      // Wider, a third column; at 1280 still two readable columns, not four tiny ones.
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      await gridIs('12-wide', WATCH_MAX, 3);
+      if (theme === 'dark') await page.screenshot({ path: join(out, `${theme}-running-watch-12-wide.png`) });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gridIs('12-1280', WATCH_MAX, 2);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      // Six pinned from the list.
+      await page.click('.topbar [role="radio"]:has-text("List")');
+      await page.waitForSelector('.running-row');
+      for (let n = 0; n < 6; n++) await page.locator('.running-row').nth(n).locator('button[aria-pressed]').click();
+      await page.click('.topbar [role="radio"]:has-text("Watch")');
+      await gridIs('6', 6, 2);
+      await page.$eval('.view-body', (el) => { el.scrollTop = 0; });
+      await page.screenshot({ path: join(out, `${theme}-running-watch-6.png`) });
+      for (let n = 0; n < 6; n++) await page.locator('.watch-tile button[aria-pressed="true"]').first().click();
+      await gridIs('12-unpinned', WATCH_MAX, 2);
     }
 
     if (!sameSizes(sizesBefore, await ptySizes(page))) failures.push(`${theme}/running-watch: a PTY changed size while it was watched`);
@@ -759,6 +822,13 @@ try {
     await page.waitForTimeout(200);
     const released = new Set((await spied(page, 'sessions.unwatch')).map((p) => p.id));
     if (!watched.size || [...watched].some((id) => !released.has(id))) failures.push(`${theme}/running-watch: leaving Watch did not stop watching every tile`);
+    // The extra sessions go, so the demo is as it was for what follows.
+    await page.evaluate(async (ids) => {
+      const call = window.__wgRealCall ?? window.wanigan.call.bind(window.wanigan);
+      for (const id of ids) await call('sessions.stop', { id }).catch(() => {});
+    }, extras);
+    await page.waitForFunction(async (n) => (await window.wanigan.call('sessions.list', { live: true })).length === n, runningCount, { timeout: 8000, polling: 200 })
+      .catch(() => failures.push(`${theme}/running-watch-12: the extra sessions did not stop`));
     await stopSpying(page);
 
     // A session's turns: what each changed in its worktree, the diff of one, and undo for the last.
@@ -1087,9 +1157,9 @@ try {
     await page.keyboard.press('Escape');
     // A model on this Mac: offered under its own heading, explained when chosen.
     await page.click('.dialog .model-row .select');
-    await page.waitForSelector('.sel-group:has-text("On this Mac")', { timeout: 3000 }).catch(() => failures.push(`${theme}/local: the model picker has no "On this Mac" group`));
+    await page.waitForSelector('.sel-group:has-text("On this computer")', { timeout: 3000 }).catch(() => failures.push(`${theme}/local: the model picker has no "On this computer" group`));
     await page.click('.sel-list [role="option"]:has-text("Qwen3-Coder 30B")').catch(() => failures.push(`${theme}/local: Qwen3-Coder 30B is not offered`));
-    await page.waitForSelector('.dialog .field-hint:has-text("Runs on this Mac through LM Studio")', { timeout: 3000 })
+    await page.waitForSelector('.dialog .field-hint:has-text("Runs on this computer through LM Studio")', { timeout: 3000 })
       .catch(() => failures.push(`${theme}/local: choosing a local model does not say where it runs`));
     if (await page.$('.dialog .model-row .segmented')) failures.push(`${theme}/local: a local model is offered an effort it does not take`);
     await page.waitForTimeout(200);
@@ -1183,22 +1253,52 @@ try {
     const found = await page.$$eval('.hrow', (rows) => rows.map((r) => r.querySelector('.hrow-title')?.textContent));
     if (found.length !== 1 || found[0] !== 'Expired coupon codes still apply') failures.push(`${theme}: History search for "coupon" showed ${JSON.stringify(found)}`);
     await page.fill('.history-bar input', '');
-    await page.click('.hrow:first-of-type .hrow-actions button:has-text("Read")');
-    await page.waitForSelector('.reader .turn', { timeout: 8000 }).catch(() => failures.push(`${theme}: the History reader never showed a turn`));
+    await page.click('.hrow:first-of-type .hrow-main');
+    await page.waitForSelector('.reader .msg', { timeout: 8000 }).catch(() => failures.push(`${theme}: the History reader never showed a turn`));
+    if (!(await page.evaluate(() => document.activeElement?.classList.contains('reader-title')))) failures.push(`${theme}: opening a conversation did not move focus to the reader`);
     await page.waitForTimeout(350);
     await page.screenshot({ path: join(out, `${theme}-history-reader.png`) });
     await page.keyboard.press('Escape');
     if (await page.$('.reader')) failures.push(`${theme}: Escape did not close the History reader`);
+    if (!(await page.evaluate(() => document.activeElement?.classList.contains('hrow-main')))) failures.push(`${theme}: closing the reader did not give focus back to its row`);
+    // Down from a row reads the next one while the reader is open, and keeps the keys on the list.
+    await page.click('.hrow:first-of-type .hrow-main');
+    await page.waitForSelector('.reader .msg', { timeout: 8000 });
+    await page.focus('.hrow:first-of-type .hrow-main');
+    const nextTitle = await page.$$eval('.hrow-title', (t) => t[1]?.textContent ?? '');
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction((t) => document.querySelector('.reader-title')?.textContent === t, nextTitle, { timeout: 5000 })
+      .catch(() => failures.push(`${theme}: Down in History did not read the next conversation`));
+    if (!(await page.evaluate(() => document.activeElement?.classList.contains('hrow-main')))) failures.push(`${theme}: Down in History took the keys from the list`);
+    await page.keyboard.press('Escape');
     await page.click('.hrow:has-text("Expired coupon codes") button:has-text("Resume")');
     await page.waitForSelector('.dialog .choose-accounts', { timeout: 8000 }).catch(() => failures.push(`${theme}: Resume never offered to continue as another account`));
     await page.waitForTimeout(250);
     await page.screenshot({ path: join(out, `${theme}-history-resume.png`) });
     await page.keyboard.press('Escape');
+    // A session, Running and History each explain themselves: How this works opens their picture, and Esc closes it.
+    for (const [name, hash] of [['session', sessionHref.replace(/^.*#/, '#')], ['running', '#/running'], ['history', `#/p/${ns}/history`]]) {
+      await page.goto(`${base}${hash}`);
+      await page.click('button:has-text("How this works")', { timeout: 8000 }).catch(() => failures.push(`${theme}/${name}-how: no How this works`));
+      await page.waitForSelector('.dialog .how-lane', { timeout: 4000 }).catch(() => failures.push(`${theme}/${name}-how: the picture never showed`));
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: join(out, `${theme}-${name}-how.png`) });
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.dialog', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/${name}-how: Esc did not close it`));
+    }
     // Talk to Wanigan: the round button on the board opens the conversation,
     // the composer sends on Enter, and the stand-in answers with real card keys.
     await page.goto(`${base}#/p/${ns}/board`);
-    await page.waitForSelector('.chat-fab');
-    await page.click('.chat-fab');
+    await page.waitForSelector('.status-line .chat-launch');
+    // Its home is the status line: it covers no view.
+    const launch = await page.evaluate(() => {
+      const r = document.querySelector('.chat-launch')?.getBoundingClientRect();
+      const line = document.querySelector('.status-line')?.getBoundingClientRect();
+      const view = document.querySelector('.work')?.getBoundingClientRect();
+      return { inLine: !!r && !!line && r.top >= line.top - 0.5 && r.bottom <= line.bottom + 0.5, clear: !!r && !!view && r.top >= view.bottom - 0.5 };
+    });
+    if (!launch.inLine || !launch.clear) failures.push(`${theme}: Talk to Wanigan is not in the status line, clear of the view (${JSON.stringify(launch)})`);
+    await page.click('.chat-launch');
     await page.waitForSelector('.chat textarea');
     if (await page.$('.chat .chat-turn')) await page.click('.chat button[aria-label="New conversation"]');
     await page.waitForSelector('.chat .chat-empty').catch(() => failures.push(`${theme}: the conversation did not start empty`));
@@ -1247,10 +1347,17 @@ try {
     await page.waitForSelector('.chat-files', { state: 'detached', timeout: 8000 }).catch(() => failures.push(`${theme}: removing the chat's image did not take it out`));
     await page.keyboard.press('Escape');
     await page.waitForSelector('.chat', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}: Esc did not close the chat`));
-    if (!(await page.evaluate(() => document.activeElement?.classList.contains('chat-fab')))) failures.push(`${theme}: closing the chat did not return focus to its button`);
+    if (!(await page.evaluate(() => document.activeElement?.classList.contains('chat-launch')))) failures.push(`${theme}: closing the chat did not return focus to its button`);
     await page.goto(`${base}${sessionHref.replace(/^.*#/, '#')}`);
     await page.waitForSelector('.xterm-rows');
-    if (await page.$('.chat-fab')) failures.push(`${theme}: the chat button covers the session composer`);
+    const covers = await page.evaluate(() => {
+      const box = document.querySelector('.composer')?.getBoundingClientRect();
+      return [...document.querySelectorAll('.chat-launch')].some((b) => {
+        const r = b.getBoundingClientRect();
+        return !!box && Math.min(r.right, box.right) - Math.max(r.left, box.left) > 0.5 && Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top) > 0.5;
+      });
+    });
+    if (covers) failures.push(`${theme}: the chat button covers the session composer`);
     // Skills: pick one, plan a copy into a project (nothing is written), and search.
     await page.goto(`${base}#/skills`);
     await page.waitForSelector('.lib-row');
@@ -1349,7 +1456,7 @@ try {
         await page.goto(`${base}${hash}`);
         await page.waitForSelector(ready, { timeout: 8000 }).catch(() => failures.push(`narrow/${name}: never showed ${ready}`));
         if (name === 'narrow-chat') {
-          await page.click('.chat-fab');
+          await page.click('.chat-launch');
           await page.waitForSelector('.chat textarea');
         }
         await page.waitForTimeout(400);
@@ -1373,8 +1480,8 @@ try {
         await page.screenshot({ path: join(out, `${name}.png`) });
         if (name === 'narrow-chat') await page.keyboard.press('Escape');
       }
-      await page.click('.hrow:first-of-type .hrow-actions button:has-text("Read")');
-      await page.waitForSelector('.reader .turn', { timeout: 8000 }).catch(() => failures.push('narrow: the History reader never showed a turn'));
+      await page.click('.hrow:first-of-type .hrow-main');
+      await page.waitForSelector('.reader .msg', { timeout: 8000 }).catch(() => failures.push('narrow: the History reader never showed a turn'));
       await page.waitForTimeout(350);
       if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) failures.push('narrow/history-reader: horizontal overflow');
       await page.screenshot({ path: join(out, 'narrow-history-reader.png') });
@@ -1390,8 +1497,8 @@ try {
       const columns = await page.$eval('.watch', (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
       if (columns !== 1) failures.push(`narrow/running-watch: ${columns} columns on a narrow window`);
       await page.waitForTimeout(2200);
-      const drawn = await page.$$eval('.watch-tile', (tiles) => tiles.filter((t) => t.querySelector('.xterm')).length);
-      if (drawn >= 4) failures.push('narrow/running-watch: tiles scrolled out of sight are still drawn');
+      const drawn = await page.$$eval('.watch-tile', (tiles) => [tiles.filter((t) => t.querySelector('.xterm')).length, tiles.length]);
+      if (drawn[0] >= drawn[1]) failures.push(`narrow/running-watch: tiles scrolled out of sight are still drawn (${drawn[0]} of ${drawn[1]})`);
       if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)) failures.push('narrow/running-watch: horizontal overflow');
       for (const f of await tileFits(page)) if (!f.inside || !f.fills) failures.push(`narrow/running-watch: "${f.title}" does not fit its tile`);
       await page.screenshot({ path: join(out, 'narrow-running-watch.png') });
@@ -1833,11 +1940,16 @@ try {
     }).catch((e) => { failures.push(`${theme}/local: a session on Qwen did not start (${e.message})`); return null; });
     if (localSession) {
       await page.goto(`${base}#/p/OA/s/${localSession.id}`);
-      const facts = await page.waitForSelector('.session-facts .remote-mark:has-text("On this Mac")', { timeout: 5000 })
+      await page.waitForSelector('.session-bar .remote-mark:has-text("On this computer")', { timeout: 5000 })
+        .catch(() => failures.push(`${theme}/local: the session's bar does not say it runs on this computer`));
+      // Its details say which model, by name, never the internal id.
+      await page.click('#session-panel-tab-details').catch(() => failures.push(`${theme}/local: the session's panel has no Details`));
+      const facts = await page.waitForSelector('.session-facts .remote-mark:has-text("On this computer")', { timeout: 5000 })
         .then(() => page.textContent('.session-facts'), () => '');
-      if (!/Qwen3-Coder 30B/.test(facts) || /local\/lmstudio/.test(facts)) failures.push(`${theme}/local: the session header does not say it runs Qwen on this Mac (${facts.slice(0, 160)})`);
+      if (!/Qwen3-Coder 30B/.test(facts) || /local\/lmstudio/.test(facts)) failures.push(`${theme}/local: the session's details do not say it runs Qwen on this computer (${facts.slice(0, 160)})`);
       await page.waitForTimeout(200);
       await page.screenshot({ path: join(out, `${theme}-session-local.png`) });
+      await page.click('#session-panel-tab-turns').catch(() => {});
       await page.evaluate((id) => window.wanigan.call('sessions.stop', { id }), localSession.id);
     }
     await page.goto(`${base}#/settings`);
@@ -1928,6 +2040,13 @@ try {
       await send({ to: 'main', summary: 'Yes: both call freeShippingThreshold()' }, { agent_id: 'a91c', agent_type: 'researcher' });
       await page.waitForTimeout(700);
       await send({ to: 'researcher', summary: 'Thanks. Adding a drawer test now' });
+      // Nothing floats over the board: a chip in the status line says it, with the latest label, and opens the scene.
+      await page.waitForFunction(() => document.querySelector('.status-line .chatter-chip .chatter-n')?.textContent === '3', null, { timeout: 8000 })
+        .catch(() => failures.push(`${theme}/chatter: the status line does not say three messages went`));
+      if (await page.$('.chatter')) failures.push(`${theme}/chatter: the scene floats over the view before it is asked for`);
+      if (!/Adding a drawer test now/.test((await page.textContent('.status-line .chatter-chip').catch(() => '')) ?? '')) failures.push(`${theme}/chatter: the chip does not say the latest label`);
+      await page.screenshot({ path: join(out, `${theme}-chatter-chip.png`) });
+      await page.click('.status-line .chatter-chip');
       await page.waitForSelector('.chatter .chatter-line:nth-child(3)', { timeout: 8000 }).catch(() => failures.push(`${theme}/chatter: three messages never showed`));
       await page.waitForTimeout(900);
       const seen = await page.evaluate(() => {

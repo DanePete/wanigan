@@ -15,15 +15,21 @@ import type { Events } from '@shared/protocol';
 import { bridge, call } from '../lib/api';
 import { useTheme } from '../lib/theme';
 
-function themeFromTokens(): ITheme {
-  const css = getComputedStyle(document.documentElement);
+/**
+ * The terminal's colours, from the tokens as its host element sees them: a
+ * place that sets `--terminal-bg` (a session's canvas) gets that ground, and
+ * everywhere else the sunk tint.
+ */
+function themeFromTokens(host: HTMLElement | null): ITheme {
+  const css = getComputedStyle(host ?? document.documentElement);
   const v = (name: string): string => css.getPropertyValue(name).trim();
   const dark = document.documentElement.dataset.theme !== 'light';
+  const ground = v('--terminal-bg') || v('--sunken');
   return {
-    background: v('--sunken'),
+    background: ground,
     foreground: v('--fg'),
     cursor: v('--water'),
-    cursorAccent: v('--sunken'),
+    cursorAccent: ground,
     selectionBackground: dark ? 'rgba(99,179,228,0.28)' : 'rgba(27,110,166,0.22)',
     black: dark ? '#1d2227' : '#2b3640',
     red: v('--red'),
@@ -72,9 +78,11 @@ function onPty(sessionId: string, handler: PtyHandler): () => void {
   };
 }
 
-export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRef }: {
+export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRef, tour }: {
   sessionId: string;
   live: boolean;
+  /** Its name for a guided tour's step (`data-tour`). */
+  tour?: string;
   /**
    * Draw the PTY at the size it already has, scaled to fit, and never resize
    * it. Such a terminal is a picture until it is asked to take keys: it is out
@@ -96,7 +104,7 @@ export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRe
   const { resolved } = useTheme();
 
   useEffect(() => {
-    if (term.current) term.current.options.theme = themeFromTokens();
+    if (term.current) term.current.options.theme = themeFromTokens(host.current);
   }, [resolved]);
 
   useEffect(() => {
@@ -112,7 +120,7 @@ export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRe
       allowProposedApi: false,
       // Watching is for the live tail; the session's own view keeps the long scrollback.
       scrollback: fixedSize ? 1_000 : 10_000,
-      theme: themeFromTokens(),
+      theme: themeFromTokens(el),
       macOptionIsMeta: true,
     });
     const fit = fixedSize ? null : new FitAddon();
@@ -230,5 +238,5 @@ export function Terminal({ sessionId, live, fixedSize = false, onEscape, focusRe
     // `fixedSize` and `focusRef` are fixed for a terminal's life; a change of session starts a new one.
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div className={`terminal${fixedSize ? ' terminal-fixed' : ''}`} ref={host} aria-label="Terminal" />;
+  return <div className={`terminal${fixedSize ? ' terminal-fixed' : ''}`} ref={host} aria-label="Terminal" data-tour={tour} />;
 }
