@@ -56,15 +56,21 @@
 //   or another edit was made real on the page since, the verdict says step 3 could not run against it, and why.
 //   Pictures are kept in the data folder under live-layer/<project>/<edit>/, and the core is told: verified, or still
 //   implemented with the failed verdict (its words are in the site; the verdict says what differs).
+// - Typing on the page, and trying a style, before either is an edit: the picked element is keyed first (as
+//   layerTarget keys it), then made editable in place by the page script, whose answer (the words kept, or why not) the
+//   window adds as a text edit; a navigation that ends it answers cancelled. A style being tried is one preview the
+//   page script owns, on the elements an edit for it would reach (`this`) or every one of its kind, shown through a
+//   sheet injected once per document at the user origin that holds no value of its own (trySheet) and outranks the
+//   layer's own rules for the same properties. Neither is kept anywhere but the page shown.
 // - Nothing here writes to the site except the helper save, and nothing reaches any origin but the site's own.
 import { randomInt } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 import {
-  LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash,
+  LAYER_PROPERTIES, compileLayer, layerEdit, layerTextHash, trySheet, tryValues,
   type LayerApplied, type LayerBeforeCheck, type LayerCut, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerRect, type LayerSnapshot,
-  type LayerTarget, type LayerVerdict,
+  type LayerTarget, type LayerTyped, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
   MAX_DIFFERENCES, VERIFY_WIDTHS, against, applyMask, compareElements, comparePixels, compareTokens, diffBitmaps, diffPicture, heldAlike, judge, maskedOf,
@@ -127,6 +133,9 @@ type Found = Record<string, { count?: unknown; texts?: unknown; plain?: unknown 
 
 /** Whether an edit's element is checked by its text: one element (`this`) whose text was there to hash. */
 const guarded = (e: LayerEdit): boolean => e.scope === 'this' && !!e.target.textHash;
+
+/** A target the core would take for an edit, checked as it will check it: one it would refuse is never offered. */
+const sound = (t: LayerTarget): boolean => !layerEdit({ id: 'check', target: t, scope: 'this', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }).refused;
 
 /**
  * Resolve each edit in effect (draft, implemented, or orphaned and maybe back) on the page at `path`, through the page
@@ -821,6 +830,10 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   let sheet: { wc: number; key: string } | null = null;
   /** Each sheet's generation: the page's root names the one that holds (compileLayer's gate). */
   let generation = 0;
+  /** The page (by its webContents) whose document has the try sheet; a new document has none. */
+  let triedIn: number | null = null;
+  /** Trying a style, one call at a time and in the order asked, so a preview taken away is never put back by one asked before it. */
+  let trying: Promise<unknown> = Promise.resolve();
   /**
    * The helper's confirm tokens, by edit: a save it refused saying how far it reaches (words in a Drupal default layout
    * every entity of a bundle shares) is made when the edit is made real again, with the token that answer gave.
@@ -919,29 +932,46 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
   const hooks: LiveViewHooks = {
     view(wc) {
       sheet = null;
+      triedIn = null;
       if (!wc) return;
-      // A new document has none of the old one's stylesheet.
-      wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument && sheet?.wc === wc.id) sheet = null; });
+      // A new document has none of the old one's stylesheets.
+      wc.on('did-start-navigation', (details) => {
+        if (!details.isMainFrame || details.isSameDocument) return;
+        if (sheet?.wc === wc.id) sheet = null;
+        if (triedIn === wc.id) triedIn = null;
+      });
       wc.on('did-finish-load', () => { if (options.enabled()) void apply().catch(() => {}); });
     },
   };
 
   /* ── the picked element, keyed ── */
 
-  const target = async (): Promise<LayerPickTarget | null> => {
-    const here = shown();
-    if (!here) return null;
+  type Pick = { parts?: unknown; selector?: unknown; text?: unknown; tag?: unknown; values?: unknown };
+  type Keyed = { part: TracePart & { identity: PartIdentity }; inner: string | null };
+  /**
+   * The picked element as the page script reads it (its computed values for `props`), and the innermost part around
+   * it with an identity in the shown page's trace. Null with nothing picked.
+   */
+  const picked = async (props: readonly string[]): Promise<{ trace: LiveTrace | null; pick: Pick; keyed: Keyed | null } | null> => {
     const answer = await options.trace();
     const trace = answer.state === 'ok' ? answer.trace : null;
-    type Pick = { parts?: unknown; selector?: unknown; text?: unknown; tag?: unknown; values?: unknown };
-    const pick = await options.run<Pick | null>(call('layerPick', LAYER_PROPERTIES), null);
+    const pick = await options.run<Pick | null>(call('layerPick', props), null);
     if (!pick || typeof pick !== 'object') return null;
     const byId = new Map((trace?.parts ?? []).map((p) => [p.id, p]));
-    let keyed: { part: TracePart & { identity: PartIdentity }; inner: string | null } | null = null;
+    let keyed: Keyed | null = null;
     for (const k of Array.isArray(pick.parts) ? pick.parts as { part?: unknown; inner?: unknown }[] : []) {
       const p = typeof k?.part === 'string' ? byId.get(k.part) : undefined;
       if (p?.identity && (k.inner === null || typeof k.inner === 'string')) { keyed = { part: p as TracePart & { identity: PartIdentity }, inner: k.inner as string | null }; break; }
     }
+    return { trace, pick, keyed };
+  };
+
+  const target = async (): Promise<LayerPickTarget | null> => {
+    const here = shown();
+    if (!here) return null;
+    const got = await picked(LAYER_PROPERTIES);
+    if (!got) return null;
+    const { trace, pick, keyed } = got;
     // Its whole text, as the site rendered it: what the edit is checked against on every load. None, no check.
     const words = typeof pick.text === 'string' && pick.text ? pick.text : null;
     const textHash = words ? layerTextHash(words) : null;
@@ -950,8 +980,6 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     for (const k of LAYER_PROPERTIES) if (typeof values[k] === 'string') before[k] = (values[k] as string).slice(0, 2_000);
     if (words) before.text = words.slice(0, 2_000);
     const human = humanName(pick.tag);
-    // Checked as the core will check it: a target it would refuse is not offered.
-    const sound = (t: LayerTarget): boolean => !layerEdit({ id: 'check', target: t, scope: 'this', breakpoint: 'all', change: { type: 'style', values: { color: 'red' } } }).refused;
     if (keyed) {
       const t: LayerTarget = { part: keyed.part.identity, inner: keyed.inner, selector: null, textHash };
       if (sound(t)) {
@@ -974,6 +1002,89 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (typeof pick.selector !== 'string') return null;
     const t: LayerTarget = { part: null, inner: null, selector: pick.selector, textHash };
     return sound(t) ? { target: t, label: `${human} (no part names it)`, kindLabel: null, kindCount: 0, before, fragile: fragileWhy(t, 'this') !== null } : null;
+  };
+
+  /* ── typing on the page, and trying a style, before either is an edit ── */
+
+  /** Why typing on the page never began, from the main process's side. */
+  const refusedType = (why: string): LayerTyped => ({ ended: 'refused', why });
+
+  /**
+   * Type on the picked element's words in the page: keyed first (target(), by the words the site rendered), then made
+   * editable by the page script, the keyboard given to the view. Answers what the page script says when typing ends,
+   * or cancelled when the page goes to another address first (its script, and the words typed, go with it).
+   */
+  const type = async (): Promise<LayerTyped> => {
+    const here = shown();
+    if (!here) return refusedType('Words are typed on the local site’s own page, and the view does not show one now.');
+    const t = await target();
+    if (!t) return refusedType('Nothing is chosen on the page any more: pick it again, then retype it.');
+    const wc = here.cur.webContents;
+    if (wc.isDestroyed() || wc.getURL() !== here.url) return refusedType('The page changed meanwhile: retype it on the page shown now.');
+    let off = (): void => {};
+    const ended = new Promise<LayerTyped>((resolve) => {
+      const gone = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
+        if (details.isMainFrame && !details.isSameDocument) resolve({ ended: 'cancelled', why: 'The page went to another address while you typed, so nothing was kept.', key: false });
+      };
+      const destroyed = (): void => resolve({ ended: 'cancelled', why: 'The page went away while you typed, so nothing was kept.', key: false });
+      wc.on('did-start-navigation', gone);
+      wc.on('destroyed', destroyed);
+      off = () => { wc.off('did-start-navigation', gone); wc.off('destroyed', destroyed); };
+    });
+    try {
+      // The keyboard goes to the page: the caret is there.
+      wc.focus();
+      const got = await Promise.race([options.run<unknown>(call('layerType'), null), ended]);
+      if (got && typeof got === 'object' && 'ended' in got) return got as LayerTyped;
+      if (!got || typeof got !== 'object') return refusedType('The page did not answer: reload it, then retype it.');
+      const g = got as { kept?: unknown; words?: unknown; why?: unknown; refused?: unknown; key?: unknown };
+      if (typeof g.refused === 'string') return refusedType(g.refused.slice(0, 300));
+      const words = typeof g.words === 'string' ? g.words.replace(/\s+/g, ' ').trim().slice(0, 100_000) : '';
+      const key = g.key === true;
+      if (g.kept === true && words) return { ended: 'kept', words, target: t, key };
+      return { ended: 'cancelled', why: g.why === 'empty' ? 'Nothing was left typed, so the words were put back.' : null, key };
+    } finally {
+      off();
+    }
+  };
+
+  /**
+   * Try style values on the picked element (`this`: the elements an edit for it would reach; `kind`: every element of
+   * its kind on the page), as one preview the page script owns; values that are not the layer's, or none, take it away.
+   */
+  const tryNow = async (rawValues: unknown, rawScope: unknown): Promise<number> => {
+    const here = shown();
+    if (!here) return 0;
+    const untry = async (): Promise<number> => { await options.run(call('layerTry', null, null), 0); return 0; };
+    const values = tryValues(rawValues);
+    if (!values) return untry();
+    const scope = rawScope === 'kind' ? 'kind' : 'this';
+    const got = await picked([]);
+    if (!got) return untry();
+    const { trace, pick, keyed } = got;
+    let spec: { parts: string[] | null; inner: string | null; selector: string | null } | null = null;
+    if (keyed && sound({ part: keyed.part.identity, inner: keyed.inner, selector: null, textHash: null })) {
+      // The same parts an edit would reach (resolveLayer): its identity's, or for `kind`, every part sharing its kind.
+      const key = scope === 'kind' ? kindKey(keyed.part.identity) : identityKey(keyed.part.identity);
+      const same = (i: PartIdentity): boolean => (scope === 'kind' ? kindKey(i) : identityKey(i)) === key;
+      if (key) spec = { parts: (trace?.parts ?? []).filter((p) => p.identity && same(p.identity)).map((p) => p.id), inner: keyed.inner, selector: null };
+    } else if (scope === 'this' && typeof pick.selector === 'string' && sound({ part: null, inner: null, selector: pick.selector, textHash: null })) {
+      spec = { parts: null, inner: null, selector: pick.selector };
+    }
+    if (!spec) return untry();
+    const wc = here.cur.webContents;
+    if (triedIn !== wc.id) {
+      // Once per document, at the user origin with the layer's own sheet: it holds nothing until the page script marks an element.
+      await wc.insertCSS(trySheet(), { cssOrigin: 'user' });
+      triedIn = wc.id;
+    }
+    const n = await options.run<unknown>(call('layerTry', spec, values), 0);
+    return typeof n === 'number' && Number.isInteger(n) ? n : 0;
+  };
+  const tryStyle = (rawValues: unknown, rawScope: unknown): Promise<number> => {
+    const next = trying.then(() => tryNow(rawValues, rawScope), () => tryNow(rawValues, rawScope));
+    trying = next.catch(() => {});
+    return next;
   };
 
   /* ── making an edit real ── */
@@ -1296,6 +1407,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     return apply();
   });
   ipc.handle('live:layerTarget', async (event) => (ok(event) ? target() : null));
+  ipc.handle('live:layerType', async (event): Promise<LayerTyped> => (ok(event) ? type() : refusedType('The live view is off.')));
+  ipc.handle('live:layerTypeEnd', async (event, keep: unknown) => { if (options.trusted(event)) await options.run(call('layerTypeEnd', keep === true), null); });
+  ipc.handle('live:layerTry', async (event, values: unknown, scope: unknown) => (ok(event) ? tryStyle(values, scope) : 0));
   ipc.handle('live:layerImplement', async (event, raw: unknown): Promise<LayerImplemented> => (ok(event)
     ? implement(raw) : { ok: false, id: typeof raw === 'string' ? raw.slice(0, 64) : '', route: 'none', why: 'The live view is off.' }));
   ipc.handle('live:layerVerify', async (event, raw: unknown, rawOptions: unknown): Promise<LayerVerdict> => {

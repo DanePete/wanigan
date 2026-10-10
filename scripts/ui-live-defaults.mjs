@@ -43,6 +43,9 @@ export const LIVE_DEFAULTS = String.raw`(() => {
     layerImplement: async (id) => ({ ok: false, id, route: 'none', why: nothing }),
     layerVerify: async () => { throw new Error(nothing); },
     layerPicture: async () => null,
+    layerType: async () => ({ ended: 'refused', why: nothing }),
+    layerTypeEnd: async () => {},
+    layerTry: async () => 0,
     // Local and Live (live-compare.ts).
     compareShot: async () => { throw new Error(nothing); },
     // Go to (live-find.ts): the key from the page never comes.

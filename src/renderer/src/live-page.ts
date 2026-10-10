@@ -1520,8 +1520,9 @@ export function livePage(): void {
    * text, and the live view's keys are not taken (busy). The keyboard going to the window, whose status line has Keep
    * and Put back, does not end it.
    *
-   * Answers `{ kept: true, words }`, `{ kept: false, why }` (`why`: null for Escape, `same` or `empty` when there was
-   * nothing to keep), or `{ refused }` with why it never began.
+   * Answers `{ kept: true, words, key }`, `{ kept: false, why, key }` (`why`: null for Escape, `same` or `empty` when
+   * there was nothing to keep; `key`: it ended by Enter or Escape here, so the window may take the keyboard back), or
+   * `{ refused }` with why it never began.
    */
   function layerType(): Promise<unknown> {
     endTyping(true);
@@ -1549,8 +1550,8 @@ export function livePage(): void {
         if (!inside(e) && document.activeElement !== el) return;
         // An input method's Enter confirms a word; only the owner's own Enter keeps the words.
         if (e.type === 'keydown' && !e.isComposing && e.keyCode !== 229) {
-          if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); finish(true); return; }
-          if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); finish(false); return; }
+          if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); finish(true, true); return; }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); finish(false, true); return; }
         }
         // The page's own scripts hear none of what is typed here: a carousel's arrows, a site's shortcuts.
         e.stopPropagation();
@@ -1592,7 +1593,7 @@ export function livePage(): void {
         ['paste', paste as EventListener], ['drop', drop as EventListener], ['click', click as EventListener], ['auxclick', click as EventListener],
         ['pointerdown', press as EventListener], ['mousedown', press as EventListener], ['input', redraw],
       ];
-      function finish(keep: boolean): void {
+      function finish(keep: boolean, key = false): void {
         if (typing !== t) return;
         typing = null;
         for (const [name, fn] of events) removeEventListener(name, fn, true);
@@ -1609,7 +1610,7 @@ export function livePage(): void {
         if (sel?.anchorNode && el.contains(sel.anchorNode)) sel.removeAllRanges();
         if (document.activeElement === el) el.blur();
         redraw();
-        resolve(kept ? { kept: true, words: now } : { kept: false, why: !keep ? null : now ? 'same' : 'empty' });
+        resolve(kept ? { kept: true, words: now, key } : { kept: false, why: !keep ? null : now ? 'same' : 'empty', key });
       }
       t.end = finish;
       for (const [name, fn] of events) addEventListener(name, fn, true);

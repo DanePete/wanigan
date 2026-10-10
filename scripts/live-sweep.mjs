@@ -7,7 +7,10 @@
 // palette, the component library (listed, searched, pictured, an entry's
 // details, placing one, a WordPress library's patterns and styles, an outdated
 // helper), taking a part out (at once, or asked first with its reach), the
-// design layer (a style and words made edits of it, once per Enter, the tray
+// design layer (words typed on the page itself from E, Retype the words and a
+// double-click, with the status line saying so and its Keep and Put back; a
+// style shown on the page as each control changes, then kept; a style and
+// words made edits of it, once per Enter, the tray
 // with their reach, state and what it means, made real where main would and
 // refused where it would not, undo waiting while words are saved, a block's
 // words saved to its own template with that reach said first and the write
@@ -27,8 +30,9 @@
 // nothing drawn over anything or cut off, at 1280, 1440 and 1920 px with the
 // dock beside and beneath. Then the page script itself, in a
 // real Chromium page of made-up markup: the trace's part marks read and paired,
-// a lens painted, a part dragged to a new place and put back, and the dock's
-// keys taken from the page.
+// a lens painted, a part dragged to a new place and put back, the dock's keys
+// taken from the page, words typed on the page (each keystroke, Escape, Enter,
+// a link, a paste, clicking away, a double-click) and a style tried on it.
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
@@ -36,6 +40,7 @@ import { BRIDGE, root, startGateway } from './ui-harness.mjs';
 import { liveFixture, liveStub } from './ui-live-stub.mjs';
 import { LIVE_DEFAULTS } from './ui-live-defaults.mjs';
 import { LIVE_PAGE_KEYS } from '../src/shared/live-keys.ts';
+import { compileLayer, trySheet } from '../src/shared/design-layer.ts';
 import { fitProblems } from './ui-fit.mjs';
 
 const out = join(root, '.artifacts', 'live');
@@ -139,8 +144,18 @@ try {
     await page.locator('.live-split-part').evaluate((el) => { el.scrollTop = el.clientHeight * 1.6; });
     await shot('inspector-more');
 
+    // E on a part that is more than words (the sidebar's region) opens every way to edit it; on words alone it types on
+    // them on the page ("layout", below).
+    await page.getByRole('button', { name: 'Back to the layers' }).click();
+    await page.locator('.live-layer', { hasText: 'Sidebar' }).first().click();
+    await page.waitForFunction(() => document.querySelector('.live-inspector .live-side-title')?.textContent === 'Sidebar', null, { timeout: 3000 }).catch(() => fail(t('inspector: choosing Sidebar did not choose it')));
+    await page.locator('.live-inspector .live-side-title').focus();
+    await page.keyboard.press('e');
+    await page.waitForSelector('[role="menu"]', { timeout: 2000 }).catch(() => fail(t('inspector: E on Sidebar, more than words, did not open the Edit menu')));
+    if (await page.evaluate(() => window.__wgLive.calls.includes('layerType'))) fail(t('inspector: E on Sidebar, more than words, typed on the page'));
+    await page.keyboard.press('Escape');
+
     // Moving by the keyboard: Alt+↓ on a block of the sidebar, said aloud; Escape puts it back.
-    await page.locator('.live-crumb', { hasText: 'Hero' }).count();
     await page.getByRole('button', { name: 'Back to the layers' }).click();
     await page.locator('.live-layer', { hasText: 'Search' }).first().click();
     await page.locator('.live-inspector .live-side-title').focus();
@@ -318,7 +333,7 @@ try {
       if (folded) fail(t(`layout: ${folded} of the diagnostics are open before they are asked for`));
       await page.getByRole('button', { name: /^Edit Search/ }).click();
       const fromTree = await page.$$eval('[role="menu"] [role^="menuitem"]', (els) => els.map((e) => e.textContent));
-      for (const want of [/^Retype the words/, /^Try a style/, /^Block settings/]) if (!fromTree.some((x) => want.test(x))) fail(t(`layout: chosen in the tree, the Edit menu lacks ${want} (${fromTree.join(' | ')})`));
+      for (const want of [/^Retype the words/, /^Retype in a box/, /^Try a style/, /^Block settings/]) if (!fromTree.some((x) => want.test(x))) fail(t(`layout: chosen in the tree, the Edit menu lacks ${want} (${fromTree.join(' | ')})`));
       await shot('layout-tree-edit');
       await page.keyboard.press('Escape');
 
@@ -335,11 +350,22 @@ try {
       if (fromPick.join('|') !== fromTree.join('|')) fail(t(`layout: a pick offers other edits than the tree (${fromPick.join(' | ')})`));
       await page.keyboard.press('Escape');
 
-      // The verbs' keys: E opens Edit, M opens Move, . says why there is no code here, ⇧A shows it alone.
+      // The verbs' keys: E on words alone types on them on the page (Escape in the window puts them back), M opens Move,
+      // . says why there is no code here, ⇧A shows it alone.
       await page.locator('.live-inspector .live-side-title').focus();
+      n = await mark();
       await page.keyboard.press('e');
-      await page.waitForSelector('[role="menu"]', { timeout: 2000 }).catch(() => fail(t('layout: E did not open the Edit menu')));
+      await page.waitForSelector('.live-status:has-text("Typing on the page: Enter keeps it in the layer, Esc puts it back")', { timeout: 2000 })
+        .catch(() => fail(t('layout: E on words alone did not type on them on the page')));
+      if (!(await since(n)).includes('layerType')) fail(t('layout: E on words alone did not ask the page to type on them'));
+      if (await page.$('[role="menu"]')) fail(t('layout: E on words alone opened the Edit menu as well'));
       await page.keyboard.press('Escape');
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTypeEnd false'), n, { timeout: 2000 }).catch(() => fail(t('layout: Escape in the window did not put the words back')));
+      await page.waitForFunction(() => !/Typing on the page/.test(document.querySelector('.live-status')?.textContent ?? ''), null, { timeout: 2000 })
+        .catch(() => fail(t('layout: the status line still says typing once the words were put back')));
+      if (!(await page.$('.live-inspector'))) fail(t('layout: Escape that put the words back also closed the part’s details'));
+      if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layout: words put back were added to the layer'));
+      await page.locator('.live-inspector .live-side-title').focus();
       await page.keyboard.press('m');
       await page.waitForSelector('.live-move', { timeout: 2000 }).catch(() => fail(t('layout: M did not open Move')));
       if ((await page.getAttribute('.live-verbs button[aria-keyshortcuts="M"]', 'aria-pressed')) !== 'true') fail(t('layout: Move is not shown as on'));
@@ -557,13 +583,13 @@ try {
       };
       // Notes, with Saved by hand under them, in the dock beneath the page.
       const notesTab = async () => { await closeTray(); await dockTo(page, 'Notes', (w) => fail(t(`layer: ${w}`))); };
-      /** Choose a part in the tree and open Retype the words on it, with the new words typed. */
+      /** Choose a part in the tree and open Retype in a box on it (the keyboard and screen-reader way), with the new words typed. */
       const retype = async (part, words) => {
         await backToLayers();
         await page.locator('.live-layer', { hasText: part }).first().click();
         await page.getByRole('button', { name: new RegExp(`^Edit ${part}`) }).click();
-        await page.getByRole('menuitem', { name: /^Retype the words/ }).click();
-        await page.waitForSelector('.live-layer-edit textarea', { timeout: 3000 }).catch(() => fail(t(`layer: Retype the words on ${part} opened nothing to type in`)));
+        await page.getByRole('menuitem', { name: /^Retype in a box/ }).click();
+        await page.waitForSelector('.live-layer-edit textarea', { timeout: 3000 }).catch(() => fail(t(`layer: Retype in a box on ${part} opened nothing to type in`)));
         await page.locator('.live-layer-edit textarea').fill(words);
       };
       const added = (words) => page.waitForSelector(`.live-layer-added:has-text("${words}")`, { timeout: 3000 }).catch(() => fail(t(`layer: “${words}” was not said to be in the layer`)));
@@ -586,21 +612,49 @@ try {
       if (!(await page.locator('.live-layer-scope input[value="this"]').isChecked())) fail(t('layer: a style is not for this element by default'));
       let n = await mark();
       await page.locator('#live-style-color').fill('#c0392b');
+      // Each change shows on the page at once, as a preview: nothing is added to the layer until it is kept.
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTry this {"color":"#c0392b"}'), n, { timeout: 2000 })
+        .catch(async () => fail(t(`layer: the colour chosen was not shown on the page as it changed (${(await since(n)).join(', ')})`)));
+      if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layer: a style being tried was added to the layer before it was kept'));
+      await page.locator('#live-style-color').fill('#1e8449');
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTry this {"color":"#1e8449"}'), n, { timeout: 2000 })
+        .catch(() => fail(t('layer: a second colour did not replace the first on the page')));
+      // Pictured with the page scrolled to the event the colour is tried on.
+      await page.evaluate(() => window.__wgLive.scrollTo(820));
+      await layerShot('layer-try');
+      await page.evaluate(() => window.__wgLive.scrollTo(0));
+      await page.locator('#live-style-color').fill('#c0392b');
+      await page.waitForFunction(() => window.__wgLive.tried?.values?.color === '#c0392b', null, { timeout: 2000 }).catch(() => fail(t('layer: the page does not show the colour chosen last')));
       await layerShot('layer-style', '.live-layer-scope');
+      n = await mark();
       await page.getByRole('button', { name: 'Show it on the page' }).click();
       await page.waitForSelector('.live-layer-added:has-text("for this element")', { timeout: 3000 }).catch(() => fail(t('layer: a style tried was not said to be in the layer')));
       if (!(await since(n)).includes('layerAdd style this')) fail(t('layer: the style was not added to the layer for this element'));
       if (!(await since(n)).includes('layerApply')) fail(t('layer: the page was not shown the layer again after the edit'));
+      // The preview gives way only once the layer shows the same values: never a moment without them.
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTry off'), n, { timeout: 2000 }).catch(() => fail(t('layer: the preview stayed on the page once the style was kept')));
+      {
+        const after = await since(n);
+        if (after.indexOf('layerTry off') < after.indexOf('layerApply')) fail(t(`layer: the preview went before the layer showed the style kept (${after.join(', ')})`));
+      }
       await page.waitForFunction(() => document.querySelector('.live-bar-tools button[aria-keyshortcuts="Shift+E"]')?.getAttribute('aria-label') === 'Edits, 1 draft: the design layer (⇧E)', null, { timeout: 3000 })
         .catch(() => fail(t('layer: the bar does not count the draft')));
       n = await mark();
       await page.fill('#live-style-font-size', '22');
       await kind.click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).includes('layerTry kind {"font-size":"22px"}'), n, { timeout: 2000 })
+        .catch(async () => fail(t(`layer: every one of its kind was not shown the size as it was chosen (${(await since(n)).join(', ')})`)));
       await page.getByRole('button', { name: 'Show it on the page' }).click();
       await page.waitForSelector('.live-layer-added:has-text("for every event node (3 elements on this page)")', { timeout: 3000 })
         .catch(() => fail(t('layer: a style for every instance was not said with its reach')));
       if (!(await since(n)).includes('layerAdd style kind')) fail(t('layer: the style was not added for every instance'));
+      n = await mark();
+      await page.fill('#live-style-padding-top', '30');
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).some((c) => c.startsWith('layerTry ') && c.includes('{"padding-top":"30px"}')), n, { timeout: 2000 })
+        .catch(() => fail(t('layer: a third style was not shown on the page as it changed')));
       await page.getByRole('button', { name: 'Done' }).click();
+      await page.waitForFunction((k) => window.__wgLive.calls.slice(k).at(-1) === 'layerTry off', n, { timeout: 2000 }).catch(() => fail(t('layer: Done left the style being tried on the page')));
+      if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layer: a style tried and left with Done was added to the layer'));
 
       // Retyped words are a text draft; markup no part names is said to be fragile before the edit is made, and how:
       // its words guard it. Enter adds it once: not when an input method confirms a word, not again while it is held.
@@ -617,12 +671,48 @@ try {
       await added('Open every day, 7 to 6');
       const adds = await counted(n, /^layerAdd text this$/);
       if (adds !== 1) fail(t(`layer: an input method’s Enter, then Enter held, made ${adds} drafts, not one`));
-      // A field the site stores (an article's body), and a block whose words its own template writes.
-      await retype('Body', 'Fresh loaves daily');
-      if (!(await page.locator('.live-layer-edit').innerText()).includes('For this element.')) fail(t('layer: Retype does not say what it reaches'));
-      await page.keyboard.press('Enter');
+      // Words typed on the page itself, in a field the site stores (an article's body). A double-click on them in the page
+      // (answered by the page as a key is) or Retype the words puts the window into typing: the status line says so with
+      // Keep and Put back, and the keys that work now are those two. Put back adds nothing; Keep adds one text edit and
+      // shows the layer again, and the window is out of typing.
+      const typingSaid = () => page.waitForSelector('.live-status:has-text("Typing on the page: Enter keeps it in the layer, Esc puts it back")', { timeout: 3000 });
+      const notTyping = (what) => page.waitForFunction(() => !/Typing on the page/.test(document.querySelector('.live-status')?.textContent ?? ''), null, { timeout: 3000 })
+        .catch(() => fail(t(`layer: ${what}: the status line still says typing`)));
+      await backToLayers();
+      await page.locator('.live-layer', { hasText: 'Body' }).first().click();
+      await page.waitForFunction(() => document.querySelector('.live-inspector .live-side-title')?.textContent === 'Body', null, { timeout: 3000 }).catch(() => fail(t('layer: choosing Body did not choose it')));
+      n = await mark();
+      await page.waitForFunction(() => typeof window.__wgLive.press === 'function', null, { timeout: 3000 }).catch(() => fail(t('layer: the window is not waiting for the page')));
+      await page.evaluate(() => window.__wgLive.press('retype'));
+      await typingSaid().catch(() => fail(t('layer: a double-click on the chosen words in the page did not type on them')));
+      if (!(await since(n)).includes('layerType')) fail(t('layer: the double-click did not ask the page to type'));
+      const keysWhileTyping = await page.locator('.live-status-keys').innerText().catch(() => '');
+      if (!/Enter\s*keep/.test(keysWhileTyping) || !/Esc\s*put back/.test(keysWhileTyping)) fail(t(`layer: while typing the status line’s keys read "${keysWhileTyping}"`));
+      await page.evaluate(() => window.__wgLive.type('Fresh'));
+      await page.getByRole('button', { name: 'Put back' }).click();
+      await notTyping('Put back');
+      if (!(await since(n)).includes('layerTypeEnd false')) fail(t('layer: Put back did not put the words back on the page'));
+      if ((await since(n)).some((c) => c.startsWith('layerAdd'))) fail(t('layer: words put back were added to the layer'));
+      n = await mark();
+      await page.getByRole('button', { name: /^Edit Body/ }).click();
+      await page.getByRole('menuitem', { name: /^Retype the words/ }).click();
+      await typingSaid().catch(() => fail(t('layer: Retype the words did not put the window into typing on the page')));
+      if (await page.$('.live-layer-edit textarea')) fail(t('layer: Retype the words opened the box as well as typing on the page'));
+      for (const so of ['Fresh', 'Fresh loaves', 'Fresh loaves daily']) await page.evaluate((w) => window.__wgLive.type(w), so);
+      await page.evaluate(() => window.__wgLive.scrollTo(320));
+      await layerShot('layer-typing');
+      await page.evaluate(() => window.__wgLive.scrollTo(0));
+      await page.getByRole('button', { name: 'Keep' }).click();
       await added('Fresh loaves daily');
+      await notTyping('Keep');
+      {
+        const after = await since(n);
+        if (after.filter((c) => c === 'layerAdd text this').length !== 1) fail(t(`layer: keeping words typed on the page made ${after.filter((c) => c === 'layerAdd text this').length} text edits, not one`));
+        if (after.lastIndexOf('layerApply') < after.indexOf('layerAdd text this')) fail(t('layer: the layer was not applied again once the words typed were added'));
+      }
+      // A block whose words its own template writes, retyped in the box: the keyboard and screen-reader way to do the same.
       await retype('Copyright', '© 2026 Acme Bakery');
+      if (!(await page.locator('.live-layer-edit').innerText()).includes('For this element.')) fail(t('layer: Retype in a box does not say what it reaches'));
       await page.keyboard.press('Enter');
       await added('© 2026 Acme Bakery');
 
@@ -1387,6 +1477,138 @@ try {
   if (same[0]?.count !== 2 || same[0]?.same !== true || same[0]?.field !== mark) fail(`page script: one stored thing shown twice was not said to be one: ${JSON.stringify(same[0])}`);
   if (same[1]?.count !== 2 || same[1]?.same !== false) fail(`page script: elements showing different words were said to be one: ${JSON.stringify(same[1])}`);
   await words.close();
+
+  // Typing on the page: the chosen element's own words, edited where they are (made-up markup). Each keystroke changes
+  // the element; the live view's keys wait while it lasts; Escape puts back exactly what it held, the same text nodes
+  // and the helper's part marks, whatever was typed over them; Enter keeps the words in the element's own nodes, which
+  // the layer then writes to, while its words for keying are still the site's; a link around the words goes nowhere;
+  // a paste is its plain text; clicking away keeps; an element with an element inside is refused; and a double-click
+  // on the chosen words answers 'retype' to the window.
+  const typed = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  const navigated = [];
+  typed.on('request', (r) => { if (r.url().includes('northwind.example.test')) navigated.push(r.url()); });
+  await typed.setContent(`<!doctype html><html><body style="margin:24px;font:16px sans-serif">
+<h2 id="t1"><!-- wl:part id="p-title" -->Paddling 101<!-- /wl:part id="p-title" --></h2>
+<p><a id="trips" href="https://northwind.example.test/trips" onclick="window.__heard = true"><span id="t2">Book a trip</span></a></p>
+<p id="t3">Paddles <b>for hire</b></p>
+<p id="away">Opening hours</p>
+</body></html>`);
+  await typed.addScriptTag({ content: script });
+  const choose = async (sel) => {
+    await typed.evaluate(() => { window.__p = window.__wl.pick(null); });
+    await typed.click(sel);
+    return typed.evaluate(() => window.__p);
+  };
+  const startTyping = () => typed.evaluate(() => { window.__typed = 'typing'; window.__wl.layerType().then((v) => { window.__typed = v; }); });
+  const answer = () => typed.evaluate(() => window.__typed);
+  const t1 = () => typed.$eval('#t1', (e) => ({ html: e.innerHTML, text: e.textContent, editable: e.getAttribute('contenteditable'), style: e.getAttribute('style') }));
+  const site = await t1();
+  if ((await choose('#t1'))?.own !== 'Paddling 101') fail('page script: the title could not be chosen to type on');
+  await typed.evaluate((k) => { window.__got = null; window.__wl.awaitGoto(k).then((v) => { window.__got = v; }); }, LIVE_PAGE_KEYS);
+  await typed.evaluate(() => { window.__nodes = [...document.getElementById('t1').childNodes]; });
+  await startTyping();
+  if (!(await typed.evaluate(() => window.__wl.busy())) || (await typed.evaluate(() => document.activeElement?.id)) !== 't1') fail('page script: typing did not take the keyboard to the words, or let the live view’s keys go');
+  let so = 'Paddling 101';
+  for (const key of [' ', 'p', '3']) {
+    await typed.keyboard.type(key);
+    so += key;
+    const now = (await t1()).text;
+    if (now !== so) fail(`page script: after typing ${JSON.stringify(key)} the element reads ${JSON.stringify(now)}, not ${JSON.stringify(so)}`);
+  }
+  if ((await typed.evaluate(() => window.__got)) !== null) fail(`page script: a key typed into the words was taken as the live view’s (${await typed.evaluate(() => window.__got)})`);
+  await typed.screenshot({ path: join(out, 'page-script-typing.png'), caret: 'initial' });
+  // Everything selected and typed over, the part marks with it, then Escape: exactly what the site rendered, in the same nodes.
+  await typed.keyboard.press('ControlOrMeta+A');
+  await typed.keyboard.type('Canoe');
+  await typed.keyboard.press('Escape');
+  const back = await t1();
+  if (JSON.stringify(back) !== JSON.stringify(site)) fail(`page script: Escape put back ${JSON.stringify(back)}, not ${JSON.stringify(site)}`);
+  if (!(await typed.evaluate(() => { const now = [...document.getElementById('t1').childNodes]; return now.length === window.__nodes.length && now.every((n, i) => n === window.__nodes[i]); }))) fail('page script: Escape did not put back the element’s own nodes');
+  if (JSON.stringify(await answer()) !== JSON.stringify({ kept: false, why: null, key: true })) fail(`page script: Escape answered ${JSON.stringify(await answer())}`);
+  if (await typed.evaluate(() => window.__wl.busy())) fail('page script: still busy once typing ended');
+  // Enter keeps the words, in the element's own text node between the part marks; keyed, it is still the site's words.
+  await startTyping();
+  await typed.keyboard.press('Backspace');
+  await typed.keyboard.type('2');
+  await typed.keyboard.press('Enter');
+  const kept = await t1();
+  if (JSON.stringify(await answer()) !== JSON.stringify({ kept: true, words: 'Paddling 102', key: true })) fail(`page script: Enter answered ${JSON.stringify(await answer())}`);
+  if (kept.html !== site.html.replace('Paddling 101', 'Paddling 102') || kept.editable !== null || kept.style !== null) fail(`page script: Enter left ${JSON.stringify(kept)}`);
+  if (!(await typed.evaluate(() => window.__nodes.every((n, i) => document.getElementById('t1').childNodes[i] === n)))) fail('page script: the words kept are not in the element’s own nodes');
+  if ((await typed.evaluate(() => window.__wl.layerPick([])))?.text !== 'Paddling 101') fail('page script: words kept on the page are keyed by the words typed, not the site’s');
+  await typed.evaluate(() => window.__wl.layerSet({ tags: {}, texts: [], on: true, gate: 'g1' }));
+  if ((await t1()).html !== site.html) fail('page script: once the layer does not hold the words typed, the site’s were not put back');
+  // Clicking away in the page keeps the words, as Enter does.
+  await startTyping();
+  await typed.keyboard.type('!');
+  await typed.click('#away');
+  if (JSON.stringify(await answer()) !== JSON.stringify({ kept: true, words: 'Paddling 101!', key: false })) fail(`page script: clicking away answered ${JSON.stringify(await answer())}`);
+  await typed.evaluate(() => window.__wl.layerSet({ tags: {}, texts: [], on: true, gate: 'g1' }));
+  // Words inside a link: typed into, the link never followed, its own click handler never told. A paste: its plain text only.
+  if ((await choose('#t2'))?.own !== 'Book a trip') fail('page script: the link’s words could not be chosen');
+  await startTyping();
+  await typed.click('#t2');
+  await typed.keyboard.type('!');
+  await typed.waitForTimeout(200);
+  if (navigated.length || typed.url() !== 'about:blank') fail(`page script: a click in a link’s words being typed followed the link (${navigated.join(', ') || typed.url()})`);
+  if (await typed.evaluate(() => window.__heard)) fail('page script: a click in a link’s words being typed reached the page’s own click handler');
+  if (!(await typed.$eval('#t2', (e) => e.textContent)).includes('!')) fail('page script: a click in a link’s words did not leave them typed into');
+  await typed.evaluate(() => {
+    const data = new DataTransfer();
+    data.setData('text/html', '<b>Kayaks</b><script>x()</script>');
+    data.setData('text/plain', ' and\nkayaks');
+    document.activeElement.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  const pasted = await typed.$eval('#t2', (e) => ({ html: e.innerHTML, text: e.textContent }));
+  if (!pasted.text.includes(' and kayaks') || /<|Kayaks/.test(pasted.html)) fail(`page script: a paste was not its plain text alone: ${JSON.stringify(pasted)}`);
+  await typed.keyboard.press('Escape');
+  if ((await typed.$eval('#t2', (e) => e.innerHTML)) !== 'Book a trip') fail('page script: Escape did not put the link’s words back');
+  // Words with an element inside them are not typed into.
+  await choose('#t3');
+  await startTyping();
+  await typed.waitForFunction(() => window.__typed !== 'typing', null, { timeout: 2000 }).catch(() => {});
+  if (!(await answer())?.refused || (await typed.$eval('#t3', (e) => e.getAttribute('contenteditable'))) !== null) fail(`page script: words with an element inside were typed into: ${JSON.stringify(await answer())}`);
+  // A double-click on the chosen words answers 'retype'; anywhere else, nothing.
+  await choose('#t1');
+  await typed.evaluate(() => { window.__got = null; window.__wl.awaitGoto([]).then((v) => { window.__got = v; }); });
+  await typed.dblclick('#away');
+  if ((await typed.evaluate(() => window.__got)) !== null) fail('page script: a double-click away from the chosen words answered the window');
+  await typed.dblclick('#t1');
+  if ((await typed.evaluate(() => window.__got)) !== 'retype') fail(`page script: a double-click on the chosen words answered ${await typed.evaluate(() => window.__got)}`);
+  await typed.close();
+
+  // Trying a style: one preview the page script owns, over the layer's own rule for the same property (both sheets
+  // put in alike here, as at the user origin in the app, so their selectors decide), replaced on every change, on
+  // every element of a kind, and gone without a trace.
+  const trying = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await trying.setContent(`<!doctype html><html><body style="margin:24px;font:16px sans-serif">
+<h2 id="t1" style="letter-spacing: 1px">Paddling 101</h2>
+<div class="card"><h3>Canoes</h3></div><div class="card"><h3>Kayaks</h3></div><div class="card"><h3>Paddles</h3></div>
+</body></html>`);
+  await trying.addScriptTag({ content: script });
+  const layered = [{ id: 'e1', target: { part: null, inner: null, selector: '#t1', textHash: null }, label: 'Title', page: '/', scope: 'this', breakpoint: 'all', change: { type: 'style', values: { color: 'rgb(30, 132, 73)' } }, before: {}, state: 'draft', by: 'owner', at: 1, verdict: null }];
+  await trying.addStyleTag({ content: compileLayer(layered, [], 'g1') });
+  await trying.addStyleTag({ content: trySheet() });
+  await trying.evaluate(() => { document.documentElement.setAttribute('data-wl-layer', 'g1'); document.getElementById('t1').setAttribute('data-wl-edit', 'e1'); });
+  const look = () => trying.$eval('#t1', (e) => ({ color: getComputedStyle(e).color, size: getComputedStyle(e).fontSize, style: e.getAttribute('style'), mark: e.getAttribute('data-wl-try') }));
+  const plain = await look();
+  if (plain.color !== 'rgb(30, 132, 73)') fail(`page script: the layer’s own colour did not show (${plain.color})`);
+  const one = { parts: null, inner: null, selector: '#t1' };
+  if ((await trying.evaluate((spec) => window.__wl.layerTry(spec, { color: 'rgb(192, 57, 43)', 'font-size': '30px' }), one)) !== 1) fail('page script: a style tried on one element did not say it showed there');
+  const shownNow = await look();
+  if (shownNow.color !== 'rgb(192, 57, 43)' || shownNow.size !== '30px') fail(`page script: the style tried did not show over the layer’s (${JSON.stringify(shownNow)})`);
+  await trying.screenshot({ path: join(out, 'page-script-try.png') });
+  await trying.evaluate((spec) => window.__wl.layerTry(spec, { color: 'rgb(41, 128, 185)' }), one);
+  const replaced = await look();
+  if (replaced.color !== 'rgb(41, 128, 185)' || replaced.size === '30px') fail(`page script: a second try did not replace the first (${JSON.stringify(replaced)})`);
+  const cards = await trying.evaluate(() => window.__wl.layerTry({ parts: null, inner: null, selector: '.card > h3' }, { color: 'rgb(1, 2, 3)' }));
+  const cardColors = await trying.$$eval('.card > h3', (els) => els.map((e) => getComputedStyle(e).color));
+  if (cards !== 3 || cardColors.some((c) => c !== 'rgb(1, 2, 3)') || (await look()).color !== plain.color) fail(`page script: a style tried on every one of a kind showed on ${JSON.stringify(cardColors)} (and the title is ${(await look()).color})`);
+  await trying.evaluate(() => window.__wl.layerTry(null, null));
+  const gone = await look();
+  const cardsGone = await trying.$$eval('.card > h3', (els) => els.map((e) => [e.getAttribute('style'), e.getAttribute('data-wl-try')]));
+  if (JSON.stringify(gone) !== JSON.stringify(plain) || cardsGone.some(([style, mark]) => style !== null || mark !== null)) fail(`page script: the style tried left a trace: ${JSON.stringify({ gone, cardsGone })}`);
+  await trying.close();
 
   // The verification's masks: where the trace's parts are on the page, and the blocks a helper marked as changing
   // between renders (data-wanigan-vary, held still or not), in document pixels.

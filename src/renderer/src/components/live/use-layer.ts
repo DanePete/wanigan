@@ -15,8 +15,11 @@
 // Whether the page shows the layer is the main process's switch (one for the view, whichever project it shows): it is
 // read from main's answers, asked as soon as the project's live view opens, and an answer that comes back after the
 // project changed is not this project's and is dropped.
+//
+// Typing on the page (LiveBridge.layerType) is kept here too, so the status line under the page says so whatever the
+// side panel shows: words kept there are added as a text edit and the layer applied, as a retype in the box is.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { LayerApplied, LayerEditInput, LayerSnapshot } from '@shared/design-layer';
+import type { LayerApplied, LayerEditInput, LayerPickTarget, LayerSnapshot, LayerTyped } from '@shared/design-layer';
 import { bridge, call } from '../../lib/api';
 import { draftsOf } from '../../lib/live-layer';
 import { liveBridge } from '../../lib/live';
@@ -60,6 +63,16 @@ export interface LayerApi {
   discard: (id: string) => Promise<unknown>;
   /** The view finished loading a page: read the log and hear what the layer found on the page, when there is anything to find. */
   loaded: () => void;
+  /** Typing on the page now: the status line says so, with Keep and Put back. */
+  typing: boolean;
+  /**
+   * Type on the picked element's words in the page itself. Words kept there become a text edit for that element on
+   * `page` (added, and the layer applied, so the page goes on showing them); answers the edit's target and words, or
+   * null when they were put back, never typed (said), or the add was refused (said).
+   */
+  typeOnPage: (page: string) => Promise<{ target: LayerPickTarget; words: string } | null>;
+  /** End typing on the page from the window: keep the words (true), or put back what the page showed (false). */
+  endTyping: (keep: boolean) => void;
 }
 
 export function useLayer(projectId: string, local: boolean): LayerApi {
@@ -167,9 +180,38 @@ export function useLayer(projectId: string, local: boolean): LayerApi {
     if (snapRef.current?.edits.length || applied?.off) void refresh();
   }, [refresh, applied?.off]);
 
+  const [typing, setTyping] = useState(false);
+  const typingNow = useRef(false);
+  const typeOnPage = useCallback(async (page: string): Promise<{ target: LayerPickTarget; words: string } | null> => {
+    if (!live || typingNow.current) return null;
+    const asked = projectId;
+    typingNow.current = true;
+    setTyping(true);
+    let got: LayerTyped;
+    try {
+      got = await live.layerType().catch((e: Error): LayerTyped => ({ ended: 'refused', why: e.message }));
+    } finally {
+      typingNow.current = false;
+      setTyping(false);
+    }
+    if (got.ended === 'refused') { toast(got.why, 'error'); return null; }
+    // Ended by Enter or Escape in the page: the keyboard comes back to the window, to the part's details, as after a pick.
+    if (got.key) {
+      await live.focusWindow().catch(() => {});
+      window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.live-inspector .live-side-title')?.focus());
+    }
+    if (got.ended === 'cancelled') { if (got.why) toast(got.why); return null; }
+    // Kept for another project's page (the view moved on meanwhile): not this layer's.
+    if (projectRef.current !== asked) return null;
+    const { target, words } = got;
+    const done = await add({ target: target.target, label: target.label, page, scope: 'this', breakpoint: 'all', change: { type: 'text', value: words }, before: target.before });
+    return done ? { target, words } : null;
+  }, [live, projectId, toast, add]);
+  const endTyping = useCallback((keep: boolean): void => { void live?.layerTypeEnd(keep).catch(() => {}); }, [live]);
+
   const writing = Object.values(running).some((k) => k === 'real' || k === 'template');
   return {
     snapshot, applied, on: !applied?.off, drafts: draftsOf(snapshot), change, add, refresh, fresh, show, loaded,
-    running, writing, task, verify, failures, undo, redo, discard,
+    running, writing, task, verify, failures, undo, redo, discard, typing, typeOnPage, endTyping,
   };
 }

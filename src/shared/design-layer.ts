@@ -367,14 +367,15 @@ export type LayerTyped =
   /**
    * Enter, clicking away, or the window's Keep: the words now shown (whitespace folded), and the element as
    * layerTarget keys it. The page goes on showing them, in the element's own text nodes, until the window adds the
-   * edit and the layer shows it there.
+   * edit and the layer shows it there. `key`: it ended by Enter in the page, so the window takes the keyboard back,
+   * as it does after a pick.
    */
-  | { ended: 'kept'; words: string; target: LayerPickTarget }
+  | { ended: 'kept'; words: string; target: LayerPickTarget; key: boolean }
   /**
    * Escape, the window's Put back, the same words or none, or the page going to another address: the page shows
-   * what it showed before. `why` when it was not the owner's own choice.
+   * what it showed before. `why` when it was not the owner's own choice; `key` when it was Escape in the page.
    */
-  | { ended: 'cancelled'; why: string | null }
+  | { ended: 'cancelled'; why: string | null; key: boolean }
   /** Nothing was typed: no element chosen, one that is not only words, or a page that is not the local site's. */
   | { ended: 'refused'; why: string };
 

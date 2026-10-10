@@ -33,7 +33,7 @@ test('the shortcut sheet lists exactly the live view’s keys, and each does wha
     'Compare Local with a hosted environment: compare',
     'The site’s component library: library',
     'Your edits to the page, in the design layer: edits',
-    'Every way to edit the chosen part: edit',
+    'Type on the chosen part’s words on the page, or every way to edit it: edit',
     'Move the chosen part: move',
     'The chosen part’s code, in the code editor: code',
     'Show the chosen part alone: alone',

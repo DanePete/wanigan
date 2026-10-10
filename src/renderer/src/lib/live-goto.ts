@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { FindItem, FindResult } from '@shared/live-find';
 import { readVisits, remember, type LiveFindAnswer, type Visit } from '@shared/live-goto';
-import type { LiveKeyId } from '@shared/live-keys';
+import type { LiveGesture, LiveKeyId } from '@shared/live-keys';
 import { liveBridge } from './live';
 
 /* ── opening ───────────────────────────────────────────────────────────── */
@@ -86,10 +86,11 @@ export const isTyping = editable;
  * Called by the live view while it is on screen: it is known to be there,
  * Shift+Space in its toolbar, side panel or dock tabs (not while typing) opens Go to,
  * and so does Shift+Space in its page, which the page script answers. The
- * page answers the live view's own keys too (P picks…), which `onPageKey`
- * runs. Returns what opens Go to from the address field.
+ * page answers the live view's own keys too (P picks…), and a double-click on
+ * the chosen part's words ('retype'), which `onPageKey` runs. Returns what
+ * opens Go to from the address field.
  */
-export function useGoToKeys(projectId: string, onPageKey?: (id: LiveKeyId) => void): (from?: Pick<GoToRequest, 'address' | 'query'>) => void {
+export function useGoToKeys(projectId: string, onPageKey?: (id: LiveKeyId | LiveGesture) => void): (from?: Pick<GoToRequest, 'address' | 'query'>) => void {
   const pageKey = useRef(onPageKey);
   pageKey.current = onPageKey;
   useEffect(() => {
