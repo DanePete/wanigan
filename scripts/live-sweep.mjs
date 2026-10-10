@@ -2248,6 +2248,32 @@ try {
     await admin.close();
   }
   {
+    // A theme's own stylesheet, which no part names as its source, edited and fetched again in place: the parts its
+    // changed rules style are found (the innermost part holding each element), and a rule for the whole page is not.
+    const styled = await browser.newPage({ viewport: { width: 900, height: 600 } });
+    let sheet = '.hours { color: #333; } .news { color: #444; } body { margin: 0; }';
+    await styled.route('https://acme.example.test/**', (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/theme.css') return route.fulfill({ contentType: 'text/css', body: sheet });
+      return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><link rel="stylesheet" href="/theme.css"></head><body>
+<!-- wl:part id="p-news" --><div data-wl-block="views_block:news@acme_news" class="news">Latest news</div><!-- /wl:part id="p-news" -->
+<!-- wl:part id="p-hours" --><div data-wl-block="block_content:hours@acme_hours"><h2>Hours</h2><p class="hours">Open every day</p></div><!-- /wl:part id="p-hours" -->
+</body></html>` });
+    });
+    await styled.goto('https://acme.example.test/');
+    await styled.addScriptTag({ content: script });
+    const parts = Object.fromEntries((await styled.evaluate(() => window.__wl.scan())).filter((r) => r.part).map((r) => [r.part, r.index]));
+    if ((await styled.evaluate(() => window.__wl.restyled())).length) fail('restyled: something was said restyled before any swap');
+    sheet = '.hours { color: #2f5a46; font-size: 22px; } .news { color: #444; } body { margin: 0; background: #fff; }';
+    if ((await styled.evaluate(() => window.__wl.css())) !== 1) fail('restyled: the theme’s stylesheet was not fetched again in place');
+    const hit = await styled.evaluate(() => window.__wl.restyled());
+    if (JSON.stringify(hit) !== JSON.stringify([parts['p-hours']])) fail(`restyled: the changed rule's part was not found alone (${JSON.stringify(hit)}, parts ${JSON.stringify(parts)})`);
+    if ((await styled.evaluate(() => getComputedStyle(document.querySelector('.hours')).fontSize)) !== '22px') fail('restyled: the new copy of the stylesheet is not what the page shows');
+    if ((await styled.evaluate(() => document.querySelectorAll('link[rel="stylesheet"]').length)) !== 1) fail('restyled: the old copy of the stylesheet was left in the page');
+    if ((await styled.evaluate(() => window.__wl.restyled())).length) fail('restyled: a swap was said twice');
+    await styled.close();
+  }
+  {
     // The site's own messages, in Drupal core's own markup (status-messages.html.twig, and message.js's for a script's):
     // read with their kinds and words (never the hidden heading), said in Wanigan's pop-up, and hidden by the sheet.
     const said = await browser.newPage({ viewport: { width: 1000, height: 600 } });

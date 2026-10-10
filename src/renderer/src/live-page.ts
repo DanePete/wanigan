@@ -1282,16 +1282,88 @@ export function livePage(): void {
       .filter((l) => { try { return new URL(l.href).origin === location.origin; } catch { return false; } });
     if (links.some((l) => /\/files\/css\/css_|\/(?:wp-content\/cache|autoptimize)\//.test(l.href))) return -1;
     const stamp = String(Date.now());
+    // Each sheet's rules as they were, to say once the new copies load which parts the changed rules style (restyled()).
+    const was = links.map((l) => rulesOf(l.sheet));
+    const loads: Promise<StyleRule[] | null>[] = [];
     for (const link of links) {
       const url = new URL(link.href);
       url.searchParams.set('wlr', stamp);
       const next = link.cloneNode() as HTMLLinkElement;
       next.href = url.toString();
-      next.addEventListener('load', () => link.remove(), { once: true });
-      next.addEventListener('error', () => next.remove(), { once: true });
+      loads.push(new Promise((done) => {
+        const late = setTimeout(() => done(null), SWAP_MS);
+        next.addEventListener('load', () => { clearTimeout(late); link.remove(); done(rulesOf(next.sheet)); }, { once: true });
+        next.addEventListener('error', () => { clearTimeout(late); next.remove(); done(null); }, { once: true });
+      }));
       link.after(next);
     }
+    swapped = Promise.all(loads).then((now) => changedSelectors(was, now));
     return links.length;
+  }
+
+  /** How long a stylesheet's new copy is waited for before what it changed is left unsaid. */
+  const SWAP_MS = 4000;
+  type StyleRule = { selector: string; text: string };
+  /** The selectors of the rules the last swap changed, added or took away; null before any swap. */
+  let swapped: Promise<string[]> | null = null;
+
+  /** A sheet's style rules, inside @media and @supports too; none when it cannot be read. */
+  function rulesOf(sheet: CSSStyleSheet | null): StyleRule[] {
+    const out: StyleRule[] = [];
+    const walk = (list: CSSRuleList): void => {
+      for (const rule of Array.from(list)) {
+        if (rule instanceof CSSStyleRule) out.push({ selector: rule.selectorText, text: rule.cssText });
+        else if (rule instanceof CSSGroupingRule) walk(rule.cssRules);
+      }
+    };
+    try { if (sheet) walk(sheet.cssRules); } catch { /* another origin's, or not loaded */ }
+    return out;
+  }
+
+  /** The selectors of rules in one copy of a sheet and not the other: what an edit to it changed. */
+  function changedSelectors(was: StyleRule[][], now: (StyleRule[] | null)[]): string[] {
+    const out = new Set<string>();
+    was.forEach((before, i) => {
+      const after = now[i];
+      if (!after) return;
+      const had = new Set(before.map((r) => r.text));
+      const has = new Set(after.map((r) => r.text));
+      for (const r of after) if (!had.has(r.text)) out.add(r.selector);
+      for (const r of before) if (!has.has(r.text)) out.add(r.selector);
+    });
+    return [...out];
+  }
+
+  /** What a selector picks on the page now: states (:hover, ::before) left out, as the element they are of. */
+  const STATES = /::?(?:before|after|first-line|first-letter|marker|placeholder|selection|backdrop|hover|focus-visible|focus-within|focus|active|visited|target)\b/g;
+
+  /**
+   * The regions the last stylesheet swap restyled: for each element a changed rule styles, the innermost region
+   * holding it. A rule for the whole page (html, body, :root) or for more than 40 elements styles everything and is
+   * no part to outline. Empty when nothing was swapped, or nothing it changed is on this page.
+   */
+  async function restyled(): Promise<number[]> {
+    const pending = swapped;
+    swapped = null;
+    const selectors = pending ? await pending : [];
+    const els = new Set<Element>();
+    for (const selector of selectors) {
+      const plain = selector.replace(STATES, '');
+      let found: Element[];
+      try { found = Array.from(document.querySelectorAll(plain)); } catch { continue; }
+      if (found.length > 40 || found.some((e) => e === document.documentElement || e === document.body)) continue;
+      for (const e of found) if (!e.closest(`#${HOST_ID}`)) els.add(e);
+    }
+    const depth = (r: Region): number => { let d = 0; for (let p = r.parent; p !== null && d < 64; p = regions[p]?.parent ?? null) d++; return d; };
+    const holds = (r: Region, e: Element): boolean => (r.el ? r.el === e || r.el.contains(e) : !!r.range && r.range.intersectsNode(e));
+    const hit = new Set<number>();
+    for (const e of els) {
+      let best: Region | null = null;
+      for (const r of regions) if (holds(r, e) && (!best || depth(r) > depth(best))) best = r;
+      if (best) hit.add(best.index);
+      if (hit.size >= 50) break;
+    }
+    return [...hit];
   }
 
   /* ── the design layer (src/main/live-layer.ts; the contract is src/shared/design-layer.ts) ── */
@@ -2066,7 +2138,7 @@ export function livePage(): void {
   }
 
   w.__wl = {
-    scan, outline, clear, pick, cancelPick, choose, css, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
+    scan, outline, clear, pick, cancelPick, choose, css, restyled, problems, texts, fingerprints, styleOf, paint, where, reveal, arrange, disarm, preview, unpreview,
     layerFind, layerSet, layerPick, layerSnap, layerOf, layerAreas, layerPage, layerLate, layerType, layerTry, layerColors, retypeAt,
     /** End typing on the page from the window: keep the words typed so far, or put back what was there. */
     layerTypeEnd: (keep: unknown) => endTyping(keep === true),

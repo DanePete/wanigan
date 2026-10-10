@@ -277,8 +277,10 @@ const WIDTHS: Record<Width, { px: number | null; label: string; icon: 'desktop' 
 };
 
 type Banner =
-  | { kind: 'outlined'; file: string; count: number }
-  | { kind: 'not-here'; file: string }
+  /** `styled`: the parts a stylesheet's changed rules style, not the parts it makes. */
+  | { kind: 'outlined'; file: string; count: number; styled?: boolean }
+  /** `swapped`: a stylesheet fetched again in place, not a reload. */
+  | { kind: 'not-here'; file: string; swapped?: boolean }
   | { kind: 'elsewhere'; file: string }
   | { kind: 'waiting'; file: string }
   | { kind: 'reloaded' }
@@ -289,8 +291,10 @@ const fileName = (path: string): string => path.split('/').pop() ?? path;
 
 function bannerText(n: Banner): string {
   switch (n.kind) {
-    case 'outlined': return `${n.file} changed: ${n.count === 1 ? 'outlined the part' : `outlined the ${n.count} parts`} of this page it makes.`;
-    case 'not-here': return `${n.file} changed: reloaded. No part of this page names it as its source, so nothing is outlined.`;
+    case 'outlined': return `${n.file} changed: ${n.count === 1 ? 'outlined the part' : `outlined the ${n.count} parts`} of this page ${n.styled ? 'its changed rules style' : 'it makes'}.`;
+    case 'not-here': return n.swapped
+      ? `${n.file} changed: its styles are on the page now. No part of this page names it as its source, and its changed rules style none of them, so nothing is outlined.`
+      : `${n.file} changed: reloaded. No part of this page names it as its source, so nothing is outlined.`;
     case 'elsewhere': return `${n.file} changed in another checkout, which this site is not serving. Nothing reloaded.`;
     case 'waiting': return `${n.file} changed. Reload to see it (following the agents’ edits is off in Settings).`;
     case 'reloaded': return 'A turn ended without editing a file: reloaded, in case it changed content.';
@@ -555,14 +559,18 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
       const at = next.region.index;
       void live.choose(at).then((p) => { if (p) setSelection((s) => (s?.region?.index === at && !s.pick ? { ...s, pick: p } : s)); }).catch(() => {});
     }
-    const hits = paths.length ? found.filter((r) => paths.some((p) => madeBy(r, p))) : [];
+    let hits = paths.length ? found.filter((r) => paths.some((p) => madeBy(r, p))) : [];
+    // Stylesheets fetched again in place, which no part names (a theme's own CSS): the parts their changed rules style.
+    const swapped = !reloaded && paths.length > 0 && paths.every(isStylesheet);
+    const styled = swapped && !hits.length;
+    if (styled) { const at = new Set(await live.restyled()); hits = found.filter((r) => at.has(r.index)); }
     if (paths.length) setChanged(new Set(hits.map((h) => h.index)));
     if (hits.length) {
       await live.outline(hits.map((h) => h.index), null, 'edit');
-      say({ kind: 'outlined', file: fileName(paths[0] as string), count: hits.length });
+      say({ kind: 'outlined', file: fileName(paths[0] as string), count: hits.length, styled });
       return;
     }
-    if (paths.length) say({ kind: 'not-here', file: fileName(paths[0] as string) });
+    if (paths.length) say({ kind: 'not-here', file: fileName(paths[0] as string), swapped });
     if (next?.region) await live.outline([next.region.index], labelOf(next.region), 'pick');
   }, [live, madeBy, labelOf, say]);
 

@@ -16,7 +16,7 @@ export const PICK_STUB = `(() => {
     show: async (projectId) => { state.projectId = projectId; setTimeout(() => { for (const l of listeners) l({ ...state }); }, 50); return true; },
     bounds: () => {}, hide: async () => {}, cover: async () => null, go: async () => true,
     // What the page was asked to do after an edit: the sweep reads these.
-    reload: async (hard) => { window.__liveCalls.push(hard ? 'reload-hard' : 'reload'); }, css: async () => { window.__liveCalls.push('css'); return 1; },
+    reload: async (hard) => { window.__liveCalls.push(hard ? 'reload-hard' : 'reload'); }, css: async () => { window.__liveCalls.push('css'); return 1; }, restyled: async () => [],
     back: async () => {}, forward: async () => {}, open: async () => {},
     // The page's DevTools, quiet: this stand-in draws no page to inspect.
     devtoolsShow: async () => 'closed', devtoolsBounds: () => {}, devtoolsHide: async () => null, devtoolsClose: async () => {}, devtoolsDetach: async () => false, devtoolsInspect: async () => false, onDevtools: () => () => {}, reveal: async () => null,

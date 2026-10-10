@@ -136,7 +136,7 @@ export const LIVE_STUB = String.raw`(() => {
   window.wanigan.live = {
     show: async () => { setTimeout(tell, 0); return true; }, bounds: () => {}, hide: async () => {},
     cover: async (covered) => (covered ? FRAME : null),
-    reload: async () => {}, css: async () => 0,
+    reload: async () => {}, css: async () => 0, restyled: async () => [],
     go: async (url) => { L.went.push(url); view = { url, title: url }; setTimeout(tell, 0); return true; },
     back: async () => {}, forward: async () => {}, open: async () => {},
     // The page's DevTools, quiet: this stand-in draws no page to inspect.

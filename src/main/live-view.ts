@@ -603,6 +603,11 @@ export function wireLiveView(options: {
     if (swapped <= 0) view?.webContents.reload();
     return swapped;
   });
+  ipcMain.handle('live:restyled', async (event) => {
+    if (!ok(event)) return [];
+    const found = await run<number[]>('window.__wl && window.__wl.restyled ? window.__wl.restyled() : []', []);
+    return Array.isArray(found) ? found.filter((i) => Number.isInteger(i) && i >= 0).slice(0, 50) : [];
+  });
   ipcMain.handle('live:scan', async (event) => {
     if (!ok(event)) return [];
     const regions = await run<LiveRegion[]>('window.__wl ? window.__wl.scan() : []', []);
