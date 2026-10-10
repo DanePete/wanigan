@@ -288,6 +288,8 @@ export function wireLiveView(options: {
   /** The view is stepped aside for something over it (a dialog). */
   let covered = false;
   let logged: TimedProblem[] = [];
+  /** The page's frame as its last navigation began (did-start-navigation), this view's only. */
+  let lastFrame: string | null = null;
   /** Hidden windows rendering for an agent, by webContents id: what their requests reported. */
   const collecting = new Map<number, LiveProblem[]>();
   /** The HTTP status of the page the view shows, when one loaded. */
@@ -443,6 +445,7 @@ export function wireLiveView(options: {
     lastError = null;
     lastStatus = null;
     logged = [];
+    lastFrame = null;
   };
 
   const create = (id: string, hosted: string | null): WebContentsView => {
@@ -484,7 +487,13 @@ export function wireLiveView(options: {
       void wc.insertCSS(SITE_MESSAGES_CSS, { cssOrigin: 'user' }).catch(() => {});
     });
     wc.on('did-finish-load', () => { void sayMessages(); });
-    wc.on('did-start-navigation', (details) => { if (details.isMainFrame && !details.isSameDocument) logged = []; });
+    wc.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      logged = [];
+      // The page as it is while the new one is fetched: what a cover shows when, asked once the reload has begun, the
+      // view has no frame to give (a save's reload under its last frame showed an empty, dark stage for 0.7 s).
+      void wc.capturePage().then((img) => { if (!img.isEmpty()) lastFrame = img.toDataURL(); }).catch(() => {});
+    });
     wc.on('console-message', (details) => {
       // Electron's own advice to app developers is not the site's problem.
       if ((details.level !== 'error' && details.level !== 'warning') || details.message.includes('Electron Security Warning')) return;
@@ -570,7 +579,8 @@ export function wireLiveView(options: {
     if (!options.trusted(event) || !view) return null;
     if (covered === true) {
       let frame: string | null = null;
-      try { frame = (await view.webContents.capturePage()).toDataURL(); } catch { frame = null; }
+      try { const img = await view.webContents.capturePage(); frame = img.isEmpty() ? null : img.toDataURL(); } catch { frame = null; }
+      frame ??= lastFrame;
       view.setVisible(false);
       isCovered(true);
       return frame;
