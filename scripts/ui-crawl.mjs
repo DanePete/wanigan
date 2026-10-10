@@ -144,7 +144,7 @@ function plan(w) {
     { name: 'MCP store', hash: '#/mcp', open: click('.topbar-tools [role="radio"]:has-text("Store")'), ready: '.store-card' },
     { name: 'Search and commands', hash: board, open: press('Meta+k'), scope: '.palette' },
     { name: 'Keyboard shortcuts', hash: board, open: press('Shift+Slash'), scope: '.dialog', ready: '.shortcuts' },
-    { name: 'How this works', hash: board, open: click('.how-btn'), scope: '.dialog', ready: '.how-flow' },
+    { name: 'How this works', hash: board, open: click('.board-how button'), scope: '.dialog', ready: '.how-flow' },
     { name: 'Saved views', hash: board, open: click('.views-trigger'), scope: '.views-panel', ready: '.views-panel .views-row' },
     { name: 'Talk to Wanigan', hash: board, open: click('.chat-fab'), scope: '.chat' },
     { name: 'Play with Wanigan', hash: '#/needs', open: click('.needs-orb .play-button'), scope: '.play-panel' },
@@ -161,7 +161,8 @@ function plan(w) {
     { name: 'Make a session a card', session: shell, open: click('.topbar-tools button:has-text("Make this a card")'), scope: '.dialog' },
     { name: 'Undo a turn', session: stock, open: click('.turn-change button:has-text("Undo this turn")'), scope: '.dialog', ready: '.dialog .undo-files li' },
     { name: 'A turn’s changes', session: stock, open: click('.turn-change .turn-diff'), scope: '.turn-panel', ready: '.turn-panel .dl-add' },
-    { name: 'Pull request', hash: `${board}?card=${ns.key}-10`, open: click('.drawer button:has-text("Open a pull request")'), scope: '.drawer .pr-confirm' },
+    // The card's branch and its pull request are the drawer's Branch tab.
+    { name: 'Pull request', hash: `${board}?card=${ns.key}-10`, open: async (page) => { await click('.drawer [role="tab"]:has-text("Branch")')(page); await click('.drawer button:has-text("Open a pull request")')(page); }, scope: '.drawer .pr-confirm' },
     { name: 'History › reader', hash: `#/p/${ns.key}/history`, open: click('.hrow .hrow-actions button:has-text("Read")'), scope: '.reader', ready: '.reader .turn' },
     { name: 'History › resume', hash: `#/p/${ns.key}/history`, open: click('.hrow:has-text("Expired coupon codes") button:has-text("Resume")'), scope: '.dialog', ready: '.dialog .choose-accounts' },
     { name: 'Skills › copy', hash: '#/skills', open: click('.lib-actions button:has-text("Copy to a project")'), scope: '.dialog', ready: '.dialog .plan-files li' },

@@ -534,7 +534,7 @@ try {
       // ⌘J on the Code tab puts the editor away: back to the view before it, the drawer closed.
       await page.click('.topbar .project-more');
       await page.click('.menu-list [role="menuitemradio"]:has-text("List")');
-      await page.waitForSelector('.table tbody tr');
+      await page.waitForSelector('.list-table tbody tr[data-key]');
       await page.click('.topbar .tabs a:text-is("Code")');
       await page.waitForSelector('.editor-drawer[data-mode="page"]');
       await page.keyboard.press('Meta+j');

@@ -1,11 +1,11 @@
 import { Select } from '../components/Select';
 import { useState } from 'react';
 import { CARD_TYPES, PRIORITIES, type CardType, type Priority, type ProjectSummary } from '@shared/model';
-import { attempt, bridge, call } from '../lib/api';
-import { keyLabel } from '@shared/shortcuts';
+import { attempt, call } from '../lib/api';
 import { openCard } from '../lib/router';
 import { TYPE_LABEL } from '../lib/format';
-import { Button, Dialog, Field, IconButton, Segmented, useToast } from '../components/ui';
+import { Button, Dialog, Field, IconButton, KeyCaps, Segmented, tipProps, useToast } from '../components/ui';
+import { PRIORITY_MEANING } from '../views/Board';
 
 export function NewCardDialog({ projects, initial, onClose }: {
   projects: ProjectSummary[];
@@ -25,7 +25,6 @@ export function NewCardDialog({ projects, initial, onClose }: {
   const [drafting, setDrafting] = useState(false);
   const [drafted, setDrafted] = useState<string | null>(null);
   const project = projects.find((p) => p.id === projectId);
-  const mac = bridge().platform === 'darwin';
 
   const draft = async (): Promise<void> => {
     const note = [title, body].filter((s) => s.trim()).join('\n\n');
@@ -69,32 +68,28 @@ export function NewCardDialog({ projects, initial, onClose }: {
       width={600}
       footer={
         <>
-          <span className="dialog-hint"><kbd>{keyLabel('Mod', mac)}</kbd><kbd>{keyLabel('Enter', mac)}</kbd> create and open</span>
+          <span className="dialog-hint"><KeyCaps keys={['Mod', 'Enter']} /> create and open</span>
           <Button tone="quiet" onClick={onClose}>Cancel</Button>
           <Button tone="primary" onClick={() => submit(false)} disabled={!title.trim() || busy || drafting}>Create card</Button>
         </>
       }
     >
-      <form onSubmit={(e) => { e.preventDefault(); void submit(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(true); } }}>
+      <form className="new-card" onSubmit={(e) => { e.preventDefault(); void submit(false); }} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(true); } }}>
         {projects.length > 1 ? (
           <Field label="Project">{(id) => (
             <Select id={id} value={projectId} onChange={setProjectId} options={projects.map((p) => ({ value: p.id, label: `${p.name} (${p.key})` }))} />
           )}</Field>
         ) : null}
-        <div className="field"><span className="field-label">Type</span>
-          <Segmented<CardType> label="Type" value={type} onChange={setType} options={CARD_TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] }))} />
-        </div>
         <Field label="Title">{(id) => <input id={id} data-autofocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing, or a rough note" />}</Field>
         <Field label="Description" hint="Agents read this when they take the card.">{(id) => (
           <textarea id={id} rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
         )}</Field>
         <div className="draft-row">
-          <Button size="s" icon="search" onClick={() => draft()} disabled={drafting || !(title.trim() || body.trim())}>
+          <Button size="s" icon="search" onClick={() => draft()} disabled={drafting || !(title.trim() || body.trim())}
+            {...tipProps('Claude Code reads the project with read-only tools and writes the note up as a card with criteria')}>
             {drafting ? 'Claude is reading the project…' : 'Draft with Claude'}
           </Button>
-          <span className="faint small">
-            {drafted ?? 'Turns a rough note into a clear card with criteria, reading the project with read-only tools. Uses a turn of your plan.'}
-          </span>
+          <span className="faint small" aria-live="polite">{drafted ?? 'A rough note becomes a clear card with criteria. Uses a turn of your plan.'}</span>
         </div>
         <div className="field">
           <label className="field-label" htmlFor="new-criterion">Acceptance criteria</label>
@@ -103,7 +98,7 @@ export function NewCardDialog({ projects, initial, onClose }: {
               {criteria.map((c, i) => (
                 <li key={`${i}-${c}`}>
                   <span>{c}</span>
-                  <IconButton icon="close" label={`Remove “${c}”`} onClick={() => setCriteria((all) => all.filter((_, j) => j !== i))} />
+                  <IconButton icon="close" size="s" label={`Remove “${c}”`} onClick={() => setCriteria((all) => all.filter((_, j) => j !== i))} />
                 </li>
               ))}
             </ul>
@@ -111,12 +106,17 @@ export function NewCardDialog({ projects, initial, onClose }: {
           <input id="new-criterion" value={criterion} onChange={(e) => setCriterion(e.target.value)} placeholder="Something checkable, then Enter"
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); addCriterion(); } }} />
         </div>
-        <div className="field-row">
+        <div className="field-row new-card-kinds">
+          <div className="field"><span className="field-label" id="new-card-type">Type</span>
+            <Segmented<CardType> label="Type" size="s" value={type} onChange={setType} options={CARD_TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] }))} />
+          </div>
           <div className="field"><span className="field-label">Priority</span>
-            <Segmented<Priority> label="Priority" value={priority} onChange={setPriority} options={PRIORITIES.map((p) => ({ value: p, label: `P${p}` }))} />
+            <Segmented<Priority> label="Priority" size="s" value={priority} onChange={setPriority}
+              options={PRIORITIES.map((p) => ({ value: p, label: `P${p}`, hint: PRIORITY_MEANING[p] }))} />
           </div>
           <div className="field"><span className="field-label">Column</span>
-            <Segmented<'inbox' | 'ready'> label="Column" value={status} onChange={setStatus} options={[{ value: 'inbox', label: 'Inbox' }, { value: 'ready', label: 'Ready' }]} />
+            <Segmented<'inbox' | 'ready'> label="Column" size="s" value={status} onChange={setStatus}
+              options={[{ value: 'inbox', label: 'Inbox', hint: 'Waits for you to accept it' }, { value: 'ready', label: 'Ready', hint: 'Ready for a session to take' }]} />
           </div>
         </div>
         <button type="submit" hidden />

@@ -57,7 +57,7 @@ try {
     await go('#/p/NS/board?card=NS-6', '.drawer .stages');
     await shot('card', theme);
     await go('#/p/NS/board', '.card');
-    await win.click('.how-btn');
+    await win.click('.board-how button');
     await win.waitForSelector('.how-flow .how-box');
     await shot('how-it-works', theme);
     await win.keyboard.press('Escape');
