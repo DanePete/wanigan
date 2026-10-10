@@ -18,7 +18,7 @@ import { STATE_LABEL, ago, fileManager } from '../lib/format';
 import { Icon, type IconName } from '../components/icons';
 import { KeyCaps } from '../components/ui';
 import { openNotifications } from '../components/NotificationTray';
-import { openSettingsSection } from '../shell/SettingsNav';
+import { SETTINGS_PLACES } from '../shell/SettingsNav';
 import type { DialogState } from '../App';
 import { useCoversLive } from '../lib/live';
 
@@ -104,9 +104,9 @@ export function Palette({ projects, currentProject, onClose, setDialog, runComma
       keyed('go-accounts', 'Go to', 'account', 'Accounts', 'Settings'),
       { id: 'go-skills', group: 'Go to', label: 'Skills', detail: 'Settings', icon: 'skill', run: () => navigate({ name: 'skills' }) },
       { id: 'go-mcp', group: 'Go to', label: 'MCP servers', detail: 'Settings', icon: 'plug', run: () => navigate({ name: 'mcp' }) },
-      ...([['set-appearance', 'Appearance', 'sun'], ['set-live', 'Live view settings', 'live'], ['set-updates', 'Updates', 'pull'],
-        ['set-local', 'Local models', 'local'], ['set-phone', 'Phone', 'phone'], ['set-jev', 'Jev', 'board']] as const).map(([id, label, icon]): Item => (
-        { id: `go-${id}`, group: 'Go to', label, detail: 'Settings', icon, whenTyped: true, run: () => openSettingsSection(id) })),
+      // Every one of Settings' own sections, as its list names it.
+      ...SETTINGS_PLACES.filter((p) => p.route.name === 'settings').map((p): Item => (
+        { id: `go-set-${p.id}`, group: 'Go to', label: p.palette ?? p.label, detail: 'Settings', icon: p.icon, whenTyped: true, run: () => navigate(p.route) })),
     ];
     projects.forEach((p, i) => {
       out.push({

@@ -1,37 +1,36 @@
-// The few things worth a setting. Most of Wanigan has a sensible default instead.
+// The few things worth a setting, one section at a time (the list beside it is
+// shell/SettingsNav.tsx). Most of Wanigan has a sensible default instead.
 import type { ProjectSummary } from '@shared/model';
 import type { AppSettings, NotifyLevel } from '@shared/settings';
 import type { UpdateStatus } from '@shared/updates';
-import { JevSettings } from '../components/Jev';
+import { JevHealthNow, JevSettings } from '../components/Jev';
 import { LocalModelsSettings } from '../components/LocalModels';
 import { PhoneSettings } from '../components/PhoneSettings';
-import { Button, Segmented, Toggle, useToast } from '../components/ui';
+import { Badge, Button, Disclosure, EmptyState, Segmented, Toggle, useToast } from '../components/ui';
 import { bridge } from '../lib/api';
 import { ago, plural } from '../lib/format';
+import { useLocation, type SettingsSection } from '../lib/router';
 import { useAppState } from '../lib/settings';
 import { setTheme, useTheme, type ThemeChoice } from '../lib/theme';
 import { resetTours, setToursOff, startTour, useTourState } from '../lib/tours';
-import '../styles/live.css';
+import { SettingRow, SettingsGroup, SettingsPage } from './SettingsPage';
 
 export function SettingsView({ projects }: { projects: ProjectSummary[] | undefined }) {
-  return (
-    <section className="view" aria-labelledby="settings-title">
-      <header className="topbar">
-        <div className="topbar-title"><h1 id="settings-title">Settings</h1></div>
-      </header>
-      <div className="view-body">
-        <div className="view-pad settings">
-          <AppearanceSettings />
-          <GeneralSettings />
-          <LiveViewSettings />
-          <UpdateSettings />
-          <LocalModelsSettings />
-          <PhoneSettings />
-          <JevSettings projects={projects} />
-        </div>
-      </div>
-    </section>
-  );
+  const { route } = useLocation();
+  const section: SettingsSection = route.name === 'settings' ? route.section ?? 'appearance' : 'appearance';
+  switch (section) {
+    case 'appearance': return <AppearanceSettings />;
+    case 'general': return <GeneralSettings />;
+    case 'live': return <LiveViewSettings />;
+    case 'updates': return <UpdateSettings />;
+    case 'local': return <LocalModelsSettings />;
+    case 'phone': return <PhoneSettings />;
+    case 'jev': return (
+      <SettingsPage id="set-jev" title="Jev" meta={<JevHealthNow />}>
+        <JevSettings projects={projects} />
+      </SettingsPage>
+    );
+  }
 }
 
 const THEMES: readonly { value: ThemeChoice; label: string }[] = [
@@ -49,35 +48,39 @@ function AppearanceSettings() {
   const tours = useTourState();
   const toast = useToast();
   return (
-    <section className="settings-group" aria-labelledby="set-appearance">
-      <header className="account-group-head">
-        <h2 id="set-appearance">Appearance</h2>
-      </header>
-      <div className="settings-row settings-notify">
-        <div className="settings-notify-head">
-          <span className="settings-label">Theme</span>
-          <Segmented<ThemeChoice> label="Theme" value={choice} options={THEMES} onChange={setTheme} />
-        </div>
-      </div>
-      <div className="settings-row">
-        <Toggle checked={!tours.off} onChange={(on) => setToursOff(!on)} label="Offer a view’s tour the first time you open it"
-          hint="Every view’s tour is a click away whenever you want it: the compass at the end of the status line, or Tour in the palette." />
-      </div>
-      <div className="settings-row settings-tours">
-        <Button size="s" icon="tour" onClick={() => startTour('welcome')}>Play the welcome tour</Button>
-        <Button size="s" tone="quiet" onClick={() => { resetTours(); toast('Every tour will offer itself again, the welcome tour included.', 'done'); }}>Offer every tour again</Button>
-      </div>
-    </section>
+    <SettingsPage id="set-appearance" title="Appearance">
+      <SettingsGroup title="Look" tour="settings-theme">
+        <SettingRow label="Theme" hint="Kept on this computer."
+          control={<Segmented<ThemeChoice> label="Theme" value={choice} options={THEMES} onChange={setTheme} />} />
+      </SettingsGroup>
+      <SettingsGroup title="Guided tours" tour="settings-tours">
+        <SettingRow>
+          <Toggle checked={!tours.off} onChange={(on) => setToursOff(!on)} label="Offer a view’s tour the first time you open it"
+            hint="Every view’s tour is a click away whenever you want it: the compass at the end of the status line, or Tour in the palette." />
+        </SettingRow>
+        <SettingRow label="Play them again" hint="The welcome tour walks the whole window; each view’s tour offers itself again on your next visit."
+          control={(
+            <span className="settings-tours">
+              <Button size="s" icon="tour" onClick={() => startTour('welcome')}>Play the welcome tour</Button>
+              <Button size="s" tone="quiet" onClick={() => { resetTours(); toast('Every tour will offer itself again, the welcome tour included.', 'done'); }}>Offer every tour again</Button>
+            </span>
+          )} />
+      </SettingsGroup>
+    </SettingsPage>
   );
 }
 
-const NOTIFY_OPTIONS: readonly { value: NotifyLevel; label: string; hint: string }[] = [
-  { value: 'all', label: 'On', hint: 'Permission requests, failures, reviews, questions and finished turns' },
-  { value: 'urgent', label: 'Only permission and failures', hint: 'Only what has an agent stopped or a session failed' },
-  { value: 'off', label: 'Off', hint: 'Nothing; Needs you and the dock badge still count it all' },
-];
+const mac = (): boolean => bridge().platform === 'darwin';
 
-/** What the app does on this Mac. Kept by the app, not the core. */
+function notifyOptions(): readonly { value: NotifyLevel; label: string; hint: string }[] {
+  return [
+    { value: 'all', label: 'On', hint: 'Permission requests, failures, reviews, questions and finished turns' },
+    { value: 'urgent', label: 'Only permission and failures', hint: 'Only what has an agent stopped or a session failed' },
+    { value: 'off', label: 'Off', hint: `Nothing; Needs you${mac() ? ' and the Dock icon' : ''} still count${mac() ? '' : 's'} it all` },
+  ];
+}
+
+/** What the app does on this computer. Kept by the app, not the core. */
 function GeneralSettings() {
   const { state, update } = useAppState();
   const toast = useToast();
@@ -85,37 +88,23 @@ function GeneralSettings() {
   const s = state?.settings;
 
   return (
-    <section className="settings-group" aria-labelledby="set-general">
-      <header className="account-group-head">
-        <h2 id="set-general">General</h2>
-      </header>
-      <div className="settings-row">
-        <label className="check-row">
-          <input type="checkbox" checked={s?.keepAwake ?? true} disabled={!s}
-            onChange={(e) => void update({ keepAwake: e.target.checked }).catch(fail)} />
-          <span>
-            Keep the Mac awake while sessions run
-            <span className="faint small"> — the display can still sleep. Only while Wanigan is open: quitting it leaves sessions running but lets the Mac sleep.</span>
-          </span>
-        </label>
-        {state ? <p className="faint small">{awakeNow(state)}</p> : null}
-      </div>
-      <div className="settings-row settings-notify">
-        <div className="settings-notify-head">
-          <span className="settings-label">Notifications</span>
-          <Segmented<NotifyLevel>
-            label="Notifications"
-            value={s?.notifications ?? 'all'}
-            options={NOTIFY_OPTIONS}
-            onChange={(notifications) => void update({ notifications }).catch(fail)}
-          />
-        </div>
-        <p className="faint small">
-          Banners while Wanigan is in the background, and alert cards while it is in front, for anything that needs you somewhere
-          other than what you are looking at. The dock badge always counts what needs you.
-        </p>
-      </div>
-    </section>
+    <SettingsPage id="set-general" title="General">
+      <SettingsGroup title="While sessions run">
+        <SettingRow hint={state ? awakeNow(state) : undefined} live>
+          <Toggle checked={s?.keepAwake ?? true} disabled={!s} onChange={(keepAwake) => void update({ keepAwake }).catch(fail)}
+            label="Keep this computer awake while sessions run"
+            hint="The display can still sleep. Only while Wanigan is open: quitting it leaves sessions running, and lets the computer sleep." />
+        </SettingRow>
+      </SettingsGroup>
+      <SettingsGroup title="Notifications" tour="settings-notify">
+        <SettingRow label="Notifications"
+          hint={`Banners while Wanigan is in the background, and alerts while it is in front, for anything that needs you somewhere other than what you are looking at.${mac() ? ' The Dock icon always counts what needs you.' : ''}`}
+          control={(
+            <Segmented<NotifyLevel> label="Notifications" value={s?.notifications ?? 'all'} options={notifyOptions()}
+              onChange={(notifications) => void update({ notifications }).catch(fail)} />
+          )} />
+      </SettingsGroup>
+    </SettingsPage>
   );
 }
 
@@ -127,71 +116,57 @@ function LiveViewSettings() {
   const s = state?.settings;
   const set = (patch: Partial<AppSettings>): void => void update(patch).catch(fail);
   const on = s?.liveView ?? false;
+  const off = !s || !on;
   // What the switches below say when they cannot be used yet.
-  const why = s && !on ? 'live-settings-why' : undefined;
+  const why = s && !on ? 'Switch the live view on to choose these.' : null;
   return (
-    <section className="settings-group" aria-labelledby="set-live">
-      <header className="account-group-head">
-        <h2 id="set-live">Live view</h2>
-      </header>
-      <div className="settings-row">
-        <label className="check-row">
-          <input type="checkbox" checked={on} disabled={!s} onChange={(e) => set({ liveView: e.target.checked })} />
-          <span>
-            Show each project’s local site inside Wanigan
-            <span className="faint small"> — a Live tab on the project and beside a session’s terminal. It opens the site you already run (ddev, Lando, a dev server). Nothing is installed or started.</span>
-          </span>
-        </label>
-        {why ? <p id={why} className="faint small live-settings-why">Switch the live view on to choose these.</p> : null}
-      </div>
-      <fieldset className="settings-row live-settings-kinds">
-        <legend className="settings-label">Show it for</legend>
-        <label className="check-row">
-          <input type="checkbox" checked={s?.liveDrupal ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveDrupal: e.target.checked })} />
-          <span>Drupal sites <span className="faint small"> — knows which component or template made each part of the page</span></span>
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={s?.liveWordpress ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveWordpress: e.target.checked })} />
-          <span>WordPress sites <span className="faint small"> — knows blocks, template parts and Elementor elements</span></span>
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={s?.liveSites ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveSites: e.target.checked })} />
-          <span>Other sites and JS apps <span className="faint small"> — any address: a dev server, a static site</span></span>
-        </label>
-      </fieldset>
-      <div className="settings-row live-settings-checks">
-        <label className="check-row">
-          <input type="checkbox" checked={s?.liveFollow ?? true} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveFollow: e.target.checked })} />
-          <span>
-            Follow the agents’ edits
-            <span className="faint small"> — reload as they change files, and outline what each file made. Off: an edit only says what changed, and you reload.</span>
-          </span>
-        </label>
-        <label className="check-row">
-          <input type="checkbox" checked={s?.liveShots ?? false} disabled={!s || !on} aria-describedby={why} onChange={(e) => set({ liveShots: e.target.checked })} />
-          <span>
-            Keep before and after screenshots on cards
-            <span className="faint small"> — a full-page picture of the card’s page as its session begins, and again after each turn that changes files, shown on the card with what changed marked. Taken on this Mac, kept in Wanigan’s data folder.</span>
-          </span>
-        </label>
-      </div>
-      <div className="settings-row">
-        <p className="settings-label">Hosted environments</p>
-        <p className="faint small live-settings-why">
+    <SettingsPage id="set-live" title="Live view">
+      <SettingsGroup title="The live view" tour="settings-live">
+        <SettingRow>
+          <Toggle checked={on} disabled={!s} onChange={(liveView) => set({ liveView })} label="Show each project’s local site inside Wanigan"
+            hint="A Live tab on the project and beside a session’s terminal. It opens the site you already run (ddev, Lando, a dev server); nothing is installed or started." />
+        </SettingRow>
+      </SettingsGroup>
+      <SettingsGroup title="Show it for" note={why} className={off ? 'is-waiting' : undefined}>
+        <SettingRow>
+          <Toggle checked={s?.liveDrupal ?? true} disabled={off} onChange={(liveDrupal) => set({ liveDrupal })} label="Drupal sites"
+            hint="Knows which component or template made each part of the page." />
+        </SettingRow>
+        <SettingRow>
+          <Toggle checked={s?.liveWordpress ?? true} disabled={off} onChange={(liveWordpress) => set({ liveWordpress })} label="WordPress sites"
+            hint="Knows blocks, template parts and Elementor elements." />
+        </SettingRow>
+        <SettingRow>
+          <Toggle checked={s?.liveSites ?? true} disabled={off} onChange={(liveSites) => set({ liveSites })} label="Other sites and JS apps"
+            hint="Any address: a dev server, a static site." />
+        </SettingRow>
+      </SettingsGroup>
+      <SettingsGroup title="While agents work" note={why} className={off ? 'is-waiting' : undefined}>
+        <SettingRow>
+          <Toggle checked={s?.liveFollow ?? true} disabled={off} onChange={(liveFollow) => set({ liveFollow })} label="Follow the agents’ edits"
+            hint="Reload as they change files, and outline what each file made. Off: an edit only says what changed, and you reload." />
+        </SettingRow>
+        <SettingRow>
+          <Toggle checked={s?.liveShots ?? false} disabled={off} onChange={(liveShots) => set({ liveShots })} label="Keep before and after screenshots on cards"
+            hint="A full-page picture of the card’s page as its session begins, and again after each turn that changes files, shown on the card with what changed marked. Taken on this computer, kept in Wanigan’s data folder." />
+        </SettingRow>
+      </SettingsGroup>
+      <Disclosure title="Hosted environments" summary="Opened read-only, and only when you do" className="settings-more">
+        <p>
           A site’s Dev, Test and Live, kept in its site settings, are tabs beside Local, and Compare lays a page of your local site over the same
           page there. Opening one, or comparing with it, sends requests to that site, only when you do. It opens read-only, in a private session of
           its own: no cookies shared with your local site, never the helper’s token, its certificate checked as any browser would (or, for a copy
-          of the site on this Mac, by your own mkcert authority, as the Local tab is), and nothing sent that could change it.
+          of the site on this computer, by your own mkcert authority, as the Local tab is), and nothing sent that could change it.
         </p>
-      </div>
-    </section>
+      </Disclosure>
+    </SettingsPage>
   );
 }
 
 function awakeNow(state: NonNullable<ReturnType<typeof useAppState>['state']>): string {
-  if (!state.settings.keepAwake) return 'Off: the Mac sleeps as it normally would.';
-  if (state.awake.holding) return `Holding the Mac awake now, for ${plural(state.awake.live, 'live session')}.`;
-  return 'Nothing is live, so the Mac may sleep.';
+  if (!state.settings.keepAwake) return 'Off: this computer sleeps as it normally would.';
+  if (state.awake.holding) return `Holding this computer awake now, for ${plural(state.awake.live, 'live session')}.`;
+  return 'Nothing is live, so this computer may sleep.';
 }
 
 /**
@@ -202,56 +177,51 @@ function UpdateSettings() {
   const { state, update, check } = useAppState();
   const toast = useToast();
   const fail = (e: unknown): void => toast((e as Error)?.message ?? String(e), 'error');
-  if (!state?.updates) return null;
-  const status = state.updates;
+  const status = state?.updates ?? null;
   const open = (which: 'download' | 'notes'): void => void bridge().openUpdate(which).catch(fail);
 
   return (
-    <section className="settings-group" aria-labelledby="set-updates">
-      <header className="account-group-head">
-        <h2 id="set-updates">Updates</h2>
-      </header>
-      <div className="settings-row">
-        <div className="settings-line">
-          <span className="settings-label">Wanigan {state.version}</span>
-          <Button size="s" icon="refresh" onClick={() => check().catch(fail)} disabled={status.state === 'checking'}>Check now</Button>
-        </div>
-        <p className="faint small" aria-live="polite">{statusLine(status)}</p>
-      </div>
-      {status.state === 'available' ? (
-        <div className="settings-row update-found">
-          <div className="settings-line">
-            <span className="settings-label">Wanigan {status.release.version} is available</span>
-            <div className="settings-actions">
-              <Button size="s" tone="primary" icon="pull" onClick={() => open('download')}>Download</Button>
-              <Button size="s" icon="open" onClick={() => open('notes')}>Release notes</Button>
-            </div>
-          </div>
-          <p className="faint small">
-            {status.release.name}
-            {status.release.publishedAt ? ` · published ${new Date(status.release.publishedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+    <SettingsPage id="set-updates" title="Updates"
+      tools={status ? <Button size="s" icon="refresh" onClick={() => check().catch(fail)} disabled={status.state === 'checking'} data-tour="settings-updates">Check now</Button> : null}>
+      {!state ? null : !status ? (
+        <EmptyState title="Updates are not checked here" icon="pull">The demo never asks the network, so it never looks for a new version.</EmptyState>
+      ) : (
+        <>
+          <SettingsGroup title="This version">
+            <SettingRow label={`Wanigan ${state.version}`} hint={statusLine(status)} live />
+            {status.state === 'available' ? (
+              <SettingRow className="update-found"
+                label={<>Wanigan {status.release.version} is available <Badge tone="water">New</Badge></>}
+                hint={`${status.release.name}${status.release.publishedAt ? ` · published ${new Date(status.release.publishedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}`}
+                control={(
+                  <span className="settings-actions">
+                    <Button size="s" tone="primary" icon="pull" onClick={() => open('download')}>Download</Button>
+                    <Button size="s" icon="open" onClick={() => open('notes')}>Release notes</Button>
+                  </span>
+                )}>
+                <p className="setting-more">
+                  {mac()
+                    ? 'To install it, quit Wanigan, open the disk image and drag Wanigan 2 into Applications, replacing this one.'
+                    : 'To install it, quit Wanigan, then install the new version over this one.'}
+                  {' '}Your projects, boards and history stay. If sessions are running when the new version opens, it asks before restarting them.
+                </p>
+              </SettingRow>
+            ) : null}
+          </SettingsGroup>
+          <SettingsGroup title="Checking">
+            <SettingRow>
+              <Toggle checked={state.settings.updateChecks === 'daily'} onChange={(daily) => void update({ updateChecks: daily ? 'daily' : 'off' }).catch(fail)}
+                label="Check for a new version once a day"
+                hint="Wanigan asks GitHub’s public list of releases. No project, conversation or usage data is included; GitHub receives normal connection metadata." />
+            </SettingRow>
+          </SettingsGroup>
+          <p className="settings-foot">
+            Updates are installed manually: download the new version, quit Wanigan, and replace the app.
+            Automatic installation is not implemented in this build.
           </p>
-          <p className="small">
-            To install it, quit Wanigan, open the disk image and drag Wanigan 2 into Applications, replacing this one. Your
-            projects, boards and history stay. If sessions are running when the new version opens, it asks before restarting them.
-          </p>
-        </div>
-      ) : null}
-      <div className="settings-row">
-        <label className="check-row">
-          <input type="checkbox" checked={state.settings.updateChecks === 'daily'}
-            onChange={(e) => void update({ updateChecks: e.target.checked ? 'daily' : 'off' }).catch(fail)} />
-          <span>
-            Check for a new version once a day
-            <span className="faint small"> — Wanigan asks GitHub’s public list of releases. No project, conversation or usage data is included; GitHub receives normal connection metadata.</span>
-          </span>
-        </label>
-      </div>
-      <p className="faint small settings-note">
-        Updates are installed manually: download the new version, quit Wanigan, and replace the app in Applications.
-        Automatic installation is not implemented in this build.
-      </p>
-    </section>
+        </>
+      )}
+    </SettingsPage>
   );
 }
 

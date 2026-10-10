@@ -207,7 +207,13 @@ try {
       ['decisions', `#/p/${ns}/decisions`, '.decision'],
       ['activity', `#/p/${ns}/activity`, '.activity-item'],
       ['accounts', '#/accounts', '.account'],
-      ['settings', '#/settings', '#set-general'],
+      // Settings, one section at a time: #/settings opens its first, Appearance.
+      ['settings', '#/settings', '#set-appearance'],
+      ['settings-general', '#/settings/general', '#set-general'],
+      ['settings-live', '#/settings/live', '#set-live'],
+      ['settings-updates', '#/settings/updates', '#set-updates'],
+      ['settings-phone', '#/settings/phone', '#set-phone'],
+      ['settings-jev', '#/settings/jev', '#set-jev'],
       ['skills', '#/skills', '.prose h3'],
       ['mcp', '#/mcp', '.mcp-row'],
       ['paused-project', '#/p/FIE/board', '.banner-paused'],
@@ -1915,22 +1921,22 @@ try {
     await page.keyboard.press('Escape');
 
     // Settings reach the app as patches.
-    await page.goto(`${base}#/settings`);
+    await page.goto(`${base}#/settings/general`);
     await page.waitForSelector('#set-general');
-    await page.click('.settings-notify [role="radio"]:has-text("Only permission")');
-    await page.click('.settings .check-row input');
+    await page.click('section[aria-labelledby="set-general"] [role="radio"]:has-text("Only permission")');
+    await page.click('section[aria-labelledby="set-general"] input[role="switch"]');
     const app = await page.evaluate(() => window.__wgApp.settings);
     if (app.notifications !== 'urgent' || app.keepAwake !== false) failures.push(`${theme}/settings: patches did not reach the app (${JSON.stringify(app)})`);
-    // The General group by its heading (Appearance comes first on the page now).
-    if (!/Off: the Mac sleeps/.test(await page.textContent('section[aria-labelledby="set-general"]'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
+    // The General section by its heading: one section at a time.
+    if (!/Off: this computer sleeps/.test(await page.textContent('section[aria-labelledby="set-general"]'))) failures.push(`${theme}/settings: turning keep-awake off is not said`);
 
-    // Local models: LM Studio found, its server's real port, Qwen on this Mac; the demo downloads nothing.
+    // Local models: LM Studio found, its server's real port, Qwen on this computer; the demo downloads nothing.
+    await page.goto(`${base}#/settings/local`);
     const localSection = await page.waitForSelector('section[aria-labelledby="set-local"] .local-module', { timeout: 5000 })
       .then(() => page.textContent('section[aria-labelledby="set-local"]'), () => '');
-    if (!/Server running on port 1234/.test(localSection) || !/Qwen3-Coder 30B/.test(localSection) || !/On this Mac/.test(localSection)) {
+    if (!/Server running on port 1234/.test(localSection) || !/Qwen3-Coder 30B/.test(localSection) || !/On this computer/.test(localSection)) {
       failures.push(`${theme}/local: Settings does not show LM Studio and Qwen (${localSection.slice(0, 160)})`);
     }
-    await page.$eval('section[aria-labelledby="set-local"]', (el) => el.scrollIntoView({ block: 'start' }));
     await page.waitForTimeout(150);
     await page.screenshot({ path: join(out, `${theme}-settings-local.png`) });
     // A session on Qwen says so in its header; stopped at once, so nothing after is disturbed.
@@ -1952,8 +1958,8 @@ try {
       await page.click('#session-panel-tab-turns').catch(() => {});
       await page.evaluate((id) => window.wanigan.call('sessions.stop', { id }), localSession.id);
     }
-    await page.goto(`${base}#/settings`);
-    await page.waitForSelector('#set-general');
+    await page.goto(`${base}#/settings/updates`);
+    await page.waitForSelector('#set-updates');
 
     // Updates: the notification tray asks once (the bell says there is something), nothing is checked before a yes,
     // and a new version is news in the tray and in Settings.
@@ -1973,7 +1979,7 @@ try {
     await page.waitForSelector('.tray-update-ask', { state: 'detached', timeout: 3000 }).catch(() => failures.push(`${theme}/updates: answering did not put the question away`));
     await page.keyboard.press('Escape');
     if ((await page.evaluate(() => window.__wgApp.settings.updateChecks)) !== 'daily') failures.push(`${theme}/updates: "Check daily" did not reach the app`);
-    if (!(await page.isChecked('section[aria-labelledby="set-updates"] .check-row input'))) failures.push(`${theme}/updates: Settings does not show the daily check as on`);
+    if (!(await page.isChecked('section[aria-labelledby="set-updates"] input[role="switch"]'))) failures.push(`${theme}/updates: Settings does not show the daily check as on`);
     await page.evaluate(() => {
       window.__wgUpdateAnswer = {
         state: 'available', checkedAt: Date.now(),

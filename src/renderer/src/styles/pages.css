@@ -171,6 +171,123 @@
   color: var(--muted);
 }
 
+/* ── settings: one section at a time (views/SettingsPage.tsx) ─────────── */
+
+/* The section on the ground, a readable column beside the list of sections. */
+.settings-body {
+  display: grid;
+  align-content: start;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-8) var(--space-10);
+}
+
+.settings-body-m {
+  max-width: 100ch;
+}
+
+.settings-body-l {
+  max-width: 150ch;
+}
+
+/* One panel of rows per group: the rows divide it with the hairline; none is a box of its own. */
+.settings-list {
+  min-width: 0;
+  border: var(--hairline) solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  min-height: calc(var(--control-m) + 2 * var(--space-3));
+  padding: var(--space-3) var(--space-4);
+}
+
+.setting + .setting {
+  border-top: var(--hairline) solid var(--line);
+}
+
+.setting-text {
+  flex: 1 1 24ch;
+  min-width: 0;
+  display: grid;
+  gap: var(--gap-hair);
+}
+
+.setting-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.setting-hint {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  overflow-wrap: anywhere;
+}
+
+.setting-text > p:not(.setting-more) {
+  margin: 0;
+}
+
+.setting-more {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.setting-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-sm);
+}
+
+/* What a section owes its reader in full (what Jev receives, that updates are manual): last, and quiet. */
+.settings-foot {
+  margin: 0;
+  max-width: 90ch;
+  color: var(--faint);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-more p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.settings-project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── accounts ────────────────────────────────────────────────────────────── */
 
 .accounts {
