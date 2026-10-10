@@ -104,8 +104,10 @@ edit is previewed the way it will be implemented:
   plain rule would lose ties. Whether the native rule wins is proven in Stage 3.
 
 Each change repaints at once, without a reload.
-- **Text** patches the traced node's text in place (plain text, or the field's
-  allowed markup through a schema-checked editor: no `contenteditable` free-for-all).
+- **Text** patches the traced node's text in place (plain text, typed on the
+  one element that holds only those words, `plaintext-only` while it is typed;
+  or the field's allowed markup through a schema-checked editor: no
+  `contenteditable` free-for-all).
 - **Images** swap the `src`/`srcset` of the traced image to a local preview of
   the new file, keeping its box, so layout changes show honestly.
 - **Tokens** override the theme's custom property (`--color-accent`,
@@ -488,12 +490,26 @@ or the project.
    step 4 and other pages are not checked.
 
 **The window** shows a tray of the project's edits (before and after, the
-page each is on, its state and verdict, fragile ones said so), per-edit
-discard, undo and redo, and the style panel and "Retype the words", which now
-make layer edits with a scope (`this`, every instance of its `kind`, or a
-token for the site) instead of trying values on the page. A style edit's
-"Make it real" goes to an agent as intent, as before; a text edit's saves
-through the helper and then verifies.
+page each is on, its state and verdict, fragile ones said so) and per-edit
+discard, undo and redo. Edits are made where they show, as a site builder
+makes them. "Retype the words" (E on a part that is only words, or a
+double-click on the chosen part's words in the page) makes that element
+editable where it is, through the page script (`LiveBridge.layerType`): plain
+text, the caret at its end, every keystroke the page itself. It is keyed
+first (`layerTarget()`), so the edit names the words the site rendered. Enter
+or clicking away keeps the words as a text edit (`live.layerAdd`, scope
+`this`), which the layer goes on showing without a flicker; Escape puts back
+exactly what was there, its text nodes and the helper's part marks; a
+navigation ends it as cancelled. Meanwhile the status line says it is typing,
+with Keep and Put back, the live view's keys stay off the page, and links
+around the words do not act. "Retype in a box" makes the same edit from the
+side panel, for the keyboard and screen readers. The style panel shows each
+value on the page as its control moves, as one preview the page script owns
+(`LiveBridge.layerTry`) on the element or every one of its kind, through a
+sheet that outranks the layer's own rules, and keeps it as a layer edit with
+a scope (`this`, every instance of its `kind`, or a token for the site) on
+Show it on the page. A style edit's "Make it real" goes to an agent as
+intent, as before; a text edit's saves through the helper and then verifies.
 
 ## Proven, and what it changed
 
