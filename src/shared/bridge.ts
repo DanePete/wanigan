@@ -142,13 +142,6 @@ export interface LiveBridge {
   mutations(): Promise<number>;
   /** The picked element, described again (after a tried style or new words). */
   picked(): Promise<LivePick | null>;
-  /** Try style values on the picked element, in this copy of the page only. Returns its computed style. */
-  style(values: Record<string, string>): Promise<Record<string, string> | null>;
-  /** Put the picked element's own style back. */
-  unstyle(): Promise<Record<string, string> | null>;
-  /** Let the owner retype the picked element's words on the page. Null when they kept the old ones. */
-  editText(): Promise<{ before: string; after: string } | null>;
-  cancelEdit(): Promise<void>;
   /** The site helper's count of content changes (null without a helper, or when it did not answer). */
   helperChanged(): Promise<number | null>;
   /**

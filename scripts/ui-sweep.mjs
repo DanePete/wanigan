@@ -2117,7 +2117,7 @@ async function liveSiteStates() {
           reload: async () => { report(); },
           css: async () => 0, go: async () => true, back: async () => {}, forward: async () => {}, open: async () => {}, devtools: async () => {},
           scan: async () => [], outline: async () => 0, clear: async () => {}, pick: nothing, choose: nothing, cancelPick: async () => {}, capture: nothing,
-          problems: async () => [], mutations: async () => 0, picked: nothing, style: nothing, unstyle: nothing, editText: nothing, cancelEdit: async () => {},
+          problems: async () => [], mutations: async () => 0, picked: nothing,
           helperChanged: nothing, helperSave: async () => ({ ok: false, error: null, label: null }), hasScript: async () => true,
           onState: (l) => { listeners.add(l); return () => listeners.delete(l); },
         };

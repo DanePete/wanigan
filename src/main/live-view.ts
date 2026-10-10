@@ -25,8 +25,6 @@ const WORLD = 4242;
 const MAX_SCAN = 2_000;
 /** What the page's console said went wrong since it last loaded, newest kept. */
 const MAX_CONSOLE = 40;
-/** The style properties a hand edit may try (the page script holds the same list). */
-const STYLE_VALUE = /^[^;{}<>]{0,120}$/;
 
 export interface LiveViewWiring {
   /** The window went away: drop the view. */
@@ -608,20 +606,6 @@ export function wireLiveView(options: {
   });
   ipcMain.handle('live:mutations', async (event) => (ok(event) ? run<number>('window.__wl ? window.__wl.mutations() : 0', 0) : 0));
   ipcMain.handle('live:picked', async (event) => (ok(event) ? run<LivePick | null>('window.__wl ? window.__wl.picked() : null', null) : null));
-  ipcMain.handle('live:style', async (event, raw: unknown) => {
-    if (!ok(event) || env || !raw || typeof raw !== 'object') return null;
-    const values = Object.fromEntries(Object.entries(raw as Record<string, unknown>)
-      .filter((e): e is [string, string] => /^[a-z-]{1,40}$/.test(e[0]) && typeof e[1] === 'string' && STYLE_VALUE.test(e[1]))
-      .slice(0, 30));
-    return run<Record<string, string> | null>(`window.__wl ? window.__wl.style(${JSON.stringify(values)}) : null`, null);
-  });
-  ipcMain.handle('live:unstyle', async (event) => (ok(event) ? run<Record<string, string> | null>('window.__wl ? window.__wl.unstyle() : null', null) : null));
-  ipcMain.handle('live:editText', async (event) => {
-    if (!ok(event) || env) return null;
-    view?.webContents.focus();
-    return run<{ before: string; after: string } | null>('window.__wl ? window.__wl.editText() : null', null);
-  });
-  ipcMain.handle('live:cancelEdit', async (event) => { if (options.trusted(event)) await run('window.__wl && window.__wl.cancelEdit()', null); });
   ipcMain.handle('live:hasScript', (event) => options.trusted(event) && script() !== null);
   ipcMain.handle('live:capture', async (event, rawRect: unknown) => {
     if (!ok(event) || !view || view.webContents.isDestroyed()) return null;

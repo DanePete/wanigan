@@ -533,8 +533,6 @@ export function liveStub(f) {
     async problems() { return []; },
     async mutations() { return 0; },
     async picked() { return null; },
-    async style() { return null; }, async unstyle() { return null; },
-    async editText() { window.__wgLive.calls.push('editText'); return window.__wgLive.words ?? null; }, async cancelEdit() {},
     async helperChanged() { return 1; },
     async helperSave() { return { ok: true, error: null, label: 'Article 12' }; },
     async hasScript() { return true; },
