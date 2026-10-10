@@ -21,6 +21,10 @@
 import { WORDPRESS_ADAPTERS_SOURCE } from './live-helper-wordpress-adapters.ts';
 import { WORDPRESS_USAGE_SOURCE } from './live-helper-wordpress-usage.ts';
 import { WORDPRESS_VERIFY_SOURCE } from './live-helper-wordpress-verify.ts';
+import { WORDPRESS_WORDS_SOURCE } from './live-helper-wordpress-words.ts';
+import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
+import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
+import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 
 export const WORDPRESS_HELPER_VERSION = 4;
 export const WORDPRESS_HELPER_FILE = 'wanigan-live.php';
@@ -36,7 +40,11 @@ export function wordpressHelper(token: string, siteDir = ''): string {
   if (!/^[0-9a-f]{16,128}$/.test(token)) throw new Error('A helper token is hex.');
   const dir = siteDir.replace(/^\/+|\/+$/g, '');
   if (!/^[A-Za-z0-9._/-]*$/.test(dir) || dir.split('/').some((s) => s === '..' || s === '.')) throw new Error('WordPress’s folder must be a plain relative path.');
-  return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
+  // The site-adapter base right after the core, then the stored-words search and the plugins' adapters for it (each
+  // registers itself, and is used only when its plugin is active): page builders first, as they are asked in the order
+  // they registered.
+  const words = WORDPRESS_WORDS_SOURCE + WORDPRESS_ELEMENTOR_SOURCE + WORDPRESS_ACF_SOURCE + WORDPRESS_COPIES_SOURCE;
+  return (SOURCE + WORDPRESS_ADAPTERS_SOURCE + words + WORDPRESS_USAGE_SOURCE + WORDPRESS_VERIFY_SOURCE).split('__WANIGAN_TOKEN__').join(token)
     .split('__WANIGAN_SITE_DIR__').join(dir)
     .split('__WANIGAN_VERSION__').join(String(WORDPRESS_HELPER_VERSION))
     .split('__WANIGAN_MARK__').join(WORDPRESS_HELPER_MARK);
@@ -241,7 +249,7 @@ final class Wanigan_Live {
 	public static function boot(): void {
 		self::$self = wp_normalize_path(__FILE__);
 		$path = self::request_path();
-		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage)(/|$)#', $path, $m)) {
+		if (preg_match('#/_wanigan/(changed|save|trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(/|$)#', $path, $m)) {
 			// The Go to index lists the wp-admin menu as core builds it for this user. Plugins register their admin
 			// pages only in an admin request (many check is_admin() when they load), so this request is one:
 			// wp-admin/admin.php defines WP_ADMIN before WordPress loads, and must-use plugins load before plugins.
@@ -1858,7 +1866,8 @@ final class Wanigan_Live {
 				$value = array_key_exists($key, $values) ? $values[$key] : null;
 				$rev = !empty($registered[$key]['revisions_enabled']);
 				$label = (isset($s['description']) && $s['description'] !== '' ? $s['description'] : $key) . ' (' . $title . ')';
-				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : null);
+				// A plugin's own data, or a structure in a string, is not offered as words to type (Wanigan_Live_Stored::meta_why()).
+				$add('meta-' . $n, 'meta', $label, $s, $secret ? null : $value, 'meta', $rev, $secret ? 'Wanigan does not show or change a value that looks like a secret.' : Wanigan_Live_Stored::meta_why((string) $key, $s, $value));
 				$id = $out['meta-' . $n];
 				unset($out['meta-' . $n]);
 				$out['meta:' . $key] = $id;
@@ -1876,6 +1885,21 @@ final class Wanigan_Live {
 		}
 		self::$post_edits[$pid] = $out;
 		return $out;
+	}
+
+	/** A stored trace's public and private halves, for the stored-words save (Wanigan_Live_Stored); null when it is gone or another user's. */
+	public static function stored_trace(string $id): ?array {
+		return self::load($id);
+	}
+
+	/** Why the logged-in user cannot change a post here now (its capability, a lock), or null: for the stored-words save. */
+	public static function post_refusal(WP_Post $post, string $noun): ?string {
+		return self::post_why($post, $noun);
+	}
+
+	/** A post's newest revision id, or null: for the stored-words save. */
+	public static function revision_of(int $pid): ?int {
+		return self::latest_revision($pid);
 	}
 
 	/** Why the logged-in user cannot change a post here now, or null. */
@@ -4672,7 +4696,7 @@ final class Wanigan_Live {
 	/** Runs at wp_loaded: post types, meta, blocks and settings are registered, and the user is known. */
 	public static function route(): void {
 		$path = self::request_path();
-		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
+		if (!preg_match('#/_wanigan/(trace|edit|move|insert|remove|undo|find|ai|components|usage|words)(?:/([A-Za-z0-9._-]+))?/?$#', $path, $m)) return;
 		nocache_headers();
 		$post = isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST';
 		$route = $m[1];
@@ -4700,6 +4724,11 @@ final class Wanigan_Live {
 			if ($route === 'insert') self::move($body, true);
 			if ($route === 'remove') self::remove($body);
 			if ($route === 'undo') self::undo($body);
+			if ($route === 'words') {
+				// Words no edit target holds, found where the post keeps them and saved there (Wanigan_Live_Stored, below).
+				$words = Wanigan_Live_Stored::request($body);
+				self::answer($words[0], $words[1]);
+			}
 		} catch (Throwable $e) {
 			self::answer(array('ok' => false, 'error' => 'WordPress stopped with an error: ' . $e->getMessage()), 500);
 		}
@@ -5558,6 +5587,9 @@ final class Wanigan_Live {
 				wp_set_sidebars_widgets($all);
 				$result = array();
 			}
+		} elseif ($u['type'] === 'stored') {
+			// Words saved where a post kept them (Wanigan_Live_Stored): the old value, only while it holds what was written.
+			$result = Wanigan_Live_Stored::undo($u);
 		} elseif ($u['type'] === 'menu') {
 			if (self::menu_state($u['menu']) !== $u['after']) $result = new WP_Error('wanigan', 'The menu changed again since, so putting it back could undo other work.');
 			else {

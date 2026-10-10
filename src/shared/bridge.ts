@@ -5,7 +5,7 @@ import type { CompareWidth } from './live-compare.ts';
 import type { LiveEditSaved, LiveEdited, LivePaint, LiveTraceAnswer } from './live-lens.ts';
 import type { ArrangeDrop, ArrangeSpec, LiveInsert, LiveMove, LiveMoveSaved, LiveRemove, LiveWriteOptions } from './live-arrange.ts';
 import type { LibraryPicturesAnswer, LiveLibraryAnswer, LiveUsageAnswer } from './live-library.ts';
-import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerProperty, LayerTyped, LayerVerdict } from './design-layer.ts';
+import type { LayerApplied, LayerImplemented, LayerPickTarget, LayerProperty, LayerTyped, LayerUndone, LayerVerdict } from './design-layer.ts';
 import type { LiveSiteAiAnswer } from './live-ai.ts';
 import type { LiveFailure } from './live-site.ts';
 import type { LiveFindAnswer, LiveHere } from './live-goto.ts';
@@ -222,6 +222,8 @@ export interface LiveBridge {
   layerTarget(): Promise<LayerPickTarget | null>;
   /** Make one edit real in the site, where phase 1 can (words in a plain text field, through the helper), and tell the core. */
   layerImplement(id: string): Promise<LayerImplemented>;
+  /** Put back the words a stored-words save wrote for an edit (its answer said `undo`), while the site still holds them, from the page it was made on. */
+  layerUndo(id: string): Promise<LayerUndone>;
   /** Verify one implemented edit (or every implemented edit of this page): the page as designed against the page as the site renders it, at the given widths (default 390 and 1440). Tells the core. */
   layerVerify(id: string | null, options?: { widths?: number[] }): Promise<LayerVerdict>;
   /** A verification picture (a path a verdict named) as base64 PNG, for a window that cannot read the data folder. */

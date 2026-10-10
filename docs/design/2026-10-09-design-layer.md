@@ -134,7 +134,7 @@ its tokens, its breakpoints, whether it is a custom theme).
 
 | Edit | Native home | How |
 |---|---|---|
-| Text, image, alt (one instance) | The field, block or configuration that holds it, through core. Drupal: the Entity API with `validate()` and a new revision, one run of words inside formatted text spliced and checked through its own format, configuration through the Config API with typed validation or its translation's override, an inline block through its layout's section storage. WordPress: the block's own element in the post, template, template part, synced pattern or navigation menu that stores it (one block written alone with `WP_Block_Processor`, formatted words spliced as core splices bound rich text), words bound to post meta in that field, one placement's override in its `core/block`, an image's media-library alt through media REST | Deterministic, through the helper, with a base hash and a 409 if the site changed; each target says where it shows, and a Drupal default layout every entity of a bundle shares says its reach and asks first |
+| Text, image, alt (one instance) | The field, block or configuration that holds it, through core. Drupal: the Entity API with `validate()` and a new revision, one run of words inside formatted text spliced and checked through its own format, configuration through the Config API with typed validation or its translation's override, an inline block through its layout's section storage. WordPress: the block's own element in the post, template, template part, synced pattern or navigation menu that stores it (one block written alone with `WP_Block_Processor`, formatted words spliced as core splices bound rich text), words bound to post meta in that field, one placement's override in its `core/block`, an image's media-library alt through media REST. Last, words nothing on the page offers, where the content keeps them (the stored-words search): WordPress, the post's stored content (markup, shortcodes' settings and wrapped words, block settings, a block's settings and markup together), excerpt and custom fields (JSON token by token, saved lists as lists) through `wp_update_post()` or `update_metadata_by_mid()`; Drupal, the fields of the shown translation its other saves do not model, through the Entity API; Elementor's tree through its `Document::save()`, ACF's fields, rows, blocks and options through `acf_update_value()` | Deterministic, through the helper, with a base hash and a 409 if the site changed; each target says where it shows, and a Drupal default layout every entity of a bundle shares says its reach and asks first; a stored-words save is read back on the reloaded page and can be undone |
 | Token (site-wide colour, font, size, space) | The theme's token: `theme.json` presets (WordPress), the theme's `:root` custom properties or its SCSS variables (Drupal) | Deterministic for `theme.json` and plain CSS custom properties; agent for SCSS maps and Tailwind config |
 | Style, every instance of a component | That component's own source: its SDC `.css`, its SCSS partial, or its block stylesheet, found from the matched rule and source maps | Deterministic when the rule and file are plain CSS; agent otherwise |
 | Style, one instance | Where core stores one instance's style: WordPress block-support attributes (preset references first); Drupal, a field or component prop that already varies it | Deterministic for block supports; otherwise an agent adds a native hook (a modifier class from a field or a variant prop) and a rule in the component's CSS |
@@ -497,6 +497,61 @@ or the project.
      holding them (named), a changed page, a target the trace says this user
      may not change, or a refusal from the site (passed on as the site said
      it) answers `route: 'none'`, with why.
+   - Last, words nothing the page offers to edit holds (on WordPress also
+     words in a post's content no target offers, not formatted text a target
+     holds; on Drupal words no template writes, and first for a marked field of
+     a type its word saves do not model) are looked for where the content the
+     edit's part belongs to keeps them: the helpers' `POST /_wanigan/words`
+     (`find` reads only; `save` re-finds the place and writes only there, over
+     the hash `find` took, 409 otherwise), contract in
+     `src/shared/live-stored-words.ts`. Both helpers share one matcher: words
+     compared as the page shows them (wptexturize's typography read as typed,
+     references read, whitespace folded), whole words, found exactly once as
+     text (a string value, a text node, a quoted attribute that is not an
+     address, class, id, style or script); JSON read token by token and
+     written back with that token's flags; a serialized list walked and
+     written back only when it round-trips byte for byte. WordPress searches
+     the post's stored content (markup, registered shortcodes' settings and
+     wrapped words, block settings, a block's settings and markup holding the
+     same words changed together as `serialize_block_attributes()` writes
+     them, JSON content as JSON), its excerpt and every custom field by
+     `meta_id`; it saves with `wp_update_post()` (a revision) only when core's
+     filters on saving content would store exactly those bytes, or
+     `update_metadata_by_mid()` slashed deeply with `clean_post_cache()` after,
+     as a user with `edit_post` and no live lock, new words through kses as
+     plain text. Drupal searches the shown translation's default revision,
+     every field its word saves do not model and that can hold words (string
+     and map properties, never references, choices, addresses, machine names
+     or a contributed module's own structures), and saves through the Entity
+     API with the other word saves' gates, as a new revision; a paragraph is
+     refused until its save goes through the page that holds it. Adapters for
+     plugins that keep words their own way register with the WordPress search,
+     each in its own class, used only when the plugin is active, never needed
+     by the core path: Elementor, a site adapter on the shared base
+     (docs/design/2026-10-10-site-adapters.md: what it calls is declared and
+     checked, a missing call refuses by name, a version past the verified
+     range saves and says so) (its elements tree, `Document::save()`, its
+     caches and revisions; a template the page shows found through its
+     `data-elementor-id` marks and asked first), ACF (fields, sub-field rows,
+     blocks and options through `acf_update_value()` after
+     `acf_validate_value()`; an option asked first), and known copies and
+     builders' own data that are never saved (Beaver Builder's and
+     SiteOrigin's layouts refused with whose they are, their content copies,
+     Bricks', Breakdance's and Elementor's data, Pagelayer's copy, an SEO
+     plugin's mirror). Found once, the page as it is is kept, the words saved,
+     the edit marked implemented on the site's ok, and the page reloaded and
+     read back; the answer says where the words are kept and through whose
+     save, whether the site keeps a revision, what a plugin's own copy may do,
+     and when the page still shows the old words says so first. Undo puts
+     the old value back by the token the site gave (ten minutes); the edit
+     stays implemented. Refusals name their cause: nowhere ("the site does not
+     keep these words in this content: code or another content item makes
+     them"), more than once (named), only in code, made from a template
+     (`%%title%%`, `{{post_title}}`, `[node:title]`), kept in the site's
+     settings (an option, not changed from here yet), or changed since. Still
+     not saved: words a plugin computes and never stores, a builder's own
+     cache (said, not cleared, outside the adapters), words in another
+     content item than the one the trace names, and options outside ACF's.
    - Just before words are saved, and when a style, a token or formatted
      words are handed to an agent (once: asking again never keeps a page
      that may already have the agent's change), the page the edit is on is

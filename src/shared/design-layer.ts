@@ -399,9 +399,26 @@ export interface LayerApplied {
  * brief (`route: 'agent'`) on the owner's click, or is not yet possible (`route: 'none'`), and says why.
  */
 export type LayerImplemented =
-  /** `note`: what the site said beside the save, when it said something (src/main/live-view.ts HelperSaved). */
-  | { ok: true; id: string; state: 'implemented'; revision: string | null; note?: string }
+  | {
+    ok: true; id: string; state: 'implemented'; revision: string | null;
+    /** What the site said beside the save, when it said something (src/main/live-view.ts HelperSaved). */
+    note?: string;
+    /**
+     * Words saved where the content keeps them, found by the helper's stored-words search (src/shared/live-stored-words.ts):
+     * what happened in the owner's words (where they are kept, whether the site keeps a revision, what a plugin's own
+     * copy may do, what the reloaded page shows), whether Undo can put the old value back (LiveBridge.layerUndo), and
+     * what the reloaded page shows: the new words, still the old ones, or not known.
+     */
+    said?: string; undo?: boolean; shows?: 'new' | 'old' | 'unknown';
+    /** The site adapter that saved them, when one did: which, its plugin's version, and whether that version is verified (docs/design/2026-10-10-site-adapters.md). */
+    adapter?: { id: string; name: string; version: string | null; status: 'ready' | 'unverified' };
+  }
   | { ok: false; id: string; route: 'agent' | 'none'; why: string };
+
+/** Putting a stored-words save back (LiveBridge.layerUndo): done, with the revision the site made and what it means, or why not. */
+export type LayerUndone =
+  | { ok: true; id: string; revision: string | null; said: string }
+  | { ok: false; id: string; why: string };
 
 /** A rectangle of the page, in CSS pixels of the document at the verified width. */
 export interface LayerRect { x: number; y: number; width: number; height: number }

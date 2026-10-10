@@ -23,6 +23,7 @@ import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
 import { DRUPAL_USAGE_FILES } from './live-helper-drupal-usage.ts';
 import { DRUPAL_VERIFY_FILES, DRUPAL_VERIFY_MODULE, DRUPAL_VERIFY_SERVICES } from './live-helper-drupal-verify.ts';
 import { DRUPAL_WORDS_FILES } from './live-helper-drupal-words.ts';
+import { DRUPAL_STORED_FILES } from './live-helper-drupal-stored.ts';
 import { DRUPAL_ADAPTER_FILES } from './live-helper-drupal-adapters.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
@@ -89,6 +90,15 @@ wanigan_live.save:
   methods: [POST]
   defaults:
     _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::save'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.words:
+  path: '/_wanigan/words'
+  methods: [POST]
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Save\\StoredWords::words'
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
@@ -845,5 +855,6 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_USAGE_FILES,
   ...DRUPAL_VERIFY_FILES,
   ...DRUPAL_WORDS_FILES,
+  ...DRUPAL_STORED_FILES,
   ...DRUPAL_ADAPTER_FILES,
 };

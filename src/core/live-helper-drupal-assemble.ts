@@ -209,8 +209,26 @@ final class TraceBuilder {
       if ($identity !== NULL) {
         $this->identities[$id] = $identity;
         $keys[$id] = Identity::key($identity);
+        $this->shown($identity, $p);
       }
     }
+  }
+
+  /**
+   * What the page showed of a piece of content, kept beside the trace: the
+   * revision it rendered and when that translation last changed, by type,
+   * UUID and language. The stored-words save (Save\StoredWords) saves only
+   * over that.
+   */
+  private function shown(array $identity, array $p): void {
+    $entity = $p['meta']['entity']['object'] ?? NULL;
+    if ($identity['kind'] !== 'entity' || !$entity instanceof EntityInterface) {
+      return;
+    }
+    $this->private['shown'][$identity['type'] . '|' . $identity['id'] . '|' . ($identity['langcode'] ?? '')] = [
+      'revision' => $p['meta']['entity']['revision'] ?? NULL,
+      'changed' => method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : NULL,
+    ];
   }
 
   /**

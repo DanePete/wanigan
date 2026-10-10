@@ -76,6 +76,7 @@ const live: LiveBridge = {
   layerShow: (on) => ipcRenderer.invoke('live:layerShow', on) as ReturnType<LiveBridge['layerShow']>,
   layerTarget: () => ipcRenderer.invoke('live:layerTarget') as ReturnType<LiveBridge['layerTarget']>,
   layerImplement: (id) => ipcRenderer.invoke('live:layerImplement', id) as ReturnType<LiveBridge['layerImplement']>,
+  layerUndo: (id) => ipcRenderer.invoke('live:layerUndo', id) as ReturnType<LiveBridge['layerUndo']>,
   layerVerify: (id, options) => ipcRenderer.invoke('live:layerVerify', id, options ?? null) as ReturnType<LiveBridge['layerVerify']>,
   layerPicture: (path) => ipcRenderer.invoke('live:layerPicture', path) as ReturnType<LiveBridge['layerPicture']>,
   layerType: () => ipcRenderer.invoke('live:layerType') as ReturnType<LiveBridge['layerType']>,

@@ -9,6 +9,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { WORDPRESS_HELPER_MARK, WORDPRESS_HELPER_VERSION, wordpressHelper } from './live-helper-wordpress.ts';
+import { WORDPRESS_ELEMENTOR_SOURCE } from './live-helper-wordpress-elementor.ts';
+import { WORDPRESS_ACF_SOURCE } from './live-helper-wordpress-acf.ts';
+import { WORDPRESS_COPIES_SOURCE } from './live-helper-wordpress-copies.ts';
 
 // A made-up token, built here so no key-shaped string sits in the source.
 const TOKEN = 'ab'.repeat(24);
@@ -42,8 +45,21 @@ test('only a hex token and a plain relative folder are written into PHP', () => 
   for (const bad of ['../outside', 'web/../..', "web'; //", 'a b', 'web/./x']) assert.throws(() => wordpressHelper(TOKEN, bad), /plain relative path/, bad);
 });
 
-test('it hooks core, and names no plugin or theme', () => {
-  const src = wordpressHelper(TOKEN);
+test('it hooks core, and names no plugin or theme outside the stored-words adapters, each isolated in its own class', () => {
+  // The adapters (Elementor, ACF, known copies) are the one place a plugin is named: each in its own file and class,
+  // registered with the stored-words search, which never depends on them. Everything else is core only.
+  const adapters = [WORDPRESS_ELEMENTOR_SOURCE, WORDPRESS_ACF_SOURCE, WORDPRESS_COPIES_SOURCE];
+  const full = wordpressHelper(TOKEN);
+  for (const a of adapters) assert.ok(full.includes(a));
+  const src = adapters.reduce((s, a) => s.replace(a, ''), full);
+  for (const [a, name, shape] of [
+    [WORDPRESS_ELEMENTOR_SOURCE, 'Wanigan_Live_Adapter_Elementor', 'extends Wanigan_Live_Adapter implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_ACF_SOURCE, 'Wanigan_Live_Acf', 'implements Wanigan_Live_Words_Adapter'],
+    [WORDPRESS_COPIES_SOURCE, 'Wanigan_Live_Copies', 'implements Wanigan_Live_Words_Adapter'],
+  ] as const) {
+    assert.match(a, new RegExp(`final class ${name} ${shape}`));
+    assert.ok(!src.includes(name), `${name} is named only in its own file`);
+  }
   // The seams the trace and the edits are built on, each from WordPress core.
   for (const hook of ["add_action('all'", "'log_query_custom_data'", "'wp_before_load_template'", "'wp_before_include_template'", "'pre_render_block'", "'interactivity_process_directives'", "'wp_template_enhancement_output_buffer'", "'render_block_core_template_part_file'", "'block_bindings_source_value'", "'dynamic_sidebar_params'", "'walker_nav_menu_start_el'", 'rest_do_request(', 'WP_REST_Post_Meta_Fields', 'serialize_blocks(', 'wp_set_sidebars_widgets(', "'wp-admin/menu.php'"]) {
     assert.ok(src.includes(hook), hook);
@@ -52,6 +68,15 @@ test('it hooks core, and names no plugin or theme', () => {
   for (const name of ['elementor', 'acf', 'woocommerce', 'yoast', 'gravity', 'divi', 'astra', 'twentytwenty', 'rank-math', 'jetpack', 'akismet', 'mwai', 'alttext', 'openai', 'anthropic']) {
     assert.ok(!new RegExp(`\\b${name}`, 'i').test(src), name);
   }
+});
+
+test('each adapter calls its plugin only inside its own source', () => {
+  // Elementor's API is called only by its adapter, ACF's only by its: the known-copies list may name their data (it is
+  // the exclusion list, kept whether or not an adapter exists), never call them.
+  const others = (mine: string): string => [WORDPRESS_ELEMENTOR_SOURCE, WORDPRESS_ACF_SOURCE, WORDPRESS_COPIES_SOURCE].filter((a) => a !== mine).join('\n');
+  assert.ok(/\\Elementor\\Plugin::\$instance/.test(WORDPRESS_ELEMENTOR_SOURCE) && !/\\?Elementor\\/.test(others(WORDPRESS_ELEMENTOR_SOURCE)), 'Elementor’s classes');
+  assert.ok(/\bacf_update_value\(/.test(WORDPRESS_ACF_SOURCE) && !/\bacf_[a-z_]+\(/.test(others(WORDPRESS_ACF_SOURCE)), 'ACF’s functions');
+  assert.ok(!/\bFLBuilder|SiteOrigin_Panels|\\Bricks\\|aioseo\(/.test(others(WORDPRESS_COPIES_SOURCE)), 'the copies’ plugins are named only by the copies');
 });
 
 test('the site’s AI is read through core alone, and no key is ever read', () => {
