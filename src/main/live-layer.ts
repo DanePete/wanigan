@@ -1146,7 +1146,9 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     if (at.count !== 1 && !(edit.target.part && at.same === true)) return none(`It reaches ${String(at.count)} elements here; words are saved one element at a time.`);
     if (at.plain !== true || typeof at.words !== 'string') return none('Its element holds more than plain words, so they are not saved from here.');
     if (at.words.length > SAVE_MAX || value.length > SAVE_MAX) return none(`Words longer than ${SAVE_MAX.toLocaleString('en')} characters are saved in the site’s own form.`);
-    if (typeof at.field === 'string') {
+    // A field mark around configuration (a webform shown by a content field) belongs to the content that holds it, not
+    // to the words: those are the configuration's, found among the trace's targets below.
+    if (typeof at.field === 'string' && edit.target.part?.kind !== 'config') {
       // A text field the helper marked around the words (Drupal): exactly the field, translation and item the edit's
       // target names, never the first item that happens to hold the same words, never the default language.
       const where = saveTarget(edit.target.part, at.field);
