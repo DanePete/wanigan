@@ -432,13 +432,14 @@ or the project.
      property of it, equals the words as the site rendered them (whitespace
      folded, wptexturize's quotes, dashes and ellipsis read as typed): a title,
      an excerpt, a string meta, the site title or tagline, a menu link's text
-     (its address sent back as it was); on Drupal a block's title, the site's
-     name or slogan, one run of a view's header, footer or empty text (offered
-     run by run, so its markup is never in the value), or a content menu
-     link's text. Configuration is validated against its typed schema with
-     the rules only Drupal's forms keep, needs the form route's permission, is
-     written to its translation's override when the page showed one, and says
-     that the next configuration import puts back what is exported.
+     (its address sent back as it was), a WordPress block's words; on Drupal a
+     block's title, the site's name or slogan, one run of a view's header,
+     footer or empty text (offered run by run, so its markup is never in the
+     value), or a content menu link's text. Configuration is validated against
+     its typed schema with the rules only Drupal's forms keep, needs the form
+     route's permission, is written to its translation's override when the
+     page showed one, and says that the next configuration import puts back
+     what is exported.
      Never a slug, a status, a choice, an address or a read-only value. It is
      looked for in the parts the edit's identity names, then outward a level
      at a time, the nearest level deciding: each part's parent, and the post
@@ -448,18 +449,39 @@ or the project.
      schema save (`POST /_wanigan/edit/<id>` with the trace's id, checked
      with `checkValue` in main and again by the helper), refused if the view
      holds another trace by then.
-   - Formatted text on WordPress (a block's rich text, words inside a
-     post's content, a value holding markup) answers `route: 'agent'`, as
-     styles and tokens do until phase 3. Every refusal names its cause:
-     Drupal keeps no such thing (words written in a template, which answer
-     `route: 'agent'`; a menu link written in code; a base field's label), or
-     Wanigan does not do it yet (a template's `t()` strings, which are
-     interface translation; a caption; words across formatting; a draft;
-     words code makes from what is not saved here). The Drupal helper lists
-     each template part's own words, read by Drupal's Twig lexer, for this. Nothing holding the words, more than one thing holding
-     them (named), a changed page, a target the trace says this user may not
-     change, or a refusal from the site (passed on as the site said it)
-     answers `route: 'none'`, with why.
+   - A string its schema calls HTML (`contentMediaType: 'text/html'`: a
+     WordPress block's rich text, a field a block binds as rich text, a
+     navigation label) is sent as HTML, never as typed text
+     (`src/shared/rich-text.ts`). Words alone (no tag inside): the new words
+     escaped as the helper's own save writes text (`WP_HTML_Processor`
+     serialization: `&`, `<`, `>`, `"` and `'` as `&amp;`, `&lt;`, `&gt;`,
+     `&quot;` and `&apos;`), so what is sent is what the site keeps. Words
+     between tags: the one stretch where old and new words differ (compared
+     as words) must fall inside one run of text between two tags, at both
+     ends of the slide repeated letters allow; it is written there escaped,
+     every tag and every other run kept byte for byte, the new words taking
+     the formatting of the words they replace.
+   - A target the helper says shows beyond this page (its `shows`: a
+     template or template part, a synced pattern's own words, a navigation
+     menu, a widget, a site setting, a media library alt) is said first,
+     with where (`route: 'none'`, nothing saved or rendered), and saved when
+     the edit is made real again within five minutes for the same target,
+     reach and words. The edit sheet asks the same way (`editNotice()`).
+   - On WordPress a change across formatting (or words added right beside a
+     tag, which could go inside it or outside), words inside a classic
+     post's content, and a block setting whose schema says neither HTML nor
+     text answer `route: 'agent'`, saying which (and where they show, when
+     beyond this page), as styles and tokens do until phase 3. Every refusal
+     names its cause: Drupal keeps no such thing (words written in a
+     template, which answer `route: 'agent'`; a menu link written in code; a
+     base field's label), or Wanigan does not do it yet (a template's `t()`
+     strings, which are interface translation; a caption; words across
+     formatting; a draft; words code makes from what is not saved here). The
+     Drupal helper lists each template part's own words, read by Drupal's
+     Twig lexer, for this. Nothing holding the words, more than one thing
+     holding them (named), a changed page, a target the trace says this user
+     may not change, or a refusal from the site (passed on as the site said
+     it) answers `route: 'none'`, with why.
    - Just before words are saved, and when a style, a token or formatted
      words are handed to an agent (once: asking again never keeps a page
      that may already have the agent's change), the page the edit is on is

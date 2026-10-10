@@ -367,10 +367,11 @@ export function liveStub(f) {
     siteAi: { state: 'ok', ai: { version: 1, platform: 'drupal', coreAi: false, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false }, saves: f.trace.saves } },
   };
   window.__wgApp.settings = { ...window.__wgApp.settings, liveView: true, liveFollow: true, liveDrupal: true, liveWordpress: true, liveSites: true, liveShots: false };
+  // `platform`: the sweep may make the made-up site a WordPress one from the start (its helper's kind with it).
   const site = (projectId) => ({
-    projectId, url: 'https://acme.example.test/', platform: 'drupal', servedPath: null, servedCard: null, candidates: [], ddev: null,
+    projectId, url: 'https://acme.example.test/', platform: window.__wgLive.platform ?? 'drupal', servedPath: null, servedCard: null, candidates: [], ddev: null,
     // `found`: no helper of this Wanigan's, but one another Wanigan set up is in the site's files.
-    helper: window.__wgLive.found ? null : { kind: 'drupal', version: window.__wgLive.outdated ? 3 : 4, outdated: window.__wgLive.outdated },
+    helper: window.__wgLive.found ? null : { kind: window.__wgLive.platform ?? 'drupal', version: window.__wgLive.outdated ? 3 : 4, outdated: window.__wgLive.outdated },
     found: window.__wgLive.found ? { kind: 'drupal', version: 4, outdated: false } : null,
     helperPlan: { kind: 'drupal', folder: '/tmp/acme/web/modules/custom/wanigan_live', files: ['wanigan_live.info.yml', 'wanigan_live.module'], exclude: '/web/modules/custom/wanigan_live/', runs: ['ddev drush pm:install wanigan_live'], refused: null },
     token: window.__wgLive.found ? null : 'stub',

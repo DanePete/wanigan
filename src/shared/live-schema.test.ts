@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkValue, draftOf, schemaForm, valueOf } from './live-schema.ts';
+import { checkValue, draftOf, htmlMode, schemaForm, valueOf } from './live-schema.ts';
 
 const hero = {
   type: 'object',
@@ -88,4 +88,44 @@ test('a pattern from the site is never run here', () => {
   const started = Date.now();
   assert.deepEqual(valueOf(form, { '': `${'a'.repeat(40)}!` }, ''), { value: `${'a'.repeat(40)}!` });
   assert.ok(Date.now() - started < 100);
+});
+
+/* ── a string the schema calls HTML ── */
+
+const paragraph = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    content: { type: 'string', source: 'rich-text', contentMediaType: 'text/html', description: 'Its words as HTML.' },
+    dropCap: { type: 'boolean' },
+  },
+};
+
+test('HTML holding no tag is edited as its words: shown decoded, typed text sent escaped, never as markup', () => {
+  const form = schemaForm(paragraph)!;
+  const content = form.fields[0]!;
+  assert.equal(content.kind === 'string' && content.html, true);
+  assert.equal(content.kind === 'string' && content.multiline, true, 'formatted text gets room');
+  const value = { content: 'Fish &amp; chips', dropCap: false };
+  assert.equal(htmlMode(form, content, value), 'words');
+  const draft = draftOf(form, value);
+  assert.equal(draft.content, 'Fish & chips', 'the words, as the page shows them');
+  assert.deepEqual(valueOf(form, { ...draft, content: 'Tea & <b>cake</b> "fresh" isn\'t it' }, value), { value: { content: 'Tea &amp; &lt;b&gt;cake&lt;/b&gt; &quot;fresh&quot; isn&apos;t it', dropCap: false } },
+    'a typed tag is words: & < > and quotes escaped as WordPress’s HTML processor writes text');
+  assert.deepEqual(valueOf(form, draft, value), { value }, 'words left as they were go back as they were kept, byte for byte');
+  assert.equal(htmlMode(form, content, { content: 'Sea &zwj; air' }), 'markup', 'a reference the window cannot read is not shown as words: it would go back changed');
+  assert.equal(htmlMode(form, form.fields[1]!, value), null);
+  // One value, not an object: a bound field shown as rich text.
+  const one = schemaForm({ type: 'string', contentMediaType: 'text/html' })!;
+  assert.deepEqual(valueOf(one, { '': 'a < b' }, 'a &gt; b'), { value: 'a &lt; b' });
+  // A plain string is untouched: escaping is for HTML only.
+  assert.deepEqual(valueOf(schemaForm({ type: 'string' })!, { '': 'a < b' }, ''), { value: 'a < b' });
+});
+
+test('HTML holding inline tags is edited as the HTML it is: shown and sent as written', () => {
+  const form = schemaForm(paragraph)!;
+  const value = { content: 'Read <a href="/menu">the menu</a> &amp; order', dropCap: false };
+  assert.equal(htmlMode(form, form.fields[0]!, value), 'markup');
+  const draft = draftOf(form, value);
+  assert.equal(draft.content, 'Read <a href="/menu">the menu</a> &amp; order');
+  assert.deepEqual(valueOf(form, { ...draft, content: 'Read <a href="/menu">our menu</a> &amp; order' }, value), { value: { content: 'Read <a href="/menu">our menu</a> &amp; order', dropCap: false } });
 });
