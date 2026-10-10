@@ -342,7 +342,8 @@ export interface LayerApplied {
  * brief (`route: 'agent'`) on the owner's click, or is not yet possible (`route: 'none'`), and says why.
  */
 export type LayerImplemented =
-  | { ok: true; id: string; state: 'implemented'; revision: string | null }
+  /** `note`: what the site said beside the save, when it said something (src/main/live-view.ts HelperSaved). */
+  | { ok: true; id: string; state: 'implemented'; revision: string | null; note?: string }
   | { ok: false; id: string; route: 'agent' | 'none'; why: string };
 
 /** A rectangle of the page, in CSS pixels of the document at the verified width. */

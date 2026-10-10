@@ -146,12 +146,22 @@ final class Words {
    *
    * $formatter is the one the page showed the field with, as the field's
    * mark said: which of a summary and a text it showed, and whether trimmed.
+   *
+   * $unchanged says the field's mark showed the content is as the page
+   * rendered it (its revision and changed time). Only then are words the
+   * page shows around the field's own, which the field does not hold, read
+   * as the site's (a template or code adds them as it shows the field):
+   * the edit is made on the field's own words (within()), and $wrapped is
+   * set to what was added around them and the words the field now holds.
+   * Otherwise such words are refused, saying Wanigan cannot tell which; and
+   * words the field does not hold are said to have changed only where the
+   * content might have.
    */
-  public static function apply(ContentEntityInterface $entity, string $name, ?string $item, string $before, string $after, string $formatter): ?array {
+  public static function apply(ContentEntityInterface $entity, string $name, ?string $item, string $before, string $after, string $formatter, bool $unchanged = FALSE, ?array &$wrapped = NULL): ?array {
     $field = $entity->get($name);
     $type = (string) $field->getFieldDefinition()->getType();
     if (in_array($type, self::PLAIN, TRUE)) {
-      return self::plain($field, $item, $before, $after);
+      return self::plain($field, $item, $before, $after, $unchanged, $wrapped);
     }
     if (!in_array($type, self::FORMATTED, TRUE)) {
       return [409, 'Wanigan does not save words to this kind of field yet (' . $type . '): it keeps more than words, so nothing is changed from here. Change it in Drupal’s form, or ask an agent.'];
@@ -162,11 +172,12 @@ final class Words {
     if (!in_array($formatter, self::FORMATTERS, TRUE)) {
       return [409, 'Wanigan does not save words this field shows through the ' . $formatter . ' formatter yet: it may show them other than as they are kept. Change them in Drupal’s form.'];
     }
-    return self::formatted($entity, $field, $type, $item, $before, $after, $formatter);
+    return self::formatted($entity, $field, $type, $item, $before, $after, $formatter, $unchanged, $wrapped);
   }
 
   /**
-   * Whether any item of a field holds the words, as apply() would find them.
+   * Whether any item of a field holds the words themselves, as apply()
+   * finds them first (not words the page shows around an item's own).
    */
   public static function held(ContentEntityInterface $entity, string $name, string $before, string $formatter): bool {
     $field = $entity->get($name);
@@ -188,9 +199,11 @@ final class Words {
   }
 
   /**
-   * A plain text item's words: its whole value.
+   * A plain text item's words: its whole value. Without an item named, the
+   * one item holding the words; else the one item whose words the page
+   * shows with more around them (within()).
    */
-  private static function plain($field, ?string $item, string $before, string $after): ?array {
+  private static function plain($field, ?string $item, string $before, string $after, bool $unchanged, ?array &$wrapped): ?array {
     $deltas = [];
     foreach ($field as $i => $value) {
       if ($item !== NULL ? self::names($value, (int) $i, $item) : self::fold((string) $value->value) === $before) {
@@ -200,24 +213,132 @@ final class Words {
     if ($item !== NULL && count($deltas) !== 1) {
       return [409, 'The item this edit was made on is not in the field any more: it changed since the page loaded. Reload, and try again.'];
     }
-    if ($item !== NULL && self::fold((string) $field->get($deltas[0])->value) !== $before) {
-      return [409, 'That item of the field no longer holds those words: it changed since the page loaded. Reload, and try again.'];
-    }
-    if (!$deltas) {
-      return [409, 'The field no longer holds those words: it changed since the page loaded. Reload, and try again.'];
-    }
     if (count($deltas) > 1) {
       return [409, 'More than one item of this field holds those words, and the page did not say which one it showed, so none is changed. Change it in Drupal.'];
     }
-    $field->get($deltas[0])->value = $after;
+    if (!$deltas) {
+      foreach ($field as $i => $value) {
+        if (self::around(self::fold((string) $value->value), $before) !== NULL) {
+          $deltas[] = (int) $i;
+        }
+      }
+      if (count($deltas) > 1) {
+        return [409, 'The page shows more words than any one item of this field holds, and the words of more than one item are among them, so none is changed. Change it in Drupal’s form.'];
+      }
+      if (!$deltas) {
+        return [409, $unchanged
+          ? 'No item of this field holds the words the page shows, and the content has not changed since the page loaded: the site shows this field’s words other than as it keeps them (a formatter, a template or code changes them), so they are not saved from here. Change them in Drupal’s form, or ask an agent to change the code that shows them.'
+          : 'The field does not hold those words: it changed since the page loaded, or the site shows it other than as it keeps it. Reload, and try again.'];
+      }
+    }
+    $value = $field->get($deltas[0]);
+    $stored = self::fold((string) $value->value);
+    if ($stored === $before) {
+      $value->value = $after;
+      return NULL;
+    }
+    $within = self::within($stored, $before, $after, $unchanged, $item !== NULL ? 'That item of the field' : 'This field');
+    if (isset($within['refused'])) {
+      return $within['refused'];
+    }
+    $value->value = $within['words'];
+    $wrapped = $within;
     return NULL;
+  }
+
+  /**
+   * Where a page shows a field's words ($stored, folded) with more around
+   * them: [what is before them, what is after], when they are in the page's
+   * words exactly once and are not all of them; else NULL.
+   */
+  public static function around(string $stored, string $shown): ?array {
+    if ($stored === '' || $stored === $shown) {
+      return NULL;
+    }
+    $at = strpos($shown, $stored);
+    if ($at === FALSE || strpos($shown, $stored, $at + 1) !== FALSE) {
+      return NULL;
+    }
+    return [substr($shown, 0, $at), substr($shown, $at + strlen($stored))];
+  }
+
+  /**
+   * An edit of words the page showed as $before, made on the words a field
+   * holds ($stored, folded), which are not all of them: ['words' => the
+   * field's new words, 'lead' => what the page adds before them, 'tail' =>
+   * after], or ['refused' => [HTTP status, words]].
+   *
+   * Only where the content is as the page rendered it ($unchanged) is the
+   * rest of the page's words known to be added by the site as it shows the
+   * field: then new words that keep what is added, unchanged, around new
+   * words of the field's own are saved as those, and a change to what is
+   * added is refused, saying it is code. Otherwise Wanigan cannot tell
+   * whether the site adds it or the field changed since, and says so. Words
+   * the field does not hold within them are refused, said to have changed
+   * only where the content might have.
+   */
+  private static function within(string $stored, string $before, string $after, bool $unchanged, string $what): array {
+    $around = self::around($stored, $before);
+    if ($around === NULL) {
+      return ['refused' => [409, $unchanged
+        ? $what . ' holds other words (“' . self::quote($stored) . '”) than the page shows, and the content has not changed since the page loaded: the site shows them other than as it keeps them (a formatter, a template or code changes them), so they are not saved from here. Change them in Drupal’s form, or ask an agent to change the code that shows them.'
+        : $what . ' does not hold those words: it changed since the page loaded, or the site shows it other than as it keeps it. Reload, and try again.']];
+    }
+    [$lead, $tail] = $around;
+    $added = self::added($lead, $tail);
+    if (!$unchanged) {
+      return ['refused' => [409, 'The page shows ' . $added . ' the words this field holds (“' . self::quote($stored) . '”), and Wanigan cannot tell here whether the site’s templates or code add that or the field changed since the page loaded, so nothing is saved. Reload, and try again, or change it in Drupal’s form.']];
+    }
+    $code = 'The site’s templates or code add ' . $added . ' this field’s words on the page, and only the field’s own words (“' . self::quote($stored) . '”) can be saved here';
+    $words = preg_match('~^' . self::loose($lead) . '(.*?)' . self::loose($tail) . '$~su', $after, $m) ? trim($m[1]) : NULL;
+    $bare = static fn (string $text): string => preg_replace('/\s+/u', '', $text) ?? $text;
+    if ($words === '' || ($words === NULL && $bare($after) === $bare($lead . $tail))) {
+      return ['refused' => [409, $code . ', and this change leaves them empty. Clear the field in Drupal’s form.']];
+    }
+    if ($words === NULL) {
+      return ['refused' => [409, $code . ': this change also changes what is added around them. Change only the field’s words, or ask an agent to change the rest, which is code.']];
+    }
+    return ['words' => $words, 'lead' => trim($lead), 'tail' => trim($tail)];
+  }
+
+  /**
+   * What a page adds around a field's words, as words: “© 2026” before,
+   * “All rights reserved.” after, or both.
+   */
+  public static function added(string $lead, string $tail): string {
+    $parts = [];
+    if (trim($lead) !== '') {
+      $parts[] = '“' . self::quote(trim($lead)) . '” before';
+    }
+    if (trim($tail) !== '') {
+      $parts[] = '“' . self::quote(trim($tail)) . '” after';
+    }
+    return implode(' and ', $parts);
+  }
+
+  /**
+   * Words quoted in an answer: at most 120 characters of them.
+   */
+  private static function quote(string $words): string {
+    return mb_strlen($words) > 120 ? rtrim(mb_substr($words, 0, 119)) . '…' : $words;
+  }
+
+  /**
+   * A pattern for words as typed: each run of whitespace as any.
+   */
+  private static function loose(string $words): string {
+    $out = '';
+    foreach (preg_split('/(\s+)/u', $words, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY) as $piece) {
+      $out .= preg_match('/^\s+$/u', $piece) ? '\s+' : preg_quote($piece, '~');
+    }
+    return $out;
   }
 
   /**
    * One run of words in a formatted text item: found once, spliced, and kept
    * only when its format shows nothing else changed.
    */
-  private static function formatted(ContentEntityInterface $entity, $field, string $type, ?string $item, string $before, string $after, string $formatter): ?array {
+  private static function formatted(ContentEntityInterface $entity, $field, string $type, ?string $item, string $before, string $after, string $formatter, bool $unchanged = FALSE, ?array &$wrapped = NULL): ?array {
     // Where the words are, in what the page showed of each item searched:
     // [delta, property, how many times, shown trimmed].
     $found = [];
@@ -234,7 +355,7 @@ final class Words {
       $urls = $urls || ($format !== NULL && self::enabled($format, 'filter_url'));
       foreach (self::shown($value, $type, $formatter) as $property => $trimmed) {
         $stored = (string) $value->{$property};
-        $searched[] = [$stored, $literal];
+        $searched[] = [$stored, $literal, (int) $i];
         if ($n = self::count($stored, $before, $literal)) {
           $found[] = [(int) $i, $property, $n, $trimmed];
         }
@@ -245,7 +366,29 @@ final class Words {
     }
     $total = array_sum(array_column($found, 2));
     if ($total === 0) {
-      return [409, self::whyNot($searched, $before, $urls)];
+      // The page shows more words than the text holds: where one item's
+      // whole text is among them once, the edit is made on its words
+      // (within()), and saved as any run of them is.
+      $wraps = [];
+      foreach ($searched as [$stored, $literal, $delta]) {
+        $words = self::fold($literal ? $stored : self::wordsOf($stored));
+        if (self::around($words, $before) !== NULL) {
+          $wraps[] = [$delta, $words];
+        }
+      }
+      if (count($wraps) === 1) {
+        [$delta, $words] = $wraps[0];
+        $within = self::within($words, $before, $after, $unchanged, 'This field’s text');
+        if (isset($within['refused'])) {
+          return $within['refused'];
+        }
+        $refused = self::formatted($entity, $field, $type, 'delta:' . $delta, $words, $within['words'], $formatter, $unchanged);
+        if ($refused === NULL) {
+          $wrapped = $within;
+        }
+        return $refused;
+      }
+      return [409, self::whyNot($searched, $before, $urls, $unchanged)];
     }
     if ($total > 1) {
       if (count(array_unique(array_column($found, 1))) > 1) {
@@ -549,20 +692,17 @@ final class Words {
   /**
    * Why the words are not in the text searched, as precisely as the text
    * tells: across tags, a caption, a link the URL filter made, an embedded
-   * media item's; otherwise changed since.
+   * media item's; otherwise changed since, or, where the content is as the
+   * page rendered it ($unchanged), shown some other way.
    */
-  private static function whyNot(array $searched, string $before, bool $urls): string {
+  private static function whyNot(array $searched, string $before, bool $urls, bool $unchanged = FALSE): string {
     $media = FALSE;
     foreach ($searched as [$stored, $literal]) {
       if ($literal || trim($stored) === '') {
         continue;
       }
       $document = Html::load($stored);
-      $all = '';
-      foreach (self::textNodes($document) as $node) {
-        $all .= $node->data;
-      }
-      if (str_contains(self::fold($all), $before)) {
+      if (str_contains(self::fold(self::wordsOf($stored)), $before)) {
         return 'These words run across formatting (part of them bold, a link or another tag), so which part the new words belong to is not clear: Wanigan does not change them from here yet. Change them in Drupal’s form.';
       }
       foreach ((new \DOMXPath($document))->query('//*[@data-caption]') as $element) {
@@ -578,7 +718,21 @@ final class Words {
     if ($media) {
       return 'These words are not in this field’s text: a media item embedded in it (<drupal-media>) shows them, and they are that media item’s, which Wanigan does not change from here yet. Change them on the media item.';
     }
-    return 'The field no longer holds those words: it changed since the page loaded. Reload, and try again.';
+    return $unchanged
+      ? 'This field’s text does not hold the words the page shows, and the content has not changed since the page loaded: the site shows them some other way (a filter, a formatter, a template or code makes them), so they are not saved from here. Change them in Drupal’s form, or ask an agent to change the code that shows them.'
+      : 'The field does not hold those words: it changed since the page loaded, or the site shows it other than as it keeps it. Reload, and try again.';
+  }
+
+  /**
+   * A stored text's words, each text node's as it is, joined as a page's
+   * text is (textContent).
+   */
+  private static function wordsOf(string $stored): string {
+    $all = '';
+    foreach (self::textNodes(Html::load($stored)) as $node) {
+      $all .= $node->data;
+    }
+    return $all;
   }
 
   /**

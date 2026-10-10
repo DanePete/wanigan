@@ -483,7 +483,13 @@ final class LiveController extends ControllerBase {
    * reference's ref:<type>:<uuid>). The words go to that translation, never
    * another, and to that item only, which must hold the words before.
    * Without an item, the one item holding the words before is saved; two
-   * that hold them are refused, never guessed between.
+   * that hold them are refused, never guessed between. Where the page shows
+   * the item's words with more around them (the site's templates or code
+   * add it as they show the field), and the mark shows the content is as
+   * the page rendered it, the edit is made on the item's own words: saved
+   * when what is added is kept, unchanged, around new words, refused as
+   * code when the change touches it. Words the field does not hold are said
+   * to have changed since only where the content might have.
    *
    * It saves only over what the page showed: content saved again since, or
    * a newer draft than the version visitors see (content moderation edits
@@ -581,9 +587,20 @@ final class LiveController extends ControllerBase {
     // What Drupal reports of the content as it is, before the words change,
     // to tell a problem the change brings from one it already had.
     $was = Words::problems($entity);
+    // Whether the field's mark shows the content is as the page rendered it:
+    // the revision it showed is this one (a later one is refused above), or
+    // the changed time it showed is this translation's, and where it carried
+    // both, both are. Only then are words the page shows around the field's
+    // own read as the site's, and words the field does not hold never said
+    // to have changed since (Words::apply()).
+    $changed = method_exists($entity, 'getChangedTime') ? (string) $entity->getChangedTime() : NULL;
+    $unchanged = (($entity->getEntityType()->isRevisionable() && $shown !== '') || ($shownChanged !== '' && $changed === $shownChanged))
+      && ($shownChanged === '' || $changed === NULL || $changed === $shownChanged);
     // The words, in the one item that holds them: a plain value, or one run
-    // inside formatted text checked through its own format.
-    if ($refused = Words::apply($entity, $name, $item, $before, $after, $formatter)) {
+    // inside formatted text checked through its own format; or the field's
+    // own words, where the page shows them with more around them.
+    $wrapped = NULL;
+    if ($refused = Words::apply($entity, $name, $item, $before, $after, $formatter, $unchanged, $wrapped)) {
       return $this->refuse($refused[1], $refused[0]);
     }
     if ($entity->getEntityType()->isRevisionable()) {
@@ -612,13 +629,16 @@ final class LiveController extends ControllerBase {
     $revision = $entity->getEntityType()->isRevisionable() ? $entity->getRevisionId() : NULL;
     $state = $entity->hasField('moderation_state') ? $entity->get('moderation_state')->value : NULL;
     $notes = [];
+    if ($wrapped) {
+      $notes[] = 'Saved to the field’s own words, “' . $wrapped['words'] . '”: the site’s templates or code add ' . Words::added($wrapped['lead'], $wrapped['tail']) . ' them on the page.';
+    }
     if ($already) {
-      $notes[] = 'Saved. Note that this content already had ' . (count($already) === 1 ? 'a problem' : 'problems') . ' Drupal reports, in '
+      $notes[] = ($wrapped ? 'Note' : 'Saved. Note') . ' that this content already had ' . (count($already) === 1 ? 'a problem' : 'problems') . ' Drupal reports, in '
         . (count($already) === 1 ? 'a field' : 'fields') . ' this change does not touch: ' . implode(' ', array_slice($already, 0, 3))
         . (count($already) > 3 ? ' (and ' . (count($already) - 3) . ' more)' : '');
     }
     return $this->json([
-      'ok' => TRUE, 'value' => $after, 'label' => (string) $entity->label(),
+      'ok' => TRUE, 'value' => $wrapped['words'] ?? $after, 'label' => (string) $entity->label(),
       'revision' => $revision !== NULL ? (string) $revision : NULL, 'state' => is_string($state) ? $state : NULL,
     ] + ($notes ? ['note' => implode(' ', $notes)] : []));
   }

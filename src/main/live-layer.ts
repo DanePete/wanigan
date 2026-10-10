@@ -1086,7 +1086,7 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       // applies again after the load.
       if (!here.cur.webContents.isDestroyed()) here.cur.webContents.reloadIgnoringCache();
       if (refused) return none(inSiteUnmarked(saved.revision ?? null, refused));
-      return { ok: true, id, state: 'implemented', revision: saved.revision ?? null };
+      return { ok: true, id, state: 'implemented', revision: saved.revision ?? null, ...(saved.note ? { note: saved.note } : {}) };
     }
     // No field marked around them (WordPress's helper marks none): the edit target in the page's trace that holds
     // exactly these words, saved as the window saves one.
