@@ -245,8 +245,12 @@ before adding it:
   example props (a component's schema examples, a block's `example`, a
   pattern as written), at phone and desktop widths, in a hidden window, cached
   until the component's files change.
-- **Where it is used:** the pages that show it, from Go to's index and the
-  traces the view has kept.
+- **Where it is used:** the places the site's stored data says use it, from
+  the helper's read-only search (`GET /_wanigan/usage`; how each platform's
+  search works and what it cannot see is in
+  docs/research/2026-10-09-core-limits.md, build item 10), each opening in
+  the view where a page shows it; and where the page shown uses it, from its
+  trace.
 - **From there:** add it to the page (drag it onto the live view, or choose it
   and click where it goes), open its source in the Code tab, or ask an agent
   about it.

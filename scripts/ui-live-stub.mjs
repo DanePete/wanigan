@@ -224,6 +224,73 @@ export function wordpressLibrary() {
 }
 
 /**
+ * Where entries are used across the made-up sites, as the helpers' /_wanigan/usage would answer (live-library.ts
+ * EntryUsage): a component found in templates, a block placed, in a default layout and in one item's own layout, and a
+ * WordPress block in posts and, through a synced pattern, in a page and a template part. Any other entry is used
+ * nowhere.
+ */
+export function usage() {
+  const drupal = (entry, places, extra = {}) => ({ state: 'ok', usage: { version: 1, platform: 'drupal', entry, places, found: places.length, complete: true, gaps: [], ms: 412, ...extra } });
+  const blockUnseen = [
+    'Pages a placement shows on: its visibility conditions (paths, roles, content types) are decided as each page renders, so a placement says where it is placed, not which pages show it.',
+    'A block rendered from code: a template, a preprocess function or a module that builds it as a render array is invisible to stored data.',
+  ];
+  return {
+    'sdc:acme:hero': drupal('sdc:acme:hero', [
+      { kind: 'template', label: 'node--article--full.html.twig', file: 'web/themes/custom/acme/templates/node--article--full.html.twig', where: 'line 6, embed', note: 'theme hook node__article__full, in acme' },
+      { kind: 'template', label: 'page--front.html.twig', file: 'web/themes/custom/acme/templates/page--front.html.twig', where: 'line 12, include; line 30, include', count: 2, note: 'theme hook page__front, in acme' },
+      { kind: 'template', label: 'Event teaser component (acme:event-teaser)', file: 'web/themes/custom/acme/components/event-teaser/event-teaser.twig', where: 'line 3, include()' },
+    ], {
+      searched: ['214 Twig templates of the acme theme, its base themes and the enabled modules, parsed with Drupal’s own Twig.'],
+      unseen: [
+        'A use chosen at render time: a template name held in a variable, joined from words, or picked in a preprocess function.',
+        'A component placed from PHP, as a render array of #type component (core’s own Navigation module places its components this way).',
+        'A template that includes the component’s file by its path instead of its name.',
+        'Which pages show it: a template runs only where its theme hook and suggestions match, which only rendering a page decides.',
+        '1 template includes, embeds or extends a template chosen at render time, so any of them may use it: web/themes/custom/acme/templates/field--paragraph.html.twig.',
+      ],
+    }),
+    'block:acme_cta_block': drupal('block:acme_cta_block', [
+      { kind: 'placement', label: 'Call to action', where: 'Sidebar region, Acme theme', note: 'no visibility conditions: any page in this theme', url: '/', edit: '/admin/structure/block/manage/acme_cta' },
+      { kind: 'placement', label: 'Call to action, events', where: 'Content region, Acme theme', note: 'shows only where its visibility conditions allow (request_path)', edit: '/admin/structure/block/manage/acme_cta_events' },
+      { kind: 'layout-default', label: 'Event (Default)', where: 'section 1, content region', note: 'every Event shown this way without a layout of its own; the page opened is Spring open house', url: '/events/spring-open-house', edit: '/admin/structure/types/manage/event/display/default/layout' },
+      { kind: 'layout-override', label: 'About us (Basic page)', where: 'section 2 (Two columns), second region', url: '/about', edit: '/node/7/layout' },
+    ], {
+      searched: ['Block placements in every theme, by the block’s plugin.', 'Layout Builder default layouts.', 'Layouts of single Content items: stored layouts that name the block, then each of those walked.'],
+      unseen: blockUnseen,
+    }),
+    'block:acme_newsletter_block': drupal('block:acme_newsletter_block', [
+      { kind: 'placement', label: 'Newsletter signup', where: 'Footer region, Acme theme', note: 'switched off', edit: '/admin/structure/block/manage/acme_newsletter' },
+    ], {
+      complete: false, found: 1, gaps: ['The search stopped after 10 seconds, so what it had not reached is not listed.'],
+      searched: ['Block placements in every theme, by the block’s plugin.', 'Layout Builder default layouts.'], unseen: blockUnseen,
+    }),
+    'block:northwind/testimonial': { state: 'ok', usage: {
+      version: 1, platform: 'wordpress', entry: 'block:northwind/testimonial', found: 5, complete: true, gaps: [], ms: 186,
+      places: [
+        { kind: 'content', label: 'About', url: '/about/', edit: '/wp-admin/post.php?post=12&action=edit', where: 'core/group › northwind/testimonial', note: 'Page', store: 'post:12', paths: [[2, 0]] },
+        { kind: 'content', label: 'Spring news', where: 'northwind/testimonial', note: 'Post; draft', count: 2, edit: '/wp-admin/post.php?post=31&action=edit', store: 'post:31', paths: [[0], [4]] },
+        { kind: 'synced-pattern', label: 'Kind words', where: 'core/group › northwind/testimonial', edit: '/wp-admin/post.php?post=40&action=edit', store: 'post:40', paths: [[0, 1]] },
+        { kind: 'content', label: 'Home', via: 'the synced pattern “Kind words”', url: '/', where: 'core/block', note: 'Page', store: 'post:2', paths: [[3]] },
+        { kind: 'template-part', label: 'Footer', via: 'the synced pattern “Kind words”', note: 'the theme’s file', file: 'wp-content/themes/northwind/parts/footer.html', where: 'core/block', store: 'tp:northwind//footer', paths: [[1]], edit: '/wp-admin/site-editor.php?p=/wp_template_part/northwind%2F%2Ffooter&canvas=edit' },
+      ],
+      searched: [
+        'Stored block markup of every public post type, templates, template parts, synced patterns and navigation menus (published, scheduled, draft, pending and private), each match confirmed block by block.',
+        'The theme’s template and part files, as WordPress reads them.', 'Registered patterns.', 'Block widgets.',
+        'What holds it, followed wherever that is used in turn: synced patterns, patterns, template parts and navigation menus.',
+      ],
+      unseen: [
+        'Blocks that Block Hooks insert as a page renders: stored content never holds them (WordPress adds them to the theme’s files and patterns as it reads them, and those are searched as it reads them).',
+        'Blocks a theme or plugin renders from PHP: a classic theme’s templates, do_blocks() on its own markup, a shortcode.',
+        'Which pages show a template or template part: the template hierarchy decides it as each page renders.',
+        'Revisions, autosaves and the trash.',
+      ],
+    } },
+    'block:core/paragraph': { state: 'outdated' },
+  };
+}
+
+/**
  * The init script, run in the page: it carries its own wireframe (made at the
  * device's width), and is given the trace as `f.trace`.
  */
@@ -280,6 +347,8 @@ export function liveStub(f) {
     // The component library: what library() answers (null: the Drupal one), the WordPress one to switch to, the
     // entries each libraryPictures() call asked for, and the pictures that fail.
     libraryAnswer: null, drupalLibrary: f.library, wpLibrary: f.wpLibrary, pictureAsks: [], failing: ['block:northwind_hours_block'],
+    // Where entries are used across the site (usage()), by entry id; any other is used nowhere.
+    usage: f.usage,
     // What the helper says of the site's AI: a Drupal site, so core has no AI API, and what saving runs.
     siteAi: { state: 'ok', ai: { version: 1, platform: 'drupal', coreAi: false, supports: null, connectors: null, abilities: null, watches: { prompts: false, abilities: false }, saves: f.trace.saves } },
   };
@@ -583,6 +652,13 @@ export function liveStub(f) {
       }));
       return { ok: true, hash: lib.hash, shots };
     },
+    // Where an entry is used across the site: the answer usage() gives, or nowhere, a little slower than at once.
+    async libraryUsage(id, entry, options) {
+      window.__wgLive.calls.push(`usage ${entry}${options?.refresh ? ' refresh' : ''}`);
+      await new Promise((done) => setTimeout(done, 40));
+      const lib = libraryNow();
+      return window.__wgLive.usage[entry] ?? { state: 'ok', usage: { version: 1, platform: lib?.platform ?? 'drupal', entry, places: [], found: 0, complete: true, gaps: [], searched: ['Block placements in every theme, by the block’s plugin.'], unseen: ['A block rendered from code is invisible to stored data.'], ms: 30 } };
+    },
     async libraryPicture(id, entry, width) {
       const e = libraryNow()?.entries.find((x) => x.id === entry);
       return e && e.picture.from !== 'none' && !window.__wgLive.failing.includes(entry) ? piecePng(e, width) : null;
@@ -674,4 +750,4 @@ export function liveStub(f) {
 }
 
 /** What liveStub is given. */
-export const liveFixture = { trace: trace(), library: library(), wpLibrary: wordpressLibrary() };
+export const liveFixture = { trace: trace(), library: library(), wpLibrary: wordpressLibrary(), usage: usage() };

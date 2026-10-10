@@ -1,14 +1,15 @@
 // The Library panel's reading of the site's library: why there is none (in the
 // main process's own words), an entry's props, whether it can be added to the
-// page shown, and where that page uses it. Made-up library (acme); nothing real.
+// page shown, where that page uses it, and where the rest of the site does.
+// Made-up library (acme); nothing real.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { libraryWhy } from '../../../main/live-library.ts';
 import type { LiveRegion } from '../../../shared/live.ts';
 import { partIndex } from '../../../shared/live-lens.ts';
-import type { ComponentLibrary, LibraryEntry } from '../../../shared/live-library.ts';
+import type { ComponentLibrary, EntryUsage, LibraryEntry } from '../../../shared/live-library.ts';
 import type { LiveTrace } from '../../../shared/live-trace.ts';
-import { libraryGroups, libraryNext, libraryWhyText, placement, propRows, usesOnPage, type LibraryProblem } from './live-library.ts';
+import { libraryGroups, libraryNext, libraryWhyText, placeAddress, placeDetail, placement, propRows, usageGroups, usageSummary, usesOnPage, type LibraryProblem } from './live-library.ts';
 
 const entry = (e: Partial<LibraryEntry> & Pick<LibraryEntry, 'id' | 'kind' | 'label'>): LibraryEntry => ({ picture: { from: 'none', why: 'none' }, ...e });
 
@@ -118,4 +119,28 @@ test('the library is grouped by kind with each kind’s count, and narrowed by e
   assert.deepEqual(libraryGroups(lib, '').map((g) => [g.title, g.total, g.entries.length]), [['Components', 1, 1], ['Blocks', 7, 2]]);
   assert.deepEqual(libraryGroups(lib, 'call action').map((g) => [g.title, g.entries.map((e) => e.id)]), [['Blocks', ['block:acme_cta_block']]]);
   assert.deepEqual(libraryGroups(lib, 'nothing like it'), []);
+});
+
+test('where the rest of the site uses an entry is grouped by kind, counted in one sentence, and opens only on the site', () => {
+  const usage: EntryUsage = {
+    version: 1, platform: 'drupal', entry: 'block:system_menu_block:main', found: 4, complete: true, gaps: [], searched: [], unseen: [], ms: 40,
+    places: [
+      { kind: 'layout-override', label: 'About us (Basic page)', url: '/about', where: 'section 2, second region', count: 2 },
+      { kind: 'placement', label: 'Main navigation', url: '/', where: 'Header region, Acme theme', note: 'no visibility conditions: any page in this theme' },
+      { kind: 'template', label: 'node--article.html.twig', file: 'web/themes/custom/acme/templates/node--article.html.twig', where: 'line 4, include' },
+      { kind: 'placement', label: 'Old menu', where: 'Footer region, Acme theme', note: 'switched off' },
+    ],
+  };
+  assert.deepEqual(usageGroups(usage).map((g) => [g.title, g.places.map((p) => p.label)]), [
+    ['Block placements', ['Main navigation', 'Old menu']], ['Layouts of single items', ['About us (Basic page)']], ['Templates', ['node--article.html.twig']],
+  ], 'in the order the kinds are listed, each kind in the order found');
+  assert.equal(usageSummary(usage), 'Used in 4 places across the site.');
+  assert.equal(usageSummary({ ...usage, complete: false, found: 9 }), 'Used in 9 places it reached across the site (4 listed).', 'a search that did not finish says so, and a cut list says how many are listed');
+  assert.equal(usageSummary({ ...usage, places: [], found: 0 }), 'Nowhere: nothing the site has stored uses it.');
+  assert.equal(usageSummary({ ...usage, places: [], found: 0, complete: false }), 'Nowhere the search reached: nothing it read uses it.');
+  assert.equal(placeDetail({ kind: 'content', label: 'About', where: 'core/group › acme/card', via: 'the synced pattern “Footer call”', note: 'Page' }), 'core/group › acme/card · through the synced pattern “Footer call” · Page');
+  assert.equal(placeDetail(usage.places[2]!), 'line 4, include', 'a file is shown on its own');
+  assert.equal(placeAddress('/about?x=1', 'https://acme.example.test/node/1'), 'https://acme.example.test/about?x=1');
+  for (const away of ['//elsewhere.example/', 'https://elsewhere.example/', 'about', undefined]) assert.equal(placeAddress(away, 'https://acme.example.test/'), null, String(away));
+  assert.equal(placeAddress('/about', null), null, 'no site, nothing to open');
 });

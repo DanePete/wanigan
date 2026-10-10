@@ -70,6 +70,7 @@ const live: LiveBridge = {
   library: (projectId, options) => ipcRenderer.invoke('live:library', projectId, options ?? null) as ReturnType<LiveBridge['library']>,
   libraryPictures: (projectId, entries, options) => ipcRenderer.invoke('live:libraryPictures', projectId, entries, options ?? null) as ReturnType<LiveBridge['libraryPictures']>,
   libraryPicture: (projectId, entry, width) => ipcRenderer.invoke('live:libraryPicture', projectId, entry, width) as ReturnType<LiveBridge['libraryPicture']>,
+  libraryUsage: (projectId, entry, options) => ipcRenderer.invoke('live:libraryUsage', projectId, entry, options ?? null) as ReturnType<LiveBridge['libraryUsage']>,
   // The design layer (src/main/live-layer.ts).
   layerApply: () => ipcRenderer.invoke('live:layerApply') as ReturnType<LiveBridge['layerApply']>,
   layerShow: (on) => ipcRenderer.invoke('live:layerShow', on) as ReturnType<LiveBridge['layerShow']>,

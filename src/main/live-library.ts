@@ -28,8 +28,8 @@ import { join } from 'node:path';
 import type { IpcMain, IpcMainInvokeEvent, Session } from 'electron';
 import { sameSite, type LiveSite } from '../shared/live.ts';
 import {
-  LIBRARY_HASH, parseLibrary, pictureRequest,
-  type ComponentLibrary, type LibraryPicturesAnswer, type LibraryShot, type LiveLibraryAnswer,
+  LIBRARY_HASH, parseLibrary, parseUsage, pictureRequest, USAGE_ENTRY,
+  type ComponentLibrary, type LibraryPicturesAnswer, type LibraryShot, type LiveLibraryAnswer, type LiveUsageAnswer,
 } from '../shared/live-library.ts';
 import type { Method } from '../shared/protocol.ts';
 import { folderOf, inHiddenWindow } from './live-capture.ts';
@@ -83,6 +83,70 @@ export async function askLibrary(fetch: SiteFetch, origin: string, token: string
   try { raw = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return { state: 'outdated' }; }
   const library = parseLibrary(raw);
   return library ? { state: 'ok', library } : { state: 'unreadable' };
+}
+
+/* ── where an entry is used ────────────────────────────────────────────── */
+
+/** A helper bounds its search at ten seconds and answers with what it found; this waits a little longer than that. */
+const USAGE_MS = 30_000;
+/** The answer for one entry is used again this long, unless asked afresh: the site's content changes under it. */
+const USAGE_FRESH_MS = 30_000;
+/** Places are bounded at 500 by the helper and by parseUsage. */
+const USAGE_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Ask a site's helper where a library entry is used (GET /_wanigan/usage?entry=…): bounded, checked by parseUsage
+ * against the entry asked, and each way it can fail said. A helper that refuses the entry says why in its own words.
+ */
+export async function askUsage(fetch: SiteFetch, origin: string, token: string, entry: string): Promise<LiveUsageAnswer> {
+  if (!USAGE_ENTRY.test(entry)) return { state: 'unknown', error: 'That is not an entry of the library.' };
+  let res: Response;
+  try {
+    res = await fetch(`${origin}/_wanigan/usage?entry=${encodeURIComponent(entry)}`, {
+      method: 'GET',
+      credentials: 'include',
+      // A helper never redirects this; following one could take the token somewhere else.
+      redirect: 'error',
+      signal: AbortSignal.timeout(USAGE_MS),
+      headers: { 'X-Wanigan-Live': token, Accept: 'application/json' },
+    });
+  } catch (error) {
+    return { state: 'down', error: (error as Error).message || 'no answer' };
+  }
+  // An older helper has no such route: the site answers with its own 404 page.
+  if (res.status === 404) return { state: 'outdated' };
+  if (res.status === 401 || res.status === 403) return { state: 'refused', status: res.status };
+  if (Number(res.headers.get('content-length') ?? 0) > USAGE_MAX_BYTES) return { state: 'too-large' };
+  const body = await readBounded(res, USAGE_MAX_BYTES);
+  if (body === null) return { state: 'too-large' };
+  let raw: unknown;
+  try { raw = JSON.parse(body); } catch { raw = undefined; }
+  // The helper refused the entry (not one, or not in its library now): its words, plain and bounded.
+  if (res.status === 400 || res.status === 422) {
+    const said = raw && typeof raw === 'object' && typeof (raw as { error?: unknown }).error === 'string' ? (raw as { error: string }).error.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    return { state: 'unknown', error: said || `The site refused to search for ${entry}.` };
+  }
+  if (!res.ok) return { state: 'down', error: `it answered ${res.status}` };
+  if (raw === undefined) return { state: 'outdated' };
+  const usage = parseUsage(raw, entry);
+  return usage ? { state: 'ok', usage } : { state: 'unreadable' };
+}
+
+/** A response's body as text, or null once it passes the bound. */
+async function readBounded(res: Response, max: number): Promise<string | null> {
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = res.body?.getReader();
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) { await reader.cancel().catch(() => {}); return null; }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** Why there is no library, in the owner's words. */
@@ -193,7 +257,7 @@ export function wireLiveLibrary(options: {
   /** Test seam: what renders and takes a piece. */
   capture?: PieceCapture;
   now?: () => number;
-}): { library(projectId: string, refresh?: boolean): Promise<LiveLibraryAnswer> } {
+}): { library(projectId: string, refresh?: boolean): Promise<LiveLibraryAnswer>; usage(projectId: string, entry: string, refresh?: boolean): Promise<LiveUsageAnswer> } {
   const { ipc } = options;
   const clock = options.now ?? Date.now;
   const capture = options.capture ?? captureInWindow;
@@ -229,6 +293,30 @@ export function wireLiveLibrary(options: {
     if (!ses) return { state: 'no-helper' };
     const answer = await askLibrary((url, init) => ses.fetch(url, init), origin, site.token);
     if (answer.state === 'ok') held.set(projectId, { origin, library: answer.library, at: clock() });
+    return answer;
+  };
+
+  const usedHeld = new Map<string, { origin: string; answer: LiveUsageAnswer; at: number }>();
+  /** Where an entry is used, through the project's view session as the user logged in there; kept half a minute. */
+  const usage = async (projectId: string, entry: string, refresh = false): Promise<LiveUsageAnswer> => {
+    if (!options.enabled()) return { state: 'off' };
+    if (!USAGE_ENTRY.test(entry)) return { state: 'unknown', error: 'That is not an entry of the library.' };
+    const site = await siteOf(projectId);
+    if (!site.url) return { state: 'no-site' };
+    if (!site.helper || !site.token) return { state: 'no-helper' };
+    if (site.helper.version < LIBRARY_HELPER) return { state: 'outdated' };
+    const origin = new URL(site.url).origin;
+    const key = `${projectId}\n${entry}`;
+    const kept = usedHeld.get(key);
+    if (!refresh && kept && kept.origin === origin && clock() - kept.at < USAGE_FRESH_MS) return kept.answer;
+    const ses = options.sessionFor(projectId, site.url);
+    if (!ses) return { state: 'no-helper' };
+    const answer = await askUsage((url, init) => ses.fetch(url, init), origin, site.token, entry);
+    if (answer.state === 'ok') {
+      usedHeld.set(key, { origin, answer, at: clock() });
+      // A few dozen entries' answers at most are kept: the oldest go first.
+      while (usedHeld.size > 50) usedHeld.delete(usedHeld.keys().next().value as string);
+    } else usedHeld.delete(key);
     return answer;
   };
 
@@ -306,6 +394,14 @@ export function wireLiveLibrary(options: {
     return { ok: true, hash: lib.hash, shots: await Promise.all(shots) };
   });
 
+  ipc.handle('live:libraryUsage', async (event, rawProject: unknown, rawEntry: unknown, rawOptions: unknown): Promise<LiveUsageAnswer> => {
+    const projectId = project(rawProject);
+    if (!options.trusted(event) || !projectId) return { state: 'off' };
+    if (typeof rawEntry !== 'string' || rawEntry.length > 300 || !USAGE_ENTRY.test(rawEntry)) return { state: 'unknown', error: 'That is not an entry of the library.' };
+    const refresh = !!rawOptions && typeof rawOptions === 'object' && (rawOptions as { refresh?: unknown }).refresh === true;
+    return usage(projectId, rawEntry, refresh);
+  });
+
   // A kept picture as base64 PNG, for a window that cannot read the data folder itself.
   ipc.handle('live:libraryPicture', async (event, rawProject: unknown, rawEntry: unknown, rawWidth: unknown): Promise<string | null> => {
     const projectId = project(rawProject);
@@ -316,5 +412,5 @@ export function wireLiveLibrary(options: {
     try { return readFileSync(file).toString('base64'); } catch { return null; }
   });
 
-  return { library };
+  return { library, usage };
 }

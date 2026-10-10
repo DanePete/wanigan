@@ -3,7 +3,10 @@
 // and the words an agent gets. Made-up entries (acme, northwind) only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIBRARY_LIMITS, libraryText, paletteEntryFor, parseLibrary, piecePath, pictureRequest, PICTURES_AT_ONCE, type ComponentLibrary, type LibraryEntry } from './live-library.ts';
+import {
+  LIBRARY_LIMITS, libraryText, paletteEntryFor, parseLibrary, parseUsage, piecePath, pictureRequest, PICTURES_AT_ONCE, sitePath, USAGE_ENTRY, USAGE_LIMITS, usageWhy,
+  type ComponentLibrary, type LibraryEntry,
+} from './live-library.ts';
 
 const HASH = '0123456789abcdef0123456789abcdef';
 
@@ -112,4 +115,59 @@ test('a library entry is placed through the trace palette entry its helper names
   assert.deepEqual(paletteEntryFor(e('block:core/paragraph', 'block'), 'wordpress'), { id: 'block:core/paragraph' });
   assert.deepEqual(paletteEntryFor(e('pattern:acme/hero', 'pattern'), 'wordpress'), { id: 'pattern:acme/hero' });
   assert.match((paletteEntryFor(e('style:core/button:outline', 'style'), 'wordpress') as { why: string }).why, /how a block looks/);
+});
+
+/* ── where an entry is used ─────────────────────────────────────────────── */
+
+const usage = {
+  version: 1, platform: 'wordpress', entry: 'block:acme/card', found: 4, complete: true, ms: 812.4,
+  searched: ['Stored block markup.', 7], unseen: ['Blocks Block Hooks insert as a page renders.'], gaps: [],
+  places: [
+    { kind: 'content', label: 'Spring sale', url: '/spring-sale/', edit: '/wp-admin/post.php?post=12&action=edit', where: 'core/group › acme/card', count: 2, store: 'post:12', paths: [[0, 1], [2], [-1], 'x'] },
+    { kind: 'template-part', label: 'Footer', store: 'tp:northwind//footer', paths: [[3, 0]], via: 'the synced pattern “Footer call”', note: 'the theme’s file' },
+    { kind: 'content', label: 'Elsewhere', url: 'https://elsewhere.example/x', edit: '//elsewhere.example/y' },
+    { kind: 'widget', label: 'Climbs', url: '/a\b', store: '../../etc', paths: [[0]] },
+    { kind: 'gadget', label: 'Not a kind' },
+    { kind: 'pattern', label: '' },
+    { kind: 'template', label: 'Card list', file: 'web/themes/custom/acme/templates/card-list.html.twig', where: 'line 12, embed' },
+    { kind: 'template', label: 'Outside', file: '/etc/passwd' },
+  ],
+};
+
+test('where an entry is used is kept as the helper said it; paths that leave the site and malformed places are dropped', () => {
+  const u = parseUsage(usage, 'block:acme/card');
+  assert.ok(u);
+  assert.deepEqual(u.places.map((p) => p.label), ['Spring sale', 'Footer', 'Elsewhere', 'Climbs', 'Card list', 'Outside'], 'an unknown kind and an empty label are dropped');
+  const [spring, footer, elsewhere, climbs, cards, outside] = u.places;
+  assert.deepEqual(spring, { kind: 'content', label: 'Spring sale', url: '/spring-sale/', edit: '/wp-admin/post.php?post=12&action=edit', where: 'core/group › acme/card', count: 2, store: 'post:12', paths: [[0, 1], [2]] });
+  assert.deepEqual([footer?.store, footer?.paths, footer?.via, footer?.note], ['tp:northwind//footer', [[3, 0]], 'the synced pattern “Footer call”', 'the theme’s file']);
+  assert.deepEqual([elsewhere?.url, elsewhere?.edit], [undefined, undefined], 'nothing on another origin, nor protocol-relative');
+  assert.deepEqual([climbs?.url, climbs?.store, climbs?.paths], [undefined, undefined, undefined], 'no backslash path, no store the trace does not name');
+  assert.equal(cards?.file, 'web/themes/custom/acme/templates/card-list.html.twig');
+  assert.equal(outside?.file, undefined);
+  assert.deepEqual([u.found, u.complete, u.ms, u.searched, u.unseen], [6, true, 812, ['Stored block markup.'], ['Blocks Block Hooks insert as a page renders.']], 'found is never fewer than the places kept');
+});
+
+test('an answer about another entry, or of another shape, is refused; one cut or with gaps is not complete', () => {
+  assert.equal(parseUsage(usage, 'block:acme/other'), null, 'an answer must be about the entry asked');
+  assert.equal(parseUsage({ ...usage, version: 2 }, 'block:acme/card'), null);
+  assert.equal(parseUsage({ ...usage, platform: 'joomla' }, 'block:acme/card'), null);
+  assert.equal(parseUsage({ ...usage, places: 'x' }, 'block:acme/card'), null);
+  const gapped = parseUsage({ ...usage, gaps: ['The search stopped at 10 seconds.'] }, 'block:acme/card');
+  assert.equal(gapped?.complete, false, 'a helper that says it has gaps is not complete, whatever else it says');
+  const many = parseUsage({ ...usage, found: 9000, places: Array.from({ length: USAGE_LIMITS.places + 5 }, (_, i) => ({ kind: 'content', label: `Post ${i}` })) }, 'block:acme/card');
+  assert.equal(many?.places.length, USAGE_LIMITS.places);
+  assert.equal(many?.found, 9000);
+  assert.equal(many?.complete, false);
+  assert.deepEqual(many?.gaps, [`Only the first ${USAGE_LIMITS.places} places are kept.`]);
+});
+
+test('a site path stays on the site; the entries asked about are the helpers\' kinds; each failure is said', () => {
+  assert.equal(sitePath('/node/12?x=1#a'), '/node/12?x=1#a');
+  for (const bad of ['node/12', '//elsewhere.example/', 'https://elsewhere.example/', '/a\\b', '/a b', '/a\nb', 7, null]) assert.equal(sitePath(bad), null, String(bad));
+  for (const ok of ['sdc:acme:card', 'block:system_menu_block:main', 'block:core/paragraph', 'pattern:northwind/hero-split', 'style:core/button:outline']) assert.match(ok, USAGE_ENTRY);
+  for (const bad of ['acme:card', 'block:', 'block:has space', 'gadget:x', `block:${'x'.repeat(251)}`]) assert.doesNotMatch(bad, USAGE_ENTRY);
+  assert.match(usageWhy({ state: 'outdated' }), /cannot say where an entry is used\. Update it from the project’s Live tab\./);
+  assert.equal(usageWhy({ state: 'unknown', error: 'This site’s library has no entry block:acme_gone.' }), 'This site’s library has no entry block:acme_gone.');
+  assert.match(usageWhy({ state: 'refused', status: 403 }), /answered 403/);
 });

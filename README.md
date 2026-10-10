@@ -207,7 +207,12 @@ WordPress and other sites can each be on or off.
   block library's blocks, WordPress's block types, patterns and block styles.
   Each is pictured alone in the site's own theme at a phone's and a desktop's
   width (in a hidden window; kept until its files change), with its props,
-  slots, files (opening in the Code tab) and where this page uses it. Add one
+  slots, files (opening in the Code tab), where the rest of the site uses it
+  (the helper's read-only search of what the site has stored, which says what
+  it cannot see: on Drupal placements, Layout Builder layouts and, for a
+  component, a parse of the theme's Twig; on WordPress stored block markup,
+  theme files, patterns and widgets, followed through synced patterns, parts
+  and patterns) and where this page uses it. Add one
   by dragging it onto the page or with Place and a click, through the same
   insert as the palette; what core cannot place alone (a Drupal component
   outside a template or field) says so.

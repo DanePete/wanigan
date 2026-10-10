@@ -20,6 +20,7 @@ import { DRUPAL_EDIT_FILES } from './live-helper-drupal-edit.ts';
 import { DRUPAL_FIND_FILES } from './live-helper-drupal-find.ts';
 import { DRUPAL_AI_FILES } from './live-helper-drupal-ai.ts';
 import { DRUPAL_LIBRARY_FILES } from './live-helper-drupal-library.ts';
+import { DRUPAL_USAGE_FILES } from './live-helper-drupal-usage.ts';
 
 export const DRUPAL_HELPER_VERSION = 4;
 export const DRUPAL_HELPER_MODULE = 'wanigan_live';
@@ -176,6 +177,14 @@ wanigan_live.components:
   path: '/_wanigan/components'
   defaults:
     _controller: '\\Drupal\\wanigan_live\\Controller\\LiveController::components'
+  requirements:
+    _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
+  options:
+    no_cache: TRUE
+wanigan_live.usage:
+  path: '/_wanigan/usage'
+  defaults:
+    _controller: '\\Drupal\\wanigan_live\\Usage\\UsageController::usage'
   requirements:
     _custom_access: '\\Drupal\\wanigan_live\\Controller\\LiveController::access'
   options:
@@ -811,4 +820,5 @@ export const DRUPAL_HELPER_FILES: Readonly<Record<string, string>> = {
   ...DRUPAL_FIND_FILES,
   ...DRUPAL_AI_FILES,
   ...DRUPAL_LIBRARY_FILES,
+  ...DRUPAL_USAGE_FILES,
 };
