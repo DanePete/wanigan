@@ -494,13 +494,16 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
   // What Layers lists: the page's parts once the trace that names them has come as well. A reload's parts are scanned
   // a moment before its trace arrives, and in between every part only the trace names read "A part of the page" (a
   // frame of it showed in every take that saved). Held at most 3 s, for a trace that never comes.
+  // And it says nothing is marked only once it knows (`known`): the page scanned and its trace come. Back from a
+  // session's split view, it said "Nothing on this page says what made it" for the moment before they had.
   const traceWaited = helperSite && (trace === null || trace.state === 'none');
-  const [layered, setLayered] = useState({ regions, partName });
+  const [scannedOnce, setScannedOnce] = useState(false);
+  const [layered, setLayered] = useState({ regions, partName, known: false });
   useEffect(() => {
-    if (!traceWaited) { setLayered({ regions, partName }); return undefined; }
-    const late = window.setTimeout(() => setLayered({ regions, partName }), 3000);
+    if (!traceWaited && scannedOnce) { setLayered({ regions, partName, known: true }); return undefined; }
+    const late = window.setTimeout(() => setLayered({ regions, partName, known: true }), 3000);
     return () => window.clearTimeout(late);
-  }, [regions, partName, traceWaited]);
+  }, [regions, partName, traceWaited, scannedOnce]);
   const fetchTrace = useCallback(async (): Promise<void> => {
     if (!helperSite) { setTrace(null); return; }
     // A helper another Wanigan set up says so, rather than that there is none.
@@ -564,6 +567,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     const found = await live.scan();
     scanned.current = found;
     setRegions(found);
+    setScannedOnce(true);
     // What the owner had chosen stays chosen, if the page still has it. A reload loses the picked element itself.
     const kept = selected.current;
     const region = kept?.region ? sameRegion(kept.region, before, found) : null;
@@ -848,6 +852,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
     setEnvId(to?.id ?? null);
     setSelection(null);
     setRegions([]);
+    setScannedOnce(false);
   };
   // Go to opens the same path on the environment shown, as the address field always did.
   useEffect(() => {
@@ -1218,7 +1223,7 @@ function LiveShown({ site, url, project, follow, card, compact, following, shots
                     <Layers regions={layered.regions} components={components} selected={selection?.region?.index ?? null}
                       changed={changed} onHover={hover} onSelect={select} partName={layered.partName} onDevtools={(r) => void inspectIn(r.index)} />
                   ) : (
-                    <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading} hosted={!!env} />
+                    <NothingMarked platform={env ? null : site.platform} loading={!!view?.loading || !layered.known} hosted={!!env} />
                   )}
                   {env || trace?.state === 'other' ? null : <HelperOffer site={site} project={project} />}
                 </>

@@ -880,7 +880,12 @@ export function liveStub(f) {
     async hasScript() { return true; },
     onState(l) { listeners.state.add(l); return () => listeners.state.delete(l); },
     onSiteMessages(l) { listeners.said.add(l); return () => listeners.said.delete(l); },
-    async trace() { window.__wgLive.calls.push('trace'); return window.__wgLive.answer; },
+    // A trace that takes its time (traceDelay ms), as a real site's can: what Layers says before it comes.
+    async trace() {
+      window.__wgLive.calls.push('trace');
+      if (window.__wgLive.traceDelay) await new Promise((done) => setTimeout(done, window.__wgLive.traceDelay));
+      return window.__wgLive.answer;
+    },
     async paint(items) { shown.paint = items; draw(); return items.length; },
     async focusWindow() {},
     async where(index) { const r = regions[index]; return r ? r.rect : null; },

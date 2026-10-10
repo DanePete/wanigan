@@ -137,6 +137,26 @@ try {
     const rows = await page.$$eval('.live-layer-title', (els) => els.map((e) => e.textContent));
     for (const want of ['Hero', 'Sidebar', 'Opening hours']) if (!rows.some((r) => r === want || r?.startsWith(want))) fail(t(`layers: no "${want}" row (${rows.join(', ')})`));
     await shot('layers');
+    // Back in Live before the page's trace has come (from a session's split view, say): Layers shows it is loading, and
+    // never says that nothing on the page says what made it (take editor-e10, 55.4 s: three frames of it).
+    {
+      await page.evaluate(() => { window.__wgLive.traceDelay = 1500; location.hash = '#/p/NS/board'; });
+      await page.waitForTimeout(400);
+      await page.evaluate(() => { location.hash = '#/p/NS/live'; });
+      await page.waitForSelector('.live-structure', { timeout: 5000 }).catch(() => fail(t('layers: Live did not come back')));
+      let said = false;
+      let loading = false;
+      for (let i = 0; i < 10; i++) {
+        const now = await page.evaluate(() => ({ said: document.body.innerText.includes('Nothing on this page says what made it'), loading: !!document.querySelector('.live-skeleton') }));
+        said ||= now.said;
+        loading ||= now.loading;
+        await page.waitForTimeout(100);
+      }
+      if (said) fail(t('layers: before the trace came, Layers said nothing on the page says what made it'));
+      if (!loading) fail(t('layers: before the trace came, Layers did not show it was loading'));
+      await page.evaluate(() => { window.__wgLive.traceDelay = 0; });
+      await page.waitForSelector('.live-layer-title', { timeout: 5000 }).catch(() => fail(t('layers: once the trace came, no rows')));
+    }
 
     // Each lens: its legend and its counts, under the bar.
     const legends = {};
@@ -2212,6 +2232,39 @@ try {
   await page.addScriptTag({ content: pageScriptSource(script) });
   if (pageErrors.length) fail(`page script: sent twice, the page logged ${JSON.stringify(pageErrors)}`);
   if (!(await page.evaluate(() => window.__wl === window.__first))) fail('page script: sent twice, the page script installed itself again');
+  // The chosen part kept in view as the view changes size (back from a session's split, where the page was narrower,
+  // the same offset is another place): in the resize event, so the first frame at the new size already shows it (take
+  // editor-e10, 55.4 s: three frames of the description first). A part scrolled away from is not taken back.
+  {
+    const rp = await browser.newPage({ viewport: { width: 420, height: 600 } });
+    const words = '<p>Made-up words that wrap onto more lines the narrower the page is, and onto fewer when it widens.</p>'.repeat(40);
+    await rp.setContent(`<!doctype html><html><body style="margin:0;font:16px sans-serif">${words}
+<!-- wl:part id="p-title" --><h1 data-wl-block="title@acme_title" style="margin:0;height:80px">The chosen title</h1><!-- /wl:part id="p-title" -->
+${words}${words}</body></html>`);
+    await rp.addScriptTag({ content: pageScriptSource(script) });
+    const at = await rp.evaluate(() => window.__wl.scan().find((r) => r.part === 'p-title')?.index ?? null);
+    if (at === null) fail('page script: the made-up title was not found');
+    else {
+      await rp.evaluate((i) => { window.__wl.choose(i); window.__wl.reveal(null); }, at);
+      // A frame for the page script to note the chosen part in view, then wider: the words above it take fewer lines.
+      const firstFrame = () => rp.evaluate(() => new Promise((done) => requestAnimationFrame(() => {
+        const b = document.querySelector('h1').getBoundingClientRect();
+        done({ top: Math.round(b.top), inView: b.bottom > 0 && b.top < innerHeight });
+      })));
+      await firstFrame();
+      await rp.setViewportSize({ width: 1100, height: 600 });
+      const wide = await firstFrame();
+      if (!wide.inView) fail(`page script: widened, the chosen part was out of view in the first frame (${JSON.stringify(wide)})`);
+      // Scrolled away from it, then narrower again: left where the person scrolled.
+      await rp.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+      await firstFrame();
+      await rp.setViewportSize({ width: 420, height: 600 });
+      const away = await firstFrame();
+      const y = await rp.evaluate(() => scrollY);
+      if (away.inView || y !== 0) fail(`page script: a chosen part scrolled away from was brought back on a resize (scrollY ${y})`);
+    }
+    await rp.close();
+  }
   {
     // The check bites: the bare script sent twice still throws, so the wrapper is what makes the difference.
     const bare = await browser.newPage();

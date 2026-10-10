@@ -916,6 +916,23 @@ export function livePage(): void {
 
   addEventListener('scroll', redraw, { capture: true, passive: true });
   addEventListener('resize', redraw, { passive: true });
+  // The chosen part kept in view when the view changes size (back from a session's split, where the page was narrower,
+  // the same scroll offset is another place). In the resize event, which runs before the frame is painted: brought into
+  // view afterwards, the page showed the wrong place for a few frames first. Only a part that was in view: a person who
+  // scrolled away from it is not taken back.
+  const inView = (el: Element | null): boolean => {
+    const b = el?.getBoundingClientRect();
+    return !!b && (b.width >= 1 || b.height >= 1) && b.bottom > 0 && b.top < innerHeight && b.right > 0 && b.left < innerWidth;
+  };
+  let chosenInView = false;
+  let noting = 0;
+  const noteChosen = (): void => { if (!noting) noting = requestAnimationFrame(() => { noting = 0; chosenInView = inView(target()); }); };
+  addEventListener('scroll', noteChosen, { capture: true, passive: true });
+  addEventListener('resize', () => {
+    const el = target();
+    if (el && chosenInView && !inView(el)) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    chosenInView = inView(el);
+  }, { passive: true });
   const ours = (n: Node): boolean => (n instanceof Element ? n : n.parentElement)?.closest(`#${HOST_ID}`) != null || (n instanceof Element && n.id === HOST_ID);
   new MutationObserver((records) => {
     if (records.every((m) => ours(m.target) || layerTouched.has(m.target instanceof Element ? m.target : (m.target.parentElement ?? m.target)))) return;
@@ -1061,6 +1078,7 @@ export function livePage(): void {
     // Words being typed elsewhere are kept, as clicking away keeps them.
     endTyping(true);
     picked = el;
+    noteChosen();
     return describe(el);
   }
 
@@ -1114,7 +1132,7 @@ export function livePage(): void {
       const click = (e: MouseEvent): void => {
         stop(e);
         const el = at(e);
-        if (el) picked = el;
+        if (el) { picked = el; noteChosen(); }
         finish(el ? describe(el) : null);
       };
       // The keyboard walks out to what holds the element and back in, and along to the ones beside it; Enter picks it.
@@ -1132,7 +1150,7 @@ export function livePage(): void {
           stop(e);
           const next = sibling(hovered, e.key === 'ArrowRight' ? 1 : -1);
           if (next) show(next);
-        } else if (e.key === 'Enter') { stop(e); picked = hovered; finish(describe(hovered)); }
+        } else if (e.key === 'Enter') { stop(e); picked = hovered; noteChosen(); finish(describe(hovered)); }
       };
       const swallow = (e: Event): void => stop(e);
       const events: [string, EventListener][] = [
