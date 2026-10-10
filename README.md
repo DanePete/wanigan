@@ -213,9 +213,9 @@ WordPress and other sites can each be on or off.
   Elementor renders and saved through Elementor's own save (its caches cleared,
   a revision kept); ACF's fields, repeater rows, blocks and options are saved
   through ACF with its validation (an option every page shows is saved only when
-  you make it real again); known copies that never render (Beaver Builder's
-  stored-content copy, SiteOrigin's, an SEO plugin's mirror) are never saved
-  into, and Beaver Builder's own layout is refused, saying so. After the save the
+  you make it real again); copies that never render (a builder's
+  stored-content copy, an SEO plugin's mirror) are never saved into, and
+  Beaver Builder's and SiteOrigin's own layouts are refused, saying so. After the save the
   page reloads and is read back: if it still shows the old words, it says the
   site has them but whatever renders them may keep its own copy, and Undo puts
   the old value back (custom fields keep no revision, so this is their only way
