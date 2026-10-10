@@ -1754,7 +1754,7 @@ final class Wanigan_Live {
 		$noun = $type ? strtolower($type->labels->singular_name) : 'post';
 		$why = self::post_why($post, $noun);
 		$route = rest_get_route_for_post($post);
-		if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves its fields here. Change it in wp-admin.';
+		if (!$why && $route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves its fields. Change it in wp-admin.';
 		$revisions = post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post);
 		$title = $post->post_title !== '' ? '“' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”' : $noun . ' ' . $pid;
 		$out = array();
@@ -2919,7 +2919,7 @@ final class Wanigan_Live {
 			$c['inserts'] = array();
 			foreach ($palette as $e) if ($e['kind'] === 'block' || $e['kind'] === 'pattern') $c['inserts'][] = $e['id'];
 			$why = $info['why'];
-			if (!$why && !self::round_trips($l['store'])) $why = 'Writing these blocks back would change other parts of ' . $info['label'] . ' (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged).';
+			if (!$why && !self::round_trips($l['store'])) $why = self::NOT_YET . 'moving blocks writes ' . $info['label'] . ' back whole, and that would change other parts of it (its saved markup does not survive parse_blocks() and serialize_blocks() unchanged).';
 			if ($why) $c['why'] = $why;
 			$c['removes'] = !$why;
 			if ($why) $c['removeWhy'] = $why;
@@ -3052,7 +3052,7 @@ final class Wanigan_Live {
 				$noun = $type ? strtolower($type->labels->singular_name) : 'post';
 				$why = self::post_why($post, $noun);
 				$route = rest_get_route_for_post($post);
-				if (!$why && $route === '') $why = 'This ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how WordPress saves blocks here.';
+				if (!$why && $route === '') $why = self::NOT_YET . 'this ' . $noun . ' type is not in the REST API (show_in_rest is off), which is how Wanigan saves blocks.';
 				$info = array('content' => $post->post_content, 'route' => $route, 'post' => $post->ID, 'label' => $noun . ' “' . self::cut(wp_strip_all_tags($post->post_title), 60) . '”', 'noun' => $noun, 'changes' => 'content', 'revisions' => post_type_supports($post->post_type, 'revisions') && wp_revisions_enabled($post), 'why' => $why);
 				// A synced pattern (core's wp_block) is one post shown in every post, template and part that uses it.
 				if ($post->post_type === 'wp_block') {
