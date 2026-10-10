@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
-import type { Bitmap, ElementSnap } from '../shared/layer-verify.ts';
+import { parseVerdict, type Bitmap, type ElementSnap } from '../shared/layer-verify.ts';
 import type { LiveEditSaved } from '../shared/live-lens.ts';
 import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
 import { folderOf } from './live-capture.ts';
@@ -1128,6 +1128,9 @@ test('an edit made real on the page after the page from before was kept: step 3 
   assert.match((beforeCheck(self, { ...kept, widths: {}, failed: { 390: 'The page did not load within 30 seconds.' } }, [390], [self]) as { why: string }).why, /could not be rendered when it was made real: The page did not load/);
   assert.match((beforeCheck(self, { ...kept, widths: { 390: { ...kept.widths['390']!, found: false } } }, [390], [self]) as { why: string }).why, /not on its page from before/);
   assert.equal(beforeKept({ ...kept, inSite: ['Not An Id'] }), null, 'what is read back is checked');
+  const long = [1, 2, 3].map((i) => edit({ label: `${'A very long heading '.repeat(10)}${i}`.slice(0, 200), state: 'implemented' }));
+  const said = beforeCheck(self, kept, [390], [self, ...long]);
+  assert.ok(!said.ran && said.why.length <= 600 && parseVerdict({ at: 1, ok: true, failed: null, widths: [390], noise: { maxDiff: 0, pixels: 0 }, differences: [], pictures: [], before: said }), 'however long the labels it names, a verdict can say it');
 });
 
 /* ── what the site says changes between renders ── */

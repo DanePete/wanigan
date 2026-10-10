@@ -791,6 +791,12 @@ const inSite = (e: LayerEdit): boolean => e.state === 'implemented' || e.state =
  * it) would be called a leak of this edit, so none may have been.
  */
 export function beforeCheck(edit: LayerEdit, kept: BeforeKept | null, widths: readonly number[], all: readonly LayerEdit[]): LayerBeforeCheck {
+  const check = whyBefore(edit, kept, widths, all);
+  // Within what a verdict may say (parseVerdict), however long the labels it names.
+  return check.ran ? check : { ran: false, why: check.why.length > 600 ? `${check.why.slice(0, 599)}…` : check.why };
+}
+
+function whyBefore(edit: LayerEdit, kept: BeforeKept | null, widths: readonly number[], all: readonly LayerEdit[]): LayerBeforeCheck {
   if (!kept) {
     return { ran: false, why: 'No page from before was kept for it: it was made real some other way than Make it real here (in a template, or marked by an agent), or before Wanigan kept one. The rest of the page was compared with the design only.' };
   }
