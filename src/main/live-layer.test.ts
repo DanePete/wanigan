@@ -1,6 +1,7 @@
 // The design layer's main-process side with stand-ins: a fake ipc, a fake core client, a page script played by a
-// small model of a page, and a render seam for the verification (Electron's windows cannot open under this runner).
-// What is checked is what reaches the page, the core and the data folder. Made-up site (acme); nothing real.
+// small model of a page, a site answering the helper's schema save, and a render seam for the verification
+// (Electron's windows cannot open under this runner). What is checked is what reaches the page, the core, the site and
+// the data folder. Made-up site (acme); nothing real.
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,7 +9,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { compileLayer, layerTextHash, type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerVerdict } from '../shared/design-layer.ts';
 import type { Bitmap, ElementSnap } from '../shared/layer-verify.ts';
-import type { LiveTrace, PartIdentity } from '../shared/live-trace.ts';
+import type { LiveEditSaved } from '../shared/live-lens.ts';
+import type { EditTarget, LiveTrace, PartIdentity, TracePart } from '../shared/live-trace.ts';
+import { saveSchemaEdit } from './live-edit-save.ts';
 import { madeOn, pathOf, wireLiveLayer, type LayerRender, type LayerRenderRequest } from './live-layer.ts';
 
 // Plainly not a key: the helper's real token is random hex the core keeps.
@@ -84,13 +87,18 @@ function modelPage() {
   return { page, run };
 }
 
-function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; saved?: { ok: boolean; error: string | null } } = {}) {
+/** What the stand-in site answers a schema save (`POST /_wanigan/edit/<id>`): a status and its JSON. */
+interface SiteAnswer { status: number; body: unknown }
+
+function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | null; trusted?: boolean; enabled?: boolean; render?: LayerRender; saved?: { ok: boolean; error: string | null }; site?: SiteAnswer } = {}) {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const dataDir = mkdtempSync(join(tmpdir(), 'wanigan-layer-'));
   const { page, run } = modelPage();
   let edits = over.edits ?? [];
   const marks: { id: string; state: string; verdict?: LayerVerdict }[] = [];
   const saves: [string, string, string][] = [];
+  /** What reached the stand-in site's schema save route: the path and the JSON body. */
+  const posts: { path: string; body: unknown }[] = [];
   const sheets: { inserted: string[]; origins: unknown[]; removed: string[]; reloads: number } = { inserted: [], origins: [], removed: [], reloads: 0 };
   let url = over.url ?? `${BASE}paddling`;
   const webContents = {
@@ -123,6 +131,21 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
     run,
     trace: async () => (traced ? { state: 'ok', trace: traced } : { state: 'missing' }),
     helperSave: async (field, before, after) => { saves.push([field, before, after]); return over.saved ? { ...over.saved, label: 'Paddling 101' } : { ok: true, error: null, label: 'Paddling 101', revision: '42' }; },
+    // live-inspect.ts schemaSave, played here: the target found in the trace the view holds (Electron's ipcMain cannot
+    // load under this runner), then the real save in live-edit-save.ts against a stand-in site.
+    schemaSave: async (id, value, tracedId): Promise<LiveEditSaved> => {
+      const t = traced?.edits.find((e) => e.id === id);
+      if (!traced || !t) return { ok: false, error: 'This page’s trace offers no such edit. Reload it, then try again.', revision: null };
+      if (tracedId !== traced.id) return { ok: false, error: 'This page changed since Wanigan read its trace. Reload it, then try again.', revision: null };
+      return saveSchemaEdit({
+        trace: traced.id, target: t, reload: () => webContents.reloadIgnoringCache(),
+        post: async (path, body) => {
+          posts.push({ path, body: JSON.parse(body) as unknown });
+          const a = over.site ?? { status: 200, body: { ok: true, revision: '43' } };
+          return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
+        },
+      }, value);
+    },
     partition: () => 'persist:wanigan-live-p1',
     sessionFor: () => null,
     askTrace: async () => ({ state: 'missing' }),
@@ -134,7 +157,7 @@ function wire(over: { edits?: LayerEdit[]; url?: string; trace?: LiveTrace | nul
   });
   const invoke = <T>(channel: string, ...args: unknown[]): Promise<T> => (handlers.get(channel) as (...a: unknown[]) => Promise<T>)({}, ...args);
   return {
-    page, marks, saves, sheets, renders, dataDir, wired,
+    page, marks, saves, posts, sheets, renders, dataDir, wired,
     edits: () => edits,
     go: (to: string) => { url = to; },
     apply: () => invoke<LayerApplied>('live:layerApply'),
@@ -309,7 +332,10 @@ test('making an edit real: words go through the helper’s save, a style goes to
   const retyped = edit({ change: { type: 'text', value: 'Paddling 102' } });
   const style = edit();
   const every = edit({ scope: 'kind', change: { type: 'text', value: 'Same everywhere' } });
-  const w = wire({ edits: [retyped, style, every] });
+  // The card's props hold the same words as a schema target: a field the helper marked is saved through its own save all the same.
+  const props: EditTarget = { id: 'props.0a1b2c3d4e5f', kind: 'props', label: 'Card props', via: 'schema', schema: { type: 'object', properties: { title: { type: 'string' } } }, value: { title: 'Paddling 101' } };
+  const drupal: LiveTrace = { ...trace(), parts: trace().parts.map((p) => (p.id === 'p1' ? { ...p, edits: [props.id] } : p)), edits: [props] };
+  const w = wire({ edits: [retyped, style, every], trace: drupal });
   try {
     w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
     await w.apply();
@@ -320,6 +346,7 @@ test('making an edit real: words go through the helper’s save, a style goes to
     const done = await w.implement(retyped.id);
     assert.deepEqual(done, { ok: true, id: retyped.id, state: 'implemented', revision: '42' });
     assert.deepEqual(w.saves, [['node:12:title:string', 'Paddling 101', 'Paddling 102']], 'the field the helper marked, the words the site has, the new words');
+    assert.deepEqual(w.posts, [], 'no schema target is asked when the helper marked the field');
     assert.deepEqual(w.marks.at(-1), { id: retyped.id, state: 'implemented' });
     assert.equal(w.sheets.reloads, 1, 'the page shows what the site now has');
     const again = await w.implement(retyped.id);
@@ -334,7 +361,8 @@ test('words with no field the helper marks, or a refusal from the site, are said
     w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101')] } };
     await w.apply();
     const unmarked = await w.implement(loose.id);
-    assert.ok(!unmarked.ok && unmarked.route === 'none' && /not in a plain text field/.test(unmarked.why));
+    assert.deepEqual(unmarked, { ok: false, id: loose.id, route: 'none', why: NOTHING_HOLDS }, 'no field marked, and nothing in the trace holds these words');
+    assert.deepEqual([w.saves, w.posts], [[], []]);
     w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 101', 'node:12:title:string')] } };
     await w.apply();
     const refused = await w.implement(loose.id);
@@ -343,6 +371,201 @@ test('words with no field the helper marks, or a refusal from the site, are said
     w.go(`${BASE}about`);
     const away = await w.implement(loose.id);
     assert.ok(!away.ok && /Open \/paddling in the live view first/.test(away.why));
+  } finally { w.done(); }
+});
+
+/* ── WordPress: words saved through the edit target that holds them ── */
+
+const NOTHING_HOLDS = 'Nothing this page offers to edit holds exactly these words, so there is nothing here to save them to: they come from a template, from formatted text, or from something the site helper does not offer on this page.';
+
+// A made-up WordPress page as its helper traces it (live-helper-wordpress.ts): the single template, a post-title block
+// in it showing post 12's title through its block context, and post 12's content beside it, which carries the post's
+// fields as schema targets (post_edits(): title, excerpt, slug, status, and the editor as a native form).
+const titleBlock: PartIdentity = { kind: 'block', store: 'tpl:acme//single', path: [1, 0], name: 'core/post-title' };
+const postContent: PartIdentity = { kind: 'entity', type: 'post', id: '12', bundle: 'post', field: 'post_content' };
+const showsPost12 = [{ name: 'context.postId', type: 'integer', preview: '12' }];
+const postField = (key: string, label: string, value: unknown, schema: Record<string, unknown>, more: Partial<EditTarget> = {}): EditTarget =>
+  ({ id: `post-12-${key}`, kind: 'field', label: `${label} of “Paddling 101”`, via: 'schema', schema, value, revisions: true, ...more });
+function postEdits(over: { title?: string; excerpt?: string; why?: string } = {}): EditTarget[] {
+  const why = over.why ? { why: over.why } : {};
+  return [
+    postField('title', 'Title', over.title ?? 'Paddling 101', { type: 'string', title: 'Title' }, why),
+    postField('excerpt', 'Excerpt', over.excerpt ?? 'Learn the strokes before the lake.', { type: 'string', title: 'Excerpt' }, why),
+    postField('slug', 'Slug', 'paddling-101', { type: 'string', title: 'Slug' }, { kind: 'property', revisions: false, ...why }),
+    postField('status', 'Status', 'publish', { type: 'string', title: 'Status', enum: ['publish', 'draft'] }, { kind: 'property', revisions: false, ...why }),
+    { id: 'post-12-editor', kind: 'field', label: 'Open “Paddling 101” in the block editor', via: 'native-form', revisions: true },
+  ];
+}
+/** The title block's own target: its attributes, none of them its words (WordPress renders the title from the post). */
+const titleAttributes: EditTarget = {
+  id: 'block-tpl-1.0', kind: 'block-attributes', label: 'Title block in the template “Single”', via: 'schema',
+  schema: { type: 'object', properties: { level: { type: 'integer' }, isLink: { type: 'boolean' }, textAlign: { type: 'string' } }, additionalProperties: false },
+  value: { level: 1, isLink: false, textAlign: 'left' }, revisions: true,
+};
+function wpTrace(over: { parts?: TracePart[]; edits?: EditTarget[] } = {}): LiveTrace {
+  const post = over.edits ?? postEdits();
+  return {
+    version: 1, platform: 'wordpress', id: '0123456789abcdef', url: '/paddling', at: 1, total: { ms: 1 },
+    parts: over.parts ?? [
+      { id: 'w0', kind: 'template', label: 'Single', identity: { kind: 'config', type: 'wp_template', id: 'acme//single' } },
+      { id: 'w1', kind: 'block', label: 'Title', parent: 'w0', identity: titleBlock, variables: showsPost12, edits: [titleAttributes.id] },
+      { id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', parent: 'w0', identity: postContent, edits: post.map((e) => e.id) },
+    ],
+    edits: [...post, titleAttributes],
+  };
+}
+/** A text edit made on the element at `inner` in the part `part` names, which showed `before`. */
+const retype = (part: PartIdentity, value: string, before = 'Paddling 101', inner: string | null = null): LayerEdit =>
+  edit({ label: 'Title', target: { part, inner, selector: null, textHash: layerTextHash(before) }, change: { type: 'text', value } });
+
+test('WordPress: a title’s new words are saved through the title’s schema target, wherever the title is shown, and the edit is marked implemented', async () => {
+  // In the template beside the post's content: the block shows its post's title through its block context.
+  // Inside the post's content: the same, and the post is also the part around it.
+  // A classic theme's the_title(): the title is a part of its own, with its own target (typography as wptexturize prints it).
+  const inPost: PartIdentity = { kind: 'block', store: 'post:12', path: [0], name: 'core/post-title' };
+  const classic: PartIdentity = { kind: 'entity', type: 'post', id: '12', bundle: 'post', field: 'post_title' };
+  const cases: { name: string; part: PartIdentity; trace: LiveTrace; shown: string }[] = [
+    { name: 'in the template', part: titleBlock, trace: wpTrace(), shown: 'Paddling 101' },
+    {
+      name: 'inside the post', part: inPost, shown: 'Paddling 101',
+      trace: wpTrace({ parts: [{ id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', identity: postContent, edits: postEdits().map((e) => e.id) }, { id: 'w1', kind: 'block', label: 'Title', parent: 'w2', identity: inPost, variables: showsPost12 }] }),
+    },
+    {
+      name: 'a classic theme', part: classic, shown: 'Don’t paddle – yet…',
+      trace: wpTrace({ edits: postEdits({ title: 'Don\'t paddle -- yet...' }), parts: [{ id: 'c1', kind: 'field', label: 'Title', identity: classic, edits: ['post-12-title'] }] }),
+    },
+  ];
+  for (const c of cases) {
+    const retitled = retype(c.part, 'Paddling 102', c.shown);
+    const w = wire({ edits: [retitled], trace: c.trace });
+    try {
+      w.page.parts = { [c.trace.parts.find((p) => p.identity === c.part)!.id]: { '': [words(c.shown)] } };
+      await w.apply();
+      const done = await w.implement(retitled.id);
+      assert.deepEqual(done, { ok: true, id: retitled.id, state: 'implemented', revision: '43' }, c.name);
+      assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/post-12-title', body: { trace: '0123456789abcdef', value: 'Paddling 102' } }], `${c.name}: the title, with the trace that offered it and the new words`);
+      assert.deepEqual(w.saves, [], `${c.name}: never /_wanigan/save, which WordPress’s helper does not answer`);
+      assert.deepEqual(w.marks, [{ id: retitled.id, state: 'implemented' }], c.name);
+      assert.equal(w.sheets.reloads, 1, `${c.name}: the page shows what the site now has`);
+    } finally { w.done(); }
+  }
+});
+
+test('WordPress: a menu link’s text is saved with its address as the trace gave it', async () => {
+  const item: PartIdentity = { kind: 'config', type: 'menu_item', id: '31' };
+  const link: EditTarget = {
+    id: 'menu-item-31', kind: 'menu-link', label: 'Menu link “Trails”', via: 'schema', revisions: false,
+    schema: { type: 'object', properties: { title: { type: 'string', title: 'Link text' }, url: { type: 'string', title: 'Address', format: 'uri', readOnly: true } } },
+    value: { title: 'Trails', url: 'https://acme.example.test/trails/' },
+  };
+  const renamed = retype(item, 'Our trails', 'Trails', 'a:nth-of-type(1)');
+  const w = wire({ edits: [renamed], trace: wpTrace({ parts: [{ id: 'm1', kind: 'menu', label: 'Link: Trails', identity: item, edits: [link.id] }], edits: [link] }) });
+  try {
+    w.page.parts = { m1: { 'a:nth-of-type(1)': [words('Trails')] } };
+    await w.apply();
+    assert.equal((await w.implement(renamed.id)).ok, true);
+    assert.deepEqual(w.posts, [{ path: '/_wanigan/edit/menu-item-31', body: { trace: '0123456789abcdef', value: { title: 'Our trails', url: 'https://acme.example.test/trails/' } } }]);
+  } finally { w.done(); }
+});
+
+test('WordPress: words no target holds, or that two hold, are refused with why, and nothing is saved', async () => {
+  // A heading from a pattern in the template: its words are the pattern's, and nothing on the page offers them.
+  const heading: PartIdentity = { kind: 'component', name: 'core/heading', within: 'config|wp_template|acme//single', nth: 0 };
+  const loose = retype(heading, 'Trail notes, revised', 'Trail notes');
+  const a = wire({ edits: [loose], trace: wpTrace({ parts: [...wpTrace().parts, { id: 'h1', kind: 'block', label: 'Heading', parent: 'w0', identity: heading }] }) });
+  try {
+    a.page.parts = { h1: { '': [words('Trail notes')] } };
+    await a.apply();
+    assert.deepEqual(await a.implement(loose.id), { ok: false, id: loose.id, route: 'none', why: NOTHING_HOLDS });
+    assert.deepEqual([a.posts, a.saves, a.marks], [[], [], []]);
+  } finally { a.done(); }
+
+  // The post's excerpt is its title, word for word: which one the block shows cannot be told from the words.
+  const both = retype(titleBlock, 'Paddling 102');
+  const b = wire({ edits: [both], trace: wpTrace({ edits: postEdits({ excerpt: 'Paddling 101' }) }) });
+  try {
+    b.page.parts = { w1: { '': [words('Paddling 101')] } };
+    await b.apply();
+    assert.deepEqual(await b.implement(both.id), {
+      ok: false, id: both.id, route: 'none',
+      why: 'More than one thing here holds exactly these words (Title of “Paddling 101” and Excerpt of “Paddling 101”), so Wanigan cannot tell which to save them to.',
+    });
+    assert.deepEqual([b.posts, b.marks], [[], []]);
+  } finally { b.done(); }
+});
+
+test('WordPress: formatted text goes to an agent as a brief, and nothing is saved', async () => {
+  // A heading block in the post's content: its words are rich text in the post's saved block markup.
+  const block: PartIdentity = { kind: 'block', store: 'post:12', path: [2], name: 'core/heading' };
+  const rich: EditTarget = {
+    id: 'block-post-12-2', kind: 'block-attributes', label: 'Heading block in post “Paddling 101”', via: 'schema', revisions: true,
+    schema: { type: 'object', properties: { content: { type: 'rich-text' }, level: { type: 'integer' } }, additionalProperties: false },
+    value: { content: 'Before the lake', level: 2 },
+  };
+  const headed = retype(block, 'Before the river', 'Before the lake');
+  const a = wire({ edits: [headed], trace: wpTrace({ parts: [{ id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', identity: postContent, edits: postEdits().map((e) => e.id) }, { id: 'b1', kind: 'block', label: 'Heading', parent: 'w2', identity: block, edits: [rich.id] }], edits: [...postEdits(), rich] }) });
+  try {
+    a.page.parts = { b1: { '': [words('Before the lake')] } };
+    await a.apply();
+    assert.deepEqual(await a.implement(headed.id), {
+      ok: false, id: headed.id, route: 'agent',
+      why: 'These words are formatted text (Heading block in post “Paddling 101”): the site keeps them with their markup, which Wanigan does not save from here. An agent can make the change from a brief.',
+    });
+    assert.deepEqual(a.posts, []);
+  } finally { a.done(); }
+
+  // A title kept with markup in it: the words shown are only part of what is kept.
+  const marked = retype(titleBlock, 'Paddling 102');
+  const b = wire({ edits: [marked], trace: wpTrace({ edits: postEdits({ title: '<em>Paddling</em> 101' }) }) });
+  try {
+    b.page.parts = { w1: { '': [words('Paddling 101')] } };
+    await b.apply();
+    const refused = await b.implement(marked.id);
+    assert.ok(!refused.ok && refused.route === 'agent' && refused.why.startsWith('These words are formatted text (Title of “Paddling 101”)'), JSON.stringify(refused));
+    assert.deepEqual(b.posts, []);
+  } finally { b.done(); }
+
+  // A paragraph of a classic post's content that repeats its excerpt word for word: the words are the content's, and
+  // the excerpt is never saved in their place.
+  const para = retype(postContent, 'Learn the strokes first.', 'Learn the strokes before the lake.', 'p:nth-of-type(1)');
+  const c = wire({ edits: [para], trace: wpTrace({ parts: [{ id: 'w2', kind: 'entity', label: 'Post 12: Paddling 101', identity: postContent, edits: postEdits().map((e) => e.id) }] }) });
+  try {
+    c.page.parts = { w2: { 'p:nth-of-type(1)': [words('Learn the strokes before the lake.')] } };
+    await c.apply();
+    assert.deepEqual(await c.implement(para.id), {
+      ok: false, id: para.id, route: 'agent',
+      why: 'These words are in a post’s content (Post 12: Paddling 101), which the site keeps as formatted text: Wanigan does not save it from here. An agent can make the change from a brief.',
+    });
+    assert.deepEqual([c.posts, c.marks], [[], []]);
+  } finally { c.done(); }
+});
+
+test('WordPress: what the site refuses (403, 409) is said as the site said it, a target the user may not change is refused before anything is sent, and nothing is marked', async () => {
+  const answers: { site: SiteAnswer; why: string }[] = [
+    { site: { status: 403, body: { ok: false, error: 'Your WordPress user cannot edit this post (edit_post).' } }, why: 'Your WordPress user cannot edit this post (edit_post).' },
+    { site: { status: 403, body: null }, why: 'The site refused: the user logged in in the live view may not edit this.' },
+    { site: { status: 409, body: { ok: false, error: 'That page was shown more than ten minutes ago (or to another user): reload it and try again.' } }, why: 'That page was shown more than ten minutes ago (or to another user): reload it and try again.' },
+  ];
+  for (const a of answers) {
+    const retitled = retype(titleBlock, 'Paddling 102');
+    const w = wire({ edits: [retitled], trace: wpTrace(), site: a.site });
+    try {
+      w.page.parts = { w1: { '': [words('Paddling 101')] } };
+      await w.apply();
+      assert.deepEqual(await w.implement(retitled.id), { ok: false, id: retitled.id, route: 'none', why: a.why }, `${a.site.status}`);
+      assert.equal(w.posts.length, 1, 'asked once');
+      assert.deepEqual([w.marks, w.sheets.reloads], [[], 0], 'nothing marked, and the page left as it is');
+    } finally { w.done(); }
+  }
+
+  // The helper said in the trace that this user may not change the post: nothing is sent.
+  const locked = retype(titleBlock, 'Paddling 102');
+  const w = wire({ edits: [locked], trace: wpTrace({ edits: postEdits({ why: 'Log in to WordPress in the live view to change this.' }) }) });
+  try {
+    w.page.parts = { w1: { '': [words('Paddling 101')] } };
+    await w.apply();
+    assert.deepEqual(await w.implement(locked.id), { ok: false, id: locked.id, route: 'none', why: 'Log in to WordPress in the live view to change this.' });
+    assert.deepEqual([w.posts, w.marks], [[], []]);
   } finally { w.done(); }
 });
 
