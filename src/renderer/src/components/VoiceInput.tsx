@@ -54,7 +54,7 @@ export function ModelProgress({ model, state }: { model: (typeof VOICE_MODELS)[n
   return (
     <div className="voice-progress" role="status">
       <div className="meter-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></div>
-      <span className="small faint">Downloading {model.label.toLowerCase()}: {mb(d.done)} of {mb(total)}</span>
+      <span className="small faint">Downloading the {model.label.toLowerCase()} model: {mb(d.done)} of {mb(total)}</span>
       <Button size="s" tone="quiet" icon="stop" onClick={() => voiceAct((vb) => vb.cancel(model.id))}>Stop</Button>
     </div>
   );
@@ -94,7 +94,7 @@ export function ModelPrompt({ state, onReady }: { state: VoiceState; onReady?: (
             </Button>
             <Button size="s" tone="quiet" onClick={() => openSettingsSection('set-voice')}>Settings</Button>
           </div>
-          {other ? <p className="small faint">Or {other.label.toLowerCase()} ({other.name}, {mb(modelBytes(other))}) in Settings › Voice: {other.summary.toLowerCase()}</p> : null}
+          {other ? <p className="small faint">Or {other.label} ({other.name}, {mb(modelBytes(other))}), in Settings › Voice. {other.summary}</p> : null}
         </>
       )}
     </div>
@@ -112,7 +112,7 @@ export function ProblemBody({ problem, state, onRetry }: { problem: ListenProble
       <div className="voice-pop-actions">
         <Button size="s" tone="primary" icon="mic" data-autofocus onClick={onRetry}>Try again</Button>
         {problem.kind === 'denied' && state.micSettings ? (
-          <Button size="s" icon="open" onClick={openSettings}>{state.platform === 'darwin' ? 'Open Microphone settings' : 'Open microphone privacy settings'}</Button>
+          <Button size="s" icon="open" onClick={() => void openSettings()}>{state.platform === 'darwin' ? 'Open Microphone settings' : 'Open microphone privacy settings'}</Button>
         ) : null}
       </div>
     </div>

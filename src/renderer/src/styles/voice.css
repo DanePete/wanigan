@@ -152,10 +152,9 @@
 }
 
 /* Settings › Voice. */
+/* Each model is a row of its own beside the others (rows space themselves: .settings-row + .settings-row). */
 .voice-models {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0;
+  margin: var(--space-3) 0;
   padding: 0;
   list-style: none;
 }

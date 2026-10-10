@@ -46,37 +46,37 @@ export function VoiceSettings() {
             options={VOICE_MODELS.map((m) => ({ value: m.id, label: m.label, hint: `${m.name}, ${mb(modelBytes(m))}${ready(m.id) ? '' : ': not downloaded yet'}` }))}
             onChange={(model) => void act((vb) => vb.setSettings({ model }))} />
         </div>
-        <ul className="voice-models">
-          {VOICE_MODELS.map((m) => {
-            const ms = state.models.find((x) => x.id === m.id);
-            const d = ms?.download;
-            return (
-              <li key={m.id} className="settings-row">
-                <div className="voice-model-head">
-                  <span className="settings-label">{m.label}: {m.name}</span>
-                  {ms?.ready ? (
-                    <>
-                      <span className="faint small">On this computer, {mb(modelBytes(m))}</span>
-                      <Button size="s" tone="quiet" icon="trash" onClick={() => act((vb) => vb.remove(m.id))}>Remove</Button>
-                    </>
-                  ) : d?.state === 'downloading' ? null : (
-                    <Button size="s" icon="pull" onClick={() => act((vb) => vb.download(m.id))}>
-                      {d?.state === 'failed' && d.done > 0 ? `Carry on (${mb(modelBytes(m) - d.done)} left)` : `Download (${mb(modelBytes(m))})`}
-                    </Button>
-                  )}
-                </div>
-                <p className="faint small">{m.summary}</p>
-                <p className="faint small">
-                  From <a href={modelPage(m)} target="_blank" rel="noreferrer">Hugging Face, {m.repo}</a> at commit <span className="mono">{m.revision.slice(0, 10)}</span>,
-                  each file checked against its SHA-256. Licence {m.licence}.
-                </p>
-                {ms && d?.state === 'downloading' ? <ModelProgress model={m} state={ms} /> : null}
-                {d?.state === 'failed' ? <p className="small error-text" role="alert">{d.error}</p> : null}
-              </li>
-            );
-          })}
-        </ul>
       </div>
+      <ul className="voice-models">
+        {VOICE_MODELS.map((m) => {
+          const ms = state.models.find((x) => x.id === m.id);
+          const d = ms?.download;
+          return (
+            <li key={m.id} className="settings-row">
+              <div className="voice-model-head">
+                <span className="settings-label">{m.label}: {m.name}</span>
+                {ms?.ready ? (
+                  <>
+                    <span className="faint small">On this computer, {mb(modelBytes(m))}</span>
+                    <Button size="s" tone="quiet" icon="trash" onClick={() => act((vb) => vb.remove(m.id))}>Remove</Button>
+                  </>
+                ) : d?.state === 'downloading' ? null : (
+                  <Button size="s" icon="pull" onClick={() => act((vb) => vb.download(m.id))}>
+                    {d?.state === 'failed' && d.done > 0 ? `Carry on (${mb(modelBytes(m) - d.done)} left)` : `Download (${mb(modelBytes(m))})`}
+                  </Button>
+                )}
+              </div>
+              <p className="faint small">{m.summary}</p>
+              <p className="faint small">
+                From <a href={modelPage(m)} target="_blank" rel="noreferrer">Hugging Face, {m.repo}</a> at commit <span className="mono">{m.revision.slice(0, 10)}</span>,
+                each file checked against its SHA-256. Licence {m.licence}.
+              </p>
+              {ms && d?.state === 'downloading' ? <ModelProgress model={m} state={ms} /> : null}
+              {d?.state === 'failed' ? <p className="small error-text" role="alert">{d.error}</p> : null}
+            </li>
+          );
+        })}
+      </ul>
 
       <div className="settings-row">
         <div className="settings-line">
