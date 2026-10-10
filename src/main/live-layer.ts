@@ -14,9 +14,10 @@
 //   patch their words in place. Words one of the layer's own text edits saved are not other words: put back, they
 //   still name the element an edit was made on. The same stored thing rendered twice on a page (an entity, a post) is two parts with one identity: an edit
 //   for `this` reaches every one of them, as the native change will, once one of them shows the words it was made on.
-//   An edit of this page that no longer resolves, or resolves to other words, is orphaned and the core is
-//   told; it is a draft again once it resolves. Without a trace nothing is resolved by identity, and nothing is
-//   called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
+//   A draft of this page that no longer resolves, or resolves to other words, is orphaned and the core is
+//   told; it is a draft again once it resolves. An implemented edit is in the site: the window is told it was not
+//   found on this load, and it stays implemented (never a draft again, never discardable). Without a trace nothing
+//   is resolved by identity, and nothing is called orphaned for it. Edits for a named breakpoint are left out: phase 1 does not read the theme's breakpoints.
 // - Implementing: only words in a plain text field the helper can save (`POST /_wanigan/save`, the window's own
 //   helperSave path, as the logged-in user), to exactly the content, translation and item the edit's target names
 //   (saveTarget): never the default language, never the first item that holds the same words. Styles and tokens go
@@ -24,7 +25,8 @@
 // - Verifying ("Stage 3: verify", steps 1–3): the design (the page with the layer) and the result (the page without
 //   it) rendered in hidden windows in the view's session at each width (live-capture.ts), each twice for the noise
 //   floor, and every width judged against the one floor the verdict states (the largest over both and every width); the comparisons are src/shared/layer-verify.ts's. Pictures are kept in the data folder under
-//   live-layer/<project>/<edit>/, and the core is told: verified, or back to draft with the verdict.
+//   live-layer/<project>/<edit>/, and the core is told: verified, or still implemented with the failed verdict (its
+//   words are in the site; the verdict says what differs).
 //   What step 3 can see, as contracted: the design is the native page with the layer, so a change the native
 //   implementation made beyond the touched elements is in both renders and does not show. Seen in Electron on a
 //   made-up page: a rule that also turned every paragraph blue passed. Catching that needs the page as it was before
@@ -38,7 +40,7 @@ import {
   type LayerApplied, type LayerEdit, type LayerImplemented, type LayerPickTarget, type LayerSnapshot, type LayerTarget, type LayerVerdict,
 } from '../shared/design-layer.ts';
 import {
-  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, editsAt, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
+  MAX_DIFFERENCES, compareElements, comparePixels, diffBitmaps, diffPicture, judge, noiseFloor, verdictNoise, verifyWidths, widestNoise, zonesOf,
   type Bitmap, type ElementSnap, type WidthFindings, type Zone,
 } from '../shared/layer-verify.ts';
 import type { LiveTraceAnswer } from '../shared/live-lens.ts';
@@ -125,9 +127,10 @@ export async function resolveLayer(run: Run, trace: LiveTrace | null, edits: rea
   }
   if (!asked.length) return out;
   // Words the site renders now because one of the layer's own text edits was made real (implemented, verified or
-  // retired, or back to draft after a verification): put back as they were, an element showing them is still the
-  // one an edit was made on (a style on a heading whose words were then saved, a card around that heading). A
-  // draft never saved is left out: its words are not the site's, so they cannot vouch for an element.
+  // retired, or a draft with a verdict: one a failed verification sent back before implemented edits stayed so):
+  // put back as they were, an element showing them is still the one an edit was made on (a style on a heading whose
+  // words were then saved, a card around that heading). A draft never saved is left out: its words are not the
+  // site's, so they cannot vouch for an element.
   const fold = (t: string): string => t.replace(/\s+/g, ' ').trim();
   const saved = edits.flatMap((x) => (x.change.type === 'text' && typeof x.before.text === 'string'
     && (x.state === 'implemented' || x.state === 'verified' || x.state === 'retired' || (x.state === 'draft' && x.verdict !== null))
@@ -395,11 +398,13 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
     const old = await putSheet(cur.webContents, gate ? compileLayer(now, [], gate) : '');
     await options.run(call('layerSet', { tags: res.tags, texts: on ? res.texts : [], on, gate }), 0);
     if (old && !cur.webContents.isDestroyed()) await cur.webContents.removeInsertedCSS(old).catch(() => {});
-    // The core is told what this page found: lost edits are orphaned, found ones are drafts again.
+    // The core is told what this page found: lost drafts are orphaned, found ones are drafts again. An implemented
+    // edit is in the site whatever this load showed: it is said to the window, and stays implemented.
     const was = new Map(snap.edits.map((e) => [e.id, e.state]));
-    for (const o of res.orphaned) if (was.get(o.id) !== 'orphaned') await mark(cur.projectId, o.id, 'orphaned');
+    for (const o of res.orphaned) if (was.get(o.id) === 'draft') await mark(cur.projectId, o.id, 'orphaned');
     for (const id of res.resolved) if (was.get(id) === 'orphaned') await mark(cur.projectId, id, 'draft');
-    return { page: path, shown: on ? res.shown : [], orphaned: res.orphaned, elsewhere: res.elsewhere, off: !on };
+    const orphaned = res.orphaned.map((o) => (was.get(o.id) === 'implemented' ? { ...o, why: `${o.why} It is in the site, so it stays implemented.` } : o));
+    return { page: path, shown: on ? res.shown : [], orphaned, elsewhere: res.elsewhere, off: !on };
   };
   const apply = (): Promise<LayerApplied> => {
     const next = applying.then(applyNow, applyNow);
@@ -590,11 +595,11 @@ export function wireLiveLayer(options: LiveLayerOptions): { hooks: LiveViewHooks
       });
       verdicts.set(e.id, { ...base, pictures });
     }
-    // The core is told: verified, or back to draft with the verdict for the edits it is about; the rest keep it.
-    const back = new Set(editsAt(base, edits.map((e) => e.id)));
+    // The core is told: verified, or still implemented with the verdict. The words are in the site either way; a
+    // failed verdict says what differs, and never makes an edit a draft again (from where it could be discarded).
     for (const e of edits) {
       const v = verdicts.get(e.id) as LayerVerdict;
-      await mark(projectId, e.id, base.ok ? 'verified' : back.has(e.id) ? 'draft' : 'implemented', v);
+      await mark(projectId, e.id, base.ok ? 'verified' : 'implemented', v);
     }
     return verdicts.get(edits[0]!.id) as LayerVerdict;
   };

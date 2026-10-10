@@ -324,7 +324,7 @@ export interface LayerApplied {
   page: string;
   /** Edits shown on this page, and how many elements each tagged. */
   shown: { id: string; elements: number }[];
-  /** Edits made on this page whose target no longer resolves, or resolves to other words: listed, never applied. The core is told. */
+  /** Edits made on this page whose target no longer resolves, or resolves to other words: listed, never applied. The core is told of drafts (orphaned); an implemented edit stays implemented. */
   orphaned: { id: string; why: string }[];
   /** Edits of other pages (scope `this`), left alone here. */
   elsewhere: string[];

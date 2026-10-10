@@ -268,6 +268,26 @@ test('words the layer’s own text edit saved are not other words: a style on th
   } finally { d.done(); }
 });
 
+test('an implemented edit stays implemented: a load where it is not found says so, and never makes it a draft or orphaned', async () => {
+  const saved = edit({ label: 'Heading', state: 'implemented', change: { type: 'text', value: 'Paddling 102' }, before: { text: 'Paddling 101' } });
+  const draft = edit();
+  const w = wire({ edits: [saved, draft] });
+  try {
+    // A template filter changed the saved words, or the element streamed in after the load: neither resolves.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Something else')] } };
+    const lost = await w.apply();
+    assert.deepEqual(lost.orphaned.map((o) => o.id), [saved.id, draft.id], 'both said to the window');
+    assert.match(lost.orphaned[0]!.why, /in the site, so it stays implemented/);
+    assert.deepEqual(w.marks, [{ id: draft.id, state: 'orphaned' }], 'only the draft is orphaned; the implemented edit is not touched');
+    // Found again: the implemented edit is still implemented, not a draft.
+    w.page.parts = { p1: { 'h2:nth-of-type(1)': [words('Paddling 102')] } };
+    const back = await w.apply();
+    assert.ok(back.shown.some((x) => x.id === saved.id));
+    assert.deepEqual(w.marks.filter((m) => m.id === saved.id), []);
+    assert.equal(w.edits().find((e) => e.id === saved.id)?.state, 'implemented');
+  } finally { w.done(); }
+});
+
 test('the same stored thing shown twice on a page is one identity: an edit for it reaches both, and is not orphaned', async () => {
   const e = edit();
   // The same card (one entity, one identity) rendered in the page and again in a sidebar teaser.
@@ -467,7 +487,7 @@ test('a verification stops at the first failing step: styles, then pixels near t
     const v = await a.verify(styled.id, { widths: [390] });
     assert.equal(v.failed, 'styles', 'the computed colour is off, whatever the pixels say');
     assert.deepEqual(v.differences, [{ kind: 'style', edit: styled.id, width: 390, element: 'h2.card__title', property: 'color', design: 'rgb(200, 0, 0)', result: 'rgb(18, 52, 86)' }]);
-    assert.deepEqual(a.marks.map((m) => [m.state, m.verdict?.failed]), [['draft', 'styles']], 'back to draft, with the verdict');
+    assert.deepEqual(a.marks.map((m) => [m.state, m.verdict?.failed]), [['implemented', 'styles']], 'still in the site, with the verdict saying what differs');
     assert.ok(v.pictures[0]?.diff && existsSync(v.pictures[0].diff), 'the difference is pictured');
   } finally { a.done(); }
 
@@ -485,7 +505,7 @@ test('a verification stops at the first failing step: styles, then pixels near t
     const v = await d.verify(elsewhere.id, { widths: [390] });
     assert.equal(v.failed, 'rest', 'a difference away from every touched element is a leak');
     assert.ok(v.differences.length > 0 && v.differences.every((x) => x.kind === 'leak'));
-    assert.deepEqual(d.marks.map((m) => m.state), ['draft']);
+    assert.deepEqual(d.marks.map((m) => m.state), ['implemented']);
   } finally { d.done(); }
 });
 

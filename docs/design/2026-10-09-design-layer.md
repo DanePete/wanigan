@@ -78,8 +78,11 @@ helpers already report:
 After every load the page script resolves each edit's identity to elements and
 tags them with a dev-only attribute (`data-wl-edit`). The layer's CSS uses only
 those attributes, so nothing it does can reach an element it was not meant for.
-An edit whose identity no longer resolves becomes `orphaned`, is listed, and is
-never applied to whatever now sits in its place.
+A draft whose identity no longer resolves becomes `orphaned`, is listed, and is
+never applied to whatever now sits in its place. An implemented edit is in the
+site: a load where it does not resolve is said, and it stays `implemented`
+(never a draft again, so never discarded or undone while its words are in the
+site); a failed verification is kept with it, saying what differs.
 
 ### How it renders
 
@@ -309,9 +312,11 @@ or the project.
    (`data-wl-layer`): Electron cannot take a user-origin sheet out again
    (`removeInsertedCSS` removes author sheets only, seen on Electron 44), so
    a new sheet replaces the old one by the root naming its generation, and
-   switching the layer off names none. An edit of this page that does not resolve
-   is reported as orphaned (and the core told); edits of other pages are left
-   alone.
+   switching the layer off names none. A draft of this page that does not
+   resolve is reported as orphaned (and the core told); an implemented edit
+   that does not resolve on a load is reported, and stays implemented: its
+   words are in the site, so it never becomes a draft again or discardable.
+   Edits of other pages are left alone.
 2. `layerTarget()` keys the picked element: its part's identity (the
    innermost region with a part that has one), the CSS path from that part's
    root element to it, its words' hash, what `kind` would reach and how many
@@ -331,7 +336,8 @@ or the project.
    versions and every width), then runs the
    steps in order: computed styles and boxes of the touched elements, pixels
    around them, then the rest of the page. It keeps the pictures in the data
-   folder and tells the core (`verified`, or back to `draft` with the verdict).
+   folder and tells the core (`verified`, or still `implemented` with the
+   verdict, which says what differs: the words are in the site either way).
 
 **The window** shows a tray of the project's edits (before and after, the
 page each is on, its state and verdict, fragile ones said so), per-edit
